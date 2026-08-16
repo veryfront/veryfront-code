@@ -1946,6 +1946,7 @@ describe("push divergence guard", () => {
         _resetEnvironmentConfig();
 
         let branchCreated = false;
+        let uploaded = false;
         const putBodies: unknown[] = [];
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
@@ -1973,8 +1974,10 @@ describe("push divergence guard", () => {
             return Response.json({
               data: [{
                 path: "app.ts",
-                content: isBranch
+                content: isBranch && !uploaded
                   ? "export const value = 'studio';\n"
+                  : isBranch
+                  ? "export const value = 1;\n"
                   : "export const value = 0;\n",
                 version_id: isBranch
                   ? "00000000-0000-4000-8000-000000000011"
@@ -1984,6 +1987,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "PUT" && url.pathname.endsWith("/files/app.ts")) {
+            uploaded = true;
             putBodies.push(await request.json());
             return Response.json({});
           }
@@ -3097,6 +3101,7 @@ describe("push divergence guard", () => {
         _resetEnvironmentConfig();
 
         const putBodies: unknown[] = [];
+        let uploaded = false;
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -3107,13 +3112,16 @@ describe("push divergence guard", () => {
             return Response.json({
               data: [{
                 path: "app.ts",
-                content: "export const value = 'studio';\n",
+                content: uploaded
+                  ? "export const value = 1;\n"
+                  : "export const value = 'studio';\n",
                 version_id: "00000000-0000-4000-8000-000000000010",
               }],
               page_info: {},
             });
           }
           if (request.method === "PUT") {
+            uploaded = true;
             putBodies.push(await request.json());
             return Response.json({});
           }
@@ -3170,6 +3178,91 @@ describe("push divergence guard", () => {
         await pushCommand({ projectDir, force: true, quiet: true });
 
         assertEquals(putBodies, [{ content: "export const value = 1;\n" }]);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("repairs a raced local file and refreshes preserved files after a forced push", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        let putCalls = 0;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: fileListCalls === 1
+                    ? "export const value = 0;\n"
+                    : fileListCalls === 2
+                    ? "export const value = 'studio';\n"
+                    : "export const value = 1;\n",
+                  version_id: `00000000-0000-4000-8000-00000000001${fileListCalls}`,
+                },
+                {
+                  path: "remote-only.ts",
+                  content: fileListCalls === 1
+                    ? "export const remote = 'old';\n"
+                    : "export const remote = 'new';\n",
+                  version_id: `00000000-0000-4000-8000-00000000002${fileListCalls}`,
+                },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putCalls++;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, force: true, quiet: true });
+
+        assertEquals(fileListCalls, 3);
+        assertEquals(putCalls, 2);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "remote-only.ts", content: "export const remote = 'new';\n" },
+          ]),
+        );
+        const target = await readSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          branch: "main",
+        });
+        assertEquals(
+          target?.files["app.ts"]?.digest,
+          await computeContentDigest("export const value = 1;\n"),
+        );
+        assertEquals(
+          target?.files["remote-only.ts"]?.digest,
+          await computeContentDigest("export const remote = 'new';\n"),
+        );
       });
     } finally {
       globalThis.fetch = originalFetch;
@@ -3266,6 +3359,72 @@ describe("push failure ordering", () => {
 });
 
 describe("push deletion ownership", () => {
+  it("refreshes preserved files after a no-op forced push without prune", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await runGit("rm", "--quiet", "app.ts");
+        await runGit("commit", "--quiet", "-m", "remove local source");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [{
+                path: "remote-only.ts",
+                content: fileListCalls === 1
+                  ? "export const remote = 'old';\n"
+                  : "export const remote = 'new';\n",
+                version_id: `00000000-0000-4000-8000-00000000001${fileListCalls}`,
+              }],
+              page_info: {},
+            });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, force: true, quiet: true });
+
+        assertEquals(fileListCalls, 2);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([{
+            path: "remote-only.ts",
+            content: "export const remote = 'new';\n",
+          }]),
+        );
+        const target = await readSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          branch: "main",
+        });
+        assertEquals(
+          target?.files["remote-only.ts"]?.digest,
+          await computeContentDigest("export const remote = 'new';\n"),
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("records late unsupported remote changes after a normal no-op push", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
