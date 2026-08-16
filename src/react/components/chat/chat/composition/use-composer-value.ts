@@ -7,6 +7,7 @@
 
 import * as React from "react";
 import type { ChatFilePart } from "#veryfront/agent/react";
+import { useChatContextOptional } from "../contexts/chat-context.tsx";
 import type { ChatInputContextValue } from "../contexts/composer-context.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
@@ -14,8 +15,10 @@ import { attachmentsToFileParts, hasPendingAttachments } from "../chat-attachmen
 
 /** State shared by controlled and composer-owned submit modes. */
 interface ComposerStateBaseProps {
-  input: string;
-  onChange: (
+  /** Falls back to the surrounding `ChatContext` input when omitted. */
+  input?: string;
+  /** Falls back to `ChatContext.setInput` when omitted. */
+  onChange?: (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => void;
   /** Clear pending attachments after a composer-owned submit sends. */
@@ -69,7 +72,33 @@ function missingSetInput(): never {
   );
 }
 
-export function useComposerValue(p: ComposerStateProps): ChatInputContextValue {
+export function useComposerValue(props: ComposerStateProps): ChatInputContextValue {
+  // One shared chat context (issue #69): when a `<Chat.Root>` is above,
+  // omitted props fall back to its `ChatContext` (the shared session), so a
+  // propless `<ChatInput.Root>` wires itself. Explicit props always win, and a
+  // standalone composer (no ChatContext) keeps the props-only behavior.
+  const chat = useChatContextOptional();
+  const chatSetInput = chat?.setInput;
+  const fallbackOnChange = React.useCallback(
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      chatSetInput?.(e.target.value),
+    [chatSetInput],
+  );
+  const p = {
+    ...props,
+    input: props.input ?? chat?.input ?? "",
+    onChange: props.onChange ?? fallbackOnChange,
+    setInput: props.setInput ?? chat?.setInput,
+    onSubmit: props.onSubmit ?? chat?.onSubmit,
+    isLoading: props.isLoading ?? chat?.isLoading,
+    stop: props.stop ?? chat?.onStop,
+    model: props.model ?? chat?.model,
+    models: props.models ?? chat?.models,
+    onModelChange: props.onModelChange ?? chat?.onModelChange,
+    attachments: props.attachments ?? chat?.attachments,
+    onAttach: props.onAttach ?? chat?.onAttach,
+    onRemoveAttachment: props.onRemoveAttachment ?? chat?.onRemoveAttachment,
+  };
   const hasResolvedAttachment = p.attachments?.some((attachment) =>
     Boolean(attachment.url) &&
     attachment.state !== "uploading" &&

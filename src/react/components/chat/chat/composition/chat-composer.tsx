@@ -144,7 +144,9 @@ ChatInputToolbar.displayName = "ChatInput.Toolbar";
  * `ChatInput.Root` — the provider shell for a fully custom composer. Supplies
  * `ChatInputContext` from props and renders your children, so you arrange
  * `ChatInput.Field` + the toolbar sub-parts yourself (like `Message.Root`). The
- * default `<ChatInput>` is exactly this Root plus the standard body.
+ * default `<ChatInput>` is exactly this Root plus the standard body. Omitted
+ * props fall back to the surrounding `ChatContext` (`<Chat.Root chat={…}>`),
+ * so a propless Root wires itself to the shared session; explicit props win.
  */
 export function ChatInputRoot(
   { className, children, ref, ...state }: ChatInputRootProps,
@@ -152,7 +154,7 @@ export function ChatInputRoot(
   const baseCtxValue = useComposerValue(state);
   const { contextValue, fileInput } = useChatInputAttachmentPicker(
     baseCtxValue,
-    state.onAttach,
+    baseCtxValue.onAttach,
     state.attachAccept,
   );
   return (
@@ -173,7 +175,10 @@ function ChatInputBase(
     onChange,
     setInput,
     onSubmit,
-    isLoading = false,
+    // No `= false` default: an omitted `isLoading` must stay `undefined` so
+    // `useComposerValue` can inherit the surrounding session's loading state
+    // (a default would always win over the context and hide Stop mid-turn).
+    isLoading,
     placeholder = "Type a message...",
     theme,
     stop,
@@ -215,13 +220,6 @@ function ChatInputBase(
     );
     const handleAttach = withFocus(onAttach);
 
-    const {
-      isDragActive,
-      onDragEnter,
-      onDragLeave,
-      onDragOver,
-      onDrop: onFileDrop,
-    } = useDropZone(withFocus(onDrop ?? onAttach));
     const baseCtxValue = useComposerValue({
       input,
       onChange,
@@ -241,9 +239,19 @@ function ChatInputBase(
       attachments,
       onRemoveAttachment,
     });
+    // Attach + drop fall back to the context-resolved handler (like
+    // `ChatInput.Root`), so a propless composer inside `<Chat.Root chat={…}>`
+    // keeps a working picker and drop zone. Explicit props stay focus-wrapped.
+    const {
+      isDragActive,
+      onDragEnter,
+      onDragLeave,
+      onDragOver,
+      onDrop: onFileDrop,
+    } = useDropZone(withFocus(onDrop ?? onAttach) ?? baseCtxValue.onAttach);
     const { contextValue, fileInput } = useChatInputAttachmentPicker(
       baseCtxValue,
-      handleAttach,
+      baseCtxValue.onAttach,
       attachAccept,
     );
 
@@ -276,13 +284,13 @@ function ChatInputBase(
                   /* Pending attachments — inside the composer card, above the
                     editor (Studio PromptForm), not floating as a separate row. */
                 }
-                {attachments && attachments.length > 0 && (
+                {contextValue.attachments.length > 0 && (
                   <div className="mb-2.5 flex flex-wrap items-center gap-2">
-                    {attachments.map((file) => (
+                    {contextValue.attachments.map((file) => (
                       <AttachmentPill
                         key={file.id}
                         attachment={file}
-                        onRemove={onRemoveAttachment}
+                        onRemove={contextValue.onRemoveAttachment}
                         className="w-[200px]"
                       />
                     ))}

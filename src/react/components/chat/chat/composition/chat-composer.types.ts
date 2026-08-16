@@ -138,12 +138,19 @@ export interface ChatInputToolbarProps extends React.HTMLAttributes<HTMLDivEleme
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** Props accepted by `ChatInput`. */
+/**
+ * Props accepted by `ChatInput`.
+ *
+ * Every prop is optional: omitted state falls back to the surrounding
+ * `ChatContext` (`<Chat.Root chat={…}>`), so a propless `<ChatInput />` wires
+ * itself to the shared session. Explicit props always win, and a standalone
+ * composer outside a `<Chat.Root>` still supplies its own `input`/`onChange`.
+ */
 export interface ChatInputProps {
-  /** Current text value of the composer input (controlled). */
-  input: string;
-  /** Fired as the user edits the input. */
-  onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  /** Current text value of the composer input (controlled). Falls back to `ChatContext.input`. */
+  input?: string;
+  /** Fired as the user edits the input. Falls back to `ChatContext.setInput`. */
+  onChange?: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
   /**
    * Update the controlled input value for headless consumers. The preset wires
    * this automatically. Direct consumers must provide it before calling
