@@ -791,6 +791,30 @@ describe("createApiClient", () => {
         globalThis.fetch = originalFetch;
       }
     });
+
+    it("does not retry PUT when the caller disables retries", async () => {
+      let callCount = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = ((_input: unknown, _init?: RequestInit) => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve(new Response("bad gateway", { status: 502 }));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ updated: true }), { status: 200 }));
+      }) as typeof fetch;
+
+      try {
+        const client = createApiClient(makeConfig());
+        await assertRejects(
+          () => client.put("/test", { content: "same" }, { retryPolicy: "none" }),
+          Error,
+          "502",
+        );
+        assertEquals(callCount, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe("retry behavior for non-idempotent requests", () => {

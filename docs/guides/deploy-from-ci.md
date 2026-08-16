@@ -38,8 +38,8 @@ Use these operating controls:
 - A protected `staging` environment in Veryfront.
 - A protected `production` environment in Veryfront before promotion.
 - A CI job that runs after changes merge to `main`.
-- `.veryfront/` in `.gitignore` so local project links and Push receipts are
-  never committed.
+- `.veryfront/` in `.gitignore` so local project links, Push receipts, and sync
+  baselines are never committed.
 
 See [Configuration](./configuration.md) for the Cloud bootstrap environment
 variables.
@@ -75,7 +75,7 @@ recomputing production bytes from the working tree.
 Preview the source reconciliation before it changes Veryfront:
 
 ```bash title="Terminal"
-veryfront push --branch main --prune --dry-run
+veryfront push --branch main --prune --force --dry-run
 ```
 
 Push dry-run reads the local and remote source needed for the comparison but
@@ -84,12 +84,18 @@ delete files, or write `.veryfront/push-receipt.json`. `--prune` includes
 remote-only managed files in the preview so CI can verify the exact mirror
 before applying it.
 
+This serialized job gives Git `main` intentional overwrite authority. It uses
+`--force` because an ephemeral runner has no persisted pull or push baseline
+for comparison. Do not copy `--force` into interactive developer pushes. A
+normal push rejects remote changes made since the last pull or push and tells
+you to reconcile them with Git.
+
 ## Start with staging
 
 Run Push and Deploy from the same Git checkout and CI job:
 
 ```bash title="Terminal"
-veryfront push --branch main --prune --yes
+veryfront push --branch main --prune --force --yes
 veryfront deploy --branch main --env staging --yes
 ```
 
@@ -106,9 +112,10 @@ commands across CI jobs or clean the checkout between them.
 Deploy creates an immutable release from the pushed source, then assigns that
 release to `staging`.
 
-This workflow uses `--prune` because Git `main` is the canonical managed
-source. Interactive Pushes should omit it when Studio-only files must remain
-available.
+This workflow uses `--prune` and `--force` because Git `main` is the canonical
+managed source and the serialized CI job is its only writer. Interactive
+pushes must omit `--force`. They should also omit `--prune` when Studio-only
+files must remain available.
 
 The current directory is the Veryfront project directory. It maps to the Git
 repository root by default. For a monorepo, run both commands from the same
@@ -181,7 +188,7 @@ jobs:
             exit 0
           fi
 
-          npx --no-install veryfront push --branch main --prune --yes
+          npx --no-install veryfront push --branch main --prune --force --yes
           npx --no-install veryfront deploy --branch main --env staging --yes
 ```
 
@@ -220,7 +227,7 @@ After that approval, use the same serialized job pattern with the production
 environment:
 
 ```bash title="Terminal"
-veryfront push --branch main --prune --yes
+veryfront push --branch main --prune --force --yes
 veryfront deploy --branch main --env production --yes
 ```
 

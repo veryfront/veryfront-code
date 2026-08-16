@@ -5,7 +5,7 @@
  * browser suites catch hydration/runtime regressions without per-test boilerplate.
  */
 
-import { expect, test as base } from "npm:playwright@1.59.0/test";
+import { expect, test as base } from "npm:playwright@1.60.0/test";
 import { findHydrationOrCspFailures } from "../../_helpers/playwright.ts";
 import { setupErrorCollection } from "../helpers/assertions.ts";
 

@@ -612,7 +612,7 @@ describe("guide content contracts", () => {
 
   it("keeps the CI deploy workflow on explicit Push before Deploy", async () => {
     const guide = await Deno.readTextFile("docs/guides/deploy-from-ci.md");
-    const push = "veryfront push --branch main --prune --yes";
+    const push = "veryfront push --branch main --prune --force --yes";
     const deploy = "veryfront deploy --branch main --env production --yes";
     const pushIndex = guide.indexOf(push);
     const deployIndex = guide.indexOf(deploy);
@@ -639,7 +639,8 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "NDJSON records");
     assertStringIncludes(guide, "git revert");
     assertStringIncludes(guide, "Start with staging");
-    assertStringIncludes(guide, "veryfront push --branch main --prune --dry-run");
+    assertStringIncludes(guide, "veryfront push --branch main --prune --force --dry-run");
+    assertStringIncludes(guide, "intentional overwrite authority");
     assertStringIncludes(guide, "preserves remote-only files");
     assertStringIncludes(guide, "does not create a missing project or branch");
     assertStringIncludes(guide, "veryfront deploy --branch main --env staging --yes");

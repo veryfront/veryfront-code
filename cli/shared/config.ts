@@ -428,7 +428,7 @@ function resolveConfigByMode(
 export interface ApiReadOptions {
   /** Abort the in-flight HTTP request when this signal fires. */
   signal?: AbortSignal;
-  /** Use `none` when a higher-level polling loop owns retry timing. */
+  /** Use `none` when a caller owns retry timing or replaying a write would be ambiguous. */
   retryPolicy?: "default" | "none";
 }
 
@@ -439,7 +439,7 @@ export interface ApiClient {
     options?: ApiReadOptions,
   ): Promise<T>;
   post<T>(path: string, body?: unknown): Promise<T>;
-  put<T>(path: string, body?: unknown): Promise<T>;
+  put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
   delete<T>(path: string): Promise<T>;
 }
@@ -574,8 +574,8 @@ export function createApiClient(config: ResolvedConfig): ApiClient {
     post<T>(path: string, body?: unknown): Promise<T> {
       return request<T>("POST", path, body);
     },
-    put<T>(path: string, body?: unknown): Promise<T> {
-      return request<T>("PUT", path, body);
+    put<T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T> {
+      return request<T>("PUT", path, body, undefined, options);
     },
     patch<T>(path: string, body?: unknown): Promise<T> {
       return request<T>("PATCH", path, body);

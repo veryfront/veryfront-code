@@ -29,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 110 registered errors", () => {
+    it("should have 112 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 110);
+      assertEquals(slugs.length, 112);
     });
   });
 
@@ -139,6 +139,10 @@ describe("error-registry", () => {
     it("registers actionable CLI precondition errors", () => {
       assertEquals(getErrorBySlug("authentication-required")?.status, 401);
       assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
+    });
+
+    it("classifies invalid sync metadata as a runtime error", () => {
+      assertEquals(getErrorBySlug("sync-state-invalid")?.exitCode, undefined);
     });
 
     it("should return correct error for all slugs", () => {
@@ -325,7 +329,7 @@ describe("error-registry", () => {
       SERVER: 18,
       BOUNDARY: 7,
       DEV: 5,
-      DEPLOY: 14,
+      DEPLOY: 16,
       AGENT: 8,
       GENERAL: 13,
     };

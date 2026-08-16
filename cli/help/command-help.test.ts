@@ -49,5 +49,12 @@ describe("command-help", () => {
       assertStringIncludes(output, "Primary subcommand: ingest");
       assertStringIncludes(output, "built-in Kreuzberg document extension");
     });
+
+    it("documents push divergence and the explicit force escape hatch", () => {
+      const output = captureConsoleLog(() => showCommandHelp("push"));
+      assertStringIncludes(output, "-f, --force");
+      assertStringIncludes(output, "changed remotely since the last pull or push");
+      assertStringIncludes(output, "intend to overwrite remote changes");
+    });
   });
 });
