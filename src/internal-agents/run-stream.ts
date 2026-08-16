@@ -1011,7 +1011,7 @@ export async function createRuntimeAgentStreamResponse(
             aborted = true;
             const cancellationError = new AgentRunCancelledError();
             readerExitReason = cancellationError;
-            logger.warn("Internal agent runtime stream aborted", {
+            logger.debug("Internal agent runtime stream aborted", {
               runId: input.runId,
               threadId: input.threadId,
               agentId: agent.id,
@@ -1139,11 +1139,13 @@ export async function createRuntimeAgentStreamResponse(
                 "error.message": error.message,
               });
               addSpanEvent(runSpan, "agent.run.cancelled");
-              logger.warn("Internal agent runtime stream cancelled", {
+              // The control plane also cancels runtime sessions to park canonical runs for tools.
+              // This is a lifecycle transition, not an execution failure.
+              logger.info("Internal agent runtime session cancelled", {
                 runId: input.runId,
                 threadId: input.threadId,
                 agentId: agent.id,
-                error: error.message,
+                status: "cancelled",
               });
               enqueueIfAttached("RunError", {
                 code: "CANCELLED",

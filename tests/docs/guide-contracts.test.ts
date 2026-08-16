@@ -232,6 +232,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/quickstart.md": {
     references: [
       "../guides/providers.md",
+      "../guides/multi-agent.md",
       "./create-project.md",
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/tool.md",
@@ -246,6 +247,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "calculator.ts",
       "What is 128 divided by 8?",
       "Inference OpenAI direct",
+      'delegates: ["researcher", "writer"]',
+      "agent_researcher",
+      "agent_writer",
     ],
   },
   "getting-started/cloud-quickstart.md": {
@@ -318,6 +322,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "veryfront serve",
       "ship the whole project directory, not just `dist/`",
       "Dockerfile",
+      "Check capability support",
+      "Remote integration tools",
+      "Deploy to Kubernetes",
+      "--from-env-file=.env",
+      "startupProbe:",
+      "rollout restart deployment/veryfront-app",
+      "kubectl apply -f k8s.yaml",
     ],
   },
   "guides/deploy-from-ci.md": {
@@ -675,7 +686,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/workflow.md",
     ],
-    snippets: ["agentAsTool", "getAgentsAsTools", "workflow"],
+    snippets: [
+      "Direct local delegation does not require a Veryfront account",
+      "agentAsTool",
+      "getAgentsAsTools",
+      "workflow",
+    ],
   },
   "guides/oauth.md": {
     references: ["../api-reference/veryfront/oauth.md"],
