@@ -147,8 +147,9 @@ export function ChatRoot(
   const error = errorProp !== undefined ? errorProp : (chat?.error ?? null);
   const input = inputProp ?? chat?.input ?? "";
   const setInput = setInputProp ?? chat?.setInput;
+  const model = modelProp ?? chat?.model;
   const hasFlatSubmitState = inputProp !== undefined || setInputProp !== undefined ||
-    isLoadingProp !== undefined;
+    isLoadingProp !== undefined || modelProp !== undefined;
   const submitSession = React.useCallback((e?: React.FormEvent) => {
     if (!chat) return;
     if (hasPendingAttachments(attachments)) {
@@ -167,12 +168,24 @@ export function ChatRoot(
     for (const attachment of attachments) {
       if (attachment.url) onRemoveAttachment?.(attachment.id);
     }
-    return chat.sendMessage({ text, ...(files.length > 0 ? { files } : {}) });
-  }, [attachments, chat, hasFlatSubmitState, input, isLoading, onRemoveAttachment, setInput]);
+    return chat.sendMessage({
+      text,
+      ...(files.length > 0 ? { files } : {}),
+      ...(model !== undefined ? { model } : {}),
+    });
+  }, [
+    attachments,
+    chat,
+    hasFlatSubmitState,
+    input,
+    isLoading,
+    model,
+    onRemoveAttachment,
+    setInput,
+  ]);
   const onSubmit = onSubmitProp ?? (chat ? submitSession : undefined);
   const onStop = onStopProp ?? chat?.stop;
   const onReload = onReloadProp ?? chat?.reload;
-  const model = modelProp ?? chat?.model;
   const onModelChange = onModelChangeProp ?? chat?.setModel;
   const editMessage = editMessageProp ?? chat?.editMessage;
   const getBranches = getBranchesProp ?? chat?.getBranches;

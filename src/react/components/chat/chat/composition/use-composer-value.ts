@@ -54,7 +54,7 @@ interface ComposerSubmitProps {
    * Send directly through composer-owned submission. When supplied, `setInput`
    * clears the controlled input after this handler runs.
    */
-  sendMessage?: (message: { text: string; files?: ChatFilePart[] }) => void;
+  sendMessage?: (message: { text: string; files?: ChatFilePart[]; model?: string }) => void;
   /** Update the controlled input value for headless context consumers. */
   setInput?: (value: string) => void;
 }
@@ -87,7 +87,7 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
   const hasExplicitSubmitState = props.input !== undefined ||
     props.setInput !== undefined || props.attachments !== undefined ||
     props.onRemoveAttachment !== undefined || props.onClearAttachments !== undefined ||
-    props.isLoading !== undefined;
+    props.isLoading !== undefined || props.model !== undefined;
   const p = {
     ...props,
     input: props.input ?? chat?.input ?? "",
@@ -130,7 +130,11 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
     const text = p.input.trim();
     const files = attachmentsToFileParts(attachments);
     if (!text && files.length === 0) return;
-    sendMessage({ text, ...(files.length > 0 ? { files } : {}) });
+    sendMessage({
+      text,
+      ...(files.length > 0 ? { files } : {}),
+      ...(p.model !== undefined ? { model: p.model } : {}),
+    });
     setInput?.("");
     if (onClearAttachments) {
       onClearAttachments();
@@ -148,6 +152,7 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
     onRemoveAttachment,
     p.input,
     p.attachments,
+    p.model,
   ]);
 
   return React.useMemo<ChatInputContextValue>(() => ({

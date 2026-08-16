@@ -37,8 +37,10 @@ export interface ChatContextValue {
 
   // Submit / Stop
   onSubmit: (e?: React.FormEvent) => void | Promise<void>;
-  /** Send resolved composer text and attachments through the shared session. */
-  sendMessage?: (message: { text: string; files?: ChatFilePart[] }) => void | Promise<void>;
+  /** Send resolved composer text, attachments, and an optional request model through the session. */
+  sendMessage?: (message: { text: string; files?: ChatFilePart[]; model?: string }) =>
+    | void
+    | Promise<void>;
   onStop?: () => void;
   onReload?: () => void;
 

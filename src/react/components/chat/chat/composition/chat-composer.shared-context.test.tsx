@@ -306,6 +306,45 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
     }
   });
 
+  it("submits with the resolved flat model instead of the session model", () => {
+    let composer: ReturnType<typeof useChatInputContext> | undefined;
+    let submitted: { text: string; model?: string } | undefined;
+    let textOnlySubmits = 0;
+    function ComposerProbe(): null {
+      composer = useChatInputContext();
+      return null;
+    }
+
+    renderToString(
+      <Chat.Root
+        chat={makeChat({
+          input: "model-specific draft",
+          model: "session-model",
+          sendMessage: (message) => {
+            submitted = message;
+            return Promise.resolve();
+          },
+          handleSubmit: () => {
+            textOnlySubmits += 1;
+            return Promise.resolve();
+          },
+        })}
+        model="flat-model"
+        onModelChange={() => {}}
+      >
+        <ChatInput.Root>
+          <ComposerProbe />
+        </ChatInput.Root>
+      </Chat.Root>,
+    );
+
+    assert(composer, "Expected the nested composer context to be available");
+    composer.onSubmit({ preventDefault() {} } as FormEvent);
+
+    assertEquals(textOnlySubmits, 0, "flat model submission must bypass the session submitter");
+    assertEquals(submitted, { text: "model-specific draft", model: "flat-model" });
+  });
+
   it("submits explicit nested composer state instead of the enclosing session state", async () => {
     let composer: ReturnType<typeof useChatInputContext> | undefined;
     let submitted: Parameters<UseChatResult["sendMessage"]>[0] | undefined;
