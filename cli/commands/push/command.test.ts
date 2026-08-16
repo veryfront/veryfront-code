@@ -3774,6 +3774,88 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("rejects a planned file changed again after forced prune repair", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        const putBodies: unknown[] = [];
+        const deleted: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: fileListCalls === 1
+                    ? "stale app"
+                    : fileListCalls === 2
+                    ? "studio overwrite"
+                    : "studio overwrite again",
+                },
+                ...(fileListCalls === 1 ? [{ path: "stale.ts", content: "stale source" }] : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") {
+            putBodies.push(await request.json());
+            return Response.json({});
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true }),
+          Error,
+          "Push rejected",
+        );
+
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"app.ts"');
+        assertEquals(fileListCalls, 3);
+        assertEquals(putBodies, [
+          { content: "export const value = 1;\n" },
+          { content: "export const value = 1;\n" },
+        ]);
+        assertEquals(deleted, ["stale.ts"]);
+        assertEquals(await readPushReceipt(projectDir), null);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          null,
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("reconciles late remote-only files during no-op forced prune", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
