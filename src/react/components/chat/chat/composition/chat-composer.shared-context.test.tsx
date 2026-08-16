@@ -603,6 +603,59 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
     );
   });
 
+  it("restores field focus after selecting an attachment inherited from Chat.Root", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let attachCalls = 0;
+    let root: Root | undefined;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
+      flushSync(() => {
+        createdRoot.render(
+          <Chat.Root chat={makeChat()} onAttach={() => attachCalls += 1}>
+            <ChatInput />
+          </Chat.Root>,
+        );
+      });
+
+      const field = document.querySelector<HTMLTextAreaElement>("textarea");
+      const upload = document.querySelector<HTMLInputElement>('input[aria-label="Upload file"]');
+      assert(field, "Expected the composer field to render");
+      assert(upload, "Expected the inherited attachment picker to render");
+
+      Object.defineProperties(field, {
+        attachEvent: { value: () => {} },
+        detachEvent: { value: () => {} },
+      });
+      upload.focus();
+      Object.defineProperty(upload, "files", {
+        configurable: true,
+        value: {
+          0: new dom.window.File(["notes"], "notes.txt", { type: "text/plain" }),
+          length: 1,
+          item: (index: number) => index === 0 ? upload.files?.[0] ?? null : null,
+        },
+      });
+      flushSync(() => upload.dispatchEvent(new dom.window.Event("change", { bubbles: true })));
+
+      assertEquals(attachCalls, 1, "the inherited attachment handler must run once");
+      assert(
+        document.activeElement === field,
+        "attachment selection must restore field focus",
+      );
+    } finally {
+      if (root) await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   it("an explicit null flat prop overrides the session value instead of inheriting it", () => {
     let observed: ChatContextValue | undefined;
     function ContextProbe(): null {

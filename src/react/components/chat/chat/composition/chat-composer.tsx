@@ -241,17 +241,19 @@ function ChatInputBase(
     });
     // Attach + drop fall back to the context-resolved handler (like
     // `ChatInput.Root`), so a propless composer inside `<Chat.Root chat={…}>`
-    // keeps a working picker and drop zone. Explicit props stay focus-wrapped.
+    // keeps a working picker and drop zone. Both explicit and inherited
+    // handlers restore field focus after a selection.
+    const resolvedAttach = handleAttach ?? withFocus(baseCtxValue.onAttach);
     const {
       isDragActive,
       onDragEnter,
       onDragLeave,
       onDragOver,
       onDrop: onFileDrop,
-    } = useDropZone(withFocus(onDrop ?? onAttach) ?? baseCtxValue.onAttach);
+    } = useDropZone(withFocus(onDrop) ?? resolvedAttach);
     const { contextValue, fileInput } = useChatInputAttachmentPicker(
       baseCtxValue,
-      baseCtxValue.onAttach,
+      resolvedAttach,
       attachAccept,
     );
 
