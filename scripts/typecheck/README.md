@@ -42,6 +42,9 @@ consumer's own `@types/react`. This gate is the regression guard.
 - [`fixtures/trigger-target-config.ts`](./fixtures/trigger-target-config.ts) —
   checks stored trigger targets under `exactOptionalPropertyTypes` across the
   schedule, webhook, and local-run authoring surfaces.
+- [`fixtures/trigger-target-default-optional.ts`](./fixtures/trigger-target-default-optional.ts) —
+  checks that explicit `undefined` fields on stored non-agent targets remain
+  assignable with TypeScript's default optional-property semantics.
 
 Add a fixture whenever a new public compound ships; keep them importing the
 published specifiers (not relative `src` paths) so they exercise the real

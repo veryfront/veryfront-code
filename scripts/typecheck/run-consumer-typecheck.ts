@@ -1,8 +1,8 @@
 /**
  * Consumer `tsc --noEmit` gate.
  *
- * Typechecks {@link ./fixtures} — documented `veryfront/ui` / `veryfront/chat`
- * composition — against the BUILT npm package (`npm/esm/**.d.ts`) using a real
+ * Typechecks {@link ./fixtures} — documented UI, chat, and trigger composition
+ * — against the BUILT npm package (`npm/esm/**.d.ts`) using a real
  * `@types/react`, exactly the way an external app compiles the published
  * declarations. This is the gap `deno check` (Deno's own react types + source)
  * and a source-level `tsc` both leave open: it is what caught, and now guards
@@ -20,7 +20,16 @@
 
 const REPO_ROOT = new URL("../../", import.meta.url).pathname;
 const TSC = `${REPO_ROOT}storybook/node_modules/.bin/tsc`;
-const TSCONFIG = "scripts/typecheck/tsconfig.consumer.json";
+const TSCONFIGS = [
+  {
+    label: "exact optional-property semantics",
+    path: "scripts/typecheck/tsconfig.consumer.json",
+  },
+  {
+    label: "default optional-property semantics",
+    path: "scripts/typecheck/tsconfig.consumer-default-optional.json",
+  },
+] as const;
 function exists(path: string): boolean {
   try {
     Deno.statSync(path);
@@ -50,18 +59,22 @@ if (!exists(TSC)) {
   Deno.exit(1);
 }
 
-console.log("Rebuilding npm/ from the current source with deno task build:npm.");
+console.log(
+  "Rebuilding npm/ from the current source with deno task build:npm.",
+);
 const buildCode = await run("deno", ["task", "build:npm"]);
 if (buildCode !== 0) {
   console.error("✖ consumer typecheck: build:npm failed");
   Deno.exit(buildCode);
 }
 
-console.log(
-  "• consumer typecheck: tsc --noEmit over documented composition vs built npm .d.ts",
-);
-const code = await run(TSC, ["--noEmit", "-p", TSCONFIG]);
-if (code === 0) {
-  console.log("✓ consumer typecheck: published composition types are consumer-clean");
+for (const config of TSCONFIGS) {
+  console.log(
+    `• consumer typecheck: ${config.label} vs built npm .d.ts`,
+  );
+  const code = await run(TSC, ["--noEmit", "-p", config.path]);
+  if (code !== 0) Deno.exit(code);
 }
-Deno.exit(code);
+console.log(
+  "✓ consumer typecheck: published composition types are consumer-clean",
+);

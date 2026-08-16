@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.consumer.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": false
+  },
+  "include": [
+    "./fixtures/trigger-target-default-optional.ts"
+  ],
+  "exclude": []
+}

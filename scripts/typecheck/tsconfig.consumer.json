@@ -44,5 +44,8 @@
   "include": [
     "./fixtures/**/*.ts",
     "./fixtures/**/*.tsx"
+  ],
+  "exclude": [
+    "./fixtures/trigger-target-default-optional.ts"
   ]
 }
