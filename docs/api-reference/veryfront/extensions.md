@@ -592,7 +592,7 @@ import {
 | -------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `requireRateLimitKey`      |                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit-validation.ts#L7)  |
 | `requireRateLimitWindowMs` |                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit-validation.ts#L25) |
-| `unrefTimer`               | Unreference a timer to prevent it from keeping the process alive | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L287)                |
+| `unrefTimer`               | Unreference a timer to prevent it from keeping the process alive | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L314)                |
 
 #### Types
 

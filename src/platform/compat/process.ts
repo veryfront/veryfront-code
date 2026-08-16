@@ -20,6 +20,7 @@ export {
   getRuntimeVersion,
   getStdout,
   getTerminalSize,
+  getV8HeapSizeLimit,
   isInteractive,
   isStdoutTTY,
   memoryUsage,
