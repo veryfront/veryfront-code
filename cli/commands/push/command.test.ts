@@ -1799,11 +1799,14 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            const isBranch = url.searchParams.get("branch") === "feature-x";
             return Response.json({
               data: [{
                 path: "app.ts",
                 content: "export const value = 0;\n",
-                version_id: "00000000-0000-4000-8000-000000000010",
+                version_id: isBranch
+                  ? "00000000-0000-4000-8000-000000000011"
+                  : "00000000-0000-4000-8000-000000000010",
               }],
               page_info: {},
             });
@@ -1825,7 +1828,7 @@ describe("push divergence guard", () => {
           branchId: "branch-123",
           body: {
             content: "export const value = 1;\n",
-            expected_version_id: "00000000-0000-4000-8000-000000000010",
+            expected_version_id: "00000000-0000-4000-8000-000000000011",
           },
         }]);
       });

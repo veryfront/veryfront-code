@@ -652,6 +652,7 @@ function requireRemoteContent(file: RemoteFile): string {
 async function buildManagedRemoteSnapshot(
   files: readonly RemoteFile[],
   ignoreChecker: IgnoreChecker,
+  includeVersion = true,
 ): Promise<Map<string, { digest: string; versionId?: string }>> {
   const snapshot = new Map<string, { digest: string; versionId?: string }>();
   for (const file of files) {
@@ -660,7 +661,7 @@ async function buildManagedRemoteSnapshot(
     }
     snapshot.set(file.path, {
       digest: await computeContentDigest(requireRemoteContent(file)),
-      ...(file.version_id ? { versionId: file.version_id } : {}),
+      ...(includeVersion && file.version_id ? { versionId: file.version_id } : {}),
     });
   }
   return snapshot;
@@ -883,8 +884,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           );
           if (preparedBranch.created) {
             const conflicts = findRemoteSnapshotChanges(
-              await buildManagedRemoteSnapshot(mainFiles, ignoreChecker),
-              await buildManagedRemoteSnapshot(branchRemoteFiles, ignoreChecker),
+              await buildManagedRemoteSnapshot(mainFiles, ignoreChecker, false),
+              await buildManagedRemoteSnapshot(branchRemoteFiles, ignoreChecker, false),
             );
             if (conflicts.length > 0) {
               throw pushConflictError(conflicts);
