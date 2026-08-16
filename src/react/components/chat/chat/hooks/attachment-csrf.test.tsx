@@ -192,7 +192,7 @@ function installXhrCsrfEdge(): {
 
 function renderUpload(
   options: Parameters<typeof useUpload>[0],
-): { upload: () => UseUploadResult; unmount: () => void } {
+): { upload: () => UseUploadResult; unmount: () => Promise<void> } {
   let latest: UseUploadResult | null = null;
   function Capture(): null {
     latest = useUpload(options);
@@ -205,7 +205,7 @@ function renderUpload(
 
 function renderAttachments(
   url: string,
-): { attachments: () => UseAttachmentsResult; unmount: () => void } {
+): { attachments: () => UseAttachmentsResult; unmount: () => Promise<void> } {
   let latest: UseAttachmentsResult | null = null;
   function Capture(): null {
     latest = useAttachments({ url });
@@ -233,7 +233,7 @@ describe("chat attachment CSRF", () => {
 
       assertEquals(edge.statuses.get("POST /api/uploads"), 200);
     } finally {
-      view.unmount();
+      await view.unmount();
       edge.restore();
       restoreDom();
     }
@@ -250,7 +250,7 @@ describe("chat attachment CSRF", () => {
 
       assertEquals(edge.tokens.get("POST /api/uploads"), null);
     } finally {
-      view.unmount();
+      await view.unmount();
       edge.restore();
       restoreDom();
     }
@@ -271,7 +271,7 @@ describe("chat attachment CSRF", () => {
 
       assertEquals(edge.statuses.get("POST /api/uploads"), 200);
     } finally {
-      view.unmount();
+      await view.unmount();
       edge.restore();
       restoreDom();
     }
@@ -294,7 +294,7 @@ describe("chat attachment CSRF", () => {
 
       assertEquals(edge.statuses.get("DELETE /api/uploads"), 204);
     } finally {
-      view.unmount();
+      await view.unmount();
       edge.restore();
       restoreDom();
     }
@@ -322,7 +322,7 @@ describe("chat attachment CSRF", () => {
 
       assertEquals(sentToken, null);
     } finally {
-      view.unmount();
+      await view.unmount();
       globalThis.fetch = originalFetch;
       restoreDom();
     }
