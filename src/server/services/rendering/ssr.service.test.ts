@@ -616,35 +616,49 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
-      it("classifies a request-local carrier for a non-Error control", async () => {
-        const control = notFound({
-          headers: { "x-control-state": "missing" },
-          cookies: [{ name: "control-seen", value: "1", path: "/" }],
-        });
-        const adapter = createMockRendererAdapter({
-          renderPage: () => {
-            throw wrapDataResponseMetadataError(control, {
-              headers: { "x-page-state": "resolved" },
-              cookies: [{ name: "page-seen", value: "1", path: "/" }],
-            });
-          },
-        });
-        const service = new SSRService({
-          rendererProvider: createMockRendererProvider(adapter),
-        });
+      it("applies buffered control metadata after loader metadata", async () => {
+        for (
+          const [control, expectedStatus, expectedKind] of [
+            [
+              notFound({
+                headers: { "x-state": "control" },
+                cookies: [{ name: "control-seen", value: "1", path: "/" }],
+              }),
+              404,
+              "not-found",
+            ],
+            [
+              redirect("/login", false, {
+                headers: { "x-state": "control" },
+                cookies: [{ name: "control-seen", value: "1", path: "/" }],
+              }),
+              302,
+              "redirect",
+            ],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw wrapDataResponseMetadataError(control, {
+                headers: { "x-state": "loader" },
+                cookies: [{ name: "loader-seen", value: "1", path: "/" }],
+              });
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
 
-        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+          const result = await service.renderPage(makeCtx(), makeRenderOptions());
 
-        assertEquals(result.status, 404);
-        assertEquals(result.failure?.kind, "not-found");
-        assertEquals(result.headers, {
-          "x-control-state": "missing",
-          "x-page-state": "resolved",
-        });
-        assertEquals(result.cookies, [
-          { name: "control-seen", value: "1", path: "/" },
-          { name: "page-seen", value: "1", path: "/" },
-        ]);
+          assertEquals(result.status, expectedStatus);
+          assertEquals(result.failure?.kind, expectedKind);
+          assertEquals(result.headers, { "x-state": "control" });
+          assertEquals(result.cookies, [
+            { name: "loader-seen", value: "1", path: "/" },
+            { name: "control-seen", value: "1", path: "/" },
+          ]);
+        }
       });
 
       it("maps a notFound() reported after the streaming shell to a 404 before responding", async () => {

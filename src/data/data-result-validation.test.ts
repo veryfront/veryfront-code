@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateDataResult } from "./data-result-validation.ts";
-import { DataResultSchema, StaticDataResultSchema } from "./schemas/data.schema.ts";
+import {
+  DataResultSchema,
+  ResponseCookieSchema,
+  StaticDataResultSchema,
+} from "./schemas/data.schema.ts";
 
 describe("validateDataResult", () => {
   it("preserves redirect and not-found precedence over props", () => {
@@ -94,6 +98,31 @@ describe("validateDataResult", () => {
         props: {},
         headers: { "x-page-state": "ready" },
         cookies: [{ name: "session", value: "safe", maxAge: 60, httpOnly: true }],
+      }).success,
+      true,
+    );
+  });
+
+  it("keeps standalone cookie validation aligned with runtime rules", () => {
+    for (
+      const cookie of [
+        { name: "session", value: "unsafe", maxAge: 1.5 },
+        { name: "session", value: "unsafe", expires: "not-a-date" },
+        { name: "__Secure-session", value: "unsafe" },
+        { name: "__Host-session", value: "unsafe", secure: true, path: "/nested" },
+        { name: "session", value: "unsafe", sameSite: "none" },
+      ]
+    ) {
+      assertEquals(ResponseCookieSchema.safeParse(cookie).success, false);
+    }
+
+    assertEquals(
+      ResponseCookieSchema.safeParse({
+        name: "__Host-session",
+        value: "safe",
+        secure: true,
+        path: "/",
+        sameSite: "none",
       }).success,
       true,
     );

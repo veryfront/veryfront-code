@@ -416,8 +416,8 @@ export class SSRService implements SSRServiceLike {
           ...outcome,
           ...mergeDataResponseMetadata([
             inheritedResponseMetadata,
-            outcome,
             requestLocalMetadata,
+            outcome,
           ]),
         }, slug);
       case "not-found":
@@ -426,8 +426,8 @@ export class SSRService implements SSRServiceLike {
           ...outcome,
           ...mergeDataResponseMetadata([
             inheritedResponseMetadata,
-            outcome,
             requestLocalMetadata,
+            outcome,
           ]),
         }, slug);
       case "undeployed":

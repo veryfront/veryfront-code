@@ -11,6 +11,15 @@ function hasValidResponseMetadata(value: { headers?: unknown; cookies?: unknown 
   }
 }
 
+function hasValidResponseCookie(value: unknown): boolean {
+  try {
+    normalizeDataResponseMetadata({ cookies: [value] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Context passed to data fetching functions */
 export const getDataContextSchema = defineSchema((v) =>
   v.object({
@@ -39,7 +48,7 @@ export const getResponseCookieSchema = defineSchema((v) =>
     httpOnly: v.boolean().optional(),
     secure: v.boolean().optional(),
     sameSite: v.union([v.literal("lax"), v.literal("strict"), v.literal("none")]).optional(),
-  }).strict()
+  }).strict().refine(hasValidResponseCookie, "Response cookie is invalid")
 );
 
 /** Result returned from data fetching functions */
