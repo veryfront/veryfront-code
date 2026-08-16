@@ -3539,7 +3539,7 @@ describe("push divergence guard", () => {
 });
 
 describe("push failure ordering", () => {
-  it("does not delete remote files after an upload fails", async () => {
+  it("records successful uploads and does not delete remote files after an upload fails", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
@@ -3615,6 +3615,17 @@ describe("push failure ordering", () => {
 
         assertEquals(requests.some((request) => request.startsWith("DELETE ")), false);
         assertEquals(await readPushReceipt(projectDir), null);
+        const target = await readSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-old",
+          branch: "main",
+        });
+        assertEquals(target?.files["app.ts"], undefined);
+        assertEquals(
+          target?.files["second.ts"]?.digest,
+          await computeContentDigest("export const second = true;\n"),
+        );
+        assertEquals(target?.files["stale.ts"]?.digest, await computeContentDigest("stale"));
       });
     } finally {
       globalThis.fetch = originalFetch;
