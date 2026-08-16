@@ -10,6 +10,7 @@ import { LAYOUT_EXTENSIONS, type LayoutExtension } from "./types.ts";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { LAYOUT_NOT_FOUND } from "#veryfront/errors";
+import { extractFrontmatter } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 
 const logger = rendererLogger.component("layout-collector");
 
@@ -32,6 +33,61 @@ function resolvePagePath(pageFilePath: string, projectDir: string): string {
 
 function getLayoutKind(path: string): "mdx" | "tsx" {
   return path.endsWith(".mdx") || path.endsWith(".md") ? "mdx" : "tsx";
+}
+
+// Strict, line-anchored patterns for the per-page layout signal on tsx pages.
+// Only genuine top-level `export const …` declarations qualify — a local
+// `const layout = …` inside a component body, or a mention in a comment, must
+// never be mistaken for a layout override.
+const TSX_LAYOUT_EXPORT_RE = /^export\s+const\s+layout\s*=\s*(true|false|"[^"\n]*"|'[^'\n]*')/m;
+const TSX_FRONTMATTER_EXPORT_RE = /^export\s+const\s+frontmatter\s*=\s*\{/m;
+
+function parseExportedLayoutValue(raw: string): boolean | string {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  return raw.slice(1, -1);
+}
+
+function extractTsxLayoutSignal(source: string): boolean | string | undefined {
+  const frontmatterMatch = TSX_FRONTMATTER_EXPORT_RE.exec(source);
+  if (frontmatterMatch) {
+    // Slice so extractFrontmatter parses this exported object rather than an
+    // arbitrary `const frontmatter` appearing elsewhere in the module.
+    const layout = extractFrontmatter(source.slice(frontmatterMatch.index))?.layout;
+    if (layout !== undefined) return layout as boolean | string;
+  }
+
+  const layoutMatch = TSX_LAYOUT_EXPORT_RE.exec(source);
+  if (layoutMatch) return parseExportedLayoutValue(layoutMatch[1]!);
+
+  return undefined;
+}
+
+/**
+ * Merges the per-page layout signal of a tsx/jsx/ts/js page into its
+ * frontmatter. Md/mdx pages carry the signal in their YAML frontmatter, which
+ * is already parsed onto the entity. Tsx pages cannot start with a YAML block,
+ * so their signal is read from top-level module exports instead:
+ * `export const layout = false | "Name"` or
+ * `export const frontmatter = { layout: … }`.
+ */
+function withModuleLayoutSignal(pageInfo: EntityInfo): EntityInfo {
+  if (pageInfo.entity.frontmatter.layout !== undefined) return pageInfo;
+  if (getLayoutKind(pageInfo.entity.path) !== "tsx") return pageInfo;
+
+  const source = pageInfo.entity.content;
+  if (!source || !source.includes("layout")) return pageInfo;
+
+  const layout = extractTsxLayoutSignal(source);
+  if (layout === undefined) return pageInfo;
+
+  return {
+    ...pageInfo,
+    entity: {
+      ...pageInfo.entity,
+      frontmatter: { ...pageInfo.entity.frontmatter, layout },
+    },
+  };
 }
 
 /**
@@ -142,7 +198,11 @@ export class LayoutCollector {
           return { layoutBundle: undefined, nestedLayouts: [] };
         }
 
-        const layoutValue = pageInfo.entity.frontmatter.layout as string | boolean | undefined;
+        const resolvedPageInfo = withModuleLayoutSignal(pageInfo);
+        const layoutValue = resolvedPageInfo.entity.frontmatter.layout as
+          | string
+          | boolean
+          | undefined;
         if (layoutValue === false || layoutValue === "false") {
           logger.debug("Layout explicitly disabled via frontmatter", {
             pagePath,
@@ -156,7 +216,7 @@ export class LayoutCollector {
 
         const { layoutBundle, layoutPath, layoutName } = await withSpan(
           SpanNames.LAYOUT_COLLECT_NAMED,
-          () => this.collectNamedLayoutWithPath(pageInfo),
+          () => this.collectNamedLayoutWithPath(resolvedPageInfo),
           {
             "layout.page_path": pagePath,
             "layout.config_layout": this.config?.layout || "none",
@@ -164,7 +224,7 @@ export class LayoutCollector {
         );
 
         return this.processLayoutResult(
-          pageInfo,
+          resolvedPageInfo,
           hasExplicitFrontmatterLayout,
           layoutBundle,
           layoutPath,
