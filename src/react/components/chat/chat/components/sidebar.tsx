@@ -301,22 +301,20 @@ export function ChatSidebarItemTitle({
 }
 ChatSidebarItemTitle.displayName = "ChatSidebar.Item.Title";
 
-/** Flatten transparent fragments so slot detection and extraction see the same leaves. */
-function flattenItemParts(children: React.ReactNode): React.ReactNode[] {
+function flattenItemParts(children: React.ReactNode, parentKey = ""): React.ReactNode[] {
   return React.Children.toArray(children).flatMap((child) => {
-    if (!React.isValidElement(child) || child.type !== React.Fragment) return child;
+    if (!React.isValidElement(child)) return child;
+    const itemKey = parentKey ? `${parentKey}/${child.key}` : String(child.key);
+    if (child.type !== React.Fragment) return React.cloneElement(child, { key: itemKey });
     const props = child.props as { children?: React.ReactNode };
-    return flattenItemParts(props.children);
+    return flattenItemParts(props.children, itemKey);
   });
 }
 
 /**
- * A single conversation row — select on click, rename/delete via a "…" menu.
- * The menu is a composable compound: pass a `<ChatSidebar.Item.Menu>` child to
- * add or reorder entries without re-implementing the row. Children containing a
- * `<ChatSidebar.Item.Title>` compose the row's label body instead. A sibling
- * `<ChatSidebar.Item.Menu>`, including one grouped in a fragment, fills the
- * action slot.
+ * A single conversation row with selection, rename, and delete behavior.
+ * A `<ChatSidebar.Item.Menu>` fills the action slot. A Title child composes the
+ * row label, with fragment-grouped leaves treated as direct children.
  */
 export function ChatSidebarItem({
   conversation,

@@ -371,6 +371,51 @@ describe("ChatSidebar.Item.Title: composable row label", () => {
     assert(html.includes("data-badge"), "sibling fragments preserve other body content");
   });
 
+  it("preserves keyed-fragment identity for stateful title siblings", async () => {
+    const restoreDom = installDom();
+    let mounts = 0;
+    function StatefulBadge(): React.ReactElement {
+      const [mountId] = React.useState(() => ++mounts);
+      return <span data-mount-id={mountId}>badge</span>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderItem = (fragmentKey: string) => (
+        <ChatSidebar.Root
+          conversations={[summary("x", "Row title", 5000)]}
+          activeId="x"
+          onSelect={() => {}}
+          onDelete={() => {}}
+        >
+          <ChatSidebar.List>
+            <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+              <React.Fragment key={fragmentKey}>
+                <ChatSidebar.Item.Title />
+                <StatefulBadge />
+              </React.Fragment>
+            </ChatSidebar.Item>
+          </ChatSidebar.List>
+        </ChatSidebar.Root>
+      );
+
+      flushSync(() => root.render(renderItem("first")));
+      assertEquals(document.querySelector("[data-mount-id]")?.getAttribute("data-mount-id"), "1");
+
+      flushSync(() => root.render(renderItem("second")));
+      assertEquals(
+        document.querySelector("[data-mount-id]")?.getAttribute("data-mount-id"),
+        "2",
+        "changing the parent fragment key remounts its stateful descendants",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("regression: a childless Item still renders the default title", () => {
     const html = renderToString(
       <ChatSidebar.Root
