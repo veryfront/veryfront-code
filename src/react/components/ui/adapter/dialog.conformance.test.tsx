@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { Dialog, DialogCancel, DialogClose, DialogContent, DialogTrigger } from "../dialog.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { builtinDialog } from "./builtin/dialog.tsx";
@@ -100,6 +100,12 @@ function runDialogConformance(
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
   describe(`Dialog adapter conformance - ${label}`, () => {
+    afterEach(async () => {
+      // jsdom defers selection updates after focus. Drain that timer before
+      // Deno's leak sanitizer closes the surrounding conformance group.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
     it("trigger opens an aria-modal dialog panel with merged classes", () => {
       const { scope, click, cleanup } = mount(
         <Wrap>
