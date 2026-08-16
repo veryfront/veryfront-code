@@ -371,6 +371,38 @@ describe("server/runtime-handler/request-tracker", () => {
       assertEquals(verySlowEntry?.level, "error");
     });
 
+    it("skips generic stuck timers for expected long-running run execution", () => {
+      const scheduledDelays: number[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
+
+      globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+        if (delay !== undefined) scheduledDelays.push(delay);
+        return originalSetTimeout(callback, delay, ...args);
+      }) as typeof setTimeout;
+
+      try {
+        const path = "/api/control-plane/runs/run_scheduled_1/execute";
+        const beforeCount = requestTracker.getInFlightCount();
+
+        requestTracker.start("expected-long-run", "proj", path, "POST");
+        assertEquals(scheduledDelays.includes(10_000), false);
+        assertEquals(requestTracker.getInFlightCount(), beforeCount + 1);
+        requestTracker.complete("expected-long-run", 200);
+
+        scheduledDelays.length = 0;
+        requestTracker.start("non-execute-method", "proj", path, "GET");
+        assertEquals(scheduledDelays.includes(10_000), true);
+        requestTracker.complete("non-execute-method", 405);
+
+        scheduledDelays.length = 0;
+        requestTracker.start("lookalike-path", "proj", `${path}/extra`, "POST");
+        assertEquals(scheduledDelays.includes(10_000), true);
+        requestTracker.complete("lookalike-path", 404);
+      } finally {
+        globalThis.setTimeout = originalSetTimeout;
+      }
+    });
+
     it("handles module request with short duration (no debug log)", () => {
       requestTracker.start("fast-mod", "proj", "/_vf_modules/fast.js", "GET");
       requestTracker.complete("fast-mod", 200);
