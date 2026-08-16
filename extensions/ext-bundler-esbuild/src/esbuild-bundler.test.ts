@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import type { BuildContext } from "veryfront/extensions/bundler";
 
 import {
+  __markEsbuildSourceDiagnosticForTests,
   __recordOwnershipErrorForTests,
   __resetOwnershipErrorForTests,
   __resetServiceRecoveryForTests,
@@ -72,6 +73,55 @@ function observeEsbuildServices(): {
 }
 
 describe("EsbuildBundler.transform", () => {
+  it("normalizes only trusted esbuild diagnostic accessors to an own marker", () => {
+    const marker = Symbol.for("veryfront.bundler.esbuild-source-diagnostic");
+    const failure = new Error("Transform failed");
+    let errorsGetterReads = 0;
+    Object.defineProperty(failure, "errors", {
+      get() {
+        errorsGetterReads++;
+        return [{ location: { line: 1, column: 1 } }];
+      },
+    });
+    const defineProperty = Object.defineProperty;
+    const previousDefineProperty = Object.getOwnPropertyDescriptor(Object, "defineProperty");
+    assertExists(previousDefineProperty);
+    defineProperty(Object, "defineProperty", {
+      ...previousDefineProperty,
+      value: () => {
+        throw new Error("poisoned Object.defineProperty");
+      },
+    });
+
+    try {
+      __markEsbuildSourceDiagnosticForTests(failure);
+    } finally {
+      defineProperty(Object, "defineProperty", previousDefineProperty);
+    }
+
+    assertEquals(errorsGetterReads, 1);
+    assertEquals(Object.getOwnPropertyDescriptor(failure, marker)?.value, true);
+
+    let locationGetterReads = 0;
+    const accessorLocation = Object.defineProperty({}, "location", {
+      get() {
+        locationGetterReads++;
+        return { line: 1, column: 1 };
+      },
+    });
+    const untrustedLocation = new Error("Transform failed");
+    Object.defineProperty(untrustedLocation, "errors", {
+      get() {
+        return [accessorLocation];
+      },
+    });
+
+    __markEsbuildSourceDiagnosticForTests(untrustedLocation);
+
+    assertEquals(locationGetterReads, 0);
+    assertEquals(Object.getOwnPropertyDescriptor(untrustedLocation, marker), undefined);
+  });
+
   it("compiles TS to JS", async () => {
     const bundler = new EsbuildBundler();
     try {

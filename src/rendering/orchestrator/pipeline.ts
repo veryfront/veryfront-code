@@ -69,7 +69,7 @@ import {
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-cache.ts";
 import { createEsmCache, createModuleCache, loadModule } from "./module-loader/index.ts";
-import { isBuildFailure } from "./module-loader/build-failure.ts";
+import { isBuildFailure, isTenantBuildFailure } from "./module-loader/build-failure.ts";
 import type { ModuleLoaderConfig } from "./module-loader/index.ts";
 import {
   getCSSImports,
@@ -396,7 +396,12 @@ export class RenderPipeline {
     );
 
     const loaded: LoadedModule[] = [];
-    const criticalFailures: Array<{ path: string; error: string; buildFailure: boolean }> = [];
+    const criticalFailures: Array<{
+      path: string;
+      error: string;
+      buildFailure: boolean;
+      tenantBuildFailure: boolean;
+    }> = [];
 
     for (const result of results) {
       if (result.mod && !result.error) {
@@ -413,6 +418,7 @@ export class RenderPipeline {
           path: result.path,
           error: errorMessage,
           buildFailure: isBuildFailure(result.error),
+          tenantBuildFailure: isTenantBuildFailure(result.error),
         });
         renderPageLog.error("Critical page module failed to load", {
           path: result.path,
@@ -439,6 +445,16 @@ export class RenderPipeline {
           // one that compiled and threw at module scope is an application
           // error the project's own error page should present.
           buildFailure: criticalFailures.some((f) => f.buildFailure),
+          // Only explicit compiler/source classifications may affect
+          // observability severity. Infrastructure can fail in the same phase.
+          //
+          // `every` rather than `some`: today `criticalFailures` holds at most
+          // one entry (collectModulesToLoad pushes exactly one `type: "page"`,
+          // and only pages reach here), so the two are equivalent. If that ever
+          // changes, one tenant mistake must not downgrade a framework fault
+          // that failed alongside it. The array is non-empty inside this branch,
+          // so `every` cannot vacuously return true.
+          tenantBuildFailure: criticalFailures.every((f) => f.tenantBuildFailure),
           loadedCount: loaded.length,
           totalModules: modules.length,
         },

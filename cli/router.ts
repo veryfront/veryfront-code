@@ -60,6 +60,17 @@ const commands: Record<string, CommandLoader> = {
   "login": async () => async (args) => {
     const { parseLoginMethod, parseProvider } = await import("./auth/utils.ts");
     const provider = parseProvider(args);
+    const method = parseLoginMethod(args);
+    if (isJsonMode() && (provider || method)) {
+      await outputCliJsonError("login", {
+        code: "USAGE_ERROR",
+        slug: "invalid-arguments",
+        registrySlug: "invalid-argument",
+        message: "Explicit login methods are not supported with --json.",
+      });
+      exitProcess(2);
+      return;
+    }
     // Every branch reports failure the same way: exit non-zero so scripts can
     // tell a failed login from a successful one, whichever credential was asked for.
     if (provider === "anthropic") {
@@ -73,7 +84,7 @@ const commands: Record<string, CommandLoader> = {
       return;
     }
     const { login } = await import("./auth/index.ts");
-    if (!await login(parseLoginMethod(args))) exitProcess(1);
+    if (!await login(method)) exitProcess(1);
   },
   "logout": async () => async (args) => {
     const { parseProvider } = await import("./auth/utils.ts");

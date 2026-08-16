@@ -7,6 +7,54 @@ import { ESBUILD_SUPPORTED_FEATURES, getLoaderFromPath } from "../../esm/transfo
 import { type TransformContext, type TransformPlugin, TransformStage } from "../types.ts";
 
 const logger = rendererLogger.component("esm-transform");
+const ESBUILD_SOURCE_DIAGNOSTIC = Symbol.for(
+  "veryfront.bundler.esbuild-source-diagnostic",
+);
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return undefined;
+  }
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+    if (
+      descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true
+    ) {
+      return descriptor.value;
+    }
+  } catch {
+    // A hostile proxy cannot provide trusted source-diagnostic evidence.
+  }
+  return undefined;
+}
+
+function isEsbuildSourceDiagnostic(error: unknown): boolean {
+  return readOwnDataProperty(error, ESBUILD_SOURCE_DIAGNOSTIC) === true;
+}
+
+/**
+ * `.mdx` and `.md` reach this stage as *generated* JSX: PARSE has already run
+ * the MDX compiler over the tenant's source, so `ctx.code` here is framework
+ * output. A diagnostic with a location points into that generated code, not
+ * into anything the project wrote, so it must not claim tenant ownership — a
+ * remark/rehype/recma plugin emitting broken JSX is a framework fault that has
+ * to page someone.
+ *
+ * Nothing is lost by refusing to infer ownership for these two extensions:
+ * genuine MDX and Markdown *source* errors are classified upstream at PARSE as
+ * `mdx-compile-error` / `markdown-compile-error`, both of which the shared
+ * tenant classifier already recognizes.
+ */
+function isGeneratedContentOutput(filePath: string): boolean {
+  return filePath.endsWith(".mdx") || filePath.endsWith(".md");
+}
 
 export const compilePlugin: TransformPlugin = {
   name: "esbuild-compile",
@@ -70,6 +118,10 @@ export const compilePlugin: TransformPlugin = {
       throw COMPILATION_ERROR.create({
         detail: `ESM transform failed for ${ctx.filePath} (loader: ${loader}): ${errorMsg}`,
         cause: err,
+        context: {
+          tenantBuildFailure: !isGeneratedContentOutput(ctx.filePath) &&
+            isEsbuildSourceDiagnostic(err),
+        },
       });
     }
   },

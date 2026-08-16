@@ -4,7 +4,8 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions } from "./types.ts";
-import { markBuildFailure } from "./module-loader/build-failure.ts";
+import { isTenantBuildFailure, markBuildFailure } from "./module-loader/build-failure.ts";
+import { COMPILATION_ERROR, createError, SSG_GENERATION_ERROR, toError } from "#veryfront/errors";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -700,12 +701,54 @@ describe("RenderPipeline behavior", () => {
       return context?.buildFailure;
     }
 
-    it("reports a build failure as one", async () => {
+    function tenantBuildFailureFlag(error: unknown): unknown {
+      const context = (error as { context?: { tenantBuildFailure?: unknown } }).context;
+      return context?.tenantBuildFailure;
+    }
+
+    it("reports a source compilation failure as tenant-owned", async () => {
       const error = await rejectLoad(pipelineWithFailingPageModule(() => {
-        throw markBuildFailure(new Error("Cannot import the static asset"));
+        throw markBuildFailure(COMPILATION_ERROR.create({
+          detail: "Cannot import the static asset",
+          context: { tenantBuildFailure: true },
+        }));
       }));
 
       assertEquals(buildFailureFlag(error), true);
+      assertEquals(tenantBuildFailureFlag(error), true);
+    });
+
+    it("keeps generic compilation failures at framework severity", () => {
+      const infrastructureError = markBuildFailure(COMPILATION_ERROR.create({
+        detail: "esbuild service exited unexpectedly",
+      }));
+
+      assertEquals(isTenantBuildFailure(infrastructureError), false);
+    });
+
+    it("keeps framework failures inside the transform phase distinct", async () => {
+      const frameworkError = markBuildFailure(toError(createError({
+        type: "build",
+        message: "cache write failed",
+      })));
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+
+      const error = await rejectLoad(pipelineWithFailingPageModule(() => {
+        throw frameworkError;
+      }));
+
+      assertEquals(buildFailureFlag(error), true);
+      assertEquals(tenantBuildFailureFlag(error), false);
+    });
+
+    it("does not infer tenant source from an SSG wrapper", () => {
+      const infrastructureError = markBuildFailure(SSG_GENERATION_ERROR.create({
+        detail: "Failed to write generated page output",
+        cause: Object.assign(new Error("No space left on device"), { code: "ENOSPC" }),
+        context: { route: "/" },
+      }));
+
+      assertEquals(isTenantBuildFailure(infrastructureError), false);
     });
 
     it("does not report a module-scope runtime throw as a build failure", async () => {
@@ -714,6 +757,7 @@ describe("RenderPipeline behavior", () => {
       }));
 
       assertEquals(buildFailureFlag(error), false);
+      assertEquals(tenantBuildFailureFlag(error), false);
     });
   });
 

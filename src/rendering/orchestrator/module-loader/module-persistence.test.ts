@@ -5,8 +5,14 @@ import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
-import { persistTransformedModule } from "./module-persistence.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  persistTransformedModule,
+  readPersistedUnresolvedSpecifiers,
+} from "./module-persistence.ts";
 
 describe("module-loader/module-persistence", () => {
   it("writes transformed code, registers MDX path-cache, and updates module cache", async () => {
@@ -22,6 +28,8 @@ describe("module-loader/module-persistence", () => {
       await Deno.mkdir(dirname(filePath), { recursive: true });
       await Deno.writeTextFile(filePath, "export const page = 1;");
 
+      const unresolvedSpecifiers = ["./missing", "./nested-missing"];
+
       const result = await persistTransformedModule({
         filePath,
         projectDir,
@@ -32,12 +40,19 @@ describe("module-loader/module-persistence", () => {
         cacheKey,
         contentSourceId: "preview-main",
         reactVersion: "19.1.1",
+        unresolvedSpecifiers,
       });
 
-      const expectedHash = hashCodeHex(transformedCode).slice(0, 8);
+      const expectedHash = hashCodeHex(
+        `${transformedCode}\0${JSON.stringify(unresolvedSpecifiers)}`,
+      ).slice(0, 8);
       assertEquals(result, join(tmpDir, `app/page.${expectedHash}.js`));
       assertEquals(await Deno.readTextFile(result), transformedCode);
       assertEquals(moduleCache.get(cacheKey), result);
+      assertEquals(
+        await readPersistedUnresolvedSpecifiers(result, localAdapter),
+        unresolvedSpecifiers,
+      );
 
       const pathCache = await getModulePathCache(tmpDir);
       const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
@@ -93,6 +108,160 @@ describe("module-loader/module-persistence", () => {
         snapshotBAlias,
         `export * from "./${basename(snapshotBPath)}";`,
       );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("writes a JavaScript cycle target at the authored stable path", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.js");
+    const transformedCode = "export const page = 1;";
+    try {
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode,
+        localAdapter,
+        moduleCache: new Map<string, string>(),
+        cacheKey: "javascript-cycle-target",
+        isCycleTarget: true,
+      });
+
+      assertEquals(result, join(tmpDir, "app/page.js"));
+      assertEquals(await Deno.readTextFile(result), transformedCode);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("does not infer a default cycle alias from string contents", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.ts");
+    const moduleCache = new Map<string, string>();
+
+    try {
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: `export const label = "Set as default";`,
+        localAdapter,
+        moduleCache,
+        cacheKey: "string-default",
+        isCycleTarget: true,
+      });
+
+      const aliasCode = await Deno.readTextFile(join(dirname(result), "page.js"));
+      assertEquals(aliasCode, `export * from "./${basename(result)}";`);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("does not infer a default cycle alias from regex contents", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+
+    const cases = [
+      `export const pattern = /export default/;`,
+      `if (enabled) /export default/.test(source); export const value = 1;`,
+      `if (enabled) {} /export default/.test(source); export const value = 1;`,
+      `function setup() {} /export default/.test(source); export const value = 1;`,
+      `function setup({ nested: {} } = {}) {} /export default/.test(source); export const value = 1;`,
+      `class Setup {} /export default/.test(source); export const value = 1;`,
+      `class Setup extends mixin({}) {} /export default/.test(source); export const value = 1;`,
+      `function read() { return /* keep the comment */ /export default/.source; }`,
+      `function read() { return // keep the comment\n/export default/.source; }`,
+    ] as const;
+
+    try {
+      for (const [index, transformedCode] of cases.entries()) {
+        const filePath = join(projectDir, `app/page-${index}.ts`);
+        const result = await persistTransformedModule({
+          filePath,
+          projectDir,
+          tmpDir,
+          transformedCode,
+          localAdapter,
+          moduleCache: new Map<string, string>(),
+          cacheKey: `regex-default-${index}`,
+          isCycleTarget: true,
+        });
+
+        const aliasCode = await Deno.readTextFile(join(dirname(result), `page-${index}.js`));
+        assertEquals(aliasCode, `export * from "./${basename(result)}";`);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("writes default cycle aliases only when an export exposes default", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const moduleCache = new Map<string, string>();
+
+    const cases = [
+      {
+        path: "app/default-declaration.ts",
+        transformedCode: `export default function Page() { return null; }`,
+        exposesDefault: true,
+      },
+      {
+        path: "app/division-before-default.ts",
+        transformedCode: `const ratio = total / count; export default ratio;`,
+        exposesDefault: true,
+      },
+      {
+        path: "app/member-keyword-division-before-default.ts",
+        transformedCode: `const ratio = mod.typeof / 2; export { default } from "./component.js";`,
+        exposesDefault: true,
+      },
+      {
+        path: "app/named-as-default.ts",
+        transformedCode: `const Page = () => null;\nexport { Page as default };`,
+        exposesDefault: true,
+      },
+      {
+        path: "app/default-as-named.ts",
+        transformedCode: `export { default as Page } from "./component.js";`,
+        exposesDefault: false,
+      },
+    ] as const;
+
+    try {
+      for (const testCase of cases) {
+        const result = await persistTransformedModule({
+          filePath: join(projectDir, testCase.path),
+          projectDir,
+          tmpDir,
+          transformedCode: testCase.transformedCode,
+          localAdapter,
+          moduleCache,
+          cacheKey: testCase.path,
+          isCycleTarget: true,
+        });
+
+        const aliasCode = await Deno.readTextFile(
+          join(dirname(result), basename(testCase.path).replace(/\.ts$/, ".js")),
+        );
+        assertEquals(
+          aliasCode.includes(`export { default } from "./${basename(result)}";`),
+          testCase.exposesDefault,
+        );
+      }
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
@@ -274,6 +443,56 @@ describe("module-loader/module-persistence", () => {
 
       assertEquals(rejected, true);
       assertEquals(writeCalls, 1);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("keeps the artifact available without caching when unresolved-import evidence cannot be written", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "lib/evidence.ts");
+    const moduleCache = new Map<string, string>();
+    const transformedCode = "export const evidence = true;";
+
+    const stubFs = Object.create(localAdapter.fs) as typeof localAdapter.fs;
+    stubFs.writeFile = (path: string, content: string) => {
+      if (path.endsWith(UNRESOLVED_IMPORTS_SIDECAR_SUFFIX)) {
+        return Promise.reject(new Error("ENOSPC: no space left on device"));
+      }
+      return localAdapter.fs.writeFile(path, content);
+    };
+    const stubAdapter = Object.create(localAdapter) as typeof localAdapter;
+    Object.defineProperty(stubAdapter, "fs", { value: stubFs });
+
+    try {
+      await Deno.mkdir(dirname(filePath), { recursive: true });
+
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode,
+        localAdapter: stubAdapter,
+        moduleCache,
+        cacheKey: "evidence",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        unresolvedSpecifiers: ["./missing"],
+        isCycleTarget: true,
+      });
+
+      assertEquals(await Deno.readTextFile(result), transformedCode);
+      const aliasCode = await Deno.readTextFile(join(tmpDir, "lib/evidence.js"));
+      assertStringIncludes(aliasCode, `export * from "./${basename(result)}";`);
+      assertEquals(moduleCache.has("evidence"), false);
+      assertEquals(await readPersistedUnresolvedSpecifiers(result, stubAdapter), []);
+
+      const pathCache = await getModulePathCache(tmpDir);
+      const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/lib/evidence.js", "19.1.1");
+      assertEquals(pathCache.has(mdxCacheKey), false);
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);

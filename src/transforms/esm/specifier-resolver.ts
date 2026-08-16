@@ -8,6 +8,8 @@
  */
 
 import { basename } from "#veryfront/compat/path/index.ts";
+import { BUILD_FAILED } from "#veryfront/errors";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import {
@@ -21,12 +23,15 @@ import { parseImports, replaceSpecifiers } from "./lexer.ts";
 
 import {
   type CacheOptions,
+  fingerprintHttpModuleRequest,
+  getEffectiveHttpCacheRequest,
   isCanonicalReactEsmUrl,
   isExternalScheme,
   isHttpUrl,
   isInternalBare,
   isParentHttpModule,
   isRelative,
+  normalizeHttpUrl,
   resolveBareSpecifier,
 } from "./http-cache-helpers.ts";
 
@@ -45,6 +50,35 @@ function stringSlice(value: string, start: number, end?: number): string {
 
 function stringStartsWith(value: string, search: string): boolean {
   return ReflectApply(StringStartsWith, value, [search]) as boolean;
+}
+
+function classifyAuthoredPackageFetchError(
+  error: unknown,
+  requestedPackageFingerprint: string | undefined,
+): unknown {
+  const snapshot = snapshotVeryfrontError(error);
+  const context = snapshot?.context;
+  if (
+    snapshot?.slug !== BUILD_FAILED.slug ||
+    typeof context !== "object" || context === null ||
+    typeof requestedPackageFingerprint !== "string" ||
+    (context as { httpStatus?: unknown }).httpStatus !== 404 ||
+    (context as { httpModuleRequestFingerprint?: unknown }).httpModuleRequestFingerprint !==
+      requestedPackageFingerprint
+  ) {
+    return error;
+  }
+
+  return BUILD_FAILED.create({
+    message: snapshot.message,
+    detail: snapshot.detail,
+    cause: error,
+    context: {
+      httpStatus: 404,
+      httpModuleRequestFingerprint: requestedPackageFingerprint,
+      tenantBuildFailure: true,
+    },
+  });
 }
 
 /** Function signature for caching an HTTP module and returning its local path. */
@@ -164,7 +198,17 @@ async function resolveSpecifier(
 
   if (stringStartsWith(specifier, "npm:")) {
     const bareSpecifier = stringSlice(specifier, 4);
-    const cached = await cacheHttpModule(`https://esm.sh/${bareSpecifier}`, options);
+    const requestedPackageUrl = `https://esm.sh/${bareSpecifier}`;
+    let cached: string | null;
+    try {
+      cached = await cacheHttpModule(requestedPackageUrl, options);
+    } catch (error) {
+      const effective = getEffectiveHttpCacheRequest(requestedPackageUrl, options);
+      const requestedPackageFingerprint = await fingerprintHttpModuleRequest(
+        normalizeHttpUrl(effective.url),
+      );
+      throw classifyAuthoredPackageFetchError(error, requestedPackageFingerprint);
+    }
     if (!cached) return bareSpecifier;
 
     if (isParentHttpModule(baseUrl)) {
@@ -217,7 +261,21 @@ async function resolveSpecifier(
   if (mapped === specifier) return null;
   if (isLocalMappedSpecifier(mapped)) return mapped;
 
-  return resolveSpecifier(mapped, baseUrl, options, cacheHttpModule);
+  let requestedPackageUrl: string | undefined;
+  const cacheAuthoredPackage: CacheHttpModuleFn = async (url, cacheOptions) => {
+    const effective = getEffectiveHttpCacheRequest(url, cacheOptions);
+    requestedPackageUrl ??= normalizeHttpUrl(effective.url);
+    return await cacheHttpModule(url, cacheOptions);
+  };
+
+  try {
+    return await resolveSpecifier(mapped, baseUrl, options, cacheAuthoredPackage);
+  } catch (error) {
+    const requestedPackageFingerprint = requestedPackageUrl === undefined
+      ? undefined
+      : await fingerprintHttpModuleRequest(requestedPackageUrl);
+    throw classifyAuthoredPackageFetchError(error, requestedPackageFingerprint);
+  }
 }
 
 /** Complete specifier replacements for one module. */

@@ -15,6 +15,10 @@ export type ApplicationErrorContext = {
   spanId?: string;
   /** OpenTelemetry trace correlation identifier. */
   traceId?: string;
+  /** Stable failure classification (e.g. "tenant-build") tagged on the event. */
+  errorClass?: string;
+  /** Severity of the captured event; reporters default to "error" when unset. */
+  level?: "error" | "warning";
   /** Sanitized scalar metadata for the failure boundary. */
   attributes?: Record<string, ApplicationErrorAttributeValue>;
 };

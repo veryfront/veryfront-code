@@ -38,6 +38,7 @@ import { HTTP_MODULE_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts
 import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { MODULE_LOAD_TIMEOUT_MS } from "#veryfront/rendering/orchestrator/module-collection.ts";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
 import { FakeTime } from "#std/testing/time";
 import {
   __getMaxInFlightHttpFetchWaiterCountForTests,
@@ -1238,6 +1239,107 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertInstanceOf(error, Error);
       assert(!error.message.includes("super-secret"));
     });
+  });
+
+  it("classifies an authored missing bare package without classifying direct HTTP failures", async () => {
+    const mockFetch = (() =>
+      Promise.resolve(new Response("not found", { status: 404 }))) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-missing-package-", mockFetch, async (tempDir) => {
+      const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
+      const packageError = await assertRejects(
+        () => cacheHttpImportsToLocal('import "missing-tenant-package";', options),
+        Error,
+      );
+      const explicitPackageError = await assertRejects(
+        () => cacheHttpImportsToLocal('import "npm:missing-tenant-package";', options),
+        Error,
+      );
+      const directHttpError = await assertRejects(
+        () => cacheModuleToLocal("https://esm.sh/missing-framework-module", tempDir),
+        Error,
+      );
+
+      assertEquals(isTenantSourceBuildError(packageError), true);
+      assertEquals(isTenantSourceBuildError(explicitPackageError), true);
+      assertEquals(isTenantSourceBuildError(directHttpError), false);
+    });
+  });
+
+  it("does not classify a missing dependency of an existing bare package as tenant source", async () => {
+    const packageUrl = "https://esm.sh/package-with-missing-dependency";
+    const dependencyUrl = "https://esm.sh/missing-package-dependency.js";
+    const mockFetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      if (url.startsWith(packageUrl)) {
+        return Promise.resolve(
+          new Response(`import "${dependencyUrl}"; export const loaded = true;`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as typeof fetch;
+
+    for (
+      const specifier of [
+        "package-with-missing-dependency",
+        "npm:package-with-missing-dependency",
+      ]
+    ) {
+      await withIsolatedHttpCache(
+        "vf-esm-missing-package-dependency-",
+        mockFetch,
+        async (tempDir) => {
+          const error = await assertRejects(
+            () =>
+              cacheHttpImportsToLocal(`import ${JSON.stringify(specifier)};`, {
+                cacheDir: tempDir,
+                importMap: { imports: {}, scopes: {} },
+              }),
+            Error,
+          );
+
+          assertEquals(isTenantSourceBuildError(error), false, specifier);
+        },
+      );
+    }
+  });
+
+  it("distinguishes a package from a missing dependency at the same sanitized URL", async () => {
+    const packageUrl = "https://esm.sh/same-path-module.js?entry=root";
+    const dependencyUrl = "https://esm.sh/same-path-module.js?entry=dependency";
+    const mockFetch = ((input: string | URL | Request) => {
+      const url = String(input);
+      if (new URL(url).searchParams.get("entry") === "root") {
+        return Promise.resolve(
+          new Response(`import "${dependencyUrl}"; export const loaded = true;`, {
+            headers: { "content-type": "application/javascript" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("not found", { status: 404 }));
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache(
+      "vf-esm-same-sanitized-package-url-",
+      mockFetch,
+      async (tempDir) => {
+        const error = await assertRejects(
+          () =>
+            cacheHttpImportsToLocal('import "same-path-package";', {
+              cacheDir: tempDir,
+              importMap: {
+                imports: { "same-path-package": packageUrl },
+                scopes: {},
+              },
+            }),
+          Error,
+        );
+
+        assertEquals(isTenantSourceBuildError(error), false);
+      },
+    );
   });
 
   it("retries failures while reading an HTTP module body", async () => {

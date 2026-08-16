@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
+import { COMPILATION_ERROR, MDX_COMPILE_ERROR } from "#veryfront/errors";
 import {
   findNestedImports,
   hasUnresolvedImports,
@@ -12,7 +14,9 @@ import {
   MAX_MDX_MODULE_IMPORTS_PER_FILE,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
   ModuleImportLimitError,
+  ModuleSourceLimitError,
 } from "./limits.ts";
+import { buildMissingModuleError } from "../missing-module.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/nested-imports", () => {
   describe("findNestedImports", () => {
@@ -63,6 +67,31 @@ import { bar } from "./local.js";
         "_vf_modules/styles/theme.css",
         "_vf_modules/polyfills/runtime.js",
       ]);
+    });
+
+    it("does not abort on malformed escaped import specifiers", () => {
+      const code = [
+        `import bad from "./bad\\xZZ";`,
+        `import good from "/_vf_modules/components/Good.js";`,
+      ].join("\n");
+
+      const result = findNestedImports(code);
+
+      assertEquals(result.vfModules.map((module) => module.path), []);
+      assertEquals(result.relative.map((module) => module.path), []);
+    });
+
+    it("does not resolve import-looking regex text after an export list", () => {
+      const code = [
+        `const value = 1;`,
+        `export { value }`,
+        `/import("\\.\\/optional.js")/.test(input);`,
+      ].join("\n");
+
+      const result = findNestedImports(code);
+
+      assertEquals(result.vfModules, []);
+      assertEquals(result.relative, []);
     });
   });
 
@@ -140,6 +169,20 @@ import { bar } from "./local.js";
       const result = hasUnresolvedImports(code);
       assertEquals(result.count, 0);
       assertEquals(result.paths, []);
+    });
+
+    it("treats malformed escaped import specifiers as unresolved evidence", () => {
+      const result = hasUnresolvedImports(`import bad from "/_vf_modules/bad\\xZZ";`);
+
+      assertEquals(result.count, 1);
+      assertEquals(result.paths, ["<malformed import specifier>"]);
+    });
+
+    it("treats raw line terminators in import specifiers as unresolved evidence", () => {
+      const result = hasUnresolvedImports('import bad from "/_vf_modules/bad\nmodule.js";');
+
+      assertEquals(result.count, 1);
+      assertEquals(result.paths, ["<malformed import specifier>"]);
     });
   });
 
@@ -360,6 +403,356 @@ import { bar } from "./local.js";
       } finally {
         await remove(esmCacheDir, { recursive: true });
       }
+    });
+
+    it("defers a missing strict dynamic import until the branch executes", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-missing-cache-" });
+      const source =
+        `export const load = (enabled) => enabled ? import("./optional.js") : Promise.resolve("skipped");`;
+      const calls: string[] = [];
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode: source,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: true,
+          fetchAndCacheModule: (path) => {
+            calls.push(path);
+            throw buildMissingModuleError({
+              modulePath: path,
+              importer: "_vf_modules/pages/index.js",
+              importStatement: `import("./optional.js")`,
+              code: source,
+              projectSlug: "docs",
+            });
+          },
+        });
+        const parentPath = join(esmCacheDir, "dynamic-parent.mjs");
+        await Deno.writeTextFile(parentPath, result);
+        const loaded = await import(
+          `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+        ) as { load(enabled: boolean): Promise<unknown> };
+
+        assertEquals(calls, ["./optional.js"]);
+        assertEquals(await loaded.load(false), "skipped");
+        await assertRejects(
+          () => loaded.load(true),
+          Error,
+          "Missing module: ./optional.js",
+        );
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
+    });
+
+    it("defers strict dynamic child source failures until the branch executes", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-source-cache-" });
+      const source =
+        `export const load = (enabled) => enabled ? import("./oversized.js") : Promise.resolve("skipped");`;
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode: source,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: true,
+          fetchAndCacheModule: (path) => {
+            throw new ModuleSourceLimitError(path, 2048, 1024);
+          },
+        });
+        const parentPath = join(esmCacheDir, "dynamic-source-parent.mjs");
+        await Deno.writeTextFile(parentPath, result);
+        const loaded = await import(
+          `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+        ) as { load(enabled: boolean): Promise<unknown> };
+
+        assertEquals(await loaded.load(false), "skipped");
+        const error = await assertRejects(
+          () => loaded.load(true),
+          Error,
+          "module source exceeds the allowed size",
+        );
+        if (!(error instanceof Error)) throw new Error("expected Error");
+        assertEquals(error.name, "ModuleSourceLimitError");
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
+    });
+
+    it("defers strict dynamic child transform failures with sanitized runtime errors", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-transform-cache-" });
+      const source =
+        `export const load = (enabled) => enabled ? import("./broken.mdx") : Promise.resolve("skipped");`;
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode: source,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: true,
+          fetchAndCacheModule: () => {
+            throw MDX_COMPILE_ERROR.create({
+              detail: "MDX compilation error: <raw source> | file: <PROJECT_DIR>/broken.mdx",
+            });
+          },
+        });
+        const parentPath = join(esmCacheDir, "dynamic-transform-parent.mjs");
+        await Deno.writeTextFile(parentPath, result);
+        const loaded = await import(
+          `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+        ) as { load(enabled: boolean): Promise<unknown> };
+
+        assertEquals(await loaded.load(false), "skipped");
+        const error = await assertRejects(
+          () => loaded.load(true),
+          Error,
+          "MDX compilation failed",
+        );
+        if (!(error instanceof Error)) throw new Error("expected Error");
+        assertEquals(error.name, "MdxCompileError");
+        assertEquals(error.message.includes("<PROJECT_DIR>"), false);
+        assertEquals(error.message.includes("<raw source>"), false);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
+    });
+
+    it("defers tenant TypeScript compilation failures until the branch executes", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-ts-cache-" });
+      const source =
+        `export const load = (enabled) => enabled ? import("./broken.ts") : Promise.resolve("skipped");`;
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode: source,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: true,
+          fetchAndCacheModule: () => {
+            throw COMPILATION_ERROR.create({
+              detail: "ESM transform failed for <PROJECT_DIR>/broken.ts: <raw source>",
+              context: { tenantBuildFailure: true },
+            });
+          },
+        });
+        const parentPath = join(esmCacheDir, "dynamic-ts-parent.mjs");
+        await Deno.writeTextFile(parentPath, result);
+        const loaded = await import(
+          `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+        ) as { load(enabled: boolean): Promise<unknown> };
+
+        assertEquals(await loaded.load(false), "skipped");
+        const error = await assertRejects(
+          () => loaded.load(true),
+          Error,
+          "TypeScript compilation failed",
+        );
+        if (!(error instanceof Error)) throw new Error("expected Error");
+        assertEquals(error.name, "CompilationError");
+        assertEquals(error.message.includes("<PROJECT_DIR>"), false);
+        assertEquals(error.message.includes("<raw source>"), false);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
+    });
+
+    it("defers strict dynamic child cycles until the branch executes", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-dynamic-cycle-cache-" });
+      const source =
+        `export const load = (enabled) => enabled ? import("./cycle.js") : Promise.resolve("skipped");`;
+
+      try {
+        const result = await resolveNestedModuleImports({
+          moduleCode: source,
+          esmCacheDir,
+          normalizedPath: "_vf_modules/pages/index.js",
+          projectSlug: "docs",
+          strictMissingModules: true,
+          fetchAndCacheModule: () => {
+            const error = new Error(
+              "Circular module dependency detected: _vf_modules/pages/index.js -> ./cycle.js",
+            );
+            error.name = "CircularModuleDependencyError";
+            throw error;
+          },
+        });
+        const parentPath = join(esmCacheDir, "dynamic-cycle-parent.mjs");
+        await Deno.writeTextFile(parentPath, result);
+        const loaded = await import(
+          `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+        ) as { load(enabled: boolean): Promise<unknown> };
+
+        assertEquals(await loaded.load(false), "skipped");
+        const error = await assertRejects(
+          () => loaded.load(true),
+          Error,
+          "circular module dependency",
+        );
+        if (!(error instanceof Error)) throw new Error("expected Error");
+        assertEquals(error.name, "CircularModuleDependencyError");
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+      }
+    });
+
+    it("uses fallback stubs for non-strict dynamic child dependency failures", async () => {
+      const cases = [
+        {
+          name: "source",
+          path: "./oversized.js",
+          error: () => new ModuleSourceLimitError("./oversized.js", 2048, 1024),
+        },
+        {
+          name: "transform",
+          path: "./broken.mdx",
+          error: () =>
+            MDX_COMPILE_ERROR.create({
+              detail: "MDX compilation error: <raw source> | file: <PROJECT_DIR>/broken.mdx",
+            }),
+        },
+        {
+          name: "cycle",
+          path: "./cycle.js",
+          error: () => {
+            const error = new Error(
+              "Circular module dependency detected: _vf_modules/pages/index.js -> ./cycle.js",
+            );
+            error.name = "CircularModuleDependencyError";
+            return error;
+          },
+        },
+      ];
+
+      for (const testCase of cases) {
+        const esmCacheDir = await makeTempDir({
+          prefix: `vf-mdx-dynamic-${testCase.name}-fallback-cache-`,
+        });
+        const source =
+          `export const load = (enabled) => enabled ? import("${testCase.path}") : Promise.resolve("skipped");`;
+
+        try {
+          const result = await resolveNestedModuleImports({
+            moduleCode: source,
+            esmCacheDir,
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: false,
+            fetchAndCacheModule: () => {
+              throw testCase.error();
+            },
+          });
+          const parentPath = join(esmCacheDir, `dynamic-${testCase.name}-fallback-parent.mjs`);
+          await Deno.writeTextFile(parentPath, result);
+          const loaded = await import(
+            `${toFileUrl(parentPath).href}?test=${crypto.randomUUID()}`
+          ) as { load(enabled: boolean): Promise<unknown> };
+
+          assertEquals(await loaded.load(false), "skipped");
+          const loadedFallback = await loaded.load(true);
+          assertEquals(typeof loadedFallback, "object");
+        } finally {
+          await remove(esmCacheDir, { recursive: true });
+        }
+      }
+    });
+
+    it("keeps strict static imports fail-fast", async () => {
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode: `import value from "./missing.js"; export { value };`,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: () => Promise.resolve(null),
+          }),
+        Error,
+        "Missing module: ./missing.js",
+      );
+    });
+
+    it("keeps strict static child source failures fail-fast", async () => {
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode: `import value from "./oversized.js"; export { value };`,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: (path) => {
+              throw new ModuleSourceLimitError(path, 2048, 1024);
+            },
+          }),
+        ModuleSourceLimitError,
+        "exceeds the source-size limit",
+      );
+    });
+
+    it("keeps strict static child transform failures fail-fast", async () => {
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode: `import value from "./broken.mdx"; export { value };`,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: () => {
+              throw MDX_COMPILE_ERROR.create({
+                detail: "MDX compilation error: <raw source> | file: <PROJECT_DIR>/broken.mdx",
+              });
+            },
+          }),
+        Error,
+        "MDX compilation error",
+      );
+    });
+
+    it("keeps strict static child cycles fail-fast", async () => {
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode: `import value from "./cycle.js"; export { value };`,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: () => {
+              const error = new Error(
+                "Circular module dependency detected: _vf_modules/pages/index.js -> ./cycle.js",
+              );
+              error.name = "CircularModuleDependencyError";
+              throw error;
+            },
+          }),
+        Error,
+        "Circular module dependency detected",
+      );
+    });
+
+    it("keeps dynamic infrastructure failures fail-fast", async () => {
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode: `export const load = () => import("./later.js");`,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: () => {
+              throw new Error("cache backend unavailable");
+            },
+          }),
+        Error,
+        "cache backend unavailable",
+      );
     });
 
     it("resolves admitted fan-out with bounded concurrency", async () => {

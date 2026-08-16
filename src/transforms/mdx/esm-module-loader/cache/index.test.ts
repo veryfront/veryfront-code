@@ -23,7 +23,11 @@ import { exists, readTextFile, remove, writeTextFile } from "#veryfront/compat/f
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
-import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
+import {
+  buildMdxEsmModuleFileName,
+  buildMdxEsmPathCacheKey,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "../cache-format.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -445,6 +449,34 @@ describe("invalidateModulePaths — disk persistence", () => {
         false,
         "stale .mjs file must be deleted from disk during invalidation",
       );
+    } finally {
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+      clearModulePathCache();
+    }
+  });
+
+  it("deletes unresolved-import evidence beside stale modules", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-invalidate-evidence-" });
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const staleMjsPath = join(cacheDir, buildMdxEsmModuleFileName("stale-evidence"));
+    const evidencePath = `${staleMjsPath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`;
+
+    try {
+      await writeTextFile(staleMjsPath, `export default "stale";`);
+      await writeTextFile(evidencePath, JSON.stringify(["./missing"]));
+      await writeTextFile(
+        join(cacheDir, "_index.json"),
+        JSON.stringify({ [versionedKey]: staleMjsPath }),
+      );
+      await getModulePathCache(cacheDir);
+
+      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await waitForDiskCleanup();
+
+      assertEquals(await exists(staleMjsPath), false);
+      assertEquals(await exists(evidencePath), false);
     } finally {
       await remove(cacheDir, { recursive: true }).catch(() => {});
       clearModulePathCache();

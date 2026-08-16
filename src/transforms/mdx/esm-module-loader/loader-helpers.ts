@@ -17,14 +17,19 @@ import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { exists as fsExists } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "./constants.ts";
 import { getLocalFs } from "./cache/index.ts";
-import { createStubModule } from "./utils/stub-module.ts";
+import { createStubModule, type DeferredImportErrorDescriptor } from "./utils/stub-module.ts";
 import {
+  findDynamicImportSpans,
   findStaticImportFromSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
 } from "./utils/source-spans.ts";
 import { createModuleFetcherContext, fetchAndCacheModule } from "./module-fetcher/index.ts";
 import { buildMissingModuleError } from "./missing-module.ts";
+import {
+  dynamicDependencyFailure,
+  toImportStringLiteral,
+} from "./module-fetcher/nested-imports.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import {
@@ -32,6 +37,7 @@ import {
   MAX_MDX_MODULE_IMPORTS_PER_FILE,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
 } from "./module-fetcher/limits.ts";
+import { splitSpecifierSuffix } from "#veryfront/transforms/shared/specifier-suffix.ts";
 
 /**
  * Check which framework bundles are missing from disk.
@@ -108,12 +114,33 @@ export async function initializeCacheDir(context: ESMLoaderContext): Promise<str
  */
 export function findVfModuleImports(
   code: string,
-): Array<{ original: string; path: string; start: number; end: number }> {
-  return findStaticImportFromSpans(
+): Array<{
+  original: string;
+  path: string;
+  suffix: string;
+  start: number;
+  end: number;
+  isDynamic?: boolean;
+}> {
+  const matchVfModule = (specifier: string): string | null =>
+    specifier.match(/^\/?(_vf_modules\/.+)$/)?.[1] ?? null;
+  const staticImports = findStaticImportFromSpans(
     code,
-    (specifier) => specifier.match(/^\/?(_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1],
+    matchVfModule,
     MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
   );
+  const dynamicImports = findDynamicImportSpans(
+    code,
+    matchVfModule,
+    MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+  ).map((importSpan) => ({ ...importSpan, isDynamic: true }));
+
+  return [...staticImports, ...dynamicImports]
+    .map((importSpan) => {
+      const { path, suffix } = splitSpecifierSuffix(importSpan.path);
+      return { ...importSpan, path, suffix };
+    })
+    .sort((left, right) => left.start - right.start);
 }
 
 /**
@@ -121,7 +148,14 @@ export function findVfModuleImports(
  */
 export async function processVfModuleImports(
   code: string,
-  imports: Array<{ original: string; path: string; start: number; end: number }>,
+  imports: Array<{
+    original: string;
+    path: string;
+    suffix?: string;
+    start: number;
+    end: number;
+    isDynamic?: boolean;
+  }>,
   context: ESMLoaderContext,
   projectDir: string,
   strictMissingModules: boolean,
@@ -180,7 +214,7 @@ export async function processVfModuleImports(
 
   const results = await parallelMap(
     imports,
-    async ({ original, path, start, end }, index) => {
+    async ({ original, path, suffix, start, end, isDynamic }, index) => {
       return await withSpan(
         SpanNames.MDX_FETCH_MODULE,
         async () => {
@@ -190,14 +224,23 @@ export async function processVfModuleImports(
             index,
             path,
           });
-          const filePath = await fetchAndCacheModule(path, fetcherContext);
+          let filePath: string | null;
+          let deferredError: DeferredImportErrorDescriptor | undefined;
+          try {
+            filePath = await fetchAndCacheModule(path, fetcherContext);
+          } catch (error) {
+            if (!isDynamic) throw error;
+            deferredError = dynamicDependencyFailure(path, error) ?? undefined;
+            if (!deferredError) throw error;
+            filePath = null;
+          }
           logger.debug(`${LOG_PREFIX_MDX_LOADER} Fetching module DONE`, {
             projectSlug,
             index,
             path,
             durationMs: (performance.now() - moduleStart).toFixed(1),
           });
-          return { original, start, end, filePath, path };
+          return { original, start, end, filePath, path, suffix, isDynamic, deferredError };
         },
         {
           "mdx.module_path": path,
@@ -216,15 +259,37 @@ export async function processVfModuleImports(
   });
 
   const replacements: SourceSpanReplacement[] = [];
-  for (const { original, start, end, filePath, path } of results) {
+  for (
+    const { original, start, end, filePath, path, suffix, isDynamic, deferredError } of results
+  ) {
     if (filePath) {
+      const importTarget = toImportStringLiteral(`file://${filePath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
-        replacement: `from "file://${filePath}"`,
+        replacement: isDynamic ? importTarget : `from ${importTarget}`,
       });
       continue;
+    }
+
+    if (isDynamic) {
+      const deferredPath = await createStubModule(
+        path,
+        code,
+        original,
+        context.esmCacheDir!,
+        { failOnImport: strictMissingModules, deferredError },
+      );
+      if (deferredPath) {
+        replacements.push({
+          start,
+          end,
+          expected: original,
+          replacement: toImportStringLiteral(`file://${deferredPath}${suffix ?? ""}`),
+        });
+        continue;
+      }
     }
 
     if (strictMissingModules) {
@@ -239,11 +304,12 @@ export async function processVfModuleImports(
 
     const stubPath = await createStubModule(path, code, original, context.esmCacheDir!);
     if (stubPath) {
+      const importTarget = toImportStringLiteral(`file://${stubPath}${suffix ?? ""}`);
       replacements.push({
         start,
         end,
         expected: original,
-        replacement: `from "file://${stubPath}"`,
+        replacement: isDynamic ? importTarget : `from ${importTarget}`,
       });
     }
   }

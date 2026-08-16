@@ -102,6 +102,120 @@ describe("module-loader/dependency-resolver", () => {
     );
   });
 
+  it("fails closed when side-effect import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `import "./value-${index}";`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 side-effect relative imports",
+    );
+  });
+
+  it("resolves and rewrites side-effect alias and relative imports", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `import "@/setup";`,
+          `import "./local-setup";`,
+          `export default function Page() { return null; }`,
+        ].join("\n"),
+        "components/setup.ts": `globalThis.aliasReady = true;`,
+        "app/local-setup.ts": `globalThis.localReady = true;`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps.length, 2);
+        const rewritten = rewriteResolvedDependencyImports(
+          fileContent,
+          deps.map((dep, index) => ({ ...dep, depTempPath: `/tmp/setup-${index}.js` })),
+        );
+        assertStringIncludes(rewritten, `import "file:///tmp/setup-0.js";`);
+        assertStringIncludes(rewritten, `import "file:///tmp/setup-1.js";`);
+      },
+    );
+  });
+
+  it("resolves side-effect imports after statements and keyword comments", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `const ready = true; import /* preload */ "@/setup";`,
+          `import /* preload */ "./local-setup";`,
+          `export default function Page() { return ready; }`,
+        ].join("\n"),
+        "components/setup.ts": `globalThis.aliasReady = true;`,
+        "app/local-setup.ts": `globalThis.localReady = true;`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps.map((dependency) => dependency.relativePath), [
+          "setup",
+          "./local-setup",
+        ]);
+      },
+    );
+  });
+
+  it("does not resolve import-looking JSX display text", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `const label = "Example: ";`,
+          `export default function Page() {`,
+          `  return <code>{label}import "./example"</code>;`,
+          `}`,
+        ].join("\n"),
+        "app/example.ts": `export const example = true;`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+
+        const deps = await resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath,
+          projectDir,
+        });
+
+        assertEquals(deps, []);
+        assertEquals(rewriteResolvedDependencyImports(fileContent, []), fileContent);
+      },
+    );
+  });
+
   it("resolves alias and relative imports while ignoring already transformed file imports", async () => {
     await withDependencyFixture(
       {

@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { extractFrontmatter } from "./frontmatter-extractor.ts";
+import { extractFrontmatter, isFrontmatterSyntaxError } from "./frontmatter-extractor.ts";
+
+const FRONTMATTER_SYNTAX_ERROR = Symbol.for("veryfront.transforms.mdx.frontmatter-syntax-error");
 
 describe("transforms/mdx/compiler/frontmatter-extractor", () => {
   describe("extractFrontmatter", () => {
@@ -98,6 +100,128 @@ export const title = "Override";
 
       assertEquals(result.body, "");
       assertEquals(result.frontmatter, {});
+    });
+
+    it("marks frontmatter syntax failures with an own data property", () => {
+      const error = assertThrows(
+        () => extractFrontmatter("---\ntitle: [unterminated\n---"),
+        SyntaxError,
+      );
+
+      assertEquals(isFrontmatterSyntaxError(error), true);
+    });
+
+    it("requires an own data marker without invoking accessors", () => {
+      const previous = Object.getOwnPropertyDescriptor(
+        SyntaxError.prototype,
+        FRONTMATTER_SYNTAX_ERROR,
+      );
+      const previousDescriptorValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+      let inheritedGetterRead = false;
+      let ownGetterRead = false;
+
+      try {
+        Object.defineProperty(SyntaxError.prototype, FRONTMATTER_SYNTAX_ERROR, {
+          configurable: true,
+          value: true,
+        });
+        assertEquals(isFrontmatterSyntaxError(new SyntaxError("framework failed")), false);
+
+        Object.defineProperty(SyntaxError.prototype, FRONTMATTER_SYNTAX_ERROR, {
+          configurable: true,
+          get() {
+            inheritedGetterRead = true;
+            return true;
+          },
+        });
+        assertEquals(isFrontmatterSyntaxError(new SyntaxError("framework failed")), false);
+
+        const accessorBacked = new SyntaxError("framework failed");
+        Object.defineProperty(accessorBacked, FRONTMATTER_SYNTAX_ERROR, {
+          configurable: true,
+          get() {
+            ownGetterRead = true;
+            return true;
+          },
+        });
+        Object.defineProperty(Object.prototype, "value", {
+          configurable: true,
+          value: true,
+        });
+        assertEquals(isFrontmatterSyntaxError(accessorBacked), false);
+        assertEquals(inheritedGetterRead, false);
+        assertEquals(ownGetterRead, false);
+      } finally {
+        if (previous) {
+          Object.defineProperty(SyntaxError.prototype, FRONTMATTER_SYNTAX_ERROR, previous);
+        } else {
+          delete (SyntaxError.prototype as { [FRONTMATTER_SYNTAX_ERROR]?: unknown })[
+            FRONTMATTER_SYNTAX_ERROR
+          ];
+        }
+        if (previousDescriptorValue) {
+          Object.defineProperty(Object.prototype, "value", previousDescriptorValue);
+        } else {
+          delete (Object.prototype as { value?: unknown }).value;
+        }
+      }
+    });
+
+    it("fails closed when a proxy throws during marker inspection", () => {
+      const hostileDescriptors = new Proxy(new SyntaxError("framework failed"), {
+        getOwnPropertyDescriptor() {
+          throw new Error("marker descriptor invoked proxy code");
+        },
+      });
+      const hostilePrototype = new Proxy(new SyntaxError("framework failed"), {
+        getPrototypeOf() {
+          throw new Error("prototype inspection invoked proxy code");
+        },
+      });
+
+      assertEquals(isFrontmatterSyntaxError(hostileDescriptors), false);
+      assertEquals(isFrontmatterSyntaxError(hostilePrototype), false);
+    });
+
+    it("uses the descriptor intrinsic captured during module initialization", () => {
+      const previous = Object.getOwnPropertyDescriptor(Reflect, "getOwnPropertyDescriptor");
+      if (!previous || typeof previous.value !== "function") {
+        throw new Error("Expected Reflect.getOwnPropertyDescriptor descriptor");
+      }
+      Object.defineProperty(Reflect, "getOwnPropertyDescriptor", {
+        ...previous,
+        value: () => ({ value: true }),
+      });
+
+      try {
+        assertEquals(isFrontmatterSyntaxError(new SyntaxError("framework failed")), false);
+      } finally {
+        Object.defineProperty(Reflect, "getOwnPropertyDescriptor", previous);
+      }
+    });
+
+    it("uses the definition intrinsic captured during module initialization", () => {
+      const defineProperty = Object.defineProperty;
+      const previous = Object.getOwnPropertyDescriptor(Object, "defineProperty");
+      if (!previous || typeof previous.value !== "function") {
+        throw new Error("Expected Object.defineProperty descriptor");
+      }
+      defineProperty(Object, "defineProperty", {
+        ...previous,
+        value: () => {
+          throw new Error("poisoned marker definition");
+        },
+      });
+
+      try {
+        const error = assertThrows(
+          () => extractFrontmatter("---\ntitle: [unterminated\n---"),
+          SyntaxError,
+        );
+        assertEquals(isFrontmatterSyntaxError(error), true);
+      } finally {
+        defineProperty(Object, "defineProperty", previous);
+      }
     });
   });
 });

@@ -31,7 +31,9 @@ export const loginHelp: CommandHelp = {
     "veryfront login --token",
   ],
   notes: [
-    "Without options, prompts for authentication method",
+    "Without options, a valid session returns immediately. Use an explicit method to sign in again. If veryfront.json contains apiToken, remove or replace it before using another method to switch accounts",
+    "If VERYFRONT_API_TOKEN is set in your shell, unset or replace it before using another method to switch accounts.",
+    "Explicit methods (--google, --github, --microsoft, --token) are not supported with --json. Combining them with --json returns a usage error.",
     "OAuth methods open browser for authentication",
     "Token is stored in ~/.config/veryfront/token",
     "Exits 1 when no credential was obtained, so scripts can gate on it",

@@ -576,6 +576,28 @@ function previousSignificantIndex(source: string, index: number): number {
   return cursor;
 }
 
+function lineCommentStart(source: string, index: number): number | null {
+  let cursor = index;
+  while (cursor > 0 && !isLineTerminator(source[cursor - 1] ?? "")) cursor--;
+
+  let quote: string | null = null;
+  for (; cursor <= index; cursor++) {
+    const char = source[cursor]!;
+    if (quote !== null) {
+      if (char === "\\") cursor++;
+      else if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "/" && source[cursor + 1] === "/") return cursor;
+  }
+
+  return null;
+}
+
 function previousSignificantIndexBeforeIgnored(source: string, index: number): number {
   let cursor = index;
 
@@ -597,10 +619,12 @@ function previousSignificantIndexBeforeIgnored(source: string, index: number): n
       source.lastIndexOf("\u2028", cursor),
       source.lastIndexOf("\u2029", cursor),
     ) + 1;
-    const lineCommentStart = source.lastIndexOf("//", cursor);
-    if (lineCommentStart >= lineStart) {
-      cursor = lineCommentStart;
-      continue;
+    if (source.lastIndexOf("//", cursor) >= lineStart) {
+      const commentStart = lineCommentStart(source, cursor);
+      if (commentStart !== null) {
+        cursor = commentStart;
+        continue;
+      }
     }
 
     return cursor;
@@ -634,7 +658,7 @@ function keywordBefore(
  * Covers `.name`, optional chaining `?.name` (the character before the word is
  * `.` either way) and private fields `#name`.
  */
-function isMemberNameBefore(
+export function isMemberNameBefore(
   source: string,
   previousTokenIndex: number,
 ): boolean {
@@ -643,11 +667,31 @@ function isMemberNameBefore(
   while (start > 0 && isIdentifierPartAt(source, start - 1)) start--;
   if (start === end) return false;
 
-  const before = previousSignificantIndex(source, start);
+  const immediateBefore = previousSignificantIndex(source, start);
+  if (immediateBefore < 0) return false;
+
+  // Most keyword-shaped identifiers are ordinary expression operands. Avoid
+  // rescanning the whole line for a comment unless the adjacent trivia can
+  // actually contain one; doing that for every `of` makes long declarations
+  // quadratic under coverage instrumentation.
+  if (
+    source[immediateBefore] !== "/" &&
+    !hasLineTerminatorBetween(source, immediateBefore + 1, start)
+  ) {
+    const immediateChar = source[immediateBefore];
+    if (immediateChar === "#") return true;
+    if (immediateChar !== ".") return false;
+    return source[immediateBefore - 1] !== "." || source[immediateBefore - 2] !== ".";
+  }
+
+  const before = previousSignificantIndexBeforeIgnored(source, start);
   if (before < 0) return false;
 
   const char = source[before];
-  return char === "." || char === "#";
+  if (char === "#") return true;
+  if (char !== ".") return false;
+
+  return source[before - 1] !== "." || source[before - 2] !== ".";
 }
 
 function restrictedStatementKeywordBeforeLabel(
@@ -1276,6 +1320,20 @@ function isPlainStatementBlockCloseBrace(
   return matchingOpenBraces.get(index)?.isPlainStatementBlock === true;
 }
 
+function isArrowFunctionBodyCloseBraceAtAsiBoundary(
+  source: string,
+  index: number,
+  nextTokenIndex: number,
+  matchingOpenBraces: ReadonlyMap<number, OpenBraceContext>,
+): boolean {
+  const openBrace = matchingOpenBraces.get(index);
+  if (openBrace === undefined || source[openBrace.previousTokenIndex] !== ">") return false;
+
+  const beforeArrow = previousSignificantIndex(source, openBrace.previousTokenIndex);
+  return source[beforeArrow] === "=" &&
+    hasLineTerminatorBetween(source, index + 1, nextTokenIndex);
+}
+
 function isForOfKeywordBefore(
   source: string,
   rangeStart: number,
@@ -1532,7 +1590,13 @@ function canStartRegexLiteral(
     ) ||
       isDeclarationBlockCloseBrace(previous, matchingOpenBraces) ||
       isStatementBlockCloseBrace(source, previous, matchingOpenBraces) ||
-      isPlainStatementBlockCloseBrace(previous, matchingOpenBraces))
+      isPlainStatementBlockCloseBrace(previous, matchingOpenBraces) ||
+      isArrowFunctionBodyCloseBraceAtAsiBoundary(
+        source,
+        previous,
+        index,
+        matchingOpenBraces,
+      ))
   ) return true;
   if (
     (char === "+" || char === "-") &&
@@ -1863,10 +1927,13 @@ function looksLikeTypeScriptAngleConstruct(
     }
   }
 
+  const quotedValueEnd = source[next] === '"' || source[next] === "'"
+    ? skipIgnored(source, next)
+    : next;
   if (
     source[next] !== undefined &&
-    (isIdentifierStartAt(source, next) || source[next] === "(") &&
-    !hasRawJsxClosingTagBeforeStatementEnd(source, name, tagEnd, cache)
+    (isIdentifierStartAt(source, next) || source[next] === "(" || quotedValueEnd !== next) &&
+    !hasRawJsxClosingTagBeforeStatementEnd(source, name, quotedValueEnd, cache)
   ) {
     const before = previousSignificantIndex(source, tagStart);
     return before >= 0 && "=(:,[!~?&|+-*%^<>".includes(source[before] ?? "");
@@ -2260,6 +2327,19 @@ function findFromSpan(
   return null;
 }
 
+function canExportHaveFromClause(source: string, statementStart: number): boolean {
+  let cursor = skipWhitespaceAndComments(source, statementStart);
+  if (
+    source.startsWith("type", cursor) &&
+    !isIdentifierPartAt(source, cursor - 1) &&
+    !isIdentifierPartAt(source, cursor + "type".length)
+  ) {
+    cursor = skipWhitespaceAndComments(source, cursor + "type".length);
+  }
+
+  return source[cursor] === "*" || source[cursor] === "{";
+}
+
 /**
  * Validate the match bound every scanner requires.
  *
@@ -2440,6 +2520,13 @@ export function findStaticImportFromSpans(
       });
       previousTokenIndex = afterKeyword;
       cursor = afterKeyword + 1;
+      continue;
+    }
+
+    if (isExport && !canExportHaveFromClause(source, afterKeyword)) {
+      atStatementStart = false;
+      previousTokenIndex = cursor + keywordLength - 1;
+      cursor = afterKeyword;
       continue;
     }
 

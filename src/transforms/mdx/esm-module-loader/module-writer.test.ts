@@ -12,6 +12,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { MDXModule } from "../types.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "./module-fetcher/limits.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -155,6 +156,159 @@ describe("MDX root module cache identity", () => {
       assertEquals(mod.default as unknown, "STRICT_CHILD_OK");
       assertEquals(validRequests > 0, true);
       assertEquals(rawRequests, 0);
+    } finally {
+      mdxRenderer.clearCache();
+      await Deno.remove(projectDir, { recursive: true });
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+    }
+  });
+});
+
+describe("MDX root dynamic imports", () => {
+  for (
+    const { label, suffix } of [
+      { label: "query", suffix: "?raw" },
+      { label: "fragment", suffix: "#variant" },
+      { label: "query and fragment", suffix: "?raw#variant" },
+    ] as const
+  ) {
+    it(`preserves a root dynamic import ${label} suffix`, async () => {
+      const moduleName = `RootSuffix-${label.replaceAll(" ", "-")}-${crypto.randomUUID()}.js`;
+      const expectedPath = `/_vf_modules/${moduleName}`;
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-mdx-root-dynamic-suffix-" });
+      const fetchedPaths: string[] = [];
+
+      try {
+        const mod = await withMockFetch(
+          (input, init) => {
+            const request = new Request(input, init);
+            const url = new URL(request.url);
+            fetchedPaths.push(url.pathname);
+            if (url.pathname !== expectedPath || url.searchParams.get("ssr") !== "true") {
+              return Promise.resolve(new Response("missing", { status: 404 }));
+            }
+            return Promise.resolve(
+              new Response("export default import.meta.url;", {
+                headers: { "content-type": "application/javascript" },
+              }),
+            );
+          },
+          () =>
+            mdxRenderer.loadModuleESM(
+              `export async function loadVariant() {
+                return (await import("${expectedPath}${suffix}")).default;
+              }
+              export default function Root() { return null; }`,
+              {
+                adapter: denoAdapter,
+                projectId: `project-${crypto.randomUUID()}`,
+                projectDir,
+                projectSlug: "root-dynamic-suffix",
+                contentSourceId: `source-${crypto.randomUUID()}`,
+                isLocalProject: true,
+              },
+            ),
+        );
+        const loadVariant = (mod as unknown as {
+          loadVariant(): Promise<string>;
+        }).loadVariant;
+
+        const importedUrl = await loadVariant();
+        assertEquals(fetchedPaths, [expectedPath]);
+        assertEquals(importedUrl.endsWith(suffix), true);
+      } finally {
+        mdxRenderer.clearCache();
+        await Deno.remove(projectDir, { recursive: true });
+        const esbuild = await import("veryfront/extensions/bundler");
+        await esbuild.stop();
+      }
+    });
+  }
+
+  it("defers a missing strict alias import until its branch executes", async () => {
+    const missingModule = `MissingRoot-${crypto.randomUUID()}`;
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-mdx-root-dynamic-" });
+
+    try {
+      const mod = await withMockFetch(
+        () => Promise.resolve(new Response("missing", { status: 404 })),
+        () =>
+          mdxRenderer.loadModuleESM(
+            `export async function loadOptional(enabled) {
+              if (!enabled) return "SKIPPED";
+              return (await import("@/${missingModule}")).default;
+            }
+            export default function Root() { return null; }`,
+            {
+              adapter: denoAdapter,
+              projectId: `project-${crypto.randomUUID()}`,
+              projectDir,
+              projectSlug: "root-dynamic",
+              contentSourceId: `source-${crypto.randomUUID()}`,
+              isLocalProject: true,
+            },
+          ),
+      );
+      const loadOptional = (mod as unknown as {
+        loadOptional(enabled: boolean): Promise<string>;
+      }).loadOptional;
+
+      assertEquals(await loadOptional(false), "SKIPPED");
+      await assertRejects(
+        () => loadOptional(true),
+        Error,
+        `Missing module: _vf_modules/${missingModule}.js`,
+      );
+    } finally {
+      mdxRenderer.clearCache();
+      await Deno.remove(projectDir, { recursive: true });
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+    }
+  });
+
+  it("defers a typed dependency failure until the root import executes", async () => {
+    const oversizedModule = `OversizedRoot-${crypto.randomUUID()}.js`;
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-mdx-root-dynamic-limit-" });
+
+    try {
+      const mod = await withMockFetch(
+        () =>
+          Promise.resolve(
+            new Response("x".repeat(MAX_MDX_MODULE_CODE_BYTES + 1), {
+              headers: { "content-type": "application/javascript" },
+            }),
+          ),
+        () =>
+          mdxRenderer.loadModuleESM(
+            `export async function loadOptional(enabled) {
+              if (!enabled) return "SKIPPED";
+              return await import("@/${oversizedModule}");
+            }
+            export default function Root() { return null; }`,
+            {
+              adapter: denoAdapter,
+              projectId: `project-${crypto.randomUUID()}`,
+              projectDir,
+              projectSlug: "root-dynamic-limit",
+              contentSourceId: `source-${crypto.randomUUID()}`,
+              isLocalProject: true,
+            },
+          ),
+      );
+      const loadOptional = (mod as unknown as {
+        loadOptional(enabled: boolean): Promise<unknown>;
+      }).loadOptional;
+
+      assertEquals(await loadOptional(false), "SKIPPED");
+      const error = await assertRejects(
+        () => loadOptional(true),
+        Error,
+        "module source exceeds the allowed size",
+      );
+      if (!(error instanceof Error)) throw new Error("expected Error");
+      assertEquals(error.name, "ModuleSourceLimitError");
     } finally {
       mdxRenderer.clearCache();
       await Deno.remove(projectDir, { recursive: true });
