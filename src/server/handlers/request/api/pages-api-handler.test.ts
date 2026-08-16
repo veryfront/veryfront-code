@@ -65,6 +65,8 @@ function createHandlerContext(
     projectSlug?: string;
     mode?: "preview" | "production";
     releaseId?: string;
+    environmentId?: string;
+    environmentName?: string;
   },
 ): HandlerContext {
   return {
@@ -75,6 +77,8 @@ function createHandlerContext(
     projectId: input.projectSlug ? `${input.projectSlug}-id` : undefined,
     resolvedEnvironment: input.mode ?? "preview",
     releaseId: input.releaseId,
+    environmentId: input.environmentId,
+    environmentName: input.environmentName,
     requestContext: {
       token: "test-token",
       slug: input.projectSlug ?? "test-project",
@@ -121,6 +125,82 @@ describe("server/handlers/request/api/pages-api-handler", () => {
       assertExists(response);
       assertEquals(response.headers.get("access-control-allow-origin"), "https://app.example.test");
       assertEquals(configLoads, 0);
+    });
+
+    it("isolates cached handlers by environment and config snapshot", async () => {
+      const cache = createMockCache();
+      const adapter = createMockAdapter();
+      __injectCacheForTests(cache as any);
+
+      const createEnvironmentContext = (
+        environmentId: string,
+        origin: string,
+      ): HandlerContext => {
+        const ctx = createHandlerContext({
+          adapter,
+          projectSlug: "hosted-project",
+          mode: "production",
+          releaseId: "shared-release",
+          environmentId,
+          environmentName: environmentId,
+        });
+        ctx.config = {
+          security: { cors: { origin: [origin] } },
+        } as HandlerContext["config"];
+        return ctx;
+      };
+
+      const staging = createEnvironmentContext(
+        "staging",
+        "https://staging.example.test",
+      );
+      const production = createEnvironmentContext(
+        "production",
+        "https://production.example.test",
+      );
+
+      const stagingHandler = await getApiHandler(staging);
+      const productionHandler = await getApiHandler(production);
+      const productionResponse = await productionHandler.handle(
+        new Request("https://project.example.test/api/test", {
+          method: "OPTIONS",
+          headers: { origin: "https://production.example.test" },
+        }),
+        production,
+      );
+
+      assertExists(productionResponse);
+      assertEquals(
+        productionResponse.headers.get("access-control-allow-origin"),
+        "https://production.example.test",
+      );
+      assertEquals(cache.store.size, 2);
+      assertEquals(stagingHandler === productionHandler, false);
+
+      const reusedProductionHandler = await getApiHandler(production);
+      assertEquals(reusedProductionHandler === productionHandler, true);
+      assertEquals(cache.store.size, 2);
+
+      const updatedProduction = createEnvironmentContext(
+        "production",
+        "https://updated.example.test",
+      );
+      const updatedProductionHandler = await getApiHandler(updatedProduction);
+      const updatedProductionResponse = await updatedProductionHandler.handle(
+        new Request("https://project.example.test/api/test", {
+          method: "OPTIONS",
+          headers: { origin: "https://updated.example.test" },
+        }),
+        updatedProduction,
+      );
+
+      assertExists(updatedProductionResponse);
+      assertEquals(
+        updatedProductionResponse.headers.get("access-control-allow-origin"),
+        "https://updated.example.test",
+      );
+      assertEquals(cache.store.size, 3);
+      assertEquals(productionHandler === updatedProductionHandler, false);
     });
   });
 

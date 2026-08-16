@@ -93,6 +93,11 @@ interface HandlerLeaseState {
 }
 
 const handlerLeaseStates = new WeakMap<Promise<APIRouteHandler>, HandlerLeaseState>();
+// Hosted config snapshots are deeply frozen and cached by their source and
+// environment fingerprint. Keep that exact process-local identity in the
+// handler key so changed environment values cannot reuse a stale handler.
+const configSnapshotIds = new WeakMap<object, number>();
+let nextConfigSnapshotId = 1;
 
 function getCache(): HandlerCache<Promise<APIRouteHandler>> {
   return injectedCache ?? apiHandlerCache;
@@ -108,6 +113,15 @@ function getApiHandlerCacheContext(ctx: HandlerContext) {
   return tryGetCacheKeyContext() ?? extractCacheKeyContext(ctx);
 }
 
+function getConfigSnapshotId(config: NonNullable<HandlerContext["config"]>): number {
+  let id = configSnapshotIds.get(config);
+  if (id === undefined) {
+    id = nextConfigSnapshotId++;
+    configSnapshotIds.set(config, id);
+  }
+  return id;
+}
+
 function getCacheKey(ctx: HandlerContext): string {
   if (!ctx.projectSlug) return ctx.projectDir;
 
@@ -115,7 +129,12 @@ function getCacheKey(ctx: HandlerContext): string {
   // No safe scoped key (e.g. production without a releaseId): fall back to the
   // project-specific dir key rather than a shared bucket.
   if (!cacheContext) return ctx.projectDir;
-  return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}`;
+  const environmentIdentity = ctx.environmentId ?? ctx.environmentName;
+  const environmentKey = environmentIdentity
+    ? `:environment:${encodeURIComponent(environmentIdentity)}`
+    : "";
+  const configKey = ctx.config ? `:config:${getConfigSnapshotId(ctx.config)}` : "";
+  return `${ctx.projectDir}:${ctx.projectSlug}:${cacheContext.mode}:${cacheContext.versionId}${environmentKey}${configKey}`;
 }
 
 function shouldCacheApiHandler(ctx: HandlerContext): boolean {
