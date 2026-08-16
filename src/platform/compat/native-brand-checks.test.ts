@@ -6,7 +6,49 @@ import { runInNewContext } from "node:vm";
 import { snapshotNativeBrandChecks } from "./native-brand-checks.ts";
 
 describe("native brand checks", () => {
-  it("falls back to an unspoofed built-in Error tag when the host check misses", () => {
+  it("does not capture replaced primary-realm Error brand hooks", async () => {
+    const previousIsError = Object.getOwnPropertyDescriptor(Error, "isError");
+    const previousToString = Object.getOwnPropertyDescriptor(Object.prototype, "toString");
+    let isErrorHookCalls = 0;
+    let toStringHookCalls = 0;
+    let isolated: typeof import("./native-brand-checks.ts") | undefined;
+    Object.defineProperty(Error, "isError", {
+      configurable: true,
+      value: () => {
+        isErrorHookCalls++;
+        return true;
+      },
+      writable: true,
+    });
+    Object.defineProperty(Object.prototype, "toString", {
+      configurable: true,
+      value: () => {
+        toStringHookCalls++;
+        return "[object Error]";
+      },
+      writable: true,
+    });
+
+    try {
+      isolated = await import("./native-brand-checks.ts?poisoned-primary-realm-error-hooks");
+    } finally {
+      if (previousToString) {
+        Object.defineProperty(Object.prototype, "toString", previousToString);
+      }
+      if (previousIsError) {
+        Object.defineProperty(Error, "isError", previousIsError);
+      } else {
+        Reflect.deleteProperty(Error, "isError");
+      }
+    }
+
+    assertEquals(isolated?.nativeBrandChecks?.isNativeError(new Error("native")), true);
+    assertEquals(isolated?.nativeBrandChecks?.isNativeError({}), false);
+    assertEquals(isErrorHookCalls, 0);
+    assertEquals(toStringHookCalls, 0);
+  });
+
+  it("falls back to an isolated Error brand check when the host check misses", () => {
     let tagReads = 0;
     let proxyTrapCalls = 0;
     const tagged = Object.defineProperty({}, Symbol.toStringTag, {
