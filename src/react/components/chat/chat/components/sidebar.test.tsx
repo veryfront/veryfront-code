@@ -258,6 +258,82 @@ describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
   });
 });
 
+describe("ChatSidebar.Item.Title — composable row label", () => {
+  it("exposes the Title leaf off the compound", () => {
+    assert(typeof ChatSidebar.Item.Title === "function", "Item.Title is addressable");
+  });
+
+  it("composes the row label alongside a sibling", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title />
+            <span data-badge="">badge</span>
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes(">Row title<"), "the Title leaf renders the conversation title");
+    assert(html.includes("data-badge"), "the sibling badge renders next to the title");
+    assertEquals(
+      html.split(">Row title<").length - 1,
+      1,
+      "the composed Title replaces the default title (no duplicate label)",
+    );
+  });
+
+  it("keeps a composed Menu sibling in the action slot (no default duplicate)", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title />
+            <ChatSidebar.Item.Menu />
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assertEquals(
+      html.split("More actions for Row title").length - 1,
+      1,
+      "exactly one menu trigger renders — the composed Menu, not a second default",
+    );
+    assert(html.includes(">Row title<"), "the composed Title still renders the label");
+  });
+
+  it("regression: a childless Item still renders the default title", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)} />
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes(">Row title<"), "the childless row renders the default title");
+    assertEquals(
+      html.split(">Row title<").length - 1,
+      1,
+      "the default title renders exactly once",
+    );
+  });
+});
+
 describe("ChatSidebarRenameEditor", () => {
   async function runKeyboardCompletion(key: "Enter" | "Escape"): Promise<[number, number]> {
     const restoreDom = installDom();

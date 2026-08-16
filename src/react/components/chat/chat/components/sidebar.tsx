@@ -63,6 +63,7 @@ import type {
   ChatSidebarItemContextValue,
   ChatSidebarItemMenuProps,
   ChatSidebarItemProps,
+  ChatSidebarItemTitleProps,
   ChatSidebarListProps,
   ChatSidebarNewButtonProps,
   ChatSidebarProps,
@@ -77,6 +78,7 @@ export type {
   ChatSidebarItemMenuProps,
   ChatSidebarItemProps,
   ChatSidebarItemRenderOptions,
+  ChatSidebarItemTitleProps,
   ChatSidebarListProps,
   ChatSidebarNewButtonProps,
   ChatSidebarProps,
@@ -277,9 +279,50 @@ const [ChatSidebarItemContext, useChatSidebarItemStrict] = createStrictContext<
 export const useChatSidebarItem = useChatSidebarItemStrict;
 
 /**
+ * The row's label — the conversation title (or custom children). Use it inside
+ * an `<ChatSidebar.Item>` to compose the row body; its presence tells the item
+ * to skip its default title.
+ */
+export function ChatSidebarItemTitle({
+  children,
+  className,
+  ref,
+}: ChatSidebarItemTitleProps): React.ReactElement {
+  const { conversation } = useChatSidebarItem();
+  return (
+    <span ref={ref} className={cn("block truncate text-[13px] leading-snug", className)}>
+      {children ?? conversation.title}
+    </span>
+  );
+}
+ChatSidebarItemTitle.displayName = "ChatSidebar.Item.Title";
+
+/**
+ * Walks the element tree looking for a rendered `<ChatSidebar.Item.Title>`
+ * (the slot-detection pattern `ui/field.tsx` ships for `findFieldParts`).
+ * Presence decides whether the item renders its default title or hands the
+ * row body to the children.
+ */
+function hasTitleLeaf(children: React.ReactNode): boolean {
+  let found = false;
+  React.Children.forEach(children, (child) => {
+    if (found || !React.isValidElement(child)) return;
+    if (child.type === ChatSidebarItemTitle) {
+      found = true;
+      return;
+    }
+    const props = child.props as { children?: React.ReactNode };
+    if (props?.children && hasTitleLeaf(props.children)) found = true;
+  });
+  return found;
+}
+
+/**
  * A single conversation row — select on click, rename/delete via a "…" menu.
  * The menu is a composable compound: pass a `<ChatSidebar.Item.Menu>` child to
- * add or reorder entries without re-implementing the row.
+ * add or reorder entries without re-implementing the row. Children containing a
+ * `<ChatSidebar.Item.Title>` compose the row's label body instead, while any
+ * top-level `<ChatSidebar.Item.Menu>` sibling still fills the action slot.
  */
 export function ChatSidebarItem({
   conversation,
@@ -334,17 +377,33 @@ export function ChatSidebarItem({
     );
   }
 
+  // A `<ChatSidebar.Item.Title>` child moves the children into the row body;
+  // otherwise they compose the trailing action slot (the shipped behavior).
+  // Top-level `<ChatSidebar.Item.Menu>` siblings keep composing the action
+  // slot, so a Title + Menu row never nests the menu trigger inside the row's
+  // primary-action button.
+  const composesTitle = hasTitleLeaf(children);
+  const parts = composesTitle ? React.Children.toArray(children) : [];
+  const menuParts = parts.filter(
+    (part) => React.isValidElement(part) && part.type === ChatSidebarItemMenu,
+  );
+  const bodyParts = parts.filter((part) => !menuParts.includes(part));
+
   return (
     <ChatSidebarItemContext.Provider value={itemContext}>
       <ListItem
         ref={ref}
-        title={conversation.title}
+        title={composesTitle ? undefined : conversation.title}
         active={isActive || menuOpen}
         className={className}
         onActivate={() => onSelect(conversation.id)}
         primaryActionProps={{ "aria-current": isActive ? "page" : undefined }}
-        action={children ?? <ChatSidebarItemMenu />}
-      />
+        action={composesTitle
+          ? (menuParts.length > 0 ? menuParts : <ChatSidebarItemMenu />)
+          : children ?? <ChatSidebarItemMenu />}
+      >
+        {composesTitle ? bodyParts : undefined}
+      </ListItem>
     </ChatSidebarItemContext.Provider>
   );
 }
@@ -591,8 +650,9 @@ function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
 }
 ChatSidebarBase.displayName = "ChatSidebar";
 
-/** `ChatSidebar.Item` compound — the row plus its composable menu leaves. */
+/** `ChatSidebar.Item` compound — the row plus its composable label + menu leaves. */
 export type ChatSidebarItemComponent = typeof ChatSidebarItem & {
+  Title: typeof ChatSidebarItemTitle;
   Menu: typeof ChatSidebarItemMenu;
   Rename: typeof ChatSidebarItemRename;
   Delete: typeof ChatSidebarItemDelete;
@@ -601,6 +661,7 @@ export type ChatSidebarItemComponent = typeof ChatSidebarItem & {
 const ChatSidebarItemCompound: ChatSidebarItemComponent = Object.assign(
   ChatSidebarItem,
   {
+    Title: ChatSidebarItemTitle,
     Menu: ChatSidebarItemMenu,
     Rename: ChatSidebarItemRename,
     Delete: ChatSidebarItemDelete,

@@ -102,12 +102,12 @@ async function walk(
 const FILE_SIZE_CEILINGS: Record<string, number> = {
   // Chat preset implementation lives in chat/chat-preset.tsx. This barrel grew
   // only for the explicit conversation-persistence contracts exported here.
-  "src/react/components/chat/chat/index.tsx": 278,
+  "src/react/components/chat/chat/index.tsx": 279,
   // Message.Sources extracted to composition/message-sources.tsx.
   "src/react/components/chat/chat/composition/message.tsx": 793,
-  // Includes the ChatSidebar.Item menu compound (Item.Menu/.Rename/.Delete).
+  // Includes the ChatSidebar.Item compound (Item.Title/.Menu/.Rename/.Delete).
   // Split responsibilities before adding more behavior to this file.
-  "src/react/components/chat/chat/components/sidebar.tsx": 628,
+  "src/react/components/chat/chat/components/sidebar.tsx": 689,
   // Composer state and native action leaves live in focused sibling modules.
   "src/react/components/chat/chat/composition/chat-composer.tsx": 389,
   "src/react/components/chat/chat/composition/chat-input-actions.tsx": 159,

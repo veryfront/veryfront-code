@@ -139,6 +139,7 @@ export {
   type ChatSidebarItemMenuProps,
   type ChatSidebarItemProps,
   type ChatSidebarItemRenderOptions,
+  type ChatSidebarItemTitleProps,
   type ChatSidebarListProps,
   type ChatSidebarNewButtonProps,
   type ChatSidebarProps,
