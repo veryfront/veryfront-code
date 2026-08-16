@@ -52,6 +52,16 @@ function getIdentifierName(node: unknown): string | undefined {
   return typeof node.name === "string" ? node.name : undefined;
 }
 
+function getExportedName(node: unknown): string | undefined {
+  const identifier = getIdentifierName(node);
+  if (identifier) return identifier;
+  if (!isAstNode(node)) return undefined;
+  return (node.type === "StringLiteral" || node.type === "Literal") &&
+      typeof node.value === "string"
+    ? node.value
+    : undefined;
+}
+
 function unwrapTsExpression(node: ASTNode): ASTNode {
   let current = node;
   while (
@@ -154,7 +164,7 @@ export async function extractTsxLayoutSignal(
           ) {
             continue;
           }
-          const exportedName = getIdentifierName(specifier.exported);
+          const exportedName = getExportedName(specifier.exported);
           const localName = getIdentifierName(specifier.local);
           if (
             (exportedName === "layout" || exportedName === "frontmatter") &&

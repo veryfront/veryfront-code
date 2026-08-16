@@ -237,6 +237,11 @@ export { layout };`),
 export { metadata as frontmatter };`),
         "special",
       );
+      assertEquals(
+        await extract(`const metadata = { layout: false };
+export { metadata as "frontmatter" };`),
+        false,
+      );
     });
 
     it("ignores local declarations and layout-looking comments", async () => {
