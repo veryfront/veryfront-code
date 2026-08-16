@@ -48,19 +48,42 @@ interface TaskDefinition {
   description?: string;
   inputSchema?: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   schedulable?: boolean;
   run: (ctx: TaskContext) => Promise<unknown> | unknown;
 }
 ```
 
-| Field          | Required | Description                                      |
-| -------------- | -------- | ------------------------------------------------ |
-| `name`         | No       | Human-readable name                              |
-| `description`  | No       | What the task does                               |
-| `inputSchema`  | No       | JSON-schema-like input contract for APIs and UIs |
-| `outputSchema` | No       | JSON-schema-like output contract                 |
-| `schedulable`  | No       | Scheduling eligibility metadata for APIs and UIs |
-| `run`          | Yes      | The function to execute                          |
+| Field                     | Required | Description                                      |
+| ------------------------- | -------- | ------------------------------------------------ |
+| `name`                    | No       | Human-readable name                              |
+| `description`             | No       | What the task does                               |
+| `inputSchema`             | No       | JSON-schema-like input contract for APIs and UIs |
+| `outputSchema`            | No       | JSON-schema-like output contract                 |
+| `integrationRequirements` | No       | Integration access required by scheduled runs    |
+| `schedulable`             | No       | Scheduling eligibility metadata for APIs and UIs |
+| `run`                     | Yes      | The function to execute                          |
+
+Use `integrationRequirements` when a scheduled task needs specific provider
+scopes or resources before it can run:
+
+```ts
+export default {
+  name: "Sync Slack channel",
+  schedulable: true,
+  integrationRequirements: [{
+    integration: "slack",
+    requiredScopes: ["channels:read"],
+    resources: [{ kind: "channel", id: "C012345" }],
+  }],
+  async run(ctx) {
+    return { ok: true };
+  },
+};
+```
+
+Veryfront reads this field from task metadata only. It does not infer
+requirements from task source code.
 
 ## Task context
 

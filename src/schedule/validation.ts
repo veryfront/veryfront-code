@@ -8,6 +8,7 @@ import {
   triggerTargetKeys,
 } from "#veryfront/trigger/target.ts";
 import { snapshotSerializable, validateTriggerId } from "#veryfront/trigger/validation.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { isSupportedIanaTimezone, normalizeCronExpression } from "./calendar.ts";
 import type {
   ScheduleAgentMessage,
@@ -94,6 +95,9 @@ function snapshotDataRecord(
 ): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     invalid(`${label} must be an object.`);
+  }
+  if (isProxyWithoutHooks(value)) {
+    invalid(`${label} is invalid.`);
   }
 
   const prototype = Reflect.getPrototypeOf(value);
@@ -236,6 +240,7 @@ function snapshotDataArray(
   maxLength: number,
 ): unknown[] {
   if (!Array.isArray(value)) invalid(`${label} must be an array.`);
+  if (isProxyWithoutHooks(value)) invalid(`${label} must be a non-Proxy plain array.`);
   if (Reflect.getPrototypeOf(value) !== Array.prototype) {
     invalid(`${label} must be a plain array.`);
   }
@@ -588,6 +593,38 @@ function normalizeIntegrationRequirements(
       resources: normalizedResources,
     };
   });
+}
+
+/**
+ * Validate, detach, and deeply freeze author-facing integration metadata.
+ *
+ * Task and workflow discovery use the same canonical contract as schedules so
+ * all trigger targets reach the API with identical identifiers, limits, and
+ * duplicate handling.
+ */
+export function captureScheduleIntegrationRequirementsConfig(
+  value: unknown,
+): ScheduleIntegrationRequirement[] | undefined {
+  try {
+    const requirements = normalizeIntegrationRequirements(value, "config");
+    if (requirements === undefined) return undefined;
+
+    for (const requirement of requirements) {
+      Object.freeze(requirement.requiredScopes);
+      for (const resource of requirement.resources) {
+        if (resource.parent !== undefined) Object.freeze(resource.parent);
+        Object.freeze(resource);
+      }
+      Object.freeze(requirement.resources);
+      Object.freeze(requirement);
+    }
+    return Object.freeze(requirements) as ScheduleIntegrationRequirement[];
+  } catch (error) {
+    if (error instanceof VeryfrontError && error.slug === SCHEDULE_CONFIG_INVALID.slug) {
+      throw error;
+    }
+    invalid("Schedule integrationRequirements is invalid.", error);
+  }
 }
 
 function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): ScheduleDefinition {

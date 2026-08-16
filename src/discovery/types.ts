@@ -77,10 +77,10 @@ export interface DiscoveryResult {
 /**
  * Handler for discovering specific item types
  */
-export interface DiscoveryHandler<T> {
+export interface DiscoveryHandler<T, Candidate = T> {
   typeName: string;
-  validate: (item: unknown) => item is T;
-  getId: (item: T, file: string, dir: string) => string;
-  register: (id: string, item: T, file: string, dir: string, exportName?: string) => T;
+  validate: (item: unknown) => item is Candidate;
+  getId: (item: Candidate, file: string, dir: string) => string;
+  register: (id: string, item: Candidate, file: string, dir: string, exportName?: string) => T;
   getResultMap: (result: DiscoveryResult) => Map<string, T>;
 }

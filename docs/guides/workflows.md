@@ -38,6 +38,11 @@ import { step, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "content-pipeline",
+  integrationRequirements: [{
+    integration: "slack",
+    requiredScopes: ["channels:read"],
+    resources: [{ kind: "channel", id: "C012345" }],
+  }],
   steps: [
     step("research", { agent: "researcher" }),
     step("write", { agent: "writer" }),
@@ -47,6 +52,9 @@ export default workflow({
 ```
 
 Steps run in order. Each step's output is available to the next step via the workflow context.
+Use `integrationRequirements` only for explicit access that scheduled workflow
+runs require. Veryfront does not infer integration requirements from workflow
+steps, nested workflows, agents, tools, or source text.
 
 ## Start a workflow
 

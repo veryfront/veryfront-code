@@ -57,16 +57,16 @@ function resolveDiscoveryDir(baseDir: string, dir: string): string {
   return `${baseDir}/${dir}`;
 }
 
-function collectDiscoveryCandidates<T>(
+function collectDiscoveryCandidates<T, Candidate>(
   module: unknown,
-  handler: DiscoveryHandler<T>,
-): DiscoveryCandidate<T>[] {
-  const defaultItem = (module as { default?: T }).default;
+  handler: DiscoveryHandler<T, Candidate>,
+): DiscoveryCandidate<Candidate>[] {
+  const defaultItem = (module as { default?: unknown }).default;
   if (handler.validate(defaultItem)) {
     return [{ exportName: "default", item: defaultItem }];
   }
 
-  const candidates: DiscoveryCandidate<T>[] = [];
+  const candidates: DiscoveryCandidate<Candidate>[] = [];
   for (const [exportName, value] of Object.entries(module as Record<string, unknown>)) {
     if (exportName === "default") continue;
     if (!handler.validate(value)) continue;
@@ -76,11 +76,11 @@ function collectDiscoveryCandidates<T>(
   return candidates;
 }
 
-function getCandidateId<T>(
-  candidate: DiscoveryCandidate<T>,
+function getCandidateId<T, Candidate>(
+  candidate: DiscoveryCandidate<Candidate>,
   file: string,
   dir: string,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<T, Candidate>,
   useExportNameFallback: boolean,
 ): string {
   const derivedId = handler.getId(candidate.item, file, dir);
@@ -94,11 +94,11 @@ function getCandidateId<T>(
 /**
  * Discover items of a specific type in a directory
  */
-async function discoverItems<T>(
+async function discoverItems<T, Candidate>(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<T, Candidate>,
   verbose?: boolean,
 ): Promise<void> {
   const files = (await findTypeScriptFiles(dir, context)).sort(compareDiscoveryFiles);
@@ -162,13 +162,13 @@ async function discoverItems<T>(
   }
 }
 
-async function discoverConfiguredItems<T>(
+async function discoverConfiguredItems<T, Candidate>(
   dirs: string[] | undefined,
   defaultDirs: string[],
   baseDir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T>,
+  handler: DiscoveryHandler<T, Candidate>,
   verbose?: boolean,
 ): Promise<void> {
   for (const dir of dirs ?? defaultDirs) {

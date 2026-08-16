@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -17,7 +17,8 @@ import {
 } from "./project-runtime.ts";
 import { runTriggerTarget } from "../trigger/local-runner.ts";
 import { isTaskDefinition } from "./types.ts";
-import type { DiscoveryResult } from "#veryfront/discovery";
+import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
+import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
 
 const discoverTasks: typeof discoverTasksRaw = (options) =>
   discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
@@ -221,6 +222,26 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       );
     });
 
+    it("keeps class-instance task definitions structurally valid", () => {
+      class StatefulTask {
+        private readonly prefix = "stateful";
+
+        run(): string {
+          return this.prefix;
+        }
+      }
+
+      const task = new StatefulTask();
+      assertEquals(isTaskDefinition(task), true);
+      assertEquals(
+        taskHandler.register("stateful", task, "tasks/stateful.ts", "tasks").run({
+          env: {},
+          config: {},
+        }),
+        "stateful",
+      );
+    });
+
     it("rejects non-task values", () => {
       assertEquals(isTaskDefinition(null), false);
       assertEquals(isTaskDefinition(undefined), false);
@@ -236,6 +257,18 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(isTaskDefinition({ run() {}, inputSchema: [] }), false);
       assertEquals(isTaskDefinition({ run() {}, outputSchema: null }), false);
       assertEquals(isTaskDefinition({ run() {}, schedulable: "true" }), false);
+      assertEquals(isTaskDefinition({ run() {}, integrationRequirements: {} }), false);
+      assertEquals(
+        isTaskDefinition({ run() {}, integrationRequirements: [{ integration: 42 }] }),
+        false,
+      );
+      assertEquals(
+        isTaskDefinition({
+          run() {},
+          integrationRequirements: [{ integration: "slack", requiredScopes: "channels:read" }],
+        }),
+        false,
+      );
       assertEquals(
         isTaskDefinition({
           run() {},
@@ -244,8 +277,79 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
           inputSchema: { type: "object" },
           outputSchema: { type: "object" },
           schedulable: true,
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: ["channels:read"],
+            resources: [{ kind: "channel", id: "C012345" }],
+          }],
         }),
         true,
+      );
+    });
+
+    it("does not evaluate integration requirement accessors", () => {
+      let reads = 0;
+      const task = Object.defineProperties({}, {
+        run: { enumerable: true, value() {} },
+        integrationRequirements: {
+          enumerable: true,
+          get() {
+            reads++;
+            return [{ integration: "slack" }];
+          },
+        },
+      });
+
+      assertEquals(isTaskDefinition(task), false);
+      assertEquals(reads, 0);
+    });
+
+    it("rejects non-canonical integration requirement metadata", () => {
+      for (
+        const integrationRequirements of [
+          [{ integration: "Slack" }],
+          [{ integration: "slack" }, { integration: "slack" }],
+          [{ integration: "slack", requiredScopes: ["channels:read", "channels:read"] }],
+          [{ integration: "slack", resources: [{ kind: "Channel", id: "C012345" }] }],
+          [{
+            integration: "slack",
+            resources: [
+              { kind: "channel", id: "C012345" },
+              { kind: "channel", id: "C012345" },
+            ],
+          }],
+        ]
+      ) {
+        assertEquals(isTaskDefinition({ run() {}, integrationRequirements }), false);
+      }
+    });
+
+    it("registers detached immutable integration requirement metadata", () => {
+      const integrationRequirements = [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }];
+      const task = { run() {}, integrationRequirements };
+
+      const registered = taskHandler.register("sync", task, "tasks/sync.ts", "tasks");
+
+      integrationRequirements[0]!.requiredScopes[0] = "mutated";
+      integrationRequirements[0]!.resources[0]!.id = "mutated";
+
+      assertEquals(registered.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
+      assertEquals(Object.isFrozen(registered), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements![0]), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements![0]!.requiredScopes), true);
+      assertEquals(Object.isFrozen(registered.integrationRequirements![0]!.resources), true);
+      assertThrows(
+        () => registered.integrationRequirements!.push({ integration: "github" }),
+        TypeError,
       );
     });
   });
@@ -264,6 +368,134 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
     assertEquals(result.errors, []);
     assertEquals(result.tasks.map((task) => task.id), ["a-first", "z-last"]);
+  });
+
+  it("reports invalid integration requirement metadata during unified discovery", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-requirements-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/sync.ts`,
+        [
+          "export default {",
+          "  run() {},",
+          '  integrationRequirements: [{ integration: "Slack" }],',
+          "};",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.tasks.size, 0);
+      assertEquals(result.errors.length, 1);
+      assertEquals(
+        result.errors[0]?.error.message.includes(
+          "must use a lowercase integration identifier",
+        ),
+        true,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("reports accessor-backed task metadata without invoking the accessor", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-accessor-metadata-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/sync.ts`,
+        [
+          "export default {",
+          "  run() {},",
+          "  get integrationRequirements() {",
+          '    throw new Error("integrationRequirements accessor executed");',
+          "  },",
+          "};",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.tasks.size, 0);
+      assertEquals(result.errors.length, 1);
+      assertEquals(
+        result.errors[0]?.error.message.includes(
+          "integrationRequirements must be a data property",
+        ),
+        true,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("discovers class-instance tasks and preserves their run receiver", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-class-instance-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/stateful.ts`,
+        [
+          "class StatefulTask {",
+          '  prefix = "stateful";',
+          "  run() { return this.prefix; }",
+          "}",
+          "export default new StatefulTask();",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals([...result.tasks.keys()], ["stateful"]);
+      assertEquals(result.tasks.get("stateful")?.run({ env: {}, config: {} }), "stateful");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("does not treat Object.prototype.run pollution as a task export", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-prototype-pollution-" });
+    Object.defineProperty(Object.prototype, "run", {
+      configurable: true,
+      value: () => "polluted",
+    });
+
+    try {
+      assertEquals(isTaskDefinition({}), false);
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/config.ts`,
+        [
+          'export const config = { mode: "safe" };',
+          "export const helper = {};",
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals([...result.tasks.keys()], []);
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).run;
+      await Deno.remove(tempDir, { recursive: true });
+    }
   });
 
   it("rejects ambiguous legacy task ids across supported extensions", async () => {

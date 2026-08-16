@@ -37,6 +37,11 @@ describe("workflow()", () => {
       version: "1.0.0",
       timeout: "1h",
       retry: { maxAttempts: 3 },
+      integrationRequirements: [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }],
       steps: [],
     });
 
@@ -44,6 +49,11 @@ describe("workflow()", () => {
     assertEquals(wf.definition.version, "1.0.0");
     assertEquals(wf.definition.timeout, "1h");
     assertEquals(wf.definition.retry?.maxAttempts, 3);
+    assertEquals(wf.definition.integrationRequirements, [{
+      integration: "slack",
+      requiredScopes: ["channels:read"],
+      resources: [{ kind: "channel", id: "C012345" }],
+    }]);
   });
 
   it("should throw on missing id", () => {

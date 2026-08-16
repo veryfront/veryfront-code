@@ -1,5 +1,7 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
+import { captureScheduleIntegrationRequirementsConfig } from "#veryfront/schedule/validation.ts";
 import {
   MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES,
   MAX_WORKFLOW_DEFINITION_DEPTH,
@@ -28,6 +30,7 @@ const DEFINITION_KEYS = new Set([
   "version",
   "inputSchema",
   "outputSchema",
+  "integrationRequirements",
   "retry",
   "timeout",
   "introspect",
@@ -293,6 +296,18 @@ function assertString(
         ? `${label} must be a canonical non-empty string of at most ${maxLength} code units`
         : `${label} must be a string of at most ${maxLength} code units`,
     );
+  }
+}
+
+function captureIntegrationRequirements(
+  value: unknown,
+  workflowId: string,
+): ScheduleIntegrationRequirementConfig[] | undefined {
+  try {
+    return captureScheduleIntegrationRequirementsConfig(value);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "invalid integration metadata";
+    fail(`Workflow "${workflowId}" integrationRequirements is invalid: ${detail}`);
   }
 }
 
@@ -1059,6 +1074,10 @@ function captureDefinition<TInput, TOutput>(
   if (version !== undefined) {
     assertString(version, `Workflow "${id}" version`, MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS, true);
   }
+  const integrationRequirements = captureIntegrationRequirements(
+    fields.get("integrationRequirements"),
+    id,
+  );
   const timeout = fields.get("timeout");
   if (timeout !== undefined) {
     assertDurationValue(timeout, `Workflow "${id}" timeout`, true);
@@ -1100,6 +1119,7 @@ function captureDefinition<TInput, TOutput>(
       ...(fields.has("version") ? { version } : {}),
       ...(fields.has("inputSchema") ? { inputSchema: fields.get("inputSchema") } : {}),
       ...(fields.has("outputSchema") ? { outputSchema: fields.get("outputSchema") } : {}),
+      ...(fields.has("integrationRequirements") ? { integrationRequirements } : {}),
       ...(fields.has("retry") ? { retry } : {}),
       ...(fields.has("timeout") ? { timeout } : {}),
       ...(fields.has("introspect") ? { introspect } : {}),

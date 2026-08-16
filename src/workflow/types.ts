@@ -7,6 +7,7 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Agent } from "#veryfront/agent/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { WorkflowProjectionState } from "./runtime-state.ts";
@@ -287,6 +288,8 @@ export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
+  /** Explicit integration scopes and resources required by scheduled runs. */
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   retry?: RetryConfig;
   timeout?: string | number;
   introspect?: boolean;

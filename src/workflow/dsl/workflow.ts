@@ -5,6 +5,7 @@
  **************************/
 
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import type {
   RetryConfig,
   StepBuilderContext,
@@ -25,6 +26,8 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
+  /** Explicit integration scopes and resources required by scheduled runs. */
+  integrationRequirements?: ScheduleIntegrationRequirementConfig[];
   retry?: RetryConfig;
   timeout?: string | number;
   introspect?: boolean;
@@ -53,6 +56,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
     version: options.version,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
+    integrationRequirements: options.integrationRequirements,
     retry: options.retry,
     timeout: options.timeout,
     introspect: options.introspect,

@@ -1,4 +1,5 @@
 import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
@@ -31,6 +32,8 @@ export interface WorkflowMetadata {
   description?: string;
   version?: string;
   timeout?: string | number;
+  /** Explicit integration scopes and resources required by scheduled runs. */
+  integrationRequirements?: readonly ScheduleIntegrationRequirementConfig[];
   /** True when steps are defined dynamically via a function */
   dynamicSteps?: boolean;
   /** True when dynamic step introspection is disabled */
@@ -230,6 +233,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     description: definition.description,
     version: definition.version,
     timeout: definition.timeout,
+    integrationRequirements: definition.integrationRequirements,
     dynamicSteps,
     introspectionSkipped,
     introspectionError,
