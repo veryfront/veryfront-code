@@ -646,7 +646,7 @@ function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
 }
 ChatSidebarBase.displayName = "ChatSidebar";
 
-/** `ChatSidebar.Item` compound — the row plus its composable label + menu leaves. */
+/** `ChatSidebar.Item` compound: the row plus its composable label and menu leaves. */
 export type ChatSidebarItemComponent = typeof ChatSidebarItem & {
   Title: typeof ChatSidebarItemTitle;
   Menu: typeof ChatSidebarItemMenu;

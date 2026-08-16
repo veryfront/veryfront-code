@@ -258,7 +258,7 @@ describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
   });
 });
 
-describe("ChatSidebar.Item.Title — composable row label", () => {
+describe("ChatSidebar.Item.Title: composable row label", () => {
   it("exposes the Title leaf off the compound", () => {
     assert(typeof ChatSidebar.Item.Title === "function", "Item.Title is addressable");
   });
@@ -326,7 +326,7 @@ describe("ChatSidebar.Item.Title — composable row label", () => {
     assertEquals(
       html.split("More actions for Row title").length - 1,
       1,
-      "exactly one menu trigger renders — the composed Menu, not a second default",
+      "exactly one menu trigger renders, the composed Menu instead of a second default",
     );
     assert(html.includes(">Row title<"), "the composed Title still renders the label");
   });
