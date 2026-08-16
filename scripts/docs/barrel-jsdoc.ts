@@ -45,7 +45,25 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
     codeFence = null;
   };
 
+  const updateCodeFence = (line: string): void => {
+    const fenceMatch = line.match(/^( {0,3})(`{3,}|~{3,})(.*)$/);
+    if (!fenceMatch) return;
+    const fence = fenceMatch[2];
+    const marker = fence[0] as "`" | "~";
+    if (codeFence === null) {
+      codeFence = { marker, length: fence.length };
+    } else if (
+      marker === codeFence.marker &&
+      fence.length >= codeFence.length &&
+      fenceMatch[3].trim() === ""
+    ) {
+      codeFence = null;
+    }
+  };
+
   for (const line of lines) {
+    if (inExample || inRemarks) updateCodeFence(line);
+
     if (codeFence === null && line.startsWith("@module")) {
       moduleName = line.replace("@module", "").trim();
       inRemarks = false;
@@ -79,20 +97,6 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
 
     if (inExample) {
-      const fenceMatch = line.trimStart().match(/^(`{3,}|~{3,})(.*)$/);
-      if (fenceMatch) {
-        const fence = fenceMatch[1];
-        const marker = fence[0] as "`" | "~";
-        if (codeFence === null) {
-          codeFence = { marker, length: fence.length };
-        } else if (
-          marker === codeFence.marker &&
-          fence.length >= codeFence.length &&
-          fenceMatch[2].trim() === ""
-        ) {
-          codeFence = null;
-        }
-      }
       exampleLines.push(line);
     } else if (inRemarks) {
       remarkLines.push(line);

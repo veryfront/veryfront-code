@@ -125,6 +125,48 @@ describe("generate-api-reference", () => {
     assertEquals(parsed.remarks, "The example remains intact.");
   });
 
+  it("preserves JSDoc tags inside fenced remarks", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * @module example
+ * @remarks
+ * The literal tag stays in this example:
+ * ~~~md
+ * @example This is Markdown content
+ * ~~~
+ * @example Actual example
+ * ~~~ts
+ * export const value = true;
+ * ~~~
+ * @returns Nothing.
+ */`);
+
+    assertEquals(
+      parsed.remarks,
+      "The literal tag stays in this example:\n~~~md\n@example This is Markdown content\n~~~",
+    );
+    assertEquals(parsed.examples, [{
+      title: "Actual example",
+      code: "~~~ts\nexport const value = true;\n~~~",
+    }]);
+  });
+
+  it("does not close a fence on a delimiter indented by four spaces", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * @module example
+ * @example Nested Markdown
+ * ~~~md
+ *     ~~~
+ * @literal
+ * ~~~
+ * @returns Nothing.
+ */`);
+
+    assertEquals(parsed.examples, [{
+      title: "Nested Markdown",
+      code: "~~~md\n    ~~~\n@literal\n~~~",
+    }]);
+  });
+
   it("uses a safe Markdown code span for linked labels containing backticks", () => {
     const parsed = parseBarrelJSDoc(
       "/**\n * Uses {@link Example|C:\\path<T>`name}.\n */",
