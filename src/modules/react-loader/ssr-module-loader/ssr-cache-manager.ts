@@ -10,7 +10,9 @@
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import { computeConfigHashSync } from "#veryfront/cache/config-hash.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
@@ -49,13 +51,19 @@ export class SSRCacheManager {
   /** Lazily compute config hash once per manager instance. */
   getConfigHash(): string {
     if (!this.cachedConfigHash) {
-      this.cachedConfigHash = computeConfigHashSync({
+      const baseConfigHash = computeConfigHashSync({
         reactVersion: this.options.reactVersion,
         dev: this.options.dev,
         apiBaseUrl: this.options.apiBaseUrl,
         moduleServerOrigin: this.options.moduleServerOrigin,
         dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
       });
+      const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+        this.options.serverExternalPackages,
+      );
+      this.cachedConfigHash = serverExternalPackagesIdentity
+        ? `${baseConfigHash}:server-externals:${hashString(serverExternalPackagesIdentity)}`
+        : baseConfigHash;
     }
     return this.cachedConfigHash;
   }

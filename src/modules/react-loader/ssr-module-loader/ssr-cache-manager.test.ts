@@ -68,6 +68,43 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("separates SSR module cache identity by server external packages", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
+    const baseOptions = {
+      projectDir,
+      projectId: "project-a",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+    };
+
+    try {
+      const noExternals = new SSRCacheManager(baseOptions);
+      const externalReact = new SSRCacheManager({
+        ...baseOptions,
+        serverExternalPackages: ["react"],
+      });
+      const externalReactDom = new SSRCacheManager({
+        ...baseOptions,
+        serverExternalPackages: ["react", "react-dom"],
+      });
+      const reorderedExternals = new SSRCacheManager({
+        ...baseOptions,
+        serverExternalPackages: ["react-dom", "react"],
+      });
+
+      assertNotEquals(noExternals.getConfigHash(), externalReact.getConfigHash());
+      assertNotEquals(externalReact.getConfigHash(), externalReactDom.getConfigHash());
+      assertEquals(externalReactDom.getConfigHash(), reorderedExternals.getConfigHash());
+      assertNotEquals(
+        externalReact.getCacheKey("/project/pages/index.tsx"),
+        externalReactDom.getCacheKey("/project/pages/index.tsx"),
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("recovers missing vfmod dependencies for redis cache entries", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const distributedCache = new FakeDistributedCache();
