@@ -6,7 +6,7 @@
  * @remarks
  * ## Runtime boundary
  *
- * `veryfront/fs` uses the native process filesystem selected for Deno or Node.
+ * `veryfront/fs` uses the native process filesystem selected for Deno, Node, or Bun.
  * It does not delegate to the `runtime.get().fs` adapter. Custom adapters
  * configured with `runtime.set()` affect adapter-consuming APIs, not these
  * compatibility functions.
