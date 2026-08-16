@@ -150,6 +150,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
           `import value from "example-package"; export default function Page() { return value; }`,
         );
         let observedVersion: string | undefined;
+        let observedServerExternalPackages: readonly string[] | undefined;
         const observedOrigins: Array<string | undefined> = [];
         const Page = () => null;
         const renderer = {
@@ -164,9 +165,11 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
             runtimeAdapter: () => Promise.resolve(adapter),
             moduleLoader: (_source, _path, _projectDir, _adapter, options) => {
               observedVersion = options?.dependencyPinningDependencies?.["example-package"];
+              observedServerExternalPackages = options?.serverExternalPackages;
               observedOrigins.push(options?.moduleServerOrigin);
               return Promise.resolve({ default: Page });
             },
+            serverExternalPackages: ["knex"],
             reactVersion: (snapshot) => Promise.resolve(snapshot.dependencies?.react ?? "19.1.1"),
           },
         );
@@ -198,6 +201,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
           RSC_DEPENDENCY_PINNING_HEADER,
         );
         assertEquals(observedVersion, "1.0.0");
+        assertEquals(observedServerExternalPackages, ["knex"]);
         assertEquals(observedOrigins, [
           "https://preview-a.example",
           "https://preview-b.example",
@@ -275,7 +279,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       }
     });
 
-    it("threads trusted local-project identity into RSC MDX loading", async () => {
+    it("threads trusted project options into RSC MDX loading", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-local-mdx-" });
       await Deno.mkdir(`${projectDir}/app`, { recursive: true });
       await Deno.writeTextFile(`${projectDir}/app/page.mdx`, "# Local RSC page");
@@ -285,9 +289,11 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
         loadModuleESM: typeof mdxRenderer.loadModuleESM;
       };
       let observedIsLocalProject: unknown;
+      let observedServerExternalPackages: readonly string[] | undefined;
       mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
         const loadOptions = options as MDXLoadModuleOptions | undefined;
         observedIsLocalProject = loadOptions?.isLocalProject;
+        observedServerExternalPackages = loadOptions?.serverExternalPackages;
         return Promise.resolve({ default: () => null });
       };
 
@@ -304,6 +310,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
             projectSlug: "local-project",
             contentSourceId: "local-main",
             isLocalProject: true,
+            serverExternalPackages: ["knex"],
           },
         );
         await (handler as unknown as {
@@ -316,6 +323,7 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
         }).loadComponent("/", snapshot, "19.1.1", "http://localhost");
 
         assertEquals(observedIsLocalProject, true);
+        assertEquals(observedServerExternalPackages, ["knex"]);
       } finally {
         mutableRenderer.loadModuleESM = originalLoadModuleESM;
         await Deno.remove(projectDir, { recursive: true });

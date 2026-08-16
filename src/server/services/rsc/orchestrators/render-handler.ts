@@ -32,6 +32,7 @@ export interface RenderHandlerModuleOptions {
   projectId?: string;
   projectSlug?: string;
   contentSourceId?: string;
+  serverExternalPackages?: readonly string[];
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Server-trusted local-project identity for dev-only module-server fallback. */
   isLocalProject?: boolean;
@@ -162,6 +163,7 @@ export class RenderHandler {
         projectSlug: this.moduleOptions.projectSlug,
         contentSourceId: this.moduleOptions.contentSourceId,
         reactVersion,
+        serverExternalPackages: this.moduleOptions.serverExternalPackages,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,
         dependencyPinningDependencies: dependencySnapshot.dependencies,
         dependencyPinningSource: this.moduleOptions.dependencyPinningSource,
@@ -188,6 +190,7 @@ export class RenderHandler {
       dev: this.mode === "development",
       mode: this.mode === "development" ? "preview" : "production",
       reactVersion,
+      serverExternalPackages: this.moduleOptions.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource: this.moduleOptions.dependencyPinningSource,

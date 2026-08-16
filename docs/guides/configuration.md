@@ -90,9 +90,16 @@ defineConfig({
   build: {
     outDir: "dist", // Output directory
     trailingSlash: false, // Add trailing slashes to URLs
+    serverExternalPackages: ["knex", "@prisma/client"],
   },
 });
 ```
+
+Use `serverExternalPackages` for npm packages that must run only on the server,
+such as database, cache, or messaging clients. Veryfront leaves these imports
+external so the runtime resolves the installed package instead of sending it
+through the browser module CDN. Use package roots only. Do not include versions
+or subpaths.
 
 ### Layout
 

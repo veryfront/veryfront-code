@@ -246,6 +246,7 @@ export function runPipeline(
             projectDir,
             importMapFingerprint,
             dependencyPinningCacheKey,
+            serverExternalPackages: ctx.serverExternalPackages,
             customPlugins: pluginCacheIdentity.identity,
           }),
           computeDepsHashSafe(

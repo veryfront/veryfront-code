@@ -314,6 +314,7 @@ export class LayoutApplicator {
           this.dependencyPinningDependencies,
           this.dependencyPinningSource,
           this.requestUrl?.origin,
+          this.config,
         );
       },
       {
@@ -438,6 +439,7 @@ export class LayoutApplicator {
                 dependencyPinningCacheKey: this.dependencyPinningCacheKey,
                 dependencyPinningDependencies: this.dependencyPinningDependencies,
                 dependencyPinningSource: this.dependencyPinningSource,
+                serverExternalPackages: this.config?.build?.serverExternalPackages,
               },
             );
           }
@@ -494,6 +496,7 @@ export class LayoutApplicator {
           dependencyPinningCacheKey: this.dependencyPinningCacheKey,
           dependencyPinningDependencies: this.dependencyPinningDependencies,
           dependencyPinningSource: this.dependencyPinningSource,
+          serverExternalPackages: this.config?.build?.serverExternalPackages,
         },
       );
     } catch (error) {

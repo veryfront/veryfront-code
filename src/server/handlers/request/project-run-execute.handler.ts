@@ -1145,6 +1145,7 @@ async function executeReleaseAssetBuildRun(input: {
           ssr: options.ssr,
           studioEmbed: false,
           reactVersion: options.reactVersion,
+          serverExternalPackages: releaseConfig.build?.serverExternalPackages,
           dependencyPinningCacheKey: options.dependencyPinningSnapshot?.cacheKey,
           dependencyPinningDependencies: options.dependencyPinningSnapshot?.dependencies,
           dependencyPinningSource: options.dependencyPinningSource,

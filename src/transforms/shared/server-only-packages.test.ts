@@ -11,6 +11,14 @@ Deno.test("isServerOnlyPackage: strips an npm: prefix before matching", () => {
   assertEquals(isServerOnlyPackage("npm:redis"), true);
 });
 
+Deno.test("isServerOnlyPackage: recognizes configured package names", () => {
+  const configured = ["knex", "@prisma/client"];
+
+  assertEquals(isServerOnlyPackage("knex", configured), true);
+  assertEquals(isServerOnlyPackage("npm:knex", configured), true);
+  assertEquals(isServerOnlyPackage("@prisma/client", configured), true);
+});
+
 Deno.test("isServerOnlyPackage: leaves browser-safe packages alone", () => {
   for (const pkg of ["react", "react-dom", "zod", "lodash", "@tanstack/react-query"]) {
     assertEquals(isServerOnlyPackage(pkg), false, `${pkg} should not be server-only`);

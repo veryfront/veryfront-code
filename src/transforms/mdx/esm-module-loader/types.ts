@@ -17,6 +17,8 @@ export interface ESMLoaderContext {
   isLocalProject?: boolean;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;
   /** Request-scoped dependency-pinning state used to isolate module caches. */
@@ -84,6 +86,8 @@ export interface ModuleFetcherContext {
   moduleGraph?: Set<string>;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;
   /** Request-scoped dependency-pinning state used to isolate module caches. */

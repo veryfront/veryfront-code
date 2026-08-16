@@ -434,6 +434,56 @@ describe("ComponentRegistry logic", () => {
       assertEquals(seenOrigins, ["https://a.example", "https://b.example"]);
     });
 
+    it("isolates component maps by the server external package set", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/Button.tsx",
+        "export default function Button() { return null; }",
+      );
+      const seenPackages: string[] = [];
+      const registry = new ComponentRegistry(
+        { registerModule: () => Promise.resolve() } as unknown as VirtualModuleSystem,
+        3001,
+        adapter,
+        undefined,
+        undefined,
+        "project-id",
+        "branch:main",
+        (_source, _filePath, _projectDir, _adapter, options) => {
+          const packages = options?.serverExternalPackages?.join(",") ?? "baseline";
+          seenPackages.push(packages);
+          const Component: React.ComponentType<Record<string, unknown>> = () => null;
+          Component.displayName = `Button(${packages})`;
+          return Promise.resolve(Component);
+        },
+      );
+
+      await registry.loadFromDirectory("/project/components", true);
+      const baseline = await registry.prepareDependencySnapshot("off");
+      const combined = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        ["knex", "@prisma/client"],
+      );
+      const reordered = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        ["@prisma/client", "knex"],
+      );
+
+      assertEquals(combined === baseline, false);
+      assertEquals(reordered, combined);
+      assertEquals(
+        registry.getAllAsComponents(combined).Button?.displayName,
+        "Button(knex,@prisma/client)",
+      );
+      assertEquals(seenPackages, ["baseline", "knex,@prisma/client"]);
+    });
+
     it("bounds retained dependency snapshots and evicts the least recently used map", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(

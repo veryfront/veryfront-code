@@ -24,6 +24,7 @@ describe("module-fetcher/source-transform", () => {
       normalizedPath: "_vf_modules/app/page.tsx",
       projectSlug: "docs",
       reactVersion: "19.1.1",
+      serverExternalPackages: ["knex"],
       moduleServerOrigin: "https://preview.example",
       dependencyPinningCacheKey: "on:pins",
       adapter,
@@ -43,6 +44,7 @@ describe("module-fetcher/source-transform", () => {
           dev: true,
           ssr: true,
           reactVersion: "19.1.1",
+          serverExternalPackages: ["knex"],
           moduleServerOrigin: "https://preview.example",
           dependencyPinningCacheKey: "on:pins",
         });
@@ -57,6 +59,7 @@ describe("module-fetcher/source-transform", () => {
         calls.push("cacheHttpImportsToLocal");
         assertEquals(code, `import React from "https://esm.sh/react";\nexport default React;`);
         assertEquals(options.reactVersion, "19.1.1");
+        assertEquals(options.serverExternalPackages, ["knex"]);
         return Promise.resolve({
           code: `import React from "file:///cache/react.mjs";\nexport default React;`,
         });

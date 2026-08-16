@@ -592,6 +592,28 @@ describe("transforms/esm/specifier-resolver", () => {
       }
     });
 
+    it("leaves configured server external packages out of the HTTP cache graph", async () => {
+      for (const specifier of ["knex", "npm:knex@3.1.0", "@prisma/client/runtime/library"]) {
+        const code = `export const load = () => import(${JSON.stringify(specifier)});`;
+        let cacheCalls = 0;
+        const result = await buildReplacements(
+          code,
+          "https://esm.sh/parent@1/index.js",
+          {
+            ...defaultOptions,
+            serverExternalPackages: ["knex", "@prisma/client"],
+          },
+          async () => {
+            cacheCalls++;
+            return null;
+          },
+        );
+
+        assertEquals(cacheCalls, 0, `${specifier} must not hit esm.sh`);
+        assertEquals(result.replacements.size, 0, `${specifier} must be left in place`);
+      }
+    });
+
     it("aborts when a dynamic bare specifier fails to resolve", async () => {
       const code = `export const load = () => import("some-package");`;
       await assertRejects(

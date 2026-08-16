@@ -679,4 +679,47 @@ describe("rendering/layouts/utils/component-loader", () => {
     assertEquals(requestedKeys[1], requestedKeys[0]);
     assertEquals(requestedKeys[0]?.includes(":pins:"), false);
   });
+
+  it("isolates the TSX layout cache by the server external package set", async () => {
+    function CachedLayout() {
+      return null;
+    }
+    const requestedKeys: string[] = [];
+    const cache = {
+      get(key: string) {
+        requestedKeys.push(key);
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+    const common = [
+      "/project/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-id",
+      "project-slug",
+      "preview-main",
+      "19.1.1",
+      undefined,
+      "off",
+      undefined,
+      undefined,
+      undefined,
+    ] as const;
+
+    await loadTSXComponent(...common);
+    await loadTSXComponent(...common, ["knex", "@prisma/client"]);
+    await loadTSXComponent(...common, ["@prisma/client", "knex"]);
+
+    assertEquals(requestedKeys[0] === requestedKeys[1], false);
+    assertEquals(requestedKeys[2], requestedKeys[1]);
+  });
 });

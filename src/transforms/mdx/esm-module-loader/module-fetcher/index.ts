@@ -285,6 +285,7 @@ async function doFetchAndCacheModule(
     effectiveReactVersion,
     dependencyPinningCacheKey,
     moduleServerOrigin,
+    context.serverExternalPackages,
   );
   const cachedPath = await readValidCachedModulePath({
     normalizedPath,
@@ -317,6 +318,7 @@ async function doFetchAndCacheModule(
         reactVersion: effectiveReactVersion,
         dependencyPinningCacheKey,
         moduleServerOrigin,
+        serverExternalPackages: context.serverExternalPackages,
         parentModulePath,
       });
     }
@@ -341,6 +343,7 @@ async function doFetchAndCacheModule(
         contentHash,
         dependencyPinningCacheKey,
         moduleServerOrigin,
+        context.serverExternalPackages,
       )
       : null;
 
@@ -360,6 +363,7 @@ async function doFetchAndCacheModule(
         projectDir,
         effectiveReactVersion,
         log,
+        context.serverExternalPackages,
       )
       : null;
     if (distResult?.code) {
@@ -375,6 +379,7 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         reactVersion: context.reactVersion,
+        serverExternalPackages: context.serverExternalPackages,
         moduleServerOrigin,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: context.dependencyPinningDependencies,
@@ -409,6 +414,7 @@ async function doFetchAndCacheModule(
       reactVersion: effectiveReactVersion,
       dependencyPinningCacheKey,
       moduleServerOrigin,
+      serverExternalPackages: context.serverExternalPackages,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
@@ -446,6 +452,7 @@ export function createModuleFetcherContext(
     dependencyPinningCacheKey?: string;
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     dependencyPinningSource?: ModuleFetcherContext["dependencyPinningSource"];
+    serverExternalPackages?: readonly string[];
     logger?: Logger;
     strictMissingModules?: boolean;
   },

@@ -164,6 +164,44 @@ describe("rendering/component-handling", () => {
     ]);
   });
 
+  it("caches client bundle transforms by the configured server external package set", async () => {
+    let transformCalls = 0;
+    const deps = {
+      transformToESM: (
+        _source: string,
+        _filePath: string,
+        _projectDir: string,
+        _adapter: RuntimeAdapter,
+        options: { serverExternalPackages?: readonly string[] },
+      ) => {
+        transformCalls++;
+        return Promise.resolve(options.serverExternalPackages?.join(",") ?? "baseline");
+      },
+    };
+    const bundle = (serverExternalPackages?: readonly string[]) =>
+      bundleComponentForClient(
+        "export default function Page() { return null; }",
+        "/project/app/server-external-identity.tsx",
+        "/project",
+        {} as RuntimeAdapter,
+        "https://modules.example.test",
+        "project-server-external-identity",
+        "19.1.0",
+        deps,
+        undefined,
+        "off",
+        undefined,
+        undefined,
+        serverExternalPackages,
+      );
+
+    assertEquals(await bundle(), "baseline");
+    assertEquals(await bundle(["knex"]), "knex");
+    assertEquals(await bundle(["knex", "@prisma/client"]), "knex,@prisma/client");
+    assertEquals(await bundle(["@prisma/client", "knex"]), "knex,@prisma/client");
+    assertEquals(transformCalls, 3);
+  });
+
   it("keeps mainline off identity and isolates enabled snapshots and origins", async () => {
     const transformed: string[] = [];
     const deps = {

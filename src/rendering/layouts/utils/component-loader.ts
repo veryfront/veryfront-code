@@ -26,6 +26,8 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
@@ -262,6 +264,7 @@ export async function loadTSXComponent(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<BundledReact.ComponentType> {
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
@@ -277,7 +280,13 @@ export async function loadTSXComponent(
     dependencySnapshot.cacheKey,
     moduleServerOrigin,
   );
-  const cacheKey = cacheVariant ? `${legacyCacheKey}:pins:${cacheVariant}` : legacyCacheKey;
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    serverExternalPackages,
+  );
+  let cacheKey = cacheVariant ? `${legacyCacheKey}:pins:${cacheVariant}` : legacyCacheKey;
+  if (serverExternalPackagesIdentity) {
+    cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
+  }
 
   const cached = cache.get(cacheKey);
   if (cached) return cached;
@@ -300,6 +309,7 @@ export async function loadTSXComponent(
           ssr: true,
           contentSourceId,
           reactVersion,
+          serverExternalPackages,
           moduleServerOrigin,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
@@ -385,6 +395,7 @@ export function loadMDXLayout(
         dependencyPinningSource,
         moduleServerOrigin,
         isLocalProject,
+        serverExternalPackages: config?.build?.serverExternalPackages,
       })) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
@@ -451,6 +462,7 @@ export async function applyTSXLayout(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -479,6 +491,7 @@ export async function applyTSXLayout(
       dependencyPinningDependencies,
       dependencyPinningSource,
       moduleServerOrigin,
+      serverExternalPackages,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {

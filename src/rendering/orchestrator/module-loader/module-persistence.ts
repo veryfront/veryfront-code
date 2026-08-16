@@ -77,6 +77,7 @@ export interface PersistTransformedModuleInput {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
+  serverExternalPackages?: readonly string[];
   /** Tenant-authored imports left unresolved in this module subtree. */
   unresolvedSpecifiers?: readonly string[];
   /**
@@ -543,6 +544,7 @@ export async function persistTransformedModule(
   const cacheVariant = buildModuleTransformCacheVariant(
     input.dependencyPinningCacheKey,
     input.moduleServerOrigin,
+    input.serverExternalPackages,
   );
   const outputRelativePath = cacheVariant
     ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
@@ -611,6 +613,7 @@ export async function persistTransformedModule(
       buildModuleTransformCacheVariant(
         input.dependencyPinningCacheKey,
         input.moduleServerOrigin,
+        input.serverExternalPackages,
       ),
     );
     const cache = await getModulePathCache(input.tmpDir);

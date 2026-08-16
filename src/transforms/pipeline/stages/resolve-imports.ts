@@ -47,6 +47,7 @@ async function buildRewriteContext(ctx: TransformContext): Promise<RewriteContex
     vendorBundleHash: ctx.vendorBundleHash,
     apiBaseUrl: ctx.apiBaseUrl,
     reactVersion: ctx.reactVersion,
+    serverExternalPackages: ctx.serverExternalPackages,
     dependencyPinningCacheKey: ctx.dependencyPinningCacheKey,
     dependencyPinningDependencies: ctx.dependencyPinningDependencies,
     dependencyPinningSource: ctx.dependencyPinningSource,

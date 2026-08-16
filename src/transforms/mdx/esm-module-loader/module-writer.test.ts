@@ -96,6 +96,37 @@ describe("MDX root module cache identity", () => {
     assertEquals(originA.compositeKey === originB.compositeKey, false);
   });
 
+  it("isolates root modules by the configured server external package set", async () => {
+    const code = "export const value = 1;";
+    const baseline = await buildMdxModuleCacheIdentity(
+      "/cache/mdx",
+      "project-id",
+      "19.1.1",
+      code,
+    );
+    const combined = await buildMdxModuleCacheIdentity(
+      "/cache/mdx",
+      "project-id",
+      "19.1.1",
+      code,
+      "off",
+      undefined,
+      ["knex", "@prisma/client"],
+    );
+    const reordered = await buildMdxModuleCacheIdentity(
+      "/cache/mdx",
+      "project-id",
+      "19.1.1",
+      code,
+      "off",
+      undefined,
+      ["@prisma/client", "knex"],
+    );
+
+    assertEquals(combined.namespaceKey === baseline.namespaceKey, false);
+    assertEquals(reordered, combined);
+  });
+
   it("pins a top-level same-origin absolute module before strict SSR fetching", async () => {
     const modulePath = `/_vf_modules/StrictChild-${crypto.randomUUID()}.js`;
     const dependencies = {};

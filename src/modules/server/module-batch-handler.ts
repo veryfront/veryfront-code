@@ -55,6 +55,8 @@ import {
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 const logger = serverLogger.component("module-batch");
 const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
@@ -101,17 +103,24 @@ export function buildBatchTransformCacheKey(
   contentSourceIdentity: string,
   sourceContentHash: string,
   moduleServerOrigin: string,
+  serverExternalPackages?: readonly string[],
 ): string {
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    serverExternalPackages,
+  );
+  const scopedProjectKey = serverExternalPackagesIdentity
+    ? `${projectKey}:server-externals:${hashString(serverExternalPackagesIdentity)}`
+    : projectKey;
   const cacheVariant = buildDependencyPinningCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
   );
   if (!cacheVariant) {
-    return buildModuleTransformCacheKey(projectKey, modulePath, isSSR);
+    return buildModuleTransformCacheKey(scopedProjectKey, modulePath, isSSR);
   }
 
   return buildModuleTransformCacheKey(
-    `${projectKey}:source:${
+    `${scopedProjectKey}:source:${
       encodeURIComponent(contentSourceIdentity)
     }:pins:${cacheVariant}:content:${sourceContentHash}`,
     modulePath,
@@ -313,6 +322,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
               contentSourceIdentity,
               sourceContentHash,
               url.origin,
+              config?.build?.serverExternalPackages,
             );
             if (canUseTransformCache) {
               const cachedCode = transformCache.get(cacheKey);
@@ -344,6 +354,7 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
                 dependencyPinningDependencies: dependencySnapshot.dependencies,
                 dependencyPinningSource: dependencySource,
                 moduleServerOrigin: url.origin,
+                serverExternalPackages: config?.build?.serverExternalPackages,
               },
             );
             const transformDurationMs = performance.now() - moduleStart;
@@ -506,6 +517,7 @@ async function transformModule(
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     dependencyPinningSource?: DependencyPinningSourceInput;
     moduleServerOrigin: string;
+    serverExternalPackages?: readonly string[];
   },
 ): Promise<string> {
   return transformModuleToServable({
@@ -526,6 +538,7 @@ async function transformModule(
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       dependencyPinningDependencies: options.dependencyPinningDependencies,
       dependencyPinningSource: options.dependencyPinningSource,
+      serverExternalPackages: options.serverExternalPackages,
     },
     isSSR: options.ssr,
     ssrRewriteOptions: options.ssr

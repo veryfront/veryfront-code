@@ -314,6 +314,7 @@ export class RenderPipeline {
       moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
         ? options?.url?.origin
         : undefined,
+      serverExternalPackages: this.config.config?.build?.serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,

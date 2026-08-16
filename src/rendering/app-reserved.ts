@@ -92,6 +92,7 @@ export async function loadReservedWithPath(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
@@ -109,6 +110,7 @@ export async function loadReservedWithPath(
           dev: true,
           contentSourceId,
           reactVersion,
+          serverExternalPackages,
           moduleServerOrigin,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -139,6 +141,7 @@ export async function tryLoadReservedInDirs(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -153,6 +156,7 @@ export async function tryLoadReservedInDirs(
     dependencyPinningDependencies,
     dependencyPinningSource,
     moduleServerOrigin,
+    serverExternalPackages,
   );
   return loaded?.component ?? null;
 }

@@ -32,15 +32,22 @@ describe(
         expect(handler).toBeDefined();
       });
 
-      it("passes the trusted local-project identity to the render handler", () => {
+      it("passes project module options to the render handler", () => {
         const localHandler = new RSCDevServerHandler("/tmp/test-project", {
           isLocalProject: true,
+          config: { build: { serverExternalPackages: ["knex"] } },
         });
-        const isLocalProject = (localHandler as unknown as {
-          renderHandler: { moduleOptions: { isLocalProject?: boolean } };
-        }).renderHandler.moduleOptions.isLocalProject;
+        const moduleOptions = (localHandler as unknown as {
+          renderHandler: {
+            moduleOptions: {
+              isLocalProject?: boolean;
+              serverExternalPackages?: readonly string[];
+            };
+          };
+        }).renderHandler.moduleOptions;
 
-        expect(isLocalProject).toBe(true);
+        expect(moduleOptions.isLocalProject).toBe(true);
+        expect(moduleOptions.serverExternalPackages).toEqual(["knex"]);
       });
     });
 

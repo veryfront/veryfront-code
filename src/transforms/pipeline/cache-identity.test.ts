@@ -321,6 +321,23 @@ describe("transform pipeline cache identity", () => {
     assertNotEquals(changed, baseline);
   });
 
+  it("partitions transforms by the configured server external package set", async () => {
+    const baseline = await computePipelineConfigIdentity(identityInput());
+    const knex = await computePipelineConfigIdentity(
+      identityInput({ serverExternalPackages: ["knex"] }),
+    );
+    const prismaAndKnex = await computePipelineConfigIdentity(
+      identityInput({ serverExternalPackages: ["@prisma/client", "knex"] }),
+    );
+    const reordered = await computePipelineConfigIdentity(
+      identityInput({ serverExternalPackages: ["knex", "@prisma/client"] }),
+    );
+
+    assertNotEquals(knex, baseline);
+    assertNotEquals(prismaAndKnex, knex);
+    assertEquals(reordered, prismaAndKnex);
+  });
+
   it("keeps ill-formed Unicode distinct from replacement characters", async () => {
     const loneSurrogate = await computePipelineConfigIdentity(
       identityInput({ projectDir: "\ud800" }),

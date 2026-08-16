@@ -21,6 +21,8 @@ export interface TransformOptions {
   studioEmbed?: boolean;
   /** React version for transforms (from project config, defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Immutable import-map snapshot already selected for this render. */
   preloadedImportMap?: ImportMapConfig;
   /** Adapter used to load and cache the project import map before SSR cache identity. */

@@ -16,6 +16,8 @@ export interface LoadComponentOptions {
   contentSourceId?: string;
   /** React version for transforms (from project config) */
   reactVersion?: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Internal stable flag + package dependency-map key for cache isolation. */
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */

@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { getModuleCacheKey, resolveCachedModulePath } from "./module-cache-lookup.ts";
+import {
+  buildModuleTransformCacheVariant,
+  getModuleCacheKey,
+  resolveCachedModulePath,
+} from "./module-cache-lookup.ts";
 
 async function withCachedFile<T>(
   content: string,
@@ -84,6 +88,33 @@ describe("module-loader/module-cache-lookup", () => {
 
     assertEquals(originA === originB, false);
     assertEquals(flagOffWithOrigin, flagOff);
+  });
+
+  it("isolates module paths by the configured server external package set", () => {
+    const base = [
+      "/project/app/page.tsx",
+      "project-id",
+      "/project",
+      "source-id",
+      "19.0.0",
+      "production",
+      "off",
+      undefined,
+    ] as const;
+    const baseline = getModuleCacheKey(...base);
+    const knex = getModuleCacheKey(...base, ["knex"]);
+    const combined = getModuleCacheKey(...base, ["knex", "@prisma/client"]);
+    const reordered = getModuleCacheKey(...base, ["@prisma/client", "knex"]);
+
+    assertEquals(knex === baseline, false);
+    assertEquals(combined === knex, false);
+    assertEquals(reordered, combined);
+    assertEquals(
+      buildModuleTransformCacheVariant("off", undefined, ["knex"])?.startsWith(
+        "on:server-externals-",
+      ),
+      true,
+    );
   });
 
   it("returns a valid in-memory cached module path", async () => {

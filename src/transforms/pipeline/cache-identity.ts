@@ -3,6 +3,7 @@ import { computeConfigHash } from "#veryfront/cache/config-hash.ts";
 import { fingerprintImportMap } from "../esm/http-cache-helpers.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { TransformPlugin } from "./types.ts";
+import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
 
 const MAX_IMPORT_MAP_ENTRIES = 20_000;
 const MAX_IDENTITY_STRING_BYTES = 64 * 1024;
@@ -450,6 +451,7 @@ export interface PipelineConfigIdentityInput {
   apiBaseUrl?: string;
   importMapFingerprint?: string;
   dependencyPinningCacheKey?: string;
+  serverExternalPackages?: readonly string[];
   customPlugins: ReadonlyArray<readonly [number, string, number, string]>;
 }
 
@@ -533,6 +535,26 @@ export async function computePipelineConfigIdentity(
   identity += `api=${encodeIdentityPrimitive(apiBaseUrl)};`;
   identity += `import-map=${encodeIdentityPrimitive(importMapFingerprint)};`;
   identity += `dependency-pins=${encodeIdentityPrimitive(dependencyPinningCacheKey)};`;
+  const serverExternalPackages = readOwnDataProperty(
+    input,
+    "serverExternalPackages",
+    "Transform pipeline identity",
+  );
+  if (serverExternalPackages !== undefined) {
+    if (!ArrayIsArray(serverExternalPackages)) {
+      throw new IntrinsicTypeError("Server external packages must be an array");
+    }
+    const canonical = canonicalizeServerExternalPackages(
+      serverExternalPackages as readonly string[],
+    );
+    if (canonical) {
+      identity += "server-externals=";
+      for (let index = 0; index < canonical.length; index++) {
+        identity += `${encodeIdentityPrimitive(canonical[index]!)},`;
+      }
+      identity += ";";
+    }
+  }
   identity += `plugins=${customPlugins}`;
   return computeHash(identity);
 }
