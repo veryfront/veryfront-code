@@ -216,6 +216,52 @@ describe("listTestFiles treats ** as a globstar only as a complete segment", () 
   }
 });
 
+describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
+  // `rg` is the oracle for this case, not node:fs glob, because `rg` is what
+  // runs when it is installed — the fallback exists to reproduce its
+  // selection. Verified directly against rg 14:
+  //   rg --files -g "*.test.*" src        -> includes src/.smoke.test.ts
+  //   rg --files -g "src/**/*.test.ts"    -> includes src/.smoke.test.ts
+  //   rg --files -g "src/**/*.test.ts"    -> OMITS  src/.fixtures/x.test.ts
+  // `-g/--glob` "always overrides any other ignore logic", so a dot-prefixed
+  // *file* is matched while a hidden *directory* is still pruned. node:fs glob
+  // excludes both, so the globSync-pinned suite below cannot cover this.
+  const DOTFILE_TREE = [
+    "src/a.test.ts",
+    "src/.smoke.test.ts",
+    "src/.fixtures/skipped.test.ts",
+    "src/nested/b.test.ts",
+  ];
+
+  it("keeps a dot-prefixed file matched by a glob pattern", () => {
+    withFixture(DOTFILE_TREE, (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root), root),
+        ["src/.smoke.test.ts", "src/a.test.ts", "src/nested/b.test.ts"],
+      );
+    });
+  });
+
+  it("keeps a dot-prefixed file under a directory pattern", () => {
+    withFixture(DOTFILE_TREE, (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesWithoutRipgrep(["src"], root), root),
+        ["src/.smoke.test.ts", "src/a.test.ts", "src/nested/b.test.ts"],
+      );
+    });
+  });
+
+  it("still prunes a hidden directory", () => {
+    withFixture(DOTFILE_TREE, (root) => {
+      const selected = relativeSorted(
+        listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root),
+        root,
+      );
+      deepStrictEqual(selected.includes("src/.fixtures/skipped.test.ts"), false);
+    });
+  });
+});
+
 describe("listTestFiles agrees with the platform glob", () => {
   // `node:fs` globSync is the reference implementation: ripgrep's `-g` returns
   // the same set for these patterns, and pinning against a built-in keeps the

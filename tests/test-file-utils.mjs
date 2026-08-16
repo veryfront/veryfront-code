@@ -85,11 +85,14 @@ function globToRegex(glob) {
 function walk(dir, onFile) {
   const entries = readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
-    // `rg` skips hidden entries unless `--hidden` is passed, and node:fs glob
-    // skips them too. The fallback has to match, or the selected test set
-    // depends on whether ripgrep happens to be installed — which is the exact
-    // class of divergence this module is being fixed for.
-    if (entry.name.startsWith(".")) continue;
+    // `rg` is the reference here, because `rg` is what runs when it is
+    // installed; the fallback exists to reproduce its selection when it is
+    // not. It treats the two cases differently, verified directly:
+    //   hidden directory  -> skipped   (src/.fixtures/x.test.ts is omitted)
+    //   dot-prefixed file -> INCLUDED  (src/.smoke.test.ts is returned)
+    // because `-g/--glob` "always overrides any other ignore logic". Note
+    // node:fs glob excludes both, so it is the wrong oracle for dot-files.
+    if (entry.isDirectory() && entry.name.startsWith(".")) continue;
     const fullPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       walk(fullPath, onFile);
@@ -127,19 +130,22 @@ function listWithFallback(patterns, cwd) {
     if (!pattern) continue;
     const absolute = resolve(cwd, pattern);
     if (!hasGlob(pattern)) {
+      // Base lookup guarded; the traversal is not, for the same reason as
+      // `listTestFiles` — a descendant vanishing mid-walk must not be read as
+      // "this path does not exist".
+      let stats;
       try {
-        const stats = statSync(absolute);
-        if (stats.isDirectory()) {
-          walk(absolute, (file) => {
-            if (TEST_FILE_RE.test(file)) files.add(file);
-          });
-        } else if (stats.isFile() && TEST_FILE_RE.test(absolute)) {
-          files.add(absolute);
-        }
+        stats = statSync(absolute);
       } catch (error) {
-        // Same rule as the glob branch below: a missing path contributes
-        // nothing, anything else propagates.
         if (!isMissingPathError(error)) throw error;
+        continue;
+      }
+      if (stats.isDirectory()) {
+        walk(absolute, (file) => {
+          if (TEST_FILE_RE.test(file)) files.add(file);
+        });
+      } else if (stats.isFile() && TEST_FILE_RE.test(absolute)) {
+        files.add(absolute);
       }
       continue;
     }
@@ -189,26 +195,28 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
       continue;
     }
 
+    // Only the base lookup is guarded. Wrapping the traversal too would
+    // re-swallow an `ENOENT` raised *inside* `walk` — a descendant removed
+    // between `readdirSync` calls — and silently drop the directory's whole
+    // contribution, which the glob branch above already avoids.
+    let stats;
     try {
-      const stats = statSync(absolute);
-      if (stats.isFile()) {
-        if (TEST_FILE_RE.test(absolute)) files.add(absolute);
-        continue;
-      }
-      if (stats.isDirectory()) {
-        const matches = runRg(["--files", "-g", "*.test.*", absolute], cwd);
-        if (matches) {
-          for (const match of matches) files.add(resolve(cwd, match));
-        } else {
-          for (const file of listWithFallback([absolute], cwd)) files.add(file);
-        }
-      }
+      stats = statSync(absolute);
     } catch (error) {
-      // Same rule as `listWithFallback`: a missing path contributes nothing,
-      // anything else propagates. A broad catch here also swallowed the
-      // rethrow from the `listWithFallback` call above, so a directory with an
-      // unreadable descendant was silently omitted.
       if (!isMissingPathError(error)) throw error;
+      continue;
+    }
+    if (stats.isFile()) {
+      if (TEST_FILE_RE.test(absolute)) files.add(absolute);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      const matches = runRg(["--files", "-g", "*.test.*", absolute], cwd);
+      if (matches) {
+        for (const match of matches) files.add(resolve(cwd, match));
+      } else {
+        for (const file of listWithFallback([absolute], cwd)) files.add(file);
+      }
     }
   }
 
