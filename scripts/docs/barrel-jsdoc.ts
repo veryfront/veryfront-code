@@ -1,0 +1,124 @@
+export interface BarrelJSDoc {
+  description: string;
+  moduleName: string;
+  remarks: string;
+  examples: Array<{ title: string; code: string }>;
+}
+
+const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
+  description: "",
+  moduleName: "",
+  remarks: "",
+  examples: [],
+};
+
+export function parseBarrelJSDoc(content: string): BarrelJSDoc {
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith("/**")) {
+    return EMPTY_BARREL_JSDOC;
+  }
+
+  const endIdx = trimmed.indexOf("*/");
+  if (endIdx === -1) {
+    return EMPTY_BARREL_JSDOC;
+  }
+
+  const block = trimmed.slice(3, endIdx);
+  const lines = block.split("\n").map((line) => line.replace(/^\s*\*\s?/, ""));
+
+  let moduleName = "";
+  const descLines: string[] = [];
+  const remarkLines: string[] = [];
+  const examples: Array<{ title: string; code: string }> = [];
+  let inExample = false;
+  let inRemarks = false;
+  let exampleTitle = "";
+  let exampleLines: string[] = [];
+  let inCodeBlock = false;
+
+  const finishExample = (): void => {
+    if (exampleLines.length > 0) {
+      examples.push({ title: exampleTitle, code: exampleLines.join("\n") });
+    }
+    exampleTitle = "";
+    exampleLines = [];
+  };
+
+  for (const line of lines) {
+    if (!inCodeBlock && line.startsWith("@module")) {
+      moduleName = line.replace("@module", "").trim();
+      inRemarks = false;
+      continue;
+    }
+
+    if (!inCodeBlock && line.startsWith("@remarks")) {
+      finishExample();
+      inExample = false;
+      inRemarks = true;
+      const inlineRemarks = line.replace("@remarks", "").trim();
+      if (inlineRemarks) remarkLines.push(inlineRemarks);
+      continue;
+    }
+
+    if (!inCodeBlock && line.startsWith("@example")) {
+      finishExample();
+      exampleTitle = line.replace("@example", "").trim();
+      exampleLines = [];
+      inExample = true;
+      inRemarks = false;
+      inCodeBlock = false;
+      continue;
+    }
+
+    if (!inCodeBlock && line.startsWith("@")) {
+      finishExample();
+      inExample = false;
+      inRemarks = false;
+      continue;
+    }
+
+    if (inExample) {
+      if (line.startsWith("```")) {
+        inCodeBlock = !inCodeBlock;
+      }
+      exampleLines.push(line);
+    } else if (inRemarks) {
+      remarkLines.push(line);
+    } else if (!moduleName || descLines.length > 0 || line.trim()) {
+      if (!line.startsWith("@")) {
+        descLines.push(line);
+      }
+    }
+  }
+
+  finishExample();
+
+  const description = normalizePublicDocText(
+    descLines.join(" ").replace(/\s+/g, " ").trim(),
+  );
+  const remarks = remarkLines.join("\n").trim();
+  return { description, moduleName, remarks, examples };
+}
+
+export function normalizePublicDocText(text: string): string {
+  const withoutInlineJsDocLinks = text.replace(
+    /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
+    (_match, rawTarget: string) => {
+      const target = rawTarget.trim();
+      const pipeIndex = target.indexOf("|");
+      const display = pipeIndex >= 0
+        ? target.slice(pipeIndex + 1).trim()
+        : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
+      return `\`${display.replace(/`/g, "\\`")}\``;
+    },
+  );
+
+  return withoutInlineJsDocLinks
+    .replace(/`[^`]*`|[<>]/g, (token) => {
+      if (token.startsWith("`")) return token;
+      return token === "<" ? "&lt;" : "&gt;";
+    })
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}

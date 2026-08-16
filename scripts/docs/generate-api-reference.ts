@@ -15,6 +15,11 @@ import { parseArgs } from "#std/flags";
 import { ensureDir } from "#std/fs/ensure-dir";
 import { COMMANDS } from "../../cli/help/command-definitions.ts";
 import type { CommandCategory, CommandHelp } from "../../cli/help/types.ts";
+import {
+  type BarrelJSDoc,
+  normalizePublicDocText,
+  parseBarrelJSDoc,
+} from "./barrel-jsdoc.ts";
 
 const ROOT = Deno.cwd();
 
@@ -75,13 +80,6 @@ interface DeepImport {
 interface ModuleGroup {
   parent: ExportEntry;
   deepImports: DeepImport[];
-}
-
-interface BarrelJSDoc {
-  description: string;
-  moduleName: string;
-  remarks: string;
-  examples: Array<{ title: string; code: string }>;
 }
 
 interface TsType {
@@ -240,13 +238,6 @@ interface SourceDocStats {
   documented: number;
   missing: number;
 }
-
-const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
-  description: "",
-  moduleName: "",
-  remarks: "",
-  examples: [],
-};
 
 // ---------------------------------------------------------------------------
 // Curated import snippets: show the most representative imports per module
@@ -924,131 +915,6 @@ function getModuleGroups(): ModuleGroup[] {
     .map((slug) => groups.get(slug)!)
     .filter(Boolean)
     .sort((a, b) => a.parent.importPath.localeCompare(b.parent.importPath));
-}
-
-// ---------------------------------------------------------------------------
-// 2. Parse barrel JSDoc
-// ---------------------------------------------------------------------------
-
-function parseBarrelJSDoc(content: string): BarrelJSDoc {
-  const trimmed = content.trimStart();
-  if (!trimmed.startsWith("/**")) {
-    return EMPTY_BARREL_JSDOC;
-  }
-
-  const endIdx = trimmed.indexOf("*/");
-  if (endIdx === -1) {
-    return EMPTY_BARREL_JSDOC;
-  }
-
-  const block = trimmed.slice(3, endIdx);
-  const lines = block.split("\n").map((l) => l.replace(/^\s*\*\s?/, ""));
-
-  let moduleName = "";
-  const descLines: string[] = [];
-  const remarkLines: string[] = [];
-  const examples: Array<{ title: string; code: string }> = [];
-  let inExample = false;
-  let inRemarks = false;
-  let exampleTitle = "";
-  let exampleLines: string[] = [];
-  let inCodeBlock = false;
-
-  const finishExample = (): void => {
-    finalizeExample(examples, exampleTitle, exampleLines);
-    exampleTitle = "";
-    exampleLines = [];
-  };
-
-  for (const line of lines) {
-    if (line.startsWith("@module")) {
-      moduleName = line.replace("@module", "").trim();
-      inRemarks = false;
-      continue;
-    }
-
-    if (line.startsWith("@remarks")) {
-      finishExample();
-      inExample = false;
-      inRemarks = true;
-      const inlineRemarks = line.replace("@remarks", "").trim();
-      if (inlineRemarks) remarkLines.push(inlineRemarks);
-      continue;
-    }
-
-    if (line.startsWith("@example")) {
-      finishExample();
-      exampleTitle = line.replace("@example", "").trim();
-      exampleLines = [];
-      inExample = true;
-      inRemarks = false;
-      inCodeBlock = false;
-      continue;
-    }
-
-    if (line.startsWith("@")) {
-      finishExample();
-      inExample = false;
-      inRemarks = false;
-      continue;
-    }
-
-    if (inExample) {
-      if (line.startsWith("```")) {
-        inCodeBlock = !inCodeBlock;
-      }
-      exampleLines.push(line);
-    } else if (inRemarks) {
-      remarkLines.push(line);
-    } else if (!moduleName || descLines.length > 0 || line.trim()) {
-      if (!line.startsWith("@")) {
-        descLines.push(line);
-      }
-    }
-  }
-
-  finishExample();
-
-  const description = normalizePublicDocText(
-    descLines.join(" ").replace(/\s+/g, " ").trim(),
-  );
-  const remarks = remarkLines.join("\n").trim();
-  return { description, moduleName, remarks, examples };
-}
-
-function normalizePublicDocText(text: string): string {
-  const withoutInlineJsDocLinks = text.replace(
-    /\{@(?:link|linkcode|linkplain)\s+([^}]+)\}/g,
-    (_match, rawTarget: string) => {
-      const target = rawTarget.trim();
-      const pipeIndex = target.indexOf("|");
-      const display = pipeIndex >= 0
-        ? target.slice(pipeIndex + 1).trim()
-        : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
-      return `\`${display.replace(/`/g, "\\`")}\``;
-    },
-  );
-
-  return withoutInlineJsDocLinks
-    .replace(/`[^`]*`|[<>]/g, (token) => {
-      if (token.startsWith("`")) return token;
-      return token === "<" ? "&lt;" : "&gt;";
-    })
-    .replace(/[\u2013\u2014]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function finalizeExample(
-  examples: Array<{ title: string; code: string }>,
-  title: string,
-  lines: string[],
-): void {
-  if (lines.length === 0) {
-    return;
-  }
-
-  examples.push({ title, code: lines.join("\n") });
 }
 
 // ---------------------------------------------------------------------------

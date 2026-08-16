@@ -47,12 +47,15 @@
  * @example Confine an untrusted path
  * ```ts
  * import { cwd, readTextFile, resolve } from "veryfront/fs";
+ * import { runtime } from "veryfront/platform";
  * import { validatePath } from "veryfront/security";
  *
  * const publicFilesDir = resolve(cwd(), "public-data");
+ * const adapter = await runtime.get();
  *
  * export async function readPublicFile(requestedPath: string): Promise<string> {
  *   const admitted = await validatePath(requestedPath, {
+ *     adapter,
  *     baseDir: publicFilesDir,
  *     allowAbsolute: false,
  *     level: "strict",

@@ -5,6 +5,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#std/testing/bdd";
 import { compile } from "npm:@mdx-js/mdx@3.1.1";
+import { parseBarrelJSDoc } from "./barrel-jsdoc.ts";
 
 const CHECK_TEMP_PREFIX = "veryfront-api-reference-check-";
 
@@ -82,6 +83,29 @@ async function assertGeneratedReferenceIsFormatted(
 }
 
 describe("generate-api-reference", () => {
+  it("preserves JSDoc tags inside fenced examples", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * Example module.
+ *
+ * @module example
+ *
+ * @example Decorated class
+ * \`\`\`ts
+ * @sealed
+ * class Example {}
+ * \`\`\`
+ *
+ * @remarks
+ * The example remains intact.
+ */`);
+
+    assertEquals(parsed.examples, [{
+      title: "Decorated class",
+      code: "```ts\n@sealed\nclass Example {}\n```\n",
+    }]);
+    assertEquals(parsed.remarks, "The example remains intact.");
+  });
+
   it("removes check output when generation fails", async () => {
     const sandboxRoot = await Deno.makeTempDir();
     const emptyRoot = `${sandboxRoot}/cwd`;
@@ -193,6 +217,22 @@ describe("generate-api-reference", () => {
       assertMatch(
         fsReference,
         /Isolated Pages route `ctx\.fs` is a separate, read-only, project-confined\s+capability/,
+      );
+      assertStringIncludes(
+        fsReference,
+        'import { runtime } from "veryfront/platform";',
+      );
+      assertStringIncludes(fsReference, "const adapter = await runtime.get();");
+      assertMatch(
+        fsReference,
+        /validatePath\(requestedPath, \{[\s\S]*?adapter,[\s\S]*?baseDir: publicFilesDir/,
+        "the confinement example must pass the active adapter to validatePath",
+      );
+      assertEquals(
+        fsReference.indexOf("## Runtime boundary") <
+          fsReference.indexOf("## Import"),
+        true,
+        "runtime boundary guidance must precede imports",
       );
       assertMatch(
         uiReference,
