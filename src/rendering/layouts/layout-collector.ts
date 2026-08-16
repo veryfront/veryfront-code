@@ -82,6 +82,23 @@ function getLiteralLayoutValue(node: unknown): boolean | string | undefined {
   if (!isAstNode(node)) return undefined;
   const literal = unwrapTsExpression(node);
   if (
+    literal.type === "TemplateLiteral" && Array.isArray(literal.expressions) &&
+    literal.expressions.length === 0 && Array.isArray(literal.quasis) &&
+    literal.quasis.length === 1
+  ) {
+    const quasi = literal.quasis[0];
+    const value = isAstNode(quasi) && typeof quasi.value === "object" && quasi.value !== null
+      ? quasi.value as { cooked?: unknown; raw?: unknown }
+      : undefined;
+    if (value) {
+      return typeof value.cooked === "string"
+        ? value.cooked
+        : typeof value.raw === "string"
+        ? value.raw
+        : undefined;
+    }
+  }
+  if (
     literal.type !== "BooleanLiteral" && literal.type !== "StringLiteral" &&
     literal.type !== "Literal"
   ) {

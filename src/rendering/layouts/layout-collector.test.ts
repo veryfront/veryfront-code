@@ -224,6 +224,15 @@ describe("LayoutCollector", () => {
     it("extracts direct and frontmatter layout literals", async () => {
       assertEquals(await extract('export const layout = "special";'), "special");
       assertEquals(await extract("export const frontmatter = { layout: false };"), false);
+      assertEquals(await extract("export const layout = `special`;"), "special");
+      assertEquals(
+        await extract("export const frontmatter = { layout: `special` };"),
+        "special",
+      );
+      assertEquals(
+        await extract('const name = "special"; export const layout = `${name}`;'),
+        undefined,
+      );
     });
 
     it("extracts separately declared exported layout bindings", async () => {
