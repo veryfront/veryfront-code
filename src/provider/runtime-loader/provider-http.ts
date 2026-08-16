@@ -751,7 +751,11 @@ export async function requestJson(options: {
 }
 
 /**
- * Request a streaming response.
+ * Request a streaming response. When the request body is replayable,
+ * classified rate-limit responses are retried up to two times before provider
+ * output is exposed, with all retry waits and attempts bounded by the stream
+ * header deadline. ReadableStream request bodies are not retried because fetch
+ * can consume them on the first attempt.
  *
  * Response headers and error bodies have a 30-second default deadline. After
  * headers arrive, caller cancellation remains connected to the returned body;
@@ -772,6 +776,7 @@ export async function requestStream(options: {
   );
   let streamOwnsDeadline = false;
   let rateLimitRetryCount = 0;
+  const requestBodyIsReplayable = !(deadline.init.body instanceof ReadableStream);
 
   try {
     while (true) {
@@ -789,6 +794,7 @@ export async function requestStream(options: {
         err.message = `${options.providerLabel} request failed: ${err.message}`;
         if (
           err instanceof ProviderRateLimitError &&
+          requestBodyIsReplayable &&
           rateLimitRetryCount < MAX_PROVIDER_STREAM_RATE_LIMIT_RETRIES
         ) {
           const retryDelayMs = err.retryAfterMs ??
