@@ -305,10 +305,10 @@ export function mergeDataResponseMetadata(
     }
     cookies.push(...(normalized.cookies ?? []));
   }
-  return {
+  return normalizeDataResponseMetadata({
     ...(headers.size > 0 ? { headers: Object.fromEntries(headers) } : {}),
     ...(cookies.length > 0 ? { cookies } : {}),
-  };
+  });
 }
 
 /**

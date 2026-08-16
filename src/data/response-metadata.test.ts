@@ -25,6 +25,46 @@ describe("data response metadata", () => {
     });
   });
 
+  it("rejects metadata that exceeds aggregate response limits", () => {
+    assertThrows(
+      () =>
+        mergeDataResponseMetadata([
+          {
+            headers: Object.fromEntries(
+              Array.from({ length: 32 }, (_, index) => [`x-layout-${index}`, "value"]),
+            ),
+          },
+          {
+            headers: Object.fromEntries(
+              Array.from({ length: 33 }, (_, index) => [`x-page-${index}`, "value"]),
+            ),
+          },
+        ]),
+      TypeError,
+      "cannot return more than 64 response headers",
+    );
+
+    assertThrows(
+      () =>
+        mergeDataResponseMetadata([
+          {
+            cookies: Array.from({ length: 32 }, (_, index) => ({
+              name: `layout-${index}`,
+              value: "value",
+            })),
+          },
+          {
+            cookies: Array.from({ length: 33 }, (_, index) => ({
+              name: `page-${index}`,
+              value: "value",
+            })),
+          },
+        ]),
+      TypeError,
+      "cannot return more than 64 response cookies",
+    );
+  });
+
   it("rejects framework-owned and case-insensitively duplicate headers", () => {
     for (
       const name of [
