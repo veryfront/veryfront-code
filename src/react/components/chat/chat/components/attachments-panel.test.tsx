@@ -140,6 +140,64 @@ describe("AttachmentsPanel — composability contract", () => {
     assert(!html.includes('aria-label="Remove run-analysis.csv"'));
   });
 
+  it("exposes Item.Name and Item.Size leaves", () => {
+    assert(
+      typeof AttachmentsPanel.Item.Name === "function",
+      "AttachmentsPanel.Item.Name must be a component",
+    );
+    assert(
+      typeof AttachmentsPanel.Item.Size === "function",
+      "AttachmentsPanel.Item.Size must be a component",
+    );
+  });
+
+  it("recomposes the row from Item.Name + Item.Size leaves", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={uploads[0]!}>
+            <AttachmentsPanel.Item.Icon />
+            <AttachmentsPanel.Item.Name />
+            <AttachmentsPanel.Item.Size />
+          </AttachmentsPanel.Item>
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    // The Name leaf renders the file name; the Size leaf renders the
+    // human-formatted byte label (24424 → "24 KB").
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(html, "24 KB");
+  });
+
+  it("Item.Size renders nothing when the file has no size", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={{ id: "no-size", name: "sizeless.txt" }}>
+            <AttachmentsPanel.Item.Name />
+            <AttachmentsPanel.Item.Size className="vf-size-leaf" />
+          </AttachmentsPanel.Item>
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    assertStringIncludes(html, "sizeless.txt");
+    assert(!html.includes("vf-size-leaf"), "Size leaf must render nothing without a size");
+  });
+
+  it("regression: a childless Item still renders its default content", () => {
+    const html = renderToString(
+      <AttachmentsPanel uploads={uploads} onRemoveUpload={() => undefined}>
+        <AttachmentsPanel.List>
+          <AttachmentsPanel.Item file={uploads[0]!} />
+        </AttachmentsPanel.List>
+      </AttachmentsPanel>,
+    );
+    // Default anatomy: media + label (name + formatted size) + overflow menu.
+    assertStringIncludes(html, "run-analysis.csv");
+    assertStringIncludes(html, "24 KB");
+    assertStringIncludes(html, 'aria-label="Actions for run-analysis.csv"');
+  });
+
   it("Item leaves read the file from context; used outside an Item they throw", () => {
     function Orphan() {
       return <AttachmentsPanel.Item.Icon />;
