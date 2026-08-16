@@ -79,6 +79,14 @@ export {
 // Recommendations
 export { getRecommendation } from "./recommendations.ts";
 
+// Package install hints
+export type { InstallTarget } from "./install-command.ts";
+export {
+  detectProjectInstallTarget,
+  formatInstallCommand,
+  runtimeInstallTarget,
+} from "./install-command.ts";
+
 // Provider-neutral Redis runtime
 export {
   captureRedisRuntimeProvider,
