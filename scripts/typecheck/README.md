@@ -1,9 +1,8 @@
 # Consumer typecheck gate
 
-`deno task typecheck:consumer` typechecks the documented `veryfront/ui` and
-`veryfront/chat` composition **the way an external app compiles the published
-package** — real `tsc --noEmit`, real `@types/react`, against the emitted
-`.d.ts` in `npm/`.
+`deno task typecheck:consumer` typechecks documented UI, chat, and trigger
+composition **the way an external app compiles the published package** — real
+`tsc --noEmit`, real `@types/react`, against the emitted `.d.ts` in `npm/`.
 
 ## Why this exists (the gap it closes)
 
@@ -40,6 +39,12 @@ consumer's own `@types/react`. This gate is the regression guard.
 - [`fixtures/chat-composition.tsx`](./fixtures/chat-composition.tsx) — batteries
   `<Chat>`, the `<Chat.Root>` compound, `Message`, `ChatSidebar`, via
   `veryfront/chat`.
+- [`fixtures/trigger-target-config.ts`](./fixtures/trigger-target-config.ts) —
+  checks stored trigger targets under `exactOptionalPropertyTypes` across the
+  schedule, webhook, and local-run authoring surfaces.
+- [`fixtures/trigger-target-default-optional.ts`](./fixtures/trigger-target-default-optional.ts) —
+  checks that explicit `undefined` fields on stored non-agent targets remain
+  assignable with TypeScript's default optional-property semantics.
 
 Add a fixture whenever a new public compound ships; keep them importing the
 published specifiers (not relative `src` paths) so they exercise the real
