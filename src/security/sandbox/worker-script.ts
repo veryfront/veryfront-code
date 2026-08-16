@@ -1550,20 +1550,13 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
       return invalidIsolatedDataResult();
     }
     const normalizedNotFound = hasNotFound ? rawNotFound.value as boolean : undefined;
-    const activeOutcomes = (hasProps ? 1 : 0) +
-      (hasRedirect ? 1 : 0) +
-      (normalizedNotFound === true ? 1 : 0);
-    if (activeOutcomes > 1) {
-      return invalidIsolatedDataResult();
-    }
 
     let normalizedRevalidate: number | false | undefined;
     if (hasRevalidate) {
       if (
         rawRevalidate.value !== false &&
         (typeof rawRevalidate.value !== "number" ||
-          !numberIsFinite(rawRevalidate.value) ||
-          rawRevalidate.value < 0)
+          !numberIsFinite(rawRevalidate.value))
       ) {
         return invalidIsolatedDataResult();
       }
@@ -1571,15 +1564,18 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
     }
 
     const normalized: Record<string, unknown> = {};
-    if (hasProps) defineDataProperty(normalized, "props", rawProps.value);
     if (normalizedRedirect) {
       defineDataProperty(normalized, "redirect", normalizedRedirect);
-    }
-    if (normalizedNotFound !== undefined) {
-      defineDataProperty(normalized, "notFound", normalizedNotFound);
-    }
-    if (normalizedRevalidate !== undefined) {
-      defineDataProperty(normalized, "revalidate", normalizedRevalidate);
+    } else if (normalizedNotFound === true) {
+      defineDataProperty(normalized, "notFound", true);
+    } else {
+      if (hasProps) defineDataProperty(normalized, "props", rawProps.value);
+      if (normalizedNotFound !== undefined) {
+        defineDataProperty(normalized, "notFound", normalizedNotFound);
+      }
+      if (normalizedRevalidate !== undefined) {
+        defineDataProperty(normalized, "revalidate", normalizedRevalidate);
+      }
     }
     if (hasHeaders) {
       defineDataProperty(

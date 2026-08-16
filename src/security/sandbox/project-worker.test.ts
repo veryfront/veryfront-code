@@ -1555,14 +1555,24 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     assertInvalidIsolatedDataResult(response);
   });
 
-  it("rejects malformed fetch-data result outcome combinations", async () => {
+  it("preserves redirect precedence for fetch-data outcome combinations", async () => {
     const response = await executeIsolatedDataModule(
       `export function getServerData() {
-        return { props: {}, redirect: { destination: "/other" } };
+        return {
+          props: { ignored: true },
+          redirect: { destination: "/other" },
+          notFound: true,
+          revalidate: 30,
+        };
       }`,
-      "malformed-data-result",
+      "redirect-precedence-data-result",
     );
-    assertInvalidIsolatedDataResult(response);
+
+    assertEquals(response.type, "data-result");
+    if (response.type !== "data-result") throw new Error("expected data result response");
+    assertEquals(response.result, {
+      redirect: { destination: "/other" },
+    });
   });
 
   it("drops unknown fields from isolated data results before snapshotting", async () => {
@@ -1649,6 +1659,22 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       props: { ok: true },
       notFound: false,
       revalidate: 30,
+    });
+  });
+
+  it("preserves finite negative revalidation metadata", async () => {
+    const response = await executeIsolatedDataModule(
+      `export function getServerData() {
+        return { props: { ok: true }, revalidate: -100 };
+      }`,
+      "negative-revalidation-data-result",
+    );
+
+    assertEquals(response.type, "data-result");
+    if (response.type !== "data-result") throw new Error("expected data result response");
+    assertEquals(response.result, {
+      props: { ok: true },
+      revalidate: -100,
     });
   });
 

@@ -46,23 +46,22 @@ export function validateDataResult(
   if (notFound !== undefined && typeof notFound !== "boolean") return fail();
   if (
     revalidate !== undefined && revalidate !== false &&
-    (typeof revalidate !== "number" || !Number.isFinite(revalidate) || revalidate < 0)
+    (typeof revalidate !== "number" || !Number.isFinite(revalidate))
   ) return fail();
 
-  const activeOutcomes = Number(props !== undefined) + Number(redirect !== undefined) +
-    Number(notFound === true);
-  if (activeOutcomes > 1) return fail();
-
   const normalized: DataResult = {};
-  if (props !== undefined) normalized.props = props;
   if (redirectDestination !== undefined) {
     normalized.redirect = {
       destination: redirectDestination,
       ...(redirectPermanent !== undefined ? { permanent: redirectPermanent } : {}),
     };
+  } else if (notFound === true) {
+    normalized.notFound = true;
+  } else {
+    if (props !== undefined) normalized.props = props;
+    if (notFound !== undefined) normalized.notFound = notFound;
+    if (revalidate !== undefined) normalized.revalidate = revalidate as number | false;
   }
-  if (notFound !== undefined) normalized.notFound = notFound;
-  if (revalidate !== undefined) normalized.revalidate = revalidate as number | false;
   if (responseMetadata.headers) normalized.headers = responseMetadata.headers;
   if (responseMetadata.cookies) normalized.cookies = responseMetadata.cookies;
   return normalized;
