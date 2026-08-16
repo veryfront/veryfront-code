@@ -23,6 +23,7 @@ const defineProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const NativeError = Error;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
@@ -37,7 +38,26 @@ function readOwnDataFunction(
   return typeof descriptor.value === "function" ? descriptor.value : undefined;
 }
 
-function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefined {
+const capturedErrorIsError = readOwnDataFunction(NativeError, "isError");
+
+function createErrorBrandCheck(hostCheck: (...args: unknown[]) => unknown) {
+  return (value: unknown): boolean => {
+    try {
+      if (apply(hostCheck, undefined, [value]) === true) return true;
+    } catch (_) {
+      // Fall through to the independent Error.isError brand primitive.
+    }
+
+    if (!capturedErrorIsError) return false;
+    try {
+      return apply(capturedErrorIsError, NativeError, [value]) === true;
+    } catch (_) {
+      return false;
+    }
+  };
+}
+
+export function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefined {
   if ((typeof value !== "object" && typeof value !== "function") || value === null) {
     return undefined;
   }
@@ -57,7 +77,7 @@ function snapshotNativeBrandChecks(value: unknown): NativeBrandChecks | undefine
     defineProperty(snapshot, key, {
       configurable: false,
       enumerable: true,
-      value: check,
+      value: key === "isNativeError" ? createErrorBrandCheck(check) : check,
       writable: false,
     });
   }

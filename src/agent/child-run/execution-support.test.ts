@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -63,8 +64,12 @@ describe("child-run-execution-support", () => {
     });
 
     it("throws the signal Error reason when present", () => {
+      const reason = new Error("custom reason");
       const controller = new AbortController();
-      controller.abort(new Error("custom reason"));
+      controller.abort(reason);
+
+      assertStrictEquals(controller.signal.reason, reason);
+      assertEquals(isNativeErrorWithoutHooks(controller.signal.reason), true);
 
       assertThrows(() => throwIfChildRunAborted(controller.signal), Error, "custom reason");
     });
