@@ -3519,4 +3519,73 @@ describe("push deletion ownership", () => {
       _resetEnvironmentConfig();
     }
   });
+
+  it("reconciles late remote-only files during no-op forced prune", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await runGit("rm", "--quiet", "app.ts");
+        await runGit("commit", "--quiet", "-m", "remove local source");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        const deleted: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                ...(fileListCalls > 1
+                  ? [{ path: "late-remote.ts", content: "late remote source" }]
+                  : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+
+        assertEquals(fileListCalls, 2);
+        assertEquals(deleted, ["late-remote.ts"]);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {},
+          },
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
 });

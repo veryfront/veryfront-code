@@ -609,6 +609,28 @@ export async function deleteFiles(
   return { deleted, failed, conflicts, applied };
 }
 
+async function deleteForcedPruneRemoteOnlyFiles(
+  client: ApiClient,
+  projectSlug: string,
+  branchId: string | null,
+  remoteFiles: readonly RemoteFile[],
+  ignoreChecker: IgnoreChecker,
+  plannedFiles: Readonly<Record<string, SyncFileSnapshot>>,
+): Promise<{ deleted: number; failed: number; conflicts: string[]; applied: string[] }> {
+  const plannedPaths = new Set(Object.keys(plannedFiles));
+  const remoteOnlyDeletes = remoteFiles
+    .filter((file) =>
+      ignoreChecker.isSupportedExtension(file.path) &&
+      !ignoreChecker.isIgnored(file.path) &&
+      !plannedPaths.has(file.path)
+    )
+    .map((file) => ({ path: file.path }));
+  if (remoteOnlyDeletes.length === 0) {
+    return { deleted: 0, failed: 0, conflicts: [], applied: [] };
+  }
+  return await deleteFiles(client, projectSlug, branchId, remoteOnlyDeletes, false);
+}
+
 function formatParts(parts: string[]): string {
   return parts.join(", ");
 }
@@ -1026,6 +1048,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
       const uploadOps = plan.uploads;
       const deleteOps = plan.deletes;
+      const branchId = target.branchId;
 
       if (!dryRun && !force) {
         spinner = quiet || jsonOutput
@@ -1050,6 +1073,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       }
 
       if (uploadOps.length === 0 && deleteOps.length === 0) {
+        let forcedPruneDeleteCount = 0;
         try {
           if (!dryRun) {
             if (!force) {
@@ -1065,6 +1089,32 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               );
               if (conflicts.length > 0) {
                 throw pushConflictError(conflicts);
+              }
+            } else if (pruneRemoteMissing) {
+              spinner.update("Verifying push target...");
+              const latestRemoteFiles = await listAllFiles(
+                client,
+                projectApiReference(config),
+                target.source,
+              );
+              const lateDeleteResult = await deleteForcedPruneRemoteOnlyFiles(
+                client,
+                projectApiReference(config),
+                branchId,
+                latestRemoteFiles,
+                ignoreChecker,
+                plan.nextFiles,
+              );
+              forcedPruneDeleteCount = lateDeleteResult.deleted;
+              if (lateDeleteResult.conflicts.length > 0) {
+                throw pushConflictError(lateDeleteResult.conflicts);
+              }
+              if (lateDeleteResult.failed > 0) {
+                throw new Error(
+                  `Push failed for ${lateDeleteResult.failed} file${
+                    lateDeleteResult.failed === 1 ? "" : "s"
+                  } during forced prune reconciliation`,
+                );
               }
             }
             await clearPushReceipt(projectDir);
@@ -1103,7 +1153,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           } else if (dryRun) {
             logInfo("Dry run complete. No files would change.");
           } else {
-            outputPushResult(config.projectSlug, branchName, 0, 0, Date.now() - startTime);
+            outputPushResult(
+              config.projectSlug,
+              branchName,
+              0,
+              forcedPruneDeleteCount,
+              Date.now() - startTime,
+            );
           }
         }
         return;
@@ -1143,7 +1199,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       await clearPushReceipt(projectDir);
 
-      const branchId = target.branchId;
       const uploadMsg = isMainBranch
         ? "Pushing to main..."
         : branchId
@@ -1277,22 +1332,19 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             projectApiReference(config),
             target.source,
           );
-          const plannedPaths = new Set(Object.keys(plan.nextFiles));
-          const lateRemoteOnlyDeletes = latestRemoteFiles
-            .filter((file) =>
-              ignoreChecker.isSupportedExtension(file.path) &&
-              !ignoreChecker.isIgnored(file.path) &&
-              !plannedPaths.has(file.path)
-            )
-            .map((file) => ({ path: file.path }));
-          if (lateRemoteOnlyDeletes.length > 0) {
-            const lateDeleteResult = await deleteFiles(
-              client,
-              projectApiReference(config),
-              branchId,
-              lateRemoteOnlyDeletes,
-              false,
-            );
+          const lateDeleteResult = await deleteForcedPruneRemoteOnlyFiles(
+            client,
+            projectApiReference(config),
+            branchId,
+            latestRemoteFiles,
+            ignoreChecker,
+            plan.nextFiles,
+          );
+          if (
+            lateDeleteResult.deleted > 0 ||
+            lateDeleteResult.failed > 0 ||
+            lateDeleteResult.conflicts.length > 0
+          ) {
             deleteResult = {
               deleted: deleteResult.deleted + lateDeleteResult.deleted,
               failed: deleteResult.failed + lateDeleteResult.failed,
