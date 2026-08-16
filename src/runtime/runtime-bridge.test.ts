@@ -779,6 +779,28 @@ describe("runtime-bridge", () => {
     }
   });
 
+  it("uses canonical OpenAI modelProvider when the runtime has a distinct display label", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model = {
+      ...createGenerateModel("prod-openai", "gpt-5.4-nano", async () => ({
+        content: [],
+        finishReason: "stop",
+        usage: {},
+      })),
+      modelProvider: "openai",
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+    );
+
+    assertEquals(recorded?.model, { id: "gpt-5.4-nano", modelProvider: "openai" });
+    assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
+  });
+
   it("omits reasoning when no canonical fields can be projected", async () => {
     let recorded: AgentRunEvent | undefined;
     const model = createGenerateModel("test", "test/empty-reasoning", async () => ({

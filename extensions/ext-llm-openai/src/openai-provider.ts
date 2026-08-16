@@ -100,12 +100,19 @@ function getOpenAIProviderLabel(config: { name?: string }): string {
   return readNonEmptyString(config.name) ?? "openai";
 }
 
+function normalizeOpenAIProviderName(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "" ? undefined : normalized;
+}
+
 function getRuntimeOpenAIProviderName(config: OpenAIRuntimeConfig): string {
-  return readNonEmptyString(config.providerName) ?? getOpenAIProviderLabel(config);
+  return normalizeOpenAIProviderName(config.providerName) ??
+    normalizeOpenAIProviderName(config.name) ?? "openai";
 }
 
 function getLLMOpenAIProviderName(config: LLMProviderConfig): string {
-  return readNonEmptyString(config.providerName) ?? "openai";
+  return normalizeOpenAIProviderName(config.providerName) ?? "openai";
 }
 
 type OpenAICompatibleProviderKind = "openai" | "mistral" | "moonshotai";
@@ -1031,6 +1038,7 @@ export function createOpenAIModelRuntime(
   const responseContext = { providerKind, providerLabel };
   return {
     provider: providerLabel,
+    modelProvider: providerName,
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
@@ -1115,6 +1123,7 @@ export function createOpenAIResponsesRuntime(
   const responseContext = { providerKind, providerLabel };
   return {
     provider: providerLabel,
+    modelProvider: providerName,
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},

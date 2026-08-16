@@ -53,7 +53,8 @@ export function createConversationRunStreamMirror(input: {
       mirror.enqueue(normalizeConversationRunEvents(encoder.encode(event)));
     },
     appendEvents(events) {
-      mirror.enqueue(normalizeConversationRunEvents(events));
+      const stampedEvents = encoder.stamp(events);
+      mirror.enqueue(encoder.stamp(normalizeConversationRunEvents(stampedEvents)));
     },
     flush() {
       return mirror.flush();
