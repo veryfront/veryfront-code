@@ -53,7 +53,7 @@ import {
 import { buildStudioUrl } from "../studio/command.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { type PlannedDelete, type PlannedUpload, planPushChanges } from "./plan.ts";
-import { readSyncTarget, writeSyncTarget } from "../../sync/state.ts";
+import { preflightSyncState, readSyncTarget, writeSyncTarget } from "../../sync/state.ts";
 
 const PREVIEW_BRANCH_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const BRANCH_SUFFIX_LENGTH = 6;
@@ -699,6 +699,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         config = { ...config, projectSlug: slugOverride };
         projectReferenceSource = { kind: "argument", name: "--project" };
       }
+
+      await preflightSyncState(projectDir);
 
       spinner.update("Loading ignore patterns...");
       const ignorePatterns = await loadIgnorePatterns(projectDir);

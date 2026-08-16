@@ -97,7 +97,7 @@ describe("sync state", () => {
       await Deno.mkdir(join(projectDir, ".veryfront"));
       await Deno.writeTextFile(join(projectDir, SYNC_STATE_RELATIVE_PATH), "{not json");
 
-      await assertRejects(
+      const error = await assertRejects(
         () =>
           readSyncTarget(projectDir, {
             controlPlane: "https://api.veryfront.com",
@@ -107,6 +107,7 @@ describe("sync state", () => {
         Error,
         `Veryfront could not read ${SYNC_STATE_RELATIVE_PATH}`,
       );
+      assertEquals((error as Error & { slug?: string }).slug, "sync-state-invalid");
     });
   });
 

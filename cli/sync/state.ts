@@ -1,4 +1,5 @@
 import { isNotFoundError, lstat, realPath } from "veryfront/fs";
+import { SYNC_STATE_INVALID } from "veryfront/errors";
 import { join, relative } from "veryfront/platform/path";
 import { normalizeControlPlane } from "../shared/deployment-provenance.ts";
 
@@ -51,15 +52,17 @@ function syncStatePath(projectDir: string): string {
 }
 
 function syncStatePathError(): Error {
-  return new Error(
-    `Veryfront cannot use ${SYNC_STATE_RELATIVE_PATH} through a symbolic link. Remove the link and run the command again.`,
-  );
+  return SYNC_STATE_INVALID.create({
+    detail:
+      `Veryfront cannot use ${SYNC_STATE_RELATIVE_PATH} through a symbolic link. Remove the link and run the command again.`,
+  });
 }
 
 function invalidSyncStateError(): Error {
-  return new Error(
-    `Veryfront could not read ${SYNC_STATE_RELATIVE_PATH}; remove it, run veryfront pull, and try again.`,
-  );
+  return SYNC_STATE_INVALID.create({
+    detail:
+      `Veryfront could not read ${SYNC_STATE_RELATIVE_PATH}; remove it, run veryfront pull, and try again.`,
+  });
 }
 
 async function lstatIfPresent(path: string) {
@@ -77,7 +80,9 @@ async function inspectSyncStatePath(projectDir: string): Promise<SyncStatePath> 
   if (!directoryInfo) return { directoryExists: false, fileExists: false };
   if (directoryInfo.isSymlink) throw syncStatePathError();
   if (!directoryInfo.isDirectory) {
-    throw new Error(`${SYNC_STATE_DIRECTORY} must be a directory inside the project.`);
+    throw SYNC_STATE_INVALID.create({
+      detail: `${SYNC_STATE_DIRECTORY} must be a directory inside the project.`,
+    });
   }
 
   const [canonicalProject, canonicalDirectory] = await Promise.all([
@@ -92,7 +97,9 @@ async function inspectSyncStatePath(projectDir: string): Promise<SyncStatePath> 
   if (!fileInfo) return { directoryExists: true, fileExists: false };
   if (fileInfo.isSymlink) throw syncStatePathError();
   if (!fileInfo.isFile) {
-    throw new Error(`${SYNC_STATE_RELATIVE_PATH} must be a file.`);
+    throw SYNC_STATE_INVALID.create({
+      detail: `${SYNC_STATE_RELATIVE_PATH} must be a file.`,
+    });
   }
   return { directoryExists: true, fileExists: true };
 }

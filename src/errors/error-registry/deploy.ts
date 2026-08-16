@@ -90,6 +90,15 @@ export const PUSH_CONFLICT = defineError({
     "Commit or stash local changes, run veryfront pull, reconcile the changes with Git, then push again",
 });
 
+export const SYNC_STATE_INVALID = defineError({
+  slug: "sync-state-invalid",
+  category: "DEPLOY",
+  status: 400,
+  title: "Local sync metadata is invalid",
+  suggestion: "Remove .veryfront/sync-state.json, run veryfront pull, and try again",
+  exitCode: 2,
+});
+
 export const SOURCE_DIGEST_MISMATCH = defineError({
   slug: "source-digest-mismatch",
   category: "DEPLOY",
@@ -145,6 +154,7 @@ export const DEPLOY_REGISTRY = {
   "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,
   "push-receipt-missing": PUSH_RECEIPT_MISSING,
   "push-conflict": PUSH_CONFLICT,
+  "sync-state-invalid": SYNC_STATE_INVALID,
   "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
   "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
   "branch-not-found": BRANCH_NOT_FOUND,

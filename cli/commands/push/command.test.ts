@@ -1722,6 +1722,42 @@ describe("deleteFiles", () => {
 });
 
 describe("push divergence guard", () => {
+  it("validates corrupt sync state before creating a missing preview branch", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        await Deno.mkdir(`${projectDir}/.veryfront`);
+        await Deno.writeTextFile(`${projectDir}/.veryfront/sync-state.json`, "{invalid\n");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let remoteRequestCount = 0;
+        globalThis.fetch = (() => {
+          remoteRequestCount++;
+          throw new Error("Push must validate local sync state before remote requests");
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, branch: "feature-x", quiet: true }),
+          Error,
+          "could not read .veryfront/sync-state.json",
+        );
+
+        assertEquals((error as Error & { slug?: string }).slug, "sync-state-invalid");
+        assertEquals(remoteRequestCount, 0);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("creates a missing preview branch from main and safely uploads local changes", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
