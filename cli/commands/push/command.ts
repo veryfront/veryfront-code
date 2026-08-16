@@ -157,6 +157,17 @@ interface BranchListItem {
   name: string;
 }
 
+interface EnsuredBranch extends BranchListItem {
+  created: boolean;
+}
+
+interface PushRemoteTarget {
+  branchId: string | null;
+  remoteFiles: RemoteFile[];
+  source: PullSource;
+  branchExists: boolean;
+}
+
 interface ListBranchesResponse {
   data: BranchListItem[];
   page_info?: {
@@ -459,14 +470,14 @@ export async function ensureBranch(
   client: ApiClient,
   projectSlug: string,
   branchName: string,
-): Promise<BranchListItem> {
+): Promise<EnsuredBranch> {
   try {
-    return await createBranch(client, projectSlug, branchName);
+    return { ...await createBranch(client, projectSlug, branchName), created: true };
   } catch (error) {
     if (getErrorStatus(error) !== 409) throw error;
 
     const existingBranch = await getBranchByName(client, projectSlug, branchName);
-    if (existingBranch) return existingBranch;
+    if (existingBranch) return { ...existingBranch, created: false };
 
     throw error;
   }
@@ -477,16 +488,20 @@ export async function resolvePushRemoteFiles(
   projectSlug: string,
   branchName: string,
   mainFiles: RemoteFile[],
-): Promise<{ branchId: string | null; remoteFiles: RemoteFile[]; source: PullSource }> {
+): Promise<PushRemoteTarget> {
   const mainSource = { type: "main" } satisfies PullSource;
-  if (branchName === "main") return { branchId: null, remoteFiles: mainFiles, source: mainSource };
+  if (branchName === "main") {
+    return { branchId: null, remoteFiles: mainFiles, source: mainSource, branchExists: true };
+  }
 
   const existingBranch = await getBranchByName(client, projectSlug, branchName);
-  if (!existingBranch) return { branchId: null, remoteFiles: mainFiles, source: mainSource };
+  if (!existingBranch) {
+    return { branchId: null, remoteFiles: mainFiles, source: mainSource, branchExists: false };
+  }
 
   const branchSource = { type: "branch", name: branchName } satisfies PullSource;
   const remoteFiles = await listAllFiles(client, projectSlug, branchSource);
-  return { branchId: existingBranch.id, remoteFiles, source: branchSource };
+  return { branchId: existingBranch.id, remoteFiles, source: branchSource, branchExists: true };
 }
 
 function buildFileUrl(projectSlug: string, path: string, branchId: string | null): string {
@@ -775,7 +790,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       const ops = sourceSnapshot.files;
       const localPaths = new Set(ops.map((op) => op.path));
 
-      const target = projectExists
+      let target: PushRemoteTarget = projectExists
         ? await resolvePushRemoteFiles(
           client,
           projectApiReference(config),
@@ -786,7 +801,37 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           branchId: null,
           remoteFiles: mainFiles,
           source: { type: "main" } satisfies PullSource,
+          branchExists: isMainBranch,
         };
+      let remoteFilesAreBaseline = !isMainBranch && !target.branchExists;
+
+      if (!dryRun && !isMainBranch && !target.branchId) {
+        spinner.update(`Creating branch "${branchName}"...`);
+        try {
+          const preparedBranch = await ensureBranch(
+            client,
+            projectApiReference(config),
+            branchName,
+          );
+          const branchSource = { type: "branch", name: branchName } satisfies PullSource;
+          target = {
+            branchId: preparedBranch.id,
+            remoteFiles: await listAllFiles(
+              client,
+              projectApiReference(config),
+              branchSource,
+            ),
+            source: branchSource,
+            branchExists: true,
+          };
+          remoteFilesAreBaseline = preparedBranch.created;
+        } catch (error) {
+          spinner.stop();
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Failed to prepare branch "${branchName}": ${message}`);
+        }
+      }
+
       const remoteFilesMissingLocally = target.remoteFiles
         .map((file) => file.path)
         .filter((path) =>
@@ -827,6 +872,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         baselineFiles: baseline?.files ?? {},
         deletePaths: toDelete,
         force,
+        remoteFilesAreBaseline,
       });
       if (plan.conflicts.length > 0) {
         spinner.stop();
@@ -914,28 +960,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       await clearPushReceipt(projectDir);
 
-      let branchId = target.branchId;
+      const branchId = target.branchId;
       const uploadMsg = isMainBranch
         ? "Pushing to main..."
         : branchId
         ? `Pushing to branch "${branchName}"...`
         : `Creating branch "${branchName}"...`;
       spinner = quiet || jsonOutput ? createNoopSpinner() : createSpinner(uploadMsg);
-
-      if (!isMainBranch && !branchId) {
-        try {
-          const preparedBranch = await ensureBranch(
-            client,
-            projectApiReference(config),
-            branchName,
-          );
-          branchId = preparedBranch.id;
-        } catch (error) {
-          spinner.stop();
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`Failed to prepare branch "${branchName}": ${message}`);
-        }
-      }
 
       let uploadResult = { uploaded: 0, failed: 0, conflicts: [] as string[] };
       let deleteResult = { deleted: 0, failed: 0, conflicts: [] as string[] };

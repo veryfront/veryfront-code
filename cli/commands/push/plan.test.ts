@@ -75,6 +75,26 @@ describe("planPushChanges", () => {
     assertEquals(plan.conflicts, ["app.ts"]);
   });
 
+  it("treats a newly created branch snapshot as its initial baseline", async () => {
+    const plan = await planPushChanges({
+      localFiles: [{ path: "app.ts", content: "local\n" }],
+      remoteFiles: [{ path: "app.ts", content: "main\n", version_id: VERSION_2 }],
+      baselineFiles: {
+        "app.ts": { digest: await computeContentDigest("deleted branch\n"), versionId: VERSION_1 },
+      },
+      deletePaths: [],
+      force: false,
+      remoteFilesAreBaseline: true,
+    });
+
+    assertEquals(plan.uploads, [{
+      path: "app.ts",
+      content: "local\n",
+      expectedVersionId: VERSION_2,
+    }]);
+    assertEquals(plan.conflicts, []);
+  });
+
   it("uses create-only protection for a new local file", async () => {
     const plan = await planPushChanges({
       localFiles: [{ path: "new.ts", content: "new\n" }],

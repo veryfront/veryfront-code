@@ -644,6 +644,7 @@ describe("ensureBranch", () => {
 
     assertEquals(result.id, "branch-created");
     assertEquals(result.name, "feature-x");
+    assertEquals(result.created, true);
     assertEquals(requests, [
       {
         method: "POST",
@@ -673,6 +674,7 @@ describe("ensureBranch", () => {
 
     assertEquals(result.id, "branch-existing");
     assertEquals(result.name, "feature-x");
+    assertEquals(result.created, false);
     assertEquals(getRequests, [
       {
         url: "/projects/my-project/branches",
@@ -733,6 +735,7 @@ describe("resolvePushRemoteFiles", () => {
     assertEquals(result.branchId, null);
     assertEquals(result.source, { type: "main" });
     assertEquals(result.remoteFiles, mainFiles);
+    assertEquals(result.branchExists, true);
     assertEquals(getCalls, 0);
   });
 
@@ -756,6 +759,7 @@ describe("resolvePushRemoteFiles", () => {
     assertEquals(result.branchId, null);
     assertEquals(result.source, { type: "main" });
     assertEquals(result.remoteFiles, mainFiles);
+    assertEquals(result.branchExists, false);
     assertEquals(getRequests, [
       {
         url: "/projects/my-project/branches",
@@ -795,6 +799,7 @@ describe("resolvePushRemoteFiles", () => {
     assertEquals(result.branchId, "branch-existing");
     assertEquals(result.source, { type: "branch", name: "feature-x" });
     assertEquals(result.remoteFiles.map((file) => file.path), ["app/page.tsx", "stale.ts"]);
+    assertEquals(result.branchExists, true);
     assertEquals(getRequests, [
       {
         url: "/projects/my-project/branches",
@@ -1700,6 +1705,208 @@ describe("deleteFiles", () => {
 });
 
 describe("push divergence guard", () => {
+  it("creates a missing preview branch from main and safely uploads local changes", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let branchCreated = false;
+        const putRequests: Array<{ branchId: string | null; body: unknown }> = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/branches") {
+            return Response.json({
+              data: branchCreated
+                ? [{ id: "branch-123", name: "feature-x", project_id: "project-123" }]
+                : [],
+            });
+          }
+          if (request.method === "POST" && url.pathname === "/projects/my-project/branches") {
+            branchCreated = true;
+            return Response.json({
+              id: "branch-123",
+              name: "feature-x",
+              projectId: "project-123",
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: "export const value = 0;\n",
+                version_id: "00000000-0000-4000-8000-000000000010",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT" && url.pathname.endsWith("/files/app.ts")) {
+            putRequests.push({
+              branchId: url.searchParams.get("branch_id"),
+              body: await request.json(),
+            });
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "feature-x", quiet: true });
+
+        assertEquals(branchCreated, true);
+        assertEquals(putRequests, [{
+          branchId: "branch-123",
+          body: {
+            content: "export const value = 1;\n",
+            expected_version_id: "00000000-0000-4000-8000-000000000010",
+          },
+        }]);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("creates a missing preview branch even when it already matches local source", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let branchCreateCalls = 0;
+        let putCalled = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/branches") {
+            return Response.json({ data: [] });
+          }
+          if (request.method === "POST" && url.pathname === "/projects/my-project/branches") {
+            branchCreateCalls++;
+            return Response.json({
+              id: "branch-123",
+              name: "feature-x",
+              projectId: "project-123",
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: "export const value = 1;\n",
+                version_id: "00000000-0000-4000-8000-000000000010",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putCalled = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "feature-x", quiet: true });
+
+        assertEquals(branchCreateCalls, 1);
+        assertEquals(putCalled, false);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("rejects a raced preview branch that changed before creation", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let createAttempted = false;
+        let putCalled = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/branches") {
+            return Response.json({
+              data: createAttempted
+                ? [{ id: "branch-123", name: "feature-x", project_id: "project-123" }]
+                : [],
+            });
+          }
+          if (request.method === "POST" && url.pathname === "/projects/my-project/branches") {
+            createAttempted = true;
+            return Response.json({ error: "already exists" }, { status: 409 });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            const branchContent = url.searchParams.get("branch") === "feature-x";
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: branchContent
+                  ? "export const value = 'studio';\n"
+                  : "export const value = 0;\n",
+                version_id: branchContent
+                  ? "00000000-0000-4000-8000-000000000011"
+                  : "00000000-0000-4000-8000-000000000010",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putCalled = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, branch: "feature-x", quiet: true }),
+          Error,
+          "Push rejected",
+        );
+
+        assertEquals(createAttempted, true);
+        assertEquals(putCalled, false);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("rejects a Studio edit made after the local baseline without sending a PUT", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];

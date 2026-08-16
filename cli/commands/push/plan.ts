@@ -34,6 +34,8 @@ export interface PlanPushChangesOptions {
   baselineFiles: Readonly<Record<string, SyncFileSnapshot>>;
   deletePaths: readonly string[];
   force: boolean;
+  /** Treat the exact remote snapshot as the baseline for a newly created branch. */
+  remoteFilesAreBaseline?: boolean;
 }
 
 function requiredVersionId(file: PushRemoteFile): string {
@@ -103,7 +105,11 @@ export async function planPushChanges(
       continue;
     }
 
-    if (!baseline || baseline.digest !== remoteDigests.get(local.path)) {
+    const remoteDigest = remoteDigests.get(local.path);
+    if (
+      !options.remoteFilesAreBaseline &&
+      (!baseline || baseline.digest !== remoteDigest)
+    ) {
       conflicts.add(local.path);
       continue;
     }
@@ -130,7 +136,11 @@ export async function planPushChanges(
     }
 
     const baseline = options.baselineFiles[path];
-    if (!baseline || baseline.digest !== remoteDigests.get(path)) {
+    const remoteDigest = remoteDigests.get(path);
+    if (
+      !options.remoteFilesAreBaseline &&
+      (!baseline || baseline.digest !== remoteDigest)
+    ) {
       conflicts.add(path);
       continue;
     }
