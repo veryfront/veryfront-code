@@ -12,7 +12,7 @@ import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { join } from "#veryfront/compat/path";
 import { LayoutCollector } from "../../../../src/rendering/layouts/layout-collector.ts";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
-import type { EntityInfo, MdxBundle } from "#veryfront/types";
+import type { EntityInfo, Frontmatter, MdxBundle } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { cleanupTestDir, createTestProjectDir } from "../../../_helpers/server.ts";
 
@@ -30,7 +30,7 @@ function createMockCompileMDX(): (
 function createPageInfo(
   projectDir: string,
   relativePath: string,
-  frontmatter: Record<string, unknown>,
+  frontmatter: Frontmatter,
   content = "# Test Page",
 ): EntityInfo {
   return {
