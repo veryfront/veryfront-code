@@ -1,4 +1,4 @@
-import { join } from "#veryfront/compat/path";
+import { dirname, join, relative } from "#veryfront/compat/path";
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
@@ -7,6 +7,48 @@ function rejectUnconfinedReadScope(): never {
   throw SECURITY_VIOLATION.create({
     detail: "Worker read scope contains a symlink outside its allowed roots",
   });
+}
+
+function directorySymlinkCanEscape(
+  linkPath: string,
+  targetPath: string,
+  physicalRoots: readonly string[],
+): boolean {
+  for (const sourceRoot of physicalRoots) {
+    if (!isWithinDirectory(sourceRoot, linkPath)) continue;
+    const sourceRelativePath = relative(sourceRoot, linkPath);
+    const parentSteps = sourceRelativePath === "."
+      ? 0
+      : sourceRelativePath.split("/").filter(Boolean).length;
+    let targetAncestor = targetPath;
+    for (let index = 0; index < parentSteps; index += 1) {
+      targetAncestor = dirname(targetAncestor);
+    }
+    if (!physicalRoots.some((root) => isWithinDirectory(root, targetAncestor))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function assertSymlinkConfined(
+  linkPath: string,
+  physicalRoots: readonly string[],
+): void {
+  let target: string;
+  let targetMetadata: Deno.FileInfo;
+  try {
+    target = Deno.realPathSync(linkPath);
+    targetMetadata = Deno.statSync(target);
+  } catch {
+    rejectUnconfinedReadScope();
+  }
+  if (
+    !physicalRoots.some((root) => isWithinDirectory(root, target)) ||
+    (targetMetadata.isDirectory && directorySymlinkCanEscape(linkPath, target, physicalRoots))
+  ) {
+    rejectUnconfinedReadScope();
+  }
 }
 
 /**
@@ -46,15 +88,7 @@ export function assertWorkerReadScopeConfined(
       rejectUnconfinedReadScope();
     }
     if (metadata.isSymlink) {
-      let target: string;
-      try {
-        target = Deno.realPathSync(current);
-      } catch {
-        rejectUnconfinedReadScope();
-      }
-      if (!physicalRoots.some((root) => isWithinDirectory(root, target))) {
-        rejectUnconfinedReadScope();
-      }
+      assertSymlinkConfined(current, physicalRoots);
       continue;
     }
     if (!metadata.isDirectory) continue;
@@ -66,15 +100,7 @@ export function assertWorkerReadScopeConfined(
       for (const entry of Deno.readDirSync(current)) {
         const entryPath = join(current, entry.name);
         if (entry.isSymlink) {
-          let target: string;
-          try {
-            target = Deno.realPathSync(entryPath);
-          } catch {
-            rejectUnconfinedReadScope();
-          }
-          if (!physicalRoots.some((root) => isWithinDirectory(root, target))) {
-            rejectUnconfinedReadScope();
-          }
+          assertSymlinkConfined(entryPath, physicalRoots);
         } else if (entry.isDirectory) {
           pending.push(entryPath);
         }
