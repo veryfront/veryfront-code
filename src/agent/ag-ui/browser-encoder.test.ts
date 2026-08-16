@@ -976,3 +976,80 @@ describe("buildAgUiBrowserFinalizeResponse", () => {
     }]);
   });
 });
+
+describe("agent/ag-ui-browser-encoder tool-input lifecycle", () => {
+  // Raised in review on #3737. A truncated local tool call terminalizes as
+  // `tool-input-start` (+ any partial deltas) followed by `tool-output-error`.
+  // Unlike `tool-input-available` and `tool-input-error`, the output-error
+  // branch never closed the input, so AG-UI clients saw ToolCallStart and
+  // ToolCallResult with no ToolCallEnd and an input lifecycle left open.
+  it("closes an open tool input before emitting its output error", () => {
+    const state = createAgUiBrowserEncoderState({ nowMs: null, epochMs: null });
+
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-input-start",
+      toolCallId: "truncated-1",
+      toolName: "search",
+    });
+    const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-output-error",
+      toolCallId: "truncated-1",
+      errorText: "interrupted",
+    });
+
+    const names = events.map((entry) => entry.event);
+    assertEquals(names, ["ToolCallEnd", "ToolCallResult"]);
+    assertEquals(
+      events[0],
+      { event: "ToolCallEnd", payload: { toolCallId: "truncated-1" } },
+    );
+  });
+
+  it("tolerates a state object built without the tracker", () => {
+    // `AgUiBrowserEncoderState` is re-exported from `veryfront/agent`, so a
+    // consumer may hold a state object built against the shape this type had
+    // before `openToolCallIds` existed. A required field would crash on the
+    // first `tool-input-start`; `reasoningSpanIndex` is optional for the same
+    // reason.
+    const state = createAgUiBrowserEncoderState({ nowMs: null, epochMs: null });
+    delete (state as { openToolCallIds?: Set<string> }).openToolCallIds;
+
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-input-start",
+      toolCallId: "legacy-1",
+      toolName: "search",
+    });
+    const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-output-error",
+      toolCallId: "legacy-1",
+      errorText: "interrupted",
+    });
+
+    assertEquals(events.map((entry) => entry.event), ["ToolCallEnd", "ToolCallResult"]);
+  });
+
+  it("does not close a tool input that was already completed", () => {
+    const state = createAgUiBrowserEncoderState({ nowMs: null, epochMs: null });
+
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-input-start",
+      toolCallId: "settled-1",
+      toolName: "search",
+    });
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-input-available",
+      toolCallId: "settled-1",
+      toolName: "search",
+      input: { q: "veryfront" },
+    });
+    const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-output-error",
+      toolCallId: "settled-1",
+      errorText: "upstream 500",
+    });
+
+    // Exactly one ToolCallEnd per call: the input-available branch already
+    // emitted it, so a normal tool failure must not emit a second.
+    assertEquals(events.map((entry) => entry.event), ["ToolCallResult"]);
+  });
+});
