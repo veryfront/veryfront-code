@@ -191,6 +191,20 @@ describe("WebSocketManager", () => {
     it("returns null for malformed JSON (parser logs the error at warn)", () => {
       assertEquals(parsePokeWebSocketMessage("{"), null);
     });
+
+    it("does not log malformed WebSocket payload content", () => {
+      const sentinel = "VF_MALFORMED_WS_PAYLOAD_MUST_NOT_REACH_LOGS_4b8e";
+      const warnCapture = captureConsoleMethod("warn");
+
+      try {
+        withJsonLogFormat(() => {
+          assertEquals(parsePokeWebSocketMessage(`{${sentinel}`), null);
+        });
+        assertEquals(warnCapture.getOutput().includes(sentinel), false);
+      } finally {
+        warnCapture.restore();
+      }
+    });
   });
   let originalWebSocket: typeof WebSocket;
   let originalSetTimeout: typeof setTimeout;
@@ -328,6 +342,36 @@ describe("WebSocketManager", () => {
     assertExists(metrics.connectionId);
 
     manager.dispose();
+  });
+
+  it("does not log raw WebSocket message payloads", () => {
+    const sentinel = "VF_WS_PAYLOAD_MUST_NOT_REACH_LOGS_38c1";
+    const originalDebug = console.debug;
+    const output: string[] = [];
+    console.debug = ((...args: unknown[]) => {
+      output.push(args.map((arg) => typeof arg === "string" ? arg : JSON.stringify(arg)).join(" "));
+    }) as typeof console.debug;
+
+    try {
+      withJsonLogFormat(() => {
+        const manager = createWebSocketManager();
+        manager.connect("project-1");
+        const socket = MockWebSocket.instances[0];
+        assertExists(socket);
+
+        socket.onmessage?.call(
+          socket as unknown as WebSocket,
+          new MessageEvent("message", {
+            data: JSON.stringify({ type: "noop", value: sentinel }),
+          }),
+        );
+        manager.dispose();
+      });
+
+      assertEquals(output.join("\n").includes(sentinel), false);
+    } finally {
+      console.debug = originalDebug;
+    }
   });
 
   it("should reset consecutive failures on open", () => {

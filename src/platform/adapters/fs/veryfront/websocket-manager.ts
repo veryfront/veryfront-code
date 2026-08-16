@@ -219,7 +219,10 @@ export class WebSocketManager {
 
       this.ws.onmessage = (event) => {
         this.wsLastPong = Date.now();
-        logger.debug("WebSocket message received:", { data: event.data });
+        logger.debug("WebSocket message received", {
+          payloadType: typeof event.data,
+          payloadLength: typeof event.data === "string" ? event.data.length : undefined,
+        });
         this.handlePokeMessage(event);
       };
 
