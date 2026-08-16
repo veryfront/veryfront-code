@@ -1,5 +1,15 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import { normalizeDataResponseMetadata } from "../response-metadata.ts";
+
+function hasValidResponseMetadata(value: { headers?: unknown; cookies?: unknown }): boolean {
+  try {
+    normalizeDataResponseMetadata(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Context passed to data fetching functions */
 export const getDataContextSchema = defineSchema((v) =>
@@ -29,7 +39,7 @@ export const getResponseCookieSchema = defineSchema((v) =>
     httpOnly: v.boolean().optional(),
     secure: v.boolean().optional(),
     sameSite: v.union([v.literal("lax"), v.literal("strict"), v.literal("none")]).optional(),
-  })
+  }).strict()
 );
 
 /** Result returned from data fetching functions */
@@ -41,7 +51,7 @@ export const getDataResultSchema = defineSchema((v) =>
     revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
     headers: v.record(v.string(), v.string()).optional(),
     cookies: v.array(getResponseCookieSchema()).optional(),
-  })
+  }).refine(hasValidResponseMetadata, "Data result response metadata is invalid")
 );
 
 /** Cache-safe result returned from getStaticData. */
@@ -51,6 +61,10 @@ export const getStaticDataResultSchema = defineSchema((v) =>
     redirect: getRedirectSchema().optional(),
     notFound: v.boolean().optional(),
     revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
+    headers: v.custom<never>(() => false, "getStaticData cannot return response headers")
+      .optional(),
+    cookies: v.custom<never>(() => false, "getStaticData cannot return response cookies")
+      .optional(),
   })
 );
 

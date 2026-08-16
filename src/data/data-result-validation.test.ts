@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateDataResult } from "./data-result-validation.ts";
@@ -56,5 +57,45 @@ describe("validateDataResult", () => {
       assertEquals(schema.safeParse({ props: {}, revalidate: -1 }).success, false);
       assertEquals(schema.safeParse({ props: {}, revalidate: 0 }).success, true);
     }
+  });
+
+  it("keeps exported schema validation aligned with response metadata rules", () => {
+    assertEquals(
+      StaticDataResultSchema.safeParse({
+        props: {},
+        cookies: [{ name: "session", value: "unsafe" }],
+      }).success,
+      false,
+    );
+    assertEquals(
+      StaticDataResultSchema.safeParse({ props: {}, headers: { "x-state": "ready" } }).success,
+      false,
+    );
+    assertEquals(
+      DataResultSchema.safeParse({ props: {}, headers: { "set-cookie": "unsafe=1" } }).success,
+      false,
+    );
+    assertEquals(
+      DataResultSchema.safeParse({
+        props: {},
+        cookies: [{ name: "session", value: "safe", maxAge: 1.5 }],
+      }).success,
+      false,
+    );
+    assertEquals(
+      DataResultSchema.safeParse({
+        props: {},
+        cookies: [{ name: "session", value: "safe", unsupported: true }],
+      }).success,
+      false,
+    );
+    assertEquals(
+      DataResultSchema.safeParse({
+        props: {},
+        headers: { "x-page-state": "ready" },
+        cookies: [{ name: "session", value: "safe", maxAge: 60, httpOnly: true }],
+      }).success,
+      true,
+    );
   });
 });
