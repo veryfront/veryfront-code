@@ -343,6 +343,38 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
     assertEquals(sessionInput, undefined);
   });
 
+  it("preserves an enclosing explicit submit override for nested composer state", () => {
+    let composer: ReturnType<typeof useChatInputContext> | undefined;
+    let parentSubmits = 0;
+    let sessionSends = 0;
+    function ComposerProbe(): null {
+      composer = useChatInputContext();
+      return null;
+    }
+
+    renderToString(
+      <Chat.Root
+        chat={makeChat({
+          sendMessage: () => {
+            sessionSends += 1;
+            return Promise.resolve();
+          },
+        })}
+        onSubmit={() => parentSubmits += 1}
+      >
+        <ChatInput.Root input="nested draft" setInput={() => {}}>
+          <ComposerProbe />
+        </ChatInput.Root>
+      </Chat.Root>,
+    );
+
+    assert(composer, "Expected the nested composer context to be available");
+    composer.onSubmit({ preventDefault() {} } as FormEvent);
+
+    assertEquals(parentSubmits, 1);
+    assertEquals(sessionSends, 0);
+  });
+
   it("explicit ChatInput.Root props win over the surrounding context values", async () => {
     const html = renderToString(
       <Chat.Root chat={makeChat({ input: "context value" })}>
