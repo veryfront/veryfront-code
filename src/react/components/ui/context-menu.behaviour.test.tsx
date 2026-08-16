@@ -102,8 +102,11 @@ function mountInScope(element: React.ReactElement): {
     root,
     win: dom.window as unknown as Window & typeof globalThis,
     rightClickTrigger,
-    cleanup: () => {
+    cleanup: async () => {
       root.unmount();
+      // Drain one macrotask so jsdom's selectionchange 0ms timer (started by
+      // element.focus()) completes inside the test's sanitizer window.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       restore();
     },
   };
@@ -129,7 +132,7 @@ function Menu(
 }
 
 describe("ContextMenu behaviour (builtin)", () => {
-  it("is closed until a right-click; contextmenu opens it, portalled into the token scope", () => {
+  it("is closed until a right-click; contextmenu opens it, portalled into the token scope", async () => {
     const { scope, rightClickTrigger, cleanup } = mountInScope(<Menu />);
     try {
       assertEquals(scope.querySelector('[role="menu"]'), null, "closed initially");
@@ -142,11 +145,11 @@ describe("ContextMenu behaviour (builtin)", () => {
         "portalled surface stays within the token scope, not document.body",
       );
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("makes the default trigger focusable and opens from Shift+F10", () => {
+  it("makes the default trigger focusable and opens from Shift+F10", async () => {
     const { scope, cleanup } = mountInScope(<Menu />);
     try {
       const trigger = scope.querySelector<HTMLElement>('[data-testid="trigger"]')!;
@@ -166,11 +169,11 @@ describe("ContextMenu behaviour (builtin)", () => {
       });
       assert(scope.querySelector('[role="menu"]'), "Shift+F10 opens the menu");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("renders items as role=menuitem with their labels", () => {
+  it("renders items as role=menuitem with their labels", async () => {
     const { scope, rightClickTrigger, cleanup } = mountInScope(<Menu />);
     try {
       rightClickTrigger();
@@ -188,11 +191,11 @@ describe("ContextMenu behaviour (builtin)", () => {
         "disabled native activation keeps the menu open",
       );
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("suppresses disabled asChild activation at the composed-control boundary", () => {
+  it("suppresses disabled asChild activation at the composed-control boundary", async () => {
     let childClicks = 0;
     let selections = 0;
     const { scope, rightClickTrigger, cleanup } = mountInScope(
@@ -218,11 +221,11 @@ describe("ContextMenu behaviour (builtin)", () => {
       assertEquals(selections, 0, "the item selection handler does not run");
       assert(scope.querySelector('[role="menu"]'), "the menu stays open");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("suppresses the native menu (preventDefault) on the contextmenu event", () => {
+  it("suppresses the native menu (preventDefault) on the contextmenu event", async () => {
     const { scope, cleanup } = mountInScope(<Menu />);
     try {
       const trigger = scope.querySelector<HTMLElement>('[data-testid="trigger"]')!;
@@ -235,11 +238,11 @@ describe("ContextMenu behaviour (builtin)", () => {
       flushSync(() => trigger.dispatchEvent(evt));
       assert(evt.defaultPrevented, "native context menu is prevented");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("selecting an item fires onSelect and closes the menu", () => {
+  it("selecting an item fires onSelect and closes the menu", async () => {
     let selected = 0;
     const { scope, rightClickTrigger, cleanup } = mountInScope(
       <Menu onSelect={() => selected++} />,
@@ -253,7 +256,7 @@ describe("ContextMenu behaviour (builtin)", () => {
       assertEquals(selected, 1, "onSelect fired once");
       assertEquals(scope.querySelector('[role="menu"]'), null, "menu closed on select");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
@@ -284,11 +287,11 @@ describe("ContextMenu behaviour (builtin)", () => {
       assertEquals(scope.querySelector('[role="menu"]'), null, "menu closed on keyboard select");
       assertEquals(document.activeElement, trigger, "focus returns to the context menu trigger");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("honors a consumer-cancelled click before selecting or closing", () => {
+  it("honors a consumer-cancelled click before selecting or closing", async () => {
     let clicks = 0;
     let selections = 0;
     const { scope, rightClickTrigger, cleanup } = mountInScope(
@@ -318,11 +321,11 @@ describe("ContextMenu behaviour (builtin)", () => {
       assertEquals(selections, 0, "onSelect does not run after cancellation");
       assert(scope.querySelector('[role="menu"]'), "cancelled click keeps the menu open");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("closes on Escape (native document keydown listener)", () => {
+  it("closes on Escape (native document keydown listener)", async () => {
     const { scope, rightClickTrigger, cleanup } = mountInScope(<Menu />);
     try {
       rightClickTrigger();
@@ -334,11 +337,11 @@ describe("ContextMenu behaviour (builtin)", () => {
       });
       assertEquals(scope.querySelector('[role="menu"]'), null, "Escape dismissed the menu");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 
-  it("closes on outside mousedown (native document pointer listener)", () => {
+  it("closes on outside mousedown (native document pointer listener)", async () => {
     const { scope, rightClickTrigger, cleanup } = mountInScope(<Menu />);
     try {
       rightClickTrigger();
@@ -350,7 +353,7 @@ describe("ContextMenu behaviour (builtin)", () => {
       });
       assertEquals(scope.querySelector('[role="menu"]'), null, "outside click dismissed the menu");
     } finally {
-      cleanup();
+      await cleanup();
     }
   });
 });
