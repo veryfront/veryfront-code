@@ -16,7 +16,7 @@
  * server module, so any populated context implies the accessor is in place.
  */
 
-import type { RequestContext } from "./adapters/fs/veryfront/request-context.ts";
+import type { RequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 
 export type { RequestContext };
 
