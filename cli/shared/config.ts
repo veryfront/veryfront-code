@@ -326,7 +326,7 @@ async function resolveConfigBase(
   let { apiToken, apiTokenSource } = await resolveApiTokenForMode(env, configFile, interactive);
 
   if (!apiToken && interactive) {
-    const userInfo = await ensureAuthenticated(env);
+    const userInfo = await ensureAuthenticated(env, dir);
     if (!userInfo) throw new Error("Authentication required for this operation.");
     apiToken = (await readToken(env)) ?? null;
     apiTokenSource = apiToken ? "token-store" : undefined;

@@ -27,6 +27,28 @@ import {
 import type { UserInfo } from "./login.ts";
 import { resetInteractiveMode, setNonInteractive } from "../shared/interactive.ts";
 
+const STORED_CREDENTIAL_OUTAGES: ReadonlyArray<{
+  name: string;
+  expectedLoginSlug: string;
+  respond: () => Promise<Response>;
+}> = [
+  {
+    name: "a network failure",
+    expectedLoginSlug: "network-error",
+    respond: () => Promise.reject(new TypeError("network unavailable")),
+  },
+  {
+    name: "a timeout",
+    expectedLoginSlug: "timeout-error",
+    respond: () => Promise.reject(new DOMException("timed out", "TimeoutError")),
+  },
+  {
+    name: "a 503 response",
+    expectedLoginSlug: "api-client-error",
+    respond: () => Promise.resolve(new Response(null, { status: 503 })),
+  },
+];
+
 describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () => {
   let tempDir = "";
   let testEnv: EnvironmentConfig;
@@ -595,6 +617,42 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         console.log = originalLog;
         globalThis.fetch = originalFetch;
         resetInteractiveMode();
+        await remove(cwdDir, { recursive: true });
+        await remove(targetDir, { recursive: true });
+      }
+    });
+
+    it("keeps shared config fallback scoped to the requested project directory", async () => {
+      const originalFetch = globalThis.fetch;
+      const cwdDir = await makeTempDir({ prefix: "config-auth-cwd-" });
+      const targetDir = await makeTempDir({ prefix: "config-auth-target-" });
+      let requests = 0;
+
+      try {
+        await Deno.writeTextFile(
+          `${cwdDir}/veryfront.json`,
+          JSON.stringify({
+            apiToken: "vf_cwd_config",
+            apiUrl: "https://cwd-config.example.test",
+            projectSlug: "cwd-project",
+          }) + "\n",
+        );
+        globalThis.fetch = (() => {
+          requests++;
+          return Promise.resolve(Response.json({ data: [], page_info: {} }));
+        }) as typeof fetch;
+
+        const { resolveConfigWithAuth } = await import("../shared/config.ts");
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+
+        await assertRejects(
+          () => withCwd(cwdDir, () => resolveConfigWithAuth(targetDir, testEnv)),
+          Error,
+          "Authentication required",
+        );
+        assertEquals(requests, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
         await remove(cwdDir, { recursive: true });
         await remove(targetDir, { recursive: true });
       }
@@ -1208,6 +1266,76 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         await remove(envDir, { recursive: true });
       }
     });
+
+    for (const outage of STORED_CREDENTIAL_OUTAGES) {
+      it(`does not accept a project dotenv token after stored validation hits ${outage.name}`, async () => {
+        const originalFetch = globalThis.fetch;
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalToken = getEnv("VERYFRONT_API_TOKEN");
+        const output: string[] = [];
+        const errors: string[] = [];
+        const requestedAuth: string[] = [];
+        const envDir = await makeTempDir({ prefix: "login-dotenv-outage-" });
+        await saveToken("stored-unavailable-token", testEnv);
+
+        try {
+          deleteEnv("VERYFRONT_API_TOKEN");
+          await Deno.writeTextFile(
+            `${envDir}/.env`,
+            "VERYFRONT_API_TOKEN=env-file-valid-token\n",
+          );
+          const { __resetEnvLoaderForTests, loadEnv } = await import(
+            "veryfront/utils/env-loader"
+          );
+          __resetEnvLoaderForTests();
+          await loadEnv({ cwd: envDir });
+
+          globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+            const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+            requestedAuth.push(auth);
+            if (auth === "Bearer stored-unavailable-token") return outage.respond();
+            return Promise.resolve(
+              Response.json({ id: "env-user", email: "env@example.com" }),
+            );
+          }) as typeof fetch;
+          console.log = (message?: unknown) => output.push(String(message));
+          console.error = (message?: unknown) => errors.push(String(message));
+
+          const { setJsonMode } = await import("../shared/json-output.ts");
+          const { login } = await import("./login.ts");
+          setJsonMode(true);
+
+          const result = await login(
+            undefined,
+            { ...testEnv, apiToken: "env-file-valid-token" },
+            envDir,
+          );
+          const envelope = JSON.parse(output.join("\n"));
+
+          assertEquals(result, null);
+          assertEquals(envelope.success, false);
+          assertEquals(envelope.error.slug, outage.expectedLoginSlug);
+          assertEquals(requestedAuth, ["Bearer stored-unavailable-token"]);
+          assertEquals(await readToken(testEnv), "stored-unavailable-token");
+          assertEquals(output.join("\n").includes("env@example.com"), false);
+          assertEquals(errors, []);
+        } finally {
+          const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+          const { setJsonMode } = await import("../shared/json-output.ts");
+          __resetEnvLoaderForTests();
+          setJsonMode(false);
+          if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+          else deleteEnv("VERYFRONT_API_TOKEN");
+          console.log = originalLog;
+          console.error = originalError;
+          globalThis.fetch = originalFetch;
+          resetInteractiveMode();
+          await safeDeleteToken();
+          await remove(envDir, { recursive: true });
+        }
+      });
+    }
 
     it("accepts a project dotenv token after a rejected stored login in JSON mode", async () => {
       const originalFetch = globalThis.fetch;
@@ -2779,6 +2907,68 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         await safeDeleteToken();
       }
     });
+
+    for (const outage of STORED_CREDENTIAL_OUTAGES) {
+      it(`does not report a project dotenv identity after stored validation hits ${outage.name}`, async () => {
+        const originalFetch = globalThis.fetch;
+        const originalLog = console.log;
+        const originalToken = getEnv("VERYFRONT_API_TOKEN");
+        const output: string[] = [];
+        const requestedAuth: string[] = [];
+        const envDir = await makeTempDir({ prefix: "whoami-dotenv-outage-" });
+        await saveToken("stored-unavailable-token", testEnv);
+
+        try {
+          deleteEnv("VERYFRONT_API_TOKEN");
+          await Deno.writeTextFile(
+            `${envDir}/.env`,
+            "VERYFRONT_API_TOKEN=env-file-valid-token\n",
+          );
+          const { __resetEnvLoaderForTests, loadEnv } = await import(
+            "veryfront/utils/env-loader"
+          );
+          __resetEnvLoaderForTests();
+          await loadEnv({ cwd: envDir });
+
+          globalThis.fetch = ((_: string | URL | Request, init?: RequestInit) => {
+            const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+            requestedAuth.push(auth);
+            if (auth === "Bearer stored-unavailable-token") return outage.respond();
+            return Promise.resolve(
+              Response.json({ id: "env-user", email: "env@example.com" }),
+            );
+          }) as typeof fetch;
+          console.log = (message?: unknown) => output.push(String(message));
+
+          const { setJsonMode } = await import("../shared/json-output.ts");
+          const { whoami } = await import("./login.ts");
+          setJsonMode(true);
+
+          const result = await whoami({
+            ...testEnv,
+            apiToken: "env-file-valid-token",
+          });
+          const envelope = JSON.parse(output.join("\n"));
+
+          assertEquals(result, null);
+          assertEquals(envelope.data, { authenticated: false });
+          assertEquals(requestedAuth, ["Bearer stored-unavailable-token"]);
+          assertEquals(await readToken(testEnv), "stored-unavailable-token");
+          assertEquals(output.join("\n").includes("env@example.com"), false);
+        } finally {
+          const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+          const { setJsonMode } = await import("../shared/json-output.ts");
+          __resetEnvLoaderForTests();
+          setJsonMode(false);
+          if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+          else deleteEnv("VERYFRONT_API_TOKEN");
+          console.log = originalLog;
+          globalThis.fetch = originalFetch;
+          await safeDeleteToken();
+          await remove(envDir, { recursive: true });
+        }
+      });
+    }
 
     it("reports a veryfront.json API key in human mode without exposing it", async () => {
       const originalFetch = globalThis.fetch;

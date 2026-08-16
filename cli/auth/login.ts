@@ -612,7 +612,7 @@ async function describeExistingSession(
     } catch (error) {
       if (error instanceof CredentialValidationUnavailableError) {
         unavailable ??= error;
-        if (authoritative) {
+        if (authoritative || apiTokenSource === "token-store") {
           if (!isJsonMode() && source !== "stored") {
             writeAuthoritativeCredentialUnavailableMessage(
               source,
@@ -862,6 +862,8 @@ export async function ensureAuthenticated(
   return login(undefined, env, projectDir);
 }
 
+const CREDENTIAL_VALIDATION_UNAVAILABLE = Symbol("credential-validation-unavailable");
+
 export async function logout(env: EnvironmentConfig = getEnvironmentConfig()): Promise<void> {
   await deleteToken(env);
   console.log();
@@ -872,14 +874,16 @@ async function reportCredential(
   token: string,
   source: ApiTokenSource,
   env: EnvironmentConfig,
-): Promise<AuthIdentity | null> {
+): Promise<AuthIdentity | typeof CREDENTIAL_VALIDATION_UNAVAILABLE | null> {
   let credential: AuthIdentity | null;
   try {
     credential = await validateCredential(token, env, {
       throwOnCredentialValidationUnavailable: true,
     });
   } catch (error) {
-    if (error instanceof CredentialValidationUnavailableError) return null;
+    if (error instanceof CredentialValidationUnavailableError) {
+      return CREDENTIAL_VALIDATION_UNAVAILABLE;
+    }
     throw error;
   }
   if (!credential) {
@@ -933,6 +937,7 @@ export async function whoami(
       candidate.apiTokenSource,
       candidate.validationEnv,
     );
+    if (result === CREDENTIAL_VALIDATION_UNAVAILABLE) break;
     if (result) return result;
     if (candidate.authoritative) break;
   }
