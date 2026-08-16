@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { createStrictContext } from "../../../create-strict-context.ts";
-import type { ChatMessage, ChatStatus } from "#veryfront/agent/react";
+import type { ChatFilePart, ChatMessage, ChatStatus } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import type { ModelOption } from "../../model-selector.tsx";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
@@ -37,6 +37,8 @@ export interface ChatContextValue {
 
   // Submit / Stop
   onSubmit: (e?: React.FormEvent) => void | Promise<void>;
+  /** Send resolved composer text and attachments through the shared session. */
+  sendMessage?: (message: { text: string; files?: ChatFilePart[] }) => void | Promise<void>;
   onStop?: () => void;
   onReload?: () => void;
 

@@ -8,7 +8,7 @@
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent } from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -17,6 +17,7 @@ import type { UseChatResult } from "#veryfront/agent/react";
 import { Chat } from "../chat-preset.tsx";
 import { ChatInput } from "./chat-composer.tsx";
 import { useChatContext } from "../contexts/chat-context.tsx";
+import { useChatInputContext } from "../contexts/composer-context.tsx";
 import type { ChatContextValue } from "../contexts/chat-context.tsx";
 
 function makeChat(overrides: Partial<UseChatResult> = {}): UseChatResult {
@@ -257,6 +258,89 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
       if (root) await unmountReactRoot(root);
       restore();
     }
+  });
+
+  it("submits explicit nested composer state instead of the enclosing session state", async () => {
+    let composer: ReturnType<typeof useChatInputContext> | undefined;
+    let submitted: Parameters<UseChatResult["sendMessage"]>[0] | undefined;
+    let clearedInput: string | undefined;
+    const removedAttachments: string[] = [];
+    function ComposerProbe(): null {
+      composer = useChatInputContext();
+      return null;
+    }
+
+    renderToString(
+      <Chat.Root
+        chat={makeChat({
+          input: "session draft",
+          sendMessage: (message) => {
+            submitted = message;
+            return Promise.resolve();
+          },
+        })}
+        attachments={[]}
+      >
+        <ChatInput.Root
+          input="nested draft"
+          setInput={(value) => clearedInput = value}
+          attachments={[{
+            id: "nested-attachment",
+            name: "nested.pdf",
+            state: "uploaded",
+            type: "application/pdf",
+            url: "https://example.com/nested.pdf",
+          }]}
+          onRemoveAttachment={(id) => removedAttachments.push(id)}
+        >
+          <ComposerProbe />
+        </ChatInput.Root>
+      </Chat.Root>,
+    );
+
+    assert(composer, "Expected the nested composer context to be available");
+    composer.onSubmit({ preventDefault() {} } as FormEvent);
+
+    assertEquals(submitted, {
+      text: "nested draft",
+      files: [{
+        type: "file",
+        mediaType: "application/pdf",
+        url: "https://example.com/nested.pdf",
+        filename: "nested.pdf",
+      }],
+    });
+    assertEquals(clearedInput, "");
+    assertEquals(removedAttachments, ["nested-attachment"]);
+  });
+
+  it("routes inherited input changes through an explicit composer setter", () => {
+    let composer: ReturnType<typeof useChatInputContext> | undefined;
+    let explicitInput: string | undefined;
+    let sessionInput: string | undefined;
+    function ComposerProbe(): null {
+      composer = useChatInputContext();
+      return null;
+    }
+
+    renderToString(
+      <Chat.Root
+        chat={makeChat({ setInput: (value) => sessionInput = value })}
+      >
+        <ChatInput.Root
+          input="controlled draft"
+          setInput={(value) => explicitInput = value}
+        >
+          <ComposerProbe />
+        </ChatInput.Root>
+      </Chat.Root>,
+    );
+
+    assert(composer, "Expected the nested composer context to be available");
+    composer.onChange?.({ target: { value: "edited draft" } } as ChangeEvent<HTMLTextAreaElement>);
+
+    assertEquals(explicitInput, "edited draft");
+    assertEquals(sessionInput, undefined);
   });
 
   it("explicit ChatInput.Root props win over the surrounding context values", async () => {

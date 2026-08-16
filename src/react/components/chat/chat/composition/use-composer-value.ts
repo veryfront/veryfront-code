@@ -78,18 +78,23 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
   // propless `<ChatInput.Root>` wires itself. Explicit props always win, and a
   // standalone composer (no ChatContext) keeps the props-only behavior.
   const chat = useChatContextOptional();
-  const chatSetInput = chat?.setInput;
+  const resolvedSetInput = props.setInput ?? chat?.setInput;
   const fallbackOnChange = React.useCallback(
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-      chatSetInput?.(e.target.value),
-    [chatSetInput],
+      resolvedSetInput?.(e.target.value),
+    [resolvedSetInput],
   );
+  const hasExplicitSubmitState = props.input !== undefined ||
+    props.setInput !== undefined || props.attachments !== undefined ||
+    props.onRemoveAttachment !== undefined;
   const p = {
     ...props,
     input: props.input ?? chat?.input ?? "",
     onChange: props.onChange ?? fallbackOnChange,
-    setInput: props.setInput ?? chat?.setInput,
+    setInput: resolvedSetInput,
     onSubmit: props.onSubmit ?? chat?.onSubmit,
+    sendMessage: props.sendMessage ??
+      (props.onSubmit === undefined && hasExplicitSubmitState ? chat?.sendMessage : undefined),
     isLoading: props.isLoading ?? chat?.isLoading,
     stop: props.stop ?? chat?.onStop,
     model: props.model ?? chat?.model,
@@ -112,7 +117,7 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
   // When `sendMessage` is supplied the composer owns submit: trim, wait for
   // in-flight uploads, fold resolved attachments into file parts, send, clear.
   // Otherwise fall back to the caller's explicit `onSubmit` (controlled mode).
-  const { sendMessage, setInput, onClearAttachments, onSubmit } = p;
+  const { sendMessage, setInput, onClearAttachments, onSubmit, onRemoveAttachment } = p;
   const onSubmitEffective = React.useCallback((e?: React.FormEvent) => {
     if (!sendMessage) {
       onSubmit?.(e);
@@ -126,8 +131,23 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
     if (!text && files.length === 0) return;
     sendMessage({ text, ...(files.length > 0 ? { files } : {}) });
     setInput?.("");
-    onClearAttachments?.();
-  }, [canSubmit, sendMessage, onSubmit, setInput, onClearAttachments, p.input, p.attachments]);
+    if (onClearAttachments) {
+      onClearAttachments();
+    } else {
+      for (const attachment of attachments) {
+        if (attachment.url) onRemoveAttachment?.(attachment.id);
+      }
+    }
+  }, [
+    canSubmit,
+    sendMessage,
+    onSubmit,
+    setInput,
+    onClearAttachments,
+    onRemoveAttachment,
+    p.input,
+    p.attachments,
+  ]);
 
   return React.useMemo<ChatInputContextValue>(() => ({
     input: p.input,
