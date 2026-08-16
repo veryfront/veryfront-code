@@ -1278,12 +1278,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             target.source,
           );
           const plannedPaths = new Set(Object.keys(plan.nextFiles));
-          const alreadyPlannedDeletes = new Set(deleteOps.map((op) => op.path));
           const lateRemoteOnlyDeletes = latestRemoteFiles
             .filter((file) =>
               ignoreChecker.isSupportedExtension(file.path) &&
               !ignoreChecker.isIgnored(file.path) &&
-              !alreadyPlannedDeletes.has(file.path) &&
               !plannedPaths.has(file.path)
             )
             .map((file) => ({ path: file.path }));

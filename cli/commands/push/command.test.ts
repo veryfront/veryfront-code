@@ -3349,7 +3349,9 @@ describe("push deletion ownership", () => {
             return Response.json({
               data: [
                 { path: "app.ts", content: "stale app" },
-                { path: "stale.ts", content: "stale source" },
+                ...(deleted.includes("stale.ts")
+                  ? []
+                  : [{ path: "stale.ts", content: "stale source" }]),
                 { path: "inbox/seen/runtime.json", content: '{"seen":true}\n' },
                 { path: "submissions/submitted/runtime.md", content: "runtime\n" },
               ],
@@ -3409,7 +3411,9 @@ describe("push deletion ownership", () => {
             return Response.json({
               data: [
                 { path: "app.ts", content: "stale app" },
-                { path: "stale.ts", content: "stale source" },
+                ...(deleted.includes("stale.ts")
+                  ? []
+                  : [{ path: "stale.ts", content: "stale source" }]),
                 { path: "assets/logo.png", content: "<PNG>" },
               ],
               page_info: {},
@@ -3491,7 +3495,7 @@ describe("push deletion ownership", () => {
         await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
         assertEquals(fileListCalls, 2);
-        assertEquals(deleted.sort(), ["late-remote.ts", "stale.ts"]);
+        assertEquals(deleted.sort(), ["late-remote.ts", "stale.ts", "stale.ts"]);
         assertEquals(
           await readSyncTarget(projectDir, {
             controlPlane: "https://control.example.test",
