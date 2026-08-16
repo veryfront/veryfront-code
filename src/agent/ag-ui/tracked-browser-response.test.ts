@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createAgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts";
-import { createAgUiBrowserEncoderState } from "./browser-encoder.ts";
 import { createAgUiChunkEncoderBridge } from "./chunk-encoder-bridge.ts";
 import { createAgUiTrackedBrowserResponse } from "./tracked-browser-response.ts";
 
@@ -69,7 +68,7 @@ describe("agent/ag-ui-tracked-browser-response", () => {
     assertStringIncludes(text, '"finishReason":"stop"');
   });
 
-  it("suppresses final response output when encoded events contain RunError", async () => {
+  it("supports legacy custom encoders without timingState", async () => {
     const response = createAgUiTrackedBrowserResponse({
       agUiInput: {
         threadId: crypto.randomUUID(),
@@ -89,7 +88,6 @@ describe("agent/ag-ui-tracked-browser-response", () => {
         waitForFinish: async () => {},
       },
       chunkEncoder: {
-        timingState: createAgUiBrowserEncoderState({ nowMs: null, epochMs: null }),
         encode: () => [{ event: "RunError", payload: { message: "boom" } }],
         finalize: () => [],
       },
@@ -101,6 +99,10 @@ describe("agent/ag-ui-tracked-browser-response", () => {
     const text = await response.text();
     assertStringIncludes(text, "event: RunError");
     assertEquals(text.includes("finishReason"), false);
+    assertEquals(
+      parseSseFrames(text).every((frame) => typeof frame.data.elapsedMs === "number"),
+      true,
+    );
   });
 
   it("shares an injected run timing anchor across bootstrap, chunk, and final events", async () => {
