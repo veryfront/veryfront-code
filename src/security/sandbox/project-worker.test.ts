@@ -22,7 +22,7 @@ import type { WorkerEgressBroker } from "./worker-egress-guard.ts";
 import { computeHash } from "#veryfront/utils";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { validateDataResult } from "#veryfront/data/helpers.ts";
-import { fromFileUrl, toFileUrl } from "#veryfront/compat/path";
+import { fromFileUrl, join, toFileUrl } from "#veryfront/compat/path";
 
 const testSuite = isDeno ? describe : describe.skip;
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -1710,6 +1710,73 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
+  it("rejects a scoped read root containing a symlink to an outside file", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = join(outsideDir, "secret.txt");
+    const linkedPath = join(projectDir, "linked-secret.txt");
+    await Deno.writeTextFile(outsidePath, "outside secret");
+    await Deno.symlink(outsidePath, linkedPath);
+
+    const worker = new ProjectWorker({
+      projectId: "test-preexisting-symlink-denied",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      allowInternalEgress: false,
+    });
+
+    try {
+      assertThrows(
+        () => worker.start(),
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("revalidates changed read roots when a replacement source generation starts", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = join(outsideDir, "secret.txt");
+    const linkedPath = join(projectDir, "linked-secret.txt");
+    await Deno.writeTextFile(outsidePath, "outside secret");
+
+    const currentGeneration = new ProjectWorker({
+      projectId: "test-current-symlink-generation",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      allowInternalEgress: false,
+    });
+    const replacementGeneration = new ProjectWorker({
+      projectId: "test-replacement-symlink-generation",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      allowInternalEgress: false,
+    });
+
+    currentGeneration.start();
+    try {
+      await assertWorkerReady(currentGeneration);
+      currentGeneration.terminate();
+      await Deno.symlink(outsidePath, linkedPath);
+
+      assertThrows(
+        () => replacementGeneration.start(),
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
+      );
+    } finally {
+      currentGeneration.terminate();
+      replacementGeneration.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
   it("blocks project fetches to loopback network targets", async () => {
     const projectDir = await Deno.makeTempDir();
     const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
@@ -2316,6 +2383,45 @@ testSuite("ProjectWorker - executeStream", () => {
       threw = true;
     }
     assert(threw, "should throw when worker is not available");
+  });
+
+  it("revalidates changed stream roots when a replacement source generation starts", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = join(outsideDir, "secret.txt");
+    await Deno.writeTextFile(outsidePath, "outside secret");
+
+    const currentGeneration = new ProjectWorker({
+      projectId: "test-current-stream-symlink-generation",
+      permissions: { ...buildWorkerPermissions([projectDir]), net: false },
+      requestTimeoutMs: 5_000,
+      allowInternalEgress: false,
+      workerScriptUrl: TEST_WORKER_SCRIPT_URL,
+    });
+    const replacementGeneration = new ProjectWorker({
+      projectId: "test-replacement-stream-symlink-generation",
+      permissions: { ...buildWorkerPermissions([projectDir]), net: false },
+      requestTimeoutMs: 5_000,
+      allowInternalEgress: false,
+      workerScriptUrl: TEST_WORKER_SCRIPT_URL,
+    });
+
+    currentGeneration.start();
+    try {
+      currentGeneration.terminate();
+      await Deno.symlink(outsidePath, join(projectDir, "linked-secret.txt"));
+
+      assertThrows(
+        () => replacementGeneration.start(),
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
+      );
+    } finally {
+      currentGeneration.terminate();
+      replacementGeneration.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
   });
 
   it("returns a ReadableStream when worker is started", async () => {
