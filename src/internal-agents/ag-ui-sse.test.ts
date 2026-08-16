@@ -87,10 +87,17 @@ describe("internal-agents/ag-ui-sse", () => {
         toolCallId: "tool-1",
         errorText: "boom",
       }),
-      [{
-        event: "ToolCallResult",
-        payload: { toolCallId: "tool-1", result: { error: "boom" }, isError: true },
-      }],
+      // `tool-1` opened with `tool-input-start` above and never reached a
+      // terminal input event, so its input is closed here before the result.
+      // This expectation previously omitted `ToolCallEnd`, which left the
+      // client holding an open tool-input lifecycle for the whole run (#3737).
+      [
+        { event: "ToolCallEnd", payload: { toolCallId: "tool-1" } },
+        {
+          event: "ToolCallResult",
+          payload: { toolCallId: "tool-1", result: { error: "boom" }, isError: true },
+        },
+      ],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "error", error: "Runtime failed" }),
