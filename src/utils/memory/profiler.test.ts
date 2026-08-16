@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing";
 import {
   checkMemoryPressure,
   DEFAULT_PROFILER_CRITICAL_THRESHOLD,
@@ -14,6 +15,7 @@ import {
   getMemorySnapshot,
   getRapidHeapGrowthEvaluation,
   registerCache,
+  resolveEffectiveHeapLimitMB,
   setHeapWarningThreshold,
   startMemoryMonitoring,
   stopMemoryMonitoring,
@@ -95,6 +97,70 @@ describe("memory/profiler", () => {
       const { heapUsedPercent } = getHeapStats();
       assert(heapUsedPercent >= 0);
       assert(heapUsedPercent <= 100);
+    });
+  });
+
+  describe("heap limit honesty", () => {
+    it("reports the runtime heap limit, not the DENO_V8_FLAGS env string", async () => {
+      const { getHeapStatistics } = await import("node:v8");
+      const runtimeLimitMB = getHeapStatistics().heap_size_limit / (1024 * 1024);
+
+      await withEnv({ DENO_V8_FLAGS: "--max-old-space-size=999999" }, async () => {
+        const stats = getHeapStats();
+        assert(
+          Math.abs(stats.heapSizeLimitMB - runtimeLimitMB) < 1,
+          `heapSizeLimitMB (${stats.heapSizeLimitMB}) must reflect the real V8 heap_size_limit ` +
+            `(${runtimeLimitMB.toFixed(2)}MB), not the unverified env string`,
+        );
+      });
+    });
+
+    it("clamps an unverified DENO_V8_FLAGS limit to the V8 default ceiling", () => {
+      const effective = resolveEffectiveHeapLimitMB({
+        runtimeHeapLimitMB: undefined,
+        configuredHeapLimitMB: 4096,
+      });
+
+      assert(
+        effective <= 2048,
+        `an unverified 4096MB env limit must be clamped to the 2048MB V8 default (got ${effective})`,
+      );
+    });
+
+    it("reports over-threshold pressure at ~1.6GB used when a 4096MB flag is unverified", () => {
+      const effective = resolveEffectiveHeapLimitMB({
+        runtimeHeapLimitMB: undefined,
+        configuredHeapLimitMB: 4096,
+      });
+      const heapUsedPercent = (1638.4 / effective) * 100;
+
+      assertEquals(
+        evaluateMemoryPressure(heapUsedPercent, { warning: 65, critical: 75 }),
+        { critical: true, warning: true },
+        "1638.4MB used against the effective limit must exceed a 75% eviction threshold",
+      );
+    });
+
+    it("uses the runtime-verified limit as-is when heap statistics expose it", () => {
+      assertEquals(
+        resolveEffectiveHeapLimitMB({
+          runtimeHeapLimitMB: 4096,
+          configuredHeapLimitMB: 4096,
+        }),
+        4096,
+        "a limit confirmed by runtime heap statistics is trusted as-is",
+      );
+    });
+
+    it("falls back to the V8 default when nothing is configured or verifiable", () => {
+      assertEquals(
+        resolveEffectiveHeapLimitMB({
+          runtimeHeapLimitMB: undefined,
+          configuredHeapLimitMB: undefined,
+        }),
+        2048,
+        "with no runtime or configured limit the V8 default old-space ceiling applies",
+      );
     });
   });
 

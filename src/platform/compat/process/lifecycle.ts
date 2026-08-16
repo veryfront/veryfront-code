@@ -4,7 +4,7 @@ import {
   invokeGlobalErrorHandler,
   normalizeGlobalError,
 } from "./global-error.ts";
-import { runtimeProcess } from "./runtime-process.ts";
+import { type RuntimeProcess, runtimeProcess } from "./runtime-process.ts";
 
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
@@ -68,6 +68,30 @@ export function memoryUsage(): {
 
   const { rss, heapTotal, heapUsed, external } = runtimeProcess.memoryUsage();
   return { rss, heapTotal, heapUsed, external: external || 0 };
+}
+
+/**
+ * Read the real V8 heap size limit in bytes from runtime heap statistics
+ * (`node:v8` `getHeapStatistics().heap_size_limit`).
+ *
+ * Unlike env strings such as `DENO_V8_FLAGS`, this reflects the limit V8 is
+ * actually enforcing. Returns `undefined` when the runtime does not expose
+ * V8 heap statistics (e.g. browser bundles).
+ */
+export function getV8HeapSizeLimit(): number | undefined {
+  try {
+    const proc = runtimeProcess as
+      | (RuntimeProcess & { getBuiltinModule?: (id: string) => unknown })
+      | null;
+    const v8 = proc?.getBuiltinModule?.("node:v8") as
+      | { getHeapStatistics?: () => { heap_size_limit?: number } }
+      | undefined;
+    const limit = v8?.getHeapStatistics?.().heap_size_limit;
+    return typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : undefined;
+  } catch (_) {
+    /* expected: runtimes without node:v8 support */
+    return undefined;
+  }
 }
 
 /**
