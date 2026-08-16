@@ -601,66 +601,23 @@ export default function BrandedPage() {
     }
   });
 
-  it("ignores a local const layout inside a tsx component body", async () => {
+  it("reports a missing direct layout export as page metadata", async () => {
     const projectDir = await createTestProjectDir();
 
     try {
-      await writeTextFile(
-        join(projectDir, "pages/layout.tsx"),
-        `export default function RootLayout({ children }) { return children; }`,
-      );
-
       const pageInfo = createPageInfo(
         projectDir,
-        "pages/grid.tsx",
+        "pages/branded.tsx",
         {},
-        `export default function GridPage() {
-  const layout = "grid";
-  return <div className={layout}>Grid page</div>;
-}`,
+        `export const layout = "missing";
+export default function BrandedPage() { return <div>Branded page</div>; }`,
       );
       const collector = await createCollector(projectDir);
 
-      const result = await collector.collectLayouts(pageInfo);
-
-      // A non-exported local variable is not a layout signal - the nested
-      // chain stays intact and no LAYOUT_NOT_FOUND is thrown.
-      assertEquals(
-        result.nestedLayouts.map((layout) => layout.path),
-        [join(projectDir, "pages/layout.tsx")],
-      );
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
-  });
-
-  it("ignores non-exported layout mentions (local false, comments) on tsx pages", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await writeTextFile(
-        join(projectDir, "pages/layout.tsx"),
-        `export default function RootLayout({ children }) { return children; }`,
-      );
-
-      const pageInfo = createPageInfo(
-        projectDir,
-        "pages/wide.tsx",
-        {},
-        `// const layout = "wide"
-export default function WidePage() {
-  const layout = false;
-  return <div>{layout ? "on" : "off"}</div>;
-}`,
-      );
-      const collector = await createCollector(projectDir);
-
-      const result = await collector.collectLayouts(pageInfo);
-
-      // Neither the comment nor the local const disables or renames the layout.
-      assertEquals(
-        result.nestedLayouts.map((layout) => layout.path),
-        [join(projectDir, "pages/layout.tsx")],
+      await assertRejects(
+        () => collector.collectLayouts(pageInfo),
+        Error,
+        'Layout "missing" not found. Specified in page metadata',
       );
     } finally {
       await cleanupTestDir(projectDir);
@@ -681,173 +638,6 @@ export default function WidePage() {
         "pages/bare.tsx",
         {},
         `export const frontmatter = { layout: false };
-
-export default function BarePage() {
-  return <div>Bare page</div>;
-}`,
-      );
-      const collector = await createCollector(projectDir);
-
-      const result = await collector.collectLayouts(pageInfo);
-
-      assertEquals(result.layoutBundle, undefined);
-      assertEquals(result.nestedLayouts, []);
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
-  });
-
-  it("does not treat frontmatter layout as final before a later spread", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await writeTextFile(
-        join(projectDir, "pages/layout.tsx"),
-        `export default function RootLayout({ children }) { return children; }`,
-      );
-
-      const pageInfo = createPageInfo(
-        projectDir,
-        "pages/example.tsx",
-        {},
-        `const defaults = { layout: "special" };
-export const frontmatter = { layout: false, ...defaults };
-
-export default function ExamplePage() {
-  return <div>Example</div>;
-}`,
-      );
-      const collector = await createCollector(projectDir);
-
-      const result = await collector.collectLayouts(pageInfo);
-
-      assertEquals(
-        result.nestedLayouts.map((layout) => layout.path),
-        [join(projectDir, "pages/layout.tsx")],
-      );
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
-  });
-
-  it("ignores layout exports inside block comments and template literals", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await writeTextFile(
-        join(projectDir, "pages/layout.tsx"),
-        `export default function RootLayout({ children }) { return children; }`,
-      );
-
-      const pageInfo = createPageInfo(
-        projectDir,
-        "pages/example.tsx",
-        {},
-        `/*
-export const frontmatter = { layout: false };
-*/
-const example = \`
-export const layout = false;
-\`;
-
-export default function ExamplePage() {
-  return <pre>{example}</pre>;
-}`,
-      );
-      const collector = await createCollector(projectDir);
-
-      const result = await collector.collectLayouts(pageInfo);
-
-      assertEquals(
-        result.nestedLayouts.map((layout) => layout.path),
-        [join(projectDir, "pages/layout.tsx")],
-      );
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
-  });
-
-  it("ignores layout-looking text inside JSX children", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await writeTextFile(
-        join(projectDir, "pages/layout.tsx"),
-        `export default function RootLayout({ children }) { return children; }`,
-      );
-
-      const pageInfo = createPageInfo(
-        projectDir,
-        "pages/example.tsx",
-        {},
-        `export default function ExamplePage() {
-  return <pre>
-export const layout = false
-</pre>;
-}`,
-      );
-      const collector = await createCollector(projectDir);
-
-      const result = await collector.collectLayouts(pageInfo);
-
-      assertEquals(
-        result.nestedLayouts.map((layout) => layout.path),
-        [join(projectDir, "pages/layout.tsx")],
-      );
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
-  });
-
-  it("ignores layout initializers that only start with a boolean literal", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await writeTextFile(
-        join(projectDir, "pages/layout.tsx"),
-        `export default function RootLayout({ children }) { return children; }`,
-      );
-
-      const pageInfo = createPageInfo(
-        projectDir,
-        "pages/example.tsx",
-        {},
-        `const falseLayout = "marketing";
-export const layout = falseLayout;
-
-export default function ExamplePage() {
-  return <div>Example</div>;
-}`,
-      );
-      const collector = await createCollector(projectDir);
-
-      const result = await collector.collectLayouts(pageInfo);
-
-      assertEquals(
-        result.nestedLayouts.map((layout) => layout.path),
-        [join(projectDir, "pages/layout.tsx")],
-      );
-    } finally {
-      await cleanupTestDir(projectDir);
-    }
-  });
-
-  it("honors formatted frontmatter exports with trailing commas", async () => {
-    const projectDir = await createTestProjectDir();
-
-    try {
-      await writeTextFile(
-        join(projectDir, "pages/layout.tsx"),
-        `export default function RootLayout({ children }) { return children; }`,
-      );
-
-      const pageInfo = createPageInfo(
-        projectDir,
-        "pages/bare.tsx",
-        {},
-        `export const frontmatter = {
-  layout: false,
-};
 
 export default function BarePage() {
   return <div>Bare page</div>;

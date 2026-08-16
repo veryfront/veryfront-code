@@ -121,7 +121,7 @@ function getObjectLayoutValue(node: unknown): boolean | string | undefined {
   return layoutValue;
 }
 
-async function extractTsxLayoutSignal(
+export async function extractTsxLayoutSignal(
   source: string,
   filePath: string,
 ): Promise<boolean | string | undefined> {
@@ -427,7 +427,7 @@ export class LayoutCollector {
     logger.debug("Layout entity found:", { found: !!layoutInfo, layoutName });
 
     if (!layoutInfo) {
-      const source = typeof layoutValue === "string" ? "frontmatter" : "config";
+      const source = typeof layoutValue === "string" ? "page metadata" : "config";
       throw LAYOUT_NOT_FOUND.create({
         detail:
           `Layout "${layoutName}" not found. Specified in ${source} for page "${pageInfo.entity.path}". Check that the layout file exists.`,
