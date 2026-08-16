@@ -133,7 +133,7 @@ describe("memory/profiler", () => {
     it("uses the conservative fallback instead of Bun's moving node:v8 shim value", async () => {
       if (!isBun) return;
 
-      await withEnv({ DENO_V8_FLAGS: "--max-old-space-size=999999" }, () => {
+      await withEnv({ DENO_V8_FLAGS: "--max-old-space-size=999999" }, async () => {
         assertEquals(
           getHeapStats().heapSizeLimitMB,
           2048,
