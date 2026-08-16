@@ -148,7 +148,7 @@ export async function upCommand(
   const { projectDir = cwd(), force = false, dryRun = false } = options;
   const jsonOutput = isJsonMode();
 
-  const userInfo = await ensureAuthenticated(env);
+  const userInfo = await ensureAuthenticated(env, projectDir);
   if (!userInfo) {
     if (jsonOutput) {
       const message = "Not authenticated. Set VERYFRONT_API_TOKEN or run veryfront login.";

@@ -67,6 +67,26 @@ async function captureExit(run: () => Promise<void>): Promise<number> {
   }
 }
 
+async function rejectExit(run: () => Promise<void>): Promise<void> {
+  const originalExit = Deno.exit;
+  // deno-lint-ignore no-explicit-any
+  (Deno as any).exit = (code = 0) => {
+    throw new ExitSentinel(code);
+  };
+
+  try {
+    await run();
+  } catch (error) {
+    if (error instanceof ExitSentinel) {
+      throw new Error(`Command exited unexpectedly with code ${error.code}`);
+    }
+    throw error;
+  } finally {
+    // deno-lint-ignore no-explicit-any
+    (Deno as any).exit = originalExit;
+  }
+}
+
 async function captureLog<T>(run: () => Promise<T>): Promise<{ result: T; output: string[] }> {
   const output: string[] = [];
   const originalLog = console.log;
@@ -261,6 +281,57 @@ describe("Up Command", () => {
   });
 
   describe("upCommand", () => {
+    it("authenticates from the explicit project directory", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const authHome = await Deno.makeTempDir();
+      const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
+      let requestedUrl = "";
+      let requestedAuth = "";
+
+      try {
+        setNonInteractive(true);
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}\n");
+        await Deno.writeTextFile(
+          join(projectDir, "veryfront.json"),
+          `${
+            JSON.stringify(
+              {
+                projectSlug: "target-project",
+                apiToken: "target-config-token",
+                apiUrl: "https://target-control.example.test/api",
+              },
+              null,
+              2,
+            )
+          }\n`,
+        );
+        const env = createTestEnvironmentConfig({
+          apiToken: undefined,
+          homeDir: authHome,
+          xdgConfigHome: authHome,
+        });
+
+        await withMockFetch(
+          ((input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            requestedUrl = request.url;
+            requestedAuth = request.headers.get("Authorization") ?? "";
+            return Promise.resolve(identityResponse());
+          }) as typeof fetch,
+          () => rejectExit(() => upCommand({ projectDir }, env, { deployProject })),
+        );
+
+        assertEquals(requestedUrl, "https://target-control.example.test/api/me");
+        assertEquals(requestedAuth, "Bearer target-config-token");
+        assertEquals(requests.length, 1);
+        assertEquals(requests[0]?.projectDir, projectDir);
+      } finally {
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+        await Deno.remove(authHome, { recursive: true });
+      }
+    });
+
     it("exits nonzero after an unauthenticated JSON result", async () => {
       const tempDir = await Deno.makeTempDir();
 
