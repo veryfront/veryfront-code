@@ -291,7 +291,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getOwnDataProperty(
-  value: object,
+  value: Record<string, unknown> | readonly unknown[],
   key: PropertyKey,
 ): { readonly value: unknown } | undefined {
   const descriptor = objectGetOwnPropertyDescriptor(value, key);

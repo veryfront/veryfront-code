@@ -18,7 +18,7 @@ import {
 
 type CapturedMethod = (...args: never[]) => unknown;
 
-function captureOptionalMethod(value: object, key: string): CapturedMethod | undefined {
+function captureOptionalMethod(value: FSAdapter, key: string): CapturedMethod | undefined {
   const seen = new Set<object>();
   let owner: object | null = value;
   for (let depth = 0; owner !== null && depth < 64; depth++) {
@@ -42,7 +42,7 @@ function captureOptionalMethod(value: object, key: string): CapturedMethod | und
   return undefined;
 }
 
-function publishFrozen(target: object, key: PropertyKey, value: unknown): void {
+function publishFrozen(target: FSAdapterWrapper, key: PropertyKey, value: unknown): void {
   Object.defineProperty(target, key, {
     configurable: false,
     enumerable: true,

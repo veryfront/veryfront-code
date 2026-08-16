@@ -286,7 +286,7 @@ function cloneProviderConfig(config: OAuthProviderConfig): OAuthProviderConfig {
     raw.defaultScopes = defaultScopes;
   }
 
-  const snapshot: Record<string, unknown> = Object.create(null);
+  const snapshot: OAuthProviderConfig = Object.create(null);
   for (const [key, value] of Object.entries(raw)) {
     Object.defineProperty(snapshot, key, {
       configurable: true,
@@ -302,7 +302,7 @@ function cloneProviderConfig(config: OAuthProviderConfig): OAuthProviderConfig {
   if (tokenMapping.snapshot !== undefined) {
     snapshot.tokenResponseMapping = tokenMapping.snapshot;
   }
-  return snapshot as unknown as OAuthProviderConfig;
+  return snapshot;
 }
 
 function encodeBasicCredentials(clientId: string, clientSecret: string): string {

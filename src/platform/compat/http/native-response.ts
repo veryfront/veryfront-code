@@ -89,7 +89,7 @@ export function toNativeResponse(
   // Re-wrap polyfilled Response as native Response.
   // At runtime, `response` may be an undici Response (from the dnt shim) that
   // fails Deno's native instanceof check. Cast to access its properties.
-  const r = response as unknown as Response;
+  const r = response as Response;
   return new NativeResponse(r.body, {
     status: r.status,
     statusText: r.statusText,

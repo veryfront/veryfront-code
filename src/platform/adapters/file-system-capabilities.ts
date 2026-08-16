@@ -128,7 +128,7 @@ export interface CapturedStaticReaders {
   };
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, value, [key]) as boolean;
 }
 

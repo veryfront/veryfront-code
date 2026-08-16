@@ -52,7 +52,7 @@ function encodedByteLength(value: string): number {
   return ReflectApply(TypedArrayByteLengthGetter, bytes, []) as number;
 }
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
 }
 

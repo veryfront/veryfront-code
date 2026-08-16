@@ -196,19 +196,20 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
         () => {
           if (!this.summary) return [...this.messages];
 
-          const summaryMessage = {
+          const summaryParts = [
+            {
+              type: "text",
+              text: `${SUMMARY_MESSAGE_PREFIX}${this.summary}`,
+            },
+          ];
+          const summaryMessage: MinimalMessage = {
             id: "summary",
-            role: "system" as const,
-            parts: [
-              {
-                type: "text" as const,
-                text: `${SUMMARY_MESSAGE_PREFIX}${this.summary}`,
-              },
-            ],
+            role: "system",
+            parts: summaryParts,
             timestamp: Date.now(),
-          } as unknown as M;
+          };
 
-          return [summaryMessage, ...this.messages];
+          return [summaryMessage as M, ...this.messages];
         },
         { "memory.type": "summary", "memory.has_summary": !!this.summary },
       ),

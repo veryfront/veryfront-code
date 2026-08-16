@@ -43,7 +43,7 @@ function materializeAdapterWithFS(
   adapter: RuntimeAdapter,
   wrappedFS: RuntimeAdapter["fs"],
 ): RuntimeAdapter {
-  const enhanced: Record<string | symbol, unknown> = {};
+  const enhanced = {} as RuntimeAdapter & Record<string | symbol, unknown>;
   const seen = new Set<string | symbol>();
 
   let current: object | null = adapter;
@@ -58,7 +58,7 @@ function materializeAdapterWithFS(
   }
 
   enhanced.fs = wrappedFS;
-  return enhanced as unknown as RuntimeAdapter;
+  return enhanced;
 }
 
 export function enhanceAdapterWithFS(

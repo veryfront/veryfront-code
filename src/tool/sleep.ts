@@ -38,7 +38,7 @@ function createSleepToolInputSchema(maxSeconds: number): Schema<SleepToolInputSh
     seconds: v.number().min(1).max(maxSeconds).describe(
       `Number of seconds to wait (1-${maxSeconds})`,
     ),
-  }) as unknown as Schema<SleepToolInputShape>;
+  }) as Schema<SleepToolInputShape>;
 }
 
 /** Input payload for sleep tool. */

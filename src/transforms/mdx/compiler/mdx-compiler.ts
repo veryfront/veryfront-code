@@ -15,7 +15,7 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ReflectApply = Reflect.apply;
 const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 
-function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+function readOwnDataProperty(value: Error, key: PropertyKey): unknown {
   try {
     const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
     if (

@@ -99,7 +99,7 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
 
         const data: { runs?: WorkflowRun[]; cursor?: string; totalCount?: number } = await response
           .json();
-        const fetchedRuns: WorkflowRun[] = data.runs ?? (data as unknown as WorkflowRun[]);
+        const fetchedRuns: WorkflowRun[] = data.runs ?? (data as WorkflowRun[]);
         const nextCursor: string | undefined = data.cursor;
         const total: number | undefined = data.totalCount;
 

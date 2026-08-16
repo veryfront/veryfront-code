@@ -134,7 +134,7 @@ function createCSSCacheEntry(
   );
   return Object.freeze({
     css: detachRetainedString(css),
-    candidates: Object.freeze(candidates) as unknown as string[],
+    candidates: Object.freeze(candidates) as string[],
     stylesheet,
     pipelineIdentity,
   });

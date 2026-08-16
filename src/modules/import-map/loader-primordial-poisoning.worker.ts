@@ -8,7 +8,7 @@ const denoJson = JSON.stringify({
     package: "https://example.com/deno-package.ts",
   },
 });
-const adapter = {
+const adapterMock: unknown = {
   fs: {
     getAdapterType: () => "VeryfrontFSAdapter",
     getUnderlyingAdapter: () => ({}),
@@ -17,7 +17,8 @@ const adapter = {
     readFile: () => denoJson,
   },
   env: { get: () => undefined },
-} as unknown as RuntimeAdapter;
+};
+const adapter = adapterMock as RuntimeAdapter;
 const config = {
   resolve: {
     importMap: {

@@ -178,7 +178,7 @@ export function createApp(config: AppConfig): App {
     if (spinnerInterval) return;
     spinnerInterval = setInterval(() => {
       render();
-    }, 80) as unknown as number;
+    }, 80);
   }
 
   function stopSpinner(): void {

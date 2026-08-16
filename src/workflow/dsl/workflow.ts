@@ -69,7 +69,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
 
   // Auto-register for discovery in dev tools
   // Use type assertion since registry only stores metadata, not the full generic type
-  workflowRegistry.register(wf as unknown as Workflow);
+  workflowRegistry.register(wf as Workflow);
 
   return wf;
 }

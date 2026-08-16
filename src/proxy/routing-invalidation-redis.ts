@@ -88,7 +88,7 @@ function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const envelope = parsed as Record<string, unknown>;
+  const envelope = parsed as Partial<SignedRoutingInvalidationEnvelope>;
   if (
     envelope.version !== 1 ||
     typeof envelope.issuedAtMs !== "number" ||
@@ -102,7 +102,7 @@ function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope
   ) {
     return null;
   }
-  return envelope as unknown as SignedRoutingInvalidationEnvelope;
+  return envelope as SignedRoutingInvalidationEnvelope;
 }
 
 function signatureDomainPrefix(domain: SignatureDomain): string {
@@ -223,7 +223,7 @@ function parseEvent(message: string): ProxyRoutingInvalidationEvent | null {
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const event = parsed as Record<string, unknown>;
+  const event = parsed as Partial<ProxyRoutingInvalidationEvent>;
   if (
     event.version !== 1 ||
     typeof event.eventId !== "string" || !event.eventId ||
@@ -236,7 +236,7 @@ function parseEvent(message: string): ProxyRoutingInvalidationEvent | null {
   ) {
     return null;
   }
-  return event as unknown as ProxyRoutingInvalidationEvent;
+  return event as ProxyRoutingInvalidationEvent;
 }
 
 function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgement | null {
@@ -248,14 +248,14 @@ function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgeme
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const acknowledgement = parsed as Record<string, unknown>;
+  const acknowledgement = parsed as Partial<RoutingInvalidationAcknowledgement>;
   if (
     typeof acknowledgement.eventId !== "string" || !acknowledgement.eventId ||
     typeof acknowledgement.replicaId !== "string" || !acknowledgement.replicaId
   ) {
     return null;
   }
-  return acknowledgement as unknown as RoutingInvalidationAcknowledgement;
+  return acknowledgement as RoutingInvalidationAcknowledgement;
 }
 
 async function createDefaultClient(redisUrl: string): Promise<RoutingInvalidationRedisClient> {

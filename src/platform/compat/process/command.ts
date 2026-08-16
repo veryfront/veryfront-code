@@ -573,7 +573,7 @@ export async function runCommand(
   }
 
   if (IS_BUN) {
-    const bunGlobal = globalThis as unknown as {
+    const bunGlobal = globalThis as typeof globalThis & {
       Bun: BunCommandRuntime;
     };
 

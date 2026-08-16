@@ -43,7 +43,7 @@ function appendArrayValue<T>(array: T[], value: T): void {
 }
 
 function defineOwnDataProperty(
-  object: object,
+  object: Record<PropertyKey, unknown>,
   key: PropertyKey,
   value: unknown,
 ): void {
@@ -60,7 +60,7 @@ export function createProxyShutdownAggregateError(
   failures: readonly unknown[],
   message: string,
 ): AggregateError {
-  const iterable = createObject(null) as Record<PropertyKey, unknown>;
+  const iterable = createObject(null) as Record<PropertyKey, unknown> & Iterable<unknown>;
   defineOwnDataProperty(iterable, arrayIteratorSymbol, () => {
     let index = 0;
     const iterator = createObject(null) as Record<PropertyKey, unknown>;
@@ -77,7 +77,7 @@ export function createProxyShutdownAggregateError(
     return iterator;
   });
   return new NativeAggregateError(
-    iterable as unknown as Iterable<unknown>,
+    iterable,
     message,
   );
 }
@@ -98,7 +98,7 @@ function defineArrayValue<T>(array: T[], index: number, value: T): void {
   defineProperty(array, index, descriptor);
 }
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: readonly unknown[], key: PropertyKey): boolean {
   return apply(hasOwnProperty, object, [key]) as boolean;
 }
 

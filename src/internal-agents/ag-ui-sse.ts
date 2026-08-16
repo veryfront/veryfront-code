@@ -39,16 +39,13 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
   // recurring per event type, and means adding a timing field is one edit here
   // plus one in the encoder, never a per-schema sweep.
   const withTiming = (
-    shape: Record<string, unknown>,
+    shape: Record<string, Schema<unknown>>,
   ): Schema<Record<string, unknown>> =>
-    // deno-lint-ignore no-explicit-any
-    (v.object({
+    v.object({
       ...shape,
       elapsedMs: v.number().optional(),
       emittedAt: v.number().optional(),
-    } as any) as unknown) as Schema<
-      Record<string, unknown>
-    >;
+    });
   const schemas: Record<string, Schema<Record<string, unknown>>> = {
     RunStarted: withTiming({
       runId: v.string().min(1),

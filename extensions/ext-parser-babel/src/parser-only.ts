@@ -53,6 +53,7 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
       allowReturnOutsideFunction: options.filePath?.toLowerCase().endsWith(".cjs") === true,
       plugins: pickPlugins(options.filePath),
     });
-    return Promise.resolve(ast as unknown as ASTNode);
+    const node: { type: string } = ast;
+    return Promise.resolve(node as ASTNode);
   }
 }

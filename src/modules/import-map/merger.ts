@@ -11,8 +11,8 @@ const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
 const IntrinsicTypeError = TypeError;
 
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
+function hasOwn(descriptor: PropertyDescriptor, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, [key]) as boolean;
 }
 
 function copySnapshotField(

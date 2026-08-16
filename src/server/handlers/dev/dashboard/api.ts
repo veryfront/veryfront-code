@@ -191,7 +191,7 @@ function handleListAgents(): Response {
   const allTools = Array.from(toolRegistry.getAll().entries());
 
   const list = Array.from(agentRegistry.getAll().entries()).map(([id, agent]) => {
-    const cfg = agent.config as unknown as Record<string, unknown>;
+    const cfg = agent.config;
 
     let system: string | null = null;
     if (typeof cfg.system === "string") system = cfg.system;

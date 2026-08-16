@@ -52,13 +52,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readDataProperty(record: object, key: string): unknown {
+function readDataProperty(record: Record<string, unknown>, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(record, key);
   return descriptor?.enumerable === true && "value" in descriptor ? descriptor.value : undefined;
 }
 
 function hasExactDataProperties(
-  record: object,
+  record: Record<string, unknown>,
   allowedKeys: readonly string[],
 ): boolean {
   const allowed = new Set<string>(allowedKeys);
@@ -69,7 +69,10 @@ function hasExactDataProperties(
   });
 }
 
-function hasExactEventProperties(record: object, eventKeys: readonly string[]): boolean {
+function hasExactEventProperties(
+  record: Record<string, unknown>,
+  eventKeys: readonly string[],
+): boolean {
   return hasExactDataProperties(record, [...BASE_EVENT_KEYS, ...eventKeys]);
 }
 

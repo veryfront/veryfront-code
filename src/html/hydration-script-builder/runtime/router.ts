@@ -7,6 +7,7 @@ import type {
   ClientRouter,
   HydrationRuntimeEnv,
   PageDataPayload,
+  RuntimeDocument,
   RuntimeElement,
   RuntimeEvent,
   RuntimeFetchInit,
@@ -415,11 +416,11 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
   function handlePageDataVersionMismatch(
     path: string,
     data: PageDataPayload,
-  ): PageDataPayload {
+  ): PageDataPayload | Promise<PageDataPayload> {
     if (data.buildVersion && checkVersionMismatch(data.buildVersion)) {
       log("Version mismatch detected, performing full page reload to:", path);
       navigateDocument(path);
-      return new Promise<PageDataPayload>(() => {}) as unknown as PageDataPayload;
+      return new Promise<PageDataPayload>(() => {});
     }
 
     return data;
@@ -705,7 +706,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
 
     handoffClientRouteMetadata(
       pageData.frontmatter ?? {},
-      document as unknown as Document,
+      document as RuntimeDocument & Document,
     );
 
     if (pageData.css) {
@@ -1035,7 +1036,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
 
         viewportPrefetchObserver?.unobserve(entry.target);
         const href = getInternalRouteHrefFromLink(
-          entry.target as unknown as RuntimeElement,
+          entry.target as Element & RuntimeElement,
         );
         if (href) prefetchPage(href);
       }
@@ -1052,7 +1053,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
       if (observedPrefetchLinks.has(link)) continue;
 
       observedPrefetchLinks.add(link);
-      observer.observe(link as unknown as Element);
+      observer.observe(link as RuntimeElement & Element);
     }
   }
 

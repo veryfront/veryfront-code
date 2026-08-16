@@ -48,15 +48,9 @@ export function createLifecycleRunEventAdapter(input: {
     DEFAULT_MAX_BUFFERED_CONTENT_BYTES;
   const flushDelayMs = input.flushDelayMs ?? DEFAULT_FLUSH_DELAY_MS;
   const setTimer = input.setTimer ??
-    ((callback: () => void, delayMs: number) =>
-      globalThis.setTimeout(callback, delayMs) as unknown as number);
+    ((callback: () => void, delayMs: number) => globalThis.setTimeout(callback, delayMs));
   const clearTimer = input.clearTimer ??
-    ((timerId: number) =>
-      globalThis.clearTimeout(
-        timerId as unknown as ReturnType<
-          typeof globalThis.setTimeout
-        >,
-      ));
+    ((timerId: number) => globalThis.clearTimeout(timerId));
 
   let logicalSequence = 0;
   let pending: PendingDurableContent | null = null;

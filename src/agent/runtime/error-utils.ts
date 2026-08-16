@@ -40,7 +40,7 @@ const MAX_BEST_EFFORT_DEPTH = 8;
 const MAX_BEST_EFFORT_NODES = 256;
 const OMIT_DIAGNOSTIC_VALUE = Symbol("omit-diagnostic-value");
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
 }
 
@@ -169,7 +169,7 @@ function inspectOwnDescriptor(
 }
 
 function defineDiagnosticProperty(
-  target: object,
+  target: BestEffortDiagnosticValue[] | Record<string, BestEffortDiagnosticValue>,
   key: PropertyKey,
   value: BestEffortDiagnosticValue,
 ): void {
@@ -181,7 +181,7 @@ function defineDiagnosticProperty(
   });
 }
 
-function defineDiagnosticSerializationGuard(target: object): void {
+function defineDiagnosticSerializationGuard(target: BestEffortDiagnosticValue[]): void {
   objectDefineProperty(target, "toJSON", {
     configurable: false,
     enumerable: false,

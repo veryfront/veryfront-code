@@ -183,8 +183,8 @@ async function defaultLstat(path: string): Promise<ExtensionManifestFileInfo> {
 
   if (isNode || isBun) {
     const fs = await import("node:fs/promises");
-    const info = await fs.lstat(path, { bigint: true });
-    return fromNodeFileInfo(info as unknown as NodeBigIntFileInfo);
+    const info: NodeBigIntFileInfo = await fs.lstat(path, { bigint: true });
+    return fromNodeFileInfo(info);
   }
 
   throw new Error("The current runtime does not provide filesystem access");
@@ -203,7 +203,7 @@ async function defaultOpen(path: string): Promise<ExtensionManifestFileHandle> {
 
   if (isNode || isBun) {
     const fs = await import("node:fs/promises");
-    const handle = await fs.open(path, "r") as unknown as NodeFileHandle;
+    const handle: NodeFileHandle = await fs.open(path, "r");
     return {
       async read(buffer): Promise<number | null> {
         const bufferLength = reflectApply(typedArrayByteLength, buffer, []) as number;
@@ -228,7 +228,7 @@ function errorContext(path: string, operation: string): Record<string, unknown> 
   return { path, operation };
 }
 
-function ownStringProperty(value: object, property: string): string | undefined {
+function ownStringProperty(value: Error, property: string): string | undefined {
   const descriptor = reflectApply(objectGetOwnPropertyDescriptor, undefined, [value, property]) as
     | PropertyDescriptor
     | undefined;

@@ -59,7 +59,7 @@ export function lazySchema<T>(getSchema: () => Schema<T>): Schema<T> {
     }
   };
   const facade: Schema<T> = {
-    _output: undefined as unknown as T,
+    _output: undefined as never,
     optional: () => schema().optional(),
     nullable: () => schema().nullable(),
     nullish: () => schema().nullish(),

@@ -101,7 +101,7 @@ export function createMockAnchor(
   href: string,
   attributes: Record<string, string> = {},
 ): HTMLAnchorElement {
-  return new MockHTMLAnchorElement(href, attributes) as unknown as HTMLAnchorElement;
+  return new MockHTMLAnchorElement(href, attributes) as MockHTMLAnchorElement & HTMLAnchorElement;
 }
 
 export function createMockElement(
@@ -112,8 +112,8 @@ export function createMockElement(
   return new MockHTMLElement(
     tagName,
     attributes,
-    parent as unknown as MockHTMLElement | MockHTMLAnchorElement | null,
-  ) as unknown as HTMLElement;
+    parent as (HTMLElement & MockHTMLElement) | (HTMLAnchorElement & MockHTMLAnchorElement) | null,
+  ) as MockHTMLElement & HTMLElement;
 }
 
 function setupGlobalMock<K extends keyof GlobalWithDOM>(
@@ -132,7 +132,7 @@ function setupGlobalMock<K extends keyof GlobalWithDOM>(
 export function setupHTMLAnchorElementMock(): { cleanup: () => void } {
   return setupGlobalMock(
     "HTMLAnchorElement",
-    MockHTMLAnchorElement as unknown as typeof HTMLAnchorElement,
+    MockHTMLAnchorElement as typeof MockHTMLAnchorElement & typeof HTMLAnchorElement,
     originalHTMLAnchorElement,
   );
 }
@@ -140,13 +140,17 @@ export function setupHTMLAnchorElementMock(): { cleanup: () => void } {
 export function setupHTMLElementMock(): { cleanup: () => void } {
   return setupGlobalMock(
     "HTMLElement",
-    MockHTMLElement as unknown as typeof HTMLElement,
+    MockHTMLElement as typeof MockHTMLElement & typeof HTMLElement,
     originalHTMLElement,
   );
 }
 
 export function setupElementMock(): { cleanup: () => void } {
-  return setupGlobalMock("Element", MockElement as unknown as typeof Element, originalElement);
+  return setupGlobalMock(
+    "Element",
+    MockElement as typeof MockElement & typeof Element,
+    originalElement,
+  );
 }
 
 export function setupDOMMocks(): { cleanup: () => void } {

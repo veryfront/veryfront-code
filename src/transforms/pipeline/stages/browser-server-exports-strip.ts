@@ -107,7 +107,7 @@ function nodeName(value: unknown): string | null {
 
 function bodyOf(ast: ASTNode): Node[] {
   const program = (ast as { program?: unknown }).program;
-  const source = isNode(program) ? program : (ast as unknown as Node);
+  const source: Node = isNode(program) ? program : ast;
   const body = source.body;
   return Array.isArray(body) ? body.filter(isNode) : [];
 }
@@ -1009,7 +1009,7 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
 
 function setBody(ast: ASTNode, body: Node[]): void {
   const program = (ast as { program?: unknown }).program;
-  const target = isNode(program) ? program : (ast as unknown as Node);
+  const target: Node = isNode(program) ? program : ast;
   target.body = body;
 }
 

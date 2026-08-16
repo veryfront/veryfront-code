@@ -86,7 +86,7 @@ export async function createControlPlaneSignature(
 }
 
 export function createCtx(publicKeyPem?: string): HandlerContext {
-  return {
+  const ctx = {
     projectDir: "/project",
     adapter: {
       env: {
@@ -99,7 +99,8 @@ export function createCtx(publicKeyPem?: string): HandlerContext {
     projectSlug: "demo-project",
     projectId: "proj-1",
     isLocalProject: false,
-  } as unknown as HandlerContext;
+  };
+  return ctx as HandlerContext & typeof ctx;
 }
 
 export function createAgent(id = "agent-1"): Agent {

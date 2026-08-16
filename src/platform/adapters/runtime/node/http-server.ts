@@ -160,7 +160,7 @@ export class NodeServer implements Server {
 
   /** @internal Native transport for compatibility facades that expose Node's server. */
   get nativeHttpServer(): import("node:http").Server {
-    return this.server as unknown as import("node:http").Server;
+    return this.server as import("node:http").Server;
   }
 
   /** @internal Update an ephemeral (`port: 0`) listener with its bound port. */
@@ -853,7 +853,7 @@ async function createNodeServerInternal(
   };
 
   const nodeServer = new NodeServer(
-    server as unknown as NodeHttpServer,
+    server as NodeHttpServer,
     hostname,
     port,
     disposeUpgrades,

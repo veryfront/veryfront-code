@@ -13,7 +13,8 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { LOAD_SKILL_POLICY_CLAUSES } from "./load-skill-policy.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   captureByteReadCapabilities,
@@ -153,7 +154,7 @@ async function readSkillFile(
 }
 
 function requireExactSkillReader(
-  fileSystem: object,
+  fileSystem: FileSystemAdapter | FileSystem,
 ): (path: string, byteLimit: number) => Promise<Uint8Array> {
   const reader = captureByteReadCapabilities(fileSystem, "Skill filesystem").exact;
   if (!reader) {

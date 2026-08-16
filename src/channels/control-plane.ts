@@ -492,7 +492,7 @@ function requireSignedRequestBinding(
   }
 }
 
-function readExpectedRequestBinding(options: object): {
+function readExpectedRequestBinding(options: { requestMethod: string; requestPath: string }): {
   method: string;
   path: string;
 } {
@@ -784,7 +784,7 @@ export function getRuntimeAgentPublicMetadata(
   id: string,
   agent: Agent,
 ): RuntimeAgentPublicMetadata {
-  const rawConfig = agent.config as unknown as Record<string, unknown>;
+  const rawConfig = agent.config;
   const suggestionsParseResult = rawConfig.suggestions === undefined
     ? null
     : RuntimeSuggestionsSchema.safeParse(
@@ -809,7 +809,7 @@ export function getRuntimeAgentPublicMetadata(
 }
 
 function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
-  const rawConfig = agent.config as unknown as Record<string, unknown>;
+  const rawConfig = agent.config as { version?: unknown };
   const publicMetadata = getRuntimeAgentPublicMetadata(id, agent);
 
   return RuntimeAgentSchema.parse({

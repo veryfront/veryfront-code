@@ -44,7 +44,7 @@ export function handleInputBoxKeyDown(
 
   const nativeEvent = e.nativeEvent as KeyboardEvent | undefined;
   const isComposing = nativeEvent?.isComposing === true ||
-    (e as unknown as { isComposing?: boolean }).isComposing === true ||
+    (e as { isComposing?: boolean }).isComposing === true ||
     e.keyCode === 229;
   if (e.key !== "Enter" || e.shiftKey || isComposing || !onSubmit) return;
 

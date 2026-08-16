@@ -17,7 +17,7 @@ const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const ownKeys = Reflect.ownKeys;
 const structuredCloneValue = globalThis.structuredClone;
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
 }
 

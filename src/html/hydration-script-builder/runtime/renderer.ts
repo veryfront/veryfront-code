@@ -394,7 +394,7 @@ export function createHydrationRenderer(deps: HydrationRendererDeps): HydrationR
         container.__reactRoot.render(tree);
         log("Client-side React app rendered successfully");
       } else {
-        const { hydrateRoot } = await import("react-dom/client") as unknown as {
+        const { hydrateRoot } = await import("react-dom/client") as {
           hydrateRoot: (container: unknown, tree: unknown, options?: unknown) => ReactRoot;
         };
         const options = {

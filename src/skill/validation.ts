@@ -33,7 +33,7 @@ const NativeRangeError = RangeError;
 const NativeTypeError = TypeError;
 const ownKeys = Reflect.ownKeys;
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(hasOwnProperty, object, [key]) as boolean;
 }
 
@@ -322,7 +322,7 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
     id: registryId,
     metadata,
     rootPath,
-    ...(fsAdapter === undefined ? {} : { fsAdapter: fsAdapter as unknown as FileSystemAdapter }),
+    ...(fsAdapter === undefined ? {} : { fsAdapter: fsAdapter as FileSystemAdapter }),
     ...(ownerAgentId === undefined ? {} : { ownerAgentId }),
     ...(shortName === undefined ? {} : { shortName }),
   });

@@ -226,7 +226,7 @@ function snapshotLegacyProvides(
 }
 
 function readOwnMetadataField(
-  extension: Extension,
+  extension: Extension | Record<string, unknown>,
   field: "contracts" | "provides",
 ): unknown {
   let descriptor: PropertyDescriptor | undefined;
@@ -450,12 +450,12 @@ export function validateExtension(ext: unknown): string[] {
   let contractsValue: unknown;
   let legacyProvidesValue: unknown;
   try {
-    contractsValue = readOwnMetadataField(candidate as unknown as Extension, "contracts");
+    contractsValue = readOwnMetadataField(candidate, "contracts");
   } catch (error) {
     issues.push(describeThrownValue(error));
   }
   try {
-    legacyProvidesValue = readOwnMetadataField(candidate as unknown as Extension, "provides");
+    legacyProvidesValue = readOwnMetadataField(candidate, "provides");
   } catch (error) {
     issues.push(describeThrownValue(error));
   }

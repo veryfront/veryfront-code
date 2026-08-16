@@ -405,7 +405,7 @@ function createDefaultResources(config: NormalizedS3Config): DefaultS3Resources 
     useFipsEndpoint: config.useFipsEndpoint,
     userAgentAppId: "veryfront-ext-blob-s3",
   });
-  const send = client.send.bind(client) as unknown as S3BlobStorageClient["send"];
+  const send = client.send.bind(client) as S3BlobStorageClient["send"];
   return {
     client: {
       send,
@@ -585,7 +585,7 @@ function toNodeReadable(stream: ReadableStream): Readable {
   // The npm AWS SDK selects its Node transport in Deno, Bun, and Node. Convert
   // the framework's web-stream contract at this extension boundary.
   return Readable.fromWeb(
-    stream as unknown as Parameters<typeof Readable.fromWeb>[0],
+    stream as Parameters<typeof Readable.fromWeb>[0],
     { objectMode: false },
   );
 }

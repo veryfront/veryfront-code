@@ -108,7 +108,7 @@ export function sanitizeOptionalDiagnosticText(value: unknown): string | undefin
 }
 
 function ownDataField(
-  value: object,
+  value: Error,
   key: PropertyKey,
 ): unknown | typeof MISSING_DATA_FIELD {
   const descriptor = getOwnPropertyDescriptor(value, key);

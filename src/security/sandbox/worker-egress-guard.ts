@@ -1775,7 +1775,7 @@ export function installWorkerEgressGuard(
         );
       }
       return await guardedWorkerConnect(
-        options as unknown as Deno.ConnectOptions,
+        options as Deno.ConnectOptions & Record<PropertyKey, unknown>,
         baseOptions,
         runtime,
       );

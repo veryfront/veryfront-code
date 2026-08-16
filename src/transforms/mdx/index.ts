@@ -180,7 +180,7 @@ export const mdxRenderer = new Proxy({} as MDXRenderer, {
   },
   set(_target, prop, value) {
     const instance = getMDXRendererInstance();
-    (instance as unknown as Record<string | symbol, unknown>)[prop] = value;
+    (instance as MDXRenderer & Record<string | symbol, unknown>)[prop] = value;
     return true;
   },
   has(_target, prop) {

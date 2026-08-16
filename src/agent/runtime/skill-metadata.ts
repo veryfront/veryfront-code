@@ -48,7 +48,7 @@ const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ReflectApply = Reflect.apply;
 const ReflectOwnKeys = Reflect.ownKeys;
 
-function hasOwnProperty(value: object, key: PropertyKey): boolean {
+function hasOwnProperty(value: Record<string, unknown>, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, value, [key]) as boolean;
 }
 

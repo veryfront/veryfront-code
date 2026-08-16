@@ -38,7 +38,7 @@ const weakSetHas = WeakSet.prototype.has;
 const NativeArrayPrototype = Array.prototype;
 const NativeObjectPrototype = Object.prototype;
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
 }
 
@@ -319,7 +319,7 @@ function assertRawJsonTextWithinByteLimit(value: string, maxBytes: number): void
   }
 }
 
-function inspectPrototype(value: object): object | null {
+function inspectPrototype(value: Record<string, unknown> | unknown[]): object | null {
   try {
     return objectGetPrototypeOf(value);
   } catch {
@@ -327,7 +327,7 @@ function inspectPrototype(value: object): object | null {
   }
 }
 
-function inspectOwnKeys(value: object): (string | symbol)[] {
+function inspectOwnKeys(value: Record<string, unknown> | unknown[]): (string | symbol)[] {
   try {
     return ownKeys(value);
   } catch {
@@ -336,7 +336,7 @@ function inspectOwnKeys(value: object): (string | symbol)[] {
 }
 
 function inspectOwnDescriptor(
-  value: object,
+  value: Record<string, unknown> | unknown[],
   key: string | symbol,
 ): PropertyDescriptor {
   try {
@@ -351,7 +351,7 @@ function inspectOwnDescriptor(
 }
 
 function readDataProperty(
-  value: object,
+  value: Record<string, unknown> | unknown[],
   key: string,
   requireEnumerable: boolean,
 ): unknown {

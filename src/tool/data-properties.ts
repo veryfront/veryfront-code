@@ -19,7 +19,7 @@ function rejectProxy(value: object, label: string): void {
   if (isProxyWithoutHooks(value)) throw invalidDataProperties(label);
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, value, [key]) as boolean;
 }
 

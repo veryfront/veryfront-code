@@ -51,11 +51,11 @@ export type ModelCallTool =
  * provider options contain only validated prompt-cache metadata. Other
  * provider-specific values are excluded because run events are durable.
  */
-export interface AgentRunModelCallContextEvent {
+export type AgentRunModelCallContextEvent = {
   type: "AGENT_RUN_MODEL_CALL_CONTEXT";
   messages: ModelCallMessage[];
   tools?: ModelCallTool[];
-}
+};
 
 /** Event produced by an agent run runtime boundary. */
 export type AgentRunEvent = AgentRunModelCallContextEvent;

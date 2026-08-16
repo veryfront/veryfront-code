@@ -837,7 +837,8 @@ export class TransformedModuleCoordinator {
       });
     }, this.#heartbeatIntervalMs);
 
-    const timer = this.#heartbeatTimer as unknown as { unref?: () => void };
+    const rawTimer: unknown = this.#heartbeatTimer;
+    const timer = rawTimer as { unref?: () => void };
     if (typeof timer.unref === "function") timer.unref();
     const deno = (globalThis as { Deno?: { unrefTimer?: (id: number) => void } }).Deno;
     if (typeof this.#heartbeatTimer === "number" && typeof deno?.unrefTimer === "function") {

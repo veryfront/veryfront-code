@@ -28,7 +28,13 @@ type TimerGlobals = {
   Date: DateConstructor;
 };
 
-type MutableGlobals = Record<string, unknown>;
+type MutableGlobals = {
+  setTimeout: unknown;
+  clearTimeout: unknown;
+  setInterval: unknown;
+  clearInterval: unknown;
+  Date: unknown;
+};
 
 // A callback that reschedules itself with no delay would otherwise spin until
 // the process is killed, which reads as a hung suite rather than a bad test.
@@ -69,7 +75,7 @@ export class FakeTime {
       throw new Error("FakeTime is already installed; restore the previous instance first");
     }
 
-    const globals = globalThis as unknown as MutableGlobals;
+    const globals = globalThis as MutableGlobals;
     this.#originals = {
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout,
@@ -145,7 +151,7 @@ export class FakeTime {
     if (this.#restored) return;
     this.#restored = true;
 
-    const globals = globalThis as unknown as MutableGlobals;
+    const globals = globalThis as MutableGlobals;
     globals.setTimeout = this.#originals.setTimeout;
     globals.clearTimeout = this.#originals.clearTimeout;
     globals.setInterval = this.#originals.setInterval;

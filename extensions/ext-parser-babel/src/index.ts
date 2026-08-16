@@ -85,7 +85,7 @@ function functionHasDirective(node: ASTNode, directive: string): boolean {
 
 class BabelCodeParser extends BabelParseOnlyParser implements CodeParser {
   traverse(ast: ASTNode, visitor: TraverseVisitor): void {
-    traverse(ast, visitor as unknown as Record<string, unknown>);
+    traverse(ast, visitor);
   }
 
   generate(ast: ASTNode, options?: GenerateOptions): Promise<GenerateResult> {

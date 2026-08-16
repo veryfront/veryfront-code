@@ -49,7 +49,7 @@ export function MCPTab({ tools, resources, prompts }: MCPTabProps): React.JSX.El
       setSelectedId(e.detail.itemId);
     }
 
-    const listener = handleNavigate as unknown as EventListener;
+    const listener = handleNavigate as EventListener;
     globalThis.addEventListener("mcp-navigate", listener);
     return () => globalThis.removeEventListener("mcp-navigate", listener);
   }, []);

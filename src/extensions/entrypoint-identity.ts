@@ -64,7 +64,7 @@ async function statWithIdentity(path: string): Promise<EntrypointFileInfo> {
 
   if (isNode || isBun) {
     const fs = await import("node:fs/promises");
-    const info = await fs.stat(path, { bigint: true }) as unknown as NodeBigIntFileInfo;
+    const info: NodeBigIntFileInfo = await fs.stat(path, { bigint: true });
     return {
       isFile: info.isFile(),
       isDirectory: info.isDirectory(),

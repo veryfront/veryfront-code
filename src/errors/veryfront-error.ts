@@ -177,10 +177,7 @@ function snapshotPlainValue(
   state.seen.add(value);
   try {
     if (arrayIsArray(value)) {
-      const descriptors = getOwnPropertyDescriptors(value) as unknown as Record<
-        string,
-        PropertyDescriptor
-      >;
+      const descriptors: Record<string, PropertyDescriptor> = getOwnPropertyDescriptors(value);
       const lengthDescriptor = descriptors["length"];
       if (
         !lengthDescriptor ||

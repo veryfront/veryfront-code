@@ -124,7 +124,7 @@ export function getRuntimeVersion(): string {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) return `Deno ${deno.version.deno}`;
   if ("Bun" in globalThis) {
-    return `Bun ${(globalThis as unknown as { Bun: { version: string } }).Bun.version}`;
+    return `Bun ${(globalThis as typeof globalThis & { Bun: { version: string } }).Bun.version}`;
   }
   if (runtimeProcess) return `Node.js ${runtimeProcess.version}`;
   return "unknown";
