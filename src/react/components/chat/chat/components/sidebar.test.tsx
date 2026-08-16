@@ -258,6 +258,255 @@ describe("ChatSidebar.Item — menu compound (E4 acid test)", () => {
   });
 });
 
+describe("ChatSidebar.Item.Title: composable row label", () => {
+  it("exposes the Title leaf off the compound", () => {
+    assert(typeof ChatSidebar.Item.Title === "function", "Item.Title is addressable");
+  });
+
+  it("composes the row label alongside a sibling", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title />
+            <span data-badge="">badge</span>
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes(">Row title<"), "the Title leaf renders the conversation title");
+    assert(html.includes("data-badge"), "the sibling badge renders next to the title");
+    const primaryActionClass = html.match(/<button[^>]*class="([^"]*)"[^>]*>/)?.[1] ?? "";
+    const titleClass = html.match(/<span[^>]*class="([^"]*)"[^>]*>Row title/)?.[1] ?? "";
+    assert(
+      primaryActionClass.includes("flex items-center gap-1"),
+      "the primary action keeps the composed label and badge on one row",
+    );
+    assert(
+      titleClass.includes("min-w-0 flex-1"),
+      "the title shrinks before its sibling badge",
+    );
+    assertEquals(
+      html.split(">Row title<").length - 1,
+      1,
+      "the composed Title replaces the default title (no duplicate label)",
+    );
+  });
+
+  it("forwards native span props from the Title leaf", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title id="custom-title" data-title="" />
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes('id="custom-title"'), "Title forwards native span props");
+    assert(html.includes('data-title=""'), "Title forwards data attributes");
+  });
+
+  it("keeps a composed Menu sibling in the action slot (no default duplicate)", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title />
+            <ChatSidebar.Item.Menu />
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assertEquals(
+      html.split("More actions for Row title").length - 1,
+      1,
+      "exactly one menu trigger renders, the composed Menu instead of a second default",
+    );
+    assert(html.includes(">Row title<"), "the composed Title still renders the label");
+  });
+
+  it("partitions Title and Menu leaves grouped in a fragment", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            {React.createElement(
+              React.Fragment,
+              null,
+              <ChatSidebar.Item.Title />,
+              <span data-badge="">badge</span>,
+              <ChatSidebar.Item.Menu />,
+            )}
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assertEquals(
+      html.split("More actions for Row title").length - 1,
+      1,
+      "the fragment's Menu fills the action slot without a default duplicate",
+    );
+    assert(html.includes(">Row title<"), "the fragment's Title fills the row body");
+    assert(html.includes("data-badge"), "sibling fragments preserve other body content");
+  });
+
+  it("preserves keyed-fragment identity for stateful title siblings", async () => {
+    const restoreDom = installDom();
+    let mounts = 0;
+    function StatefulBadge(): React.ReactElement {
+      const [mountId] = React.useState(() => ++mounts);
+      return <span data-mount-id={mountId}>badge</span>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderItem = (fragmentKey: string) => (
+        <ChatSidebar.Root
+          conversations={[summary("x", "Row title", 5000)]}
+          activeId="x"
+          onSelect={() => {}}
+          onDelete={() => {}}
+        >
+          <ChatSidebar.List>
+            <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+              <React.Fragment key={fragmentKey}>
+                <ChatSidebar.Item.Title />
+                <StatefulBadge />
+              </React.Fragment>
+            </ChatSidebar.Item>
+          </ChatSidebar.List>
+        </ChatSidebar.Root>
+      );
+
+      flushSync(() => root.render(renderItem("first")));
+      assertEquals(document.querySelector("[data-mount-id]")?.getAttribute("data-mount-id"), "1");
+
+      flushSync(() => root.render(renderItem("second")));
+      assertEquals(
+        document.querySelector("[data-mount-id]")?.getAttribute("data-mount-id"),
+        "2",
+        "changing the parent fragment key remounts its stateful descendants",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("keeps state with fragment paths that contain key separators", async () => {
+    const restoreDom = installDom();
+    let mounts = 0;
+    function StatefulBadge({ label }: { label: string }): React.ReactElement {
+      const [mountId] = React.useState(() => ++mounts);
+      return <span data-badge={label} data-mount-id={mountId}>{label}</span>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderItem = (reverse: boolean) => {
+        const direct = (
+          <React.Fragment key="a/.0">
+            <StatefulBadge label="direct" />
+          </React.Fragment>
+        );
+        const nested = (
+          <React.Fragment key="a">
+            <React.Fragment>
+              <StatefulBadge label="nested" />
+            </React.Fragment>
+          </React.Fragment>
+        );
+        return (
+          <ChatSidebar.Root
+            conversations={[summary("x", "Row title", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+                <ChatSidebar.Item.Title />
+                {reverse ? [nested, direct] : [direct, nested]}
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>
+        );
+      };
+
+      flushSync(() => root.render(renderItem(false)));
+      assertEquals(
+        document.querySelector('[data-badge="direct"]')?.getAttribute("data-mount-id"),
+        "1",
+      );
+      assertEquals(
+        document.querySelector('[data-badge="nested"]')?.getAttribute("data-mount-id"),
+        "2",
+      );
+
+      flushSync(() => root.render(renderItem(true)));
+      assertEquals(
+        document.querySelector('[data-badge="direct"]')?.getAttribute("data-mount-id"),
+        "1",
+        "state follows the direct fragment after reordering",
+      );
+      assertEquals(
+        document.querySelector('[data-badge="nested"]')?.getAttribute("data-mount-id"),
+        "2",
+        "state follows the nested fragment after reordering",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
+  it("regression: a childless Item still renders the default title", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)} />
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes(">Row title<"), "the childless row renders the default title");
+    assertEquals(
+      html.split(">Row title<").length - 1,
+      1,
+      "the default title renders exactly once",
+    );
+  });
+});
+
 describe("ChatSidebarRenameEditor", () => {
   async function runKeyboardCompletion(key: "Enter" | "Escape"): Promise<[number, number]> {
     const restoreDom = installDom();

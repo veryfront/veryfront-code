@@ -4,8 +4,8 @@ The conversation list - browse, create, rename, and delete conversation threads.
 
 > **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `ChatSidebar`, `ChatSidebar.Empty`, `ChatSidebar.Group`, `ChatSidebar.Item`, `ChatSidebar.Item.Delete`, `ChatSidebar.Item.Menu`, `ChatSidebar.Item.Rename`, `ChatSidebar.List`, `ChatSidebar.NewButton`, `ChatSidebar.Root`
-> - **Not exported today:** `ChatSidebar.Item.Menu.Trigger`, `ChatSidebar.Item.Title`
+> - **Exported from `veryfront/chat` today:** `ChatSidebar`, `ChatSidebar.Empty`, `ChatSidebar.Group`, `ChatSidebar.Item`, `ChatSidebar.Item.Delete`, `ChatSidebar.Item.Menu`, `ChatSidebar.Item.Rename`, `ChatSidebar.Item.Title`, `ChatSidebar.List`, `ChatSidebar.NewButton`, `ChatSidebar.Root`
+> - **Not exported today:** `ChatSidebar.Item.Menu.Trigger`
 >
 > An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
@@ -27,7 +27,7 @@ import { ChatSidebar, ChatSidebarItemTitle, type ChatSidebarItemTitleProps } fro
 - [`.List`](#chatsidebarlist---changed) - `changed`: `<div>` → `<ul>`; `renderItem` deleted
 - [`.Group`](#chatsidebargroup---kept) - `kept`
 - [`.Item`](#chatsidebaritem---changed) - `changed`: `<div>` → `<li>`; `children` replaces the whole row; `data-active` means selection
-- [`.Item.Title`](#chatsidebaritemtitle-_proposed---2977_---new) - `new`: no addressable title leaf exists today (#2977)
+- [`.Item.Title`](#chatsidebaritemtitle-proposed---2977---new) - `new`: the addressable title leaf - the export ships today; full row recomposition is still proposed (#2977)
 - [`.Item.Menu`](#chatsidebaritemmenu---changed) - `changed`: trigger `icon` prop deleted - replaced by `.Item.Menu.Trigger`
 - [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger---new) - `new`: the addressable trigger button (the icon-slot replacement)
 - [`.Item.Rename`](#chatsidebaritemrename---changed) - `changed`: `icon` deleted
@@ -196,7 +196,7 @@ Per-row state computed today: `isActive = conversation.id === activeId`; the row
 
 ### `ChatSidebar.Item.Title` _(proposed - #2977)_ - `new`
 
-One `<span>`: the conversation's title, truncating. Does not exist today - the title is rendered internally by `ListItem`'s `title` prop, so a composed row currently has no addressable title leaf. #2977 adds it so the default row is fully recomposable. Default content: `conversation.title`. During rename mode, `.Title` hosts the inline `<input>` so row geometry stays stable.
+One `<span>`: the conversation's title, truncating. The export ships from `veryfront/chat` today: a `<ChatSidebar.Item.Title>` child moves the item's children into the row body, and a sibling `<ChatSidebar.Item.Menu>` stays in the action slot when it is direct or grouped in a fragment. Default content: `conversation.title`. Still proposed under #2977: `children` replacing the whole row, and rename mode hosting the inline `<input>` inside `.Title` so row geometry stays stable.
 
 **Layout:** in-flow text span; give its wrapper `min-w-0`/`flex-1` (or class the span `truncate`) for ellipsis.
 

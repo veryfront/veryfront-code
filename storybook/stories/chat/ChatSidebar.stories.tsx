@@ -32,6 +32,18 @@ import { DropdownMenuItem } from "veryfront/ui";
   </ChatSidebar.Item.Menu>
 </ChatSidebar.Item>`;
 
+const customTitleCode = `import { ChatSidebar } from "veryfront/chat";
+
+<ChatSidebar.Item conversation={conversation}>
+  <>
+    <ChatSidebar.Item.Title />
+    <span className="rounded bg-blue-100 px-1 text-[10px] text-blue-700">
+      Pinned
+    </span>
+    <ChatSidebar.Item.Menu />
+  </>
+</ChatSidebar.Item>`;
+
 const compositionTree =
   `ChatSidebar            <- one-shot preset: Root + NewButton + auto List
   +-- ChatSidebar.Root      <- context provider + rail container
@@ -132,6 +144,14 @@ function ChatSidebarDocsPage() {
       >
         <DocsExampleAuto of={CustomRowMenu} />
         <DocsCode code={customMenuCode} />
+      </DocsSection>
+
+      <DocsSection
+        title="Custom row title"
+        description="Use `ChatSidebar.Item.Title` to compose the row label with badges or other content. A sibling menu stays in the trailing action slot, including when the parts are grouped in a fragment."
+      >
+        <DocsExampleAuto of={CustomRowTitle} />
+        <DocsCode code={customTitleCode} />
       </DocsSection>
 
       <DocsSection title="Import">
@@ -452,6 +472,52 @@ export const Loading: Story = {
       </ReviewSurface>
     </StoryFrame>
   ),
+};
+
+export const CustomRowTitle: Story = {
+  name: "Custom row title",
+  tags: ["!dev", "acid-test"],
+  parameters: {
+    docs: { source: { code: customTitleCode } },
+  },
+  render: () => {
+    const items = conversations.slice(0, 3);
+    const [activeThreadId, setActiveThreadId] = React.useState(items[0]?.id ?? null);
+
+    return (
+      <StoryFrame maxWidth="240px">
+        <ReviewSurface label="Title leaf with a badge and one trailing menu">
+          <div className="h-[320px] overflow-hidden bg-[var(--sidebar-background)]">
+            <ChatSidebar.Root
+              fill
+              conversations={items}
+              activeId={activeThreadId}
+              onSelect={setActiveThreadId}
+              onDelete={() => undefined}
+              onRename={() => undefined}
+              onNew={() => undefined}
+            >
+              <ChatSidebar.List>
+                {items.map((conversation, index) => (
+                  <ChatSidebar.Item key={conversation.id} conversation={conversation}>
+                    <>
+                      <ChatSidebar.Item.Title />
+                      {index === 0 && (
+                        <span className="rounded bg-blue-100 px-1 text-[10px] text-blue-700">
+                          Pinned
+                        </span>
+                      )}
+                      <ChatSidebar.Item.Menu />
+                    </>
+                  </ChatSidebar.Item>
+                ))}
+              </ChatSidebar.List>
+            </ChatSidebar.Root>
+          </div>
+        </ReviewSurface>
+      </StoryFrame>
+    );
+  },
 };
 
 export const CustomRowMenu: Story = {
