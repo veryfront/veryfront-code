@@ -52,11 +52,13 @@ function assertSymlinkConfined(
 }
 
 /**
- * Reject scoped worker roots that contain a pre-existing symlink escape.
+ * Reject scoped worker roots that contain a symlink escape.
  *
  * Deno authorizes reads using the symlink location rather than its resolved
  * target. Project workers cannot create new symlinks because write access is
- * denied, so auditing the host-owned tree before startup closes that gap.
+ * denied, but the host can change a source tree. Call this before startup and
+ * again at every execution boundary so a pooled worker cannot use a link added
+ * between requests.
  */
 export function assertWorkerReadScopeConfined(
   readScope: readonly string[] | boolean,

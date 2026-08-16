@@ -1738,6 +1738,64 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     }
   });
 
+  it("revalidates scoped read roots before executing project code", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = join(outsideDir, "secret.txt");
+    const linkedPath = join(projectDir, "linked-secret.txt");
+    const modulePath = join(projectDir, "route.mjs");
+    await Deno.writeTextFile(outsidePath, "outside secret");
+    await Deno.writeTextFile(
+      modulePath,
+      `
+        export async function GET() {
+          const leaked = await Deno.readTextFile(${JSON.stringify(linkedPath)});
+          return Response.json({ leaked });
+        }
+      `,
+    );
+    const module = await prepareModulePath(modulePath);
+
+    const worker = new ProjectWorker({
+      projectId: "test-post-start-symlink-denied",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      allowInternalEgress: false,
+    });
+
+    worker.start();
+    try {
+      await assertWorkerReady(worker);
+      await Deno.symlink(outsidePath, linkedPath);
+
+      await assertRejects(
+        () =>
+          worker.execute({
+            type: "execute-app-route",
+            id: "post-start-symlink",
+            module,
+            modulePath,
+            method: "GET",
+            request: {
+              url: "http://localhost/api/read",
+              method: "GET",
+              headers: [],
+              body: null,
+            },
+            params: {},
+            projectDir,
+            sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+          }),
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
   it("blocks project fetches to loopback network targets", async () => {
     const projectDir = await Deno.makeTempDir();
     const modulePath = await Deno.makeTempFile({ dir: projectDir, suffix: ".mjs" });
@@ -2344,6 +2402,36 @@ testSuite("ProjectWorker - executeStream", () => {
       threw = true;
     }
     assert(threw, "should throw when worker is not available");
+  });
+
+  it("revalidates scoped read roots before streaming execution", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = join(outsideDir, "secret.txt");
+    await Deno.writeTextFile(outsidePath, "outside secret");
+
+    const worker = new ProjectWorker({
+      projectId: "test-post-start-stream-symlink-denied",
+      permissions: { ...buildWorkerPermissions([projectDir]), net: false },
+      requestTimeoutMs: 5_000,
+      allowInternalEgress: false,
+      workerScriptUrl: TEST_WORKER_SCRIPT_URL,
+    });
+
+    worker.start();
+    try {
+      await Deno.symlink(outsidePath, join(projectDir, "linked-secret.txt"));
+
+      assertThrows(
+        () => worker.executeStream(makeScriptedSSRRequest("post-start-stream-symlink")),
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
   });
 
   it("returns a ReadableStream when worker is started", async () => {

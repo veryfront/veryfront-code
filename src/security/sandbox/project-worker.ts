@@ -655,6 +655,7 @@ export class ProjectWorker {
             UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` }),
           );
         }
+        assertWorkerReadScopeConfined(this.permissions.read);
         if (this.pending.has(requestId)) {
           return Promise.reject(UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" }));
         }
@@ -725,6 +726,7 @@ export class ProjectWorker {
     if (!this.worker || this._status === "crashed" || this._status === "terminated") {
       throw UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` });
     }
+    assertWorkerReadScopeConfined(this.permissions.read);
 
     if (this.pending.has(requestId) || this.streamHandlers.has(requestId)) {
       throw UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" });
