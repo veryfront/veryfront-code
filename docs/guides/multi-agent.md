@@ -18,6 +18,12 @@ Each agent can omit `model` and use `openai/gpt-5.4-nano`, set `"auto"` for runt
 - At least two agents in `agents/` (see [Agents](./agents.md)).
 - A configured provider (see [Providers](./providers.md)).
 
+Direct local delegation does not require a Veryfront account. Set a direct
+provider key, run `veryfront dev`, and use `delegates` on the parent agent. The
+runtime runs the delegates in-process and gives the parent one scoped tool for
+each allowed agent. Veryfront Cloud is only required when you choose hosted run
+or control-plane capabilities.
+
 ## Agent-as-tool
 
 Convert an agent into a tool that another agent can call:

@@ -114,6 +114,31 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("shows account-free local multi-agent delegation", async () => {
+    const quickstart = await Deno.readTextFile(
+      new URL("docs/getting-started/quickstart.md", repoRoot),
+    );
+    const multiAgentGuide = await Deno.readTextFile(
+      new URL("docs/guides/multi-agent.md", repoRoot),
+    );
+
+    assertStringIncludes(quickstart, "## Add local delegation");
+    assertStringIncludes(quickstart, "// agents/researcher.ts");
+    assertStringIncludes(quickstart, "// agents/writer.ts");
+    assertStringIncludes(quickstart, 'delegates: ["researcher", "writer"]');
+    assertStringIncludes(quickstart, "`agent_researcher`");
+    assertStringIncludes(quickstart, "`agent_writer`");
+    assertStringIncludes(quickstart, "runs in the same Veryfront process");
+    assertStringIncludes(quickstart, "If the development server is still running");
+    assertEquals(quickstart.includes("tools: { invoke_agent: true }"), false);
+
+    assertStringIncludes(
+      multiAgentGuide,
+      "Direct local delegation does not require a Veryfront account",
+    );
+    assertStringIncludes(multiAgentGuide, "runs the delegates in-process");
+  });
+
   it("keeps the Cloud quickstart on one gateway-to-deployment path", async () => {
     const quickstart = await Deno.readTextFile(
       new URL("docs/getting-started/cloud-quickstart.md", repoRoot),
@@ -178,6 +203,34 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "## Verify it worked");
     assertEquals(guide.includes("veryfront login"), false);
     assertEquals(guide.includes("veryfront deploy"), false);
+  });
+
+  it("documents self-hosting boundaries and a Kubernetes deployment", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/self-hosting.md", repoRoot),
+    );
+
+    assertStringIncludes(guide, "## Check capability support");
+    assertStringIncludes(guide, "Direct provider inference");
+    assertStringIncludes(guide, "Local agent delegation with `delegates`");
+    assertStringIncludes(guide, "Remote integration tools");
+    assertStringIncludes(guide, "Requires a backing API or service layer");
+    assertStringIncludes(guide, "## Deploy to Kubernetes");
+    assertStringIncludes(guide, "kubectl create namespace veryfront-app");
+    assertStringIncludes(guide, "kubectl create secret generic provider-credentials");
+    assertStringIncludes(guide, "--from-env-file=.env");
+    assertStringIncludes(guide, "--dry-run=client -o yaml | kubectl apply -f -");
+    assertStringIncludes(guide, "Replace `<API_KEY>`");
+    assertStringIncludes(guide, "apiVersion: apps/v1");
+    assertStringIncludes(guide, "kind: Deployment");
+    assertStringIncludes(guide, "startupProbe:");
+    assertStringIncludes(guide, "tcpSocket:");
+    assertStringIncludes(guide, "kubectl apply -f k8s.yaml");
+    assertStringIncludes(guide, "rollout restart deployment/veryfront-app");
+    assertStringIncludes(
+      guide,
+      "kubectl -n veryfront-app port-forward service/veryfront-app 3000:80",
+    );
   });
 
   it("documents the current knowledge ingest JSON result shape", async () => {
