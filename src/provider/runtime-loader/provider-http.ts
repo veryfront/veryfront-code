@@ -14,6 +14,8 @@ export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moon
 const MAX_ERROR_BODY_BYTES = 8_000;
 const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
+const MAX_PROVIDER_STREAM_RATE_LIMIT_RETRIES = 2;
+const DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS = 1_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
 const MAX_PROVIDER_JSON_BODY_READS = 65_536;
@@ -439,6 +441,28 @@ async function waitForAbortable<T>(
   });
 }
 
+async function waitForProviderRateLimitRetry(
+  delayMs: number,
+  abortSignal: AbortSignal,
+): Promise<void> {
+  abortSignal.throwIfAborted();
+  if (delayMs === 0) return;
+
+  await new Promise<void>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      abortSignal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      abortSignal.removeEventListener("abort", onAbort);
+      reject(abortSignal.reason);
+    };
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+    if (abortSignal.aborted) onAbort();
+  });
+}
+
 function cancelLateResponse(response: Response): void {
   try {
     const cancellation = response.body?.cancel();
@@ -747,40 +771,53 @@ export async function requestStream(options: {
     "headersTimeoutMs",
   );
   let streamOwnsDeadline = false;
+  let rateLimitRetryCount = 0;
 
   try {
-    const response = await waitForAbortable(
-      () => options.fetchImpl(options.url, deadline.init),
-      deadline.deadlineSignal,
-      cancelLateResponse,
-    );
-    if (!response.ok) {
-      const err = await buildProviderError(
-        options.providerKind,
-        response,
+    while (true) {
+      const response = await waitForAbortable(
+        () => options.fetchImpl(options.url, deadline.init),
         deadline.deadlineSignal,
+        cancelLateResponse,
       );
-      err.message = `${options.providerLabel} request failed: ${err.message}`;
-      throw err;
-    }
+      if (!response.ok) {
+        const err = await buildProviderError(
+          options.providerKind,
+          response,
+          deadline.deadlineSignal,
+        );
+        err.message = `${options.providerLabel} request failed: ${err.message}`;
+        if (
+          err instanceof ProviderRateLimitError &&
+          rateLimitRetryCount < MAX_PROVIDER_STREAM_RATE_LIMIT_RETRIES
+        ) {
+          const retryDelayMs = err.retryAfterMs ??
+            DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS * 2 ** rateLimitRetryCount;
+          rateLimitRetryCount++;
+          await waitForProviderRateLimitRetry(retryDelayMs, deadline.deadlineSignal);
+          continue;
+        }
+        throw err;
+      }
 
-    if (!response.body) {
-      throw new ProviderRequestError({
-        provider: options.providerKind,
-        status: response.status,
-        message: `${options.providerLabel} request failed: stream body missing`,
-        retryable: false,
-      });
-    }
+      if (!response.body) {
+        throw new ProviderRequestError({
+          provider: options.providerKind,
+          status: response.status,
+          message: `${options.providerLabel} request failed: stream body missing`,
+          retryable: false,
+        });
+      }
 
-    deadline.cancelTimeout();
-    streamOwnsDeadline = true;
-    return streamWithCleanup(
-      response.body,
-      deadline.deadlineSignal,
-      deadline.abort,
-      deadline.dispose,
-    );
+      deadline.cancelTimeout();
+      streamOwnsDeadline = true;
+      return streamWithCleanup(
+        response.body,
+        deadline.deadlineSignal,
+        deadline.abort,
+        deadline.dispose,
+      );
+    }
   } catch (error) {
     if (deadline.timedOut) {
       throw providerTimeoutError(options);
