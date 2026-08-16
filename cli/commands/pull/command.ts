@@ -499,8 +499,8 @@ async function findGitRoot(projectDir: string): Promise<string | null> {
   }
 }
 
-function isUntrackedLocalMetadata(statusLine: string): boolean {
-  if (!statusLine.startsWith("?? ")) return false;
+function isLocalMetadataStatus(statusLine: string): boolean {
+  if (statusLine.length < 4) return false;
   const path = statusLine.slice(3).replace(/\\/g, "/");
   return [".veryfront/push-receipt.json", SYNC_STATE_RELATIVE_PATH].some((relativePath) =>
     path === relativePath || path.endsWith(`/${relativePath}`)
@@ -536,7 +536,7 @@ async function assertCleanGitWorktrees(projectDirs: readonly string[]): Promise<
     }
 
     const dirty = (status.stdout ?? "").split("\n").some((line) =>
-      line !== "" && !isUntrackedLocalMetadata(line)
+      line !== "" && !isLocalMetadataStatus(line)
     );
     if (dirty) {
       throw INVALID_ARGUMENT.create({

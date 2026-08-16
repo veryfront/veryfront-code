@@ -1877,6 +1877,85 @@ describe("pullCommand", () => {
     }
   });
 
+  it("allows a pruning pull when only tracked sync metadata changed", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+    try {
+      await runTestGit(tempDir, "init", "--quiet");
+      await runTestGit(tempDir, "config", "user.email", "test@example.com");
+      await runTestGit(tempDir, "config", "user.name", "Test User");
+      await Deno.mkdir(join(tempDir, ".veryfront"));
+      await Deno.writeTextFile(join(tempDir, "app.ts"), "old\n");
+      await Deno.writeTextFile(
+        join(tempDir, ".veryfront", "sync-state.json"),
+        '{"version":1,"targets":[]}\n',
+      );
+      await runTestGit(tempDir, "add", "app.ts", ".veryfront/sync-state.json");
+      await runTestGit(tempDir, "commit", "--quiet", "-m", "initial");
+      await Deno.writeTextFile(
+        join(tempDir, ".veryfront", "sync-state.json"),
+        JSON.stringify({
+          version: 1,
+          targets: [{
+            controlPlane: "https://api.veryfront.com",
+            projectId: "proj_alpha",
+            projectSlug: "alpha",
+            branch: "main",
+            files: {},
+          }],
+        }) + "\n",
+      );
+
+      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      _resetEnvironmentConfig();
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(
+            Response.json({
+              data: [{
+                path: "app.ts",
+                content: "new\n",
+                size: 4,
+                type: "file",
+              }],
+              page_info: {},
+            }),
+          );
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await pullCommand({
+        projectDir: tempDir,
+        projectSlug: "alpha",
+        prune: true,
+        force: true,
+        quiet: true,
+      });
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "app.ts")), "new\n");
+      assertEquals(
+        (await readSyncTarget(tempDir, {
+          controlPlane: "https://api.veryfront.com",
+          projectId: "proj_alpha",
+          branch: "main",
+        }))?.projectSlug,
+        "alpha",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("checks every nested Git repository before a multi-project prune", async () => {
     const tempDir = await Deno.makeTempDir();
     const projectDir = join(tempDir, "alpha");

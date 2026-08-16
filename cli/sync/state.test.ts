@@ -108,6 +108,7 @@ describe("sync state", () => {
         `Veryfront could not read ${SYNC_STATE_RELATIVE_PATH}`,
       );
       assertEquals((error as Error & { slug?: string }).slug, "sync-state-invalid");
+      assertEquals((error as Error & { exitCode?: number }).exitCode, 1);
     });
   });
 
