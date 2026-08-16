@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 
 const TEST_FILE_RE = /\.test\.[cm]?[jt]sx?$/i;
 const GLOB_CHARS_RE = /[\*\?\[]/;
@@ -38,11 +38,31 @@ function globToRegex(glob) {
     if (char === "*") {
       const next = glob[i + 1];
       if (next === "*") {
-        re += ".*";
-        i += 1;
-      } else {
+        // `**` only crosses directory boundaries when it is a *complete*
+        // path segment. Both ripgrep and node:fs `globSync` agree:
+        //   src/**/*.test.ts  -> src/a.test.ts AND src/nested/b.test.ts
+        //   src/**.test.ts    -> src/a.test.ts only (segment-scoped)
+        //   src/foo**/*.test.ts -> src/foo/a.test.ts only, NOT src/foo.test.ts
+        // So the globstar translation is gated on both boundaries, and a
+        // `**` glued to other characters degrades to a single `*`.
+        const atSegmentStart = i === 0 || glob[i - 1] === "/";
+        const after = glob[i + 2];
+        if (atSegmentStart && after === "/") {
+          // Matches zero or more segments, so the depth-1 case is included.
+          re += "(?:.*\\/)?";
+          i += 2;
+          continue;
+        }
+        if (atSegmentStart && after === undefined) {
+          re += ".*";
+          i += 1;
+          continue;
+        }
         re += "[^/]*";
+        i += 1;
+        continue;
       }
+      re += "[^/]*";
       continue;
     }
     if (char === "?") {
@@ -65,6 +85,14 @@ function globToRegex(glob) {
 function walk(dir, onFile) {
   const entries = readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
+    // `rg` is the reference here, because `rg` is what runs when it is
+    // installed; the fallback exists to reproduce its selection when it is
+    // not. It treats the two cases differently, verified directly:
+    //   hidden directory  -> skipped   (src/.fixtures/x.test.ts is omitted)
+    //   dot-prefixed file -> INCLUDED  (src/.smoke.test.ts is returned)
+    // because `-g/--glob` "always overrides any other ignore logic". Note
+    // node:fs glob excludes both, so it is the wrong oracle for dot-files.
+    if (entry.isDirectory() && entry.name.startsWith(".")) continue;
     const fullPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       walk(fullPath, onFile);
@@ -84,28 +112,81 @@ function getBaseDir(pattern, cwd) {
   return resolve(cwd, base || ".");
 }
 
+/**
+ * A base path that does not exist contributes nothing. Anything else —
+ * `EACCES` on an ancestor, a device error — has to propagate: swallowing it
+ * would drop the whole pattern, and if that left the selection empty the
+ * runner would exit 0 having run nothing. That silent-omission failure is the
+ * reason this module is being fixed.
+ */
+function isMissingPathError(error) {
+  const code = error?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/**
+ * True when `target` sits under a dot-prefixed directory relative to `cwd`.
+ *
+ * Only segments below `cwd` count: a checkout that itself lives under a hidden
+ * directory is not thereby invisible to its own test runner.
+ */
+function hasHiddenSegment(target, cwd) {
+  const relativePath = relative(cwd, target);
+  // `startsWith("..")` alone would misread a directory *named* `..fixtures` as
+  // a parent path and skip the hidden check entirely. Only an exact `..` or a
+  // `..` followed by a separator escapes `cwd`.
+  const escapesCwd = relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) || relativePath.startsWith("../");
+  if (relativePath === "" || escapesCwd) return false;
+  return toPosixPath(relativePath).split("/").some((segment) => segment.startsWith("."));
+}
+
 function listWithFallback(patterns, cwd) {
   const files = new Set();
   for (const pattern of patterns) {
     if (!pattern) continue;
     const absolute = resolve(cwd, pattern);
     if (!hasGlob(pattern)) {
+      // Base lookup guarded; the traversal is not, for the same reason as
+      // `listTestFiles` — a descendant vanishing mid-walk must not be read as
+      // "this path does not exist".
+      let stats;
       try {
-        const stats = statSync(absolute);
-        if (stats.isDirectory()) {
-          walk(absolute, (file) => {
-            if (TEST_FILE_RE.test(file)) files.add(file);
-          });
-        } else if (stats.isFile() && TEST_FILE_RE.test(absolute)) {
-          files.add(absolute);
-        }
-      } catch {
-        // Ignore missing paths.
+        stats = statSync(absolute);
+      } catch (error) {
+        if (!isMissingPathError(error)) throw error;
+        continue;
+      }
+      if (stats.isDirectory()) {
+        walk(absolute, (file) => {
+          if (TEST_FILE_RE.test(file)) files.add(file);
+        });
+      } else if (stats.isFile() && TEST_FILE_RE.test(absolute)) {
+        files.add(absolute);
       }
       continue;
     }
 
     const baseDir = getBaseDir(pattern, cwd);
+    // `rg` prunes hidden directories before the glob is applied, so a pattern
+    // whose literal prefix descends into one matches nothing at all — verified
+    // with rg 15: `-g 'src/.fixtures/**/*.test.ts'` returns no files. `walk`
+    // starts *inside* the base, so the per-entry hidden check never sees it.
+    if (hasHiddenSegment(baseDir, cwd)) continue;
+    // A glob whose base does not exist contributes nothing, the same as the
+    // non-glob branch above. This is checked up front rather than by catching
+    // around the walk: a failure *inside* the traversal (an unreadable
+    // subdirectory, a file removed mid-walk) would otherwise be swallowed
+    // after `walk` had already accumulated part of the tree, and the runner
+    // would execute a partial selection and report success — which is the
+    // exact silent-omission failure this module is being fixed for. Those
+    // errors propagate.
+    try {
+      if (!statSync(baseDir).isDirectory()) continue;
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      continue;
+    }
     const matcher = globToRegex(toPosixPath(pattern));
     walk(baseDir, (file) => {
       const rel = toPosixPath(file.startsWith(cwd) ? file.slice(cwd.length + 1) : file);
@@ -125,26 +206,39 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
       const matches = runRg(["--files", "-g", pattern], cwd);
       if (matches) {
         for (const match of matches) files.add(resolve(cwd, match));
-        continue;
+      } else {
+        // No ripgrep (it is absent on the CI runners), so resolve the glob
+        // in-process. This fallback has to be per-pattern: the whole-result
+        // fallback at the end only fires when *nothing* matched, so a single
+        // explicit file listed next to a glob was enough to suppress it and
+        // drop the glob's entire contribution without a word.
+        for (const file of listWithFallback([pattern], cwd)) files.add(file);
       }
+      continue;
     }
 
+    // Only the base lookup is guarded. Wrapping the traversal too would
+    // re-swallow an `ENOENT` raised *inside* `walk` — a descendant removed
+    // between `readdirSync` calls — and silently drop the directory's whole
+    // contribution, which the glob branch above already avoids.
+    let stats;
     try {
-      const stats = statSync(absolute);
-      if (stats.isFile()) {
-        if (TEST_FILE_RE.test(absolute)) files.add(absolute);
-        continue;
+      stats = statSync(absolute);
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
+      continue;
+    }
+    if (stats.isFile()) {
+      if (TEST_FILE_RE.test(absolute)) files.add(absolute);
+      continue;
+    }
+    if (stats.isDirectory()) {
+      const matches = runRg(["--files", "-g", "*.test.*", absolute], cwd);
+      if (matches) {
+        for (const match of matches) files.add(resolve(cwd, match));
+      } else {
+        for (const file of listWithFallback([absolute], cwd)) files.add(file);
       }
-      if (stats.isDirectory()) {
-        const matches = runRg(["--files", "-g", "*.test.*", absolute], cwd);
-        if (matches) {
-          for (const match of matches) files.add(resolve(cwd, match));
-        } else {
-          for (const file of listWithFallback([absolute], cwd)) files.add(file);
-        }
-      }
-    } catch {
-      // Ignore missing paths or stat failures.
     }
   }
 
