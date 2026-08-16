@@ -4,8 +4,8 @@ Pure functions - no DOM, no hooks. The primitives several hooks and components a
 
 > **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `agentsToPickerOptions`, `downloadMarkdown`, `exportAsMarkdown`, `extractChatMessageMetadata`, `extractSourcesFromParts`, `getAgentPromptSuggestions`, `getTextContent`, `groupPartsInOrder`, `isReasoningPart`, `isSkillToolPart`, `isToolPart`, `mergeProps`, `normalizeAgentMetadata`, `normalizeAgentsListResponse`
-> - **Not exported today:** `formatSize`, `getAgentPromptSuggestionItems`
+> - **Exported from `veryfront/chat` today:** `agentsToPickerOptions`, `downloadMarkdown`, `exportAsMarkdown`, `extractChatMessageMetadata`, `extractSourcesFromParts`, `getAgentPromptSuggestionItems`, `getAgentPromptSuggestions`, `getTextContent`, `groupPartsInOrder`, `isReasoningPart`, `isSkillToolPart`, `isToolPart`, `mergeProps`, `normalizeAgentMetadata`, `normalizeAgentsListResponse`
+> - **Not exported today:** `formatSize`
 >
 > An exported symbol is not a landed delta - see [reading the status block](./README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../29-chat-api-shape.md).
 
@@ -38,7 +38,7 @@ Every helper is a plain function you can call anywhere - in your own part render
 
 Shipped in [#3277](https://github.com/veryfront/veryfront-code/pull/3277). It is a real public export of `veryfront/chat`, re-exported from `src/chat/index.ts`, and it is the merge every `useChatInput` getter calls - so the getters and the exported helper cannot drift.
 
-What has _not_ landed with it: `formatSize` and `getAgentPromptSuggestionItems` are still internal, so the reference table above is the proposal, not today's barrel.
+What has _not_ landed with it: `formatSize` is still internal, so that reference-table entry remains a proposal rather than today's barrel.
 
 ## Notes
 

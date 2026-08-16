@@ -430,9 +430,11 @@ export {
   type AgentMetadataSuggestion,
   type AgentMetadataSuggestions,
   type AgentMetadataTaskSuggestion,
+  getAgentPromptSuggestionItems,
   getAgentPromptSuggestions,
   normalizeAgentMetadata,
   normalizeAgentMetadataResponse,
+  type PromptSuggestion,
   useAgentMetadata,
   type UseAgentMetadataResult,
 } from "#veryfront/agent/react/use-agent-metadata.ts";

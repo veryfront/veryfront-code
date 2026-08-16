@@ -116,6 +116,7 @@ const expectedRuntimeExports = [
   "isLongRunningToolRunning",
   "isHeartbeatOnlyMetadataChunk",
   "getNextChatStreamWatchdogState",
+  "getAgentPromptSuggestionItems",
   "getAgentPromptSuggestions",
   "createChatStreamWatchdogState",
   "createChatStreamWatchdog",
@@ -198,6 +199,10 @@ describe("chat/index.ts exports", () => {
     assertEquals(
       chatModule.getAgentPromptSuggestions,
       useAgentMetadataModule.getAgentPromptSuggestions,
+    );
+    assertEquals(
+      chatModule.getAgentPromptSuggestionItems,
+      useAgentMetadataModule.getAgentPromptSuggestionItems,
     );
     assertEquals(chatModule.useCompletion, useCompletionModule.useCompletion);
     assertEquals(chatModule.useStreaming, useStreamingModule.useStreaming);
