@@ -39,7 +39,7 @@
  * Counts are frozen per rule per file in `anti-slop-baseline.json` and may
  * only shrink. Regenerate after paying debt down with:
  *
- *   deno task lint:anti-slop -- --print-baseline
+ *   deno task lint:anti-slop -- --print-baseline > scripts/lint/anti-slop-baseline.json
  */
 
 import { parse } from "npm:@babel/parser@7.29.2";
@@ -419,6 +419,8 @@ async function collectProdFiles(root: string): Promise<string[]> {
     const path = `${root}/${entry.name}`;
     if (entry.isDirectory) {
       if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+      // Mirrors lint.exclude: emitted output inside a scan root is not source.
+      if (entry.name === "dist" || entry.name === "coverage") continue;
       files.push(...await collectProdFiles(path));
     } else if (entry.isFile && isProdSource(entry.name)) {
       files.push(path);
@@ -500,7 +502,7 @@ async function main(): Promise<void> {
     printFindings("Anti-slop debt decreased:", improvements);
     console.log(
       `\nRegenerate ${BASELINE_PATH} with ` +
-        `\`deno task lint:anti-slop -- --print-baseline\` to lock in the improvement.`,
+        `\`deno task lint:anti-slop -- --print-baseline > ${BASELINE_PATH}\` to lock in the improvement.`,
     );
     return;
   }

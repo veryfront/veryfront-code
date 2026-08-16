@@ -34,7 +34,7 @@ const MAX_SERIALIZED_CSS_CACHE_BYTES = 128 * 1024 * 1024;
 
 export interface CSSCacheEntry {
   readonly css: string;
-  readonly candidates: string[];
+  readonly candidates: readonly string[];
   readonly stylesheet: string;
   readonly pipelineIdentity?: string;
 }
@@ -134,7 +134,7 @@ function createCSSCacheEntry(
   );
   return Object.freeze({
     css: detachRetainedString(css),
-    candidates: Object.freeze(candidates) as string[],
+    candidates: Object.freeze(candidates),
     stylesheet,
     pipelineIdentity,
   });
@@ -309,7 +309,7 @@ export async function persistRegeneratedCSSEntry(
     throw new TypeError("Regenerated CSS entry requires a pipeline identity");
   }
   await cacheCSSAsync(entry.css, hash, {
-    candidates: entry.candidates,
+    candidates: [...entry.candidates],
     stylesheet: entry.stylesheet,
     pipelineIdentity: entry.pipelineIdentity,
   });

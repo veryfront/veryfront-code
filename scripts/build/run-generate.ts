@@ -57,7 +57,12 @@ export const UNITS: GeneratorUnit[] = [
       ["deno", "run", "-A", "extensions/ext-dev-ui-react/scripts/generate-styles.ts"],
       ["deno", "run", "-A", "extensions/ext-dev-ui-react/scripts/prebundle.ts"],
     ],
-    inputRoots: ["extensions/ext-dev-ui-react"],
+    inputRoots: [
+      "extensions/ext-dev-ui-react",
+      "extensions/ext-css-lightning",
+      "extensions/ext-css-tailwind",
+      "src",
+    ],
     inputFiles: ["deno.json"],
     outputs: [
       "extensions/ext-dev-ui-react/src/dev-ui-styles.generated.ts",
@@ -67,7 +72,7 @@ export const UNITS: GeneratorUnit[] = [
   {
     name: "client-scripts",
     commands: [["deno", "run", "-A", "scripts/build/prebundle-client-scripts.ts"]],
-    inputRoots: ["src"],
+    inputRoots: ["src", "extensions/ext-bundler-esbuild"],
     inputFiles: ["scripts/build/prebundle-client-scripts.ts", "deno.json"],
     outputs: [
       "src/build/production-build/templates.ts",
@@ -233,9 +238,17 @@ async function main(): Promise<void> {
 
   let stamps: Record<string, string> = {};
   try {
-    stamps = JSON.parse(await Deno.readTextFile(`${repoRoot}${STAMP_PATH}`));
+    const parsed: unknown = JSON.parse(
+      await Deno.readTextFile(`${repoRoot}${STAMP_PATH}`),
+    );
+    if (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) &&
+      Object.values(parsed).every((v) => typeof v === "string")
+    ) {
+      stamps = parsed as Record<string, string>;
+    }
   } catch {
-    // no stamps yet: every unit runs
+    // no stamps yet (or an unreadable file): every unit runs
   }
 
   const outputExists = (path: string): boolean => {

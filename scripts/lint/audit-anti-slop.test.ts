@@ -109,7 +109,8 @@ describe("no-object-parameters", () => {
     ]);
   });
 
-  it("reports rest and defaulted parameters", () => {
+  it("flags defaulted parameters but not object-array rest parameters", () => {
+    // `object[]` is an array type, not the broad `object` keyword.
     assertEquals(rulesOf(`function f(...values: object[]): void {}`), []);
     assertEquals(rulesOf(`function f(value: object = {}): void {}`), [
       "no-object-parameters",
