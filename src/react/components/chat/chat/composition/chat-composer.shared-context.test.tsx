@@ -204,6 +204,61 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
     }
   });
 
+  it("submits the resolved flat input instead of the session draft", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let submitted: Parameters<UseChatResult["sendMessage"]>[0] | undefined;
+    let textOnlySubmits = 0;
+    let clearedInput: string | undefined;
+    const chat = makeChat({
+      input: "session draft",
+      sendMessage: (message) => {
+        submitted = message;
+        return Promise.resolve();
+      },
+      handleSubmit: () => {
+        textOnlySubmits += 1;
+        return Promise.resolve();
+      },
+    });
+    let root: Root | undefined;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
+      flushSync(() => {
+        createdRoot.render(
+          <Chat.Root
+            chat={chat}
+            input="flat draft"
+            setInput={(value) => clearedInput = value}
+          >
+            <ChatInput.Root>
+              <ChatInput.Field />
+              <ChatInput.Submit />
+            </ChatInput.Root>
+          </Chat.Root>,
+        );
+      });
+
+      const sendButton = document.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
+      assert(sendButton, "Expected the send control to render for the flat draft");
+      flushSync(() => sendButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+      assertEquals(textOnlySubmits, 0, "flat input submission must not use the session draft");
+      assertEquals(submitted, { text: "flat draft" });
+      assertEquals(clearedInput, "");
+    } finally {
+      if (root) await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   it("explicit ChatInput.Root props win over the surrounding context values", async () => {
     const html = renderToString(
       <Chat.Root chat={makeChat({ input: "context value" })}>

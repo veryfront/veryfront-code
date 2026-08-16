@@ -147,6 +147,8 @@ export function ChatRoot(
   const error = errorProp !== undefined ? errorProp : (chat?.error ?? null);
   const input = inputProp ?? chat?.input ?? "";
   const setInput = setInputProp ?? chat?.setInput;
+  const hasFlatSubmitState = inputProp !== undefined || setInputProp !== undefined ||
+    isLoadingProp !== undefined;
   const submitSession = React.useCallback((e?: React.FormEvent) => {
     if (!chat) return;
     if (hasPendingAttachments(attachments)) {
@@ -154,15 +156,19 @@ export function ChatRoot(
       return;
     }
     const files = attachmentsToFileParts(attachments);
-    if (files.length === 0) return chat.handleSubmit(e);
+    if (files.length === 0 && !hasFlatSubmitState) return chat.handleSubmit(e);
 
     e?.preventDefault();
-    chat.setInput("");
+    if (isLoading) return;
+    const text = input.trim();
+    if (!text && files.length === 0) return;
+
+    setInput?.("");
     for (const attachment of attachments) {
       if (attachment.url) onRemoveAttachment?.(attachment.id);
     }
-    return chat.sendMessage({ text: input.trim(), files });
-  }, [attachments, chat, input, onRemoveAttachment]);
+    return chat.sendMessage({ text, ...(files.length > 0 ? { files } : {}) });
+  }, [attachments, chat, hasFlatSubmitState, input, isLoading, onRemoveAttachment, setInput]);
   const onSubmit = onSubmitProp ?? (chat ? submitSession : undefined);
   const onStop = onStopProp ?? chat?.stop;
   const onReload = onReloadProp ?? chat?.reload;
