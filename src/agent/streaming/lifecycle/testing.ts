@@ -95,7 +95,7 @@ export interface ScriptedStreamProvider<T> extends StreamProviderAdapter<T> {
   rejectNext(error: unknown): void;
 }
 
-export function createScriptedStreamProvider<T extends StreamSignal>(
+export function createScriptedStreamProvider<T>(
   values: readonly T[],
   options: { autoComplete?: boolean; returnError?: unknown } = {},
 ): ScriptedStreamProvider<T> {
@@ -186,7 +186,7 @@ export function createScriptedStreamProvider<T extends StreamSignal>(
       };
     },
     decode(part: T, _snapshot: Readonly<StreamSnapshot>): readonly StreamSignal[] {
-      return [part];
+      return [part as StreamSignal];
     },
     classifyError(): StreamProviderError {
       return {
