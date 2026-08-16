@@ -26,6 +26,14 @@ async function collectStreamText(stream: ReadableStream<Uint8Array>): Promise<st
   return new TextDecoder().decode(merged);
 }
 
+function parseSseFrames(body: string): Array<{ event: string; data: Record<string, unknown> }> {
+  return body.split("\n\n").flatMap((frame) => {
+    const event = /^event: (.+)$/m.exec(frame)?.[1];
+    const data = /^data: (.+)$/m.exec(frame)?.[1];
+    return event && data ? [{ event, data: JSON.parse(data) as Record<string, unknown> }] : [];
+  });
+}
+
 describe("agent/ag-ui-browser-response-stream", () => {
   it("writes bootstrap events, encoded chunk events, and finalize events", async () => {
     const stream = createAgUiBrowserResponseStream({
@@ -165,8 +173,19 @@ describe("agent/ag-ui-browser-response-stream", () => {
     });
 
     const text = await collectStreamText(stream);
-    assertStringIncludes(text, "event: StateSnapshot");
-    assertStringIncludes(text, 'data: {"snapshot":{}}');
+    const stateSnapshot = parseSseFrames(text).find((frame) => frame.event === "StateSnapshot")
+      ?.data;
+    assertEquals(stateSnapshot?.snapshot, {});
+    assertEquals(
+      typeof stateSnapshot?.elapsedMs === "number" &&
+        Number.isFinite(stateSnapshot.elapsedMs) && stateSnapshot.elapsedMs >= 0,
+      true,
+    );
+    assertEquals(
+      typeof stateSnapshot?.emittedAt === "number" &&
+        Number.isInteger(stateSnapshot.emittedAt) && stateSnapshot.emittedAt > 0,
+      true,
+    );
   });
 
   it("stops consuming chunks after the response stream is cancelled", async () => {

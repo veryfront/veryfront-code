@@ -41,9 +41,9 @@ function createTextStream(
 
 function normalizeRunRuntimeContext(
   event: AgentRunModelCallContextEvent,
-): AgentRunModelCallContextEvent {
+): Pick<AgentRunModelCallContextEvent, "type" | "messages"> {
   return {
-    ...event,
+    type: event.type,
     messages: event.messages.map((message) =>
       message.role === "system" && typeof message.content === "string"
         ? {
@@ -175,6 +175,20 @@ describe("agent provider transport hooks", () => {
     const localContext = contexts[1];
     assertExists(cloudContext);
     assertExists(localContext);
+    assertEquals(cloudContext.model, {
+      id: "cloud/context-parity",
+      modelProvider: "cloud",
+    });
+    assertEquals(localContext.model, {
+      id: "local/context-parity",
+      modelProvider: "local",
+    });
+    const expectedRequestControls = {
+      maxOutputTokens: 4096,
+      temperature: 0,
+    };
+    assertEquals(cloudContext.request, expectedRequestControls);
+    assertEquals(localContext.request, expectedRequestControls);
     assertEquals(
       normalizeRunRuntimeContext(cloudContext),
       normalizeRunRuntimeContext(localContext),

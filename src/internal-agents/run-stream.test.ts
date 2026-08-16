@@ -2919,11 +2919,22 @@ describe("internal-agents/run-stream", () => {
 
       const frames = parseSseFrames(await response.text());
       assertEquals(Boolean(sinkDuringCreate), true);
+      const contextFrame = frames.find((frame) =>
+        frame.event === MODEL_CALL_CONTEXT_SSE_EVENT_NAME
+      );
+      const contextEvent = contextFrame?.data as Record<string, unknown> | undefined;
+      assertEquals(contextEvent?.type, modelCallContextEvent.type);
+      assertEquals(contextEvent?.messages, modelCallContextEvent.messages);
+      assertEquals(contextEvent?.tools, modelCallContextEvent.tools);
       assertEquals(
-        frames
-          .filter((frame) => frame.event === MODEL_CALL_CONTEXT_SSE_EVENT_NAME)
-          .map((frame) => frame.data),
-        [modelCallContextEvent],
+        typeof contextEvent?.elapsedMs === "number" &&
+          Number.isFinite(contextEvent.elapsedMs) && contextEvent.elapsedMs >= 0,
+        true,
+      );
+      assertEquals(
+        typeof contextEvent?.emittedAt === "number" &&
+          Number.isInteger(contextEvent.emittedAt) && contextEvent.emittedAt > 0,
+        true,
       );
     });
 

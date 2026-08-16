@@ -85,6 +85,15 @@ function createDurableRunMirror(input: {
   };
 }
 
+function withoutEventTiming(event: unknown): unknown {
+  if (typeof event !== "object" || event === null) return event;
+  const { elapsedMs: _elapsedMs, emittedAt: _emittedAt, ...semanticEvent } = event as Record<
+    string,
+    unknown
+  >;
+  return semanticEvent;
+}
+
 function createLifecycleAdapter(input?: {
   durableRunMirror?: ConversationRunChunkMirror | null;
   messageId?: string | null;
@@ -643,7 +652,20 @@ describe("agent/hosted-chat-execution-runtime", () => {
       ).length,
       1,
     );
-    assertEquals(observed, persisted);
+    const persistedContext = persisted.find((event) =>
+      (event as { type?: string }).type === "AGENT_RUN_MODEL_CALL_CONTEXT"
+    ) as Record<string, unknown> | undefined;
+    assertEquals(
+      typeof persistedContext?.elapsedMs === "number" &&
+        Number.isFinite(persistedContext.elapsedMs) && persistedContext.elapsedMs >= 0,
+      true,
+    );
+    assertEquals(
+      typeof persistedContext?.emittedAt === "number" &&
+        Number.isInteger(persistedContext.emittedAt) && persistedContext.emittedAt > 0,
+      true,
+    );
+    assertEquals(observed, persisted.map(withoutEventTiming));
     assertEquals(JSON.stringify(uiChunks).includes("AGENT_RUN_MODEL_CALL_CONTEXT"), false);
     assertEquals(lazyScopeActive, true);
   });

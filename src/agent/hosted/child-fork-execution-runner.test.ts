@@ -32,6 +32,15 @@ function systemIncludes(system: AgentSystem, text: string): boolean {
     : system.some((message) => message.content.includes(text));
 }
 
+function withoutEventTiming(event: unknown): unknown {
+  if (typeof event !== "object" || event === null) return event;
+  const { elapsedMs: _elapsedMs, emittedAt: _emittedAt, ...semanticEvent } = event as Record<
+    string,
+    unknown
+  >;
+  return semanticEvent;
+}
+
 function createRuntimeEventStream(
   events: readonly Record<string, unknown>[],
 ): ReadableStream<Uint8Array> {
@@ -495,14 +504,29 @@ Deno.test("executeHostedChildForkWithPreparedTools preserves the mandatory sink 
   assertEquals(activeDuringStart, true);
   assertEquals(activeDuringIteration, true);
   assertEquals(order.slice(0, 4), ["append", "flush", "observe", "dispatch"]);
-  assertEquals(persisted, [{
+  assertEquals(persisted.map(withoutEventTiming), [{
     type: "AGENT_RUN_MODEL_CALL_CONTEXT",
     messages: [
       { role: "system", content: "Hosted child instructions" },
       { role: "user", content: [{ type: "text", text: "Run child" }] },
     ],
+    model: {
+      id: "test/hosted-child",
+      modelProvider: "test",
+    },
   }]);
-  assertEquals(observed, persisted);
+  const persistedContext = persisted[0] as Record<string, unknown> | undefined;
+  assertEquals(
+    typeof persistedContext?.elapsedMs === "number" &&
+      Number.isFinite(persistedContext.elapsedMs) && persistedContext.elapsedMs >= 0,
+    true,
+  );
+  assertEquals(
+    typeof persistedContext?.emittedAt === "number" &&
+      Number.isInteger(persistedContext.emittedAt) && persistedContext.emittedAt > 0,
+    true,
+  );
+  assertEquals(observed, persisted.map(withoutEventTiming));
   assertEquals(result.success, true);
   if (result.success) {
     assertEquals(result.summary.text, "Injected context.");
