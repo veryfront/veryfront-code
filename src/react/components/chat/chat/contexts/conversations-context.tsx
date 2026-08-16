@@ -19,13 +19,23 @@ import {
 } from "../hooks/use-conversations.ts";
 
 /**
- * Value accepted by the low-level context provider. Persistence state is
- * optional here so existing caller-supplied structural fixtures remain
- * compatible; {@link ConversationsProvider} always supplies it.
+ * Value accepted by the low-level context provider. Persistence state and
+ * `activeReady` are optional here so existing caller-supplied structural
+ * fixtures remain compatible; {@link ConversationsProvider} always supplies
+ * them.
  */
 export type ConversationsContextValue =
   & UseConversationsResult
-  & Partial<UseConversationsPersistenceState & UseConversationsActiveLoadState>;
+  & Partial<UseConversationsPersistenceState & UseConversationsActiveLoadState>
+  & {
+    /**
+     * True once the full active record has resolved for the current
+     * `activeConversationId` (`activeConversationId != null &&
+     * activeConversation?.id === activeConversationId`); false while it is
+     * loading or mismatched, and false when there is no active id.
+     */
+    activeReady?: boolean;
+  };
 
 const [ConversationsContext, useConversationsContext] = createStrictContext<
   ConversationsContextValue
@@ -59,8 +69,14 @@ export function ConversationsProvider(
   { children, ...options }: ConversationsProviderProps,
 ): React.ReactElement {
   const conversations = useConversations(options);
+  const activeReady = conversations.activeConversationId != null &&
+    conversations.activeConversation?.id === conversations.activeConversationId;
+  const value = React.useMemo(
+    () => ({ ...conversations, activeReady }),
+    [conversations, activeReady],
+  );
   return (
-    <ConversationsContextProvider value={conversations}>
+    <ConversationsContextProvider value={value}>
       {children}
     </ConversationsContextProvider>
   );
