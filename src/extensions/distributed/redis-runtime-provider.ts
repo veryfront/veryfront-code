@@ -342,7 +342,7 @@ function captureNodeRedisClient(value: unknown): NodeRedisClient {
     on(event: "error", listener: (error: unknown) => void): unknown {
       return Reflect.apply(on, value, [event, listener]);
     },
-  }) as unknown as NodeRedisClient;
+  }) as NodeRedisClient;
 }
 
 function captureRedisModule(value: unknown): NodeRedisModule {

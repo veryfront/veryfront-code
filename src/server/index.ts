@@ -204,7 +204,7 @@ function toNativeResponse(res: Response): Response {
   if (res instanceof _NativeResponse) return res;
   // TS narrows to `never` after the instanceof check because it can't see the
   // runtime class divergence between DNT's polyfill Response and native Response.
-  const src = res as unknown as Response;
+  const src = res as Response;
   return new _NativeResponse(src.body, {
     status: src.status,
     statusText: src.statusText,
@@ -444,8 +444,8 @@ export async function createHandler(
     };
 
     nodeUpgradeLifecycle.attach(
-      httpServer as unknown as NodeUpgradeEventSource,
-      upgradeListener as unknown as (...args: unknown[]) => void,
+      httpServer as NodeUpgradeEventSource,
+      upgradeListener as (...args: unknown[]) => void,
     );
   };
 

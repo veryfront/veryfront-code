@@ -120,7 +120,7 @@ const SECURE_FS_IMMUTABLE_AUTHORITY_KEYS = [
   "maxWholeFileReadBytes",
 ] as const;
 
-function hardenSecureFsAuthority(target: object): void {
+function hardenSecureFsAuthority(target: SecureFs): void {
   for (const key of SECURE_FS_IMMUTABLE_AUTHORITY_KEYS) {
     const descriptor = objectGetOwnPropertyDescriptor(target, key);
     if (descriptor === undefined || !("value" in descriptor)) {

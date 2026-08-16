@@ -96,7 +96,7 @@ function describeReason(reason: unknown): { error: string; stack?: string } {
 }
 
 function resolveDefaultTarget(): GuardEventTarget | undefined {
-  const candidate = globalThis as unknown as Partial<GuardEventTarget>;
+  const candidate = globalThis as Partial<GuardEventTarget>;
   return typeof candidate.addEventListener === "function" &&
       typeof candidate.removeEventListener === "function"
     ? candidate as GuardEventTarget

@@ -58,7 +58,7 @@ function trim(value: string): string {
   return apply(stringTrim, value, []) as string;
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, value, [key]) as boolean;
 }
 

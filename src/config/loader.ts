@@ -902,9 +902,7 @@ function createHostedConfigSourceReadFlight(
   // Register the deferred operation in the caller's async context now. A
   // queued multi-project read must not inherit the request context of whichever
   // earlier flight later releases capacity.
-  const promise = thenPromise(start.promise, operation) as unknown as Promise<
-    HostedConfigSourceSelection | null
-  >;
+  const promise = thenPromise(start.promise, operation);
   const flight: HostedConfigSourceReadFlight = {
     key,
     start,

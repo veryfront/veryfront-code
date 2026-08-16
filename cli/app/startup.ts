@@ -45,7 +45,7 @@ export interface StartupProgressDeps {
 function platformDeps(): StartupProgressDeps {
   return {
     write: (text) => writeStdout(text),
-    setInterval: (fn, ms) => setInterval(fn, ms) as unknown as number,
+    setInterval: (fn, ms) => setInterval(fn, ms),
     clearInterval: (handle) => clearInterval(handle),
   };
 }

@@ -43,12 +43,12 @@ const URL_HREF_GETTER = readOwnDescriptorGetter(NativeURL.prototype, "href");
 
 const INVALID_ERROR_FIELD = Symbol("invalid-error-field");
 
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return apply(objectHasOwnProperty, object, [key]) as boolean;
+function hasOwn(descriptor: PropertyDescriptor, key: PropertyKey): boolean {
+  return apply(objectHasOwnProperty, descriptor, [key]) as boolean;
 }
 
 function readOwnDescriptorGetter(
-  object: object,
+  object: URL,
   key: PropertyKey,
 ): ((this: unknown) => unknown) | undefined {
   try {

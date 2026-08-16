@@ -46,7 +46,7 @@ const stringReplaceAll = String.prototype.replaceAll;
 const stringSplit = String.prototype.split;
 const stringStartsWith = String.prototype.startsWith;
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, value, [key]) as boolean;
 }
 

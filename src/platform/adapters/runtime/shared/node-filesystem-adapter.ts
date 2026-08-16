@@ -125,7 +125,7 @@ const nodeFileSystemOperations: NodeFileSystemOperations = {
   },
 };
 
-function hasOwn(value: object, property: PropertyKey): boolean {
+function hasOwn(value: NodeFileSystemCapabilityOptions, property: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, property);
 }
 

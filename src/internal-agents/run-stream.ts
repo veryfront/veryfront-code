@@ -1032,10 +1032,7 @@ export async function createRuntimeAgentStreamResponse(
             // Replays whatever the first model call already produced, then
             // forwards later steps as they happen. RunStarted stays first.
             modelCallContextRelay.attach((event) =>
-              enqueueIfAttached(
-                MODEL_CALL_CONTEXT_SSE_EVENT_NAME,
-                event as unknown as Record<string, unknown>,
-              )
+              enqueueIfAttached(MODEL_CALL_CONTEXT_SSE_EVENT_NAME, event)
             );
             heartbeatTimer = setInterval(
               enqueueHeartbeatIfAttached,

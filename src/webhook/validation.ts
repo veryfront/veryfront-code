@@ -338,7 +338,7 @@ function normalizeFilter(value: unknown): WebhookEventFilter | undefined {
   return snapshotFilterValue(
     normalized,
     "Webhook eventFilter",
-  ) as unknown as WebhookEventFilter;
+  ) as WebhookEventFilter;
 }
 
 function normalizeAgentMessage(

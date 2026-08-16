@@ -173,7 +173,7 @@ function hasUniqueStrings(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
 }
 
-function recordEntryCountWithin(value: object, limit: number): boolean {
+function recordEntryCountWithin(value: Record<string, unknown>, limit: number): boolean {
   return Object.keys(value).length <= limit;
 }
 

@@ -41,7 +41,7 @@ function installDom(dom: JSDOM): () => void {
   };
 }
 
-function render(el: React.ReactElement): { host: HTMLElement; unmount: () => void } {
+function render(el: React.ReactElement): { host: HTMLElement; unmount: () => Promise<void> } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
   const restore = installDom(dom);
   const host = dom.window.document.getElementById("root")!;
@@ -49,9 +49,12 @@ function render(el: React.ReactElement): { host: HTMLElement; unmount: () => voi
   flushSync(() => root.render(el));
   return {
     host: host as unknown as HTMLElement,
-    unmount: () => {
+    unmount: async () => {
       try {
         root.unmount();
+        // Drain one macrotask so jsdom's selectionchange 0ms timer (started
+        // by element.focus()) completes inside the test's sanitizer window.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       } finally {
         restore();
       }
@@ -88,7 +91,7 @@ function Harness(): React.ReactElement {
 
 function runTabsConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
   describe(`Tabs adapter conformance - ${label}`, () => {
-    it("role=tablist/tab; clicking a tab selects it (aria-selected + data-state)", () => {
+    it("role=tablist/tab; clicking a tab selects it (aria-selected + data-state)", async () => {
       const { host, unmount } = render(
         <Wrap>
           <Harness />
@@ -107,7 +110,7 @@ function runTabsConformance(label: string, Wrap: React.FC<{ children: React.Reac
         assert(a!.getAttribute("aria-selected") === "false", "a deselected");
         assert(b!.getAttribute("data-state") === "active", "b data-state active");
       } finally {
-        unmount();
+        await unmount();
       }
     });
   });
@@ -118,7 +121,7 @@ const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{c
 runTabsConformance("builtin (default)", Identity);
 
 describe("Tabs adapter conformance - builtin keyboard navigation", () => {
-  it("uses one tab stop and selects tabs with roving keyboard commands", () => {
+  it("uses one tab stop and selects tabs with roving keyboard commands", async () => {
     const { host, unmount } = render(
       <Identity>
         <Harness />
@@ -141,7 +144,7 @@ describe("Tabs adapter conformance - builtin keyboard navigation", () => {
       key(a!, "End");
       assert(b!.getAttribute("aria-selected") === "true", "End selects the last tab");
     } finally {
-      unmount();
+      await unmount();
     }
   });
 });

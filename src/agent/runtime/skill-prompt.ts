@@ -52,7 +52,7 @@ if (typeof mapIteratorNext !== "function") {
   throw new NativeError("Map iterator next intrinsic is unavailable");
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor | Record<string, true>, key: PropertyKey): boolean {
   return apply(hasOwnProperty, value, [key]) as boolean;
 }
 

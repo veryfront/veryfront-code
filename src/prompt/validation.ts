@@ -19,7 +19,7 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readOwnDataProperty(
-  object: object,
+  object: Record<string, unknown> | readonly unknown[],
   property: PropertyKey,
   field: string,
 ): OwnDataProperty {

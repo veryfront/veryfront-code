@@ -1,12 +1,12 @@
 /** Bounded page and layout entity discovery. @module types/entities/getEntityInfo */
 
 import { extract } from "#std/front-matter/yaml.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { detectEntityType, normalizeFrontmatter } from "../entities.ts";
 import type { Entity, EntityInfo, Frontmatter } from "../entities.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger as baseLogger } from "#veryfront/utils/logger/index.ts";
 import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
@@ -1639,7 +1639,9 @@ function isLexicallyWithinRoot(
     : hasPathPrefix(filePath, virtualRoot);
 }
 
-function hasNoSymlinkSemantics(fileSystem: object): boolean {
+function hasNoSymlinkSemantics(
+  fileSystem: FileSystemAdapter | FileSystem,
+): boolean {
   try {
     const descriptor = Reflect.getOwnPropertyDescriptor(fileSystem, "symlinkSemantics");
     return descriptor !== undefined &&

@@ -236,7 +236,7 @@ const TENANT_BUILD_ERROR_CLASS = "tenant-build";
  */
 const TENANT_BUILD_FAILURE_TAG = Symbol.for("veryfront.module-loader.tenant-build-failure");
 
-function hasOwnTrueSymbol(value: object, key: symbol): boolean {
+function hasOwnTrueSymbol(value: Error, key: symbol): boolean {
   const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
   return descriptor !== undefined &&
     ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true &&

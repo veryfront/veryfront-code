@@ -31,7 +31,7 @@ const arrayBufferByteLengthGetter = arrayBufferByteLengthGetterCandidate;
 
 function requireTypedArrayGetter(
   property: "buffer" | "byteLength" | "byteOffset",
-): (this: object) => unknown {
+): (this: Uint8Array) => unknown {
   const getter = Object.getOwnPropertyDescriptor(typedArrayPrototype, property)?.get;
   if (typeof getter !== "function") {
     throw new TypeError(`Required Uint8Array ${property} intrinsic is unavailable`);

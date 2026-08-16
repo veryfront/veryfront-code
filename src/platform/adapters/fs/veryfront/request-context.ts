@@ -40,7 +40,7 @@ export function wrapWithCurrentContext<T extends (...args: never[]) => unknown>(
 
   return ((...args: Parameters<T>) => {
     return asyncLocalStorage.run(store, () => fn(...args));
-  }) as unknown as T;
+  }) as T;
 }
 
 export function getRequestScopedFile(cacheKey: string): string | undefined {

@@ -1135,7 +1135,7 @@ export class ProjectWorker {
           return;
         }
         clearTimeout(pending.timer);
-        pending.resolve(data as unknown as WorkerResponse);
+        pending.resolve(data as WorkerResponse);
         this.pending.delete(id);
       }
       return;

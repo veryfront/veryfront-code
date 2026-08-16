@@ -695,14 +695,14 @@ let expect: ExpectFn;
 
 if (isDeno) {
   const stdExpect = await import("#std/expect.ts");
-  expect = stdExpect.expect as unknown as ExpectFn;
+  expect = stdExpect.expect as ExpectFn;
 } else if (isBun) {
   const importBunTest = new Function("return import('bun:test')") as () => Promise<{
     expect?: ExternalExpectFn;
     default?: { expect?: ExternalExpectFn };
   }>;
   const bunTestModule = await importBunTest();
-  expect = (bunTestModule.expect ?? bunTestModule.default?.expect) as unknown as ExpectFn;
+  expect = (bunTestModule.expect ?? bunTestModule.default?.expect) as ExpectFn;
 } else {
   expect = createNodeExpect();
 }

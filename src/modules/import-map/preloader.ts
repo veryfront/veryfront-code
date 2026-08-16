@@ -68,8 +68,8 @@ function monotonicNow(): number {
   return ReflectApply(PerformanceNow, IntrinsicPerformance, []) as number;
 }
 
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
+function hasOwn(descriptor: PropertyDescriptor, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, [key]) as boolean;
 }
 
 function snapshotEmbeddedImportMap(value: unknown): ImportMapConfig {

@@ -120,14 +120,14 @@ export function useVoiceInput(
 
   const isSupported = React.useMemo((): boolean => {
     if (typeof globalThis === "undefined") return false;
-    const g = globalThis as unknown as GlobalWithSpeechRecognition;
+    const g = globalThis as GlobalWithSpeechRecognition;
     return Boolean(g.SpeechRecognition ?? g.webkitSpeechRecognition);
   }, []);
 
   React.useEffect(() => {
     if (!isSupported) return;
 
-    const g = globalThis as unknown as GlobalWithSpeechRecognition;
+    const g = globalThis as GlobalWithSpeechRecognition;
     const SpeechRecognitionAPI = g.SpeechRecognition ?? g.webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) return;
 

@@ -156,7 +156,14 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         dependsOn: node.dependsOn === undefined ? undefined : Object.freeze([...node.dependsOn]),
       };
 
-      const config = node.config as unknown as Record<string, unknown>;
+      const config = node.config as {
+        agent?: unknown;
+        tool?: unknown;
+        message?: unknown;
+        nodes?: unknown;
+        then?: unknown;
+        else?: unknown;
+      };
 
       if (type === "step") {
         const agentValue = config.agent;

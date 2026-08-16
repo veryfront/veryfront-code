@@ -48,7 +48,9 @@ export function resolveNavigationStore(
     usesRegistryFallback,
     getNavigationStore: () => {
       const storeKey = Symbol.for(NAVIGATION_STORE_REGISTRY_KEY);
-      const registry = globalThis as unknown as Record<symbol, NavigationStore | undefined>;
+      const registry = globalThis as
+        & typeof globalThis
+        & Record<symbol, NavigationStore | undefined>;
       const existing = registry[storeKey];
       if (existing) return existing;
 

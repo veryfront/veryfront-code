@@ -231,7 +231,7 @@ function tryStartDenoServer(port: number, options: CallbackServerOptions = {}): 
   });
 
   // Access native Deno.serve via `self` to bypass dnt shim transform.
-  const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"]!;
+  const nativeDeno = (self as typeof self & { Deno?: typeof Deno })["Deno"]!;
   const server = nativeDeno.serve(
     { port, hostname: "127.0.0.1", onListen: () => {} },
     (request: Request) => {

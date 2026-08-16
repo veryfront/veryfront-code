@@ -18,7 +18,7 @@ const NativeError = Error;
 const NativeAsyncFunctionPrototype = getPrototypeOf(async function () {});
 const toStringTagSymbol = Symbol.toStringTag;
 
-function hasOwn(object: object, key: PropertyKey): boolean {
+function hasOwn(object: PropertyDescriptor, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
 }
 

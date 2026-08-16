@@ -42,8 +42,8 @@ function stringSlice(value: string, start: number, end?: number): string {
   ) as string;
 }
 
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return ReflectApply(ObjectPrototypeHasOwnProperty, object, [key]) as boolean;
+function hasOwn(descriptor: PropertyDescriptor, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, [key]) as boolean;
 }
 
 function isFrameworkOwnedSpecifier(specifier: string): boolean {
@@ -64,7 +64,7 @@ function removeFrameworkOwnedMappings(record: Record<string, string>): void {
 }
 
 function readOwnDataProperty(
-  value: object,
+  value: Record<string, unknown>,
   key: PropertyKey,
   label: string,
 ): unknown {
@@ -78,7 +78,10 @@ function readOwnDataProperty(
   return descriptor.value;
 }
 
-function assertPlainObject(value: unknown, label: string): asserts value is object {
+function assertPlainObject(
+  value: unknown,
+  label: string,
+): asserts value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || ArrayIsArray(value)) {
     throw IMPORT_MAP_INVALID.create({ detail: `${label} must be a plain object` });
   }

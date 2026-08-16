@@ -52,7 +52,7 @@ export class ResponseBuilder implements FluentMethodsContext, ResponseMethodsCon
 // but TS can't verify this because property-assigned methods with generic
 // `this` parameters resolve to the constraint type, not the class type.
 staticHelpers.setResponseBuilderClass(
-  ResponseBuilder as unknown as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
+  ResponseBuilder as Parameters<typeof staticHelpers.setResponseBuilderClass>[0],
 );
 
 export function createResponseBuilder(config?: ResponseBuilderConfig): ResponseBuilder {

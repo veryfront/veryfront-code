@@ -182,12 +182,12 @@ const ERROR_REASON_TABLE = ObjectFreeze(
   } as const satisfies Readonly<Record<DeclarativeConfigErrorReason, true>>,
 );
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, value, [key]) as boolean;
 }
 
 function defineDataProperty(
-  target: object,
+  target: Record<string, unknown>,
   key: PropertyKey,
   value: unknown,
 ): void {
@@ -318,7 +318,10 @@ function captureStringMap(value: unknown): Readonly<Record<string, string>> {
   return ObjectFreeze(captured);
 }
 
-function isKnownEnumValue(value: unknown, table: object): value is string {
+function isKnownEnumValue(
+  value: unknown,
+  table: Readonly<Record<string, true>>,
+): value is string {
   if (typeof value !== "string") return false;
   let descriptor: PropertyDescriptor | undefined;
   try {

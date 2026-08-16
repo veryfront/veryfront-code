@@ -66,7 +66,7 @@ class StateBridge implements StateStore {
       this.listeners.set(key, callbacks);
     }
 
-    const typedCallback = callback as unknown as (value: unknown) => void;
+    const typedCallback = callback as (value: unknown) => void;
     callbacks.add(typedCallback);
 
     return () => {

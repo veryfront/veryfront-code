@@ -70,7 +70,7 @@ function invalidFrontmatter(): never {
   );
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return call(objectHasOwnProperty, value, [key]);
 }
 

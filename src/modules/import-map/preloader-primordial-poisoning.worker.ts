@@ -2,10 +2,11 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { ImportMapPreloader } from "./preloader.ts";
 
-const adapter = {
+const adapterMock: unknown = {
   fs: {},
   env: {},
-} as unknown as RuntimeAdapter;
+};
+const adapter = adapterMock as RuntimeAdapter;
 const configA = {
   resolve: {
     importMap: {

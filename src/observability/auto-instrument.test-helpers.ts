@@ -17,5 +17,5 @@ export function createResolvedFetch(response: Response): typeof fetch {
 export function createThrowingFetch(error: Error): typeof fetch {
   return (() => {
     throw error;
-  }) as unknown as typeof fetch;
+  }) as typeof fetch;
 }

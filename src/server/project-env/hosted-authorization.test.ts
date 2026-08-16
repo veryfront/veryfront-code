@@ -64,7 +64,7 @@ describe("hosted project environment authorization", () => {
     setEnv("VERYFRONT_API_INTERNAL_USER", "test-internal-user");
     setEnv("VERYFRONT_API_INTERNAL_PASS", "test-internal-pass");
     const requests: Array<{ url: string; authorization: string | null }> = [];
-    globalThis.fetch = ((input, init) => {
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
       requests.push({
         url,

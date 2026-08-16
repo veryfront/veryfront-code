@@ -69,7 +69,7 @@ interface NodeFileSystemModule {
 // API cannot lazily await its implementation at call time, so load it once only
 // in runtimes that actually provide Node-compatible filesystem APIs.
 const nodeFileSystem = isNode || isBun
-  ? await import("node:fs") as unknown as NodeFileSystemModule
+  ? await import("node:fs") as NodeFileSystemModule
   : undefined;
 
 const denoRuntime = getDenoRuntime();

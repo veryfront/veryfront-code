@@ -432,7 +432,7 @@ export function captureApprovalApprovers(
     seen.add(approver);
     captured.push(approver);
   }
-  return Object.freeze(captured) as unknown as string[];
+  return Object.freeze(captured) as string[];
 }
 
 /**

@@ -18,7 +18,7 @@ type KreuzbergModule = KreuzbergExtractor & {
 
 export async function loadKreuzbergNative(): Promise<KreuzbergExtractor> {
   try {
-    return await import("@kreuzberg/node") as unknown as KreuzbergExtractor;
+    return await import("@kreuzberg/node") as KreuzbergExtractor;
   } catch (error) {
     if (!isMissingPackageError(error)) throw error;
     throw new Error(
@@ -60,7 +60,7 @@ export async function loadKreuzberg(): Promise<KreuzbergExtractor> {
 
 async function importKreuzbergWasm(): Promise<KreuzbergModule> {
   try {
-    return await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
+    return await import("@kreuzberg/wasm") as KreuzbergModule;
   } catch (error) {
     if (!isMissingPackageError(error)) throw error;
     throw new Error(

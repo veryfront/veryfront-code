@@ -42,7 +42,7 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ReflectApply = Reflect.apply;
 
-function hasOwnProperty(value: object, key: PropertyKey): boolean {
+function hasOwnProperty(value: Readonly<Record<string, string>>, key: PropertyKey): boolean {
   return ReflectApply(ObjectPrototypeHasOwnProperty, value, [key]) as boolean;
 }
 

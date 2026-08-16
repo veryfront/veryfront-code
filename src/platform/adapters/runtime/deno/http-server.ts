@@ -254,7 +254,7 @@ export function createDenoServer(
     });
   }
   return createDenoServerWithRuntime(
-    runtime as unknown as DenoServeRuntime,
+    runtime as DenoServeRuntime,
     handler,
     options,
   );

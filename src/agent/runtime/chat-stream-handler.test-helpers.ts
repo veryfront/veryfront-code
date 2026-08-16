@@ -14,7 +14,7 @@ export function createSSECollector() {
         events.push(JSON.parse(line.slice(6)));
       }
     },
-  } as unknown as ReadableStreamDefaultController;
+  } as ReadableStreamDefaultController;
   return { events, controller, encoder };
 }
 

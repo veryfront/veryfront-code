@@ -42,7 +42,7 @@ interface DenoFileSystemCapabilityOptions extends NodeFileSystemCapabilityOption
   readonly denoCreateRuntime?: DenoCreateRuntime | null;
 }
 
-function hasOwn(value: object, property: PropertyKey): boolean {
+function hasOwn(value: DenoFileSystemCapabilityOptions, property: PropertyKey): boolean {
   return Object.prototype.hasOwnProperty.call(value, property);
 }
 

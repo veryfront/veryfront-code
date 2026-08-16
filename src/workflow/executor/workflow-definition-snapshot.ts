@@ -650,7 +650,7 @@ export function captureWorkflowStringList(
     seen.add(entry);
     captured.push(entry);
   }
-  return Object.freeze(captured) as unknown as string[];
+  return Object.freeze(captured) as string[];
 }
 
 function captureRetryConfig(value: unknown, label: string): RetryConfig | undefined {
@@ -1040,7 +1040,7 @@ function captureNodeList(
     captured.push(captureNode(values[index], `${label} node at index ${index}`, state, depth));
   }
   validateDependencyGraph(captured, label);
-  return Object.freeze(captured) as unknown as WorkflowNode[];
+  return Object.freeze(captured) as WorkflowNode[];
 }
 
 function captureDefinition<TInput, TOutput>(
@@ -1153,7 +1153,7 @@ export function captureWorkflowDefinitions(
     seenIds.add(workflow.id);
     captured.push(workflow);
   }
-  return Object.freeze(captured) as unknown as WorkflowDefinition[];
+  return Object.freeze(captured) as WorkflowDefinition[];
 }
 
 /** Capture nodes returned by a workflow or composite builder. */
@@ -1179,5 +1179,5 @@ export function captureWorkflowNodes(
 export function captureWorkflowMapItems(value: unknown, label: string): unknown[] {
   const entries = inspectDenseArrayValues(value, label);
   const captured = captureWorkflowStaticValue(entries, label);
-  return Object.freeze(captured) as unknown as unknown[];
+  return Object.freeze(captured) as unknown[];
 }

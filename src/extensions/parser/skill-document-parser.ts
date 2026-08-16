@@ -36,7 +36,7 @@ function call<T>(fn: (...args: never[]) => T, receiver: unknown, args: unknown[]
   return apply(fn, receiver, args) as T;
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
+function hasOwn(value: PropertyDescriptor, key: PropertyKey): boolean {
   return call(objectHasOwnProperty, value, [key]);
 }
 

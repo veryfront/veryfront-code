@@ -70,7 +70,8 @@ function toShellFrontmatter(
   // frontmatter index, while the HTML pipeline supports structured meta/link/
   // script/style fields. This boundary narrows only the type view; the shell
   // immediately validates and snapshots every structured value before use.
-  return frontmatter as unknown as NonNullable<RenderMetadata["frontmatter"]>;
+  const record: Record<string, unknown> = frontmatter;
+  return record as NonNullable<RenderMetadata["frontmatter"]>;
 }
 
 function injectHeadScriptsAfterImportMap(html: string, scripts: string): string {

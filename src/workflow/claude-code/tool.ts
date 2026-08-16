@@ -5,7 +5,7 @@
  */
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool } from "#veryfront/tool";
 import { executeAgent } from "./agent.ts";
 import type { ClaudeCodeMode, ClaudeCodeResult } from "./types.ts";
@@ -81,7 +81,7 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
   type: "function",
   description: "Run a Claude Code agent for complex coding tasks. " +
     "Supports file editing, bash commands, and iterative problem-solving.",
-  inputSchema: getClaudeCodeInputSchema() as unknown as Schema<ClaudeCodeInput>,
+  inputSchema: getClaudeCodeInputSchema(),
   inputSchemaJson: {
     type: "object",
     properties: {

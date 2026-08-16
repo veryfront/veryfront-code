@@ -76,7 +76,7 @@ if (!installedRegistry) {
  * is stored globally; request data is carried only by the provider stack.
  */
 export function getServerRenderContext(
-  react: ReactContextRuntime = React as unknown as ReactContextRuntime,
+  react: ReactContextRuntime = React as ReactContextRuntime,
 ): unknown {
   return contextOwner[SERVER_RENDER_CONTEXT_REGISTRY_SYMBOL]!.get(react);
 }

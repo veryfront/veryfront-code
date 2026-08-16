@@ -180,7 +180,7 @@ class NodeFileSystem implements FileSystem {
       import("node:path"),
     ]);
 
-    this.fs = fsModule as unknown as NodeFsPromises;
+    this.fs = fsModule as NodeFsPromises;
     this.os = osModule;
     this.path = pathModule;
     this.initialized = true;

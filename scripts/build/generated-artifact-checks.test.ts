@@ -11,10 +11,16 @@
  * This checks the wiring rather than the bundling. Running the generators for
  * real costs an esbuild pass each, and `generate:manifests:check` already
  * proves they work on every PR.
+ *
+ * `generate` runs through the run-generate.ts orchestrator, so the
+ * generate-side script list comes from its UNITS table rather than from
+ * parsing the task string; the check side is still parsed out of the task
+ * chain, so a unit added without a `--check` counterpart still fails here.
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { UNITS } from "./run-generate.ts";
 
 type Tasks = Record<string, string>;
 
@@ -53,7 +59,13 @@ function scriptInvocations(command: string): Map<string, boolean> {
   return found;
 }
 
-const generators = scriptInvocations(expandTask("generate"));
+const generators = new Map<string, boolean>();
+for (const unit of UNITS) {
+  for (const argv of unit.commands) {
+    const script = argv.find((arg) => arg.endsWith(".ts"));
+    if (script !== undefined) generators.set(script, argv.includes("--check"));
+  }
+}
 const checks = scriptInvocations(expandTask("generate:manifests:check"));
 
 describe("generated artifact checks", () => {

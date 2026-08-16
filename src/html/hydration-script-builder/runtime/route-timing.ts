@@ -189,7 +189,7 @@ export function createRouteTimingRecorder(
       if (!entries.length) return null;
 
       for (let index = entries.length - 1; index >= 0; index--) {
-        const entry = entries[index] as unknown as Record<string, unknown>;
+        const entry = entries[index] as PerformanceEntry & Record<string, unknown>;
         const responseEnd = entry?.responseEnd;
         if (
           typeof responseEnd === "number" &&
