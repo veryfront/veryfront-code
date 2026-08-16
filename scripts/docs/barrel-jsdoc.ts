@@ -34,7 +34,7 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
   let inRemarks = false;
   let exampleTitle = "";
   let exampleLines: string[] = [];
-  let inCodeBlock = false;
+  let codeFence: { marker: "`" | "~"; length: number } | null = null;
 
   const finishExample = (): void => {
     if (exampleLines.length > 0) {
@@ -42,16 +42,17 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
     exampleTitle = "";
     exampleLines = [];
+    codeFence = null;
   };
 
   for (const line of lines) {
-    if (!inCodeBlock && line.startsWith("@module")) {
+    if (codeFence === null && line.startsWith("@module")) {
       moduleName = line.replace("@module", "").trim();
       inRemarks = false;
       continue;
     }
 
-    if (!inCodeBlock && line.startsWith("@remarks")) {
+    if (codeFence === null && line.startsWith("@remarks")) {
       finishExample();
       inExample = false;
       inRemarks = true;
@@ -60,17 +61,17 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
       continue;
     }
 
-    if (!inCodeBlock && line.startsWith("@example")) {
+    if (codeFence === null && line.startsWith("@example")) {
       finishExample();
       exampleTitle = line.replace("@example", "").trim();
       exampleLines = [];
       inExample = true;
       inRemarks = false;
-      inCodeBlock = false;
+      codeFence = null;
       continue;
     }
 
-    if (!inCodeBlock && line.startsWith("@")) {
+    if (codeFence === null && line.startsWith("@")) {
       finishExample();
       inExample = false;
       inRemarks = false;
@@ -78,8 +79,19 @@ export function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
 
     if (inExample) {
-      if (line.startsWith("```")) {
-        inCodeBlock = !inCodeBlock;
+      const fenceMatch = line.trimStart().match(/^(`{3,}|~{3,})(.*)$/);
+      if (fenceMatch) {
+        const fence = fenceMatch[1];
+        const marker = fence[0] as "`" | "~";
+        if (codeFence === null) {
+          codeFence = { marker, length: fence.length };
+        } else if (
+          marker === codeFence.marker &&
+          fence.length >= codeFence.length &&
+          fenceMatch[2].trim() === ""
+        ) {
+          codeFence = null;
+        }
       }
       exampleLines.push(line);
     } else if (inRemarks) {
@@ -122,7 +134,7 @@ export function normalizePublicDocText(text: string): string {
   );
 
   return withoutInlineJsDocLinks
-    .replace(/`[^`]*`|[<>]/g, (token) => {
+    .replace(/(`+)[\s\S]*?\1|[<>]/g, (token) => {
       if (token.startsWith("`")) return token;
       return token === "<" ? "&lt;" : "&gt;";
     })

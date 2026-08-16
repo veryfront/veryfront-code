@@ -6,10 +6,15 @@
  * @remarks
  * ## Runtime boundary
  *
- * `veryfront/fs` delegates to the active runtime filesystem. It does not add a
- * project-root sandbox, block `.env` or other secret-file names, or validate
- * paths from untrusted input. Relative paths resolve from `cwd()`. Absolute
- * paths and `..` segments can reach any location that the runtime permits.
+ * `veryfront/fs` uses the native process filesystem selected for Deno or Node.
+ * It does not delegate to the `runtime.get().fs` adapter. Custom adapters
+ * configured with `runtime.set()` affect adapter-consuming APIs, not these
+ * compatibility functions.
+ *
+ * `veryfront/fs` does not add a project-root sandbox, block `.env` or other
+ * secret-file names, or validate paths from untrusted input. Relative paths
+ * resolve from `cwd()`. Absolute paths and `..` segments can reach any location
+ * that the runtime permits.
  *
  * Runtime permissions remain the outer boundary. Hosted project secrets are
  * supplied through request-owned environment data rather than `.env` files.
@@ -18,7 +23,7 @@
  *
  * Use `validatePath` from `veryfront/security` with a trusted `baseDir` before
  * reading a user-influenced path. Physical validation follows symlinks when
- * the active filesystem exposes physical path semantics.
+ * the adapter you pass exposes physical path semantics.
  *
  * @example File operations
  * ```ts

@@ -106,12 +106,31 @@ describe("generate-api-reference", () => {
     assertEquals(parsed.remarks, "The example remains intact.");
   });
 
+  it("preserves JSDoc tags inside tilde-fenced examples", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * @module example
+ * @example Decorated class
+ * ~~~ts
+ * @sealed
+ * class Example {}
+ * ~~~
+ * @remarks
+ * The example remains intact.
+ */`);
+
+    assertEquals(parsed.examples, [{
+      title: "Decorated class",
+      code: "~~~ts\n@sealed\nclass Example {}\n~~~",
+    }]);
+    assertEquals(parsed.remarks, "The example remains intact.");
+  });
+
   it("uses a safe Markdown code span for linked labels containing backticks", () => {
     const parsed = parseBarrelJSDoc(
-      "/**\n * Uses {@link Example|C:\\path`name}.\n */",
+      "/**\n * Uses {@link Example|C:\\path<T>`name}.\n */",
     );
 
-    assertEquals(parsed.description, "Uses ``C:\\path`name``.");
+    assertEquals(parsed.description, "Uses ``C:\\path<T>`name``.");
   });
 
   it("removes check output when generation fails", async () => {
@@ -218,9 +237,17 @@ describe("generate-api-reference", () => {
         "generated client reference must not expose internal import specifiers",
       );
       assertStringIncludes(fsReference, "## Runtime boundary");
+      assertStringIncludes(
+        fsReference,
+        "uses the native process filesystem selected for Deno or Node",
+      );
+      assertStringIncludes(
+        fsReference,
+        "does not delegate to the `runtime.get().fs` adapter",
+      );
       assertMatch(
         fsReference,
-        /does not add a\s+project-root sandbox, block `\.env` or other secret-file names/,
+        /does not add a\s+project-root sandbox, block `\.env` or other\s+secret-file names/,
       );
       assertMatch(
         fsReference,
