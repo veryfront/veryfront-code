@@ -213,6 +213,8 @@ function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
   });
 }
 
+const MDX_EXTENSION_PACKAGE = "@veryfront/ext-content-mdx";
+
 async function loadTemplateFiles(
   template: InitTemplate,
 ): Promise<
@@ -251,6 +253,36 @@ async function loadTemplateFiles(
     dependencies: templateConfig?.npmDependencies,
     firstPartyExtensions: templateConfig?.firstPartyExtensions,
   };
+}
+
+/**
+ * Declare `@veryfront/ext-content-mdx` whenever the assembled project actually
+ * contains an `.mdx` file.
+ *
+ * The extension is an optional peer of the npm package — it drags
+ * `@types/mdx`, which breaks `tsc --noEmit` for every library consumer — so a
+ * project that renders MDX has to install it or those routes fail at runtime.
+ *
+ * Two ways a project ends up needing it, and the template config sees neither
+ * on its own:
+ *
+ * - A scaffolded `.mdx` file. The `minimal` starter ships `app/about/page.mdx`.
+ * - The `mdx` feature. It scaffolds no files — it sets `mdx.enabled` in the
+ *   config and tips the user to "Create .mdx files in app/ directory" — so a
+ *   user who follows that advice on any template would hit a runtime failure
+ *   with nothing in `package.json` to explain it.
+ */
+function withMdxExtension(
+  firstPartyExtensions: string[] | undefined,
+  files: TemplateFile[],
+  features: FeatureName[],
+): string[] | undefined {
+  const needsMdx = features.includes("mdx") ||
+    files.some((file) => file.path.endsWith(".mdx"));
+  if (!needsMdx) return firstPartyExtensions;
+  const existing = firstPartyExtensions ?? [];
+  if (existing.includes(MDX_EXTENSION_PACKAGE)) return existing;
+  return [...existing, MDX_EXTENSION_PACKAGE];
 }
 
 async function assembleFeatureFiles(
@@ -491,7 +523,11 @@ async function assembleScaffold(request: {
     tips: [...featureAssembly.tips, ...integrationAssembly.tips],
     packageJsonOptions: {
       dependencies: template.dependencies,
-      firstPartyExtensions: template.firstPartyExtensions,
+      firstPartyExtensions: withMdxExtension(
+        template.firstPartyExtensions,
+        integrationAssembly.files,
+        request.features,
+      ),
       integrations: integrationAssembly.loadedIntegrations.map((integration) => ({
         name: integration.config.name,
         npmDependencies: integration.config.npmDependencies,

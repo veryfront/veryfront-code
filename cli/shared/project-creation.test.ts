@@ -14,6 +14,7 @@ import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import {
   createProject,
   type CreateProjectRequest,
+  materializeScaffold,
   type ProjectCreationEvent,
 } from "./project-creation.ts";
 
@@ -500,5 +501,54 @@ describe("createProject", () => {
         await remove(parentDir, { recursive: true }).catch(() => {});
       }
     }
+  });
+});
+
+describe("cli/project-creation MDX extension declaration", () => {
+  // Raised in review on #3783. `firstPartyExtensions` came only from the
+  // template config, but the `mdx` feature adds app/docs/*.mdx on top of ANY
+  // template — so `--template ai-agent --features mdx` scaffolded MDX routes
+  // with no extension declared, and every one of them failed at runtime.
+  it("declares ext-content-mdx when the mdx feature is selected on a non-mdx template", async () => {
+    const scaffold = await materializeScaffold({
+      template: "ai-agent",
+      features: ["mdx"],
+      projectName: "mdx-feature-probe",
+    });
+
+    // The mdx feature scaffolds no files: it sets `mdx.enabled` and tips the
+    // user to author `.mdx` themselves. Selecting it still has to declare the
+    // extension, or following that tip fails at runtime.
+    assertEquals(
+      scaffold.files.filter((file) => file.path.endsWith(".mdx")).length,
+      0,
+      "the mdx feature is config-and-tips only; update this if it starts shipping files",
+    );
+
+    const packageJson = JSON.parse(
+      scaffold.files.find((file) => file.path === "package.json")?.content ?? "{}",
+    );
+    const declared = Object.keys(packageJson.dependencies ?? {});
+    assertEquals(
+      declared.includes("@veryfront/ext-content-mdx"),
+      true,
+      `expected @veryfront/ext-content-mdx to be declared, got ${declared.join(", ")}`,
+    );
+  });
+
+  it("does not declare ext-content-mdx for a template with no mdx files", async () => {
+    const scaffold = await materializeScaffold({
+      template: "ai-agent",
+      projectName: "no-mdx-probe",
+    });
+
+    const mdxFiles = scaffold.files.filter((file) => file.path.endsWith(".mdx"));
+    assertEquals(mdxFiles.length, 0, "ai-agent alone should ship no .mdx");
+
+    const packageJson = JSON.parse(
+      scaffold.files.find((file) => file.path === "package.json")?.content ?? "{}",
+    );
+    const declared = Object.keys(packageJson.dependencies ?? {});
+    assertEquals(declared.includes("@veryfront/ext-content-mdx"), false);
   });
 });

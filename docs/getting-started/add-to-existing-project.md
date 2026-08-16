@@ -78,17 +78,30 @@ app/a.ts(1,23): error TS2307: Cannot find module 'veryfront/agent' or its corres
 
 **`jsx`** is needed because Veryfront routes are `.tsx` files.
 
-**`skipLibCheck`** is required, not merely recommended. Veryfront's MDX support
-depends on `@types/mdx`, which refers to a global `JSX` namespace that React 19
-no longer declares globally. Without it, `tsc` fails on a dependency you do not
-import:
+**`skipLibCheck`** is recommended rather than required. Installing `veryfront`
+on its own no longer pulls MDX into your dependency tree, so a strict project
+typechecks clean without it.
+
+It becomes necessary once you opt into MDX:
+
+```bash
+npm install @veryfront/ext-content-mdx
+```
+
+That package depends on `@types/mdx`, which refers to a global `JSX` namespace
+React 19 no longer declares. Everything under `node_modules/@types` is included
+by `tsc` automatically, so it fails on a dependency you never import:
 
 ```text
 node_modules/@types/mdx/types.d.ts(23,38): error TS2503: Cannot find namespace 'JSX'.
 ```
 
-Scaffolded projects set all three already, which is why these only surface when
-adding Veryfront to a project you already have.
+Scaffolded projects set all three already, which is why the first two only
+surface when adding Veryfront to a project you already have.
+
+Without `@veryfront/ext-content-mdx` installed, `.mdx` and `.md` routes report a
+missing `ContentProcessor` naming the package to install. Every other route
+works. The compiled `veryfront` binary embeds MDX support and is unaffected.
 
 ## Add an entry route
 

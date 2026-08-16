@@ -66,10 +66,14 @@ package_names_from_workspace() {
 
 update_package_version() {
   PACKAGE_DIR="$1"
+  # CLI-only extensions ship as optional peers of the root package, so the
+  # first-party pin has to cover peerDependencies too. Missing it would publish
+  # an RC root pointing at a version that was never published, leaving the
+  # optional peer permanently uninstallable.
   jq --arg v "$VERSION" '
-    def update_first_party_extension_deps:
-      if .dependencies then
-        .dependencies |= with_entries(
+    def update_first_party_extension_deps(section):
+      if .[section] then
+        .[section] |= with_entries(
           if (.key | startswith("@veryfront/ext-")) then .value = $v else . end
         )
       else . end;
@@ -77,7 +81,9 @@ update_package_version() {
     .version = $v
     | if .peerDependencies?.veryfront then .peerDependencies.veryfront = "^" + $v else . end
     | if .dependencies?.veryfront then .dependencies.veryfront = "^" + $v else . end
-    | update_first_party_extension_deps
+    | update_first_party_extension_deps("dependencies")
+    | update_first_party_extension_deps("optionalDependencies")
+    | update_first_party_extension_deps("peerDependencies")
   ' "${PACKAGE_DIR}/package.json" > "${PACKAGE_DIR}/package.json.tmp"
   mv "${PACKAGE_DIR}/package.json.tmp" "${PACKAGE_DIR}/package.json"
 }
