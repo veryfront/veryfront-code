@@ -3520,6 +3520,75 @@ describe("push deletion ownership", () => {
     }
   });
 
+  it("reuploads planned files changed after the initial forced-prune upload", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/second.ts`, "export const second = true;\n");
+        await runGit("add", "second.ts");
+        await runGit("commit", "--quiet", "-m", "add second source file");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        const uploaded: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: fileListCalls === 1
+                ? [
+                  { path: "app.ts", content: "stale app" },
+                  { path: "stale.ts", content: "stale source" },
+                ]
+                : [
+                  { path: "app.ts", content: "studio changed app" },
+                  { path: "assets/late.png", content: "<LATE_PNG>" },
+                ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") {
+            uploaded.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          if (request.method === "DELETE") return Response.json({});
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+
+        assertEquals(fileListCalls, 2);
+        assertEquals(uploaded.sort(), ["app.ts", "app.ts", "second.ts", "second.ts"]);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "app.ts", content: "export const value = 1;\n" },
+            { path: "assets/late.png", content: "<LATE_PNG>" },
+            { path: "second.ts", content: "export const second = true;\n" },
+          ]),
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("reconciles late remote-only files during no-op forced prune", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -3545,7 +3614,10 @@ describe("push deletion ownership", () => {
             return Response.json({
               data: [
                 ...(fileListCalls > 1
-                  ? [{ path: "late-remote.ts", content: "late remote source" }]
+                  ? [
+                    { path: "late-remote.ts", content: "late remote source" },
+                    { path: "assets/late.png", content: "<LATE_PNG>" },
+                  ]
                   : []),
               ],
               page_info: {},
@@ -3567,6 +3639,12 @@ describe("push deletion ownership", () => {
         assertEquals(deleted, ["late-remote.ts"]);
         const receipt = await readPushReceipt(projectDir);
         assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([
+            { path: "assets/late.png", content: "<LATE_PNG>" },
+          ]),
+        );
         assertEquals(
           await readSyncTarget(projectDir, {
             controlPlane: "https://control.example.test",

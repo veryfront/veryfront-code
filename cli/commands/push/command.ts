@@ -631,6 +631,23 @@ async function deleteForcedPruneRemoteOnlyFiles(
   return await deleteFiles(client, projectSlug, branchId, remoteOnlyDeletes, false);
 }
 
+async function computeForcedPruneSourceDigest(
+  sourceSnapshot: PushSourceSnapshot,
+  localPaths: ReadonlySet<string>,
+  remoteFiles: readonly RemoteFile[],
+  ignoreChecker: IgnoreChecker,
+): Promise<string> {
+  const preservedRemoteFiles = remoteFiles
+    .filter((file) =>
+      !localPaths.has(file.path) &&
+      (!ignoreChecker.isSupportedExtension(file.path) || ignoreChecker.isIgnored(file.path))
+    )
+    .map((file) => ({ path: file.path, content: requireRemoteContent(file) }));
+  return preservedRemoteFiles.length === 0
+    ? sourceSnapshot.sourceDigest
+    : await computeSourceDigest([...sourceSnapshot.files, ...preservedRemoteFiles]);
+}
+
 function formatParts(parts: string[]): string {
   return parts.join(", ");
 }
@@ -1019,7 +1036,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           }
           return { path: file.path, content: file.content };
         });
-      const pushedSourceDigest = preservedRemoteFiles.length === 0
+      let pushedSourceDigest = preservedRemoteFiles.length === 0
         ? sourceSnapshot.sourceDigest
         : await computeSourceDigest([...ops, ...preservedRemoteFiles]);
 
@@ -1116,6 +1133,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                   } during forced prune reconciliation`,
                 );
               }
+              pushedSourceDigest = await computeForcedPruneSourceDigest(
+                sourceSnapshot,
+                localPaths,
+                latestRemoteFiles,
+                ignoreChecker,
+              );
             }
             await clearPushReceipt(projectDir);
             spinner.update("Verifying push target...");
@@ -1332,6 +1355,42 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             projectApiReference(config),
             target.source,
           );
+          const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
+            latestRemoteFiles,
+            ignoreChecker,
+            false,
+          );
+          const lateUploads = uploadOps
+            .filter((upload) =>
+              latestRemoteSnapshot.get(upload.path)?.digest !==
+                plan.nextFiles[upload.path]?.digest
+            )
+            .map((upload) => ({ path: upload.path, content: upload.content }));
+          if (lateUploads.length > 0) {
+            const lateUploadResult = await uploadFiles(
+              client,
+              projectApiReference(config),
+              branchId,
+              lateUploads,
+              false,
+            );
+            uploadResult = {
+              uploaded: uploadResult.uploaded + lateUploadResult.uploaded,
+              failed: uploadResult.failed + lateUploadResult.failed,
+              conflicts: [...uploadResult.conflicts, ...lateUploadResult.conflicts],
+              applied: [...uploadResult.applied, ...lateUploadResult.applied],
+            };
+            if (lateUploadResult.conflicts.length > 0) {
+              throw pushConflictError(lateUploadResult.conflicts);
+            }
+            if (lateUploadResult.failed > 0) {
+              throw new Error(
+                `Push failed for ${lateUploadResult.failed} file${
+                  lateUploadResult.failed === 1 ? "" : "s"
+                } during forced prune reconciliation`,
+              );
+            }
+          }
           const lateDeleteResult = await deleteForcedPruneRemoteOnlyFiles(
             client,
             projectApiReference(config),
@@ -1362,6 +1421,12 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               );
             }
           }
+          pushedSourceDigest = await computeForcedPruneSourceDigest(
+            sourceSnapshot,
+            localPaths,
+            latestRemoteFiles,
+            ignoreChecker,
+          );
         }
         const writePlannedSyncTarget = async () => {
           if (!project) return;
