@@ -631,7 +631,7 @@ async function deleteForcedPruneRemoteOnlyFiles(
   return await deleteFiles(client, projectSlug, branchId, remoteOnlyDeletes, false);
 }
 
-async function uploadForcedPrunePlannedFiles(
+async function uploadForcedPlannedFiles(
   client: ApiClient,
   projectSlug: string,
   branchId: string | null,
@@ -795,58 +795,6 @@ async function computePushedSourceDigest(
     .filter((file) => !localPaths.has(file.path))
     .map((file) => ({ path: file.path, content: requireRemoteContent(file) }));
   return await computeSourceDigest([...localFiles, ...preservedRemoteFiles]);
-}
-
-async function buildLocalFileDigestSnapshot(
-  localFiles: readonly UploadOp[],
-): Promise<Map<string, { digest: string; versionId?: string }>> {
-  const snapshot = new Map<string, { digest: string; versionId?: string }>();
-  for (const file of localFiles) {
-    snapshot.set(file.path, { digest: await computeContentDigest(file.content) });
-  }
-  return snapshot;
-}
-
-async function buildSyncFilesFromManagedRemote(
-  remoteFiles: readonly RemoteFile[],
-  ignoreChecker: IgnoreChecker,
-): Promise<Record<string, SyncFileSnapshot>> {
-  const files: Record<string, SyncFileSnapshot> = {};
-  for (const file of remoteFiles) {
-    if (!ignoreChecker.isSupportedExtension(file.path) || ignoreChecker.isIgnored(file.path)) {
-      continue;
-    }
-    files[file.path] = {
-      digest: await computeContentDigest(requireRemoteContent(file)),
-      ...(file.version_id ? { versionId: file.version_id } : {}),
-    };
-  }
-  return files;
-}
-
-async function buildVerifiedForceNonPruneSyncFiles(
-  plannedFiles: Readonly<Record<string, SyncFileSnapshot>>,
-  localFiles: readonly UploadOp[],
-  remoteFiles: readonly RemoteFile[],
-  ignoreChecker: IgnoreChecker,
-): Promise<Record<string, SyncFileSnapshot>> {
-  const latestRemoteSnapshot = await buildManagedRemoteSnapshot(remoteFiles, ignoreChecker, false);
-  const localSnapshot = await buildLocalFileDigestSnapshot(localFiles);
-  const latestLocalSnapshot = new Map<string, { digest: string; versionId?: string }>();
-  for (const path of localSnapshot.keys()) {
-    const remote = latestRemoteSnapshot.get(path);
-    if (remote) latestLocalSnapshot.set(path, remote);
-  }
-  const conflicts = findRemoteSnapshotChanges(localSnapshot, latestLocalSnapshot);
-  if (conflicts.length > 0) throw pushConflictError(conflicts);
-
-  const files = await buildSyncFilesFromManagedRemote(remoteFiles, ignoreChecker);
-  for (const local of localFiles) {
-    const planned = plannedFiles[local.path];
-    if (planned) files[local.path] = planned;
-    else delete files[local.path];
-  }
-  return files;
 }
 
 async function writeAppliedSyncTarget(
@@ -1132,10 +1080,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         spinner.stop();
         throw pushConflictError(plan.conflicts);
       }
-      let syncTargetFiles = plan.nextFiles;
       const uploadOps = plan.uploads;
       const deleteOps = plan.deletes;
       const branchId = target.branchId;
+      let pushedSyncFiles = plan.nextFiles;
 
       if (!dryRun && !force) {
         spinner = quiet || jsonOutput
@@ -1220,19 +1168,20 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               }
               pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
             } else {
-              spinner.update("Verifying push target...");
               const latestRemoteFiles = await listAllFiles(
                 client,
                 projectApiReference(config),
                 target.source,
               );
-              syncTargetFiles = await buildVerifiedForceNonPruneSyncFiles(
-                plan.nextFiles,
-                ops,
-                latestRemoteFiles,
-                ignoreChecker,
-              );
               pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+              pushedSyncFiles = await buildSyncFilesAfterAppliedChanges(
+                latestRemoteFiles.filter((file) =>
+                  ignoreChecker.isSupportedExtension(file.path) &&
+                  !ignoreChecker.isIgnored(file.path)
+                ),
+                [],
+                [],
+              );
             }
             await clearPushReceipt(projectDir);
             spinner.update("Verifying push target...");
@@ -1251,7 +1200,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                 projectId: project.id,
                 projectSlug: project.slug,
                 branch: branchName,
-                files: syncTargetFiles,
+                files: pushedSyncFiles,
               });
             }
           }
@@ -1451,7 +1400,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             target.source,
           );
           let repaired = false;
-          const lateUploadResult = await uploadForcedPrunePlannedFiles(
+          const lateUploadResult = await uploadForcedPlannedFiles(
             client,
             projectApiReference(config),
             branchId,
@@ -1531,18 +1480,72 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
           }
         } else {
-          const latestRemoteFiles = await listAllFiles(
+          let latestRemoteFiles = await listAllFiles(
             client,
             projectApiReference(config),
             target.source,
           );
-          syncTargetFiles = await buildVerifiedForceNonPruneSyncFiles(
-            plan.nextFiles,
-            ops,
+          const repairUploadResult = await uploadForcedPlannedFiles(
+            client,
+            projectApiReference(config),
+            branchId,
             latestRemoteFiles,
             ignoreChecker,
+            uploadOps,
           );
+          uploadResult = {
+            uploaded: uploadResult.uploaded + repairUploadResult.uploaded,
+            failed: uploadResult.failed + repairUploadResult.failed,
+            conflicts: [...uploadResult.conflicts, ...repairUploadResult.conflicts],
+            applied: [...uploadResult.applied, ...repairUploadResult.applied],
+          };
+          if (repairUploadResult.conflicts.length > 0) {
+            throw pushConflictError(repairUploadResult.conflicts);
+          }
+          if (repairUploadResult.failed > 0) {
+            throw new Error(
+              `Push failed for ${repairUploadResult.failed} file${
+                repairUploadResult.failed === 1 ? "" : "s"
+              } during forced push verification`,
+            );
+          }
+          if (repairUploadResult.uploaded > 0) {
+            latestRemoteFiles = await listAllFiles(
+              client,
+              projectApiReference(config),
+              target.source,
+            );
+          }
+          const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
+            latestRemoteFiles,
+            ignoreChecker,
+            false,
+          );
+          const uploadPaths = new Set(uploadOps.map((upload) => upload.path));
+          const expectedUploadSnapshot = new Map(
+            [...buildSyncFileDigestSnapshot(plan.nextFiles)]
+              .filter(([path]) => uploadPaths.has(path)),
+          );
+          const actualUploadSnapshot = new Map(
+            [...latestRemoteSnapshot]
+              .filter(([path]) => uploadPaths.has(path)),
+          );
+          const conflicts = findRemoteSnapshotChanges(
+            expectedUploadSnapshot,
+            actualUploadSnapshot,
+          );
+          if (conflicts.length > 0) {
+            throw pushConflictError(conflicts);
+          }
           pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
+          pushedSyncFiles = await buildSyncFilesAfterAppliedChanges(
+            latestRemoteFiles.filter((file) =>
+              ignoreChecker.isSupportedExtension(file.path) &&
+              !ignoreChecker.isIgnored(file.path)
+            ),
+            [],
+            [],
+          );
         }
         const writePlannedSyncTarget = async () => {
           if (!project) return;
@@ -1551,7 +1554,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             projectId: project.id,
             projectSlug: project.slug,
             branch: branchName,
-            files: syncTargetFiles,
+            files: pushedSyncFiles,
           });
         };
         try {

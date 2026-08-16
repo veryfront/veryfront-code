@@ -3184,7 +3184,7 @@ describe("push divergence guard", () => {
     }
   });
 
-  it("rejects a forced overwrite when the uploaded path changes again before receipt", async () => {
+  it("rejects a forced overwrite when the repaired path changes again before receipt", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
@@ -3211,10 +3211,10 @@ describe("push divergence guard", () => {
                 path: "app.ts",
                 content: fileListCalls === 1
                   ? "export const value = 'studio';\n"
-                  : "export const value = 'studio again';\n",
-                version_id: fileListCalls === 1
-                  ? "00000000-0000-4000-8000-000000000010"
-                  : "00000000-0000-4000-8000-000000000011",
+                  : fileListCalls === 2
+                  ? "export const value = 'studio again';\n"
+                  : "export const value = 'studio a third time';\n",
+                version_id: `00000000-0000-4000-8000-00000000001${fileListCalls}`,
               }],
               page_info: {},
             });
@@ -3235,8 +3235,11 @@ describe("push divergence guard", () => {
         if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
         assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertStringIncludes(error.message, '"app.ts"');
-        assertEquals(fileListCalls, 2);
-        assertEquals(putBodies, [{ content: "export const value = 1;\n" }]);
+        assertEquals(fileListCalls, 3);
+        assertEquals(putBodies, [
+          { content: "export const value = 1;\n" },
+          { content: "export const value = 1;\n" },
+        ]);
         assertEquals(await readPushReceipt(projectDir), null);
         assertEquals(
           await readSyncTarget(projectDir, {
@@ -3254,7 +3257,94 @@ describe("push divergence guard", () => {
     }
   });
 
-  it("records refreshed preserved remote bytes after forced non-pruning mutations", async () => {
+  it("rejects a forced push when an initially matching local path changes remotely", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/second.ts`, "export const second = 2;\n");
+        await runGit("add", "second.ts");
+        await runGit("commit", "--quiet", "-m", "add second source file");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        const putPaths: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: fileListCalls === 1
+                    ? "export const value = 1;\n"
+                    : "export const value = 'studio';\n",
+                  version_id: `00000000-0000-4000-8000-00000000001${fileListCalls}`,
+                },
+                {
+                  path: "second.ts",
+                  content: fileListCalls === 1
+                    ? "export const second = 0;\n"
+                    : fileListCalls === 2
+                    ? "export const second = 'studio';\n"
+                    : "export const second = 2;\n",
+                  version_id: `00000000-0000-4000-8000-00000000002${fileListCalls}`,
+                },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putPaths.push(url.pathname);
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, force: true, quiet: true }),
+          Error,
+          "Push rejected",
+        );
+
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"app.ts"');
+        assertEquals(fileListCalls, 3);
+        assertEquals(putPaths, [
+          "/projects/my-project/files/app.ts",
+          "/projects/my-project/files/second.ts",
+          "/projects/my-project/files/app.ts",
+          "/projects/my-project/files/second.ts",
+        ]);
+        assertEquals(await readPushReceipt(projectDir), null);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          null,
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("repairs raced local bytes and records refreshed remote bytes after forced pushes", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
     const savedEnv = envKeys.map((key) => Deno.env.get(key));
@@ -3276,15 +3366,17 @@ describe("push divergence guard", () => {
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
             fileListCalls++;
-            const final = fileListCalls > 1;
+            const final = fileListCalls > 2;
             return Response.json({
               data: [
                 {
                   path: "app.ts",
-                  content: final ? "export const value = 1;\n" : "export const value = 'studio';\n",
-                  version_id: final
-                    ? "00000000-0000-4000-8000-000000000011"
-                    : "00000000-0000-4000-8000-000000000010",
+                  content: fileListCalls === 1
+                    ? "export const value = 'studio';\n"
+                    : fileListCalls === 2
+                    ? "export const value = 'studio raced';\n"
+                    : "export const value = 1;\n",
+                  version_id: `00000000-0000-4000-8000-00000000001${fileListCalls}`,
                 },
                 {
                   path: "remote-only.ts",
@@ -3310,8 +3402,11 @@ describe("push divergence guard", () => {
 
         await pushCommand({ projectDir, force: true, quiet: true });
 
-        assertEquals(fileListCalls, 2);
-        assertEquals(putBodies, [{ content: "export const value = 1;\n" }]);
+        assertEquals(fileListCalls, 3);
+        assertEquals(putBodies, [
+          { content: "export const value = 1;\n" },
+          { content: "export const value = 1;\n" },
+        ]);
         const receipt = await readPushReceipt(projectDir);
         assertExists(receipt);
         assertEquals(
@@ -3334,7 +3429,10 @@ describe("push divergence guard", () => {
             projectSlug: "my-project",
             branch: "main",
             files: {
-              "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+              "app.ts": {
+                digest: await computeContentDigest("export const value = 1;\n"),
+                versionId: "00000000-0000-4000-8000-000000000013",
+              },
               "remote-only.ts": {
                 digest: await computeContentDigest("export const remote = 2;\n"),
                 versionId: "00000000-0000-4000-8000-000000000021",
