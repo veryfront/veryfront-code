@@ -359,6 +359,9 @@ describe("server/runtime-handler/request-tracker", () => {
         requestTracker.start("slow-req", "proj", "/slow", "GET");
         requestTracker.complete("slow-req", 200);
       } finally {
+        requestTracker.complete("expected-long-run", 500);
+        requestTracker.complete("non-execute-method", 500);
+        requestTracker.complete("lookalike-path", 500);
         globalThis.setTimeout = originalSetTimeout;
       }
 
