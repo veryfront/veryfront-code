@@ -696,8 +696,19 @@ function resolvePersistedReasoning(
   if (!thinking || typeof thinking !== "object" || Array.isArray(thinking)) {
     return undefined;
   }
-  if (readOwnEnumerableDataDescriptor(thinking, "type")?.value !== "adaptive") {
+  const thinkingType = readOwnEnumerableDataDescriptor(thinking, "type")?.value;
+  if (thinkingType !== "adaptive" && thinkingType !== "enabled") {
     return undefined;
+  }
+
+  if (thinkingType === "enabled") {
+    const budgetTokens = readOwnEnumerableDataDescriptor(thinking, "budget_tokens")?.value;
+    return {
+      enabled: true,
+      ...(typeof budgetTokens === "number" && Number.isInteger(budgetTokens) && budgetTokens >= 0
+        ? { budgetTokens }
+        : {}),
+    };
   }
 
   const outputConfig = readOwnEnumerableDataDescriptor(anthropic, "output_config")?.value;

@@ -826,6 +826,35 @@ describe("runtime-bridge", () => {
     assertEquals("providerOptions" in (recorded?.request ?? {}), false);
   });
 
+  it("persists enabled Anthropic thinking with its canonical token budget", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model: ModelRuntime = {
+      provider: "veryfront-cloud",
+      modelId: "anthropic/claude-sonnet-4-6",
+      modelProvider: "anthropic",
+      async doGenerate() {
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
+        }),
+    );
+
+    assertEquals(recorded?.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
+  });
+
   it("calls a sink shared by both lanes only once", async () => {
     let calls = 0;
     const sink = () => {
