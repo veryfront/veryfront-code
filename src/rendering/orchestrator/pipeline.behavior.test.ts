@@ -28,6 +28,7 @@ import {
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
+import { getAttachedDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -628,6 +629,41 @@ describe("RenderPipeline behavior", () => {
     });
     assertEquals(result.cookies?.map((cookie) => cookie.name), ["root", "nested", "page"]);
     assertEquals(cacheWrites, 0);
+  });
+
+  it("attaches resolved response metadata when SSR later fails", async () => {
+    const pagePath = "/project/pages/response-metadata-error.tsx";
+    const pipeline = createPipeline(pagePath, {
+      ssrOrchestrator: {
+        performSSRRendering: async () => {
+          throw new Error("SSR failed after data resolution");
+        },
+        resolveErrorComponentPath: async () => null,
+      } as any,
+    });
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => ({
+        props: {},
+        headers: { "x-page-state": "resolved" },
+        cookies: [{ name: "session", value: "request-specific", path: "/" }],
+      }),
+    });
+
+    let thrown: unknown;
+    try {
+      await pipeline.renderPage("/response-metadata-error", {
+        request: new Request("http://localhost/response-metadata-error"),
+        url: new URL("http://localhost/response-metadata-error"),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(thrown instanceof Error);
+    assertEquals(getAttachedDataResponseMetadata(thrown), {
+      headers: { "x-page-state": "resolved" },
+      cookies: [{ name: "session", value: "request-specific", path: "/" }],
+    });
   });
 
   it("staticDataOnly skips request-only data hooks during static rendering", async () => {

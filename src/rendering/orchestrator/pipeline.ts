@@ -58,6 +58,7 @@ import type {
 } from "#veryfront/data/types.ts";
 import {
   attachDataResponseMetadata,
+  getAttachedDataResponseMetadata,
   mergeDataResponseMetadata,
 } from "#veryfront/data/response-metadata.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
@@ -769,6 +770,8 @@ export class RenderPipeline {
               pageInfo.entity.path,
               this.config.projectDir,
             );
+            let responseHeaders: Record<string, string> | undefined;
+            let responseCookies: ResponseCookie[] | undefined;
 
             try {
               const skipLayouts = isDotPath({
@@ -804,8 +807,6 @@ export class RenderPipeline {
                 ? { ...options.params }
                 : {};
               let layoutDataMap = new Map<string, Record<string, unknown>>();
-              let responseHeaders: Record<string, string> | undefined;
-              let responseCookies: ResponseCookie[] | undefined;
 
               const dataFetchStart = performance.now();
               const internalPreResolvedData = (options as InternalRenderOptions | undefined)?.[
@@ -1026,6 +1027,18 @@ export class RenderPipeline {
             } catch (error) {
               if (error instanceof Error) {
                 (error as Error & { sourceFile?: string }).sourceFile = sourceFile;
+                if (responseHeaders || responseCookies) {
+                  attachDataResponseMetadata(
+                    error,
+                    mergeDataResponseMetadata([
+                      {
+                        ...(responseHeaders ? { headers: responseHeaders } : {}),
+                        ...(responseCookies ? { cookies: responseCookies } : {}),
+                      },
+                      getAttachedDataResponseMetadata(error),
+                    ]),
+                  );
+                }
               }
               throw error;
             }

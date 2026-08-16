@@ -849,6 +849,23 @@ export class Renderer {
       throw error;
     }
 
+    if (isFollower && cachedData.cookies?.length) {
+      logger.debug("Rerendering follower after cookie-bearing render", {
+        slug,
+        projectId: ctx.projectId,
+      });
+      return await this.doRenderPage(
+        slug,
+        ctx,
+        options,
+        startTime,
+        null,
+        callerSignal,
+        admission,
+        false,
+      );
+    }
+
     if (isFollower) {
       logger.debug("Render deduplicated (follower)", {
         slug,

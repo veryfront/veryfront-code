@@ -30,6 +30,17 @@ function setFrontmatter(payload: CachePayload, value: unknown): void {
 }
 
 describe("rendering/cache/cache-payload", () => {
+  it("round-trips custom response headers through memory and serialized payloads", () => {
+    const payload = payloadWithNodeMap();
+    payload.result.headers = { "x-page-state": "cached" };
+
+    const memory = cloneCachePayload(payload);
+    const serialized = parseSerializedCachePayload(serializeCachePayload(payload));
+
+    assertEquals(memory.result.headers, { "x-page-state": "cached" });
+    assertEquals(serialized?.result.headers, { "x-page-state": "cached" });
+  });
+
   it("keeps memory snapshots equivalent to serialized snapshots", () => {
     const memory = cloneCachePayload(payloadWithNodeMap());
     const serialized = parseCachePayload(JSON.parse(serializeCachePayload(payloadWithNodeMap())));
