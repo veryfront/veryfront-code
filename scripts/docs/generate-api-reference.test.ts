@@ -281,7 +281,7 @@ describe("generate-api-reference", () => {
       assertStringIncludes(fsReference, "## Runtime boundary");
       assertStringIncludes(
         fsReference,
-        "uses the native process filesystem selected for Deno or Node",
+        "uses the native process filesystem selected for Deno, Node, or Bun",
       );
       assertStringIncludes(
         fsReference,
