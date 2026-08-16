@@ -11,49 +11,88 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-import { after, describe, it } from "node:test";
+import { describe, it } from "node:test";
 
 const utilsUrl = new URL("./test-file-utils.mjs", import.meta.url).href;
-const fixtures = [];
+
+const BASE_TREE = [
+  "src/a.test.ts",
+  "src/nested/b.test.ts",
+  "src/nested/deep/c.test.ts",
+  "src/not-a-test.ts",
+  "extra/explicit.test.mjs",
+];
+
+const GLOBSTAR_TREE = [
+  "src/b.test.ts",
+  "src/foo.test.ts",
+  "src/foo/a.test.ts",
+  "src/foo/deep/d.test.ts",
+];
 
 /**
- * The suite exercises the branch taken when `rg` is not on PATH, which is the
- * case on the CI runners. `rgAvailable` is module-level state latched on the
- * first ENOENT, so each scenario runs in its own child process with an empty
- * PATH rather than trying to reset it in-process.
+ * Build a throwaway tree, hand it to `run`, then remove it.
+ *
+ * Teardown is per-test rather than a `node:test` `after` hook: `tests/` is also
+ * swept by `deno test` in the integration lane, and Deno's `node:test` shim
+ * does not implement `after` — it fails the whole file with an uncaught
+ * "Not implemented: test.after". `describe`/`it` are supported in both, which
+ * is why the sibling `ensure-npm-links.test.mjs` sticks to them.
  */
-function createFixture() {
+function withFixture(relativePaths, run) {
   const root = mkdtempSync(join(tmpdir(), "vf-test-file-utils-"));
-  fixtures.push(root);
-  for (
-    const relative of [
-      "src/a.test.ts",
-      "src/nested/b.test.ts",
-      "src/nested/deep/c.test.ts",
-      "src/not-a-test.ts",
-      "extra/explicit.test.mjs",
-    ]
-  ) {
-    const absolute = join(root, relative);
-    mkdirSync(dirname(absolute), { recursive: true });
-    writeFileSync(absolute, "// fixture\n");
+  try {
+    for (const relative of relativePaths) {
+      const absolute = join(root, relative);
+      mkdirSync(dirname(absolute), { recursive: true });
+      writeFileSync(absolute, "// fixture\n");
+    }
+    run(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
-  return root;
+}
+
+/**
+ * Resolve patterns with `rg` guaranteed absent.
+ *
+ * `rgAvailable` is module-level state latched on the first ENOENT, so each
+ * scenario runs in its own child process with an empty PATH instead of trying
+ * to reset it in-process. An empty PATH is what makes `spawnSync("rg", ...)`
+ * fail with ENOENT, which is the branch this suite is about — and the branch
+ * the CI runners actually take.
+ */
+function runListTestFilesProbe(patterns, cwd) {
+  // The probe goes to a real file rather than `-e`. This suite runs in both
+  // the Node lane and the Deno integration lane (which sweeps all of `tests/`),
+  // and `process.execPath` is whichever runtime is hosting — so a Node-only
+  // `--input-type=module -e` invocation fails under Deno with "await is only
+  // valid in async functions and the top level bodies of modules".
+  const probeDir = mkdtempSync(join(tmpdir(), "vf-test-file-utils-probe-"));
+  const probePath = join(probeDir, "probe.mjs");
+  writeFileSync(
+    probePath,
+    `import { listTestFiles } from ${JSON.stringify(utilsUrl)};\n` +
+      `process.stdout.write(JSON.stringify(listTestFiles(${JSON.stringify(patterns)}, ${
+        JSON.stringify(cwd)
+      })));\n`,
+  );
+  // Deno needs its permissions named; Node takes the script path alone.
+  const args = typeof globalThis.Deno === "undefined"
+    ? [probePath]
+    : ["run", "--allow-read", "--allow-env", "--allow-run", probePath];
+  try {
+    return spawnSync(process.execPath, args, {
+      encoding: "utf8",
+      env: { ...process.env, PATH: "" },
+    });
+  } finally {
+    rmSync(probeDir, { recursive: true, force: true });
+  }
 }
 
 function listTestFilesWithoutRipgrep(patterns, cwd) {
-  const script = `
-    const { listTestFiles } = await import(${JSON.stringify(utilsUrl)});
-    const files = listTestFiles(${JSON.stringify(patterns)}, ${JSON.stringify(cwd)});
-    process.stdout.write(JSON.stringify(files));
-  `;
-  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
-    encoding: "utf8",
-    // An empty PATH is what makes spawnSync("rg", ...) fail with ENOENT, which
-    // is the condition this suite is about. Everything else is inherited.
-    env: { ...process.env, PATH: "" },
-  });
+  const result = runListTestFilesProbe(patterns, cwd);
   ok(
     result.status === 0,
     `child listTestFiles failed (status ${result.status}): ${result.stderr}`,
@@ -79,90 +118,78 @@ function globFilesSorted(pattern, root) {
     .sort();
 }
 
-after(() => {
-  for (const root of fixtures) rmSync(root, { recursive: true, force: true });
-});
-
 describe("listTestFiles without ripgrep", () => {
   it("resolves a glob pattern when no other pattern matched", () => {
-    const root = createFixture();
-    const files = listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root);
-    deepStrictEqual(relativeSorted(files, root), [
-      "src/a.test.ts",
-      "src/nested/b.test.ts",
-      "src/nested/deep/c.test.ts",
-    ]);
+    withFixture(BASE_TREE, (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root), root),
+        [
+          "src/a.test.ts",
+          "src/nested/b.test.ts",
+          "src/nested/deep/c.test.ts",
+        ],
+      );
+    });
   });
 
   it("resolves a glob pattern alongside an explicit file pattern", () => {
-    const root = createFixture();
-    // The regression: the explicit file makes the result set non-empty, so the
-    // whole-result-set fallback never fires and the glob silently contributes
-    // nothing. Selection collapses to the explicit file alone.
-    const files = listTestFilesWithoutRipgrep(
-      ["src/**/*.test.ts", "extra/explicit.test.mjs"],
-      root,
-    );
-    deepStrictEqual(relativeSorted(files, root), [
-      "extra/explicit.test.mjs",
-      "src/a.test.ts",
-      "src/nested/b.test.ts",
-      "src/nested/deep/c.test.ts",
-    ]);
+    withFixture(BASE_TREE, (root) => {
+      // The regression: the explicit file makes the result set non-empty, so
+      // the whole-result-set fallback never fires and the glob silently
+      // contributes nothing. Selection collapses to the explicit file alone.
+      const files = listTestFilesWithoutRipgrep(
+        ["src/**/*.test.ts", "extra/explicit.test.mjs"],
+        root,
+      );
+      deepStrictEqual(relativeSorted(files, root), [
+        "extra/explicit.test.mjs",
+        "src/a.test.ts",
+        "src/nested/b.test.ts",
+        "src/nested/deep/c.test.ts",
+      ]);
+    });
   });
 
   it("resolves a glob pattern alongside a directory pattern", () => {
-    const root = createFixture();
-    const files = listTestFilesWithoutRipgrep(["src/**/*.test.ts", "extra"], root);
-    deepStrictEqual(relativeSorted(files, root), [
-      "extra/explicit.test.mjs",
-      "src/a.test.ts",
-      "src/nested/b.test.ts",
-      "src/nested/deep/c.test.ts",
-    ]);
+    withFixture(BASE_TREE, (root) => {
+      const files = listTestFilesWithoutRipgrep(["src/**/*.test.ts", "extra"], root);
+      deepStrictEqual(relativeSorted(files, root), [
+        "extra/explicit.test.mjs",
+        "src/a.test.ts",
+        "src/nested/b.test.ts",
+        "src/nested/deep/c.test.ts",
+      ]);
+    });
   });
 
   it("does not invent matches for a glob that matches nothing", () => {
-    const root = createFixture();
-    const files = listTestFilesWithoutRipgrep(
-      ["does-not-exist/**/*.test.ts", "extra/explicit.test.mjs"],
-      root,
-    );
-    deepStrictEqual(relativeSorted(files, root), ["extra/explicit.test.mjs"]);
+    withFixture(BASE_TREE, (root) => {
+      const files = listTestFilesWithoutRipgrep(
+        ["does-not-exist/**/*.test.ts", "extra/explicit.test.mjs"],
+        root,
+      );
+      deepStrictEqual(relativeSorted(files, root), ["extra/explicit.test.mjs"]);
+    });
   });
 
   it("keeps a glob's contribution identical with and without an extra pattern", () => {
-    const root = createFixture();
-    const globOnly = relativeSorted(listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root), root);
-    const withExtra = relativeSorted(
-      listTestFilesWithoutRipgrep(["src/**/*.test.ts", "extra/explicit.test.mjs"], root),
-      root,
-    ).filter((file) => file.startsWith("src/"));
-    deepStrictEqual(withExtra, globOnly);
+    withFixture(BASE_TREE, (root) => {
+      const globOnly = relativeSorted(
+        listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root),
+        root,
+      );
+      const withExtra = relativeSorted(
+        listTestFilesWithoutRipgrep(["src/**/*.test.ts", "extra/explicit.test.mjs"], root),
+        root,
+      ).filter((file) => file.startsWith("src/"));
+      deepStrictEqual(withExtra, globOnly);
+    });
   });
 });
 
-function createGlobstarFixture() {
-  const root = mkdtempSync(join(tmpdir(), "vf-test-file-utils-globstar-"));
-  fixtures.push(root);
-  for (
-    const relative of [
-      "src/b.test.ts",
-      "src/foo.test.ts",
-      "src/foo/a.test.ts",
-      "src/foo/deep/d.test.ts",
-    ]
-  ) {
-    const absolute = join(root, relative);
-    mkdirSync(dirname(absolute), { recursive: true });
-    writeFileSync(absolute, "// fixture\n");
-  }
-  return root;
-}
-
 describe("listTestFiles treats ** as a globstar only as a complete segment", () => {
   // Raised in review on #3780. `**` glued to other characters is segment-scoped
-  // in both ripgrep and node:fs glob, so the zero-segment translation must be
+  // in both ripgrep and node:fs glob, so the zero-segment translation has to be
   // gated on both boundaries or `src/foo**/` wrongly selects `src/foo.test.ts`.
   for (
     const pattern of [
@@ -175,56 +202,20 @@ describe("listTestFiles treats ** as a globstar only as a complete segment", () 
     ]
   ) {
     it(`resolves ${pattern} the way node:fs glob does`, () => {
-      const root = createGlobstarFixture();
-      const expected = globFilesSorted(pattern, root);
-      deepStrictEqual(relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root), expected);
+      withFixture(GLOBSTAR_TREE, (root) => {
+        deepStrictEqual(
+          relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root),
+          globFilesSorted(pattern, root),
+        );
+      });
     });
   }
 });
 
-describe("listTestFiles does not hide a failed traversal", () => {
-  // Raised in review on #3780. Catching around the whole walk swallowed errors
-  // raised *during* traversal after files had already been collected, so the
-  // runner could execute a partial selection and report success — the same
-  // silent-omission failure this module is being fixed for.
-  it("propagates an unreadable subdirectory instead of returning a partial set", function () {
-    if (typeof process.getuid === "function" && process.getuid() === 0) {
-      // root ignores the mode bits, so the error cannot be provoked.
-      return;
-    }
-    const root = createFixture();
-    const blocked = join(root, "src", "blocked");
-    mkdirSync(blocked, { recursive: true });
-    writeFileSync(join(blocked, "hidden.test.ts"), "// fixture\n");
-    chmodSync(blocked, 0o000);
-    try {
-      const result = spawnSync(process.execPath, [
-        "--input-type=module",
-        "-e",
-        `
-        const { listTestFiles } = await import(${JSON.stringify(utilsUrl)});
-        const files = listTestFiles(["src/**/*.test.ts"], ${JSON.stringify(root)});
-        process.stdout.write(JSON.stringify(files));
-      `,
-      ], { encoding: "utf8", env: { ...process.env, PATH: "" } });
-      ok(
-        result.status !== 0,
-        `expected a non-zero exit, got ${result.status} with stdout: ${result.stdout}`,
-      );
-      ok(
-        /EACCES|EPERM/.test(result.stderr),
-        `expected a permission error to surface, got: ${result.stderr}`,
-      );
-    } finally {
-      chmodSync(blocked, 0o755);
-    }
-  });
-});
-
 describe("listTestFiles agrees with the platform glob", () => {
-  // `node:fs` globSync is the reference implementation here: ripgrep's `-g`
-  // returns the same set for these patterns, and pinning against a built-in
-  // keeps the assertion deterministic on machines where `rg` is absent.
+  // `node:fs` globSync is the reference implementation: ripgrep's `-g` returns
+  // the same set for these patterns, and pinning against a built-in keeps the
+  // assertion deterministic on machines where `rg` is absent.
   for (
     const pattern of [
       "src/**/*.test.ts",
@@ -235,21 +226,45 @@ describe("listTestFiles agrees with the platform glob", () => {
     ]
   ) {
     it(`resolves ${pattern} the way node:fs glob does`, () => {
-      const root = createFixture();
-      const expected = globFilesSorted(pattern, root);
-      deepStrictEqual(relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root), expected);
+      withFixture(BASE_TREE, (root) => {
+        deepStrictEqual(
+          relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root),
+          globFilesSorted(pattern, root),
+        );
+      });
     });
   }
+});
 
-  it("matches the in-process path, whatever ripgrep availability is here", async () => {
-    const root = createFixture();
-    const patterns = ["src/**/*.test.ts", "extra/explicit.test.mjs"];
-    const { listTestFiles } = await import(
-      fileURLToPath(new URL("./test-file-utils.mjs", import.meta.url))
-    );
-    deepStrictEqual(
-      relativeSorted(listTestFiles(patterns, root), root),
-      relativeSorted(listTestFilesWithoutRipgrep(patterns, root), root),
-    );
+describe("listTestFiles does not hide a failed traversal", () => {
+  // Raised in review on #3780. Catching around the whole walk swallowed errors
+  // raised *during* traversal after files had already been collected, so the
+  // runner could execute a partial selection and report success — the same
+  // silent-omission failure this module is being fixed for.
+  it("propagates an unreadable subdirectory instead of returning a partial set", () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) {
+      // root ignores the mode bits, so the error cannot be provoked.
+      return;
+    }
+    withFixture(BASE_TREE, (root) => {
+      const blocked = join(root, "src", "blocked");
+      mkdirSync(blocked, { recursive: true });
+      writeFileSync(join(blocked, "hidden.test.ts"), "// fixture\n");
+      chmodSync(blocked, 0o000);
+      try {
+        const result = runListTestFilesProbe(["src/**/*.test.ts"], root);
+        ok(
+          result.status !== 0,
+          `expected a non-zero exit, got ${result.status} with stdout: ${result.stdout}`,
+        );
+        ok(
+          /EACCES|EPERM/.test(result.stderr),
+          `expected a permission error to surface, got: ${result.stderr}`,
+        );
+      } finally {
+        // Restore before teardown, or the recursive remove cannot descend.
+        chmodSync(blocked, 0o755);
+      }
+    });
   });
 });
