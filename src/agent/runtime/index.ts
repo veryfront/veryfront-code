@@ -2648,9 +2648,13 @@ export class AgentRuntime {
         if (options.announceInput === true) {
           // An interrupted call never reached `tool-input-end`, so its
           // `tool-input-start` is still buffered and `inputAnnounced` is false
-          // — which would suppress the `tool-output-error` below. On the
-          // declined-recovery path that leaves the client with a reasoning
-          // block and then nothing at all.
+          // — which would suppress the `tool-output-error` below. Every
+          // terminal path passes `announceInput`, because on all of them the
+          // run stops here and the client would otherwise be left with
+          // whatever preceded the truncation and then nothing at all. Which
+          // path declined recovery — exposed reasoning, a spent step budget, a
+          // second interruption, an exposed sibling — is invisible to the
+          // user, so it must not decide whether the failure renders (#3737).
           //
           // The name is safe to publish here. `tool-call` is what can supersede
           // a name, and it also sets `inputAvailable`, which fails the guard
@@ -2689,9 +2693,14 @@ export class AgentRuntime {
           await persistToolResult(toolResult);
         }
         for (const toolCall of streamedToolCalls) {
-          await recordIncompleteLocalToolError(toolCall, {
-            announceInput: declinedRecoveryForExposedReasoning,
-          });
+          // Terminal. Every incomplete local call recorded here is also
+          // terminalized into history, so announce unconditionally and let the
+          // wire carry the same failure. `recordIncompleteLocalToolError`
+          // guards on `providerExecuted`, completeness and a final result, so
+          // only genuinely truncated local calls are announced, and
+          // `announceStreamedToolCallInput` is idempotent for any already
+          // surfaced upstream.
+          await recordIncompleteLocalToolError(toolCall, { announceInput: true });
         }
         sendSSE(controller, encoder, { type: "step-end" });
         break;

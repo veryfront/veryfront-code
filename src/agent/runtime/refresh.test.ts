@@ -2053,9 +2053,138 @@ describe("agent runtime refresh hooks", () => {
         body.match(/"type":"tool-output-available"/g)?.length ?? 0,
         hasFinalResult ? 1 : 0,
       );
-      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+      // #3737. Failing closed is about not re-running the batch, not about
+      // hiding the truncation. The exposed sibling rendered, but the
+      // interrupted call is terminalized into history here, so it also has to
+      // reach the wire — one announce and one failure for it, and none for the
+      // exposed sibling, which is complete and so never enters that branch.
+      assertEquals(
+        body.match(
+          /"type":"tool-input-start","toolCallId":"truncated-agent-after-exposure"/g,
+        )?.length ?? 0,
+        1,
+      );
+      assertEquals(
+        body.match(
+          /"type":"tool-output-error","toolCallId":"truncated-agent-after-exposure"/g,
+        )?.length ?? 0,
+        1,
+      );
+      assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+      assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
       assertEquals(body.includes("Unexpected recovery."), false);
     }
+  });
+
+  it("surfaces a truncated local tool call when maxSteps exhaustion ends the run", async () => {
+    // #3737. Recovery is declined here because the step budget is spent, not
+    // because reasoning was exposed, so the flush #3735 added never runs. The
+    // run terminalizes the truncated call into history either way, so the wire
+    // has to carry the same failure — otherwise the stream ends with no text,
+    // no tool call and no error.
+    let finishedResponse: AgentResponse | undefined;
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/truncated-at-max-steps",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "issue3737-committed",
+                toolName: "issue3737_probe",
+                input: '{"revision":"first"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-input-start",
+              id: "issue3737-truncated",
+              toolName: "issue3737_probe",
+            },
+            {
+              type: "tool-input-delta",
+              id: "issue3737-truncated",
+              delta: '{"revision":"trunc',
+            },
+            {
+              type: "finish",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const probeTool = tool({
+      id: "issue3737_probe",
+      description: "Apply a revision",
+      inputSchema: defineSchema((v) => v.object({ revision: v.string() }))(),
+      execute: async ({ revision }) => ({ revision }),
+    });
+    const assistant = eagerAgent({
+      model: "hosted/truncated-at-max-steps",
+      system: "Exhaust the step budget on a truncated tool call.",
+      tools: { issue3737_probe: probeTool },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({
+      input: "Apply both revisions",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse().text();
+
+    assertEquals(callCount, 2);
+    // The truncated call must be announced so its failure card has something
+    // to render against.
+    assertEquals(
+      body.match(
+        /"type":"tool-input-start","toolCallId":"issue3737-truncated"/g,
+      )?.length ?? 0,
+      1,
+    );
+    // Exactly one failure event on the wire for it — never a tool-input-error
+    // alongside the tool-output-error.
+    assertEquals(
+      body.match(/"type":"tool-output-error","toolCallId":"issue3737-truncated"/g)?.length ?? 0,
+      1,
+    );
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
+    assertEquals(
+      body.includes(
+        'Stream terminated before tool-call event fired for \\"issue3737_probe\\"',
+      ),
+      true,
+    );
+    assertExists(finishedResponse);
+    assertEquals(
+      finishedResponse.toolCalls.map((toolCall) => [toolCall.id, toolCall.status]),
+      [
+        ["issue3737-committed", "completed"],
+        ["issue3737-truncated", "error"],
+      ],
+    );
   });
 
   it("does not report stale text when an ordinary tool-only step exhausts maxSteps", async () => {
@@ -2211,7 +2340,31 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(callCount, 2);
     assertEquals(toolResults, []);
     assertEquals(body.match(/Created the Outlook assistant\./g)?.length ?? 0, 1);
-    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 0);
+    // #3737. The step-1 placeholder is still off the wire: recovery ran, so it
+    // is provisional and gets re-asked. The step-2 placeholder is terminal —
+    // the assertions below show it kept in the assistant message with a
+    // matching tool-result error and an errored entry in `toolCalls`, so
+    // holding it back from the wire made the persisted history and the live
+    // stream disagree. One announce and one failure, for the terminal one only.
+    assertEquals(
+      body.match(
+        /"type":"tool-input-start","toolCallId":"toolu_repeated_placeholder"/g,
+      )?.length ?? 0,
+      1,
+    );
+    assertEquals(
+      body.match(
+        /"type":"tool-input-start","toolCallId":"toolu_placeholder_after_text"/g,
+      )?.length ?? 0,
+      0,
+    );
+    assertEquals(
+      body.match(/"type":"tool-output-error","toolCallId":"toolu_repeated_placeholder"/g)?.length ??
+        0,
+      1,
+    );
+    assertEquals(body.match(/"type":"tool-output-error"/g)?.length ?? 0, 1);
+    assertEquals(body.match(/"type":"tool-input-error"/g)?.length ?? 0, 0);
     assertEquals(body.includes("Unexpected second recovery."), false);
     const completedResponse = finishedResponse as AgentResponse | undefined;
     assertExists(completedResponse);
