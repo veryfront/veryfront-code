@@ -1678,7 +1678,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     });
   });
 
-  it("preserves finite negative revalidation metadata", async () => {
+  it("rejects negative revalidation metadata", async () => {
     const response = await executeIsolatedDataModule(
       `export function getServerData() {
         return { props: { ok: true }, revalidate: -100 };
@@ -1686,12 +1686,7 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       "negative-revalidation-data-result",
     );
 
-    assertEquals(response.type, "data-result");
-    if (response.type !== "data-result") throw new Error("expected data result response");
-    assertEquals(response.result, {
-      props: { ok: true },
-      revalidate: -100,
-    });
+    assertInvalidIsolatedDataResult(response);
   });
 
   it("preserves response metadata across the isolated data boundary", async () => {

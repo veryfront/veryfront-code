@@ -1562,7 +1562,8 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
         if (
           rawRevalidate.value !== false &&
           (typeof rawRevalidate.value !== "number" ||
-            !numberIsFinite(rawRevalidate.value))
+            !numberIsFinite(rawRevalidate.value) ||
+            rawRevalidate.value < 0)
         ) {
           return invalidIsolatedDataResult();
         }

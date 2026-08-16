@@ -55,7 +55,7 @@ export function validateDataResult(
   } else {
     if (
       revalidate !== undefined && revalidate !== false &&
-      (typeof revalidate !== "number" || !Number.isFinite(revalidate))
+      (typeof revalidate !== "number" || !Number.isFinite(revalidate) || revalidate < 0)
     ) return fail();
     if (props !== undefined) normalized.props = props;
     if (notFound !== undefined) normalized.notFound = notFound;

@@ -337,7 +337,14 @@ export class SSRService implements SSRServiceLike {
             await allReady;
           } catch (error) {
             if (findSSRControlOutcome(error)) {
-              return this.handleRenderError(error, ctx, slug, request, nonce);
+              return this.handleRenderError(
+                error,
+                ctx,
+                slug,
+                request,
+                nonce,
+                responseMetadata,
+              );
             }
           }
         }
@@ -368,13 +375,20 @@ export class SSRService implements SSRServiceLike {
     slug: string,
     request: Request,
     nonce?: string,
+    inheritedResponseMetadata: DataResponseMetadata = {},
   ): SSRRenderResult {
-    const responseMetadata = error instanceof Error ? getAttachedDataResponseMetadata(error) : {};
+    const attachedResponseMetadata = error instanceof Error
+      ? getAttachedDataResponseMetadata(error)
+      : {};
+    const responseMetadata = mergeDataResponseMetadata([
+      inheritedResponseMetadata,
+      attachedResponseMetadata,
+    ]);
     const classifiedError = error instanceof Error ? unwrapDataResponseMetadataError(error) : error;
     const outcome = resolveSSRFailure(classifiedError, {
       isLocalProject: Boolean(ctx.isLocalProject),
     });
-    const requestLocalMetadata = classifiedError === error ? {} : responseMetadata;
+    const requestLocalMetadata = classifiedError === error ? {} : attachedResponseMetadata;
 
     switch (outcome.kind) {
       case "app-router-error-boundary":
@@ -400,13 +414,21 @@ export class SSRService implements SSRServiceLike {
         });
         return buildRedirectResult({
           ...outcome,
-          ...mergeDataResponseMetadata([outcome, requestLocalMetadata]),
+          ...mergeDataResponseMetadata([
+            inheritedResponseMetadata,
+            outcome,
+            requestLocalMetadata,
+          ]),
         }, slug);
       case "not-found":
         logger.debug("SSR notFound", { slug });
         return buildNotFoundResult({
           ...outcome,
-          ...mergeDataResponseMetadata([outcome, requestLocalMetadata]),
+          ...mergeDataResponseMetadata([
+            inheritedResponseMetadata,
+            outcome,
+            requestLocalMetadata,
+          ]),
         }, slug);
       case "undeployed":
         logger.debug("Project not deployed", {

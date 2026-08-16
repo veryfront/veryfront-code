@@ -624,6 +624,8 @@ describe("server/services/rendering/ssr.service", () => {
               stream: createReactReadyStream(notFound()),
               ssrHash: undefined,
               frontmatter: {},
+              headers: { "x-data-state": "missing" },
+              cookies: [{ name: "missing-seen", value: "1", path: "/" }],
             }),
         });
         const service = new SSRService({
@@ -639,6 +641,8 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-data-state": "missing" });
+        assertEquals(result.cookies, [{ name: "missing-seen", value: "1", path: "/" }]);
       });
 
       it("maps a redirect() reported after the streaming shell to a redirect before responding", async () => {
@@ -646,9 +650,16 @@ describe("server/services/rendering/ssr.service", () => {
           renderPage: () =>
             Promise.resolve({
               html: "",
-              stream: createReactReadyStream(redirect("/login")),
+              stream: createReactReadyStream(
+                redirect("/login", false, {
+                  headers: { "x-data-state": "redirect-control" },
+                  cookies: [{ name: "control-seen", value: "1", path: "/" }],
+                }),
+              ),
               ssrHash: undefined,
               frontmatter: {},
+              headers: { "x-data-state": "redirected" },
+              cookies: [{ name: "redirect-seen", value: "1", path: "/" }],
             }),
         });
         const service = new SSRService({
@@ -665,6 +676,11 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-data-state": "redirect-control" });
+        assertEquals(result.cookies, [
+          { name: "redirect-seen", value: "1", path: "/" },
+          { name: "control-seen", value: "1", path: "/" },
+        ]);
       });
 
       it("maps a permanent thrown redirect() to a 301", async () => {

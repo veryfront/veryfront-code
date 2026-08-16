@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateDataResult } from "./data-result-validation.ts";
 
@@ -38,13 +38,15 @@ describe("validateDataResult", () => {
     );
   });
 
-  it("preserves finite negative revalidation values", () => {
-    assertEquals(
-      validateDataResult(
-        { props: { value: "fresh" }, revalidate: -100 },
-        "getStaticData",
-      ),
-      { props: { value: "fresh" }, revalidate: -100 },
+  it("rejects negative revalidation values", () => {
+    assertThrows(
+      () =>
+        validateDataResult(
+          { props: { value: "fresh" }, revalidate: -100 },
+          "getStaticData",
+        ),
+      TypeError,
+      "getStaticData must return a valid data result object",
     );
   });
 });
