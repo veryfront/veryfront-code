@@ -16,7 +16,7 @@ import {
 /** Public API contract for AG-UI chat UI chunk browser encoder. */
 export type AgUiChatUiChunkBrowserEncoder = Pick<
   AgUiBrowserChunkEncoder<ChatUiMessageChunk<ChatMessageMetadata>>,
-  "encode" | "finalize"
+  "encode" | "finalize" | "timingState"
 >;
 
 /** Options accepted by create AG-UI chat UI chunk browser encoder. */

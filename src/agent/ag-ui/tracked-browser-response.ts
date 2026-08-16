@@ -13,7 +13,10 @@ export interface CreateAgUiTrackedBrowserResponseInput<TChunk> extends
     CreateAgUiRuntimeBrowserResponseInput<TChunk, null>,
     "encoder" | "initialState" | "onChunk" | "getFinalResponse"
   > {
-  chunkEncoder: Pick<AgUiChunkEncoderBridge<TChunk>, "encode" | "finalize">;
+  chunkEncoder: Pick<
+    AgUiChunkEncoderBridge<TChunk>,
+    "encode" | "finalize" | "timingState"
+  >;
   finalizeTracker: Pick<
     AgUiBrowserFinalizeTracker<TChunk>,
     "observeChunk" | "observeEncodedEvents" | "getFinalResponse"
@@ -27,6 +30,7 @@ export function createAgUiTrackedBrowserResponse<TChunk>(
   return createAgUiRuntimeBrowserResponse({
     ...input,
     encoder: {
+      timingState: input.chunkEncoder.timingState,
       encode: (chunk) => {
         const events = input.chunkEncoder.encode(chunk);
         input.finalizeTracker.observeEncodedEvents(events);

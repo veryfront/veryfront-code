@@ -28,6 +28,25 @@ function wrapVeryfrontCloudModel(
     ...(model.prepare ? { prepare: { value: model.prepare.bind(model) } } : {}),
   });
 
+  const forwardedAccessors = new Set<PropertyKey>();
+  let source: object | null = model;
+  while (source && source !== Object.prototype) {
+    for (const key of Reflect.ownKeys(source)) {
+      if (forwardedAccessors.has(key) || Object.hasOwn(wrapped, key)) continue;
+
+      forwardedAccessors.add(key);
+      const descriptor = Object.getOwnPropertyDescriptor(source, key);
+      if (!descriptor || (!descriptor.get && !descriptor.set)) continue;
+
+      Object.defineProperty(wrapped, key, {
+        ...descriptor,
+        get: descriptor.get?.bind(model),
+        set: descriptor.set?.bind(model),
+      });
+    }
+    source = Object.getPrototypeOf(source);
+  }
+
   return wrapped;
 }
 

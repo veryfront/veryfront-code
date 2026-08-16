@@ -4,6 +4,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createAgUiBrowserChunkEncoder } from "./browser-chunk-encoder.ts";
 
 describe("agent/ag-ui-browser-chunk-encoder", () => {
+  it("exposes its state as the browser response timing anchor", () => {
+    const encoder = createAgUiBrowserChunkEncoder({
+      getRuntimeEvents: () => [],
+      timing: { nowMs: null, epochMs: null },
+    });
+
+    assertEquals(encoder.timingState, encoder.state);
+  });
+
   it("merges chunk metadata into the browser finalize response", () => {
     const encoder = createAgUiBrowserChunkEncoder<{
       id: string;

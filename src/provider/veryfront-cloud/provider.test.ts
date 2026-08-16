@@ -69,6 +69,21 @@ describe("provider/veryfront-cloud", () => {
     class PrivateFieldRuntime implements ModelRuntime {
       [key: string]: unknown;
       readonly #calls: string[] = [];
+      readonly #modelId = "private-field-runtime";
+      readonly #provider = "private-provider";
+      readonly #runtimeCapabilities = { toolCalling: true } as const;
+
+      get modelId(): string {
+        return this.#modelId;
+      }
+
+      get provider(): string {
+        return this.#provider;
+      }
+
+      get runtimeCapabilities(): { readonly toolCalling: true } {
+        return this.#runtimeCapabilities;
+      }
 
       prepare(): Promise<void> {
         this.#calls.push("prepare");
@@ -107,6 +122,9 @@ describe("provider/veryfront-cloud", () => {
       await model.doStream({});
 
       assertEquals(runtime.calls(), ["prepare", "generate", "stream"]);
+      assertEquals(model.modelId, "private-field-runtime");
+      assertEquals(model.provider, "private-provider");
+      assertEquals(model.runtimeCapabilities, { toolCalling: true });
       assertEquals(model._generateViaStream, true);
       assertEquals(model.modelProvider, "openai");
     } finally {

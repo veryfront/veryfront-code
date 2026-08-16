@@ -27,6 +27,19 @@ describe("agent/conversation/private-run-event", () => {
       }),
       true,
     );
+    assertEquals(
+      isPrivateConversationRunEvent({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        messages: [{
+          role: "system",
+          content: "Cache safely.",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+          },
+        }],
+      }),
+      true,
+    );
 
     for (
       const value of [
@@ -44,6 +57,29 @@ describe("agent/conversation/private-run-event", () => {
           type: "AGENT_RUN_MODEL_CALL_CONTEXT",
           messages: [],
           request: { reasoning: { arbitrary: true } },
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "system",
+            content: "Do not persist provider secrets.",
+            providerOptions: {
+              anthropic: {
+                cacheControl: { type: "ephemeral" },
+                apiKey: "secret",
+              },
+            },
+          }],
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "system",
+            content: "Reject unsupported cache policy.",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "2h" } },
+            },
+          }],
         },
         {
           type: "AGENT_RUN_MODEL_CALL_CONTEXT",
