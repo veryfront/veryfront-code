@@ -1,4 +1,4 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 
 /** Check whether RSC is enabled. */
 export function isRSCEnabled(

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import {
   nonNegativeFiniteMeasure,
   saturatingAdd,

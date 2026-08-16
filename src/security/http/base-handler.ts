@@ -8,7 +8,7 @@ import type {
 import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 import { runWithVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import type { VerifiedControlPlaneRequestClaims } from "#veryfront/internal-agents/control-plane-auth.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { WebSocketUpgradeResponse } from "#veryfront/platform/adapters/base.ts";
 import { getErrorMessage as formatErrorMessage } from "#veryfront/errors/veryfront-error.ts";
 import { AUTHENTICATION_REQUIRED } from "#veryfront/errors";

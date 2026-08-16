@@ -1,8 +1,4 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
-import {
-  ensureRedisRuntimeProvider,
-  getRegisteredRedisRuntimeProvider,
-} from "#veryfront/extensions/distributed/defaults.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import type {
   RedisClient,
   RedisClientOptions,
@@ -18,10 +14,13 @@ let disconnecting: Promise<void> | null = null;
 export function getRedisClient(options: RedisClientOptions = {}): Promise<RedisClient> {
   if (disconnecting) return disconnecting.then(() => getRedisClient(options));
 
-  const resolving = ensureRedisRuntimeProvider().then((provider) => {
-    sharedClientOwners.add(provider);
-    return provider;
-  });
+  // Loaded lazily so the provider module stays out of browser bundles.
+  const resolving = import("#veryfront/extensions/distributed/defaults.ts")
+    .then(({ ensureRedisRuntimeProvider }) => ensureRedisRuntimeProvider())
+    .then((provider) => {
+      sharedClientOwners.add(provider);
+      return provider;
+    });
   const trackedResolution = resolving.then(
     () => undefined,
     () => undefined,
@@ -38,6 +37,9 @@ export function disconnectRedisClient(): Promise<void> {
 
   const pending = (async () => {
     await Promise.allSettled([...resolvingOwners]);
+    const { getRegisteredRedisRuntimeProvider } = await import(
+      "#veryfront/extensions/distributed/defaults.ts"
+    );
     const currentProvider = getRegisteredRedisRuntimeProvider();
     if (currentProvider) sharedClientOwners.add(currentProvider);
     const owners = [...sharedClientOwners];

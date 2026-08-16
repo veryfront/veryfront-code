@@ -1,5 +1,5 @@
 import { defineConfig, defineConfigWithEnv, mergeConfigs } from "./define-config.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 
 export type ConfigShimBridge = Readonly<{
   defineConfig: typeof defineConfig;

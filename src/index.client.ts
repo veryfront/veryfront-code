@@ -35,15 +35,17 @@ export { getEnv } from "#veryfront/platform/compat/process/env.ts";
 // chunks. Types are erased at transform time, so re-exporting them is inert.
 export type { StartServerOptions, VeryfrontHandler, VeryfrontServer } from "#veryfront/server";
 
+// Sourced from the compat module directly: the routing barrel's value graph
+// reaches the server-only API handler (VFS adapter, sandbox worker pool).
 export {
   badRequest,
   forbidden,
-  json,
+  internalServerError as serverError,
+  jsonResponse as json,
   notFound as apiNotFound,
-  redirect as apiRedirect,
-  serverError,
+  redirectResponse as apiRedirect,
   unauthorized,
-} from "#veryfront/routing";
+} from "#veryfront/http/responses";
 export type { APIContext, APIHandler, APIResponse, APIRoute } from "#veryfront/routing";
 
 export { notFound, redirect } from "#veryfront/data";

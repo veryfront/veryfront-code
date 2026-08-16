@@ -3,7 +3,7 @@ import {
   type ControlPlaneSurface,
   verifyControlPlaneJws,
 } from "#veryfront/channels/control-plane.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
 import { HTTP_INTERNAL_SERVER_ERROR } from "#veryfront/utils/constants/index.ts";

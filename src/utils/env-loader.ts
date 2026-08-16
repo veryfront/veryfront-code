@@ -1,6 +1,7 @@
 import { refreshLoggerConfig, serverLogger } from "./logger/index.ts";
 import { sanitizeUrlCredentials } from "./logger/redact.ts";
-import { cwd as getCwd, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, setEnv } from "#veryfront/platform/compat/process/env.ts";
+import { cwd as getCwd } from "#veryfront/platform/compat/process/lifecycle.ts";
 import { isNotFoundError, readTextFile } from "#veryfront/platform/compat/fs.ts";
 
 const logger = serverLogger.component("env");

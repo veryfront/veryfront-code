@@ -12,7 +12,7 @@
  */
 
 import { type EnvironmentConfig, getEnvironmentConfig } from "./environment-config.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 
 function toEnabledFlag<T extends string>(enabled: boolean, truthyValue: T): T | undefined {
   return enabled ? truthyValue : undefined;
