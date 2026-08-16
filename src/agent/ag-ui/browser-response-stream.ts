@@ -1,5 +1,6 @@
 import type { AgentResponse } from "../types.ts";
 import type { AgUiSseEvent } from "./host-support.ts";
+import { createAgUiBrowserEncoderState, stampAgUiBrowserEventTiming } from "./browser-encoder.ts";
 
 const encoder = new TextEncoder();
 
@@ -66,13 +67,15 @@ export function createAgUiBrowserResponseStream<TChunk, TState>(
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
+      const timingState = createAgUiBrowserEncoderState();
       const writeEvent = (event: AgUiSseEvent) => {
         if (streamClosed) {
           return false;
         }
 
         try {
-          controller.enqueue(formatAgUiSseEventWithId(event, nextEventId));
+          const [timed] = stampAgUiBrowserEventTiming(timingState, [event]);
+          controller.enqueue(formatAgUiSseEventWithId(timed ?? event, nextEventId));
           nextEventId += 1;
           return true;
         } catch {

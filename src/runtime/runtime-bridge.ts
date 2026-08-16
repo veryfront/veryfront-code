@@ -25,6 +25,7 @@ import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
   AgentRunModelCallContextEvent,
   ModelCallMessage,
+  ModelCallRequest,
   ModelCallTool,
 } from "./model-call-context.ts";
 import { getActiveRunEventSinks } from "./run-event-sink-context.ts";
@@ -328,7 +329,7 @@ function sanitizePersistedProviderOptions(
   const sanitized: Record<string, unknown> = {};
   let retained = false;
   for (const key of keys) {
-    if (typeof key !== "string") {
+    if (typeof key !== "string" || key.length === 0) {
       continue;
     }
     const providerBucket = readOwnEnumerableDataDescriptor(value, key)?.value;
@@ -626,12 +627,59 @@ function buildDirectModelOptions(
   };
 }
 
-async function emitModelCallContextEvent(directOptions: DirectModelOptions): Promise<void> {
+function buildModelCallRequest(options: DirectTextOptions): ModelCallRequest | undefined {
+  const reasoning = options.reasoning;
+  const request: ModelCallRequest = {
+    ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
+    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(options.topP !== undefined ? { topP: options.topP } : {}),
+    ...(options.topK !== undefined ? { topK: options.topK } : {}),
+    ...(options.stopSequences !== undefined ? { stopSequences: [...options.stopSequences] } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    ...(options.presencePenalty !== undefined ? { presencePenalty: options.presencePenalty } : {}),
+    ...(options.frequencyPenalty !== undefined
+      ? { frequencyPenalty: options.frequencyPenalty }
+      : {}),
+    ...(reasoning
+      ? {
+        reasoning: {
+          ...(reasoning.enabled !== undefined ? { enabled: reasoning.enabled } : {}),
+          ...(reasoning.effort !== undefined ? { effort: reasoning.effort } : {}),
+          ...(reasoning.budgetTokens !== undefined ? { budgetTokens: reasoning.budgetTokens } : {}),
+        },
+      }
+      : {}),
+  };
+  return Object.keys(request).length > 0 ? request : undefined;
+}
+
+function resolveModelProvider(model: ModelRuntime): string | undefined {
+  if (typeof model.modelProvider === "string" && model.modelProvider !== "") {
+    return model.modelProvider;
+  }
+  return model.provider === "veryfront-cloud" ? undefined : model.provider;
+}
+
+async function emitModelCallContextEvent(
+  options: DirectTextOptions,
+  directOptions: DirectModelOptions,
+): Promise<void> {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return;
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+    ...(options.model.modelId
+      ? {
+        model: {
+          id: options.model.modelId,
+          ...(resolveModelProvider(options.model)
+            ? { modelProvider: resolveModelProvider(options.model) }
+            : {}),
+        },
+      }
+      : {}),
+    ...(buildModelCallRequest(options) ? { request: buildModelCallRequest(options) } : {}),
     messages: sanitizeModelCallContextMessages(directOptions.prompt),
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
@@ -654,6 +702,9 @@ async function emitModelCallContextEvent(directOptions: DirectModelOptions): Pro
     }
   };
   const mandatoryEvent = sinks.mandatory ? cloneEvent() : undefined;
+  if (sinks.mandatory && !mandatoryEvent) {
+    throw new TypeError("Mandatory model call context event is not cloneable");
+  }
   const publicEvent = sinks.public && sinks.public !== sinks.mandatory ? cloneEvent() : undefined;
   if (sinks.mandatory && mandatoryEvent) {
     await sinks.mandatory(mandatoryEvent);
@@ -1042,7 +1093,7 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await emitModelCallContextEvent(directOptions);
+    await emitModelCallContextEvent(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
       return options.model.doStream(directOptions).then(({ stream }) =>
         buildGenerateResultFromStream(stream)
@@ -1056,7 +1107,7 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await emitModelCallContextEvent(directOptions);
+    await emitModelCallContextEvent(options, directOptions);
     return options.model.doStream(directOptions);
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a

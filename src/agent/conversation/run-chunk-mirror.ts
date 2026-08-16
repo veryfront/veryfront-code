@@ -1,4 +1,8 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import {
+  type AgentRunEventTimingOptions,
+  createAgentRunEventTimingAnchor,
+} from "../../runtime/model-call-context.ts";
 import { type ConversationRunEvent, ConversationRunEventEncoder } from "./run-events.ts";
 import {
   type ConversationRunMirror,
@@ -24,6 +28,7 @@ const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 
 /** Public API contract for conversation run chunk mirror. */
 export interface ConversationRunChunkMirror {
+  readonly timing?: AgentRunEventTimingOptions;
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
   flush(options?: {
@@ -165,8 +170,8 @@ export function createConversationRunChunkMirror(
   // headless -- a scheduled run has no client attached -- so this is the only
   // point that observes emission time. Callers injecting their own encoder
   // choose their own clock, or none.
-  const encoder = input.encoder ??
-    new ConversationRunEventEncoder({ nowMs: () => performance.now() });
+  const timing = createAgentRunEventTimingAnchor();
+  const encoder = input.encoder ?? new ConversationRunEventEncoder(timing);
   const immediateFlushEventCount = input.immediateFlushEventCount ??
     DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT;
   const mirror = createConversationRunMirror({
@@ -183,6 +188,7 @@ export function createConversationRunChunkMirror(
   });
 
   return {
+    timing,
     async handleChunk(chunk) {
       if (mirror.getSnapshot().disabled) {
         return;
@@ -206,8 +212,8 @@ export function createConversationRunChunkMirror(
 
       const normalizedEvents = await (input.prepareExternalEvents?.({
         events,
-        defaultPrepare: () => prepareConversationRunExternalEvents(events),
-      }) ?? prepareConversationRunExternalEvents(events));
+        defaultPrepare: () => prepareConversationRunExternalEvents(encoder.stamp(events)),
+      }) ?? prepareConversationRunExternalEvents(encoder.stamp(events)));
       await input.onExternalEventsPrepared?.({ events: normalizedEvents });
       if (normalizedEvents.length === 0) {
         return;

@@ -18,8 +18,12 @@ describe("agent/conversation/private-run-event", () => {
     assertEquals(
       isPrivateConversationRunEvent({
         type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        model: { id: "veryfront-cloud/anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
+        request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
         messages: [],
         tools: [],
+        elapsedMs: 42,
+        emittedAt: 1_786_866_357_364,
       }),
       true,
     );
@@ -30,6 +34,18 @@ describe("agent/conversation/private-run-event", () => {
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT" },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: {} },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], tools: {} },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], model: { id: 1 } },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          model: { id: "x", provider: "anthropic" },
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          request: { reasoning: { arbitrary: true } },
+        },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], emittedAt: 1.5 },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], contextId: "legacy" },
         { type: "TEXT_MESSAGE_CONTENT", messages: [] },
       ]

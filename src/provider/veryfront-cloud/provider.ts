@@ -13,8 +13,14 @@ import {
 } from "./openai.ts";
 import { resolveVeryfrontCloudModelThinking } from "./model-catalog.ts";
 
-function preferStreamedGenerate(model: ModelRuntime): ModelRuntime {
-  return Object.assign(model, { _generateViaStream: true as const });
+function wrapVeryfrontCloudModel(
+  model: ModelRuntime,
+  modelProvider: string,
+): ModelRuntime {
+  return Object.create(model, {
+    _generateViaStream: { enumerable: true, value: true },
+    modelProvider: { enumerable: true, value: modelProvider },
+  });
 }
 
 function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
@@ -32,13 +38,16 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     case "anthropic": {
       const anthropic = registry.get("anthropic");
       if (anthropic) {
-        return preferStreamedGenerate(anthropic.createModel(upstreamModelId, {
-          credential: apiToken,
-          authToken: apiToken,
-          baseURL,
-          name: "veryfront-cloud",
-          fetch,
-        }));
+        return wrapVeryfrontCloudModel(
+          anthropic.createModel(upstreamModelId, {
+            credential: apiToken,
+            authToken: apiToken,
+            baseURL,
+            name: "veryfront-cloud",
+            fetch,
+          }),
+          provider,
+        );
       }
       break;
     }
@@ -46,12 +55,15 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
     case "google": {
       const google = registry.get("google");
       if (google) {
-        return preferStreamedGenerate(google.createModel(upstreamModelId, {
-          credential: apiToken,
-          baseURL,
-          name: "veryfront-cloud",
-          fetch,
-        }));
+        return wrapVeryfrontCloudModel(
+          google.createModel(upstreamModelId, {
+            credential: apiToken,
+            baseURL,
+            name: "veryfront-cloud",
+            fetch,
+          }),
+          provider,
+        );
       }
       break;
     }
@@ -60,54 +72,72 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
       const openai = registry.get("openai");
       if (shouldUseOpenAIResponsesRuntime(upstreamModelId)) {
         if (openai?.createResponses) {
-          return preferStreamedGenerate(openai.createResponses(upstreamModelId, {
+          return wrapVeryfrontCloudModel(
+            openai.createResponses(upstreamModelId, {
+              credential: apiToken,
+              baseURL,
+              name: "veryfront-cloud",
+              providerName: "veryfront-cloud",
+              fetch,
+            }),
+            provider,
+          );
+        }
+        return wrapVeryfrontCloudModel(
+          createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+            apiToken,
+            baseURL,
+            fetch,
+          }),
+          provider,
+        );
+      }
+
+      if (openai) {
+        return wrapVeryfrontCloudModel(
+          openai.createModel(upstreamModelId, {
             credential: apiToken,
             baseURL,
             name: "veryfront-cloud",
             providerName: "veryfront-cloud",
             fetch,
-          }));
-        }
-        return preferStreamedGenerate(createVeryfrontCloudOpenAIResponsesModel(upstreamModelId, {
+          }),
+          provider,
+        );
+      }
+      return wrapVeryfrontCloudModel(
+        createVeryfrontCloudOpenAIModel(upstreamModelId, {
           apiToken,
           baseURL,
           fetch,
-        }));
-      }
-
-      if (openai) {
-        return preferStreamedGenerate(openai.createModel(upstreamModelId, {
-          credential: apiToken,
-          baseURL,
-          name: "veryfront-cloud",
-          providerName: "veryfront-cloud",
-          fetch,
-        }));
-      }
-      return preferStreamedGenerate(createVeryfrontCloudOpenAIModel(upstreamModelId, {
-        apiToken,
-        baseURL,
-        fetch,
-      }));
+        }),
+        provider,
+      );
     }
 
     case "mistral":
     case "moonshotai": {
       const openai = registry.get("openai");
       if (openai) {
-        return preferStreamedGenerate(openai.createModel(upstreamModelId, {
-          credential: apiToken,
-          baseURL,
-          name: "veryfront-cloud",
-          providerName: "openai-compatible",
-          fetch,
-        }));
+        return wrapVeryfrontCloudModel(
+          openai.createModel(upstreamModelId, {
+            credential: apiToken,
+            baseURL,
+            name: "veryfront-cloud",
+            providerName: "openai-compatible",
+            fetch,
+          }),
+          provider,
+        );
       }
-      return preferStreamedGenerate(createVeryfrontCloudOpenAIModel(upstreamModelId, {
-        apiToken,
-        baseURL,
-        fetch,
-      }));
+      return wrapVeryfrontCloudModel(
+        createVeryfrontCloudOpenAIModel(upstreamModelId, {
+          apiToken,
+          baseURL,
+          fetch,
+        }),
+        provider,
+      );
     }
 
     default: {

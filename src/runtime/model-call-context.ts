@@ -46,6 +46,29 @@ export type ModelCallTool =
     args: Record<string, unknown>;
   };
 
+/** Resolved model identity for one dispatched model call. */
+export interface ModelCallModel {
+  id: string;
+  modelProvider?: string;
+}
+
+/** Provider-neutral generation controls that materially affect one model call. */
+export interface ModelCallRequest {
+  maxOutputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  stopSequences?: string[];
+  seed?: number;
+  presencePenalty?: number;
+  frequencyPenalty?: number;
+  reasoning?: {
+    enabled?: boolean;
+    effort?: "low" | "medium" | "high" | "max";
+    budgetTokens?: number;
+  };
+}
+
 /**
  * Provider-agnostic input persisted before one model dispatch. System-message
  * provider options contain only validated prompt-cache metadata. Other
@@ -53,8 +76,12 @@ export type ModelCallTool =
  */
 export type AgentRunModelCallContextEvent = {
   type: "AGENT_RUN_MODEL_CALL_CONTEXT";
+  model?: ModelCallModel;
+  request?: ModelCallRequest;
   messages: ModelCallMessage[];
   tools?: ModelCallTool[];
+  elapsedMs?: number;
+  emittedAt?: number;
 };
 
 /** Event produced by an agent run runtime boundary. */
@@ -62,3 +89,44 @@ export type AgentRunEvent = AgentRunModelCallContextEvent;
 
 /** Receives events produced within one scoped agent run execution. */
 export type AgentRunEventSink = (event: AgentRunEvent) => void | Promise<void>;
+
+/** Shared run clock used by public and private event producers. */
+export interface AgentRunEventTimingOptions {
+  nowMs?: () => number;
+  epochMs?: () => number;
+  startedMs?: number;
+}
+
+/** Create one timing anchor for every event family belonging to a run. */
+export function createAgentRunEventTimingAnchor(
+  options: Omit<AgentRunEventTimingOptions, "startedMs"> = {},
+): AgentRunEventTimingOptions {
+  const nowMs = options.nowMs ?? (() => performance.now());
+  return {
+    nowMs,
+    epochMs: options.epochMs ?? (() => Date.now()),
+    startedMs: nowMs(),
+  };
+}
+
+/** Stamp producer timing at the persistence boundary. */
+export function createTimedAgentRunEventSink(
+  sink: AgentRunEventSink,
+  options: AgentRunEventTimingOptions = {},
+): AgentRunEventSink {
+  const nowMs = options.nowMs ?? (() => performance.now());
+  const epochMs = options.epochMs ?? (() => Date.now());
+  const startedMs = options.startedMs ?? nowMs();
+  return (event) =>
+    sink({
+      ...event,
+      elapsedMs: typeof event.elapsedMs === "number" && Number.isFinite(event.elapsedMs) &&
+          event.elapsedMs >= 0
+        ? event.elapsedMs
+        : Math.max(0, Math.round(nowMs() - startedMs)),
+      emittedAt: typeof event.emittedAt === "number" && Number.isInteger(event.emittedAt) &&
+          event.emittedAt >= 0
+        ? event.emittedAt
+        : Math.round(epochMs()),
+    });
+}

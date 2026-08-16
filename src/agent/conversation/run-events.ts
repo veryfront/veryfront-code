@@ -73,6 +73,8 @@ export interface ConversationRunEventEncoderOptions {
    * nothing is stamped.
    */
   nowMs?: () => number;
+  epochMs?: () => number;
+  startedMs?: number;
 }
 
 export class ConversationRunEventEncoder {
@@ -85,6 +87,7 @@ export class ConversationRunEventEncoder {
   private stepCount = 0;
   private readonly nowMs?: () => number;
   private readonly startedMs?: number;
+  private readonly epochMs?: () => number;
 
   // One encoder spans a whole run: it carries stepCount and the active message
   // across every step, so elapsed measured from here is run-relative and needs no
@@ -92,8 +95,9 @@ export class ConversationRunEventEncoder {
   constructor(options: ConversationRunEventEncoderOptions = {}) {
     if (options.nowMs) {
       this.nowMs = options.nowMs;
-      this.startedMs = options.nowMs();
+      this.startedMs = options.startedMs ?? options.nowMs();
     }
+    this.epochMs = options.epochMs;
   }
 
   private nextStepName(): string {
@@ -162,12 +166,34 @@ export class ConversationRunEventEncoder {
   // is treated alike -- including the ones this encoder synthesises, such as the
   // terminal result for a provider-executed call the provider never resolved.
   private stampElapsed(events: ConversationRunEvent[]): ConversationRunEvent[] {
-    if (!this.nowMs || this.startedMs === undefined) {
+    if ((!this.nowMs || this.startedMs === undefined) && !this.epochMs) {
       return events;
     }
 
-    const elapsedMs = Math.max(0, Math.round(this.nowMs() - this.startedMs));
-    return events.map((event) => ({ ...event, elapsedMs }));
+    const elapsedMs = this.nowMs && this.startedMs !== undefined
+      ? Math.max(0, Math.round(this.nowMs() - this.startedMs))
+      : undefined;
+    const emittedAt = this.epochMs ? Math.round(this.epochMs()) : undefined;
+    return events.map((event) => ({
+      ...event,
+      ...(typeof event.elapsedMs === "number" && Number.isFinite(event.elapsedMs) &&
+          event.elapsedMs >= 0
+        ? { elapsedMs: event.elapsedMs }
+        : elapsedMs === undefined
+        ? {}
+        : { elapsedMs }),
+      ...(typeof event.emittedAt === "number" && Number.isInteger(event.emittedAt) &&
+          event.emittedAt >= 0
+        ? { emittedAt: event.emittedAt }
+        : emittedAt === undefined
+        ? {}
+        : { emittedAt }),
+    }));
+  }
+
+  /** Stamp externally-created checkpoints against this encoder's run anchor. */
+  stamp(events: ConversationRunEvent[]): ConversationRunEvent[] {
+    return this.stampElapsed(events);
   }
 
   private encodeChunk(chunk: ChatStreamEvent): ConversationRunEvent[] {

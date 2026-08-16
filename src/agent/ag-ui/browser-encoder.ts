@@ -77,6 +77,7 @@ export interface AgUiBrowserEncoderStateOptions {
    * `Date.now`. Pass null to omit the stamp.
    */
   epochMs?: (() => number) | null;
+  startedMs?: number;
 }
 
 /** Event emitted for AG-UI browser encoded. */
@@ -95,7 +96,7 @@ export function createAgUiBrowserEncoderState(
   const nowMs = options.nowMs === null ? undefined : options.nowMs ?? (() => performance.now());
   const epochMs = options.epochMs === null ? undefined : options.epochMs ?? (() => Date.now());
   return {
-    ...(nowMs ? { nowMs, startedMs: nowMs() } : {}),
+    ...(nowMs ? { nowMs, startedMs: options.startedMs ?? nowMs() } : {}),
     ...(epochMs ? { epochMs } : {}),
     messageId: null,
     textOpen: false,
@@ -681,10 +682,13 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): AgUiBrowserEncodedEvent[] {
-  return stampTiming(state, mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event));
+  return stampAgUiBrowserEventTiming(
+    state,
+    mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event),
+  );
 }
 
-function stampTiming(
+export function stampAgUiBrowserEventTiming(
   state: AgUiBrowserEncoderState,
   events: AgUiBrowserEncodedEvent[],
 ): AgUiBrowserEncodedEvent[] {
@@ -710,7 +714,26 @@ function stampTiming(
     return events;
   }
 
-  return events.map((entry) => ({ ...entry, payload: { ...entry.payload, ...timing } }));
+  return events.map((entry) => {
+    const elapsedMs = entry.payload.elapsedMs;
+    const emittedAt = entry.payload.emittedAt;
+    return {
+      ...entry,
+      payload: {
+        ...entry.payload,
+        ...(typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0
+          ? { elapsedMs }
+          : timing.elapsedMs === undefined
+          ? {}
+          : { elapsedMs: timing.elapsedMs }),
+        ...(typeof emittedAt === "number" && Number.isInteger(emittedAt) && emittedAt >= 0
+          ? { emittedAt }
+          : timing.emittedAt === undefined
+          ? {}
+          : { emittedAt: timing.emittedAt }),
+      },
+    };
+  });
 }
 
 function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
@@ -952,7 +975,7 @@ export function finalizeAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   response: AgentResponse | null,
 ): AgUiBrowserEncodedEvent[] {
-  return stampTiming(state, finalizeAgUiBrowserEventsUnstamped(state, response));
+  return stampAgUiBrowserEventTiming(state, finalizeAgUiBrowserEventsUnstamped(state, response));
 }
 
 function finalizeAgUiBrowserEventsUnstamped(

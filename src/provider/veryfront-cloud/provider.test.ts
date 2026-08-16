@@ -58,6 +58,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "openai");
   });
 
   it("routes agent.generate through the streaming Veryfront Cloud gateway path", async () => {
@@ -200,6 +201,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "moonshotai");
   });
 
   it("resolves veryfront-cloud mistral models without project ext-llm-openai installed", () => {
@@ -213,6 +215,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "mistral");
   });
 
   it("rejects unsupported pre-prefixed veryfront-cloud Mistral models", () => {
@@ -241,6 +244,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "anthropic");
   });
 
   it("resolves veryfront-cloud google models without project ext-llm-google installed", () => {
@@ -254,6 +258,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "google");
   });
 
   it("resolves direct anthropic models through the built-in provider", () => {

@@ -133,6 +133,39 @@ describe("agent/conversation-run-chunk-mirror", () => {
     mirror.dispose();
   });
 
+  it("stamps missing external checkpoint timing and preserves supplied timing", async () => {
+    const queueController = createQueueController();
+    let now = 100;
+    const encoder = new ConversationRunEventEncoder({
+      nowMs: () => now,
+      epochMs: () => 1_786_866_357_364,
+    });
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      encoder,
+      immediateFlushEventCount: 99,
+      flushDelayMs: 10_000,
+    });
+    now = 142;
+
+    await mirror.appendEvents([
+      { type: "CONTEXT_COMPACTION", compactedMessageCount: 2 } as never,
+      { type: "TOOL_EXPOSURE_CHECKPOINT", elapsedMs: 7, emittedAt: 8 } as never,
+    ]);
+
+    assertEquals(
+      queueController.enqueued.map((event) => {
+        const timed = event as { elapsedMs?: number; emittedAt?: number };
+        return { elapsedMs: timed.elapsedMs, emittedAt: timed.emittedAt };
+      }),
+      [
+        { elapsedMs: 42, emittedAt: 1_786_866_357_364 },
+        { elapsedMs: 7, emittedAt: 8 },
+      ],
+    );
+    mirror.dispose();
+  });
+
   it("allows hosts to wrap chunk and external event preparation", async () => {
     const queueController = createQueueController();
     const preparedMarkers: string[] = [];

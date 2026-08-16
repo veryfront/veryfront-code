@@ -5,6 +5,7 @@ import type {
   ModelCallMessage,
   ModelCallTool,
 } from "./model-call-context.ts";
+import { createTimedAgentRunEventSink } from "./model-call-context.ts";
 
 describe("model-call-context", () => {
   it("describes only the direct provider-agnostic event", () => {
@@ -25,10 +26,18 @@ describe("model-call-context", () => {
     }];
     const event: AgentRunModelCallContextEvent = {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      model: { id: "anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
+      request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
       messages,
       tools,
     };
-    assertEquals(event, { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages, tools });
+    assertEquals(event, {
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      model: { id: "anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
+      request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
+      messages,
+      tools,
+    });
 
     const eventWithExtraField: AgentRunModelCallContextEvent = {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
@@ -46,5 +55,35 @@ describe("model-call-context", () => {
       ],
     };
     assertEquals(providerPrivateReasoning.role, "assistant");
+  });
+
+  it("rounds generated timing and preserves valid producer timing", () => {
+    const events: AgentRunModelCallContextEvent[] = [];
+    let now = 100;
+    const sink = createTimedAgentRunEventSink(
+      (event) => {
+        events.push(event);
+      },
+      { nowMs: () => now, epochMs: () => 1_786_866_357_364.4, startedMs: 100 },
+    );
+    now = 142.6;
+    sink({ type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [] });
+    sink({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+      elapsedMs: 7,
+      emittedAt: 8,
+    });
+    sink({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+      elapsedMs: -1,
+      emittedAt: 1.5,
+    });
+    assertEquals(events.map(({ elapsedMs, emittedAt }) => ({ elapsedMs, emittedAt })), [
+      { elapsedMs: 43, emittedAt: 1_786_866_357_364 },
+      { elapsedMs: 7, emittedAt: 8 },
+      { elapsedMs: 43, emittedAt: 1_786_866_357_364 },
+    ]);
   });
 });
