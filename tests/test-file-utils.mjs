@@ -1,11 +1,34 @@
-import { spawnSync } from "node:child_process";
+/**
+ * Test-file selection.
+ *
+ * Patterns are resolved entirely in-process. There is deliberately no ripgrep
+ * path and no other external resolver — see #3784. `listTestFiles` used to
+ * shell out to `rg` and walk the tree itself only when `rg` was absent, which
+ * made the selected set depend on which binaries a machine happened to have.
+ * #3780 fixed a run of divergences between the two across six review rounds,
+ * most of them introduced by the fix for the previous one. Exact parity with
+ * `rg` is not reachable by inspection, and it was never the goal. The goal is
+ * that the same tests run everywhere; one implementation is how that is met.
+ *
+ * The trade is `.gitignore` awareness, which `rg` provided for free. It was
+ * measured before being given up: with `npm/` built by `deno task build:npm`,
+ * every gitignored `*.test.*` file in the tree lives under `node_modules/` or
+ * `npm/node_modules/`, and no pattern any consumer passes reaches either. The
+ * `rg` (15.2.0) and in-process sets were identical — 1598, 1729 and 1927 files
+ * for the `test:node`, `test:bun` and Bun-default pattern sets respectively.
+ *
+ * `node:fs` `globSync` was evaluated as a third option and rejected: it is
+ * three implementations, not one. On the same fixtures, Node 25 and Deno 2.7
+ * return `src` itself for the pattern `src` + globstar while Bun 1.3 does not,
+ * and Node and Deno match through a hidden directory named in a pattern's
+ * literal prefix while Bun returns nothing. All three runtimes load this
+ * module, so that would restore the divergence class removing `rg` closes.
+ */
 import { readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 
 const TEST_FILE_RE = /\.test\.[cm]?[jt]sx?$/i;
 const GLOB_CHARS_RE = /[\*\?\[]/;
-
-let rgAvailable = true;
 
 function toPosixPath(path) {
   return path.split(sep).join("/");
@@ -13,22 +36,6 @@ function toPosixPath(path) {
 
 function hasGlob(pattern) {
   return GLOB_CHARS_RE.test(pattern);
-}
-
-function runRg(args, cwd) {
-  if (!rgAvailable) return null;
-  const result = spawnSync("rg", args, { cwd, encoding: "utf8" });
-  if (result.error) {
-    if (result.error.code === "ENOENT") {
-      rgAvailable = false;
-    }
-    return null;
-  }
-  if (result.status !== 0 && result.status !== 1) return null;
-  return result.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
 }
 
 function globToRegex(glob) {
@@ -85,13 +92,12 @@ function globToRegex(glob) {
 function walk(dir, onFile) {
   const entries = readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
-    // `rg` is the reference here, because `rg` is what runs when it is
-    // installed; the fallback exists to reproduce its selection when it is
-    // not. It treats the two cases differently, verified directly:
+    // Hidden *directories* are pruned; dot-prefixed *files* are not:
     //   hidden directory  -> skipped   (src/.fixtures/x.test.ts is omitted)
     //   dot-prefixed file -> INCLUDED  (src/.smoke.test.ts is returned)
-    // because `-g/--glob` "always overrides any other ignore logic". Note
-    // node:fs glob excludes both, so it is the wrong oracle for dot-files.
+    // Inherited from the `rg` behaviour this module used to have to match, and
+    // kept on purpose so removing `rg` changes no selection. `node:fs` glob
+    // excludes both, which is one more reason it is not a drop-in here.
     if (entry.isDirectory() && entry.name.startsWith(".")) continue;
     const fullPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {
@@ -141,15 +147,24 @@ function hasHiddenSegment(target, cwd) {
   return toPosixPath(relativePath).split("/").some((segment) => segment.startsWith("."));
 }
 
-function listWithFallback(patterns, cwd) {
+/**
+ * Resolve `patterns` — literal files, directories and globs — to absolute test
+ * file paths.
+ *
+ * @param {string[]} patterns
+ * @param {string} [cwd]
+ * @returns {string[]}
+ */
+export function listTestFiles(patterns, cwd = process.cwd()) {
   const files = new Set();
   for (const pattern of patterns) {
     if (!pattern) continue;
     const absolute = resolve(cwd, pattern);
     if (!hasGlob(pattern)) {
-      // Base lookup guarded; the traversal is not, for the same reason as
-      // `listTestFiles` — a descendant vanishing mid-walk must not be read as
-      // "this path does not exist".
+      // Only the base lookup is guarded. Wrapping the traversal too would
+      // swallow an `ENOENT` raised *inside* `walk` — a descendant removed
+      // between `readdirSync` calls — and silently drop the directory's whole
+      // contribution.
       let stats;
       try {
         stats = statSync(absolute);
@@ -168,10 +183,11 @@ function listWithFallback(patterns, cwd) {
     }
 
     const baseDir = getBaseDir(pattern, cwd);
-    // `rg` prunes hidden directories before the glob is applied, so a pattern
-    // whose literal prefix descends into one matches nothing at all — verified
-    // with rg 15: `-g 'src/.fixtures/**/*.test.ts'` returns no files. `walk`
-    // starts *inside* the base, so the per-entry hidden check never sees it.
+    // A pattern whose literal prefix descends into a hidden directory matches
+    // nothing at all, which is what `walk`'s per-entry pruning means applied to
+    // the base itself — `walk` starts *inside* the base, so the per-entry check
+    // never sees it. Same as `rg -g 'src/.fixtures/**/*.test.ts'`, verified
+    // against rg 15.
     if (hasHiddenSegment(baseDir, cwd)) continue;
     // A glob whose base does not exist contributes nothing, the same as the
     // non-glob branch above. This is checked up front rather than by catching
@@ -193,59 +209,6 @@ function listWithFallback(patterns, cwd) {
       if (matcher.test(rel)) files.add(file);
     });
   }
-  return Array.from(files);
-}
-
-export function listTestFiles(patterns, cwd = process.cwd()) {
-  const files = new Set();
-  for (const pattern of patterns) {
-    if (!pattern) continue;
-    const absolute = resolve(cwd, pattern);
-
-    if (hasGlob(pattern)) {
-      const matches = runRg(["--files", "-g", pattern], cwd);
-      if (matches) {
-        for (const match of matches) files.add(resolve(cwd, match));
-      } else {
-        // No ripgrep (it is absent on the CI runners), so resolve the glob
-        // in-process. This fallback has to be per-pattern: the whole-result
-        // fallback at the end only fires when *nothing* matched, so a single
-        // explicit file listed next to a glob was enough to suppress it and
-        // drop the glob's entire contribution without a word.
-        for (const file of listWithFallback([pattern], cwd)) files.add(file);
-      }
-      continue;
-    }
-
-    // Only the base lookup is guarded. Wrapping the traversal too would
-    // re-swallow an `ENOENT` raised *inside* `walk` — a descendant removed
-    // between `readdirSync` calls — and silently drop the directory's whole
-    // contribution, which the glob branch above already avoids.
-    let stats;
-    try {
-      stats = statSync(absolute);
-    } catch (error) {
-      if (!isMissingPathError(error)) throw error;
-      continue;
-    }
-    if (stats.isFile()) {
-      if (TEST_FILE_RE.test(absolute)) files.add(absolute);
-      continue;
-    }
-    if (stats.isDirectory()) {
-      const matches = runRg(["--files", "-g", "*.test.*", absolute], cwd);
-      if (matches) {
-        for (const match of matches) files.add(resolve(cwd, match));
-      } else {
-        for (const file of listWithFallback([absolute], cwd)) files.add(file);
-      }
-    }
-  }
-
-  if (files.size === 0) {
-    return listWithFallback(patterns, cwd);
-  }
-
   return Array.from(files);
 }
 
