@@ -2783,6 +2783,225 @@ describe("push divergence guard", () => {
     }
   });
 
+  it("rejects a remote overwrite of an uploaded file before recording the final baseline", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/ok.ts`, "export const ok = 2;\n");
+        await runGit("add", "ok.ts");
+        await runGit("commit", "--quiet", "-m", "add second source file");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            "ok.ts": { digest: await computeContentDigest("export const ok = 1;\n") },
+          },
+        });
+
+        let fileListCalls = 0;
+        const putPaths: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: fileListCalls < 3
+                    ? "export const value = 1;\n"
+                    : "export const value = 3;\n",
+                  version_id: fileListCalls < 3
+                    ? "00000000-0000-4000-8000-000000000010"
+                    : "00000000-0000-4000-8000-000000000013",
+                },
+                {
+                  path: "ok.ts",
+                  content: fileListCalls < 3 ? "export const ok = 1;\n" : "export const ok = 2;\n",
+                  version_id: fileListCalls < 3
+                    ? "00000000-0000-4000-8000-000000000020"
+                    : "00000000-0000-4000-8000-000000000021",
+                },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putPaths.push(decodeURIComponent(url.pathname.split("/").at(-1) ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "Push rejected",
+        );
+
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"app.ts"');
+        assertEquals(fileListCalls, 3);
+        assertEquals(putPaths.sort(), ["app.ts", "ok.ts"]);
+        assertEquals(await readPushReceipt(projectDir), null);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": {
+                digest: await computeContentDigest("export const value = 1;\n"),
+                versionId: "00000000-0000-4000-8000-000000000010",
+              },
+              "ok.ts": { digest: await computeContentDigest("export const ok = 2;\n") },
+            },
+          },
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("rejects a remote recreation of a deleted file before recording the final baseline", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            "gone.ts": { digest: await computeContentDigest("export const gone = 1;\n") },
+            "old.ts": { digest: await computeContentDigest("export const old = 1;\n") },
+          },
+        });
+
+        let fileListCalls = 0;
+        const deletePaths: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: "export const value = 1;\n",
+                  version_id: "00000000-0000-4000-8000-000000000010",
+                },
+                ...(fileListCalls < 3
+                  ? [
+                    {
+                      path: "gone.ts",
+                      content: "export const gone = 1;\n",
+                      version_id: "00000000-0000-4000-8000-000000000020",
+                    },
+                    {
+                      path: "old.ts",
+                      content: "export const old = 1;\n",
+                      version_id: "00000000-0000-4000-8000-000000000030",
+                    },
+                  ]
+                  : [
+                    {
+                      path: "old.ts",
+                      content: "export const old = 2;\n",
+                      version_id: "00000000-0000-4000-8000-000000000031",
+                    },
+                  ]),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "DELETE") {
+            deletePaths.push(decodeURIComponent(url.pathname.split("/").at(-1) ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, prune: true, quiet: true }),
+          Error,
+          "Push rejected",
+        );
+
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"old.ts"');
+        assertEquals(fileListCalls, 3);
+        assertEquals(deletePaths.sort(), ["gone.ts", "old.ts"]);
+        assertEquals(await readPushReceipt(projectDir), null);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": {
+                digest: await computeContentDigest("export const value = 1;\n"),
+                versionId: "00000000-0000-4000-8000-000000000010",
+              },
+              "old.ts": {
+                digest: await computeContentDigest("export const old = 1;\n"),
+                versionId: "00000000-0000-4000-8000-000000000030",
+              },
+            },
+          },
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("lets --force intentionally overwrite without a precondition", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];

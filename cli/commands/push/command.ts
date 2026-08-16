@@ -703,6 +703,23 @@ function buildSyncFileDigestSnapshot(
   );
 }
 
+async function filterAppliedChangesStillMatchingRemote(
+  latestRemoteSnapshot: ReadonlyMap<string, { digest: string; versionId?: string }>,
+  appliedUploads: readonly UploadOp[],
+  appliedDeletes: readonly PlannedDelete[],
+): Promise<{ uploads: UploadOp[]; deletes: PlannedDelete[] }> {
+  const uploads: UploadOp[] = [];
+  for (const upload of appliedUploads) {
+    if (
+      latestRemoteSnapshot.get(upload.path)?.digest === await computeContentDigest(upload.content)
+    ) {
+      uploads.push(upload);
+    }
+  }
+  const deletes = appliedDeletes.filter((deletion) => !latestRemoteSnapshot.has(deletion.path));
+  return { uploads, deletes };
+}
+
 async function buildSyncFilesAfterAppliedChanges(
   remoteFiles: readonly RemoteFile[],
   appliedUploads: readonly UploadOp[],
@@ -1226,21 +1243,31 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             projectApiReference(config),
             target.source,
           );
+          const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
+            latestRemoteFiles,
+            ignoreChecker,
+            false,
+          );
           const conflicts = findRemoteSnapshotChanges(
             buildSyncFileDigestSnapshot(plan.nextFiles),
-            await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false),
+            latestRemoteSnapshot,
           );
           if (conflicts.length > 0) {
             const appliedUploads = new Set(uploadResult.applied);
             const appliedDeletes = new Set(deleteResult.applied);
+            const stillApplied = await filterAppliedChangesStillMatchingRemote(
+              latestRemoteSnapshot,
+              uploadOps.filter((op) => appliedUploads.has(op.path)),
+              deleteOps.filter((op) => appliedDeletes.has(op.path)),
+            );
             await writeAppliedSyncTarget(
               projectDir,
               config,
               project,
               branchName,
               managedRemoteFiles,
-              uploadOps.filter((op) => appliedUploads.has(op.path)),
-              deleteOps.filter((op) => appliedDeletes.has(op.path)),
+              stillApplied.uploads,
+              stillApplied.deletes,
             );
             throw pushConflictError(conflicts);
           }
