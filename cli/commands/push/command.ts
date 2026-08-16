@@ -33,7 +33,12 @@ import {
 } from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess } from "#cli/utils";
-import { INVALID_ARGUMENT, PREVIEW_HOSTNAME_TOO_LONG, PUSH_CONFLICT } from "veryfront/errors";
+import {
+  INVALID_ARGUMENT,
+  PREVIEW_HOSTNAME_TOO_LONG,
+  PUSH_CONFLICT,
+  VeryfrontError,
+} from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
@@ -871,19 +876,30 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             branchName,
           );
           const branchSource = { type: "branch", name: branchName } satisfies PullSource;
+          const branchRemoteFiles = await listAllFiles(
+            client,
+            projectApiReference(config),
+            branchSource,
+          );
+          if (preparedBranch.created) {
+            const conflicts = findRemoteSnapshotChanges(
+              await buildManagedRemoteSnapshot(mainFiles, ignoreChecker),
+              await buildManagedRemoteSnapshot(branchRemoteFiles, ignoreChecker),
+            );
+            if (conflicts.length > 0) {
+              throw pushConflictError(conflicts);
+            }
+          }
           target = {
             branchId: preparedBranch.id,
-            remoteFiles: await listAllFiles(
-              client,
-              projectApiReference(config),
-              branchSource,
-            ),
+            remoteFiles: branchRemoteFiles,
             source: branchSource,
             branchExists: true,
           };
           remoteFilesAreBaseline = preparedBranch.created;
         } catch (error) {
           spinner.stop();
+          if (error instanceof VeryfrontError) throw error;
           const message = error instanceof Error ? error.message : String(error);
           throw new Error(`Failed to prepare branch "${branchName}": ${message}`);
         }

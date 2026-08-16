@@ -96,7 +96,7 @@ export async function planPushChanges(
     }
 
     if (!remote) {
-      if (baseline) {
+      if (!options.remoteFilesAreBaseline && baseline) {
         conflicts.add(local.path);
         continue;
       }

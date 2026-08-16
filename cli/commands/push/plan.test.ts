@@ -127,6 +127,28 @@ describe("planPushChanges", () => {
     assertEquals(plan.conflicts, ["deleted.ts"]);
   });
 
+  it("ignores a stale absent-file baseline when a recreated branch snapshot is trusted", async () => {
+    const localDigest = await computeContentDigest("local\n");
+    const plan = await planPushChanges({
+      localFiles: [{ path: "deleted.ts", content: "local\n" }],
+      remoteFiles: [],
+      baselineFiles: {
+        "deleted.ts": { digest: await computeContentDigest("old branch\n"), versionId: VERSION_1 },
+      },
+      deletePaths: [],
+      force: false,
+      remoteFilesAreBaseline: true,
+    });
+
+    assertEquals(plan.uploads, [{
+      path: "deleted.ts",
+      content: "local\n",
+      expectedAbsent: true,
+    }]);
+    assertEquals(plan.conflicts, []);
+    assertEquals(plan.nextFiles, { "deleted.ts": { digest: localDigest } });
+  });
+
   it("protects deletes with the observed remote version", async () => {
     const digest = await computeContentDigest("before\n");
     const plan = await planPushChanges({
