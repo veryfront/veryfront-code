@@ -288,6 +288,25 @@ describe("ChatSidebar.Item.Title — composable row label", () => {
     );
   });
 
+  it("forwards native span props from the Title leaf", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            <ChatSidebar.Item.Title id="custom-title" data-title="" />
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assert(html.includes('id="custom-title"'), "Title forwards native span props");
+    assert(html.includes('data-title=""'), "Title forwards data attributes");
+  });
+
   it("keeps a composed Menu sibling in the action slot (no default duplicate)", () => {
     const html = renderToString(
       <ChatSidebar.Root
@@ -310,6 +329,36 @@ describe("ChatSidebar.Item.Title — composable row label", () => {
       "exactly one menu trigger renders — the composed Menu, not a second default",
     );
     assert(html.includes(">Row title<"), "the composed Title still renders the label");
+  });
+
+  it("partitions Title and Menu leaves grouped in a fragment", () => {
+    const html = renderToString(
+      <ChatSidebar.Root
+        conversations={[summary("x", "Row title", 5000)]}
+        activeId="x"
+        onSelect={() => {}}
+        onDelete={() => {}}
+      >
+        <ChatSidebar.List>
+          <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+            {React.createElement(
+              React.Fragment,
+              null,
+              <ChatSidebar.Item.Title />,
+              <span data-badge="">badge</span>,
+              <ChatSidebar.Item.Menu />,
+            )}
+          </ChatSidebar.Item>
+        </ChatSidebar.List>
+      </ChatSidebar.Root>,
+    );
+    assertEquals(
+      html.split("More actions for Row title").length - 1,
+      1,
+      "the fragment's Menu fills the action slot without a default duplicate",
+    );
+    assert(html.includes(">Row title<"), "the fragment's Title fills the row body");
+    assert(html.includes("data-badge"), "sibling fragments preserve other body content");
   });
 
   it("regression: a childless Item still renders the default title", () => {

@@ -279,7 +279,7 @@ const [ChatSidebarItemContext, useChatSidebarItemStrict] = createStrictContext<
 export const useChatSidebarItem = useChatSidebarItemStrict;
 
 /**
- * The row's label — the conversation title (or custom children). Use it inside
+ * The row's label: the conversation title (or custom children). Use it inside
  * an `<ChatSidebar.Item>` to compose the row body; its presence tells the item
  * to skip its default title.
  */
@@ -287,42 +287,37 @@ export function ChatSidebarItemTitle({
   children,
   className,
   ref,
+  ...props
 }: ChatSidebarItemTitleProps): React.ReactElement {
   const { conversation } = useChatSidebarItem();
   return (
-    <span ref={ref} className={cn("block truncate text-[13px] leading-snug", className)}>
+    <span
+      {...props}
+      ref={ref}
+      className={cn("block truncate text-[13px] leading-snug", className)}
+    >
       {children ?? conversation.title}
     </span>
   );
 }
 ChatSidebarItemTitle.displayName = "ChatSidebar.Item.Title";
 
-/**
- * Walks the element tree looking for a rendered `<ChatSidebar.Item.Title>`
- * (the slot-detection pattern `ui/field.tsx` ships for `findFieldParts`).
- * Presence decides whether the item renders its default title or hands the
- * row body to the children.
- */
-function hasTitleLeaf(children: React.ReactNode): boolean {
-  let found = false;
-  React.Children.forEach(children, (child) => {
-    if (found || !React.isValidElement(child)) return;
-    if (child.type === ChatSidebarItemTitle) {
-      found = true;
-      return;
-    }
+/** Flatten transparent fragments so slot detection and extraction see the same leaves. */
+function flattenItemParts(children: React.ReactNode): React.ReactNode[] {
+  return React.Children.toArray(children).flatMap((child) => {
+    if (!React.isValidElement(child) || child.type !== React.Fragment) return child;
     const props = child.props as { children?: React.ReactNode };
-    if (props?.children && hasTitleLeaf(props.children)) found = true;
+    return flattenItemParts(props.children);
   });
-  return found;
 }
 
 /**
  * A single conversation row — select on click, rename/delete via a "…" menu.
  * The menu is a composable compound: pass a `<ChatSidebar.Item.Menu>` child to
  * add or reorder entries without re-implementing the row. Children containing a
- * `<ChatSidebar.Item.Title>` compose the row's label body instead, while any
- * top-level `<ChatSidebar.Item.Menu>` sibling still fills the action slot.
+ * `<ChatSidebar.Item.Title>` compose the row's label body instead. A sibling
+ * `<ChatSidebar.Item.Menu>`, including one grouped in a fragment, fills the
+ * action slot.
  */
 export function ChatSidebarItem({
   conversation,
@@ -379,11 +374,12 @@ export function ChatSidebarItem({
 
   // A `<ChatSidebar.Item.Title>` child moves the children into the row body;
   // otherwise they compose the trailing action slot (the shipped behavior).
-  // Top-level `<ChatSidebar.Item.Menu>` siblings keep composing the action
-  // slot, so a Title + Menu row never nests the menu trigger inside the row's
-  // primary-action button.
-  const composesTitle = hasTitleLeaf(children);
-  const parts = composesTitle ? React.Children.toArray(children) : [];
+  // Fragments are transparent here so title detection and menu extraction use
+  // the same child level and never duplicate or nest the menu trigger.
+  const parts = flattenItemParts(children);
+  const composesTitle = parts.some(
+    (part) => React.isValidElement(part) && part.type === ChatSidebarItemTitle,
+  );
   const menuParts = parts.filter(
     (part) => React.isValidElement(part) && part.type === ChatSidebarItemMenu,
   );

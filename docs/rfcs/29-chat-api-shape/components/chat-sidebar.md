@@ -27,7 +27,7 @@ import { ChatSidebar, ChatSidebarItemTitle, type ChatSidebarItemTitleProps } fro
 - [`.List`](#chatsidebarlist---changed) - `changed`: `<div>` → `<ul>`; `renderItem` deleted
 - [`.Group`](#chatsidebargroup---kept) - `kept`
 - [`.Item`](#chatsidebaritem---changed) - `changed`: `<div>` → `<li>`; `children` replaces the whole row; `data-active` means selection
-- [`.Item.Title`](#chatsidebaritemtitle-_proposed---2977_---new) - `new`: the addressable title leaf - the export ships today; full row recomposition is still proposed (#2977)
+- [`.Item.Title`](#chatsidebaritemtitle-proposed---2977---new) - `new`: the addressable title leaf - the export ships today; full row recomposition is still proposed (#2977)
 - [`.Item.Menu`](#chatsidebaritemmenu---changed) - `changed`: trigger `icon` prop deleted - replaced by `.Item.Menu.Trigger`
 - [`.Item.Menu.Trigger`](#chatsidebaritemmenutrigger---new) - `new`: the addressable trigger button (the icon-slot replacement)
 - [`.Item.Rename`](#chatsidebaritemrename---changed) - `changed`: `icon` deleted
@@ -196,7 +196,7 @@ Per-row state computed today: `isActive = conversation.id === activeId`; the row
 
 ### `ChatSidebar.Item.Title` _(proposed - #2977)_ - `new`
 
-One `<span>`: the conversation's title, truncating. The export ships from `veryfront/chat` today: a `<ChatSidebar.Item.Title>` child moves the item's children into the row body, and a top-level `<ChatSidebar.Item.Menu>` sibling stays in the action slot. Default content: `conversation.title`. Still proposed under #2977: `children` replacing the whole row, and rename mode hosting the inline `<input>` inside `.Title` so row geometry stays stable.
+One `<span>`: the conversation's title, truncating. The export ships from `veryfront/chat` today: a `<ChatSidebar.Item.Title>` child moves the item's children into the row body, and a sibling `<ChatSidebar.Item.Menu>` stays in the action slot when it is direct or grouped in a fragment. Default content: `conversation.title`. Still proposed under #2977: `children` replacing the whole row, and rename mode hosting the inline `<input>` inside `.Title` so row geometry stays stable.
 
 **Layout:** in-flow text span; give its wrapper `min-w-0`/`flex-1` (or class the span `truncate`) for ellipsis.
 

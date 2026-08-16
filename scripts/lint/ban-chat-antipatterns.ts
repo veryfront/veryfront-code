@@ -107,7 +107,7 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   "src/react/components/chat/chat/composition/message.tsx": 793,
   // Includes the ChatSidebar.Item compound (Item.Title/.Menu/.Rename/.Delete).
   // Split responsibilities before adding more behavior to this file.
-  "src/react/components/chat/chat/components/sidebar.tsx": 689,
+  "src/react/components/chat/chat/components/sidebar.tsx": 685,
   // Composer state and native action leaves live in focused sibling modules.
   "src/react/components/chat/chat/composition/chat-composer.tsx": 389,
   "src/react/components/chat/chat/composition/chat-input-actions.tsx": 159,

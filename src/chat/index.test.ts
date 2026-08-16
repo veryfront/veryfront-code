@@ -9,7 +9,7 @@ import type {
   UseConversationChatOptions as ComponentsChatOptions,
   UseConversationChatResult as ComponentsChatResult,
 } from "veryfront/components/chat";
-import type { ConversationStorageLimits } from "./index.ts";
+import type { ChatSidebarItemTitleProps, ConversationStorageLimits } from "./index.ts";
 import type {
   UseConversationChatOptions as ReactComponentsChatOptions,
   UseConversationChatResult as ReactComponentsChatResult,
@@ -28,9 +28,11 @@ const _reactComponentsChatOptions: ReactComponentsChatOptions = _componentsChatO
 const _componentsChatResult = null as unknown as ComponentsChatResult;
 const _reactComponentsChatResult: ReactComponentsChatResult = _componentsChatResult;
 const _storageLimits: ConversationStorageLimits = chatModule.CONVERSATION_STORAGE_LIMITS;
+const _sidebarTitleProps: ChatSidebarItemTitleProps = { id: "conversation-title" };
 void _reactComponentsChatOptions;
 void _reactComponentsChatResult;
 void _storageLimits;
+void _sidebarTitleProps;
 
 const expectedRuntimeExports = [
   // Canonical component names.

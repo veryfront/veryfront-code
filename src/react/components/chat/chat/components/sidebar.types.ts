@@ -94,9 +94,10 @@ export interface ChatSidebarItemProps {
   /**
    * Compose the row's action slot, typically a `<ChatSidebar.Item.Menu>`.
    * When the children include a `<ChatSidebar.Item.Title>`, they compose the
-   * row's label body instead; a top-level `<ChatSidebar.Item.Menu>` sibling
-   * still fills the action slot (the default `…` menu is used when none is
-   * given). Omit for the default title + `…` rename/delete menu.
+   * row's label body instead; a sibling `<ChatSidebar.Item.Menu>` still fills
+   * the action slot when it is direct or grouped in a fragment (the default
+   * `…` menu is used when none is given). Omit for the default title + `…`
+   * rename/delete menu.
    */
   children?: React.ReactNode;
   /** React 19: ref is attached to the current row root in display and rename modes. */
@@ -104,10 +105,9 @@ export interface ChatSidebarItemProps {
 }
 
 /** Props for {@link ChatSidebarItemTitle}. */
-export interface ChatSidebarItemTitleProps {
+export interface ChatSidebarItemTitleProps extends React.HTMLAttributes<HTMLSpanElement> {
   /** Override the label. Defaults to the conversation title. */
   children?: React.ReactNode;
-  className?: string;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLSpanElement>;
 }
