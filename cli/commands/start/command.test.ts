@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { readTextFile } from "veryfront/platform";
 import { saveToken } from "../../auth/token-store.ts";
 import {
   hasProxyCredentials,
@@ -206,7 +205,7 @@ describe("commands/start/command", () => {
 
   describe("production MCP boundary", () => {
     it("does not start the CLI MCP server from production start", async () => {
-      const source = await readTextFile("cli/commands/start/command.ts");
+      const source = await Deno.readTextFile(new URL("./command.ts", import.meta.url));
 
       assertEquals(source.includes("../../mcp"), false);
       assertEquals(source.includes("createMCPServer"), false);
