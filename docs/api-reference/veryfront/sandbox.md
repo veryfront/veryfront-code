@@ -179,9 +179,9 @@ Streaming event emitted during command execution.
 | `createAgentServiceSandboxClient`      | Create agent service sandbox client.            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L93)  |
 | `createAgentServiceSandboxTools`       | Create agent service sandbox tools.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L146) |
 | `createProjectScopedExecOptions`       | Options accepted by create project scoped exec. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L61)  |
-| `createSandboxShellTools`              | Create sandbox shell tools.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L231)         |
-| `normalizeBashToolSet`                 | Normalizes bash tool set.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L186)         |
-| `renameSandboxFileTools`               | Rename sandbox file tools.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L195)         |
+| `createSandboxShellTools`              | Create sandbox shell tools.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L242)         |
+| `normalizeBashToolSet`                 | Normalizes bash tool set.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L197)         |
+| `renameSandboxFileTools`               | Rename sandbox file tools.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/shell-tools.ts#L206)         |
 | `resolveDefaultSandboxRuntimeEndpoint` | Resolves default sandbox runtime endpoint.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/lazy-sandbox.ts#L79)         |
 | `unwrapSandboxWorkingDirectoryCommand` | Unwrap sandbox working directory command.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L51)  |
 

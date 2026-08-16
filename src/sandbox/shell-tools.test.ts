@@ -7,6 +7,7 @@ import {
   normalizeBashToolSet,
   renameSandboxFileTools,
 } from "./shell-tools.ts";
+import { createToolsFromHostDefinitions } from "#veryfront/tool/host-tools.ts";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 
 describe("sandbox/shell-tools", () => {
@@ -183,6 +184,40 @@ describe("sandbox/shell-tools", () => {
       properties: {},
       additionalProperties: true,
     });
+  });
+
+  it("materializes parser schemas with methods named like JSON Schema keywords", () => {
+    class ExternalParserSchema {
+      default = () => this;
+
+      parse(input: unknown) {
+        return input;
+      }
+    }
+
+    const createExternalTool = () => ({
+      description: "Use a sandbox tool",
+      inputSchema: new ExternalParserSchema(),
+      execute: () => ({ ok: true }),
+    });
+    const normalized = renameSandboxFileTools(
+      normalizeBashToolSet({
+        bash: createExternalTool(),
+        readFile: createExternalTool(),
+        writeFile: createExternalTool(),
+      }),
+    );
+
+    assertEquals(normalized.bash?.inputSchemaJson, {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    });
+    assertEquals(Object.keys(createToolsFromHostDefinitions(normalized)), [
+      "bash",
+      "sandbox_read_file",
+      "sandbox_write_file",
+    ]);
   });
 
   it("handles invalid definitions gracefully", () => {
