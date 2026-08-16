@@ -26,6 +26,7 @@ import type { Source } from "../components/sources.tsx";
 import type { BranchInfo } from "#veryfront/agent/react";
 import { ChatContextProvider } from "../contexts/chat-context.tsx";
 import type { ChatContextValue } from "../contexts/chat-context.tsx";
+import { attachmentsToFileParts, hasPendingAttachments } from "../chat-attachments.ts";
 
 /**
  * Props accepted by chat root.
@@ -146,7 +147,23 @@ export function ChatRoot(
   const error = errorProp !== undefined ? errorProp : (chat?.error ?? null);
   const input = inputProp ?? chat?.input ?? "";
   const setInput = setInputProp ?? chat?.setInput;
-  const onSubmit = onSubmitProp ?? chat?.handleSubmit;
+  const submitSession = React.useCallback((e?: React.FormEvent) => {
+    if (!chat) return;
+    if (hasPendingAttachments(attachments)) {
+      e?.preventDefault();
+      return;
+    }
+    const files = attachmentsToFileParts(attachments);
+    if (files.length === 0) return chat.handleSubmit(e);
+
+    e?.preventDefault();
+    chat.setInput("");
+    for (const attachment of attachments) {
+      if (attachment.url) onRemoveAttachment?.(attachment.id);
+    }
+    return chat.sendMessage({ text: input.trim(), files });
+  }, [attachments, chat, input, onRemoveAttachment]);
+  const onSubmit = onSubmitProp ?? (chat ? submitSession : undefined);
   const onStop = onStopProp ?? chat?.stop;
   const onReload = onReloadProp ?? chat?.reload;
   const model = modelProp ?? chat?.model;

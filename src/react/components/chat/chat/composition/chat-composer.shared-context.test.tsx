@@ -139,6 +139,71 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
     }
   });
 
+  it("submits context attachments through the shared session", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let submitted: Parameters<UseChatResult["sendMessage"]>[0] | undefined;
+    let textOnlySubmits = 0;
+    const chat = makeChat({
+      sendMessage: (message) => {
+        submitted = message;
+        return Promise.resolve();
+      },
+      handleSubmit: () => {
+        textOnlySubmits += 1;
+        return Promise.resolve();
+      },
+    });
+    let root: Root | undefined;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const createdRoot = createRoot(rootElement);
+      root = createdRoot;
+      flushSync(() => {
+        createdRoot.render(
+          <Chat.Root
+            chat={chat}
+            attachments={[{
+              id: "att-1",
+              name: "notes.pdf",
+              state: "uploaded",
+              type: "application/pdf",
+              url: "https://example.com/notes.pdf",
+            }]}
+          >
+            <ChatInput.Root>
+              <ChatInput.Field />
+              <ChatInput.Submit />
+            </ChatInput.Root>
+          </Chat.Root>,
+        );
+      });
+
+      const sendButton = document.querySelector<HTMLButtonElement>('button[aria-label="Send"]');
+      assert(sendButton, "Expected an attachment-only send control to render");
+      flushSync(() => sendButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+      assertEquals(textOnlySubmits, 0, "attachment submission must bypass text-only handleSubmit");
+      assertEquals(submitted, {
+        text: "",
+        files: [{
+          type: "file",
+          mediaType: "application/pdf",
+          url: "https://example.com/notes.pdf",
+          filename: "notes.pdf",
+        }],
+      });
+    } finally {
+      if (root) await unmountReactRoot(root);
+      restore();
+    }
+  });
+
   it("explicit ChatInput.Root props win over the surrounding context values", async () => {
     const html = renderToString(
       <Chat.Root chat={makeChat({ input: "context value" })}>
