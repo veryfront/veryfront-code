@@ -159,7 +159,14 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
   // contains the project.
   const adapter = await runtime.get();
   const config = await getConfig(projectDir, adapter);
-  const finalOutput = resolveBuildOutputDir(projectDir, outputDir, config);
+  // `clearsOutputDir: false` because `buildEmbeddedPreset` only mkdir's and
+  // writes into the target; unlike the production build it never removes it.
+  // Without this, `--preset embedded -o .` — a plausible call for a preset
+  // whose whole purpose is embedding into a host project — hard-fails on a
+  // deletion hazard that does not exist on this path.
+  const finalOutput = resolveBuildOutputDir(projectDir, outputDir, config, {
+    clearsOutputDir: false,
+  });
 
   cliLogger.info("Building embedded preset...");
   if (isVerbose()) {
