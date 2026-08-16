@@ -593,8 +593,16 @@ describe("transforms/esm/specifier-resolver", () => {
     });
 
     it("leaves configured server external packages out of the HTTP cache graph", async () => {
-      for (const specifier of ["knex", "npm:knex@3.1.0", "@prisma/client/runtime/library"]) {
-        const code = `export const load = () => import(${JSON.stringify(specifier)});`;
+      const cases = [
+        ["knex", 'export const load = () => import("knex");'],
+        ["npm:knex@3.1.0", 'export const load = () => import("npm:knex@3.1.0");'],
+        [
+          "@prisma/client/runtime/library",
+          'export const load = () => import("@prisma/client/runtime/library");',
+        ],
+      ] as const;
+
+      for (const [specifier, code] of cases) {
         let cacheCalls = 0;
         const result = await buildReplacements(
           code,
