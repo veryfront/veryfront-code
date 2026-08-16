@@ -95,7 +95,11 @@ export type StaticDataResult<T = unknown> =
   & InferSchema<
     ReturnType<typeof getStaticDataResultSchema>
   >
-  & { props?: T };
+  & {
+    props?: T;
+    headers?: never;
+    cookies?: never;
+  };
 export type StaticPathEntry = InferSchema<ReturnType<typeof getStaticPathEntrySchema>>;
 /** Return type for `getStaticPaths()`. */
 export type StaticPathsResult = InferSchema<ReturnType<typeof getStaticPathsResultSchema>>;

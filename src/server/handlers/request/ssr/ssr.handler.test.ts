@@ -1,8 +1,15 @@
 import { RENDER_ERROR } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
+import * as React from "react";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSRHandler } from "./ssr.handler.ts";
+import { __setComponentSourceLoaderForTests } from "./error-page-fallback.ts";
+import {
+  __injectProjectReactForTests,
+  __injectReactDOMServerForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
@@ -667,6 +674,73 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
 
       assertEquals(result.continue, false);
       assertEquals(result.response!.status, 500);
+    });
+
+    it("preserves response metadata on a custom server-error page", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.stat = (path: string) => {
+        if (path.endsWith("/pages")) {
+          return Promise.resolve({
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+            size: 0,
+            mtime: null,
+          });
+        }
+        if (path.endsWith("/pages/500.tsx")) {
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            size: 1,
+            mtime: null,
+          });
+        }
+        return Promise.reject(new Error("not found"));
+      };
+      adapter.fs.readFile = () => Promise.resolve("export default function ErrorPage() {}");
+      __setComponentSourceLoaderForTests(() => Promise.resolve(() => null));
+      __injectProjectReactForTests(React);
+      __injectReactDOMServerForTests({
+        renderToString: () => "",
+        renderToStaticMarkup: () => "",
+      });
+      try {
+        const mockService = createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 500,
+              html: "<html>dev overlay</html>",
+              isStreaming: false,
+              cacheStrategy: "no-cache" as const,
+              failure: {
+                kind: "server-error" as const,
+                exposure: "generic" as const,
+                error: new Error("Oops"),
+              },
+              headers: { "x-error-state": "reported" },
+              cookies: [{ name: "error-seen", value: "1", path: "/" }],
+              slug: "page",
+            }),
+        });
+        const handler = new SSRHandler(mockService);
+        const result = await handler.handle(
+          new Request("http://localhost/page"),
+          makeCtx({
+            adapter,
+            isLocalProject: true,
+            projectId: "metadata-error-page",
+          }),
+        );
+
+        assertEquals(result.response!.status, 500);
+        assertEquals(result.response!.headers.get("x-error-state"), "reported");
+        assertStringIncludes(result.response!.headers.get("set-cookie") ?? "", "error-seen=1");
+      } finally {
+        __setComponentSourceLoaderForTests(null);
+        resetReactCache();
+      }
     });
 
     it("returns runtime error type with dev overlay content", async () => {

@@ -358,6 +358,9 @@ export class ContextAwareCacheCoordinator {
     if (result.pageModule) {
       cloned.pageModule = { ...result.pageModule };
     }
+    if (result.headers) {
+      cloned.headers = { ...result.headers };
+    }
 
     return cloned;
   }

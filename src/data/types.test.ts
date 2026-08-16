@@ -123,6 +123,20 @@ describe("types.ts", () => {
       assertExists(pageModule.getStaticData);
     });
 
+    it("should reject response metadata from getStaticData", () => {
+      const metadataResult: DataResult = {
+        props: { data: "static" },
+        headers: { "x-page-state": "stale" },
+      };
+      const pageModule: PageWithData = {
+        default: () => null,
+        // @ts-expect-error Static data cannot carry request-specific response metadata.
+        getStaticData: () => metadataResult,
+      };
+
+      assertExists(pageModule.getStaticData);
+    });
+
     it("should support getStaticPaths", () => {
       const pageModule: PageWithData = {
         default: () => null,

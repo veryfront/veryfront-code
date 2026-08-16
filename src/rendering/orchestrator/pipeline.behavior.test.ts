@@ -27,7 +27,7 @@ import {
   globalModuleCache,
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
-import { resolveSSRControlOutcome } from "../ssr-outcome.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 

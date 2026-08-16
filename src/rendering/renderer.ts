@@ -153,6 +153,8 @@ interface CachedRenderData {
   headings?: RenderResult["headings"];
   ssrHash?: string;
   pageModule?: RenderResult["pageModule"];
+  headers?: RenderResult["headers"];
+  cookies?: RenderResult["cookies"];
 }
 
 function createCacheRenderNonce(): string {
@@ -866,6 +868,8 @@ export class Renderer {
       headings: cachedData.headings,
       ssrHash: cachedData.ssrHash,
       pageModule: cachedData.pageModule,
+      ...(cachedData.headers ? { headers: cachedData.headers } : {}),
+      ...(cachedData.cookies ? { cookies: cachedData.cookies } : {}),
       stream: null,
     };
   }
@@ -966,7 +970,7 @@ export class Renderer {
         },
       );
 
-      if (cacheKey !== null) {
+      if (cacheKey !== null && !result.cookies?.length) {
         await this.cache.persistResult(
           result,
           slug,
@@ -996,6 +1000,8 @@ export class Renderer {
         headings: result.headings,
         ssrHash: result.ssrHash,
         pageModule: result.pageModule,
+        ...(result.headers ? { headers: result.headers } : {}),
+        ...(result.cookies ? { cookies: result.cookies } : {}),
       };
     } finally {
       if (globalAcquired) renderSemaphore.release();

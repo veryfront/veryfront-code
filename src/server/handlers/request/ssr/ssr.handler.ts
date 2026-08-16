@@ -427,7 +427,9 @@ export class SSRHandler extends BaseHandler {
       pathname: result.slug || "/",
     }, dependencySnapshot);
 
-    return customResponse ? this.respond(customResponse) : null;
+    if (!customResponse) return null;
+    appendDataResponseMetadata(customResponse.headers, result);
+    return this.respond(customResponse);
   }
 
   private async buildResponse(

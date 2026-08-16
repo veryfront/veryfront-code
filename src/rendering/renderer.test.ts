@@ -273,6 +273,80 @@ describe("Renderer helpers", () => {
   });
 });
 
+describe("Renderer response metadata", () => {
+  it("preserves headers and cookies without caching a cookie response", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () =>
+          Promise.resolve({
+            html: "<html>metadata</html>",
+            frontmatter: {},
+            stream: null,
+            headers: { "x-page-state": "fresh" },
+            cookies: [{ name: "session", value: "abc", path: "/" }],
+          }),
+      },
+    });
+
+    const result = await renderer.renderPage("/metadata", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    });
+
+    assertEquals(result.headers, { "x-page-state": "fresh" });
+    assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("preserves response headers through render cache hits", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            html: "<html>cached metadata</html>",
+            frontmatter: {},
+            stream: null,
+            headers: { "x-page-state": "cacheable" },
+          });
+        },
+      },
+    });
+    const options = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+
+    const first = await renderer.renderPage("/cached-metadata", makeRenderContext(), options);
+    const second = await renderer.renderPage("/cached-metadata", makeRenderContext(), options);
+
+    assertEquals(first.headers, { "x-page-state": "cacheable" });
+    assertEquals(second.headers, { "x-page-state": "cacheable" });
+    assertEquals(renderCalls, 1);
+  });
+});
+
 describe("Renderer release asset cache isolation", () => {
   const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
 
