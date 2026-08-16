@@ -106,6 +106,14 @@ describe("generate-api-reference", () => {
     assertEquals(parsed.remarks, "The example remains intact.");
   });
 
+  it("uses a safe Markdown code span for linked labels containing backticks", () => {
+    const parsed = parseBarrelJSDoc(
+      "/**\n * Uses {@link Example|C:\\path`name}.\n */",
+    );
+
+    assertEquals(parsed.description, "Uses ``C:\\path`name``.");
+  });
+
   it("removes check output when generation fails", async () => {
     const sandboxRoot = await Deno.makeTempDir();
     const emptyRoot = `${sandboxRoot}/cwd`;

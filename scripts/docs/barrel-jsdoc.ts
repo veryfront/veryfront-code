@@ -109,7 +109,15 @@ export function normalizePublicDocText(text: string): string {
       const display = pipeIndex >= 0
         ? target.slice(pipeIndex + 1).trim()
         : target.match(/^\S+\s+(.+)$/)?.[1]?.trim() || target;
-      return `\`${display.replace(/`/g, "\\`")}\``;
+      const longestBacktickRun = Math.max(
+        0,
+        ...(display.match(/`+/g) ?? []).map((run) => run.length),
+      );
+      const delimiter = "`".repeat(longestBacktickRun + 1);
+      const needsPadding = display.startsWith("`") || display.endsWith("`");
+      return `${delimiter}${
+        needsPadding ? ` ${display} ` : display
+      }${delimiter}`;
     },
   );
 
