@@ -4,12 +4,7 @@ import {
   invokeGlobalErrorHandler,
   normalizeGlobalError,
 } from "./global-error.ts";
-import { type RuntimeProcess, runtimeProcess } from "./runtime-process.ts";
-
-type HostRequire = (specifier: string) => unknown;
-
-// Bun exposes this lexical binding in ESM without installing it on globalThis.
-declare const require: HostRequire | undefined;
+import { runtimeProcess } from "./runtime-process.ts";
 
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
@@ -80,18 +75,20 @@ export function memoryUsage(): {
  * (`node:v8` `getHeapStatistics().heap_size_limit`).
  *
  * Unlike env strings such as `DENO_V8_FLAGS`, this reflects the limit V8 is
- * actually enforcing. Returns `undefined` when the runtime does not expose
- * V8 heap statistics (e.g. browser bundles).
+ * actually enforcing. Returns `undefined` when the runtime does not expose a
+ * fixed V8 heap limit. Bun's `node:v8` compatibility value is process-derived
+ * and changes as peak memory grows, so it is intentionally not accepted.
  */
 export function getV8HeapSizeLimit(): number | undefined {
+  if (IS_BUN) return undefined;
+
   try {
     const proc = runtimeProcess as
-      | (RuntimeProcess & { getBuiltinModule?: (id: string) => unknown })
+      | { getBuiltinModule?: (id: string) => unknown }
       | null;
-    const v8 = (proc?.getBuiltinModule?.("node:v8") ??
-      (IS_BUN && typeof require === "function" ? require("node:v8") : undefined)) as
-        | { getHeapStatistics?: () => { heap_size_limit?: number } }
-        | undefined;
+    const v8 = proc?.getBuiltinModule?.("node:v8") as
+      | { getHeapStatistics?: () => { heap_size_limit?: number } }
+      | undefined;
     const limit = v8?.getHeapStatistics?.().heap_size_limit;
     return typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : undefined;
   } catch (_) {

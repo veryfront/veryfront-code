@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import { withEnv } from "#veryfront/testing";
 import {
   checkMemoryPressure,
@@ -102,6 +103,7 @@ describe("memory/profiler", () => {
 
   describe("heap limit honesty", () => {
     it("reports the runtime heap limit, not the DENO_V8_FLAGS env string", async () => {
+      if (isBun) return;
       const { getHeapStatistics } = await import("node:v8");
       const runtimeLimitMB = getHeapStatistics().heap_size_limit / (1024 * 1024);
 
@@ -121,10 +123,23 @@ describe("memory/profiler", () => {
         configuredHeapLimitMB: 4096,
       });
 
-      assert(
-        effective <= 2048,
-        `an unverified 4096MB env limit must be clamped to the 2048MB V8 default (got ${effective})`,
+      assertEquals(
+        effective,
+        2048,
+        "an unverified 4096MB env limit must resolve to the 2048MB V8 default",
       );
+    });
+
+    it("uses the conservative fallback instead of Bun's moving node:v8 shim value", async () => {
+      if (!isBun) return;
+
+      await withEnv({ DENO_V8_FLAGS: "--max-old-space-size=999999" }, () => {
+        assertEquals(
+          getHeapStats().heapSizeLimitMB,
+          2048,
+          "Bun must not use its process-derived node:v8 compatibility value as a heap ceiling",
+        );
+      });
     });
 
     it("reports over-threshold pressure at ~1.6GB used when a 4096MB flag is unverified", () => {
