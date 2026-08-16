@@ -38,21 +38,31 @@ function globToRegex(glob) {
     if (char === "*") {
       const next = glob[i + 1];
       if (next === "*") {
-        // `**` crosses directory boundaries. Written as its own segment
-        // (`src/**/*.test.ts`) it must also match *zero* segments, so
-        // `src/a.test.ts` is selected — this is what both ripgrep and
-        // node:fs `globSync` do. Translating it to `.*` alone requires a
-        // trailing separator and silently drops every depth-1 match.
-        if (glob[i + 2] === "/") {
+        // `**` only crosses directory boundaries when it is a *complete*
+        // path segment. Both ripgrep and node:fs `globSync` agree:
+        //   src/**/*.test.ts  -> src/a.test.ts AND src/nested/b.test.ts
+        //   src/**.test.ts    -> src/a.test.ts only (segment-scoped)
+        //   src/foo**/*.test.ts -> src/foo/a.test.ts only, NOT src/foo.test.ts
+        // So the globstar translation is gated on both boundaries, and a
+        // `**` glued to other characters degrades to a single `*`.
+        const atSegmentStart = i === 0 || glob[i - 1] === "/";
+        const after = glob[i + 2];
+        if (atSegmentStart && after === "/") {
+          // Matches zero or more segments, so the depth-1 case is included.
           re += "(?:.*\\/)?";
           i += 2;
-        } else {
+          continue;
+        }
+        if (atSegmentStart && after === undefined) {
           re += ".*";
           i += 1;
+          continue;
         }
-      } else {
         re += "[^/]*";
+        i += 1;
+        continue;
       }
+      re += "[^/]*";
       continue;
     }
     if (char === "?") {
@@ -116,17 +126,24 @@ function listWithFallback(patterns, cwd) {
     }
 
     const baseDir = getBaseDir(pattern, cwd);
-    const matcher = globToRegex(toPosixPath(pattern));
+    // A glob whose base does not exist contributes nothing, the same as the
+    // non-glob branch above. This is checked up front rather than by catching
+    // around the walk: a failure *inside* the traversal (an unreadable
+    // subdirectory, a file removed mid-walk) would otherwise be swallowed
+    // after `walk` had already accumulated part of the tree, and the runner
+    // would execute a partial selection and report success — which is the
+    // exact silent-omission failure this module is being fixed for. Those
+    // errors propagate.
     try {
-      walk(baseDir, (file) => {
-        const rel = toPosixPath(file.startsWith(cwd) ? file.slice(cwd.length + 1) : file);
-        if (matcher.test(rel)) files.add(file);
-      });
+      if (!statSync(baseDir).isDirectory()) continue;
     } catch {
-      // A glob whose base directory does not exist contributes nothing, the
-      // same as the non-glob branch above. Left unguarded this throws out of
-      // the runner entirely instead of yielding an empty selection.
+      continue;
     }
+    const matcher = globToRegex(toPosixPath(pattern));
+    walk(baseDir, (file) => {
+      const rel = toPosixPath(file.startsWith(cwd) ? file.slice(cwd.length + 1) : file);
+      if (matcher.test(rel)) files.add(file);
+    });
   }
   return Array.from(files);
 }

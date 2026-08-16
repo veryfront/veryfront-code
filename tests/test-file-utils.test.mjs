@@ -1,6 +1,14 @@
 import { deepStrictEqual, ok } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { globSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  globSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,6 +64,18 @@ function listTestFilesWithoutRipgrep(patterns, cwd) {
 function relativeSorted(files, root) {
   return files
     .map((file) => resolve(file).slice(resolve(root).length + 1).split(sep).join("/"))
+    .sort();
+}
+
+/**
+ * `globSync` yields directory entries as well as files (`src/**` includes
+ * `src/foo`), while `listTestFiles` only ever returns files. Compare like with
+ * like so the reference stays meaningful for directory-matching patterns.
+ */
+function globFilesSorted(pattern, root) {
+  return globSync(pattern, { cwd: root })
+    .filter((entry) => statSync(join(root, entry)).isFile())
+    .map((entry) => entry.split(sep).join("/"))
     .sort();
 }
 
@@ -122,6 +142,85 @@ describe("listTestFiles without ripgrep", () => {
   });
 });
 
+function createGlobstarFixture() {
+  const root = mkdtempSync(join(tmpdir(), "vf-test-file-utils-globstar-"));
+  fixtures.push(root);
+  for (
+    const relative of [
+      "src/b.test.ts",
+      "src/foo.test.ts",
+      "src/foo/a.test.ts",
+      "src/foo/deep/d.test.ts",
+    ]
+  ) {
+    const absolute = join(root, relative);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, "// fixture\n");
+  }
+  return root;
+}
+
+describe("listTestFiles treats ** as a globstar only as a complete segment", () => {
+  // Raised in review on #3780. `**` glued to other characters is segment-scoped
+  // in both ripgrep and node:fs glob, so the zero-segment translation must be
+  // gated on both boundaries or `src/foo**/` wrongly selects `src/foo.test.ts`.
+  for (
+    const pattern of [
+      "src/foo**/*.test.ts",
+      "src/**.test.ts",
+      "src/**/*.test.ts",
+      "src/**",
+      "**/*.test.ts",
+      "src/foo/**/*.test.ts",
+    ]
+  ) {
+    it(`resolves ${pattern} the way node:fs glob does`, () => {
+      const root = createGlobstarFixture();
+      const expected = globFilesSorted(pattern, root);
+      deepStrictEqual(relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root), expected);
+    });
+  }
+});
+
+describe("listTestFiles does not hide a failed traversal", () => {
+  // Raised in review on #3780. Catching around the whole walk swallowed errors
+  // raised *during* traversal after files had already been collected, so the
+  // runner could execute a partial selection and report success — the same
+  // silent-omission failure this module is being fixed for.
+  it("propagates an unreadable subdirectory instead of returning a partial set", function () {
+    if (typeof process.getuid === "function" && process.getuid() === 0) {
+      // root ignores the mode bits, so the error cannot be provoked.
+      return;
+    }
+    const root = createFixture();
+    const blocked = join(root, "src", "blocked");
+    mkdirSync(blocked, { recursive: true });
+    writeFileSync(join(blocked, "hidden.test.ts"), "// fixture\n");
+    chmodSync(blocked, 0o000);
+    try {
+      const result = spawnSync(process.execPath, [
+        "--input-type=module",
+        "-e",
+        `
+        const { listTestFiles } = await import(${JSON.stringify(utilsUrl)});
+        const files = listTestFiles(["src/**/*.test.ts"], ${JSON.stringify(root)});
+        process.stdout.write(JSON.stringify(files));
+      `,
+      ], { encoding: "utf8", env: { ...process.env, PATH: "" } });
+      ok(
+        result.status !== 0,
+        `expected a non-zero exit, got ${result.status} with stdout: ${result.stdout}`,
+      );
+      ok(
+        /EACCES|EPERM/.test(result.stderr),
+        `expected a permission error to surface, got: ${result.stderr}`,
+      );
+    } finally {
+      chmodSync(blocked, 0o755);
+    }
+  });
+});
+
 describe("listTestFiles agrees with the platform glob", () => {
   // `node:fs` globSync is the reference implementation here: ripgrep's `-g`
   // returns the same set for these patterns, and pinning against a built-in
@@ -137,9 +236,7 @@ describe("listTestFiles agrees with the platform glob", () => {
   ) {
     it(`resolves ${pattern} the way node:fs glob does`, () => {
       const root = createFixture();
-      const expected = globSync(pattern, { cwd: root })
-        .map((file) => file.split(sep).join("/"))
-        .sort();
+      const expected = globFilesSorted(pattern, root);
       deepStrictEqual(relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root), expected);
     });
   }
