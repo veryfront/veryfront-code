@@ -166,6 +166,54 @@ describe("agent/conversation-run-chunk-mirror", () => {
     mirror.dispose();
   });
 
+  it("preserves timing across custom external event preparation", async () => {
+    const queueController = createQueueController();
+    let now = 100;
+    let epoch = 1_000;
+    const callbackInputTiming: Array<{ elapsedMs?: number; emittedAt?: number }> = [];
+    const encoder = new ConversationRunEventEncoder({
+      nowMs: () => now,
+      epochMs: () => epoch,
+    });
+    const mirror = createConversationRunChunkMirror({
+      queueController,
+      encoder,
+      immediateFlushEventCount: 99,
+      flushDelayMs: 10_000,
+      prepareExternalEvents: ({ events }) => {
+        callbackInputTiming.push(...events.map((event) => {
+          const timed = event as { elapsedMs?: number; emittedAt?: number };
+          return { elapsedMs: timed.elapsedMs, emittedAt: timed.emittedAt };
+        }));
+        now = 160;
+        epoch = 2_000;
+        return [
+          ...events,
+          { type: "CONTEXT_COMPACTION", compactedMessageCount: 1 } as never,
+        ];
+      },
+    });
+    now = 142;
+    epoch = 1_042;
+
+    await mirror.appendEvents([
+      { type: "TOOL_EXPOSURE_CHECKPOINT" } as never,
+    ]);
+
+    assertEquals(callbackInputTiming, [{ elapsedMs: 42, emittedAt: 1_042 }]);
+    assertEquals(
+      queueController.enqueued.map((event) => {
+        const timed = event as { elapsedMs?: number; emittedAt?: number };
+        return { elapsedMs: timed.elapsedMs, emittedAt: timed.emittedAt };
+      }),
+      [
+        { elapsedMs: 42, emittedAt: 1_042 },
+        { elapsedMs: 60, emittedAt: 2_000 },
+      ],
+    );
+    mirror.dispose();
+  });
+
   it("allows hosts to wrap chunk and external event preparation", async () => {
     const queueController = createQueueController();
     const preparedMarkers: string[] = [];

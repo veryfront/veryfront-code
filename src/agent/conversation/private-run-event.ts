@@ -70,7 +70,8 @@ function isRequest(value: unknown): boolean {
   const effort = ownDataValue(reasoning, "effort");
   const budget = ownDataValue(reasoning, "budgetTokens");
   return (enabled === undefined || typeof enabled === "boolean") &&
-    (effort === undefined || ["low", "medium", "high", "max"].includes(String(effort))) &&
+    (effort === undefined ||
+      (typeof effort === "string" && ["low", "medium", "high", "max"].includes(effort))) &&
     (budget === undefined || (Number.isInteger(budget) && (budget as number) >= 0));
 }
 
@@ -104,7 +105,8 @@ function isMessage(value: unknown): boolean {
       return ownDataValue(part, "type") === "tool-call" &&
         hasOnlyKeys(part, ["type", "toolCallId", "toolName", "input", "providerExecuted"]) &&
         typeof ownDataValue(part, "toolCallId") === "string" &&
-        typeof ownDataValue(part, "toolName") === "string" && Object.hasOwn(part, "input") &&
+        typeof ownDataValue(part, "toolName") === "string" &&
+        ownDataValue(part, "input") !== undefined &&
         (ownDataValue(part, "providerExecuted") === undefined ||
           typeof ownDataValue(part, "providerExecuted") === "boolean");
     }
@@ -115,7 +117,7 @@ function isMessage(value: unknown): boolean {
         typeof ownDataValue(part, "toolCallId") === "string" &&
         typeof ownDataValue(part, "toolName") === "string" && isRecord(output) &&
         hasOnlyKeys(output, ["type", "value"]) && ownDataValue(output, "type") === "json" &&
-        Object.hasOwn(output, "value");
+        ownDataValue(output, "value") !== undefined;
     }
     return false;
   });
@@ -140,7 +142,8 @@ function isTool(value: unknown): boolean {
   if (!isRecord(value)) return false;
   if (ownDataValue(value, "type") === "function") {
     return hasOnlyKeys(value, ["type", "name", "description", "inputSchema"]) &&
-      typeof ownDataValue(value, "name") === "string" && Object.hasOwn(value, "inputSchema") &&
+      typeof ownDataValue(value, "name") === "string" &&
+      ownDataValue(value, "inputSchema") !== undefined &&
       (ownDataValue(value, "description") === undefined ||
         typeof ownDataValue(value, "description") === "string");
   }

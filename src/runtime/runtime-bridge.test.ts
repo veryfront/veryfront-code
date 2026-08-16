@@ -1,8 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
@@ -667,7 +674,7 @@ describe("runtime-bridge", () => {
     });
 
     try {
-      await assertRejects(
+      const error = await assertRejects(
         async () =>
           await runWithMandatoryRunEventSink(
             () => {
@@ -693,9 +700,11 @@ describe("runtime-bridge", () => {
                   }),
               ),
           ),
-        TypeError,
+        DurableRunEventPersistenceError,
         "Mandatory model call context event is not cloneable",
       );
+      assertInstanceOf(error, DurableRunEventPersistenceError);
+      assertStrictEquals(error.cause, cloneError);
     } finally {
       if (recorder && originalRecordError) recorder.recordError = originalRecordError;
     }
@@ -748,6 +757,73 @@ describe("runtime-bridge", () => {
         budgetTokens: 2048,
       });
     }
+  });
+
+  it("omits reasoning when no canonical fields can be projected", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model = createGenerateModel("test", "test/empty-reasoning", async () => ({
+      content: [],
+      finishReason: "stop",
+      usage: {},
+    }));
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          reasoning: { ignored: "provider-private" } as never,
+        }),
+    );
+
+    assertEquals(recorded?.request, undefined);
+  });
+
+  it("persists adaptive Anthropic thinking as canonical reasoning without raw provider options", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const providerOptions = {
+      anthropic: {
+        thinking: { type: "adaptive", display: "summarized" },
+        output_config: { effort: "high" },
+      },
+    };
+    const model: ModelRuntime = {
+      provider: "veryfront-cloud",
+      modelId: "anthropic/claude-opus-4-8",
+      modelProvider: "anthropic",
+      async doGenerate(options) {
+        const dispatched = options as {
+          providerOptions?: Record<string, unknown>;
+          reasoning?: unknown;
+        };
+        assertEquals(dispatched.providerOptions, providerOptions);
+        assertEquals(dispatched.reasoning, undefined);
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions,
+        }),
+    );
+
+    assertEquals(recorded?.request, {
+      reasoning: { enabled: true, effort: "high" },
+    });
+    assertEquals("providerOptions" in (recorded?.request ?? {}), false);
   });
 
   it("calls a sink shared by both lanes only once", async () => {

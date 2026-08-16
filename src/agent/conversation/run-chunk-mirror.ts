@@ -210,10 +210,12 @@ export function createConversationRunChunkMirror(
         return;
       }
 
-      const normalizedEvents = await (input.prepareExternalEvents?.({
-        events,
-        defaultPrepare: () => prepareConversationRunExternalEvents(encoder.stamp(events)),
-      }) ?? prepareConversationRunExternalEvents(encoder.stamp(events)));
+      const stampedEvents = encoder.stamp(events);
+      const preparedEvents = await (input.prepareExternalEvents?.({
+        events: stampedEvents,
+        defaultPrepare: () => prepareConversationRunExternalEvents(stampedEvents),
+      }) ?? prepareConversationRunExternalEvents(stampedEvents));
+      const normalizedEvents = prepareConversationRunExternalEvents(encoder.stamp(preparedEvents));
       await input.onExternalEventsPrepared?.({ events: normalizedEvents });
       if (normalizedEvents.length === 0) {
         return;

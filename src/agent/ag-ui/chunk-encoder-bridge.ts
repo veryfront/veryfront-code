@@ -14,6 +14,8 @@ export interface AgUiChunkEncoderBridge<TChunk> {
   encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
   state: AgUiBrowserEncoderState;
+  /** Timing anchor consumed by the browser response composition root. */
+  timingState: AgUiBrowserEncoderState;
 }
 
 /** Options accepted by create AG-UI chunk encoder bridge. */
@@ -35,6 +37,7 @@ export function createAgUiChunkEncoderBridge<TChunk>(
 
   return {
     state,
+    timingState: state,
     encode: (chunk) =>
       options.getRuntimeEvents(chunk).flatMap((event) =>
         mapRuntimeStreamEventToAgUiBrowserEvents(state, event)

@@ -45,6 +45,39 @@ describe("agent/conversation/private-run-event", () => {
           messages: [],
           request: { reasoning: { arbitrary: true } },
         },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: undefined,
+            }],
+          }],
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              output: { type: "json", value: undefined },
+            }],
+          }],
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          tools: [{
+            type: "function",
+            name: "lookup",
+            inputSchema: undefined,
+          }],
+        },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], emittedAt: 1.5 },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], contextId: "legacy" },
         { type: "TEXT_MESSAGE_CONTENT", messages: [] },
@@ -70,6 +103,26 @@ describe("agent/conversation/private-run-event", () => {
 
     assertEquals(isPrivateConversationRunEvent(event), false);
     assertEquals(reads, 0);
+  });
+
+  it("requires reasoning effort to be a literal allowed string", () => {
+    let coercions = 0;
+    const effort = {
+      toString() {
+        coercions += 1;
+        return "high";
+      },
+    };
+
+    assertEquals(
+      isPrivateConversationRunEvent({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        messages: [],
+        request: { reasoning: { effort } },
+      }),
+      false,
+    );
+    assertEquals(coercions, 0);
   });
 
   it("uses the registered VeryfrontError slug for persistence failures", () => {

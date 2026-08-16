@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createAgUiBrowserResponseStream } from "./browser-response-stream.ts";
+import { createAgUiChunkEncoderBridge } from "./chunk-encoder-bridge.ts";
 import type { AgUiSseEvent } from "./host-support.ts";
 
 async function collectStreamText(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -73,6 +74,53 @@ describe("agent/ag-ui-browser-response-stream", () => {
     assertStringIncludes(text, "event: MessagesSnapshot");
     assertStringIncludes(text, "event: TextMessageContent");
     assertStringIncludes(text, "event: RunFinished");
+  });
+
+  it("shares the chunk encoder timing anchor with bootstrap and final events", async () => {
+    let now = 100;
+    const chunkEncoder = createAgUiChunkEncoderBridge<{ messageId: string }>({
+      getRuntimeEvents: (chunk) => [
+        { type: "message-start", messageId: chunk.messageId },
+        { type: "text-start", id: chunk.messageId },
+      ],
+      timing: { nowMs: () => now, epochMs: null },
+    });
+
+    now = 150;
+    const stream = createAgUiBrowserResponseStream({
+      agUiInput: {
+        runId: "run-timing",
+        threadId: "thread-timing",
+        messages: [],
+      },
+      agentId: "assistant-1",
+      execution: {
+        agentUIStream: {
+          async *[Symbol.asyncIterator]() {
+            now = 175;
+            yield { messageId: "msg-1" };
+          },
+        },
+        fail: async () => {},
+        waitForFinish: async () => {
+          now = 200;
+        },
+      },
+      encoder: chunkEncoder,
+      initialState: {},
+    });
+
+    const frames = parseSseFrames(await collectStreamText(stream));
+    assertEquals(
+      frames.filter((frame) =>
+        ["RunStarted", "TextMessageStart", "RunFinished"].includes(frame.event)
+      ).map((frame) => [frame.event, frame.data.elapsedMs]),
+      [
+        ["RunStarted", 50],
+        ["TextMessageStart", 75],
+        ["RunFinished", 100],
+      ],
+    );
   });
 
   it("emits RunError and swallows execution.fail rejections", async () => {

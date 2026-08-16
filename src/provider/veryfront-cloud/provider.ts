@@ -17,10 +17,18 @@ function wrapVeryfrontCloudModel(
   model: ModelRuntime,
   modelProvider: string,
 ): ModelRuntime {
-  return Object.create(model, {
+  const wrapped = Object.create(model, {
     _generateViaStream: { enumerable: true, value: true },
     modelProvider: { enumerable: true, value: modelProvider },
   });
+
+  Object.defineProperties(wrapped, {
+    doGenerate: { value: model.doGenerate.bind(model) },
+    doStream: { value: model.doStream.bind(model) },
+    ...(model.prepare ? { prepare: { value: model.prepare.bind(model) } } : {}),
+  });
+
+  return wrapped;
 }
 
 function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
