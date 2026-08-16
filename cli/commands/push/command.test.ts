@@ -1637,6 +1637,7 @@ describe("uploadFiles", () => {
     assertEquals(putCalled, false);
     assertEquals(result.uploaded, 2);
     assertEquals(result.failed, 0);
+    assertEquals(result.applied, []);
   });
 
   it("should count failed uploads correctly", async () => {
@@ -1757,6 +1758,27 @@ describe("deleteFiles", () => {
     );
 
     assertEquals(result, { deleted: 0, failed: 0, conflicts: ["old.ts"], applied: [] });
+  });
+
+  it("does not report dry-run deletes as applied", async () => {
+    let deleteCalled = false;
+    const mockClient = createMockClient({
+      delete: () => {
+        deleteCalled = true;
+        return Promise.resolve({});
+      },
+    });
+
+    const result = await deleteFiles(
+      mockClient,
+      "my-project",
+      null,
+      [{ path: "old.ts", expectedVersionId: "version-current" }],
+      true,
+    );
+
+    assertEquals(deleteCalled, false);
+    assertEquals(result, { deleted: 1, failed: 0, conflicts: [], applied: [] });
   });
 
   it("reports applied deletes before the first precondition conflict", async () => {

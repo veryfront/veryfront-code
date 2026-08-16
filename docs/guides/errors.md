@@ -666,7 +666,6 @@ Push rejected because remote files changed.
 Local sync metadata is invalid.
 
 - **HTTP status:** 400
-- **CLI exit code:** 1
 - **What to do:** Remove .veryfront/sync-state.json, run veryfront pull, and try again
 
 ### source-digest-mismatch

@@ -96,7 +96,6 @@ export const SYNC_STATE_INVALID = defineError({
   status: 400,
   title: "Local sync metadata is invalid",
   suggestion: "Remove .veryfront/sync-state.json, run veryfront pull, and try again",
-  exitCode: 1,
 });
 
 export const SOURCE_DIGEST_MISMATCH = defineError({

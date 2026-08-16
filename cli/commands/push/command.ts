@@ -538,7 +538,6 @@ export async function uploadFiles(
     if (dryRun) {
       if (!isJsonMode()) cliLogger.info(`  Would upload: ${op.path}`);
       uploaded++;
-      applied.push(op.path);
       continue;
     }
 
@@ -583,7 +582,6 @@ export async function deleteFiles(
     if (dryRun) {
       if (!isJsonMode()) cliLogger.info(`  Would delete: ${op.path}`);
       deleted++;
-      applied.push(op.path);
       continue;
     }
 

@@ -141,6 +141,10 @@ describe("error-registry", () => {
       assertEquals(getErrorBySlug("project-source-empty")?.status, 400);
     });
 
+    it("classifies invalid sync metadata as a runtime error", () => {
+      assertEquals(getErrorBySlug("sync-state-invalid")?.exitCode, undefined);
+    });
+
     it("should return correct error for all slugs", () => {
       const slugs = getAllSlugs();
       for (const slug of slugs) {
