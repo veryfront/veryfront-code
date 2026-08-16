@@ -132,7 +132,12 @@ function isMissingPathError(error) {
  */
 function hasHiddenSegment(target, cwd) {
   const relativePath = relative(cwd, target);
-  if (relativePath === "" || relativePath.startsWith("..")) return false;
+  // `startsWith("..")` alone would misread a directory *named* `..fixtures` as
+  // a parent path and skip the hidden check entirely. Only an exact `..` or a
+  // `..` followed by a separator escapes `cwd`.
+  const escapesCwd = relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) || relativePath.startsWith("../");
+  if (relativePath === "" || escapesCwd) return false;
   return toPosixPath(relativePath).split("/").some((segment) => segment.startsWith("."));
 }
 

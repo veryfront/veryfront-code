@@ -263,6 +263,18 @@ describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
     });
   });
 
+  it("treats a directory named ..something as hidden, not as a parent path", () => {
+    // `relative()` returns `..fixtures` here, which a bare startsWith("..")
+    // check reads as "outside cwd" and waves through. rg 15 returns nothing
+    // for this pattern.
+    withFixture(["..fixtures/a.test.ts", "src/a.test.ts"], (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesWithoutRipgrep(["..fixtures/**/*.test.ts"], root), root),
+        [],
+      );
+    });
+  });
+
   it("still prunes a hidden directory", () => {
     withFixture(DOTFILE_TREE, (root) => {
       const selected = relativeSorted(
