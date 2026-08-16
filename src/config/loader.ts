@@ -29,7 +29,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache/registry.ts";
 import { VERYFRONT_CONFIG_FILES } from "./config-files.ts";
-import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { currentRequestContext } from "#veryfront/platform/request-context-access.ts";
 import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
@@ -1935,7 +1935,7 @@ interface InternalGetConfigOptions extends GetConfigOptions {
 }
 
 function getVirtualConfigSourceContext(): VirtualConfigSourceContext | undefined {
-  const source = getCurrentRequestContext();
+  const source = currentRequestContext();
   if (!source) return undefined;
 
   return {
@@ -2026,7 +2026,7 @@ function assertMatchingVirtualConfigSource(
 
 function assertMatchingHostedProjectIdentity(
   cacheKey: string,
-  actual: ReturnType<typeof getCurrentRequestContext>,
+  actual: ReturnType<typeof currentRequestContext>,
 ): void {
   if (!actual) {
     throw CACHE_INVARIANT_VIOLATION.create({
@@ -2144,7 +2144,7 @@ function getConfigInternal(
         assertMatchingVirtualConfigSource(options.sourceContext, ambientSourceContext);
       }
       if (hostedMultiProjectFilesystem) {
-        assertMatchingHostedProjectIdentity(options!.cacheKey!, getCurrentRequestContext());
+        assertMatchingHostedProjectIdentity(options!.cacheKey!, currentRequestContext());
       }
       const sourceContext = hasQualifiedCacheIdentity
         ? options.sourceContext ?? ambientSourceContext
