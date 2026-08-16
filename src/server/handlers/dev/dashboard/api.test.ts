@@ -307,6 +307,24 @@ describe("Dashboard API - GET endpoints", () => {
     assertEquals(body.isBinary, true);
   });
 
+  it("/_dev/api/file-content keeps .env.example visible", async () => {
+    let readFileCalled = false;
+    const ctx = createMockCtxWithFs({
+      readFile: async () => {
+        readFileCalled = true;
+        return "API_KEY=<API_KEY>\n";
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/file-content?path=.env.example");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 200);
+    assertEquals(readFileCalled, true);
+    const body = await res!.json();
+    assertEquals(body.content, "API_KEY=<API_KEY>\n");
+  });
+
   for (
     const path of [
       ".env",
@@ -372,6 +390,44 @@ describe("Dashboard API - GET endpoints", () => {
       { name: "README.md", type: "file", path: "README.md" },
     ]);
     assertEquals(body.count, 3);
+  });
+
+  it("/_dev/api/files keeps .env.example files and env directories visible", async () => {
+    const entries = [
+      { name: "env", isDirectory: true },
+      { name: ".env.example", isDirectory: false },
+    ];
+    const ctx = createMockCtxWithFs({
+      readDir: async function* () {
+        yield* entries;
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 200);
+    const body = await res!.json();
+    assertEquals(body.files, [
+      { name: "env", type: "directory", path: "env" },
+      { name: ".env.example", type: "file", path: ".env.example" },
+    ]);
+  });
+
+  it("/_dev/api/files permits direct listing of an env directory", async () => {
+    let readDirCalled = false;
+    const ctx = createMockCtxWithFs({
+      readDir: async function* () {
+        readDirCalled = true;
+        yield { name: "example.ts", isDirectory: false };
+      },
+    });
+    const req = new Request("http://localhost/_dev/api/files?path=examples/env");
+
+    const res = await handleDashboardAPI(req, ctx);
+
+    assertEquals(res?.status, 200);
+    assertEquals(readDirCalled, true);
   });
 
   it("/_dev/api/files blocks direct listing of sensitive directories", async () => {

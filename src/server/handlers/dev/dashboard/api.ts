@@ -106,16 +106,26 @@ const SENSITIVE_DASHBOARD_DIRECTORY_NAMES = new Set([
   ".kube",
   ".ssh",
 ]);
+const SAFE_ENV_TEMPLATE_NAMES = new Set([
+  ".env.example",
+  ".env.sample",
+  ".env.template",
+]);
 const UNAVAILABLE_FILE_MESSAGE = "File content is not available";
 
-function isSensitiveDashboardPath(path: string): boolean {
+function isSensitiveDashboardPath(
+  path: string,
+  kind: "file" | "directory",
+): boolean {
   const segments = path.replaceAll("\\", "/").split("/").filter(Boolean).map((segment) =>
     segment.toLowerCase()
   );
   if (segments.some((segment) => SENSITIVE_DASHBOARD_DIRECTORY_NAMES.has(segment))) return true;
+  if (kind === "directory") return false;
 
   const fileName = segments.at(-1);
   if (!fileName) return false;
+  if (SAFE_ENV_TEMPLATE_NAMES.has(fileName)) return false;
   if (fileName === ".env" || fileName.startsWith(".env.")) return true;
   if (SENSITIVE_DASHBOARD_FILE_NAMES.has(fileName)) return true;
 
@@ -456,7 +466,7 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
   } else {
     const canonical = await validateRelativePath(relativePath, projectDir, adapter);
     if (canonical === null) return errorResponse("Invalid path", 400);
-    if (isSensitiveDashboardPath(relativePath)) {
+    if (isSensitiveDashboardPath(relativePath, "directory")) {
       return errorResponse(UNAVAILABLE_FILE_MESSAGE, 403);
     }
     fullPath = canonical;
@@ -466,7 +476,7 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
     const files: Array<{ name: string; type: "file" | "directory"; path: string }> = [];
     for await (const entry of adapter.fs.readDir(fullPath)) {
       const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
-      if (isSensitiveDashboardPath(entryPath)) continue;
+      if (isSensitiveDashboardPath(entryPath, entry.isDirectory ? "directory" : "file")) continue;
       files.push({
         name: entry.name,
         type: entry.isDirectory ? "directory" : "file",
@@ -499,15 +509,16 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
 
   const canonical = await validateRelativePath(relativePath, projectDir, adapter);
   if (canonical === null) return errorResponse("Invalid path", 400);
-  if (isSensitiveDashboardPath(relativePath)) {
+  if (isSensitiveDashboardPath(relativePath, "file")) {
     return errorResponse(UNAVAILABLE_FILE_MESSAGE, 403);
   }
 
   try {
     const content = await adapter.fs.readFile(canonical);
-    const extension = relativePath.split(".").pop() ?? "";
+    const fileName = relativePath.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase() ?? "";
+    const extension = fileName.split(".").pop() ?? "";
 
-    if (!TEXT_EXTENSIONS.has(extension.toLowerCase())) {
+    if (!TEXT_EXTENSIONS.has(extension) && !SAFE_ENV_TEMPLATE_NAMES.has(fileName)) {
       return jsonResponse({
         path: relativePath,
         extension,
