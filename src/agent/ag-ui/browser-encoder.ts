@@ -46,6 +46,12 @@ export interface AgUiBrowserEncoderState {
   activeStepName: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
+  /**
+   * Tool calls whose `ToolCallStart` has been emitted but not yet closed with
+   * a `ToolCallEnd`. Distinct from `streamedToolInputIds`, which tracks
+   * whether any args were streamed, not whether the call is still open.
+   */
+  openToolCallIds: Set<string>;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
   metadata: AgUiBrowserRunFinishedMetadata;
@@ -107,6 +113,7 @@ export function createAgUiBrowserEncoderState(
     activeStepName: null,
     stepCount: 0,
     streamedToolInputIds: new Set<string>(),
+    openToolCallIds: new Set<string>(),
     sawVisibleOutput: false,
     sawTerminalError: false,
     metadata: {},
@@ -544,6 +551,21 @@ export function buildAgUiBrowserFinalizeResponse(
   };
 }
 
+/**
+ * Emit the `ToolCallEnd` for a call whose input never reached a terminal
+ * input event. Returns nothing when the call was already closed, so a normal
+ * tool failure does not produce a second end.
+ */
+function closeOpenToolInput(
+  state: AgUiBrowserEncoderState,
+  toolCallId: unknown,
+): AgUiBrowserEncodedEvent[] {
+  if (typeof toolCallId !== "string" || toolCallId.length === 0) return [];
+  if (!state.openToolCallIds.delete(toolCallId)) return [];
+  state.streamedToolInputIds.delete(toolCallId);
+  return [{ event: "ToolCallEnd", payload: { toolCallId } }];
+}
+
 function completeToolInput(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -563,6 +585,7 @@ function completeToolInput(
 
   if (toolCallId.length > 0) {
     state.streamedToolInputIds.delete(toolCallId);
+    state.openToolCallIds.delete(toolCallId);
   }
 
   events.push({
@@ -855,6 +878,9 @@ function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
         ...closeOpenReasoningEvent(state),
       ];
       state.sawVisibleOutput = true;
+      if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
+        state.openToolCallIds.add(event.toolCallId);
+      }
       events.push({
         event: "ToolCallStart",
         payload: {
@@ -928,6 +954,14 @@ function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
+        // A truncated local tool call terminalizes as `tool-input-start`
+        // (plus any partial deltas) and then straight to this event, so the
+        // input is still open. `tool-input-available` and `tool-input-error`
+        // close it via `completeToolInput`; this branch has to close it too,
+        // or the client is left with ToolCallStart and ToolCallResult and no
+        // ToolCallEnd. No synthetic args are emitted: the model never
+        // committed any, and inventing `{}` would claim it did.
+        ...closeOpenToolInput(state, event.toolCallId),
         createToolResultEvent(event.toolCallId, { error: event.errorText }, true),
       ];
 
