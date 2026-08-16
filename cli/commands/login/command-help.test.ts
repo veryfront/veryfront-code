@@ -25,4 +25,11 @@ describe("cli/commands/login/command-help", () => {
     assertStringIncludes(output, "--json");
     assertStringIncludes(output, "usage error");
   });
+
+  it("documents shell-token precedence when switching accounts", () => {
+    const output = captureConsoleLog(() => showCommandHelp("login"));
+
+    assertStringIncludes(output, "VERYFRONT_API_TOKEN");
+    assertStringIncludes(output, "unset or replace");
+  });
 });
