@@ -554,6 +554,34 @@ describe("tool/remote-mcp", () => {
     assertEquals(getToolResultError(result), "[already_exists] Agent already exists");
   });
 
+  it("bounds local tool-call correlation ids in text error results", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const oversizedToolCallId = `tool-${"x".repeat(252)}`;
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:create_agent",
+        result: {
+          isError: true,
+          content: [{ text: "Agent already exists" }],
+        },
+      }), async () =>
+      await source.executeTool("create_agent", { id: "writer" }, {
+        toolCallId: oversizedToolCallId,
+      }));
+
+    assertEquals(result, {
+      error: "tool_error",
+      code: "tool_error",
+      message: "Agent already exists",
+      correlation_id: oversizedToolCallId.slice(0, 256),
+    });
+  });
+
   it("wraps non-object structured MCP errors with a canonical marker", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",

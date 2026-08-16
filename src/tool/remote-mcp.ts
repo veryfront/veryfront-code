@@ -318,7 +318,11 @@ function parseCallToolErrorText(
     error: code,
     code,
     message: text,
-    ...(context?.toolCallId ? { correlation_id: context.toolCallId } : {}),
+    ...(context?.toolCallId
+      ? {
+        correlation_id: context.toolCallId.slice(0, MAX_REMOTE_MCP_CORRELATION_ID_LENGTH),
+      }
+      : {}),
   };
 }
 
