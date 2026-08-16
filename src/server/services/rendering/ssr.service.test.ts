@@ -9,7 +9,10 @@ import type { RendererAdapter } from "../../shared/renderer-factory.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors/index.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
-import { attachDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import {
+  attachDataResponseMetadata,
+  wrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
 import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
@@ -543,7 +546,7 @@ describe("server/services/rendering/ssr.service", () => {
       it("maps render redirects to redirect results", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
-            throw attachDataResponseMetadata(
+            throw wrapDataResponseMetadataError(
               new VeryfrontError("Redirect to /login", {
                 slug: "render-error",
                 category: "RUNTIME",
@@ -803,10 +806,11 @@ describe("server/services/rendering/ssr.service", () => {
           },
           flush: () => Promise.resolve(true),
         });
-        const renderError = attachDataResponseMetadata(
-          Object.assign(new Error("App router render failed"), {
-            errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
-          }),
+        const boundaryError = Object.assign(new Error("App router render failed"), {
+          errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
+        });
+        const renderError = wrapDataResponseMetadataError(
+          boundaryError,
           {
             headers: { "x-error-state": "reported" },
             cookies: [{ name: "error-seen", value: "1", path: "/" }],
@@ -825,7 +829,7 @@ describe("server/services/rendering/ssr.service", () => {
           const result = await service.renderPage(makeCtx(), makeRenderOptions());
           assertEquals(result.status, 500);
           assertEquals(result.failure?.kind, "app-router-error-boundary");
-          assertEquals(result.html, renderError.errorBoundaryHtml);
+          assertEquals(result.html, boundaryError.errorBoundaryHtml);
           assertEquals(result.headers, { "x-error-state": "reported" });
           assertEquals(result.cookies, [{ name: "error-seen", value: "1", path: "/" }]);
           assertEquals(captured.length, 1);

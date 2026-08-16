@@ -633,37 +633,52 @@ describe("RenderPipeline behavior", () => {
 
   it("attaches resolved response metadata when SSR later fails", async () => {
     const pagePath = "/project/pages/response-metadata-error.tsx";
+    const sharedRenderError = new Error("SSR failed after data resolution");
+    let dataCalls = 0;
     const pipeline = createPipeline(pagePath, {
       ssrOrchestrator: {
         performSSRRendering: async () => {
-          throw new Error("SSR failed after data resolution");
+          throw sharedRenderError;
         },
         resolveErrorComponentPath: async () => null,
       } as any,
     });
     (pipeline as any).loadModule = async () => ({
-      getServerData: () => ({
-        props: {},
-        headers: { "x-page-state": "resolved" },
-        cookies: [{ name: "session", value: "request-specific", path: "/" }],
-      }),
+      getServerData: () => {
+        dataCalls++;
+        return dataCalls === 1
+          ? {
+            props: {},
+            headers: { "x-page-state": "resolved" },
+            cookies: [{ name: "session", value: "request-specific", path: "/" }],
+          }
+          : { props: {} };
+      },
     });
 
-    let thrown: unknown;
-    try {
-      await pipeline.renderPage("/response-metadata-error", {
-        request: new Request("http://localhost/response-metadata-error"),
-        url: new URL("http://localhost/response-metadata-error"),
-      });
-    } catch (error) {
-      thrown = error;
+    const thrown: unknown[] = [];
+    for (let requestIndex = 0; requestIndex < 2; requestIndex++) {
+      try {
+        await pipeline.renderPage("/response-metadata-error", {
+          request: new Request("http://localhost/response-metadata-error"),
+          url: new URL("http://localhost/response-metadata-error"),
+        });
+      } catch (error) {
+        thrown.push(error);
+      }
     }
 
-    assert(thrown instanceof Error);
-    assertEquals(getAttachedDataResponseMetadata(thrown), {
+    assert(thrown[0] instanceof Error);
+    assertEquals(getAttachedDataResponseMetadata(thrown[0]), {
       headers: { "x-page-state": "resolved" },
       cookies: [{ name: "session", value: "request-specific", path: "/" }],
     });
+    assert(thrown[1] instanceof Error);
+    assertEquals(
+      getAttachedDataResponseMetadata(thrown[1]),
+      {},
+      "a reused project Error cannot retain another request's response metadata",
+    );
   });
 
   it("staticDataOnly skips request-only data hooks during static rendering", async () => {

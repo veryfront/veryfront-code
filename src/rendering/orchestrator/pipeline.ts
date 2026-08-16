@@ -58,8 +58,8 @@ import type {
 } from "#veryfront/data/types.ts";
 import {
   attachDataResponseMetadata,
-  getAttachedDataResponseMetadata,
   mergeDataResponseMetadata,
+  wrapDataResponseMetadataError,
 } from "#veryfront/data/response-metadata.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
@@ -1028,14 +1028,13 @@ export class RenderPipeline {
               if (error instanceof Error) {
                 (error as Error & { sourceFile?: string }).sourceFile = sourceFile;
                 if (responseHeaders || responseCookies) {
-                  attachDataResponseMetadata(
+                  throw wrapDataResponseMetadataError(
                     error,
                     mergeDataResponseMetadata([
                       {
                         ...(responseHeaders ? { headers: responseHeaders } : {}),
                         ...(responseCookies ? { cookies: responseCookies } : {}),
                       },
-                      getAttachedDataResponseMetadata(error),
                     ]),
                   );
                 }

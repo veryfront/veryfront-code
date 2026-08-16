@@ -31,7 +31,11 @@ import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import type { DataResponseMetadata, ResponseCookie } from "#veryfront/data/types.ts";
-import { getAttachedDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import {
+  getAttachedDataResponseMetadata,
+  mergeDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -365,8 +369,12 @@ export class SSRService implements SSRServiceLike {
     request: Request,
     nonce?: string,
   ): SSRRenderResult {
-    const outcome = resolveSSRFailure(error, { isLocalProject: Boolean(ctx.isLocalProject) });
     const responseMetadata = error instanceof Error ? getAttachedDataResponseMetadata(error) : {};
+    const classifiedError = error instanceof Error ? unwrapDataResponseMetadataError(error) : error;
+    const outcome = resolveSSRFailure(classifiedError, {
+      isLocalProject: Boolean(ctx.isLocalProject),
+    });
+    const requestLocalMetadata = classifiedError === error ? {} : responseMetadata;
 
     switch (outcome.kind) {
       case "app-router-error-boundary":
@@ -390,10 +398,16 @@ export class SSRService implements SSRServiceLike {
           permanent: outcome.permanent,
           projectSlug: ctx.projectSlug,
         });
-        return buildRedirectResult(outcome, slug);
+        return buildRedirectResult({
+          ...outcome,
+          ...mergeDataResponseMetadata([outcome, requestLocalMetadata]),
+        }, slug);
       case "not-found":
         logger.debug("SSR notFound", { slug });
-        return buildNotFoundResult(outcome, slug);
+        return buildNotFoundResult({
+          ...outcome,
+          ...mergeDataResponseMetadata([outcome, requestLocalMetadata]),
+        }, slug);
       case "undeployed":
         logger.debug("Project not deployed", {
           projectSlug: ctx.projectSlug,

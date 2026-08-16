@@ -17,6 +17,7 @@ const regexpTest = RegExp.prototype.test;
 const reflectApply = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const attachedResponseMetadata = new WeakMap<object, DataResponseMetadata>();
+const responseMetadataErrorCauses = new WeakMap<Error, Error>();
 
 const FRAMEWORK_OWNED_RESPONSE_HEADERS = new Set([
   "accept-ch",
@@ -320,6 +321,26 @@ export function attachDataResponseMetadata<T extends Error>(
 ): T {
   attachedResponseMetadata.set(carrier, normalizeDataResponseMetadata(metadata));
   return carrier;
+}
+
+/**
+ * Carry response metadata on a request-local error while retaining the project
+ * error for classification, reporting, and stack rendering.
+ */
+export function wrapDataResponseMetadataError(
+  error: Error,
+  metadata: DataResponseMetadata,
+): Error {
+  const carrier = new Error(error.message, { cause: error });
+  carrier.name = error.name;
+  carrier.stack = error.stack;
+  responseMetadataErrorCauses.set(carrier, unwrapDataResponseMetadataError(error));
+  return attachDataResponseMetadata(carrier, metadata);
+}
+
+/** Return the project error carried by {@link wrapDataResponseMetadataError}. */
+export function unwrapDataResponseMetadataError(error: Error): Error {
+  return responseMetadataErrorCauses.get(error) ?? error;
 }
 
 /** Read response metadata attached by {@link attachDataResponseMetadata}. */
