@@ -8,6 +8,7 @@ import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import { showHeader } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 import { ensureBuiltinContentProcessor } from "../../shared/ensure-content-processor.ts";
+import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 /**
  * Schema factory for build command arguments
@@ -148,10 +149,49 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   });
 }
 
+/**
+ * Total bytes of the artifacts the embedded manifest declares.
+ *
+ * The production build reports the size of what it emitted, so the embedded
+ * preset reports the same thing rather than leaving the field at zero. The
+ * manifest is the artifact list, so it cannot drift from what was written.
+ * A file the preset failed to emit is skipped: `buildEmbeddedPreset` only warns
+ * when an RSC bundle or a route fails, and a size roll-up must not turn that
+ * warning into a hard error.
+ */
+async function sumEmbeddedOutputSize(
+  outDir: string,
+  manifest: { routes: ReadonlyArray<{ file: string }>; assets: ReadonlyArray<{ file: string }> },
+): Promise<number> {
+  const { join } = await import("veryfront/platform/path");
+  const { createFileSystem } = await import("veryfront/platform");
+  const fs = createFileSystem();
+
+  const files = new Set<string>(["embedded/manifest.json"]);
+  for (const route of manifest.routes) files.add(route.file);
+  for (const asset of manifest.assets) files.add(asset.file);
+
+  let total = 0;
+  for (const file of files) {
+    try {
+      total += (await fs.stat(join(outDir, file))).size;
+    } catch {
+      // Not emitted — already reported by the preset as a warning.
+    }
+  }
+  return total;
+}
+
 async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
   const { buildEmbeddedPreset } = await import("veryfront/build");
   const { getConfig } = await import("veryfront/config");
   const { resolveBuildOutputDir } = await import("./command.ts");
+  const startTime = Date.now();
+  // A failure below reaches the router, which already turns it into the JSON
+  // error envelope; only the success path is this function's to report.
+  const json = isJsonMode();
+
+  if (json) streamJsonLine({ type: "step", name: "config", status: "started" });
 
   // The config was never loaded on this path, so `build.outDir` was ignored
   // and the preset always wrote `dist`. Resolving through the same helper the
@@ -168,18 +208,52 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
     clearsOutputDir: false,
   });
 
-  cliLogger.info("Building embedded preset...");
-  if (isVerbose()) {
-    cliLogger.info(`  ${dim("Project:")} ${projectDir}`);
-    cliLogger.info(`  ${dim("Output:")} ${finalOutput}`);
+  if (json) {
+    streamJsonLine({ type: "step", name: "config", status: "completed" });
+    streamJsonLine({ type: "step", name: "build", status: "started" });
+  } else {
+    cliLogger.info("Building embedded preset...");
+    if (isVerbose()) {
+      cliLogger.info(`  ${dim("Project:")} ${projectDir}`);
+      cliLogger.info(`  ${dim("Output:")} ${finalOutput}`);
+    }
   }
 
-  await buildEmbeddedPreset({
+  const { manifest } = await buildEmbeddedPreset({
     projectDir,
     outDir: finalOutput,
     runtime: "deno",
     config,
   });
+
+  if (json) {
+    const elapsed = Date.now() - startTime;
+    streamJsonLine({
+      type: "step",
+      name: "build",
+      status: "completed",
+      duration_ms: elapsed,
+    });
+    // Same event and payload shape as the default build path in command.ts:
+    // one command must not answer `--json` with two different result lines.
+    streamJsonLine({
+      type: "result",
+      success: true,
+      data: {
+        pages: manifest.routes.filter((route) => route.type === "page").length,
+        // The preset emits one esbuild bundle and has no splitting stage —
+        // which is why `--split` is rejected for it above.
+        chunks: 1,
+        assets: manifest.assets.length,
+        totalSize: await sumEmbeddedOutputSize(finalOutput, manifest),
+        duration_ms: elapsed,
+        outputDir: finalOutput,
+        // `--dry-run` is rejected for this preset, so a build that got here ran.
+        dryRun: false,
+      },
+    });
+    return;
+  }
 
   logSuccess("Built embedded preset");
   cliLogger.info(`  ${finalOutput}\n`);
