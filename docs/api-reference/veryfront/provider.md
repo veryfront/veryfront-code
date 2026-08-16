@@ -119,6 +119,36 @@ Clear all registered model providers and reset lazy built-ins (for testing).
 
 These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
 
+### `veryfront/provider/openai-reasoning`
+
+```ts
+import {
+  getDefaultOpenAIReasoningEffort,
+  isOpenAIReasoningModel,
+  rejectsOpenAISamplingParams,
+} from "veryfront/provider/openai-reasoning";
+```
+
+#### Functions
+
+| Name                                  | Description | Source                                                                                                       |
+| ------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| `getDefaultOpenAIReasoningEffort`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L42)  |
+| `isOpenAIReasoningModel`              |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L106) |
+| `rejectsOpenAISamplingParams`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L110) |
+| `resolveOpenAIReasoningConfig`        |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L71)  |
+| `shouldRequestOpenAIReasoningSummary` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L97)  |
+| `supportsDefaultReasoningParams`      |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L16)  |
+
+#### Types
+
+| Name                            | Description | Source                                                                                                     |
+| ------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `OpenAIProviderReasoningEffort` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L5) |
+| `OpenAIProviderReasoningOption` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L7) |
+| `OpenAIReasoningEffort`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L3) |
+| `ResolvedOpenAIReasoning`       |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/shared/openai-reasoning.ts#L9) |
+
 ### `veryfront/provider/shared`
 
 Shared plumbing consumed by the `@veryfront/ext-*` provider extensions. This barrel is the stable extension-facing surface. Implementations remain internal to `runtime-loader.ts` and `runtime-loader/`; their physical location may change without changing extension imports.
