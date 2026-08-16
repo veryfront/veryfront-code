@@ -50,8 +50,14 @@ export interface AgUiBrowserEncoderState {
    * Tool calls whose `ToolCallStart` has been emitted but not yet closed with
    * a `ToolCallEnd`. Distinct from `streamedToolInputIds`, which tracks
    * whether any args were streamed, not whether the call is still open.
+   *
+   * Optional, and populated lazily, so a state object built against the shape
+   * this type had before the tracker existed stays valid — the same reason
+   * `reasoningSpanIndex` above is optional. This type is re-exported from
+   * `veryfront/agent`, so a required field would crash existing callers on the
+   * first `tool-input-start`.
    */
-  openToolCallIds: Set<string>;
+  openToolCallIds?: Set<string>;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
   metadata: AgUiBrowserRunFinishedMetadata;
@@ -561,7 +567,7 @@ function closeOpenToolInput(
   toolCallId: unknown,
 ): AgUiBrowserEncodedEvent[] {
   if (typeof toolCallId !== "string" || toolCallId.length === 0) return [];
-  if (!state.openToolCallIds.delete(toolCallId)) return [];
+  if (state.openToolCallIds?.delete(toolCallId) !== true) return [];
   state.streamedToolInputIds.delete(toolCallId);
   return [{ event: "ToolCallEnd", payload: { toolCallId } }];
 }
@@ -585,7 +591,7 @@ function completeToolInput(
 
   if (toolCallId.length > 0) {
     state.streamedToolInputIds.delete(toolCallId);
-    state.openToolCallIds.delete(toolCallId);
+    state.openToolCallIds?.delete(toolCallId);
   }
 
   events.push({
@@ -879,7 +885,7 @@ function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
       ];
       state.sawVisibleOutput = true;
       if (typeof event.toolCallId === "string" && event.toolCallId.length > 0) {
-        state.openToolCallIds.add(event.toolCallId);
+        (state.openToolCallIds ??= new Set<string>()).add(event.toolCallId);
       }
       events.push({
         event: "ToolCallStart",

@@ -1005,6 +1005,29 @@ describe("agent/ag-ui-browser-encoder tool-input lifecycle", () => {
     );
   });
 
+  it("tolerates a state object built without the tracker", () => {
+    // `AgUiBrowserEncoderState` is re-exported from `veryfront/agent`, so a
+    // consumer may hold a state object built against the shape this type had
+    // before `openToolCallIds` existed. A required field would crash on the
+    // first `tool-input-start`; `reasoningSpanIndex` is optional for the same
+    // reason.
+    const state = createAgUiBrowserEncoderState({ nowMs: null, epochMs: null });
+    delete (state as { openToolCallIds?: Set<string> }).openToolCallIds;
+
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-input-start",
+      toolCallId: "legacy-1",
+      toolName: "search",
+    });
+    const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "tool-output-error",
+      toolCallId: "legacy-1",
+      errorText: "interrupted",
+    });
+
+    assertEquals(events.map((entry) => entry.event), ["ToolCallEnd", "ToolCallResult"]);
+  });
+
   it("does not close a tool input that was already completed", () => {
     const state = createAgUiBrowserEncoderState({ nowMs: null, epochMs: null });
 
