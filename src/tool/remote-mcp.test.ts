@@ -697,6 +697,37 @@ describe("tool/remote-mcp", () => {
     assertEquals(getToolResultError(result), "Skill validation failed");
   });
 
+  it("rejects malformed JSON-RPC tool error envelopes", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    for (
+      const error of [
+        null,
+        "failed",
+        { message: "Missing error code" },
+        { code: -32603, message: " " },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          withMockFetch(
+            async () =>
+              Response.json({
+                jsonrpc: "2.0",
+                id: "veryfront-mcp:tools:call:update_skill",
+                error,
+              }),
+            async () => await source.executeTool("update_skill", {}),
+          ),
+        Error,
+        "malformed JSON-RPC error object",
+      );
+    }
+  });
+
   it("normalizes HTTP invalid_grant failures into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",

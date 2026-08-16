@@ -83,6 +83,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isJsonRpcErrorObject(
+  value: unknown,
+): value is JsonRpcErrorObject & { code: number; message: string } {
+  return isRecord(value) &&
+    typeof value.code === "number" &&
+    Number.isInteger(value.code) &&
+    typeof value.message === "string" &&
+    value.message.trim().length > 0;
+}
+
 function isJsonRpcToolErrorResult(value: unknown): value is JsonRpcToolErrorResult {
   if (!isRecord(value)) return false;
   const candidate = value as unknown as Partial<JsonRpcToolErrorResult>;
@@ -812,6 +822,9 @@ function getJsonRpcResult(
     throw protocolError("Remote MCP response cannot include both result and error");
   }
   if (hasError) {
+    if (!isJsonRpcErrorObject(payload.error)) {
+      throw protocolError("Remote MCP response included a malformed JSON-RPC error object");
+    }
     if (preserveToolErrors) {
       // Tool execution errors are recoverable model-visible results. Discovery
       // and other protocol operations keep the existing NETWORK_ERROR path.
