@@ -80,6 +80,7 @@ interface ModuleGroup {
 interface BarrelJSDoc {
   description: string;
   moduleName: string;
+  remarks: string;
   examples: Array<{ title: string; code: string }>;
 }
 
@@ -243,6 +244,7 @@ interface SourceDocStats {
 const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
   description: "",
   moduleName: "",
+  remarks: "",
   examples: [],
 };
 
@@ -944,8 +946,10 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
 
   let moduleName = "";
   const descLines: string[] = [];
+  const remarkLines: string[] = [];
   const examples: Array<{ title: string; code: string }> = [];
   let inExample = false;
+  let inRemarks = false;
   let exampleTitle = "";
   let exampleLines: string[] = [];
   let inCodeBlock = false;
@@ -959,6 +963,16 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
   for (const line of lines) {
     if (line.startsWith("@module")) {
       moduleName = line.replace("@module", "").trim();
+      inRemarks = false;
+      continue;
+    }
+
+    if (line.startsWith("@remarks")) {
+      finishExample();
+      inExample = false;
+      inRemarks = true;
+      const inlineRemarks = line.replace("@remarks", "").trim();
+      if (inlineRemarks) remarkLines.push(inlineRemarks);
       continue;
     }
 
@@ -967,6 +981,7 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
       exampleTitle = line.replace("@example", "").trim();
       exampleLines = [];
       inExample = true;
+      inRemarks = false;
       inCodeBlock = false;
       continue;
     }
@@ -974,6 +989,7 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
     if (line.startsWith("@")) {
       finishExample();
       inExample = false;
+      inRemarks = false;
       continue;
     }
 
@@ -982,6 +998,8 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
         inCodeBlock = !inCodeBlock;
       }
       exampleLines.push(line);
+    } else if (inRemarks) {
+      remarkLines.push(line);
     } else if (!moduleName || descLines.length > 0 || line.trim()) {
       if (!line.startsWith("@")) {
         descLines.push(line);
@@ -994,7 +1012,8 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
   const description = normalizePublicDocText(
     descLines.join(" ").replace(/\s+/g, " ").trim(),
   );
-  return { description, moduleName, examples };
+  const remarks = remarkLines.join("\n").trim();
+  return { description, moduleName, remarks, examples };
 }
 
 function normalizePublicDocText(text: string): string {
@@ -2505,6 +2524,11 @@ function generateMD(
     lines.push("");
   }
 
+  if (jsdoc.remarks) {
+    lines.push(jsdoc.remarks);
+    lines.push("");
+  }
+
   // Import snippet: use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath];
   const allExportNames = new Set([
@@ -2622,6 +2646,10 @@ function generateMD(
       lines.push("");
       if (di.jsdoc.description) {
         lines.push(di.jsdoc.description);
+        lines.push("");
+      }
+      if (di.jsdoc.remarks) {
+        lines.push(di.jsdoc.remarks);
         lines.push("");
       }
       lines.push("```ts");
@@ -2798,6 +2826,7 @@ async function main() {
       jsdoc = {
         description: entry.syntheticDescription ?? "",
         moduleName: entry.importPath,
+        remarks: "",
         examples: [],
       };
     } else {
@@ -2807,7 +2836,7 @@ async function main() {
         jsdoc = parseBarrelJSDoc(content);
       } catch (err) {
         console.warn(`  Could not read ${entry.filePath}: ${err}`);
-        jsdoc = { description: "", moduleName: "", examples: [] };
+        jsdoc = { description: "", moduleName: "", remarks: "", examples: [] };
       }
       nodes = await getDenoDoc(entry.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(nodes));
@@ -2824,7 +2853,12 @@ async function main() {
         const content = await Deno.readTextFile(absFilePath);
         deepJsdoc = parseBarrelJSDoc(content);
       } catch {
-        deepJsdoc = { description: "", moduleName: "", examples: [] };
+        deepJsdoc = {
+          description: "",
+          moduleName: "",
+          remarks: "",
+          examples: [],
+        };
       }
       const deepNodes = await getDenoDoc(deep.filePath);
       addSourceDocStats(sourceDocStats, summarizeSourceDocs(deepNodes));

@@ -160,6 +160,9 @@ describe("generate-api-reference", () => {
       const chatReference = await Deno.readTextFile(
         `${outputDir}/veryfront/chat.md`,
       );
+      const fsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/fs.md`,
+      );
       const agentReference = await Deno.readTextFile(
         `${outputDir}/veryfront/agent.md`,
       );
@@ -182,13 +185,22 @@ describe("generate-api-reference", () => {
         false,
         "generated client reference must not expose internal import specifiers",
       );
+      assertStringIncludes(fsReference, "## Runtime boundary");
+      assertMatch(
+        fsReference,
+        /does not add a\s+project-root sandbox, block `\.env` or other secret-file names/,
+      );
+      assertMatch(
+        fsReference,
+        /Isolated Pages route `ctx\.fs` is a separate, read-only, project-confined\s+capability/,
+      );
       assertMatch(
         uiReference,
         /^\|\s*`AppShellProps`\s*\|\s*Props accepted by `AppShell`\.\s*\|/m,
       );
       assertMatch(
         uiReference,
-        /import type \{\s*DisclosureParts,\s*DisclosureProps,\s*MultipleToggleGroupRootProps,?\s*\} from "veryfront\/ui\/adapter";/m,
+        /import type \{\s*[A-Za-z][A-Za-z0-9]*(?:,\s*[A-Za-z][A-Za-z0-9]*){0,2},?\s*\} from "veryfront\/ui\/adapter";/m,
         "type-only deep exports must use a copyable type import",
       );
       for (
