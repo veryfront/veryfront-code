@@ -78,6 +78,65 @@ const TEXT_EXTENSIONS = new Set([
   "dockerignore",
 ]);
 
+const SENSITIVE_DASHBOARD_FILE_NAMES = new Set([
+  ".envrc",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  "application_default_credentials.json",
+  "credentials.json",
+  "env",
+  "id_ed25519",
+  "id_rsa",
+  "secrets.json",
+  "service-account.json",
+]);
+const SENSITIVE_DASHBOARD_FILE_EXTENSIONS = new Set([
+  "env",
+  "key",
+  "p12",
+  "pem",
+  "pfx",
+]);
+const SENSITIVE_DASHBOARD_DIRECTORY_NAMES = new Set([
+  ".aws",
+  ".docker",
+  ".git",
+  ".gnupg",
+  ".kube",
+  ".ssh",
+]);
+const SAFE_ENV_TEMPLATE_NAMES = new Set([
+  ".env.example",
+  ".env.sample",
+  ".env.template",
+]);
+const UNAVAILABLE_FILE_MESSAGE = "File content is not available";
+
+function isSensitiveDashboardPath(
+  path: string,
+  kind: "file" | "directory",
+): boolean {
+  const segments = path.replaceAll("\\", "/").split("/").filter(Boolean).map((segment) =>
+    segment.toLowerCase().replace(/[ .]+$/g, "")
+  );
+  // A colon addresses an alternate data stream on NTFS. Treat stream paths as
+  // unavailable so a sensitive file cannot be reached through an alias such as
+  // `.env::$DATA`.
+  if (segments.some((segment) => segment.includes(":"))) return true;
+  if (segments.some((segment) => SENSITIVE_DASHBOARD_DIRECTORY_NAMES.has(segment))) return true;
+  if (kind === "directory") return false;
+
+  const fileName = segments.at(-1);
+  if (!fileName) return false;
+  if (SAFE_ENV_TEMPLATE_NAMES.has(fileName)) return false;
+  if (fileName === ".env" || fileName.startsWith(".env.")) return true;
+  if (SENSITIVE_DASHBOARD_FILE_NAMES.has(fileName)) return true;
+
+  const extension = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".") + 1) : "";
+  return SENSITIVE_DASHBOARD_FILE_EXTENSIONS.has(extension);
+}
+
 type DashboardApiMethod = "GET" | "POST";
 type DashboardApiRouteHandler = (
   req: Request,
@@ -411,16 +470,21 @@ async function handleListFiles(req: Request, ctx: HandlerContext): Promise<Respo
   } else {
     const canonical = await validateRelativePath(relativePath, projectDir, adapter);
     if (canonical === null) return errorResponse("Invalid path", 400);
+    if (isSensitiveDashboardPath(relativePath, "directory")) {
+      return errorResponse(UNAVAILABLE_FILE_MESSAGE, 403);
+    }
     fullPath = canonical;
   }
 
   try {
     const files: Array<{ name: string; type: "file" | "directory"; path: string }> = [];
     for await (const entry of adapter.fs.readDir(fullPath)) {
+      const entryPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      if (isSensitiveDashboardPath(entryPath, entry.isDirectory ? "directory" : "file")) continue;
       files.push({
         name: entry.name,
         type: entry.isDirectory ? "directory" : "file",
-        path: relativePath ? `${relativePath}/${entry.name}` : entry.name,
+        path: entryPath,
       });
     }
 
@@ -449,12 +513,16 @@ async function handleReadFileContent(req: Request, ctx: HandlerContext): Promise
 
   const canonical = await validateRelativePath(relativePath, projectDir, adapter);
   if (canonical === null) return errorResponse("Invalid path", 400);
+  if (isSensitiveDashboardPath(relativePath, "file")) {
+    return errorResponse(UNAVAILABLE_FILE_MESSAGE, 403);
+  }
 
   try {
     const content = await adapter.fs.readFile(canonical);
-    const extension = relativePath.split(".").pop() ?? "";
+    const fileName = relativePath.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase() ?? "";
+    const extension = fileName.split(".").pop() ?? "";
 
-    if (!TEXT_EXTENSIONS.has(extension.toLowerCase())) {
+    if (!TEXT_EXTENSIONS.has(extension) && !SAFE_ENV_TEMPLATE_NAMES.has(fileName)) {
       return jsonResponse({
         path: relativePath,
         extension,
