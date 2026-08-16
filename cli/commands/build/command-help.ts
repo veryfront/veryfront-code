@@ -44,6 +44,10 @@ export const buildHelp: CommandHelp = {
       description: "Select build preset (e.g. embedded)",
     },
   ],
+  notes: [
+    "--preset embedded emits a single bundle, so it supports only -o/--output and build.outDir.",
+    "It rejects --dry-run, --split/--no-split, --compress/--no-compress, --prefetch, --ssg/--no-ssg, --include and --exclude rather than ignoring them.",
+  ],
   examples: [
     "veryfront build",
     "veryfront build --output dist",
