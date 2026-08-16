@@ -28,7 +28,7 @@ import {
   uploadFiles,
   type UploadOp,
 } from "./command.ts";
-import { type ApiClient, resolveConfig } from "#cli/shared/config";
+import { type ApiClient, type ApiReadOptions, resolveConfig } from "#cli/shared/config";
 import {
   createDefaultIgnoreChecker,
   createIgnoreChecker,
@@ -47,7 +47,11 @@ import { computeContentDigest, writeSyncTarget } from "../../sync/state.ts";
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
   post: (path: string, body?: unknown) => Promise<unknown>;
-  put: (path: string, body?: unknown) => Promise<unknown>;
+  put: (
+    path: string,
+    body?: unknown,
+    options?: ApiReadOptions,
+  ) => Promise<unknown>;
   delete: (path: string) => Promise<unknown>;
 }>;
 
@@ -61,8 +65,12 @@ function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
       const result = await (overrides.post?.(path, body) ?? Promise.resolve({}));
       return result as T;
     },
-    put: async <T>(path: string, body?: unknown): Promise<T> => {
-      const result = await (overrides.put?.(path, body) ?? Promise.resolve({}));
+    put: async <T>(
+      path: string,
+      body?: unknown,
+      options?: ApiReadOptions,
+    ): Promise<T> => {
+      const result = await (overrides.put?.(path, body, options) ?? Promise.resolve({}));
       return result as T;
     },
     patch: <T>(): Promise<T> => Promise.resolve({} as T),
@@ -1468,9 +1476,11 @@ describe("push dry-run project bootstrap", () => {
 describe("uploadFiles", () => {
   it("sends update and create preconditions", async () => {
     const capturedBodies: unknown[] = [];
+    const capturedOptions: unknown[] = [];
     const mockClient = createMockClient({
-      put: (_url: string, body?: unknown) => {
+      put: (_url: string, body?: unknown, options?: unknown) => {
         capturedBodies.push(body);
+        capturedOptions.push(options);
         return Promise.resolve({});
       },
     });
@@ -1494,17 +1504,23 @@ describe("uploadFiles", () => {
       { content: "updated", expected_version_id: "version-current" },
       { content: "new", expected_absent: true },
     ]);
+    assertEquals(capturedOptions, [
+      { retryPolicy: "none" },
+      { retryPolicy: "none" },
+    ]);
     assertEquals(result, { uploaded: 2, failed: 0, conflicts: [] });
   });
 
   it("should upload files to branch endpoint when branchId is provided", async () => {
     const capturedUrls: string[] = [];
     const capturedBodies: unknown[] = [];
+    const capturedOptions: Array<ApiReadOptions | undefined> = [];
 
     const mockClient = createMockClient({
-      put: (url: string, body?: unknown) => {
+      put: (url: string, body?: unknown, options?: ApiReadOptions) => {
         capturedUrls.push(url);
         capturedBodies.push(body);
+        capturedOptions.push(options);
         return Promise.resolve({});
       },
     });
@@ -1521,6 +1537,7 @@ describe("uploadFiles", () => {
       "/projects/my-project/files/pages%2Findex.tsx?branch_id=branch-123",
     );
     assertEquals(capturedBodies[0], { content: "export default function Home() {}" });
+    assertEquals(capturedOptions, [undefined]);
     assertEquals(result.uploaded, 1);
     assertEquals(result.failed, 0);
   });

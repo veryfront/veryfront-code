@@ -529,11 +529,15 @@ export async function uploadFiles(
     }
 
     try {
-      await client.put(buildFileUrl(projectSlug, op.path, branchId), {
-        content: op.content,
-        ...(op.expectedVersionId ? { expected_version_id: op.expectedVersionId } : {}),
-        ...(op.expectedAbsent ? { expected_absent: true } : {}),
-      });
+      await client.put(
+        buildFileUrl(projectSlug, op.path, branchId),
+        {
+          content: op.content,
+          ...(op.expectedVersionId ? { expected_version_id: op.expectedVersionId } : {}),
+          ...(op.expectedAbsent ? { expected_absent: true } : {}),
+        },
+        op.expectedVersionId || op.expectedAbsent ? { retryPolicy: "none" } : undefined,
+      );
       uploaded++;
     } catch (error) {
       if (getErrorStatus(error) === 409) {
