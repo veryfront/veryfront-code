@@ -38,8 +38,18 @@ function globToRegex(glob) {
     if (char === "*") {
       const next = glob[i + 1];
       if (next === "*") {
-        re += ".*";
-        i += 1;
+        // `**` crosses directory boundaries. Written as its own segment
+        // (`src/**/*.test.ts`) it must also match *zero* segments, so
+        // `src/a.test.ts` is selected — this is what both ripgrep and
+        // node:fs `globSync` do. Translating it to `.*` alone requires a
+        // trailing separator and silently drops every depth-1 match.
+        if (glob[i + 2] === "/") {
+          re += "(?:.*\\/)?";
+          i += 2;
+        } else {
+          re += ".*";
+          i += 1;
+        }
       } else {
         re += "[^/]*";
       }
@@ -107,10 +117,16 @@ function listWithFallback(patterns, cwd) {
 
     const baseDir = getBaseDir(pattern, cwd);
     const matcher = globToRegex(toPosixPath(pattern));
-    walk(baseDir, (file) => {
-      const rel = toPosixPath(file.startsWith(cwd) ? file.slice(cwd.length + 1) : file);
-      if (matcher.test(rel)) files.add(file);
-    });
+    try {
+      walk(baseDir, (file) => {
+        const rel = toPosixPath(file.startsWith(cwd) ? file.slice(cwd.length + 1) : file);
+        if (matcher.test(rel)) files.add(file);
+      });
+    } catch {
+      // A glob whose base directory does not exist contributes nothing, the
+      // same as the non-glob branch above. Left unguarded this throws out of
+      // the runner entirely instead of yielding an empty selection.
+    }
   }
   return Array.from(files);
 }
@@ -125,8 +141,15 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
       const matches = runRg(["--files", "-g", pattern], cwd);
       if (matches) {
         for (const match of matches) files.add(resolve(cwd, match));
-        continue;
+      } else {
+        // No ripgrep (it is absent on the CI runners), so resolve the glob
+        // in-process. This fallback has to be per-pattern: the whole-result
+        // fallback at the end only fires when *nothing* matched, so a single
+        // explicit file listed next to a glob was enough to suppress it and
+        // drop the glob's entire contribution without a word.
+        for (const file of listWithFallback([pattern], cwd)) files.add(file);
       }
+      continue;
     }
 
     try {

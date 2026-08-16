@@ -557,7 +557,7 @@
     "test:tool-search-live": "VF_DISABLE_LRU_INTERVAL=1 deno test --no-check -A tests/agent/verify-tool-search-live.test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
     "test:node": {
-      "command": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts' extensions/ext-bundler-esbuild/src/binary.test.ts tests/ensure-npm-links.test.mjs",
+      "command": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts' extensions/ext-bundler-esbuild/src/binary.test.ts tests/ensure-npm-links.test.mjs tests/test-file-utils.test.mjs",
       "dependencies": ["build:npm"]
     },
     "test:bun": {
