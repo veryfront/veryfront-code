@@ -304,7 +304,8 @@ ChatSidebarItemTitle.displayName = "ChatSidebar.Item.Title";
 function flattenItemParts(children: React.ReactNode, parentKey = ""): React.ReactNode[] {
   return React.Children.toArray(children).flatMap((child) => {
     if (!React.isValidElement(child)) return child;
-    const itemKey = parentKey ? `${parentKey}/${child.key}` : String(child.key);
+    const childKey = String(child.key);
+    const itemKey = `${parentKey}${childKey.length}:${childKey}`;
     if (child.type !== React.Fragment) return React.cloneElement(child, { key: itemKey });
     const props = child.props as { children?: React.ReactNode };
     return flattenItemParts(props.children, itemKey);

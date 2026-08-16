@@ -416,6 +416,75 @@ describe("ChatSidebar.Item.Title: composable row label", () => {
     }
   });
 
+  it("keeps state with fragment paths that contain key separators", async () => {
+    const restoreDom = installDom();
+    let mounts = 0;
+    function StatefulBadge({ label }: { label: string }): React.ReactElement {
+      const [mountId] = React.useState(() => ++mounts);
+      return <span data-badge={label} data-mount-id={mountId}>{label}</span>;
+    }
+
+    try {
+      const root = createRoot(document.getElementById("root")!);
+      const renderItem = (reverse: boolean) => {
+        const direct = (
+          <React.Fragment key="a/.0">
+            <StatefulBadge label="direct" />
+          </React.Fragment>
+        );
+        const nested = (
+          <React.Fragment key="a">
+            <React.Fragment>
+              <StatefulBadge label="nested" />
+            </React.Fragment>
+          </React.Fragment>
+        );
+        return (
+          <ChatSidebar.Root
+            conversations={[summary("x", "Row title", 5000)]}
+            activeId="x"
+            onSelect={() => {}}
+            onDelete={() => {}}
+          >
+            <ChatSidebar.List>
+              <ChatSidebar.Item conversation={summary("x", "Row title", 5000)}>
+                <ChatSidebar.Item.Title />
+                {reverse ? [nested, direct] : [direct, nested]}
+              </ChatSidebar.Item>
+            </ChatSidebar.List>
+          </ChatSidebar.Root>
+        );
+      };
+
+      flushSync(() => root.render(renderItem(false)));
+      assertEquals(
+        document.querySelector('[data-badge="direct"]')?.getAttribute("data-mount-id"),
+        "1",
+      );
+      assertEquals(
+        document.querySelector('[data-badge="nested"]')?.getAttribute("data-mount-id"),
+        "2",
+      );
+
+      flushSync(() => root.render(renderItem(true)));
+      assertEquals(
+        document.querySelector('[data-badge="direct"]')?.getAttribute("data-mount-id"),
+        "1",
+        "state follows the direct fragment after reordering",
+      );
+      assertEquals(
+        document.querySelector('[data-badge="nested"]')?.getAttribute("data-mount-id"),
+        "2",
+        "state follows the nested fragment after reordering",
+      );
+
+      await unmountReactRoot(root);
+      await settle();
+    } finally {
+      restoreDom();
+    }
+  });
+
   it("regression: a childless Item still renders the default title", () => {
     const html = renderToString(
       <ChatSidebar.Root
