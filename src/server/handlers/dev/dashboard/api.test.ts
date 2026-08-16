@@ -340,6 +340,10 @@ describe("Dashboard API - GET endpoints", () => {
       "secrets.json",
       "certs/private.pem",
       ".git/config",
+      ".env ",
+      ".env... ",
+      ".aws /credentials",
+      ".ssh./id_rsa",
     ]
   ) {
     it(`/_dev/api/file-content blocks sensitive file ${path}`, async () => {

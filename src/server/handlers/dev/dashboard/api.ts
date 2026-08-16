@@ -118,7 +118,7 @@ function isSensitiveDashboardPath(
   kind: "file" | "directory",
 ): boolean {
   const segments = path.replaceAll("\\", "/").split("/").filter(Boolean).map((segment) =>
-    segment.toLowerCase()
+    segment.toLowerCase().replace(/[ .]+$/g, "")
   );
   if (segments.some((segment) => SENSITIVE_DASHBOARD_DIRECTORY_NAMES.has(segment))) return true;
   if (kind === "directory") return false;
