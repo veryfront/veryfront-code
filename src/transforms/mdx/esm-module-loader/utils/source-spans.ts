@@ -667,6 +667,23 @@ export function isMemberNameBefore(
   while (start > 0 && isIdentifierPartAt(source, start - 1)) start--;
   if (start === end) return false;
 
+  const immediateBefore = previousSignificantIndex(source, start);
+  if (immediateBefore < 0) return false;
+
+  // Most keyword-shaped identifiers are ordinary expression operands. Avoid
+  // rescanning the whole line for a comment unless the adjacent trivia can
+  // actually contain one; doing that for every `of` makes long declarations
+  // quadratic under coverage instrumentation.
+  if (
+    source[immediateBefore] !== "/" &&
+    !hasLineTerminatorBetween(source, immediateBefore + 1, start)
+  ) {
+    const immediateChar = source[immediateBefore];
+    if (immediateChar === "#") return true;
+    if (immediateChar !== ".") return false;
+    return source[immediateBefore - 1] !== "." || source[immediateBefore - 2] !== ".";
+  }
+
   const before = previousSignificantIndexBeforeIgnored(source, start);
   if (before < 0) return false;
 
