@@ -80,6 +80,57 @@ app/
 `layout.tsx` and the other supported `layout.*` extensions are reserved layout metadata at every
 directory level in both routers. They wrap descendant pages and never create a `/layout` route.
 
+### Overriding or disabling a layout
+
+A page can opt out of the nested layout chain, or replace it with a named layout.
+
+On `.md`/`.mdx` pages, set `layout` in the frontmatter:
+
+```mdx
+---
+title: Standalone
+layout: false
+---
+
+# Renders with no layout at all
+```
+
+On `.tsx`/`.jsx`/`.ts`/`.js` pages, export a `layout` constant:
+
+```tsx
+// app/standalone/page.tsx
+export const layout = false;
+
+export default function StandalonePage() {
+  return <div>Renders with no layout at all</div>;
+}
+```
+
+You can also put the same value in an exported `frontmatter` object:
+
+```tsx
+export const frontmatter = { layout: "marketing" };
+```
+
+The `frontmatter.layout` property accepts the same `false` and named-layout values as the direct
+`layout` export.
+
+Supported values in both cases:
+
+- `layout: false` renders the page bare: no ancestor layouts, no default layout.
+- `layout: "name"` replaces the entire nested chain with the named layout. Ancestor
+  layouts (including the root layout) are not applied.
+
+An explicit project path with a file extension, such as `@/layouts/custom.tsx` or
+`@components/CustomLayout.tsx`, loads that file directly, without falling back to
+convention-based discovery. Plain names resolve from, in order:
+
+1. `layouts/<name>.{tsx,mdx,md,jsx,ts,js}` - anything in `layouts/` is a layout.
+2. `components/<Name>Layout.*` or `components/Layout.*`.
+
+A project-wide default can also be set with `layout` in `veryfront.config.ts`; a page's
+`layout` frontmatter or export always wins over the config default.
+
 ## Dynamic routes
 
 Use brackets for dynamic segments:

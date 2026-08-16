@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   discoverComponentsLayoutPath,
+  extractTsxLayoutSignal,
   type FileExistenceChecker,
   resolveLayoutRouterRootDir,
 } from "./layout-collector.ts";
@@ -214,6 +215,104 @@ describe("LayoutCollector", () => {
 
     it("should not detect true as explicit layout", () => {
       assertEquals(hasExplicitLayout(true), false);
+    });
+  });
+
+  describe("TSX layout export parsing", () => {
+    const extract = (source: string) => extractTsxLayoutSignal(source, "pages/example.tsx");
+
+    it("extracts direct and frontmatter layout literals", async () => {
+      assertEquals(await extract('export const layout = "special";'), "special");
+      assertEquals(await extract("export const frontmatter = { layout: false };"), false);
+      assertEquals(await extract("export const layout = `special`;"), "special");
+      assertEquals(
+        await extract("export const frontmatter = { layout: `special` };"),
+        "special",
+      );
+      assertEquals(
+        await extract('const name = "special"; export const layout = `${name}`;'),
+        undefined,
+      );
+    });
+
+    it("extracts separately declared exported layout bindings", async () => {
+      assertEquals(
+        await extract(`const layout = false;
+export { layout };`),
+        false,
+      );
+      assertEquals(
+        await extract(`const metadata = { layout: "special" };
+export { metadata as frontmatter };`),
+        "special",
+      );
+      assertEquals(
+        await extract(`const metadata = { layout: false };
+export { metadata as "frontmatter" };`),
+        false,
+      );
+    });
+
+    it("ignores local declarations and layout-looking comments", async () => {
+      assertEquals(
+        await extract(`// export const layout = false
+export default function Page() {
+  const layout = false;
+  return <div>{layout}</div>;
+}`),
+        undefined,
+      );
+    });
+
+    it("does not keep a frontmatter layout value that precedes a spread", async () => {
+      assertEquals(
+        await extract(`const defaults = { layout: "special" };
+export const frontmatter = { layout: false, ...defaults };`),
+        undefined,
+      );
+    });
+
+    it("uses a literal frontmatter layout that follows a spread", async () => {
+      assertEquals(
+        await extract(`const defaults = { layout: "special" };
+export const frontmatter = { ...defaults, layout: false };`),
+        false,
+      );
+    });
+
+    it("ignores export-looking text inside comments and template literals", async () => {
+      assertEquals(
+        await extract(`/* export const frontmatter = { layout: false }; */
+const example = \`export const layout = false;\`;
+export default function Page() { return <pre>{example}</pre>; }`),
+        undefined,
+      );
+    });
+
+    it("ignores export-looking JSX child text", async () => {
+      assertEquals(
+        await extract(`export default function Page() {
+  return <pre>export const layout = false</pre>;
+}`),
+        undefined,
+      );
+    });
+
+    it("ignores non-literal initializers", async () => {
+      assertEquals(
+        await extract(`const falseLayout = "marketing";
+export const layout = falseLayout;`),
+        undefined,
+      );
+    });
+
+    it("parses formatted frontmatter objects with trailing commas", async () => {
+      assertEquals(
+        await extract(`export const frontmatter = {
+  layout: false,
+};`),
+        false,
+      );
     });
   });
 

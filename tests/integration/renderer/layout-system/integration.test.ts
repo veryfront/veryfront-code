@@ -89,6 +89,47 @@ This is a test post.
         const result = await renderer.renderPage("blog");
         assertExists(result.html);
         assertStringIncludes(result.html, "My Blog Post");
+        assertStringIncludes(result.html, 'id="root-layout"');
+        assertStringIncludes(result.html, 'id="blog-layout"');
+        // Root layout wraps the blog layout
+        assertEquals(
+          result.html.indexOf('id="root-layout"') < result.html.indexOf('id="blog-layout"'),
+          true,
+        );
+      });
+    });
+  });
+
+  it("tsx page inherits nested layouts by default", async () => {
+    await withTestContext("layout-tsx-default-chain", async (context) => {
+      await mkdir(join(context.projectDir, "app/about"), { recursive: true });
+
+      await writeTextFile(
+        join(context.projectDir, "app/layout.tsx"),
+        `export default function RootLayout({ children }) {
+  return <div id="root-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "app/about/page.tsx"),
+        `export default function AboutPage() {
+  return <div>About page</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "veryfront.config.ts"),
+        `export default {
+  router: 'app',
+};`,
+      );
+
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("about");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "About page");
+        assertStringIncludes(result.html, 'id="root-layout"');
       });
     });
   });
@@ -252,6 +293,172 @@ layout: main
         const result = await renderer.renderPage("test");
         assertExists(result.html);
         assertStringIncludes(result.html, "Test Content");
+      });
+    });
+  });
+
+  it("named layout replaces the nested chain without root inheritance", async () => {
+    await withTestContext("layout-named-replaces-chain", async (context) => {
+      await mkdir(join(context.projectDir, "app/promo"), { recursive: true });
+      await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+
+      await writeTextFile(
+        join(context.projectDir, "app/layout.tsx"),
+        `export default function RootLayout({ children }) {
+  return <div id="root-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "layouts/special.tsx"),
+        `export default function SpecialLayout({ children }) {
+  return <div id="special-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "app/promo/page.mdx"),
+        `---
+title: Promo
+layout: special
+---
+
+# Promo Content
+`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "veryfront.config.ts"),
+        `export default {
+  router: 'app',
+};`,
+      );
+
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("promo");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "Promo Content");
+        assertStringIncludes(result.html, 'id="special-layout"');
+        assertEquals(result.html.includes('id="root-layout"'), false);
+      });
+    });
+  });
+
+  it("layout: false frontmatter renders the page bare", async () => {
+    await withTestContext("layout-false-mdx", async (context) => {
+      await mkdir(join(context.projectDir, "app/standalone"), { recursive: true });
+
+      await writeTextFile(
+        join(context.projectDir, "app/layout.tsx"),
+        `export default function RootLayout({ children }) {
+  return <div id="root-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "app/standalone/page.mdx"),
+        `---
+title: Standalone
+layout: false
+---
+
+# Standalone Content
+`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "veryfront.config.ts"),
+        `export default {
+  router: 'app',
+};`,
+      );
+
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("standalone");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "Standalone Content");
+        assertEquals(result.html.includes('id="root-layout"'), false);
+      });
+    });
+  });
+
+  it("tsx page with export const layout = false renders bare", async () => {
+    await withTestContext("layout-tsx-export-false", async (context) => {
+      await mkdir(join(context.projectDir, "app/bare"), { recursive: true });
+
+      await writeTextFile(
+        join(context.projectDir, "app/layout.tsx"),
+        `export default function RootLayout({ children }) {
+  return <div id="root-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "app/bare/page.tsx"),
+        `export const layout = false;
+
+export default function BarePage() {
+  return <div>Bare page content</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "veryfront.config.ts"),
+        `export default {
+  router: 'app',
+};`,
+      );
+
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("bare");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "Bare page content");
+        assertEquals(result.html.includes('id="root-layout"'), false);
+      });
+    });
+  });
+
+  it("tsx page with a named layout export replaces the chain", async () => {
+    await withTestContext("layout-tsx-export-named", async (context) => {
+      await mkdir(join(context.projectDir, "app/branded"), { recursive: true });
+      await mkdir(join(context.projectDir, "layouts"), { recursive: true });
+
+      await writeTextFile(
+        join(context.projectDir, "app/layout.tsx"),
+        `export default function RootLayout({ children }) {
+  return <div id="root-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "layouts/special.tsx"),
+        `export default function SpecialLayout({ children }) {
+  return <div id="special-layout">{children}</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "app/branded/page.tsx"),
+        `export const layout = "special";
+
+export default function BrandedPage() {
+  return <div>Branded page content</div>;
+}`,
+      );
+
+      await writeTextFile(
+        join(context.projectDir, "veryfront.config.ts"),
+        `export default {
+  router: 'app',
+};`,
+      );
+
+      await withRenderer(context.projectDir, async (renderer) => {
+        const result = await renderer.renderPage("branded");
+        assertExists(result.html);
+        assertStringIncludes(result.html, "Branded page content");
+        assertStringIncludes(result.html, 'id="special-layout"');
+        assertEquals(result.html.includes('id="root-layout"'), false);
       });
     });
   });
