@@ -2563,6 +2563,113 @@ describe("push divergence guard", () => {
     }
   });
 
+  it("rejects a remote change to a skipped file after successful uploads", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/same.ts`, "export const same = 1;\n");
+        await runGit("add", "same.ts");
+        await runGit("commit", "--quiet", "-m", "add same source file");
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            "same.ts": { digest: await computeContentDigest("export const same = 1;\n") },
+          },
+        });
+
+        let fileListCalls = 0;
+        let putCalled = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: fileListCalls < 3
+                    ? "export const value = 1;\n"
+                    : "export const value = 2;\n",
+                  version_id: fileListCalls < 3
+                    ? "00000000-0000-4000-8000-000000000010"
+                    : "00000000-0000-4000-8000-000000000011",
+                },
+                {
+                  path: "same.ts",
+                  content: fileListCalls < 3
+                    ? "export const same = 1;\n"
+                    : "export const same = 2;\n",
+                  version_id: fileListCalls < 3
+                    ? "00000000-0000-4000-8000-000000000020"
+                    : "00000000-0000-4000-8000-000000000021",
+                },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putCalled = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "Push rejected",
+        );
+
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+        assertStringIncludes(error.message, '"same.ts"');
+        assertEquals(fileListCalls, 3);
+        assertEquals(putCalled, true);
+        assertEquals(await readPushReceipt(projectDir), null);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": { digest: await computeContentDigest("export const value = 2;\n") },
+              "same.ts": {
+                digest: await computeContentDigest("export const same = 1;\n"),
+                versionId: "00000000-0000-4000-8000-000000000020",
+              },
+            },
+          },
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("lets --force intentionally overwrite without a precondition", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
