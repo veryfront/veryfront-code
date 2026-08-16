@@ -25,6 +25,11 @@ Use `validatePath` from `veryfront/security` with a trusted `baseDir` before
 reading a user-influenced path. Physical validation follows symlinks when
 the adapter you pass exposes physical path semantics.
 
+`validatePath` is a path-admission check, not an operating-system sandbox.
+The trusted root must not be writable by untrusted or project code while a
+validated path is in use. Otherwise, concurrent filesystem changes can
+create a time-of-check/time-of-use race between validation and reading.
+
 ## Import
 
 ```ts
