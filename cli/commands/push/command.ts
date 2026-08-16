@@ -1124,6 +1124,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               if (conflicts.length > 0) {
                 throw pushConflictError(conflicts);
               }
+              pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
             } else if (pruneRemoteMissing) {
               spinner.update("Verifying push target...");
               let latestRemoteFiles = await listAllFiles(
@@ -1375,6 +1376,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             );
             throw pushConflictError(conflicts);
           }
+          pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
         } else if (pruneRemoteMissing) {
           const latestRemoteFiles = await listAllFiles(
             client,
