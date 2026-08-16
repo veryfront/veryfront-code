@@ -1,4 +1,4 @@
-import type { DataResponseMetadata, DataResult } from "./types.ts";
+import type { DataResponseMetadata, DataResult, StaticDataResult } from "./types.ts";
 
 /**
  * Brand marking an object as produced by {@link notFound} or {@link redirect}.
@@ -20,7 +20,7 @@ const DATA_CONTROL_RESULT = Symbol.for("veryfront.dataControlResult");
  * `JSON.stringify`, and the `DataResult` schema. A returned control result
  * behaves exactly as it did before the brand existed.
  */
-function brandDataControlResult(result: DataResult): DataResult {
+function brandDataControlResult<T extends DataResult>(result: T): T {
   Object.defineProperty(result, DATA_CONTROL_RESULT, { value: true });
   return result;
 }
@@ -31,6 +31,16 @@ function brandDataControlResult(result: DataResult): DataResult {
  * Return it or throw it. `throw redirect("/login")` behaves exactly like
  * `return redirect("/login")`.
  */
+export function redirect(
+  destination: string,
+  permanent?: boolean,
+  response?: undefined,
+): StaticDataResult;
+export function redirect(
+  destination: string,
+  permanent: boolean | undefined,
+  response: DataResponseMetadata,
+): DataResult;
 export function redirect(
   destination: string,
   permanent = false,
@@ -50,6 +60,8 @@ export function redirect(
  * `return notFound()`, which is useful deep inside a helper that has no clean
  * way to return to the loader.
  */
+export function notFound(response?: undefined): StaticDataResult;
+export function notFound(response: DataResponseMetadata): DataResult;
 export function notFound(response?: DataResponseMetadata): DataResult {
   return brandDataControlResult({
     notFound: true,

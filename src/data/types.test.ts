@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { notFound, redirect } from "./helpers.ts";
 import type {
   CacheEntry,
   DataContext,
@@ -121,6 +122,20 @@ describe("types.ts", () => {
       };
 
       assertExists(pageModule.getStaticData);
+    });
+
+    it("supports metadata-free control helpers from getStaticData", () => {
+      const missingPage: PageWithData = {
+        default: () => null,
+        getStaticData: () => notFound(),
+      };
+      const redirectingPage: PageWithData = {
+        default: () => null,
+        getStaticData: () => redirect("/next"),
+      };
+
+      assertExists(missingPage.getStaticData);
+      assertExists(redirectingPage.getStaticData);
     });
 
     it("should reject response metadata from getStaticData", () => {

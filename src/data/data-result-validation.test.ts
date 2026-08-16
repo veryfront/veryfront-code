@@ -10,7 +10,7 @@ describe("validateDataResult", () => {
           props: { ignored: true },
           redirect: { destination: "/next" },
           notFound: true,
-          revalidate: 60,
+          revalidate: Number.POSITIVE_INFINITY,
           headers: { "x-page-state": "redirected" },
         },
         "getServerData",
@@ -26,7 +26,7 @@ describe("validateDataResult", () => {
         {
           props: { ignored: true },
           notFound: true,
-          revalidate: 60,
+          revalidate: "ignored",
           headers: { "x-page-state": "missing" },
         },
         "getServerData",

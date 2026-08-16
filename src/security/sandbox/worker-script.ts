@@ -1551,24 +1551,23 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
     }
     const normalizedNotFound = hasNotFound ? rawNotFound.value as boolean : undefined;
 
-    let normalizedRevalidate: number | false | undefined;
-    if (hasRevalidate) {
-      if (
-        rawRevalidate.value !== false &&
-        (typeof rawRevalidate.value !== "number" ||
-          !numberIsFinite(rawRevalidate.value))
-      ) {
-        return invalidIsolatedDataResult();
-      }
-      normalizedRevalidate = rawRevalidate.value as number | false;
-    }
-
     const normalized: Record<string, unknown> = {};
     if (normalizedRedirect) {
       defineDataProperty(normalized, "redirect", normalizedRedirect);
     } else if (normalizedNotFound === true) {
       defineDataProperty(normalized, "notFound", true);
     } else {
+      let normalizedRevalidate: number | false | undefined;
+      if (hasRevalidate) {
+        if (
+          rawRevalidate.value !== false &&
+          (typeof rawRevalidate.value !== "number" ||
+            !numberIsFinite(rawRevalidate.value))
+        ) {
+          return invalidIsolatedDataResult();
+        }
+        normalizedRevalidate = rawRevalidate.value as number | false;
+      }
       if (hasProps) defineDataProperty(normalized, "props", rawProps.value);
       if (normalizedNotFound !== undefined) {
         defineDataProperty(normalized, "notFound", normalizedNotFound);

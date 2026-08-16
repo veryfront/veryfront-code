@@ -761,6 +761,39 @@ describe("server/services/rendering/ssr.service", () => {
         }
       });
 
+      it("preserves attached response metadata on non-control render failures", async () => {
+        for (
+          const [ctx, expectedKind] of [
+            [makeCtx(), "runtime"],
+            [
+              makeCtx({
+                isLocalProject: false,
+                allowHostProjectCodeExecution: true,
+              }),
+              "server-error",
+            ],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw attachDataResponseMetadata(new Error("Render failed after data"), {
+                headers: { "x-error-state": "reported" },
+                cookies: [{ name: "error-seen", value: "1", path: "/" }],
+              });
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(ctx, makeRenderOptions());
+
+          assertEquals(result.failure?.kind, expectedKind);
+          assertEquals(result.headers, { "x-error-state": "reported" });
+          assertEquals(result.cookies, [{ name: "error-seen", value: "1", path: "/" }]);
+        }
+      });
+
       it("captures app-router error-boundary failures before returning boundary HTML", async () => {
         const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
         setApplicationErrorReporter({
@@ -770,9 +803,15 @@ describe("server/services/rendering/ssr.service", () => {
           },
           flush: () => Promise.resolve(true),
         });
-        const renderError = Object.assign(new Error("App router render failed"), {
-          errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
-        });
+        const renderError = attachDataResponseMetadata(
+          Object.assign(new Error("App router render failed"), {
+            errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
+          }),
+          {
+            headers: { "x-error-state": "reported" },
+            cookies: [{ name: "error-seen", value: "1", path: "/" }],
+          },
+        );
         const adapter = createMockRendererAdapter({
           renderPage: () => {
             throw renderError;
@@ -787,6 +826,8 @@ describe("server/services/rendering/ssr.service", () => {
           assertEquals(result.status, 500);
           assertEquals(result.failure?.kind, "app-router-error-boundary");
           assertEquals(result.html, renderError.errorBoundaryHtml);
+          assertEquals(result.headers, { "x-error-state": "reported" });
+          assertEquals(result.cookies, [{ name: "error-seen", value: "1", path: "/" }]);
           assertEquals(captured.length, 1);
           assertEquals((captured[0]?.error as Error).message, "App router render failed");
           assertEquals(captured[0]?.context, {

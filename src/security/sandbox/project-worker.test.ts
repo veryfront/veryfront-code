@@ -1555,24 +1555,40 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     assertInvalidIsolatedDataResult(response);
   });
 
-  it("preserves redirect precedence for fetch-data outcome combinations", async () => {
-    const response = await executeIsolatedDataModule(
-      `export function getServerData() {
-        return {
-          props: { ignored: true },
-          redirect: { destination: "/other" },
-          notFound: true,
-          revalidate: 30,
-        };
-      }`,
-      "redirect-precedence-data-result",
-    );
+  it("preserves control precedence for fetch-data outcome combinations", async () => {
+    for (
+      const [source, expected, slug] of [
+        [
+          `export function getServerData() {
+            return {
+              props: { ignored: true },
+              redirect: { destination: "/other" },
+              notFound: true,
+              revalidate: Number.POSITIVE_INFINITY,
+            };
+          }`,
+          { redirect: { destination: "/other" } },
+          "redirect-precedence-data-result",
+        ],
+        [
+          `export function getServerData() {
+            return {
+              props: { ignored: true },
+              notFound: true,
+              revalidate: "ignored",
+            };
+          }`,
+          { notFound: true },
+          "not-found-precedence-data-result",
+        ],
+      ] as const
+    ) {
+      const response = await executeIsolatedDataModule(source, slug);
 
-    assertEquals(response.type, "data-result");
-    if (response.type !== "data-result") throw new Error("expected data result response");
-    assertEquals(response.result, {
-      redirect: { destination: "/other" },
-    });
+      assertEquals(response.type, "data-result");
+      if (response.type !== "data-result") throw new Error("expected data result response");
+      assertEquals(response.result, expected);
+    }
   });
 
   it("drops unknown fields from isolated data results before snapshotting", async () => {

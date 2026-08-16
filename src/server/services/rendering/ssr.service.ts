@@ -31,6 +31,7 @@ import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import type { DataResponseMetadata, ResponseCookie } from "#veryfront/data/types.ts";
+import { getAttachedDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -365,6 +366,7 @@ export class SSRService implements SSRServiceLike {
     nonce?: string,
   ): SSRRenderResult {
     const outcome = resolveSSRFailure(error, { isLocalProject: Boolean(ctx.isLocalProject) });
+    const responseMetadata = error instanceof Error ? getAttachedDataResponseMetadata(error) : {};
 
     switch (outcome.kind) {
       case "app-router-error-boundary":
@@ -379,6 +381,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "redirect":
         logger.debug("SSR redirect", {
@@ -404,6 +407,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "overloaded":
         return {
@@ -414,6 +418,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "runtime":
         captureApplicationError(outcome.error, {
@@ -454,6 +459,7 @@ export class SSRService implements SSRServiceLike {
             cacheStrategy: "no-cache",
             failure: outcome,
             slug,
+            ...responseMetadata,
           };
         }
       case "server-error":
@@ -477,6 +483,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
     }
   }

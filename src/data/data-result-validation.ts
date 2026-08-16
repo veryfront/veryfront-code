@@ -44,11 +44,6 @@ export function validateDataResult(
     redirectPermanent = redirectRecord.permanent as boolean | undefined;
   }
   if (notFound !== undefined && typeof notFound !== "boolean") return fail();
-  if (
-    revalidate !== undefined && revalidate !== false &&
-    (typeof revalidate !== "number" || !Number.isFinite(revalidate))
-  ) return fail();
-
   const normalized: DataResult = {};
   if (redirectDestination !== undefined) {
     normalized.redirect = {
@@ -58,6 +53,10 @@ export function validateDataResult(
   } else if (notFound === true) {
     normalized.notFound = true;
   } else {
+    if (
+      revalidate !== undefined && revalidate !== false &&
+      (typeof revalidate !== "number" || !Number.isFinite(revalidate))
+    ) return fail();
     if (props !== undefined) normalized.props = props;
     if (notFound !== undefined) normalized.notFound = notFound;
     if (revalidate !== undefined) normalized.revalidate = revalidate as number | false;
