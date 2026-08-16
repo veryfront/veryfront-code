@@ -32,7 +32,8 @@ test(
     const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
 
     for (const subdomain of PROJECTS) {
-      const response = await request.get(`${runtime.getUrl(subdomain)}/api/status`);
+      const apiRequest = runtime.getApiRequest(subdomain, "/api/status");
+      const response = await request.get(apiRequest.url, { headers: apiRequest.headers });
 
       expect(response.ok()).toBeTruthy();
       expect(await response.json()).toEqual({ ok: true, project: subdomain });

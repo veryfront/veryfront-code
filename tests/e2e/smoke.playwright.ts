@@ -65,7 +65,8 @@ for (const subdomain of PROJECTS) {
 
     test("API routes respond with JSON", async ({ request }, testInfo) => {
       const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
-      const response = await request.get(`${runtime.getUrl(subdomain)}/api/status`);
+      const apiRequest = runtime.getApiRequest(subdomain, "/api/status");
+      const response = await request.get(apiRequest.url, { headers: apiRequest.headers });
 
       expect(response.ok()).toBeTruthy();
       expect(response.headers()["content-type"]).toContain("application/json");
