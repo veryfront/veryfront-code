@@ -1313,6 +1313,16 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (uploadResult.failed > 0) {
         spinner.stop();
+        const appliedUploads = new Set(uploadResult.applied);
+        await writeAppliedSyncTarget(
+          projectDir,
+          config,
+          project,
+          branchName,
+          managedRemoteFiles,
+          uploadOps.filter((op) => appliedUploads.has(op.path)),
+          [],
+        );
         throw new Error(
           `Push failed for ${uploadResult.failed} file${
             uploadResult.failed === 1 ? "" : "s"
