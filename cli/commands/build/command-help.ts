@@ -45,7 +45,7 @@ export const buildHelp: CommandHelp = {
     },
   ],
   notes: [
-    "--preset embedded emits a single bundle, so it supports only -o/--output and build.outDir.",
+    "--preset embedded emits a single bundle, so of the build flags it honours only -o/--output and build.outDir. Global flags such as --json, --verbose and --quiet are unaffected.",
     "It rejects --dry-run, --split/--no-split, --compress/--no-compress, --prefetch, --ssg/--no-ssg, --include and --exclude rather than ignoring them.",
   ],
   examples: [
