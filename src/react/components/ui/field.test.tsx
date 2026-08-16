@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 
 import { Field, FieldControl, FieldDescription, FieldError, FieldLabel } from "./field.tsx";
 
@@ -95,6 +95,12 @@ function render(element: React.ReactElement): {
 }
 
 describe("Field", () => {
+  afterEach(async () => {
+    // React defers scheduler cleanup after unmount. Drain that timer before
+    // Deno's leak sanitizer closes the surrounding behaviour group.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+
   it("wires label htmlFor and control id, and aria-describedby → description", () => {
     const { host, unmount } = render(
       <Field>
