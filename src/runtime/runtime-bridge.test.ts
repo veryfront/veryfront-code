@@ -1,8 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { metricsManager } from "#veryfront/observability/metrics/index.ts";
 import { type AgentRunEvent, runWithRunEventSink } from "../agent/index.ts";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
+import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
 import { runWithMandatoryRunEventSink } from "./run-event-sink-context.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import {
@@ -85,8 +92,8 @@ describe("runtime-bridge", () => {
       (event) => {
         recorded = event;
       },
-      () =>
-        generateText({
+      async () =>
+        await generateText({
           model,
           system: [{ role: "system", content: "Shared prompt", providerOptions }],
           messages: [{ role: "user", content: "Hello" }],
@@ -99,6 +106,7 @@ describe("runtime-bridge", () => {
     ]);
     assertEquals(recorded, {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      model: { id: "test/sanitized-context", modelProvider: "test" },
       messages: [
         {
           role: "system",
@@ -114,6 +122,42 @@ describe("runtime-bridge", () => {
       ],
     });
     assertEquals(JSON.stringify(recorded).includes(sensitiveValue), false);
+  });
+
+  it("drops empty provider keys from persisted model call context", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model = createGenerateModel("test", "test/empty-provider-key", async () => ({
+      content: [{ type: "text", text: "done" }],
+      finishReason: "stop",
+      usage: {},
+    }));
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          system: [{
+            role: "system",
+            content: "Shared prompt",
+            providerOptions: {
+              "": { cacheControl: { type: "ephemeral" } },
+              anthropic: { cacheControl: { type: "ephemeral" } },
+            },
+          }],
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+    );
+
+    assertEquals(recorded?.messages[0], {
+      role: "system",
+      content: "Shared prompt",
+      providerOptions: {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      },
+    });
   });
 
   it("rejects accessor-backed system cache metadata without invoking it", async () => {
@@ -219,6 +263,8 @@ describe("runtime-bridge", () => {
       assertEquals(event.tools, options.tools);
       assertEquals(recorded, {
         type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        model: { id: "test/model-call-context", modelProvider: "test" },
+        request: { temperature: 0.7 },
         messages: options.prompt,
         tools: options.tools,
       });
@@ -281,6 +327,8 @@ describe("runtime-bridge", () => {
     assertEquals(order, ["persist", "dispatch"]);
     assertEquals(recorded, {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      model: { id: "test/model-call-context", modelProvider: "test" },
+      request: { temperature: 0.7 },
       messages: [
         { role: "system", content: "System instructions" },
         { role: "user", content: [{ type: "text", text: "Load the skill" }] },
@@ -356,6 +404,7 @@ describe("runtime-bridge", () => {
 
     assertEquals(recorded, {
       type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      model: { id: "test/model-call-provider-redaction", modelProvider: "test" },
       messages: [
         {
           role: "system",
@@ -446,6 +495,7 @@ describe("runtime-bridge", () => {
     assertEquals(contexts, [
       {
         type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        model: { id: "test/evolving-skill-context", modelProvider: "test" },
         messages: [
           { role: "system", content: system },
           { role: "user", content: [{ type: "text", text: "Review this change." }] },
@@ -454,6 +504,7 @@ describe("runtime-bridge", () => {
       },
       {
         type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        model: { id: "test/evolving-skill-context", modelProvider: "test" },
         messages: [
           { role: "system", content: system },
           { role: "user", content: [{ type: "text", text: "Review this change." }] },
@@ -585,7 +636,7 @@ describe("runtime-bridge", () => {
     assertEquals(order, ["mandatory", "public", "dispatch"]);
   });
 
-  it("delivers a successful sink clone and sanitizes another clone failure", async () => {
+  it("fails closed when the mandatory context cannot be cloned", async () => {
     const sensitiveFailureClass = "CUSTOMER_SECRET_FAILURE_CLASS";
     const cloneError = new Error("clone failed");
     cloneError.name = sensitiveFailureClass;
@@ -623,38 +674,270 @@ describe("runtime-bridge", () => {
     });
 
     try {
-      await runWithMandatoryRunEventSink(
-        () => {
-          mandatoryCalls += 1;
-        },
-        () =>
-          runWithRunEventSink(
-            (event) => {
-              publicEvent = event;
+      const error = await assertRejects(
+        async () =>
+          await runWithMandatoryRunEventSink(
+            () => {
+              mandatoryCalls += 1;
             },
             () =>
-              generateText({
-                model,
-                messages: [{
-                  role: "assistant",
-                  content: [{
-                    type: "tool-call",
-                    toolCallId: "call-1",
-                    toolName: "stateful",
-                    input: statefulInput,
-                  }],
-                }, { role: "user", content: "Continue" }],
-              }),
+              runWithRunEventSink(
+                (event) => {
+                  publicEvent = event;
+                },
+                () =>
+                  generateText({
+                    model,
+                    messages: [{
+                      role: "assistant",
+                      content: [{
+                        type: "tool-call",
+                        toolCallId: "call-1",
+                        toolName: "stateful",
+                        input: statefulInput,
+                      }],
+                    }, { role: "user", content: "Continue" }],
+                  }),
+              ),
           ),
+        DurableRunEventPersistenceError,
+        "Mandatory model call context event is not cloneable",
       );
+      assertInstanceOf(error, DurableRunEventPersistenceError);
+      assertStrictEquals(error.cause, cloneError);
     } finally {
       if (recorder && originalRecordError) recorder.recordError = originalRecordError;
     }
 
     assertEquals(mandatoryCalls, 0);
-    assertEquals(publicEvent?.type, "AGENT_RUN_MODEL_CALL_CONTEXT");
-    assertEquals(dispatches, 1);
+    assertEquals(publicEvent, undefined);
+    assertEquals(dispatches, 0);
     assertEquals(failureClasses, ["unknown"]);
+  });
+
+  it("persists canonical cloud providers and explicitly projected reasoning", async () => {
+    for (
+      const [modelId, modelProvider] of [
+        ["veryfront-cloud/anthropic/claude-sonnet-4-6", "anthropic"],
+        ["veryfront-cloud/openai/gpt-5.4", "openai"],
+        ["veryfront-cloud/google/gemini-3.1-pro-preview", "google"],
+        ["veryfront-cloud/mistral/mistral-large-2512", "mistral"],
+      ] as const
+    ) {
+      let recorded: AgentRunEvent | undefined;
+      const bareModelId = modelId.split("/").at(-1)!;
+      const model = {
+        ...createGenerateModel("veryfront-cloud", bareModelId, async () => ({
+          content: [],
+          finishReason: "stop",
+          usage: {},
+        })),
+        modelProvider,
+      };
+      await runWithRunEventSink(
+        (event) => {
+          recorded = event;
+        },
+        () =>
+          generateText({
+            model,
+            messages: [{ role: "user", content: "Hello" }],
+            reasoning: {
+              enabled: true,
+              effort: "high",
+              budgetTokens: 2048,
+              ignored: "private-runtime-detail",
+            } as never,
+          }),
+      );
+      assertEquals(recorded?.model, { id: bareModelId, modelProvider });
+      assertEquals(
+        recorded?.request?.reasoning,
+        modelProvider === "openai"
+          ? { enabled: true, effort: "high" }
+          : { enabled: true, effort: "high", budgetTokens: 2048 },
+      );
+    }
+  });
+
+  it("persists default OpenAI transport reasoning for direct reasoning models", async () => {
+    for (const modelId of ["o1", "o3-mini", "o4-mini", "gpt-5.4-nano"]) {
+      let recorded: AgentRunEvent | undefined;
+      const model = createGenerateModel("openai", modelId, async (options) => {
+        assertEquals(options.reasoning, undefined);
+        return { content: [], finishReason: "stop", usage: {} };
+      });
+
+      await runWithRunEventSink(
+        (event) => {
+          recorded = event;
+        },
+        () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+      );
+
+      assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
+    }
+  });
+
+  it("uses canonical OpenAI modelProvider when the runtime has a distinct display label", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model = {
+      ...createGenerateModel("prod-openai", "gpt-5.4-nano", async () => ({
+        content: [],
+        finishReason: "stop",
+        usage: {},
+      })),
+      modelProvider: "openai",
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () => generateText({ model, messages: [{ role: "user", content: "Hello" }] }),
+    );
+
+    assertEquals(recorded?.model, { id: "gpt-5.4-nano", modelProvider: "openai" });
+    assertEquals(recorded?.request?.reasoning, { enabled: true, effort: "medium" });
+  });
+
+  it("omits reasoning when no canonical fields can be projected", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model = createGenerateModel("test", "test/empty-reasoning", async () => ({
+      content: [],
+      finishReason: "stop",
+      usage: {},
+    }));
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          reasoning: { ignored: "provider-private" } as never,
+        }),
+    );
+
+    assertEquals(recorded?.request, undefined);
+  });
+
+  it("persists adaptive Anthropic thinking as canonical reasoning without raw provider options", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const providerOptions = {
+      anthropic: {
+        thinking: { type: "adaptive", display: "summarized" },
+        output_config: { effort: "high" },
+      },
+    };
+    const model: ModelRuntime = {
+      provider: "veryfront-cloud",
+      modelId: "anthropic/claude-opus-4-8",
+      modelProvider: "anthropic",
+      async doGenerate(options) {
+        const dispatched = options as {
+          providerOptions?: Record<string, unknown>;
+          reasoning?: unknown;
+        };
+        assertEquals(dispatched.providerOptions, providerOptions);
+        assertEquals(dispatched.reasoning, undefined);
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions,
+        }),
+    );
+
+    assertEquals(recorded?.request, {
+      reasoning: { enabled: true, effort: "high" },
+    });
+    assertEquals("providerOptions" in (recorded?.request ?? {}), false);
+  });
+
+  it("persists enabled Anthropic thinking with its canonical token budget", async () => {
+    let recorded: AgentRunEvent | undefined;
+    const model: ModelRuntime = {
+      provider: "veryfront-cloud",
+      modelId: "anthropic/claude-sonnet-4-6",
+      modelProvider: "anthropic",
+      async doGenerate() {
+        return { content: [], finishReason: "stop", usage: {} };
+      },
+      async doStream() {
+        throw new Error("unexpected stream dispatch");
+      },
+    };
+
+    await runWithRunEventSink(
+      (event) => {
+        recorded = event;
+      },
+      () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Hello" }],
+          providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
+        }),
+    );
+
+    assertEquals(recorded?.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
+  });
+
+  it("persists raw enabled Anthropic thinking when neutral reasoning has no effect", async () => {
+    for (const reasoning of [{}, { enabled: false }] as const) {
+      let recorded: AgentRunEvent | undefined;
+      const providerOptions = {
+        anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } },
+      };
+      const model: ModelRuntime = {
+        provider: "veryfront-cloud",
+        modelId: "anthropic/claude-sonnet-4-6",
+        modelProvider: "anthropic",
+        async doGenerate(options) {
+          const dispatched = options as {
+            reasoning?: unknown;
+            providerOptions?: Record<string, unknown>;
+          };
+          assertEquals(dispatched.reasoning, reasoning);
+          assertEquals(dispatched.providerOptions, providerOptions);
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+        async doStream() {
+          throw new Error("unexpected stream dispatch");
+        },
+      };
+
+      await runWithRunEventSink(
+        (event) => {
+          recorded = event;
+        },
+        () =>
+          generateText({
+            model,
+            messages: [{ role: "user", content: "Hello" }],
+            providerOptions,
+            reasoning,
+          }),
+      );
+
+      assertEquals(recorded?.request, {
+        reasoning: { enabled: true, budgetTokens: 2048 },
+      });
+    }
   });
 
   it("calls a sink shared by both lanes only once", async () => {

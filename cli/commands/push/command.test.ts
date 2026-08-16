@@ -88,15 +88,20 @@ interface GitProject {
 
 async function withGitProject(test: (project: GitProject) => Promise<void>): Promise<void> {
   const projectDir = await Deno.makeTempDir();
+  const isolatedGitConfigGlobal = await Deno.makeTempFile();
   const originalGithubSha = Deno.env.get("GITHUB_SHA");
+  const originalGitConfigGlobal = Deno.env.get("GIT_CONFIG_GLOBAL");
   const runGit = async (...args: string[]): Promise<string> => {
     const result = await new Deno.Command("git", {
       args,
       cwd: projectDir,
       clearEnv: true,
-      env: Object.fromEntries(
-        Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
-      ),
+      env: {
+        ...Object.fromEntries(
+          Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
+        ),
+        GIT_CONFIG_GLOBAL: isolatedGitConfigGlobal,
+      },
       stdout: "piped",
       stderr: "piped",
     }).output();
@@ -107,7 +112,10 @@ async function withGitProject(test: (project: GitProject) => Promise<void>): Pro
 
   try {
     Deno.env.delete("GITHUB_SHA");
+    await Deno.writeTextFile(isolatedGitConfigGlobal, "[init]\n\tdefaultBranch = main\n");
+    Deno.env.set("GIT_CONFIG_GLOBAL", isolatedGitConfigGlobal);
     await runGit("init", "--quiet");
+    assertEquals(await runGit("symbolic-ref", "--short", "HEAD"), "main");
     await runGit("config", "user.email", "test@veryfront.com");
     await runGit("config", "user.name", "Veryfront Test");
     await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
@@ -117,7 +125,9 @@ async function withGitProject(test: (project: GitProject) => Promise<void>): Pro
   } finally {
     if (originalGithubSha === undefined) Deno.env.delete("GITHUB_SHA");
     else Deno.env.set("GITHUB_SHA", originalGithubSha);
+    restoreEnv("GIT_CONFIG_GLOBAL", originalGitConfigGlobal);
     await Deno.remove(projectDir, { recursive: true });
+    await Deno.remove(isolatedGitConfigGlobal);
   }
 }
 

@@ -18,8 +18,25 @@ describe("agent/conversation/private-run-event", () => {
     assertEquals(
       isPrivateConversationRunEvent({
         type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        model: { id: "veryfront-cloud/anthropic/claude-sonnet-4-6", modelProvider: "anthropic" },
+        request: { maxOutputTokens: 4096, reasoning: { enabled: true, budgetTokens: 2048 } },
         messages: [],
         tools: [],
+        elapsedMs: 42,
+        emittedAt: 1_786_866_357_364,
+      }),
+      true,
+    );
+    assertEquals(
+      isPrivateConversationRunEvent({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        messages: [{
+          role: "system",
+          content: "Cache safely.",
+          providerOptions: {
+            anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } },
+          },
+        }],
       }),
       true,
     );
@@ -30,6 +47,74 @@ describe("agent/conversation/private-run-event", () => {
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT" },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: {} },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], tools: {} },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], model: { id: 1 } },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          model: { id: "x", provider: "anthropic" },
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          request: { reasoning: { arbitrary: true } },
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "system",
+            content: "Do not persist provider secrets.",
+            providerOptions: {
+              anthropic: {
+                cacheControl: { type: "ephemeral" },
+                apiKey: "secret",
+              },
+            },
+          }],
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "system",
+            content: "Reject unsupported cache policy.",
+            providerOptions: {
+              anthropic: { cacheControl: { type: "ephemeral", ttl: "2h" } },
+            },
+          }],
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              input: undefined,
+            }],
+          }],
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [{
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "lookup",
+              output: { type: "json", value: undefined },
+            }],
+          }],
+        },
+        {
+          type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+          messages: [],
+          tools: [{
+            type: "function",
+            name: "lookup",
+            inputSchema: undefined,
+          }],
+        },
+        { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], emittedAt: 1.5 },
         { type: "AGENT_RUN_MODEL_CALL_CONTEXT", messages: [], contextId: "legacy" },
         { type: "TEXT_MESSAGE_CONTENT", messages: [] },
       ]
@@ -54,6 +139,26 @@ describe("agent/conversation/private-run-event", () => {
 
     assertEquals(isPrivateConversationRunEvent(event), false);
     assertEquals(reads, 0);
+  });
+
+  it("requires reasoning effort to be a literal allowed string", () => {
+    let coercions = 0;
+    const effort = {
+      toString() {
+        coercions += 1;
+        return "high";
+      },
+    };
+
+    assertEquals(
+      isPrivateConversationRunEvent({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        messages: [],
+        request: { reasoning: { effort } },
+      }),
+      false,
+    );
+    assertEquals(coercions, 0);
   });
 
   it("uses the registered VeryfrontError slug for persistence failures", () => {

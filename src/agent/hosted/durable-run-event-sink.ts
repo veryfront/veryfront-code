@@ -5,7 +5,11 @@ import {
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
 } from "../conversation/run-event-limits.ts";
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
-import type { AgentRunEventSink } from "../../runtime/model-call-context.ts";
+import {
+  type AgentRunEventSink,
+  type AgentRunEventTimingOptions,
+  createTimedAgentRunEventSink,
+} from "../../runtime/model-call-context.ts";
 import { agentLogger } from "#veryfront/utils";
 
 const DEFAULT_DURABLE_RUN_EVENT_PERSISTENCE_TIMEOUT_MS = 30_000;
@@ -94,16 +98,13 @@ function buildTruncationNotice(input: {
 }): unknown {
   return {
     role: "system",
-    content: [{
-      type: "text",
-      text:
-        `${OMITTED_MESSAGE_NOTICE} Original ${
-          formatMebibytes(input.originalByteLength)
-        } exceeded the ${
-          formatMebibytes(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES)
-        } append limit; ${input.omittedMessageCount} message(s) omitted. The model call was not ` +
-        `dispatched — this record is an excerpt, not the context that was sent.`,
-    }],
+    content:
+      `${OMITTED_MESSAGE_NOTICE} Original ${
+        formatMebibytes(input.originalByteLength)
+      } exceeded the ${
+        formatMebibytes(MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES)
+      } append limit; ${input.omittedMessageCount} message(s) omitted. The model call was not ` +
+      `dispatched — this record is an excerpt, not the context that was sent.`,
   };
 }
 
@@ -136,8 +137,12 @@ function truncatePrivateRunEventToLimit(
     keepTools: boolean,
   ): Record<string, unknown> => ({
     type: event.type,
+    ...(event.model === undefined ? {} : { model: event.model }),
+    ...(event.request === undefined ? {} : { request: event.request }),
     messages: [buildTruncationNotice({ originalByteLength, omittedMessageCount }), ...kept],
     ...(tools === undefined ? {} : { tools: keepTools ? tools : [] }),
+    ...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
+    ...(event.emittedAt === undefined ? {} : { emittedAt: event.emittedAt }),
   });
 
   const fits = (candidate: Record<string, unknown>): boolean =>
@@ -263,8 +268,9 @@ export function createDurableRunEventSink(input: {
   mirror: ConversationRunChunkMirror;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
+  timing?: AgentRunEventTimingOptions;
 }): AgentRunEventSink {
-  return async (event) => {
+  return createTimedAgentRunEventSink(async (event) => {
     let oversize: ResolvedRunEvent["oversize"];
     try {
       assertEnabled(input.mirror.getSnapshot());
@@ -318,5 +324,5 @@ export function createDurableRunEventSink(input: {
       );
       throw buildOversizeError(oversize);
     }
-  };
+  }, input.timing ?? input.mirror.timing);
 }

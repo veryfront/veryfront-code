@@ -368,11 +368,12 @@ describe("internal-agents/ag-ui-sse", () => {
       runId: "run_1",
       threadId: "thread-1",
       agentId: "assistant-1",
+      emittedAt: 8,
     });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1"}\n\n',
+      'event: RunStarted\ndata: {"runId":"run_1","threadId":"thread-1","agentId":"assistant-1","emittedAt":8}\n\n',
     );
   });
 
@@ -425,11 +426,11 @@ describe("internal-agents/ag-ui-sse", () => {
   });
 
   it("accepts extension event tokens without weakening SSE framing", () => {
-    const payload = formatAgUiEvent("Done.custom-v1", { ok: true });
+    const payload = formatAgUiEvent("Done.custom-v1", { ok: true, emittedAt: 8 });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: Done.custom-v1\ndata: {"ok":true}\n\n',
+      'event: Done.custom-v1\ndata: {"ok":true,"emittedAt":8}\n\n',
     );
   });
 
@@ -482,11 +483,12 @@ describe("internal-agents/ag-ui-sse", () => {
         usageCaptureStatus: "complete",
         finishReason: "stop",
       },
+      emittedAt: 8,
     });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"billableInputTokens":10,"billableOutputTokens":7,"costUsd":0.002,"providerInputCostUsd":0.001,"providerOutputCostUsd":0.0005,"providerCostUsd":0.0015,"veryfrontInputChargeUsd":0.0012,"veryfrontOutputChargeUsd":0.0007,"veryfrontChargeUsd":0.0019,"veryfrontBilledUsd":0.002,"costCredits":2,"costSource":"gateway","billingMode":"deferred","usageCaptureStatus":"complete","finishReason":"stop"}}\n\n',
+      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"billableInputTokens":10,"billableOutputTokens":7,"costUsd":0.002,"providerInputCostUsd":0.001,"providerOutputCostUsd":0.0005,"providerCostUsd":0.0015,"veryfrontInputChargeUsd":0.0012,"veryfrontOutputChargeUsd":0.0007,"veryfrontChargeUsd":0.0019,"veryfrontBilledUsd":0.002,"costCredits":2,"costSource":"gateway","billingMode":"deferred","usageCaptureStatus":"complete","finishReason":"stop"},"emittedAt":8}\n\n',
     );
   });
 
@@ -495,11 +497,12 @@ describe("internal-agents/ag-ui-sse", () => {
       messageId: "assistant-1",
       contentId: "block-1",
       delta: "hello",
+      emittedAt: 8,
     });
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: TextMessageContent\ndata: {"messageId":"assistant-1","contentId":"block-1","delta":"hello"}\n\n',
+      'event: TextMessageContent\ndata: {"messageId":"assistant-1","contentId":"block-1","delta":"hello","emittedAt":8}\n\n',
     );
   });
 

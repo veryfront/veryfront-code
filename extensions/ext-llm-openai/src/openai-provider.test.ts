@@ -74,6 +74,19 @@ function _readRequestHeader(init: RequestInit | undefined, name: string): string
 // ---------------------------------------------------------------------------
 
 describe("openai-provider", () => {
+  it("exposes canonical model providers independently of runtime display labels", () => {
+    for (const createRuntime of [createOpenAIModelRuntime, createOpenAIResponsesRuntime]) {
+      const runtime = createRuntime({
+        apiKey: "test-openai-key",
+        name: "prod-openai",
+        providerName: " OpenAI ",
+      }, "gpt-5.4-nano");
+
+      assertEquals(runtime.provider, "prod-openai");
+      assertEquals(runtime.modelProvider, "openai");
+    }
+  });
+
   it("creates an OpenAI-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;

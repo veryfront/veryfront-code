@@ -4,7 +4,9 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { agent } from "#veryfront/agent";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { clearModelProviders, resolveModel } from "#veryfront/provider";
+import type { ModelRuntime } from "#veryfront/provider/types.ts";
 
 const CLOUD_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -58,6 +60,77 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "openai");
+  });
+
+  it("preserves class runtime method receivers while adding cloud metadata", async () => {
+    setCloudBootstrap();
+
+    class PrivateFieldRuntime implements ModelRuntime {
+      [key: string]: unknown;
+      readonly #calls: string[] = [];
+      readonly #modelId = "private-field-runtime";
+      readonly #provider = "private-provider";
+      readonly #runtimeCapabilities = { toolCalling: true } as const;
+
+      get modelId(): string {
+        return this.#modelId;
+      }
+
+      get provider(): string {
+        return this.#provider;
+      }
+
+      get runtimeCapabilities(): { readonly toolCalling: true } {
+        return this.#runtimeCapabilities;
+      }
+
+      prepare(): Promise<void> {
+        this.#calls.push("prepare");
+        return Promise.resolve();
+      }
+
+      doGenerate(): Promise<{ content: unknown[] }> {
+        this.#calls.push("generate");
+        return Promise.resolve({ content: [] });
+      }
+
+      doStream(): Promise<{ stream: ReadableStream<unknown> }> {
+        this.#calls.push("stream");
+        return Promise.resolve({ stream: readableStreamFrom([]) });
+      }
+
+      calls(): string[] {
+        return [...this.#calls];
+      }
+    }
+
+    const runtime = new PrivateFieldRuntime();
+    const registry = ensureBuiltinLLMProviders();
+    const builtinOpenAI = registry.require("openai");
+    registry.unregister("openai");
+    registry.register({
+      id: "openai",
+      createModel: () => runtime,
+    });
+
+    try {
+      const model = resolveModel("veryfront-cloud/openai/private-field-runtime");
+
+      await model.prepare?.();
+      await model.doGenerate({});
+      await model.doStream({});
+
+      assertEquals(runtime.calls(), ["prepare", "generate", "stream"]);
+      assertEquals(model.modelId, "private-field-runtime");
+      assertEquals(model.provider, "private-provider");
+      assertEquals(model.runtimeCapabilities, { toolCalling: true });
+      assertEquals(model._generateViaStream, true);
+      assertEquals(model.modelProvider, "openai");
+    } finally {
+      registry.unregister("openai");
+      registry.register(builtinOpenAI);
+    }
   });
 
   it("routes agent.generate through the streaming Veryfront Cloud gateway path", async () => {
@@ -200,6 +273,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "moonshotai");
   });
 
   it("resolves veryfront-cloud mistral models without project ext-llm-openai installed", () => {
@@ -213,6 +287,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "mistral");
   });
 
   it("rejects unsupported pre-prefixed veryfront-cloud Mistral models", () => {
@@ -241,6 +316,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "anthropic");
   });
 
   it("resolves veryfront-cloud google models without project ext-llm-google installed", () => {
@@ -254,6 +330,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");
     assertEquals(model._generateViaStream, true);
+    assertEquals(model.modelProvider, "google");
   });
 
   it("resolves direct anthropic models through the built-in provider", () => {

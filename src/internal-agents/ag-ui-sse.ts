@@ -167,7 +167,17 @@ export function formatAgUiEvent(event: string, payload: Record<string, unknown>)
 
   const schemas = resolveAgUiEventPayloadSchemas();
   const schema = schemas[event as AgUiEventName];
-  const validatedPayload = schema ? schema.parse(payload) : payload;
+  const { elapsedMs, emittedAt, ...rest } = payload;
+  const timedPayload = {
+    ...rest,
+    ...(typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs >= 0
+      ? { elapsedMs }
+      : {}),
+    emittedAt: typeof emittedAt === "number" && Number.isInteger(emittedAt) && emittedAt >= 0
+      ? emittedAt
+      : Date.now(),
+  };
+  const validatedPayload = schema ? schema.parse(timedPayload) : timedPayload;
   return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(validatedPayload)}\n\n`);
 }
 

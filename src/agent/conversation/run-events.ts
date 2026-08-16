@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
+import type { AgentRunEventTimingOptions } from "../../runtime/model-call-context.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 
 /** Shared conversation run event types value. */
@@ -73,6 +74,8 @@ export interface ConversationRunEventEncoderOptions {
    * nothing is stamped.
    */
   nowMs?: () => number;
+  epochMs?: () => number;
+  startedMs?: number;
 }
 
 export class ConversationRunEventEncoder {
@@ -85,6 +88,7 @@ export class ConversationRunEventEncoder {
   private stepCount = 0;
   private readonly nowMs?: () => number;
   private readonly startedMs?: number;
+  private readonly epochMs?: () => number;
 
   // One encoder spans a whole run: it carries stepCount and the active message
   // across every step, so elapsed measured from here is run-relative and needs no
@@ -92,8 +96,19 @@ export class ConversationRunEventEncoder {
   constructor(options: ConversationRunEventEncoderOptions = {}) {
     if (options.nowMs) {
       this.nowMs = options.nowMs;
-      this.startedMs = options.nowMs();
+      this.startedMs = options.startedMs ?? options.nowMs();
     }
+    this.epochMs = options.epochMs;
+  }
+
+  /** Return the run timing anchor owned by this encoder, when it has one. */
+  getTimingAnchor(): AgentRunEventTimingOptions | undefined {
+    if (!this.nowMs && !this.epochMs) return undefined;
+    return {
+      ...(this.nowMs ? { nowMs: this.nowMs } : {}),
+      ...(this.epochMs ? { epochMs: this.epochMs } : {}),
+      ...(this.startedMs !== undefined ? { startedMs: this.startedMs } : {}),
+    };
   }
 
   private nextStepName(): string {
@@ -162,12 +177,36 @@ export class ConversationRunEventEncoder {
   // is treated alike -- including the ones this encoder synthesises, such as the
   // terminal result for a provider-executed call the provider never resolved.
   private stampElapsed(events: ConversationRunEvent[]): ConversationRunEvent[] {
-    if (!this.nowMs || this.startedMs === undefined) {
+    if (events.length === 0) {
       return events;
     }
 
-    const elapsedMs = Math.max(0, Math.round(this.nowMs() - this.startedMs));
-    return events.map((event) => ({ ...event, elapsedMs }));
+    for (const event of events) {
+      if (Object.hasOwn(event, "elapsedMs")) assertValidElapsedMs(event.elapsedMs);
+      if (Object.hasOwn(event, "emittedAt")) assertValidEmittedAt(event.emittedAt);
+    }
+
+    const needsElapsedMs = events.some((event) => !Object.hasOwn(event, "elapsedMs"));
+    const needsEmittedAt = events.some((event) => !Object.hasOwn(event, "emittedAt"));
+    const elapsedMs = needsElapsedMs && this.nowMs && this.startedMs !== undefined
+      ? Math.max(0, Math.round(this.nowMs() - this.startedMs))
+      : undefined;
+    const emittedAt = needsEmittedAt && this.epochMs ? Math.round(this.epochMs()) : undefined;
+    if (elapsedMs !== undefined) assertValidElapsedMs(elapsedMs);
+    if (emittedAt !== undefined) assertValidEmittedAt(emittedAt);
+    if (elapsedMs === undefined && emittedAt === undefined) {
+      return events;
+    }
+    return events.map((event) => ({
+      ...event,
+      ...(elapsedMs !== undefined && !Object.hasOwn(event, "elapsedMs") ? { elapsedMs } : {}),
+      ...(emittedAt !== undefined && !Object.hasOwn(event, "emittedAt") ? { emittedAt } : {}),
+    }));
+  }
+
+  /** Stamp externally-created checkpoints against this encoder's run anchor. */
+  stamp(events: ConversationRunEvent[]): ConversationRunEvent[] {
+    return this.stampElapsed(events);
   }
 
   private encodeChunk(chunk: ChatStreamEvent): ConversationRunEvent[] {
@@ -346,6 +385,18 @@ export class ConversationRunEventEncoder {
       default:
         return chunk.type.startsWith("data-") ? encodeCustomDataEvent(chunk) : [];
     }
+  }
+}
+
+function assertValidElapsedMs(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("elapsedMs must be a finite non-negative number");
+  }
+}
+
+function assertValidEmittedAt(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new TypeError("emittedAt must be a non-negative integer");
   }
 }
 

@@ -40,6 +40,7 @@ describe("agent/ag-ui-chunk-encoder-bridge", () => {
     });
 
     assertEquals(bridge.state.messageId, "msg-1");
+    assertEquals(bridge.timingState, bridge.state);
     assertEquals(finalEvents.length > 0, true);
   });
 });

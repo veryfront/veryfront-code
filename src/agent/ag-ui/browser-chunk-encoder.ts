@@ -14,6 +14,8 @@ import type { AgentResponse } from "../types.ts";
 /** Public API contract for AG-UI browser chunk encoder. */
 export interface AgUiBrowserChunkEncoder<TChunk> {
   state: AgUiBrowserEncoderState;
+  /** Optional timing anchor consumed by the browser response composition root. */
+  timingState?: AgUiBrowserEncoderState;
   encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
 }
@@ -108,6 +110,7 @@ export function createAgUiBrowserChunkEncoder<TChunk>(
 
   return {
     state: runtimeEventEncoder.state,
+    timingState: runtimeEventEncoder.state,
     encode: (chunk) => {
       mergeMetadata(runtimeEventEncoder.state.metadata, options.getMetadataFromChunk?.(chunk));
       return options.getRuntimeEvents(chunk).flatMap((event) => runtimeEventEncoder.encode(event));

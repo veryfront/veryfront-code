@@ -2,6 +2,8 @@ export interface RuntimeMetadata {
   readonly specificationVersion?: string;
   readonly provider?: string;
   readonly modelId?: string;
+  /** Canonical underlying model provider when a gateway runtime masks it. */
+  readonly modelProvider?: string;
   readonly [key: string]: unknown;
 }
 

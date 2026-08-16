@@ -2,11 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import { ConversationRunEventEncoder } from "../conversation/run-events.ts";
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
 import { createGenerateModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
-import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import {
+  type AgentRunModelCallContextEvent,
+  createAgentRunEventTimingAnchor,
+} from "../../runtime/model-call-context.ts";
 import {
   getPrivateRunEventAppendRequestByteLength,
   MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
@@ -66,8 +70,7 @@ function firstAppendedEvent(appended: unknown[][]): Record<string, unknown> {
 
 function leadingNoticeText(event: Record<string, unknown>): string {
   const messages = event.messages as Array<Record<string, unknown>> | undefined;
-  const parts = messages?.[0]?.content as Array<Record<string, unknown>> | undefined;
-  const text = parts?.[0]?.text;
+  const text = messages?.[0]?.content;
   if (typeof text !== "string") {
     throw new Error("expected a leading notice message");
   }
@@ -87,7 +90,28 @@ function createModelCallContextEventWithText(
 }
 
 describe("agent/hosted/durable-run-event-sink", () => {
-  it("appends and flushes one direct event without chunk metadata", async () => {
+  it("uses one run anchor for public and private event families", async () => {
+    let now = 100;
+    const timing = createAgentRunEventTimingAnchor({
+      nowMs: () => now,
+      epochMs: () => 1_786_866_357_364,
+    });
+    const target = mirror();
+    const publicEncoder = new ConversationRunEventEncoder(timing);
+    now = 142;
+    publicEncoder.encode({ type: "start", messageId: "message-1" });
+    const publicEvent = publicEncoder.encode({ type: "text-start", id: "text:0" })[0];
+    await createDurableRunEventSink({ mirror: target.result, timing })({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+    });
+    const privateEvent = firstAppendedEvent(target.appended);
+    assertEquals(publicEvent?.elapsedMs, 42);
+    assertEquals(privateEvent.elapsedMs, 42);
+    assertEquals(publicEvent?.emittedAt, privateEvent.emittedAt);
+  });
+
+  it("appends and flushes one direct event with default producer timing", async () => {
     const target = mirror();
     const order: string[] = [];
     const sink = createDurableRunEventSink({
@@ -112,7 +136,20 @@ describe("agent/hosted/durable-run-event-sink", () => {
     await sink(event);
 
     assertEquals(order, ["append", "flush"]);
-    assertEquals(target.appended, [[event]]);
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(persisted.type, event.type);
+    assertEquals(persisted.messages, event.messages);
+    assertEquals(persisted.tools, event.tools);
+    assertEquals(
+      typeof persisted.elapsedMs === "number" && persisted.elapsedMs >= 0,
+      true,
+      "an absent timing option still stamps nonnegative elapsedMs",
+    );
+    assertEquals(
+      typeof persisted.emittedAt === "number" && Number.isInteger(persisted.emittedAt),
+      true,
+      "an absent timing option still stamps an epoch timestamp",
+    );
     for (
       const field of [
         "contextId",
@@ -127,22 +164,68 @@ describe("agent/hosted/durable-run-event-sink", () => {
     }
   });
 
+  it("preserves valid producer timing instead of replacing it", async () => {
+    const target = mirror();
+    const sink = createDurableRunEventSink({
+      mirror: target.result,
+      timing: {
+        nowMs: () => 900,
+        startedMs: 100,
+        epochMs: () => 1_900_000_000_000,
+      },
+    });
+
+    await sink({
+      type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+      messages: [],
+      elapsedMs: 42,
+      emittedAt: 1_786_866_357_364,
+    });
+
+    const persisted = firstAppendedEvent(target.appended);
+    assertEquals(persisted.elapsedMs, 42);
+    assertEquals(persisted.emittedAt, 1_786_866_357_364);
+  });
+
   it("persists a direct context above 2 MiB as one unchanged event", async () => {
     const target = mirror();
     const event = createModelCallContextEventWithText(
       MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES + 1,
     );
 
-    await createDurableRunEventSink({ mirror: target.result })(event);
+    await createDurableRunEventSink({
+      mirror: target.result,
+      timing: {
+        nowMs: () => 100,
+        startedMs: 100,
+        epochMs: () => 1_786_866_357_364,
+      },
+    })(event);
 
-    assertEquals(target.appended, [[event]]);
+    assertEquals(target.appended, [[{
+      ...event,
+      elapsedMs: 0,
+      emittedAt: 1_786_866_357_364,
+    }]]);
   });
 
   it("accepts the exact append request byte limit and rejects one byte over", async () => {
-    const baseEvent = createModelCallContextEventWithText(0);
+    const baseEvent = {
+      ...createModelCallContextEventWithText(0),
+      model: { id: "claude-sonnet-4-6", modelProvider: "anthropic" },
+      request: { maxOutputTokens: 4096 },
+      elapsedMs: 42,
+      emittedAt: 1_786_866_357_364,
+    };
     const exactTextLength = MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES -
       getPrivateRunEventAppendRequestByteLength(baseEvent);
-    const exactEvent = createModelCallContextEventWithText(exactTextLength);
+    const exactEvent = {
+      ...baseEvent,
+      messages: [{
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "x".repeat(exactTextLength) }],
+      }],
+    };
     assertEquals(
       getPrivateRunEventAppendRequestByteLength(exactEvent),
       MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,
@@ -153,7 +236,13 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(exactTarget.appended, [[exactEvent]]);
 
     const oversizedTarget = mirror();
-    const oversizedEvent = createModelCallContextEventWithText(exactTextLength + 1);
+    const oversizedEvent = {
+      ...baseEvent,
+      messages: [{
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "x".repeat(exactTextLength + 1) }],
+      }],
+    };
     await assertRejects(
       async () =>
         await createDurableRunEventSink({ mirror: oversizedTarget.result })(oversizedEvent),
@@ -168,6 +257,10 @@ describe("agent/hosted/durable-run-event-sink", () => {
       "a truncated record is persisted for audit before the gate throws",
     );
     const persisted = firstAppendedEvent(oversizedTarget.appended);
+    assertEquals(persisted.model, baseEvent.model);
+    assertEquals(persisted.request, baseEvent.request);
+    assertEquals(persisted.elapsedMs, 42);
+    assertEquals(persisted.emittedAt, 1_786_866_357_364);
     assertEquals(
       getPrivateRunEventAppendRequestByteLength(persisted) <=
         MAX_CONVERSATION_RUN_EVENT_APPEND_REQUEST_BYTES,

@@ -99,6 +99,31 @@ describe("resolveAgentModelTransport", () => {
     assertEquals((transport as { reasoning?: unknown }).reasoning, { enabled: true });
   });
 
+  it("keeps adaptive Anthropic thinking provider-native", async () => {
+    const hostModel = createModel("veryfront-cloud/anthropic/claude-opus-4-8");
+    const config: AgentConfig = {
+      model: "veryfront-cloud/anthropic/claude-opus-4-8",
+      system: "You are a helpful assistant.",
+      resolveModelTransport: () => ({ model: hostModel }),
+    };
+
+    const transport = await resolveAgentModelTransport({
+      agentId: "agent-1",
+      config,
+      context: undefined,
+      mode: "stream",
+      modelOverride: undefined,
+    });
+
+    assertEquals(transport.providerOptions, {
+      anthropic: {
+        thinking: { type: "adaptive", display: "summarized" },
+        output_config: { effort: "high" },
+      },
+    });
+    assertEquals(transport.reasoning, undefined);
+  });
+
   it("preserves provider option thinking opt-outs over Veryfront Cloud reasoning defaults", async () => {
     const hostModel = createModel("veryfront-cloud/moonshotai/kimi-k2.6");
     const providerOptions = { openai: { thinking: { type: "disabled" } } };

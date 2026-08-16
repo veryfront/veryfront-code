@@ -60,6 +60,11 @@ import {
   parseSseJsonEvents,
 } from "./ag-ui-sse.ts";
 import type { AgentRunEvent, AgentRunEventSink } from "#veryfront/runtime/model-call-context.ts";
+import {
+  createAgentRunEventTimingAnchor,
+  createTimedAgentRunEventSink,
+} from "#veryfront/runtime/model-call-context.ts";
+import { stampAgUiBrowserEventTiming } from "#veryfront/agent/ag-ui/browser-encoder.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
@@ -664,17 +669,19 @@ function compactRuntimeMessagesForStream(
  * awaited, before there is a controller to enqueue into, so events raised
  * before `attach` are buffered and replayed once the stream opens.
  */
-function createModelCallContextRelay(): {
+function createModelCallContextRelay(
+  timing: Parameters<typeof createTimedAgentRunEventSink>[1],
+): {
   sink: AgentRunEventSink;
   attach: (emit: (event: AgentRunEvent) => void) => void;
 } {
   const buffered: AgentRunEvent[] = [];
   let emit: ((event: AgentRunEvent) => void) | undefined;
   return {
-    sink: (event) => {
+    sink: createTimedAgentRunEventSink((event) => {
       if (emit) emit(event);
       else buffered.push(event);
-    },
+    }, timing),
     attach: (next) => {
       emit = next;
       for (const event of buffered.splice(0)) next(event);
@@ -703,7 +710,8 @@ export async function createRuntimeAgentStreamResponse(
   let completedResponse: AgentResponse | null = null;
   let runtimeStream: ReadableStream<Uint8Array>;
   let closeSandbox = createIdempotentAsyncCleanup();
-  const modelCallContextRelay = createModelCallContextRelay();
+  const timing = createAgentRunEventTimingAnchor();
+  const modelCallContextRelay = createModelCallContextRelay(timing);
   try {
     const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
     const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
@@ -923,7 +931,7 @@ export async function createRuntimeAgentStreamResponse(
             }),
           );
           addSpanEvent(runSpan, "agent.run.started");
-          const state = createStreamTransformState();
+          const state = createStreamTransformState(timing);
           const reader = runtimeStream.getReader();
           const decoder = new TextDecoder();
           let remainder = "";
@@ -942,7 +950,8 @@ export async function createRuntimeAgentStreamResponse(
           };
 
           const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
-            const encodedEvent = formatAgUiEvent(event, payload);
+            const [timed] = stampAgUiBrowserEventTiming(state, [{ event, payload }]);
+            const encodedEvent = formatAgUiEvent(event, timed?.payload ?? payload);
             if (!clientAttached) {
               return;
             }

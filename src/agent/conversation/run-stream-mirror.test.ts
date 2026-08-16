@@ -4,6 +4,7 @@ import { FakeTime } from "#std/testing/time";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createConversationRunStreamMirror } from "./run-stream-mirror.ts";
 import { type ConversationRunEventQueueController } from "./durable.ts";
+import { ConversationRunEventEncoder } from "./run-events.ts";
 
 function createMockQueueController(initial?: {
   latestEventId?: number;
@@ -68,6 +69,7 @@ describe("agent/conversation-run-stream-mirror", () => {
     const mirror = createConversationRunStreamMirror({
       queueController: controller,
       immediateFlushEventCount: 2,
+      encoder: new ConversationRunEventEncoder(),
     });
 
     mirror.handleStreamEvent({ type: "text-start", id: "msg-1" });
@@ -80,11 +82,37 @@ describe("agent/conversation-run-stream-mirror", () => {
     mirror.dispose();
   });
 
+  it("stamps elapsed and epoch time with its default run-scoped encoder", () => {
+    const controller = createMockQueueController();
+    const mirror = createConversationRunStreamMirror({
+      queueController: controller,
+      immediateFlushEventCount: 10,
+    });
+
+    mirror.handleStreamEvent({ type: "text-start", id: "msg-1" });
+
+    const event = controller.enqueued[0]?.[0] as
+      | { elapsedMs?: number; emittedAt?: number }
+      | undefined;
+    assertEquals(
+      typeof event?.elapsedMs === "number" && Number.isFinite(event.elapsedMs) &&
+        event.elapsedMs >= 0,
+      true,
+    );
+    assertEquals(
+      typeof event?.emittedAt === "number" && Number.isInteger(event.emittedAt) &&
+        event.emittedAt > 0,
+      true,
+    );
+    mirror.dispose();
+  });
+
   it("normalizes already-encoded events before enqueueing them", () => {
     const controller = createMockQueueController();
     const mirror = createConversationRunStreamMirror({
       queueController: controller,
       immediateFlushEventCount: 10,
+      encoder: new ConversationRunEventEncoder(),
     });
 
     mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "x".repeat(300 * 1024) }]);
@@ -96,6 +124,44 @@ describe("agent/conversation-run-stream-mirror", () => {
       ),
       true,
     );
+    mirror.dispose();
+  });
+
+  it("stamps external events before and after normalization", () => {
+    const controller = createMockQueueController();
+    let now = 100;
+    let epoch = 1_000;
+    const mirror = createConversationRunStreamMirror({
+      queueController: controller,
+      immediateFlushEventCount: 10,
+      encoder: new ConversationRunEventEncoder({
+        nowMs: () => now,
+        epochMs: () => epoch,
+      }),
+    });
+    now = 142;
+    epoch = 1_042;
+
+    mirror.appendEvents([
+      { type: "TEXT_MESSAGE_CONTENT", delta: "x".repeat(300 * 1024) },
+      { type: "TOOL_EXPOSURE_CHECKPOINT", elapsedMs: 7, emittedAt: 8 },
+    ]);
+
+    const normalized = controller.enqueued[0] as Array<{
+      type: string;
+      elapsedMs?: number;
+      emittedAt?: number;
+    }>;
+    assertEquals(normalized.length > 2, true);
+    assertEquals(
+      normalized.slice(0, -1).every((event) => event.elapsedMs === 42 && event.emittedAt === 1_042),
+      true,
+    );
+    assertEquals(normalized.at(-1), {
+      type: "TOOL_EXPOSURE_CHECKPOINT",
+      elapsedMs: 7,
+      emittedAt: 8,
+    });
     mirror.dispose();
   });
 

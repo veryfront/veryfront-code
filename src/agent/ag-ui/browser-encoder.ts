@@ -77,6 +77,7 @@ export interface AgUiBrowserEncoderStateOptions {
    * `Date.now`. Pass null to omit the stamp.
    */
   epochMs?: (() => number) | null;
+  startedMs?: number;
 }
 
 /** Event emitted for AG-UI browser encoded. */
@@ -95,7 +96,7 @@ export function createAgUiBrowserEncoderState(
   const nowMs = options.nowMs === null ? undefined : options.nowMs ?? (() => performance.now());
   const epochMs = options.epochMs === null ? undefined : options.epochMs ?? (() => Date.now());
   return {
-    ...(nowMs ? { nowMs, startedMs: nowMs() } : {}),
+    ...(nowMs ? { nowMs, startedMs: options.startedMs ?? nowMs() } : {}),
     ...(epochMs ? { epochMs } : {}),
     messageId: null,
     textOpen: false,
@@ -681,10 +682,13 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): AgUiBrowserEncodedEvent[] {
-  return stampTiming(state, mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event));
+  return stampAgUiBrowserEventTiming(
+    state,
+    mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event),
+  );
 }
 
-function stampTiming(
+export function stampAgUiBrowserEventTiming(
   state: AgUiBrowserEncoderState,
   events: AgUiBrowserEncodedEvent[],
 ): AgUiBrowserEncodedEvent[] {
@@ -699,18 +703,47 @@ function stampTiming(
   // wall-clock traces and logs, and turns ingest lag into `created_at -
   // emittedAt`. Both are stamped because wall clocks can step backwards and
   // the monotonic reading cannot.
-  const timing: Record<string, number> = {};
-  if (state.nowMs && state.startedMs !== undefined) {
-    timing.elapsedMs = Math.max(0, Math.round(state.nowMs() - state.startedMs));
+  for (const { payload } of events) {
+    if (Object.hasOwn(payload, "elapsedMs")) assertValidElapsedMs(payload.elapsedMs);
+    if (Object.hasOwn(payload, "emittedAt")) assertValidEmittedAt(payload.emittedAt);
   }
-  if (state.epochMs) {
-    timing.emittedAt = Math.round(state.epochMs());
-  }
-  if (Object.keys(timing).length === 0) {
+
+  const needsElapsedMs = events.some(({ payload }) => !Object.hasOwn(payload, "elapsedMs"));
+  const needsEmittedAt = events.some(({ payload }) => !Object.hasOwn(payload, "emittedAt"));
+  const elapsedMs = needsElapsedMs && state.nowMs && state.startedMs !== undefined
+    ? Math.max(0, Math.round(state.nowMs() - state.startedMs))
+    : undefined;
+  const emittedAt = needsEmittedAt && state.epochMs ? Math.round(state.epochMs()) : undefined;
+  if (elapsedMs !== undefined) assertValidElapsedMs(elapsedMs);
+  if (emittedAt !== undefined) assertValidEmittedAt(emittedAt);
+  if (elapsedMs === undefined && emittedAt === undefined) {
     return events;
   }
 
-  return events.map((entry) => ({ ...entry, payload: { ...entry.payload, ...timing } }));
+  return events.map((entry) => ({
+    ...entry,
+    payload: {
+      ...entry.payload,
+      ...(elapsedMs !== undefined && !Object.hasOwn(entry.payload, "elapsedMs")
+        ? { elapsedMs }
+        : {}),
+      ...(emittedAt !== undefined && !Object.hasOwn(entry.payload, "emittedAt")
+        ? { emittedAt }
+        : {}),
+    },
+  }));
+}
+
+function assertValidElapsedMs(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("elapsedMs must be a finite non-negative number");
+  }
+}
+
+function assertValidEmittedAt(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new TypeError("emittedAt must be a non-negative integer");
+  }
 }
 
 function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
@@ -952,7 +985,7 @@ export function finalizeAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   response: AgentResponse | null,
 ): AgUiBrowserEncodedEvent[] {
-  return stampTiming(state, finalizeAgUiBrowserEventsUnstamped(state, response));
+  return stampAgUiBrowserEventTiming(state, finalizeAgUiBrowserEventsUnstamped(state, response));
 }
 
 function finalizeAgUiBrowserEventsUnstamped(
