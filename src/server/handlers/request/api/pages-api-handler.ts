@@ -161,7 +161,7 @@ async function createApiHandler(
     await ensurePreviewSourceSnapshotFresh(ctx);
   }
 
-  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter);
+  const handler = new APIRouteHandler(ctx.projectDir, ctx.adapter, ctx.config);
   await handler.initialize();
   return handler;
 }

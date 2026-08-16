@@ -88,6 +88,42 @@ function createHandlerContext(
 }
 
 describe("server/handlers/request/api/pages-api-handler", () => {
+  describe("request config snapshot", () => {
+    it("does not reload hosted config while creating the API route handler", async () => {
+      const adapter = createMockAdapter();
+      let configLoads = 0;
+      __injectApiRouteDepsForTests({
+        getConfig: () => {
+          configLoads++;
+          return Promise.reject(new Error("hosted config must use the authenticated snapshot"));
+        },
+      });
+      const ctx = createHandlerContext({
+        adapter,
+        projectSlug: "hosted-project",
+      });
+      ctx.config = {
+        security: {
+          cors: { origin: ["https://app.example.test"] },
+          remoteHosts: ["assets.example.test"],
+        },
+      } as HandlerContext["config"];
+
+      const handler = await getApiHandler(ctx);
+      const response = await handler.handle(
+        new Request("https://project.example.test/api/test", {
+          method: "OPTIONS",
+          headers: { origin: "https://app.example.test" },
+        }),
+        ctx,
+      );
+
+      assertExists(response);
+      assertEquals(response.headers.get("access-control-allow-origin"), "https://app.example.test");
+      assertEquals(configLoads, 0);
+    });
+  });
+
   describe("LRUHandlerCache", () => {
     it("should clean up automatically evicted handlers without cleaning up manual removals", async () => {
       const evicted: MockHandler[] = [];

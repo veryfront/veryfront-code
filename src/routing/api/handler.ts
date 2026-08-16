@@ -155,9 +155,15 @@ export class APIRouteHandler {
   constructor(
     private projectDir: string,
     adapter?: RuntimeAdapter,
+    config?: Awaited<ReturnType<typeof getConfig>>,
   ) {
     this.adapter = adapter ?? null;
     this.adapterPromise = adapter ? Promise.resolve(adapter) : null;
+    this.config = config ?? null;
+    if (config !== undefined) {
+      this.corsConfig = config.security?.cors ?? null;
+      this.corsConfigLoaded = true;
+    }
   }
 
   initialize(): Promise<void> {
