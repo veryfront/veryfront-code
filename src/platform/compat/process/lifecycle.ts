@@ -6,6 +6,11 @@ import {
 } from "./global-error.ts";
 import { type RuntimeProcess, runtimeProcess } from "./runtime-process.ts";
 
+type HostRequire = (specifier: string) => unknown;
+
+// Bun exposes this lexical binding in ESM without installing it on globalThis.
+declare const require: HostRequire | undefined;
+
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
 export function getArgs(): string[] {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
@@ -83,9 +88,10 @@ export function getV8HeapSizeLimit(): number | undefined {
     const proc = runtimeProcess as
       | (RuntimeProcess & { getBuiltinModule?: (id: string) => unknown })
       | null;
-    const v8 = proc?.getBuiltinModule?.("node:v8") as
-      | { getHeapStatistics?: () => { heap_size_limit?: number } }
-      | undefined;
+    const v8 = (proc?.getBuiltinModule?.("node:v8") ??
+      (IS_BUN && typeof require === "function" ? require("node:v8") : undefined)) as
+        | { getHeapStatistics?: () => { heap_size_limit?: number } }
+        | undefined;
     const limit = v8?.getHeapStatistics?.().heap_size_limit;
     return typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? limit : undefined;
   } catch (_) {
