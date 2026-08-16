@@ -1,13 +1,28 @@
+const PLAYWRIGHT_RUNTIME_PORT = 8080;
+const PLAYWRIGHT_RUNTIME_ORIGIN = `http://127.0.0.1:${PLAYWRIGHT_RUNTIME_PORT}`;
+
+function createApiRequest(hostname: string, path: string) {
+  return {
+    url: `${PLAYWRIGHT_RUNTIME_ORIGIN}${path}`,
+    headers: { host: `${hostname}:${PLAYWRIGHT_RUNTIME_PORT}` },
+  };
+}
+
 export const PLAYWRIGHT_RUNTIME_CONFIGS = [
   {
     name: "production-host",
     modeName: "production",
-    getUrl: (subdomain: string) => `http://${subdomain}.localhost:8080`,
+    getUrl: (subdomain: string) => `http://${subdomain}.localhost:${PLAYWRIGHT_RUNTIME_PORT}`,
+    getApiRequest: (subdomain: string, path: string) =>
+      createApiRequest(`${subdomain}.localhost`, path),
   },
   {
     name: "preview-host",
     modeName: "preview",
-    getUrl: (subdomain: string) => `http://${subdomain}.preview.localhost:8080`,
+    getUrl: (subdomain: string) =>
+      `http://${subdomain}.preview.localhost:${PLAYWRIGHT_RUNTIME_PORT}`,
+    getApiRequest: (subdomain: string, path: string) =>
+      createApiRequest(`${subdomain}.preview.localhost`, path),
   },
 ] as const;
 
