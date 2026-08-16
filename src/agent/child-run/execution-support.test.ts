@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isNativeError } from "node:util/types";
 import {
   formatChildRunStreamPartError,
   isChildRunAbortError,
@@ -68,8 +68,16 @@ describe("child-run-execution-support", () => {
       const controller = new AbortController();
       controller.abort(reason);
 
-      assertStrictEquals(controller.signal.reason, reason);
-      assertEquals(isNativeErrorWithoutHooks(controller.signal.reason), true);
+      assertStrictEquals(
+        controller.signal.reason,
+        reason,
+        "AbortSignal must retain the supplied Error reason by identity",
+      );
+      assertEquals(
+        isNativeError(controller.signal.reason),
+        true,
+        "node:util/types must retain the supplied Error brand",
+      );
 
       assertThrows(() => throwIfChildRunAborted(controller.signal), Error, "custom reason");
     });
