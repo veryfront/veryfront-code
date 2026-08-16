@@ -44,6 +44,10 @@ export const buildHelp: CommandHelp = {
       description: "Select build preset (e.g. embedded)",
     },
   ],
+  notes: [
+    "--preset embedded emits a single bundle, so of the build flags it honours only -o/--output and build.outDir. Global flags such as --json, --verbose and --quiet are unaffected.",
+    "It rejects --dry-run, --split/--no-split, --compress/--no-compress, --prefetch, --ssg/--no-ssg, --include and --exclude rather than ignoring them.",
+  ],
   examples: [
     "veryfront build",
     "veryfront build --output dist",

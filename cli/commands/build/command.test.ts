@@ -264,3 +264,35 @@ describe("commands/build/command", () => {
     });
   });
 });
+
+describe("cli/build resolveBuildOutputDir clearsOutputDir", () => {
+  // Raised in review on #3781. The guard exists because the production build
+  // removes its output directory first. The embedded preset only mkdir's and
+  // writes, so applying the guard there rejected `-o .` — a plausible call for
+  // a preset meant to be embedded in a host project — over a hazard that does
+  // not exist on that path.
+  it("rejects an output directory containing the project when the caller clears it", () => {
+    assertThrows(
+      () => resolveBuildOutputDir("/tmp/proj", "/tmp/proj", { build: {} }),
+      Error,
+    );
+  });
+
+  it("allows the same directory when the caller only writes into it", () => {
+    assertEquals(
+      resolveBuildOutputDir("/tmp/proj", "/tmp/proj", { build: {} }, {
+        clearsOutputDir: false,
+      }),
+      "/tmp/proj",
+    );
+  });
+
+  it("still honours build.outDir when the guard is opted out", () => {
+    assertEquals(
+      resolveBuildOutputDir("/tmp/proj", undefined, { build: { outDir: "custom" } }, {
+        clearsOutputDir: false,
+      }),
+      "/tmp/proj/custom",
+    );
+  });
+});

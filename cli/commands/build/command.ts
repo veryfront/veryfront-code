@@ -84,9 +84,15 @@ export function resolveBuildOutputDir(
   projectDir: string,
   explicitOutputDir: string | undefined,
   config: Pick<VeryfrontConfig, "build">,
+  options: { clearsOutputDir?: boolean } = {},
 ): string {
   const outputDir = explicitOutputDir ?? resolveConfiguredOutputDir(projectDir, config);
-  assertOutputDirExcludesProject(projectDir, outputDir, explicitOutputDir !== undefined);
+  // The guard below exists because the caller wipes the directory first. A
+  // caller that only writes into it is not dangerous, and rejecting it would
+  // block legitimate invocations — see the embedded preset.
+  if (options.clearsOutputDir !== false) {
+    assertOutputDirExcludesProject(projectDir, outputDir, explicitOutputDir !== undefined);
+  }
   return outputDir;
 }
 
@@ -102,9 +108,12 @@ function resolveConfiguredOutputDir(
 /**
  * Refuse an output directory that is the project directory or an ancestor of it.
  *
- * The build clears its output directory before writing, so an `outDir` of `.`
- * or `..` would recursively delete the project's own source — or the workspace
- * above it. That was unreachable while `build.outDir` was ignored; now that the
+ * The production build clears its output directory before writing
+ * (`build-setup.ts` removes it recursively), so an `outDir` of `.` or `..`
+ * would recursively delete the project's own source — or the workspace above
+ * it. This is why the check is opt-out via `clearsOutputDir`: a caller that
+ * only writes into the directory, like the embedded preset, carries no such
+ * risk and must not be blocked. That was unreachable while `build.outDir` was ignored; now that the
  * config value is honored, a stale compatibility-era config could reach it.
  * Failing loudly is the only safe answer: silently substituting `dist` would
  * reintroduce the ignored-configuration bug this change exists to fix.
