@@ -563,6 +563,36 @@ export default function BarePage() {
     }
   });
 
+  it("honors escaped identifiers that parse as a layout export", async () => {
+    const projectDir = await createTestProjectDir();
+
+    try {
+      await writeTextFile(
+        join(projectDir, "pages/layout.tsx"),
+        `export default function RootLayout({ children }) { return children; }`,
+      );
+
+      const pageInfo = createPageInfo(
+        projectDir,
+        "pages/bare.tsx",
+        {},
+        `export const l\\u0061yout = false;
+
+export default function BarePage() {
+  return <div>Bare page</div>;
+}`,
+      );
+      const collector = await createCollector(projectDir);
+
+      const result = await collector.collectLayouts(pageInfo);
+
+      assertEquals(result.layoutBundle, undefined);
+      assertEquals(result.nestedLayouts, []);
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
+  });
+
   it("honors export const layout = 'Name' on tsx pages", async () => {
     const projectDir = await createTestProjectDir();
 

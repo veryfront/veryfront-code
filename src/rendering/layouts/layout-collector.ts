@@ -242,7 +242,7 @@ async function withModuleLayoutSignal(pageInfo: EntityInfo): Promise<EntityInfo>
   if (getLayoutKind(pageInfo.entity.path) !== "tsx") return pageInfo;
 
   const source = pageInfo.entity.content;
-  if (!source || !source.includes("layout")) return pageInfo;
+  if (!source) return pageInfo;
 
   const layout = await extractTsxLayoutSignal(source, pageInfo.entity.path);
   if (layout === undefined) return pageInfo;
