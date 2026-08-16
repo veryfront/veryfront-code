@@ -1958,6 +1958,7 @@ describe("push divergence guard", () => {
           "Push rejected",
         );
         if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
         assertStringIncludes(error.message, '"app.ts"');
         assertStringIncludes(error.message, "veryfront push --force");
         assertEquals(putCalled, false);

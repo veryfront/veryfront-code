@@ -647,6 +647,13 @@ Push receipt not found.
 - **HTTP status:** 400
 - **What to do:** Run: veryfront push --branch main first
 
+### push-conflict
+
+Push rejected because remote files changed.
+
+- **HTTP status:** 409
+- **What to do:** Commit or stash local changes, run veryfront pull, reconcile the changes with Git, then push again
+
 ### source-digest-mismatch
 
 Release source digest mismatch.

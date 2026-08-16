@@ -33,7 +33,7 @@ import {
 } from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess } from "#cli/utils";
-import { INVALID_ARGUMENT, PREVIEW_HOSTNAME_TOO_LONG } from "veryfront/errors";
+import { INVALID_ARGUMENT, PREVIEW_HOSTNAME_TOO_LONG, PUSH_CONFLICT } from "veryfront/errors";
 import { brand, createNoopSpinner, createSpinner, formatDuration } from "#cli/ui";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIgnoreChecker, type IgnoreChecker, loadIgnorePatterns } from "../../sync/ignore.ts";
@@ -620,11 +620,12 @@ function buildConfirmParts(ops: UploadOp[], toDelete: string[]): string[] {
 
 function pushConflictError(paths: readonly string[]): Error {
   const files = paths.map((path) => `"${path}"`).join(", ");
-  return new Error(
-    `Push rejected because remote files changed since your last pull or push: ${files}. ` +
+  return PUSH_CONFLICT.create({
+    detail: `Push rejected because remote files changed since your last pull or push: ${files}. ` +
       "Commit or stash local changes, run veryfront pull, reconcile the changes with Git, then push again. " +
       "Use veryfront push --force only to intentionally overwrite remote changes.",
-  );
+    context: { paths: [...paths] },
+  });
 }
 
 export async function recordPushReceipt(

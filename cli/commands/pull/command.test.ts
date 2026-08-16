@@ -660,6 +660,60 @@ describe("pullCommand", () => {
     }
   });
 
+  it("validates corrupt sync state before overwriting local files", async () => {
+    const tempDir = await Deno.makeTempDir();
+    const originalFetch = globalThis.fetch;
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const localContent = "export const source = 'local';\n";
+
+    try {
+      await Deno.mkdir(join(tempDir, ".veryfront"));
+      await Deno.writeTextFile(join(tempDir, ".veryfront", "sync-state.json"), "{invalid\n");
+      await Deno.writeTextFile(join(tempDir, "app.ts"), localContent);
+      Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+      _resetEnvironmentConfig();
+
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/projects/alpha") {
+          return Promise.resolve(Response.json({ id: "proj_alpha", slug: "alpha" }));
+        }
+        if (url.pathname === "/projects/alpha/files") {
+          return Promise.resolve(Response.json({
+            data: [{
+              path: "app.ts",
+              content: "export const source = 'remote';\n",
+              version_id: "00000000-0000-4000-8000-000000000010",
+              size: 32,
+              type: "file",
+            }],
+            page_info: {},
+          }));
+        }
+        throw new Error(`Pull made an unexpected request: ${url}`);
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          pullCommand({
+            projectDir: tempDir,
+            projectSlug: "alpha",
+            force: true,
+            quiet: true,
+          }),
+        Error,
+        "could not read .veryfront/sync-state.json",
+      );
+
+      assertEquals(await Deno.readTextFile(join(tempDir, "app.ts")), localContent);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      _resetEnvironmentConfig();
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("preserves customized local config files during a pruning pull", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;

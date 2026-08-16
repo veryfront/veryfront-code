@@ -174,6 +174,11 @@ async function readSyncState(projectDir: string): Promise<SyncState> {
   throw invalidSyncStateError();
 }
 
+/** Validate the local sync metadata before a command mutates project files. */
+export async function preflightSyncState(projectDir: string): Promise<void> {
+  await readSyncState(projectDir);
+}
+
 export async function readSyncTarget(
   projectDir: string,
   inputScope: SyncTargetScope,

@@ -81,6 +81,15 @@ export const PUSH_RECEIPT_MISSING = defineError({
   suggestion: "Run: veryfront push --branch main first",
 });
 
+export const PUSH_CONFLICT = defineError({
+  slug: "push-conflict",
+  category: "DEPLOY",
+  status: 409,
+  title: "Push rejected because remote files changed",
+  suggestion:
+    "Commit or stash local changes, run veryfront pull, reconcile the changes with Git, then push again",
+});
+
 export const SOURCE_DIGEST_MISMATCH = defineError({
   slug: "source-digest-mismatch",
   category: "DEPLOY",
@@ -135,6 +144,7 @@ export const DEPLOY_REGISTRY = {
   "release-build-timeout": RELEASE_BUILD_TIMEOUT,
   "deployment-verification-timeout": DEPLOYMENT_VERIFICATION_TIMEOUT,
   "push-receipt-missing": PUSH_RECEIPT_MISSING,
+  "push-conflict": PUSH_CONFLICT,
   "source-digest-mismatch": SOURCE_DIGEST_MISMATCH,
   "preview-hostname-too-long": PREVIEW_HOSTNAME_TOO_LONG,
   "branch-not-found": BRANCH_NOT_FOUND,

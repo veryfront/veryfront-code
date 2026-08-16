@@ -44,6 +44,7 @@ import {
 } from "./project-bootstrap.ts";
 import {
   computeContentDigest,
+  preflightSyncState,
   SYNC_STATE_RELATIVE_PATH,
   type SyncFileSnapshot,
   writeSyncTarget,
@@ -777,6 +778,10 @@ async function pullSingleProject(
       cliLogger.info("Pull cancelled.");
       return { written: 0, deleted: 0, cancelled: true };
     }
+  }
+
+  if (!dryRun && syncBranchForPullSource(source)) {
+    await preflightSyncState(projectDir);
   }
 
   if (!hasFileOperations) {
