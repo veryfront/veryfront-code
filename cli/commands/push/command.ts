@@ -1284,6 +1284,34 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         conflicts: [] as string[],
         applied: [] as string[],
       };
+      const writeVerifiedAppliedSyncTarget = async () => {
+        const latestRemoteFiles = await listAllFiles(
+          client,
+          projectApiReference(config),
+          target.source,
+        );
+        const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
+          latestRemoteFiles,
+          ignoreChecker,
+          false,
+        );
+        const appliedUploads = new Set(uploadResult.applied);
+        const appliedDeletes = new Set(deleteResult.applied);
+        const stillApplied = await filterAppliedChangesStillMatchingRemote(
+          latestRemoteSnapshot,
+          uploadOps.filter((op) => appliedUploads.has(op.path)),
+          deleteOps.filter((op) => appliedDeletes.has(op.path)),
+        );
+        await writeAppliedSyncTarget(
+          projectDir,
+          config,
+          project,
+          branchName,
+          latestRemoteFiles,
+          stillApplied.uploads,
+          stillApplied.deletes,
+        );
+      };
 
       if (uploadOps.length > 0) {
         spinner.update("Uploading files...");
@@ -1359,6 +1387,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
 
       if (deleteResult.failed > 0) {
         spinner.stop();
+        await writeVerifiedAppliedSyncTarget();
         throw new Error(
           `Push failed for ${deleteResult.failed} file${
             deleteResult.failed === 1 ? "" : "s"
@@ -1513,6 +1542,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             throw pushConflictError(repairUploadResult.conflicts);
           }
           if (repairUploadResult.failed > 0) {
+            await writeVerifiedAppliedSyncTarget();
             throw new Error(
               `Push failed for ${repairUploadResult.failed} file${
                 repairUploadResult.failed === 1 ? "" : "s"
