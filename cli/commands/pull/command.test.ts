@@ -28,6 +28,7 @@ import type { ApiClient } from "#cli/shared/config";
 import { readProjectLink } from "../../shared/project-link.ts";
 import { computeContentDigest, readSyncTarget } from "../../sync/state.ts";
 import { join } from "veryfront/platform/path";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 
 function createMockClient(overrides: {
   get?: (url: string, params?: unknown) => Promise<unknown>;
@@ -1880,7 +1881,7 @@ describe("pullCommand", () => {
   it("allows a pruning pull when only tracked sync metadata changed", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
-    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const originalApiToken = getEnv("VERYFRONT_API_TOKEN");
 
     try {
       await runTestGit(tempDir, "init", "--quiet");
@@ -1908,7 +1909,7 @@ describe("pullCommand", () => {
         }) + "\n",
       );
 
-      Deno.env.set("VERYFRONT_API_TOKEN", "token");
+      setEnv("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
       globalThis.fetch = ((input: string | URL | Request) => {
         const url = new URL(String(input));
@@ -1950,7 +1951,8 @@ describe("pullCommand", () => {
       );
     } finally {
       globalThis.fetch = originalFetch;
-      restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
+      if (originalApiToken === undefined) deleteEnv("VERYFRONT_API_TOKEN");
+      else setEnv("VERYFRONT_API_TOKEN", originalApiToken);
       _resetEnvironmentConfig();
       await Deno.remove(tempDir, { recursive: true });
     }

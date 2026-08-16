@@ -696,11 +696,9 @@ function findRemoteSnapshotChanges(
 
 function buildSyncFileDigestSnapshot(
   files: Readonly<Record<string, SyncFileSnapshot>>,
-  excludePaths: ReadonlySet<string> = new Set(),
 ): Map<string, { digest: string; versionId?: string }> {
   return new Map(
     Object.entries(files)
-      .filter(([path]) => !excludePaths.has(path))
       .map(([path, file]) => [path, { digest: file.digest }]),
   );
 }
@@ -1223,21 +1221,14 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       spinner.update("Verifying push target...");
       try {
         if (!force) {
-          const mutatedPaths = new Set([
-            ...uploadOps.map((op) => op.path),
-            ...deleteOps.map((op) => op.path),
-          ]);
           const latestRemoteFiles = await listAllFiles(
             client,
             projectApiReference(config),
             target.source,
           );
           const conflicts = findRemoteSnapshotChanges(
-            buildSyncFileDigestSnapshot(plan.nextFiles, mutatedPaths),
-            new Map(
-              [...(await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false))]
-                .filter(([path]) => !mutatedPaths.has(path)),
-            ),
+            buildSyncFileDigestSnapshot(plan.nextFiles),
+            await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false),
           );
           if (conflicts.length > 0) {
             const appliedUploads = new Set(uploadResult.applied);

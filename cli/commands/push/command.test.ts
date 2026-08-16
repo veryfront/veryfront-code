@@ -488,6 +488,7 @@ describe("push JSON output", () => {
         setJsonMode(true);
         console.log = captureConsoleLog(output);
 
+        let uploaded = false;
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -495,12 +496,16 @@ describe("push JSON output", () => {
             return Response.json({ id: "proj_json", slug: "json-project" });
           }
           if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
-            return Response.json({ data: [], page_info: {} });
+            return Response.json({
+              data: uploaded ? [{ path: "app.ts", content: "export const value = 1;\n" }] : [],
+              page_info: {},
+            });
           }
           if (
             request.method === "PUT" &&
             url.pathname === "/projects/json-project/files/app.ts"
           ) {
+            uploaded = true;
             return Response.json({});
           }
           if (request.method === "GET" && url.pathname === "/projects/json-project") {
@@ -1861,6 +1866,7 @@ describe("push divergence guard", () => {
         _resetEnvironmentConfig();
 
         let branchCreated = false;
+        let uploadApplied = false;
         const putRequests: Array<{ branchId: string | null; body: unknown }> = [];
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
@@ -1888,7 +1894,9 @@ describe("push divergence guard", () => {
             return Response.json({
               data: [{
                 path: "app.ts",
-                content: "export const value = 0;\n",
+                content: isBranch && uploadApplied
+                  ? "export const value = 1;\n"
+                  : "export const value = 0;\n",
                 version_id: isBranch
                   ? "00000000-0000-4000-8000-000000000011"
                   : "00000000-0000-4000-8000-000000000010",
@@ -1897,6 +1905,7 @@ describe("push divergence guard", () => {
             });
           }
           if (request.method === "PUT" && url.pathname.endsWith("/files/app.ts")) {
+            uploadApplied = true;
             putRequests.push({
               branchId: url.searchParams.get("branch_id"),
               body: await request.json(),
@@ -2585,6 +2594,88 @@ describe("push divergence guard", () => {
     }
   });
 
+  for (const operation of ["upload", "delete"] as const) {
+    it(`rejects a remote ${operation} race after the mutation succeeds`, async () => {
+      const originalFetch = globalThis.fetch;
+      const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+      const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+      try {
+        await withGitProject(async ({ projectDir }) => {
+          if (operation === "upload") {
+            await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+          } else {
+            await Deno.remove(`${projectDir}/app.ts`);
+          }
+          Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+          Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+          Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+          _resetEnvironmentConfig();
+          await writeSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            },
+          });
+
+          let fileListCalls = 0;
+          let mutationApplied = false;
+          globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (request.method === "GET" && url.pathname === "/projects/my-project") {
+              return Response.json({ id: "project-123", slug: "my-project" });
+            }
+            if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+              fileListCalls++;
+              const afterMutation = fileListCalls === 3;
+              return Response.json({
+                data: [{
+                  path: "app.ts",
+                  content: afterMutation
+                    ? "export const value = 'studio-race';\n"
+                    : "export const value = 1;\n",
+                  version_id: afterMutation
+                    ? "00000000-0000-4000-8000-000000000011"
+                    : "00000000-0000-4000-8000-000000000010",
+                }],
+                page_info: {},
+              });
+            }
+            if (
+              (operation === "upload" && request.method === "PUT") ||
+              (operation === "delete" && request.method === "DELETE")
+            ) {
+              mutationApplied = true;
+              return Response.json({});
+            }
+            throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+          }) as typeof fetch;
+
+          const error = await assertRejects(
+            () => pushCommand({ projectDir, prune: operation === "delete", quiet: true }),
+            Error,
+            "Push rejected",
+          );
+
+          if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+          assertEquals((error as Error & { slug?: string }).slug, "push-conflict");
+          assertStringIncludes(error.message, '"app.ts"');
+          assertEquals(fileListCalls, 3);
+          assertEquals(mutationApplied, true);
+          assertEquals(await readPushReceipt(projectDir), null);
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
+        envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+        _resetEnvironmentConfig();
+      }
+    });
+  }
+
   it("rejects a remote change to a skipped file after successful uploads", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
@@ -2840,6 +2931,7 @@ describe("push deletion ownership", () => {
         _resetEnvironmentConfig();
 
         const requests: string[] = [];
+        let uploaded = false;
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -2847,14 +2939,20 @@ describe("push deletion ownership", () => {
 
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
             return Response.json({
-              data: [{ path: "remote-only.ts", content: "remote\n" }],
+              data: [
+                { path: "remote-only.ts", content: "remote\n" },
+                ...(uploaded ? [{ path: "app.ts", content: "export const value = 1;\n" }] : []),
+              ],
               page_info: {},
             });
           }
           if (request.method === "GET" && url.pathname === "/projects/my-project") {
             return Response.json({ id: "project-123", slug: "my-project" });
           }
-          if (request.method === "PUT") return Response.json({});
+          if (request.method === "PUT") {
+            uploaded = true;
+            return Response.json({});
+          }
           if (request.method === "DELETE") return Response.json({});
           throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
         }) as typeof fetch;
