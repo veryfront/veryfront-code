@@ -24,7 +24,7 @@ import {
   type WorkerEgressBroker,
 } from "./worker-egress-guard.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
-import { assertWorkerReadScopeConfined } from "./worker-read-scope.ts";
+import { createWorkerReadScopeGenerationAudit } from "./worker-read-scope.ts";
 import { deserializeWorkerError } from "./worker-error-boundary.ts";
 import type {
   SerializedError,
@@ -477,6 +477,7 @@ export class ProjectWorker {
   private suppressIdleNotifications = false;
   private requestTimeoutMs: number;
   private readonly permissions: Readonly<WorkerPermissions>;
+  private readonly assertReadScopeGenerationConfined: () => void;
   private workerScriptUrl?: string;
   private readonly isolatedSsrRendererModuleUrl?: string;
   private egressResolveHost?: ResolveWorkerHost;
@@ -490,6 +491,9 @@ export class ProjectWorker {
   constructor(options: ProjectWorkerOptions) {
     this.projectId = options.projectId;
     this.permissions = snapshotWorkerPermissions(options.permissions);
+    this.assertReadScopeGenerationConfined = createWorkerReadScopeGenerationAudit(
+      this.permissions.read,
+    );
     this.requestTimeoutMs = requireRequestTimeoutMs(options.requestTimeoutMs);
     this.workerScriptUrl = options.workerScriptUrl;
     this.isolatedSsrRendererModuleUrl = options.isolatedSsrRendererModuleUrl === undefined
@@ -545,7 +549,7 @@ export class ProjectWorker {
       });
     }
 
-    assertWorkerReadScopeConfined(this.permissions.read);
+    this.assertReadScopeGenerationConfined();
 
     const allowInternalEgress = this.allowInternalEgress;
     let workerPermissions: Readonly<ScopedWorkerPermissions> = this.permissions;
@@ -655,7 +659,7 @@ export class ProjectWorker {
             UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` }),
           );
         }
-        assertWorkerReadScopeConfined(this.permissions.read);
+        this.assertReadScopeGenerationConfined();
         if (this.pending.has(requestId)) {
           return Promise.reject(UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" }));
         }
@@ -726,7 +730,7 @@ export class ProjectWorker {
     if (!this.worker || this._status === "crashed" || this._status === "terminated") {
       throw UNKNOWN_ERROR.create({ detail: `Worker not available (status: ${this._status})` });
     }
-    assertWorkerReadScopeConfined(this.permissions.read);
+    this.assertReadScopeGenerationConfined();
 
     if (this.pending.has(requestId) || this.streamHandlers.has(requestId)) {
       throw UNKNOWN_ERROR.create({ detail: "Duplicate worker request id" });

@@ -3,9 +3,38 @@ import { assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { VeryfrontError } from "#veryfront/errors";
-import { assertWorkerReadScopeConfined } from "./worker-read-scope.ts";
+import {
+  assertWorkerReadScopeConfined,
+  createWorkerReadScopeGenerationAudit,
+} from "./worker-read-scope.ts";
 
 describe("worker read scope", () => {
+  it("audits each immutable source generation once", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = join(outsideDir, "secret.txt");
+    const linkedPath = join(projectDir, "linked-secret.txt");
+    await Deno.writeTextFile(outsidePath, "outside secret");
+
+    try {
+      const currentGeneration = createWorkerReadScopeGenerationAudit([projectDir]);
+      currentGeneration();
+      await Deno.symlink(outsidePath, linkedPath);
+
+      currentGeneration();
+
+      const replacementGeneration = createWorkerReadScopeGenerationAudit([projectDir]);
+      assertThrows(
+        replacementGeneration,
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
   it("allows a symlink whose target is inside another allowed root", async () => {
     const firstRoot = await Deno.makeTempDir();
     const secondRoot = await Deno.makeTempDir();

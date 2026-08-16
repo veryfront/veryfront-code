@@ -56,9 +56,8 @@ function assertSymlinkConfined(
  *
  * Deno authorizes reads using the symlink location rather than its resolved
  * target. Project workers cannot create new symlinks because write access is
- * denied, but the host can change a source tree. Call this before startup and
- * again at every execution boundary so a pooled worker cannot use a link added
- * between requests.
+ * denied. Use {@link createWorkerReadScopeGenerationAudit} for pooled workers
+ * so this full-tree scan runs once per immutable source generation.
  */
 export function assertWorkerReadScopeConfined(
   readScope: readonly string[] | boolean,
@@ -111,4 +110,25 @@ export function assertWorkerReadScopeConfined(
       rejectUnconfinedReadScope();
     }
   }
+}
+
+/**
+ * Create a successful-once read-scope audit for one immutable worker source
+ * generation.
+ *
+ * Host source changes must rotate the worker generation identity or evict its
+ * pool scope. The replacement worker receives a new audit and scans the new
+ * tree before startup. Reusing this closure across mutable source generations
+ * would violate that host-owned lifecycle contract.
+ */
+export function createWorkerReadScopeGenerationAudit(
+  readScope: readonly string[] | boolean,
+): () => void {
+  const generationReadScope = Array.isArray(readScope) ? [...readScope] : readScope;
+  let complete = false;
+  return () => {
+    if (complete) return;
+    assertWorkerReadScopeConfined(generationReadScope);
+    complete = true;
+  };
 }
