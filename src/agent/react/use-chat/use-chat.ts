@@ -215,6 +215,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
       message: {
         text: string;
         files?: ChatFilePart[];
+        model?: string;
         baseMessages?: ChatMessage[];
         userMessageId?: string;
       },
@@ -241,6 +242,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
       let didError = false;
       try {
         const allMessages = [...base, userMessage];
+        const requestModel = message.model ?? model;
 
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
@@ -257,7 +259,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
           credentials: options.credentials,
           body: JSON.stringify({
             messages: allMessages,
-            ...(model ? { model } : {}),
+            ...(requestModel ? { model: requestModel } : {}),
             ...options.body,
           }),
           signal: abortController.signal,
@@ -301,7 +303,7 @@ function useChatState(options: UseChatOptions): ResettableUseChatResult {
           setStreamingMessageId(currentMessageIdRef.current);
         };
         // Mutable local — updated by onData before onMessage/onUpdate use it.
-        let serverModel: string | undefined = model;
+        let serverModel: string | undefined = requestModel;
         setActiveModel((current) =>
           isLatestRequest(requestIdRef.current, requestId) ? undefined : current
         );

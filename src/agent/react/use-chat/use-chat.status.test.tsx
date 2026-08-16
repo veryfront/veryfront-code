@@ -192,6 +192,39 @@ describe("react/agent/useChat status lifecycle", () => {
     }
   });
 
+  it("uses a per-message model override for the request and response metadata", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    let requestBody: { model?: string } | undefined;
+    globalThis.fetch = (_input, init) => {
+      requestBody = JSON.parse(String((init as { body?: unknown } | undefined)?.body));
+      return Promise.resolve(sseResponse());
+    };
+    let latest: UseChatResult | null = null;
+
+    function Capture(): null {
+      latest = useChat({ api: "/api/ag-ui", model: "session-model" });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await latest!.sendMessage({ text: "Hello", model: "flat-model" });
+      await settle();
+
+      assertEquals(requestBody?.model, "flat-model");
+      const assistant = latest!.messages.find((message) => message.role === "assistant");
+      assert(assistant, "the streamed assistant response should be retained");
+      assertEquals(assistant.metadata?.model, "flat-model");
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
   it("keeps a successful client tool output persistable", async () => {
     const restoreDom = installDom();
     let latest: UseChatResult | null = null;
