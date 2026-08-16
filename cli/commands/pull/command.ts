@@ -42,6 +42,12 @@ import {
   planPulledProjectBootstrap,
   preflightPulledProjectBootstrap,
 } from "./project-bootstrap.ts";
+import {
+  computeContentDigest,
+  SYNC_STATE_RELATIVE_PATH,
+  type SyncFileSnapshot,
+  writeSyncTarget,
+} from "../../sync/state.ts";
 
 /**
  * Schema factory for pull command arguments
@@ -134,6 +140,7 @@ interface ProjectFile {
   type: string;
   created_at: string;
   updated_at: string;
+  version_id?: string;
 }
 
 interface ListFilesResponse {
@@ -151,6 +158,7 @@ interface ValidatedFilePath {
 
 interface WriteOp extends ValidatedFilePath {
   content: string;
+  versionId?: string;
 }
 
 interface DeleteOp {
@@ -490,11 +498,12 @@ async function findGitRoot(projectDir: string): Promise<string | null> {
   }
 }
 
-function isUntrackedPushReceipt(statusLine: string): boolean {
+function isUntrackedLocalMetadata(statusLine: string): boolean {
   if (!statusLine.startsWith("?? ")) return false;
   const path = statusLine.slice(3).replace(/\\/g, "/");
-  return path === ".veryfront/push-receipt.json" ||
-    path.endsWith("/.veryfront/push-receipt.json");
+  return [".veryfront/push-receipt.json", SYNC_STATE_RELATIVE_PATH].some((relativePath) =>
+    path === relativePath || path.endsWith(`/${relativePath}`)
+  );
 }
 
 async function assertCleanGitWorktrees(projectDirs: readonly string[]): Promise<void> {
@@ -526,7 +535,7 @@ async function assertCleanGitWorktrees(projectDirs: readonly string[]): Promise<
     }
 
     const dirty = (status.stdout ?? "").split("\n").some((line) =>
-      line !== "" && !isUntrackedPushReceipt(line)
+      line !== "" && !isUntrackedLocalMetadata(line)
     );
     if (dirty) {
       throw INVALID_ARGUMENT.create({
@@ -611,6 +620,44 @@ async function confirmPullWrite(
   return await confirmPrompt(`This will ${action} in ${projectDir}. Continue?`, false);
 }
 
+function syncBranchForPullSource(source: PullSource): string | null {
+  switch (source.type) {
+    case "main":
+      return "main";
+    case "branch":
+      return source.name;
+    case "environment":
+    case "release":
+      return null;
+  }
+}
+
+async function recordPullSyncTarget(
+  projectDir: string,
+  config: ResolvedConfig,
+  project: { id: string; slug: string },
+  source: PullSource,
+  writeOps: readonly WriteOp[],
+): Promise<void> {
+  const branch = syncBranchForPullSource(source);
+  if (!branch) return;
+
+  const files: Record<string, SyncFileSnapshot> = {};
+  for (const op of writeOps) {
+    files[op.relativePath] = {
+      digest: await computeContentDigest(op.content),
+      ...(op.versionId ? { versionId: op.versionId } : {}),
+    };
+  }
+  await writeSyncTarget(projectDir, {
+    controlPlane: config.apiUrl,
+    projectId: project.id,
+    projectSlug: project.slug,
+    branch,
+    files,
+  });
+}
+
 async function pullSingleProject(
   projectSlug: string,
   projectDir: string,
@@ -669,7 +716,11 @@ async function pullSingleProject(
           `Veryfront returned invalid content for file "${file.path}". No local files were changed.`,
       });
     }
-    writeOps.push({ ...op, content: file.content });
+    writeOps.push({
+      ...op,
+      content: file.content,
+      ...(file.version_id ? { versionId: file.version_id } : {}),
+    });
   }
 
   let deleteOps: DeleteOp[] = [];
@@ -739,6 +790,9 @@ async function pullSingleProject(
       quiet,
       plan: bootstrapPlan,
     });
+    if (!dryRun) {
+      await recordPullSyncTarget(projectDir, config, project, source, writeOps);
+    }
     return { written: 0, deleted: 0, cancelled: false };
   }
 
@@ -777,6 +831,9 @@ async function pullSingleProject(
     quiet,
     plan: bootstrapPlan,
   });
+  if (!dryRun) {
+    await recordPullSyncTarget(projectDir, config, project, source, writeOps);
+  }
 
   if (!quiet) {
     if (dryRun) {

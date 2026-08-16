@@ -26,6 +26,7 @@ import {
 } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import { readProjectLink } from "../../shared/project-link.ts";
+import { computeContentDigest, readSyncTarget } from "../../sync/state.ts";
 import { join } from "veryfront/platform/path";
 
 function createMockClient(overrides: {
@@ -539,6 +540,7 @@ describe("pullCommand", () => {
               data: [{
                 path: "app/page.tsx",
                 content: "export default function Page() { return null; }\n",
+                version_id: "00000000-0000-4000-8000-000000000001",
                 size: 47,
                 type: "file",
                 created_at: "2026-01-01T00:00:00Z",
@@ -572,6 +574,27 @@ describe("pullCommand", () => {
       assertEquals(
         JSON.parse(await Deno.readTextFile(join(tempDir, "tsconfig.json"))),
         EXPECTED_BOOTSTRAP_TSCONFIG,
+      );
+      assertEquals(
+        await readSyncTarget(tempDir, {
+          controlPlane: "https://api.veryfront.com",
+          projectId: "proj_alpha",
+          branch: "main",
+        }),
+        {
+          controlPlane: "https://api.veryfront.com",
+          projectId: "proj_alpha",
+          projectSlug: "alpha-canonical",
+          branch: "main",
+          files: {
+            "app/page.tsx": {
+              digest: await computeContentDigest(
+                "export default function Page() { return null; }\n",
+              ),
+              versionId: "00000000-0000-4000-8000-000000000001",
+            },
+          },
+        },
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -1568,13 +1591,16 @@ describe("pullCommand", () => {
       Deno.env.set("VERYFRONT_API_TOKEN", "token");
       _resetEnvironmentConfig();
 
-      globalThis.fetch = (() =>
-        Promise.resolve(
-          new Response(JSON.stringify({ data: [], page_info: {} }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        )) as typeof fetch;
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        return Promise.resolve(
+          Response.json(
+            url.pathname === "/projects/alpha"
+              ? { id: "proj_alpha", slug: "alpha" }
+              : { data: [], page_info: {} },
+          ),
+        );
+      }) as typeof fetch;
 
       await pullCommand({
         projectDir: tempDir,
@@ -1842,7 +1868,7 @@ describe("pullCommand", () => {
     }
   });
 
-  it("preflights a shared monorepo once and ignores nested push receipts", async () => {
+  it("preflights a shared monorepo once and ignores nested local metadata", async () => {
     const tempDir = await Deno.makeTempDir();
     const originalFetch = globalThis.fetch;
     const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
@@ -1861,6 +1887,10 @@ describe("pullCommand", () => {
         await Deno.writeTextFile(
           join(tempDir, project, ".veryfront", "push-receipt.json"),
           "{}\n",
+        );
+        await Deno.writeTextFile(
+          join(tempDir, project, ".veryfront", "sync-state.json"),
+          '{"version":1,"targets":[]}\n',
         );
       }
 

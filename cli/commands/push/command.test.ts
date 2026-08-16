@@ -9,6 +9,7 @@ import {
   assertExists,
   assertMatch,
   assertRejects,
+  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -18,6 +19,7 @@ import {
   capturePushSourceSnapshot,
   createBranch,
   createStagedPushOptions,
+  deleteFiles,
   ensureBranch,
   generateBranchName,
   pushCommand,
@@ -40,11 +42,13 @@ import {
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
 import { stripAnsi } from "../../ui/ansi.ts";
+import { computeContentDigest, writeSyncTarget } from "../../sync/state.ts";
 
 type MockClientOverrides = Partial<{
   get: (path: string, params?: Record<string, string>) => Promise<unknown>;
   post: (path: string, body?: unknown) => Promise<unknown>;
   put: (path: string, body?: unknown) => Promise<unknown>;
+  delete: (path: string) => Promise<unknown>;
 }>;
 
 function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
@@ -62,7 +66,10 @@ function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
       return result as T;
     },
     patch: <T>(): Promise<T> => Promise.resolve({} as T),
-    delete: <T>(): Promise<T> => Promise.resolve({} as T),
+    delete: async <T>(path: string): Promise<T> => {
+      const result = await (overrides.delete?.(path) ?? Promise.resolve({}));
+      return result as T;
+    },
   };
 }
 
@@ -561,7 +568,7 @@ describe("push JSON output", () => {
 
         const withPruneOutput: string[] = [];
         console.log = captureConsoleLog(withPruneOutput);
-        await pushCommand({ projectDir, dryRun: true, prune: true });
+        await pushCommand({ projectDir, dryRun: true, prune: true, force: true });
         assertEquals(JSON.parse(withPruneOutput[0]!).data.wouldDelete, 1);
       });
     } finally {
@@ -1021,7 +1028,14 @@ describe("push receipt source snapshot", () => {
             return Response.json({ error: "not found" }, { status: 404 });
           }
           if (request.method === "GET" && url.pathname === "/projects/project-123/files") {
-            return Response.json({ data: [], page_info: {} });
+            return Response.json({
+              data: [...uploaded].map(([path, content], index) => ({
+                path,
+                content,
+                version_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+              })),
+              page_info: {},
+            });
           }
           if (request.method === "POST" && url.pathname === "/projects") {
             projectCreateRequests++;
@@ -1447,6 +1461,37 @@ describe("push dry-run project bootstrap", () => {
 });
 
 describe("uploadFiles", () => {
+  it("sends update and create preconditions", async () => {
+    const capturedBodies: unknown[] = [];
+    const mockClient = createMockClient({
+      put: (_url: string, body?: unknown) => {
+        capturedBodies.push(body);
+        return Promise.resolve({});
+      },
+    });
+
+    const result = await uploadFiles(
+      mockClient,
+      "my-project",
+      null,
+      [
+        {
+          path: "existing.ts",
+          content: "updated",
+          expectedVersionId: "version-current",
+        },
+        { path: "new.ts", content: "new", expectedAbsent: true },
+      ],
+      false,
+    );
+
+    assertEquals(capturedBodies, [
+      { content: "updated", expected_version_id: "version-current" },
+      { content: "new", expected_absent: true },
+    ]);
+    assertEquals(result, { uploaded: 2, failed: 0, conflicts: [] });
+  });
+
   it("should upload files to branch endpoint when branchId is provided", async () => {
     const capturedUrls: string[] = [];
     const capturedBodies: unknown[] = [];
@@ -1595,6 +1640,174 @@ describe("uploadFiles", () => {
     assertEquals(result.uploaded, 0);
     assertEquals(result.failed, 0);
   });
+
+  it("reports a precondition conflict with its path", async () => {
+    const conflict = Object.assign(new Error("File changed"), { status: 409 });
+    const mockClient = createMockClient({
+      put: () => Promise.reject(conflict),
+    });
+
+    const result = await uploadFiles(
+      mockClient,
+      "my-project",
+      null,
+      [{ path: "app.ts", content: "local", expectedVersionId: "version-current" }],
+      false,
+    );
+
+    assertEquals(result, { uploaded: 0, failed: 0, conflicts: ["app.ts"] });
+  });
+});
+
+describe("deleteFiles", () => {
+  it("sends the observed version as a delete precondition", async () => {
+    const urls: string[] = [];
+    const mockClient = createMockClient({
+      delete: (url: string) => {
+        urls.push(url);
+        return Promise.resolve({});
+      },
+    });
+
+    const result = await deleteFiles(
+      mockClient,
+      "my-project",
+      "00000000-0000-4000-8000-000000000010",
+      [{ path: "old.ts", expectedVersionId: "00000000-0000-4000-8000-000000000020" }],
+      false,
+    );
+
+    assertEquals(urls, [
+      "/projects/my-project/files/old.ts?branch_id=00000000-0000-4000-8000-000000000010&expected_version_id=00000000-0000-4000-8000-000000000020",
+    ]);
+    assertEquals(result, { deleted: 1, failed: 0, conflicts: [] });
+  });
+
+  it("reports a precondition conflict with its path", async () => {
+    const conflict = Object.assign(new Error("File changed"), { status: 409 });
+    const mockClient = createMockClient({ delete: () => Promise.reject(conflict) });
+
+    const result = await deleteFiles(
+      mockClient,
+      "my-project",
+      null,
+      [{ path: "old.ts", expectedVersionId: "version-current" }],
+      false,
+    );
+
+    assertEquals(result, { deleted: 0, failed: 0, conflicts: ["old.ts"] });
+  });
+});
+
+describe("push divergence guard", () => {
+  it("rejects a Studio edit made after the local baseline without sending a PUT", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 0;\n") },
+          },
+        });
+
+        let putCalled = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: "export const value = 'studio';\n",
+                version_id: "00000000-0000-4000-8000-000000000010",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putCalled = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        const error = await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "Push rejected",
+        );
+        if (!(error instanceof Error)) throw new Error("Expected push to reject with an Error");
+        assertStringIncludes(error.message, '"app.ts"');
+        assertStringIncludes(error.message, "veryfront push --force");
+        assertEquals(putCalled, false);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("lets --force intentionally overwrite without a precondition", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const putBodies: unknown[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: "export const value = 'studio';\n",
+                version_id: "00000000-0000-4000-8000-000000000010",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            putBodies.push(await request.json());
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, force: true, quiet: true });
+
+        assertEquals(putBodies, [{ content: "export const value = 1;\n" }]);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
 });
 
 describe("push failure ordering", () => {
@@ -1637,6 +1850,8 @@ describe("push failure ordering", () => {
             return Response.json({
               data: [{
                 path: "stale.ts",
+                content: "stale",
+                version_id: "00000000-0000-4000-8000-000000000099",
                 size: 8,
                 type: "file",
                 created_at: "",
