@@ -455,7 +455,13 @@ describe("conversation run lifecycle read adapter", () => {
     }
   });
 
-  it("round trips provider-executed error results through durable v2 as AG-UI tool errors", () => {
+  it("round trips provider-executed structured errors through durable v2", () => {
+    const diagnostic = {
+      error: "invalid_skill",
+      code: "invalid_skill",
+      message: "Skill validation failed",
+      request_id: "request-123",
+    };
     const durableEvents = writeDurableEvents(frames([
       {
         event: {
@@ -479,7 +485,7 @@ describe("conversation run lifecycle read adapter", () => {
           type: "provider_tool_result",
           toolCallId: "provider-err",
           toolName: "web_search",
-          output: "provider failed",
+          output: diagnostic,
           isError: true,
           providerExecuted: true,
         },
@@ -495,7 +501,7 @@ describe("conversation run lifecycle read adapter", () => {
         event: "ToolCallResult",
         payload: {
           toolCallId: "provider-err",
-          result: "provider failed",
+          result: diagnostic,
           isError: true,
         },
       }],
