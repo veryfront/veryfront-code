@@ -130,4 +130,42 @@ export async function generateCommand(
   }
 
   for (const file of result.files) cliLogger.info(`Created ${file.path}`);
+  await warnIfMdxExtensionMissing(projectDir, result.files.map((file) => file.path));
+}
+
+/**
+ * Tell the user to install the MDX extension when we have just written an
+ * `.mdx` file into a project that does not declare it.
+ *
+ * The pages router scaffolds `.mdx` for `page` and `layout`. Since
+ * `@veryfront/ext-content-mdx` became an optional peer of the npm package, a
+ * project that never installed it renders those routes as an error — while
+ * this command has just reported "Created" and exited 0. The compile path
+ * already throws a typed error naming the package, but by then the developer
+ * is debugging a route they were told was fine.
+ *
+ * Best-effort: a project without a readable package.json (a Deno project, say)
+ * gets no warning rather than a false one.
+ */
+async function warnIfMdxExtensionMissing(
+  projectDir: string,
+  paths: string[],
+): Promise<void> {
+  if (!paths.some((path) => path.endsWith(".mdx"))) return;
+  try {
+    const raw = await readTextFile(join(projectDir, "package.json"));
+    const manifest = JSON.parse(raw) as Record<string, Record<string, string> | undefined>;
+    const declared = [
+      manifest.dependencies,
+      manifest.devDependencies,
+      manifest.peerDependencies,
+      manifest.optionalDependencies,
+    ].some((group) => group?.["@veryfront/ext-content-mdx"] !== undefined);
+    if (declared) return;
+    cliLogger.warn(
+      "This project does not depend on @veryfront/ext-content-mdx, so the generated .mdx file will not render. Install it with: npm install @veryfront/ext-content-mdx",
+    );
+  } catch {
+    // No readable package.json: say nothing rather than warn wrongly.
+  }
 }
