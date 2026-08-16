@@ -297,18 +297,30 @@ describe("generate-api-reference", () => {
       );
       assertStringIncludes(
         fsReference,
-        'import { runtime } from "veryfront/platform";',
-      );
-      assertStringIncludes(fsReference, "const adapter = await runtime.get();");
-      assertMatch(
-        fsReference,
-        /validatePath\(requestedPath, \{[\s\S]*?adapter,[\s\S]*?baseDir: publicFilesDir/,
-        "the confinement example must pass the active adapter to validatePath",
+        'import { cwd, readTextFile, realPath, resolve } from "veryfront/fs";',
       );
       assertStringIncludes(
         fsReference,
-        "return await adapter.fs.readFile(admitted.canonicalPath);",
-        "the confinement example must read through the adapter that validated the path",
+        'import { validateLexicalPath } from "veryfront/security";',
+      );
+      assertEquals(
+        fsReference.includes('from "veryfront/platform"'),
+        false,
+        "the copyable example must use only published package exports",
+      );
+      assertStringIncludes(
+        fsReference,
+        'const publicFilesDir = await realPath(resolve(cwd(), "public-data"));',
+      );
+      assertMatch(
+        fsReference,
+        /const candidate = resolve\(publicFilesDir, requestedPath\);[\s\S]*?const canonicalPath = await realPath\(candidate\);[\s\S]*?validateLexicalPath\(canonicalPath, \{[\s\S]*?baseDir: publicFilesDir/,
+        "the confinement example must validate the physically resolved path",
+      );
+      assertStringIncludes(
+        fsReference,
+        "return await readTextFile(admitted.canonicalPath);",
+        "the confinement example must read the admitted canonical path",
       );
       assertEquals(
         fsReference.indexOf("## Runtime boundary") <

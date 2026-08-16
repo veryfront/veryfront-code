@@ -21,11 +21,12 @@ supplied through request-owned environment data rather than `.env` files.
 Isolated Pages route `ctx.fs` is a separate, read-only, project-confined
 capability. Those protections do not change the contract of `veryfront/fs`.
 
-Use `validatePath` from `veryfront/security` with a trusted `baseDir` before
-reading a user-influenced path. Physical validation follows symlinks when
-the adapter you pass exposes physical path semantics.
+Canonicalize a trusted root and candidate with `realPath`, then use
+`validateLexicalPath` from `veryfront/security` before reading a
+user-influenced path. Canonicalization follows existing symlinks before the
+containment check.
 
-`validatePath` is a path-admission check, not an operating-system sandbox.
+Path admission is not an operating-system sandbox.
 The trusted root must not be writable by untrusted or project code while a
 validated path is in use. Otherwise, concurrent filesystem changes can
 create a time-of-check/time-of-use race between validation and reading.
@@ -68,24 +69,22 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 ### Confine an untrusted path
 
 ```ts
-import { cwd, resolve } from "veryfront/fs";
-import { runtime } from "veryfront/platform";
-import { validatePath } from "veryfront/security";
+import { cwd, readTextFile, realPath, resolve } from "veryfront/fs";
+import { validateLexicalPath } from "veryfront/security";
 
-const publicFilesDir = resolve(cwd(), "public-data");
-const adapter = await runtime.get();
+const publicFilesDir = await realPath(resolve(cwd(), "public-data"));
 
 export async function readPublicFile(requestedPath: string): Promise<string> {
-  const admitted = await validatePath(requestedPath, {
-    adapter,
+  const candidate = resolve(publicFilesDir, requestedPath);
+  const canonicalPath = await realPath(candidate);
+  const admitted = validateLexicalPath(canonicalPath, {
     baseDir: publicFilesDir,
-    allowAbsolute: false,
-    level: "strict",
+    allowAbsolute: true,
   });
   if (!admitted.valid || !admitted.canonicalPath) {
     throw new Error("Invalid path");
   }
-  return await adapter.fs.readFile(admitted.canonicalPath);
+  return await readTextFile(admitted.canonicalPath);
 }
 ```
 
