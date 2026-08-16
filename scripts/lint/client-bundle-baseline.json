@@ -1,8 +1,6 @@
 {
   "note": "Known server modules reachable from a browser entrypoint (#3670). Burn down, never grow. Regenerate with: deno run --allow-read --allow-write scripts/lint/audit-client-bundle.ts --update",
   "entrypoints": {
-    "src/index.client.ts": [
-      "src/platform/adapters/fs/veryfront/request-context.ts"
-    ]
+    "src/index.client.ts": []
   }
 }
