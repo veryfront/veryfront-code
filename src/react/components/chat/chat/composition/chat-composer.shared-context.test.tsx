@@ -205,6 +205,52 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
     }
   });
 
+  it("honors an explicit attachment cleanup with inherited submit state", () => {
+    let composer: ReturnType<typeof useChatInputContext> | undefined;
+    let submitted: Parameters<UseChatResult["sendMessage"]>[0] | undefined;
+    let clearCalls = 0;
+    function ComposerProbe(): null {
+      composer = useChatInputContext();
+      return null;
+    }
+
+    renderToString(
+      <Chat.Root
+        chat={makeChat({
+          sendMessage: (message) => {
+            submitted = message;
+            return Promise.resolve();
+          },
+        })}
+        attachments={[{
+          id: "att-1",
+          name: "notes.pdf",
+          state: "uploaded",
+          type: "application/pdf",
+          url: "https://example.com/notes.pdf",
+        }]}
+      >
+        <ChatInput.Root onClearAttachments={() => clearCalls += 1}>
+          <ComposerProbe />
+        </ChatInput.Root>
+      </Chat.Root>,
+    );
+
+    assert(composer, "Expected the nested composer context to be available");
+    composer.onSubmit({ preventDefault() {} } as FormEvent);
+
+    assertEquals(submitted, {
+      text: "",
+      files: [{
+        type: "file",
+        mediaType: "application/pdf",
+        url: "https://example.com/notes.pdf",
+        filename: "notes.pdf",
+      }],
+    });
+    assertEquals(clearCalls, 1);
+  });
+
   it("submits the resolved flat input instead of the session draft", async () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',

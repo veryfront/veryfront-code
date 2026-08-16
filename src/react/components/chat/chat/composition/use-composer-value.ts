@@ -86,7 +86,7 @@ export function useComposerValue(props: ComposerStateProps): ChatInputContextVal
   );
   const hasExplicitSubmitState = props.input !== undefined ||
     props.setInput !== undefined || props.attachments !== undefined ||
-    props.onRemoveAttachment !== undefined;
+    props.onRemoveAttachment !== undefined || props.onClearAttachments !== undefined;
   const p = {
     ...props,
     input: props.input ?? chat?.input ?? "",

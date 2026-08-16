@@ -17764,6 +17764,7 @@ export const FRAMEWORK_CANDIDATES: readonly string[] = [
   "props.models",
   "props.onAttach",
   "props.onChange",
+  "props.onClearAttachments",
   "props.onDelete",
   "props.onModelChange",
   "props.onNew",
