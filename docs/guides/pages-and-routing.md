@@ -106,6 +106,15 @@ export default function StandalonePage() {
 }
 ```
 
+You can also put the same value in an exported `frontmatter` object:
+
+```tsx
+export const frontmatter = { layout: "marketing" };
+```
+
+The `frontmatter.layout` property accepts the same `false` and named-layout values as the direct
+`layout` export.
+
 Supported values in both cases:
 
 - `layout: false` renders the page bare: no ancestor layouts, no default layout.

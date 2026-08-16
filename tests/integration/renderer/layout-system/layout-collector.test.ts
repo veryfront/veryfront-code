@@ -696,4 +696,73 @@ export default function BarePage() {
       await cleanupTestDir(projectDir);
     }
   });
+
+  it("ignores layout exports inside block comments and template literals", async () => {
+    const projectDir = await createTestProjectDir();
+
+    try {
+      await writeTextFile(
+        join(projectDir, "pages/layout.tsx"),
+        `export default function RootLayout({ children }) { return children; }`,
+      );
+
+      const pageInfo = createPageInfo(
+        projectDir,
+        "pages/example.tsx",
+        {},
+        `/*
+export const frontmatter = { layout: false };
+*/
+const example = \`
+export const layout = false;
+\`;
+
+export default function ExamplePage() {
+  return <pre>{example}</pre>;
+}`,
+      );
+      const collector = await createCollector(projectDir);
+
+      const result = await collector.collectLayouts(pageInfo);
+
+      assertEquals(
+        result.nestedLayouts.map((layout) => layout.path),
+        [join(projectDir, "pages/layout.tsx")],
+      );
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
+  });
+
+  it("honors formatted frontmatter exports with trailing commas", async () => {
+    const projectDir = await createTestProjectDir();
+
+    try {
+      await writeTextFile(
+        join(projectDir, "pages/layout.tsx"),
+        `export default function RootLayout({ children }) { return children; }`,
+      );
+
+      const pageInfo = createPageInfo(
+        projectDir,
+        "pages/bare.tsx",
+        {},
+        `export const frontmatter = {
+  layout: false,
+};
+
+export default function BarePage() {
+  return <div>Bare page</div>;
+}`,
+      );
+      const collector = await createCollector(projectDir);
+
+      const result = await collector.collectLayouts(pageInfo);
+
+      assertEquals(result.layoutBundle, undefined);
+      assertEquals(result.nestedLayouts, []);
+    } finally {
+      await cleanupTestDir(projectDir);
+    }
+  });
 });

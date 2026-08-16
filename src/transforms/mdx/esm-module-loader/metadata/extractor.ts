@@ -4,6 +4,38 @@ import { extractBalancedBlock, parseJsonish } from "./string-parser.ts";
 
 const logger = rendererLogger.component("mdx");
 
+function removeTrailingCommas(value: string): string {
+  let result = "";
+  let quote = "";
+
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]!;
+
+    if (quote) {
+      result += char;
+      if (char === "\\" && index + 1 < value.length) result += value[++index];
+      else if (char === quote) quote = "";
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      result += char;
+      continue;
+    }
+
+    if (char === ",") {
+      let nextIndex = index + 1;
+      while (/\s/.test(value[nextIndex] ?? "")) nextIndex++;
+      if (value[nextIndex] === "}" || value[nextIndex] === "]") continue;
+    }
+
+    result += char;
+  }
+
+  return result;
+}
+
 export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | undefined {
   const fmIndex = moduleCode.search(/(?:export\s+)?const\s+frontmatter\s*=\s*/);
   if (fmIndex < 0) return undefined;
@@ -20,7 +52,7 @@ export function extractFrontmatter(moduleCode: string): FrontmatterMetadata | un
   // are never mistaken for key-value separators.
   // Single-quote replacement is limited to values without apostrophes; values
   // containing apostrophes must already use double-quotes in the source.
-  const jsonish = raw
+  const jsonish = removeTrailingCommas(raw)
     .replace(/([{,]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
     .replace(/'([^']*)'/g, '"$1"');
 

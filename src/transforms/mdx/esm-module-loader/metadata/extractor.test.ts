@@ -47,6 +47,18 @@ describe("transforms/mdx/esm-module-loader/metadata/extractor", () => {
       const result = extractFrontmatter(code);
       assertEquals(result?.draft, true);
     });
+
+    it("handles trailing commas without changing string values", () => {
+      const code = `export const frontmatter = {
+        title: ",}",
+        tags: ["one", "two",],
+        layout: false,
+      };`;
+      const result = extractFrontmatter(code);
+      assertEquals(result?.title, ",}");
+      assertEquals(result?.tags, ["one", "two"]);
+      assertEquals(result?.layout, false);
+    });
   });
 
   describe("extractMetadata", () => {

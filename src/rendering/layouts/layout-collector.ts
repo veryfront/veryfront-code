@@ -36,11 +36,66 @@ function getLayoutKind(path: string): "mdx" | "tsx" {
 }
 
 // Strict, line-anchored patterns for the per-page layout signal on tsx pages.
-// Only genuine top-level `export const …` declarations qualify — a local
-// `const layout = …` inside a component body, or a mention in a comment, must
-// never be mistaken for a layout override.
-const TSX_LAYOUT_EXPORT_RE = /^export\s+const\s+layout\s*=\s*(true|false|"[^"\n]*"|'[^'\n]*')/m;
-const TSX_FRONTMATTER_EXPORT_RE = /^export\s+const\s+frontmatter\s*=\s*\{/m;
+// Only genuine `export const …` declarations qualify: comments and literals
+// are masked before matching, while their original offsets stay intact.
+const TSX_LAYOUT_EXPORT_RE = /^[ \t]*export\s+const\s+layout\s*=/m;
+const TSX_FRONTMATTER_EXPORT_RE = /^[ \t]*export\s+const\s+frontmatter\s*=/m;
+
+function maskCommentsAndLiterals(source: string): string {
+  const masked = source.split("");
+  let state: "code" | "line-comment" | "block-comment" | "string" = "code";
+  let quote = "";
+
+  const mask = (index: number): void => {
+    if (masked[index] !== "\n" && masked[index] !== "\r") masked[index] = " ";
+  };
+
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]!;
+    const next = source[index + 1];
+
+    if (state === "line-comment") {
+      if (char === "\n" || char === "\r") state = "code";
+      else mask(index);
+      continue;
+    }
+
+    if (state === "block-comment") {
+      mask(index);
+      if (char === "*" && next === "/") {
+        mask(++index);
+        state = "code";
+      }
+      continue;
+    }
+
+    if (state === "string") {
+      mask(index);
+      if (char === "\\") {
+        if (next !== undefined) mask(++index);
+      } else if (char === quote) {
+        state = "code";
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      mask(index);
+      mask(++index);
+      state = "line-comment";
+    } else if (char === "/" && next === "*") {
+      mask(index);
+      mask(++index);
+      state = "block-comment";
+    } else if (char === '"' || char === "'" || char === "`") {
+      mask(index);
+      quote = char;
+      state = "string";
+    }
+  }
+
+  return masked.join("");
+}
 
 function parseExportedLayoutValue(raw: string): boolean | string {
   if (raw === "true") return true;
@@ -49,16 +104,22 @@ function parseExportedLayoutValue(raw: string): boolean | string {
 }
 
 function extractTsxLayoutSignal(source: string): boolean | string | undefined {
-  const frontmatterMatch = TSX_FRONTMATTER_EXPORT_RE.exec(source);
-  if (frontmatterMatch) {
+  const maskedSource = maskCommentsAndLiterals(source);
+  const frontmatterMatch = TSX_FRONTMATTER_EXPORT_RE.exec(maskedSource);
+  const frontmatterSource = frontmatterMatch ? source.slice(frontmatterMatch.index) : undefined;
+  if (frontmatterSource && /^\s*export\s+const\s+frontmatter\s*=\s*\{/.test(frontmatterSource)) {
     // Slice so extractFrontmatter parses this exported object rather than an
     // arbitrary `const frontmatter` appearing elsewhere in the module.
-    const layout = extractFrontmatter(source.slice(frontmatterMatch.index))?.layout;
+    const layout = extractFrontmatter(frontmatterSource)?.layout;
     if (layout !== undefined) return layout as boolean | string;
   }
 
-  const layoutMatch = TSX_LAYOUT_EXPORT_RE.exec(source);
-  if (layoutMatch) return parseExportedLayoutValue(layoutMatch[1]!);
+  const layoutMatch = TSX_LAYOUT_EXPORT_RE.exec(maskedSource);
+  if (layoutMatch) {
+    const initializer = source.slice(layoutMatch.index + layoutMatch[0].length);
+    const valueMatch = /^\s*(true|false|"[^"\n]*"|'[^'\n]*')/.exec(initializer);
+    if (valueMatch) return parseExportedLayoutValue(valueMatch[1]!);
+  }
 
   return undefined;
 }
