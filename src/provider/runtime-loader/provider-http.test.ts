@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects, assertStrictEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
 import {
@@ -426,7 +426,7 @@ describe("provider-http", () => {
           }),
         ProviderRequestError,
         "response body was not valid JSON",
-      );
+      ) as ProviderRequestError;
 
       assertEquals(error.status, 200);
       assertEquals(error.retryable, false);
@@ -453,7 +453,7 @@ describe("provider-http", () => {
           }),
         ProviderRequestError,
         "Test provider request failed: response body was not valid UTF-8",
-      );
+      ) as ProviderRequestError;
 
       assertEquals(error.provider, "openai");
       assertEquals(error.status, 200);
@@ -475,7 +475,7 @@ describe("provider-http", () => {
           }),
         ProviderRequestError,
         "JSON response exceeded 4 bytes",
-      );
+      ) as ProviderRequestError;
 
       assertEquals(error.status, 200);
       assertEquals(error.retryable, false);
@@ -556,7 +556,7 @@ describe("provider-http", () => {
           }),
         ProviderRequestError,
         "request timed out",
-      );
+      ) as ProviderRequestError;
 
       assertEquals(error.status, 0);
       assertEquals(error.retryable, true);
@@ -604,6 +604,114 @@ describe("provider-http", () => {
       assertEquals(await new Response(stream).text(), "chunk");
     });
 
+    it("retries a rate-limited stream request before provider output", async () => {
+      let attempts = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return Promise.resolve(
+            attempts === 1
+              ? jsonResponse(
+                429,
+                { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                { "retry-after": "0" },
+              )
+              : new Response("chunk"),
+          );
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+      });
+
+      assertEquals(attempts, 2);
+      assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("bounds rate-limit retries", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(jsonResponse(
+                429,
+                { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                { "retry-after": "0" },
+              ));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        ProviderRateLimitError,
+      ) as ProviderRateLimitError;
+
+      assertEquals(attempts, 3);
+      assertEquals(error.retryable, true);
+    });
+
+    it("does not retry a rate limit with a non-replayable stream body", async () => {
+      let attempts = 0;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("request"));
+          controller.close();
+        },
+      });
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(jsonResponse(
+                429,
+                { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                { "retry-after": "0" },
+              ));
+            },
+            init: { method: "POST", body },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        ProviderRateLimitError,
+      ) as ProviderRateLimitError;
+
+      assertEquals(attempts, 1);
+      assertEquals(error.retryable, true);
+    });
+
+    it("keeps rate-limit backoff inside the stream header deadline", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(jsonResponse(
+                429,
+                { error: { code: "rate_limit_exceeded", message: "slow down" } },
+                { "retry-after": "1" },
+              ));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      ) as ProviderRequestError;
+
+      assertEquals(attempts, 1);
+      assertEquals(error.retryable, true);
+    });
+
     it("enforces its header deadline when a custom fetch ignores AbortSignal", async () => {
       const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
       const error = await assertRejects(
@@ -618,7 +726,7 @@ describe("provider-http", () => {
           }),
         ProviderRequestError,
         "request timed out",
-      );
+      ) as ProviderRequestError;
 
       assertEquals(error.status, 0);
       assertEquals(error.retryable, true);
