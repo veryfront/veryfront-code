@@ -16,7 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "../../../ui/dropdown-menu.tsx";
-import { AttachmentPill, useAttachmentPill } from "./attachment-pill.tsx";
+import { AttachmentPill, formatSize, useAttachmentPill } from "./attachment-pill.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import { isSafeUploadUrl, openSafeUploadUrl } from "../upload-url.ts";
 
@@ -275,9 +275,9 @@ export interface AttachmentsPanelItemProps {
   className?: string;
   /**
    * Compose the row from the `AttachmentsPanel.Item.*` leaves (`.Icon` /
-   * `.Preview` / `.Remove`), the `AttachmentPill.*` parts (e.g. `.Label`), or
-   * your own text read from `useAttachmentPill()`. Omit for the default card
-   * (media + label + overflow menu).
+   * `.Preview` / `.Name` / `.Size` / `.Remove`), the `AttachmentPill.*` parts
+   * (e.g. `.Label`), or your own text read from `useAttachmentPill()`. Omit for
+   * the default card (media + label + overflow menu).
    */
   children?: React.ReactNode;
   /** React 19: ref is a regular prop (threaded to the underlying `AttachmentPill`). */
@@ -324,12 +324,10 @@ function AttachmentsPanelItemMedia(
 }
 
 // ---------------------------------------------------------------------------
-// AttachmentsPanel.Item.* — the row leaves that carry attachment-domain logic:
-// `.Icon` / `.Preview` (derived pill state) and `.Remove` (bound to the panel's
-// `onRemoveUpload`). Each reads the item's file from the enclosing
-// `AttachmentPill` context. Plain text (name / size) has no such logic — read it
-// from `useAttachmentPill()` / `useAttachments()` and render your own, or use
-// `AttachmentPill.Label`. Use these inside an `AttachmentsPanel.Item`.
+// AttachmentsPanel.Item.* — the row leaves: `.Icon` / `.Preview` (derived pill
+// state), `.Name` / `.Size` (the file's text lines), and `.Remove` (bound to
+// the panel's `onRemoveUpload`). Each reads the item's file from the enclosing
+// `AttachmentPill` context. Use these inside an `AttachmentsPanel.Item`.
 // ---------------------------------------------------------------------------
 
 /** `AttachmentsPanel.Item.Icon` — the file-type icon square. */
@@ -357,13 +355,52 @@ function AttachmentsPanelItemPreview(
 }
 AttachmentsPanelItemPreview.displayName = "AttachmentsPanel.Item.Preview";
 
-// Note: there is deliberately no `Item.Name` / `Item.Size` leaf. Those are plain
-// text with no attachment-domain logic — read them from `useAttachments()` (or
-// `useAttachmentPill().attachment`) and render your own text (`formatSize` is
-// exported for the byte label). `AttachmentPill.Label` also renders name + a
-// secondary size/type line if you want the default treatment. We only expose
-// leaves that carry domain binding (`.Remove`) or derived state (`.Icon` /
-// `.Preview`) — never a wrapper around a bare `<p>`.
+/**
+ * `AttachmentsPanel.Item.Name` — the file-name line. Deliberately plain text:
+ * unlike `AttachmentPill.Label`, it does not wrap the name in a shimmer while
+ * the attachment uploads. Compose `AttachmentPill.Label` for that treatment.
+ */
+function AttachmentsPanelItemName(
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLParagraphElement>
+    & { ref?: React.Ref<HTMLParagraphElement> },
+): React.JSX.Element {
+  const { attachment } = useAttachmentPill();
+  return (
+    <p
+      ref={ref}
+      className={cn("truncate text-sm font-medium leading-tight", className)}
+      {...props}
+    >
+      {attachment.name || "Attachment"}
+    </p>
+  );
+}
+AttachmentsPanelItemName.displayName = "AttachmentsPanel.Item.Name";
+
+/**
+ * `AttachmentsPanel.Item.Size` — the human-formatted byte label (`formatSize`).
+ * Renders nothing when the file has no size. Always the faint secondary color;
+ * the error/destructive state line stays with `AttachmentPill.Label`.
+ */
+function AttachmentsPanelItemSize(
+  { className, ref, ...props }:
+    & React.HTMLAttributes<HTMLParagraphElement>
+    & { ref?: React.Ref<HTMLParagraphElement> },
+): React.JSX.Element | null {
+  const { attachment } = useAttachmentPill();
+  if (attachment.size == null) return null;
+  return (
+    <p
+      ref={ref}
+      className={cn("truncate text-xs leading-tight text-[var(--faint)]", className)}
+      {...props}
+    >
+      {formatSize(attachment.size)}
+    </p>
+  );
+}
+AttachmentsPanelItemSize.displayName = "AttachmentsPanel.Item.Size";
 
 /** Props for `AttachmentsPanel.Item.Remove`. */
 export interface AttachmentsPanelItemRemoveProps {
@@ -408,6 +445,8 @@ AttachmentsPanelItemRemove.displayName = "AttachmentsPanel.Item.Remove";
 const AttachmentsPanelItemCompound = Object.assign(AttachmentsPanelItem, {
   Icon: AttachmentsPanelItemIcon,
   Preview: AttachmentsPanelItemPreview,
+  Name: AttachmentsPanelItemName,
+  Size: AttachmentsPanelItemSize,
   Remove: AttachmentsPanelItemRemove,
 });
 AttachmentsPanelItem.displayName = "AttachmentsPanel.Item";

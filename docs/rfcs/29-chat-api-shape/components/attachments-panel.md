@@ -2,10 +2,10 @@
 
 A compound component for browsing and managing durable uploaded files, with the same compositional depth as messages.
 
-> **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
+> **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `AttachmentsPanel`, `AttachmentsPanel.Action`, `AttachmentsPanel.Empty`, `AttachmentsPanel.Header`, `AttachmentsPanel.Item`, `AttachmentsPanel.Item.Icon`, `AttachmentsPanel.Item.Preview`, `AttachmentsPanel.Item.Remove`, `AttachmentsPanel.List`, `AttachmentsPanel.Loading`, `AttachmentsPanel.Root`, `useAttachments`
-> - **Not exported today:** `AttachmentsPanel.Item.Name`, `AttachmentsPanel.Item.Size`
+> - **Exported from `veryfront/chat` today:** `AttachmentsPanel`, `AttachmentsPanel.Action`, `AttachmentsPanel.Empty`, `AttachmentsPanel.Header`, `AttachmentsPanel.Item`, `AttachmentsPanel.Item.Icon`, `AttachmentsPanel.Item.Name`, `AttachmentsPanel.Item.Preview`, `AttachmentsPanel.Item.Remove`, `AttachmentsPanel.Item.Size`, `AttachmentsPanel.List`, `AttachmentsPanel.Loading`, `AttachmentsPanel.Root`, `useAttachments`
+> - **Not exported today:** none
 >
 > An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
 
@@ -34,8 +34,8 @@ import {
 - [`.Item`](#attachmentspanelitem---changed) - `changed`: pill `<div>` → `<li>`; `data-upload-state` / `data-active` / `data-error` proposed
 - [`.Item.Icon`](#attachmentspanelitemicon---changed) - `changed`: `<div>` → `<span>`
 - [`.Item.Preview`](#attachmentspanelitempreview---changed) - `changed`: wrapper square → one `<span>` background thumbnail
-- [`.Item.Name`](#attachmentspanelitemname-_proposed---2975_---new) - `new`: no source today (#2975)
-- [`.Item.Size`](#attachmentspanelitemsize-_proposed---2975_---new) - `new`: no source today (#2975)
+- [`.Item.Name`](#attachmentspanelitemname---new---shipped-srcreactcomponentschatchatcomponentsattachments-paneltsx363) - `new`, **`shipped`**: the file-name leaf (#2975)
+- [`.Item.Size`](#attachmentspanelitemsize---new---shipped-srcreactcomponentschatchatcomponentsattachments-paneltsx386) - `new`, **`shipped`**: the formatted-size leaf (#2975)
 - [`.Item.Remove`](#attachmentspanelitemremove---changed) - `changed`: `icon` prop deleted
 - [`.Loading`](#attachmentspanelloading---changed) - `changed`: self-gates on fetch state (today Root-gated)
 - [`.Empty`](#attachmentspanelempty---changed) - `changed`: self-gates on zero files (today Root-gated)
@@ -53,8 +53,8 @@ import {
       {/* <li> - one file row · data-upload-state · data-active · data-error (proposed) */}
       <AttachmentsPanel.Item.Icon /> {/* <span> - file-type / state square (when not an image) */}
       <AttachmentsPanel.Item.Preview /> {/* <img> - image thumbnail; null for non-images */}
-      <AttachmentsPanel.Item.Name /> {/* <span> - file name (proposed, #2975) */}
-      <AttachmentsPanel.Item.Size /> {/* <span> - formatted byte size (proposed, #2975) */}
+      <AttachmentsPanel.Item.Name /> {/* <p> - file name (shipped, #2975) */}
+      <AttachmentsPanel.Item.Size /> {/* <p> - formatted byte size (shipped, #2975) */}
       <AttachmentsPanel.Item.Remove /> {/* <button> - delete; null without a remove handler */}
     </AttachmentsPanel.Item>
   </AttachmentsPanel.List>
@@ -184,9 +184,9 @@ The image thumbnail - today delegates to `AttachmentPill.Thumbnail`: a 40px squa
 | ----------------------------------------------- | ---- | ------------ |
 | `asChild` + native (`ImgHTMLAttributes`, `ref`) |      | Own the node |
 
-### `AttachmentsPanel.Item.Name` _(proposed - #2975)_ - `new`
+### `AttachmentsPanel.Item.Name` - `new` - `shipped` (src/react/components/chat/chat/components/attachments-panel.tsx:363)
 
-One `<span>`: the file's name, truncating. Does not exist today - today the source deliberately omits it (name is "plain text with no attachment-domain logic", read from the item context and rendered yourself, or via `AttachmentPill.Label` which renders a name + secondary line column). #2975 adds it so the default row is fully recomposable from leaves. Default content: `file.name`.
+One `<p>` (the default row's name line; the RFC text originally sketched a `<span>`): the file's name, truncating. Landed per #2975 so the default row is fully recomposable from leaves. Default content: `file.name`, falling back to `"Attachment"` when the name is empty. It is deliberately plain text: it does not reproduce `AttachmentPill.Label`'s uploading shimmer or state line - compose `AttachmentPill.Label` when you want that stateful treatment.
 
 **Layout:** in-flow text span; place it in your own `min-w-0` column to get truncation (see the Composed example).
 
@@ -194,9 +194,9 @@ One `<span>`: the file's name, truncating. Does not exist today - today the sour
 | -------------------------------------------- | ---- | ------------------------------------------------------------------------------- |
 | `asChild` + native (`HTMLAttributes`, `ref`) |      | Convention only - the shared node contract; no part-specific props are proposed |
 
-### `AttachmentsPanel.Item.Size` _(proposed - #2975)_ - `new`
+### `AttachmentsPanel.Item.Size` - `new` - `shipped` (src/react/components/chat/chat/components/attachments-panel.tsx:386)
 
-One `<span>`: the file's size formatted as `B` / `KB` / `MB` (the [`formatSize`](../helpers.md) helper, public). Renders `null` when `file.size` is undefined; type/extension labels belong in `.Item.Icon` or custom children, not this size leaf.
+One `<p>` (the default row's secondary line; the RFC text originally sketched a `<span>`): the file's size formatted as `B` / `KB` / `MB` (the [`formatSize`](../helpers.md) helper, public). Renders `null` when `file.size` is undefined; type/extension labels belong in `.Item.Icon` or custom children, not this size leaf. It always renders the faint secondary color - the error/destructive treatment stays with `AttachmentPill.Label`.
 
 **Layout:** in-flow text span inside your label column.
 
