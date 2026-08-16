@@ -24,6 +24,7 @@ import {
   type WorkerEgressBroker,
 } from "./worker-egress-guard.ts";
 import type { WorkerPermissions } from "./worker-permissions.ts";
+import { assertWorkerReadScopeConfined } from "./worker-read-scope.ts";
 import { deserializeWorkerError } from "./worker-error-boundary.ts";
 import type {
   SerializedError,
@@ -543,6 +544,8 @@ export class ProjectWorker {
         message: "Custom project worker scripts cannot use unrestricted network permissions",
       });
     }
+
+    assertWorkerReadScopeConfined(this.permissions.read);
 
     const allowInternalEgress = this.allowInternalEgress;
     let workerPermissions: Readonly<ScopedWorkerPermissions> = this.permissions;

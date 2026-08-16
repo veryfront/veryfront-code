@@ -22,7 +22,7 @@ import type { WorkerEgressBroker } from "./worker-egress-guard.ts";
 import { computeHash } from "#veryfront/utils";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
 import { validateDataResult } from "#veryfront/data/helpers.ts";
-import { fromFileUrl, toFileUrl } from "#veryfront/compat/path";
+import { fromFileUrl, join, toFileUrl } from "#veryfront/compat/path";
 
 const testSuite = isDeno ? describe : describe.skip;
 const TEST_SOURCE_INTEGRATION_POLICY = { schemaVersion: 1, mode: "unrestricted" } as const;
@@ -1702,6 +1702,34 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       assert(
         response.error.message.includes("Requires read access"),
         `expected permission denial, got: ${response.error.message}`,
+      );
+    } finally {
+      worker.terminate();
+      await Deno.remove(projectDir, { recursive: true });
+      await Deno.remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("rejects a scoped read root containing a symlink to an outside file", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outsideDir = await Deno.makeTempDir();
+    const outsidePath = join(outsideDir, "secret.txt");
+    const linkedPath = join(projectDir, "linked-secret.txt");
+    await Deno.writeTextFile(outsidePath, "outside secret");
+    await Deno.symlink(outsidePath, linkedPath);
+
+    const worker = new ProjectWorker({
+      projectId: "test-preexisting-symlink-denied",
+      permissions: buildWorkerPermissions([projectDir]),
+      requestTimeoutMs: 10_000,
+      allowInternalEgress: false,
+    });
+
+    try {
+      assertThrows(
+        () => worker.start(),
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
       );
     } finally {
       worker.terminate();
