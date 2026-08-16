@@ -1,5 +1,6 @@
 import type { DataContext, DataResult, PageWithData } from "./types.ts";
 import { isDataControlResult, toDataControlResult } from "./helpers.ts";
+import { validateDataResult } from "./data-result-validation.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DATA_FETCH_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { TimeoutError, withTimeoutThrow } from "#veryfront/rendering/utils/stream-utils.ts";
@@ -172,10 +173,10 @@ export class ServerDataFetcher {
             }
           });
 
-          if (result.redirect) return { redirect: result.redirect };
-          if (result.notFound) return { notFound: true };
+          const validated = validateDataResult(result, "getServerData");
+          if (validated.redirect || validated.notFound) return validated;
 
-          return { props: result.props ?? {}, revalidate: result.revalidate };
+          return { ...validated, props: validated.props ?? {} };
         } catch (error) {
           const durationMs = Math.round(performance.now() - start);
 

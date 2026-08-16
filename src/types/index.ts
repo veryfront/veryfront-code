@@ -6,6 +6,7 @@
  */
 
 import type * as React from "react";
+import type { ResponseCookie } from "#veryfront/data/types.ts";
 
 export type {
   BundleResult,
@@ -192,6 +193,10 @@ export interface RenderResult {
     type: "mdx" | "component";
   };
   ssrHash?: string;
+  /** Validated application headers appended after framework-owned headers. */
+  headers?: Record<string, string>;
+  /** Distinct cookies serialized as separate Set-Cookie response fields. */
+  cookies?: ResponseCookie[];
 }
 
 export type {

@@ -30,6 +30,7 @@ import {
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import type { DataResponseMetadata, ResponseCookie } from "#veryfront/data/types.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -82,6 +83,10 @@ export interface SSRRenderResult {
   slug: string;
   /** Dependency snapshot identity rendered into this document. */
   dependencyPinningCacheKey?: string;
+  /** Validated application headers appended after framework-owned headers. */
+  headers?: Record<string, string>;
+  /** Distinct cookies emitted as separate Set-Cookie response fields. */
+  cookies?: ResponseCookie[];
 }
 
 export interface SSRRenderOptions {
@@ -124,6 +129,8 @@ function buildRedirectResult(
     cacheStrategy: "no-cache",
     failure: redirect,
     slug,
+    ...(redirect.headers ? { headers: redirect.headers } : {}),
+    ...(redirect.cookies ? { cookies: redirect.cookies } : {}),
   };
 }
 
@@ -131,15 +138,20 @@ function buildRedirectResult(
  * Build the 404 result shared by the thrown-control-result and file-not-found
  * paths. `slug` is escaped by `ErrorPages.notFound`.
  */
-function buildNotFoundResult(slug: string): SSRRenderResult {
+function buildNotFoundResult(
+  notFound: Extract<SSRFailureOutcome, { kind: "not-found" }>,
+  slug: string,
+): SSRRenderResult {
   return {
     status: HTTP_NOT_FOUND,
     html: ErrorPages.notFound(slug || "/"),
     htmlProvenance: "framework",
     isStreaming: false,
     cacheStrategy: "no-cache",
-    failure: { kind: "not-found" },
+    failure: notFound,
     slug,
+    ...(notFound.headers ? { headers: notFound.headers } : {}),
+    ...(notFound.cookies ? { cookies: notFound.cookies } : {}),
   };
 }
 
@@ -303,8 +315,15 @@ export class SSRService implements SSRServiceLike {
       }
 
       const isStreaming = !!result.stream && !result.html;
-      const cacheStrategy = useNoCache ? "no-cache" : "short";
-      const etag = isStreaming ? undefined : computeSSRETag(result.ssrHash, result.html);
+      const responseMetadata: DataResponseMetadata = {
+        ...(result.headers ? { headers: result.headers } : {}),
+        ...(result.cookies ? { cookies: result.cookies } : {}),
+      };
+      const setsCookies = (responseMetadata.cookies?.length ?? 0) > 0;
+      const cacheStrategy = useNoCache || setsCookies ? "no-cache" : "short";
+      const etag = isStreaming || setsCookies
+        ? undefined
+        : computeSSRETag(result.ssrHash, result.html);
 
       if (isStreaming) {
         const allReady = getAllReady(result.stream);
@@ -328,6 +347,7 @@ export class SSRService implements SSRServiceLike {
         cacheStrategy,
         slug,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        ...responseMetadata,
       };
     } catch (error) {
       if (hasRenderSession(renderSessionId)) {
@@ -370,7 +390,7 @@ export class SSRService implements SSRServiceLike {
         return buildRedirectResult(outcome, slug);
       case "not-found":
         logger.debug("SSR notFound", { slug });
-        return buildNotFoundResult(slug);
+        return buildNotFoundResult(outcome, slug);
       case "undeployed":
         logger.debug("Project not deployed", {
           projectSlug: ctx.projectSlug,

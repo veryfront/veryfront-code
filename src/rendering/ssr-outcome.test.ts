@@ -17,6 +17,7 @@ import {
   resolveSSRControlOutcome,
   resolveSSRFailure,
 } from "./ssr-outcome.ts";
+import { attachDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 function assertSSRFailureOutcome(
   actual: SSRFailureOutcome,
@@ -118,17 +119,41 @@ describe("ssr-outcome.ts", () => {
   describe("resolveSSRControlOutcome", () => {
     it("recognises the routing brands the render pipeline raises", () => {
       assertEquals(
-        resolveSSRControlOutcome(FILE_NOT_FOUND.create({ detail: "Page not found: x" })),
-        { kind: "not-found" },
+        resolveSSRControlOutcome(
+          attachDataResponseMetadata(
+            FILE_NOT_FOUND.create({ detail: "Page not found: x" }),
+            {
+              headers: { "x-missing-reason": "gone" },
+              cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+            },
+          ),
+        ),
+        {
+          kind: "not-found",
+          headers: { "x-missing-reason": "gone" },
+          cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+        },
       );
       assertEquals(
         resolveSSRControlOutcome(
-          RENDER_ERROR.create({
-            detail: "Redirect to /login",
-            context: { redirect: { destination: "/login", permanent: true } },
-          }),
+          attachDataResponseMetadata(
+            RENDER_ERROR.create({
+              detail: "Redirect to /login",
+              context: { redirect: { destination: "/login", permanent: true } },
+            }),
+            {
+              headers: { "x-auth-result": "signed-in" },
+              cookies: [{ name: "session", value: "abc", path: "/" }],
+            },
+          ),
         ),
-        { kind: "redirect", location: "/login", permanent: true },
+        {
+          kind: "redirect",
+          location: "/login",
+          permanent: true,
+          headers: { "x-auth-result": "signed-in" },
+          cookies: [{ name: "session", value: "abc", path: "/" }],
+        },
       );
       assertEquals(resolveSSRControlOutcome(notFound()), { kind: "not-found" });
       assertEquals(

@@ -9,6 +9,7 @@ import type { RendererAdapter } from "../../shared/renderer-factory.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors/index.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
+import { attachDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
@@ -364,6 +365,33 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "short");
       });
 
+      it("forces no-cache and suppresses etags when a render sets cookies", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+              headers: { "x-page-state": "fresh" },
+              cookies: [{ name: "session", value: "abc", path: "/" }],
+            } as any),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ useNoCache: false }),
+        );
+
+        assertEquals(result.headers, { "x-page-state": "fresh" });
+        assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.etag, undefined);
+      });
+
       it("requests buffered delivery when the response is cacheable", async () => {
         let delivery: unknown;
         const adapter = createMockRendererAdapter({
@@ -462,12 +490,18 @@ describe("server/services/rendering/ssr.service", () => {
       it("handles file-not-found error as not-found result", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
-            throw new VeryfrontError("Not found", {
-              slug: "file-not-found",
-              category: "ROUTE",
-              status: 404,
-              title: "File not found",
-            });
+            throw attachDataResponseMetadata(
+              new VeryfrontError("Not found", {
+                slug: "file-not-found",
+                category: "ROUTE",
+                status: 404,
+                title: "File not found",
+              }),
+              {
+                headers: { "x-missing-reason": "gone" },
+                cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+              },
+            );
           },
         });
         const service = new SSRService({
@@ -479,6 +513,8 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-missing-reason": "gone" });
+        assertEquals(result.cookies, [{ name: "visited-missing", value: "1", path: "/" }]);
       });
 
       it("handles api-client-error 404 for undeployed project", async () => {
@@ -507,18 +543,24 @@ describe("server/services/rendering/ssr.service", () => {
       it("maps render redirects to redirect results", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
-            throw new VeryfrontError("Redirect to /login", {
-              slug: "render-error",
-              category: "RUNTIME",
-              status: 500,
-              title: "Component render failed",
-              context: {
-                redirect: {
-                  destination: "/login",
-                  permanent: false,
+            throw attachDataResponseMetadata(
+              new VeryfrontError("Redirect to /login", {
+                slug: "render-error",
+                category: "RUNTIME",
+                status: 500,
+                title: "Component render failed",
+                context: {
+                  redirect: {
+                    destination: "/login",
+                    permanent: false,
+                  },
                 },
+              }),
+              {
+                headers: { "x-auth-result": "required" },
+                cookies: [{ name: "return-to", value: "/private", path: "/" }],
               },
-            });
+            );
           },
         });
         const service = new SSRService({
@@ -530,6 +572,12 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "redirect");
         assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-auth-result": "required" });
+        assertEquals(result.cookies, [{
+          name: "return-to",
+          value: "/private",
+          path: "/",
+        }]);
       });
 
       it("maps a thrown notFound() control result to a 404", async () => {

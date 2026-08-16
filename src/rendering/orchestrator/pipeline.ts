@@ -50,7 +50,16 @@ import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
-import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
+import type {
+  DataContext,
+  DataResponseMetadata,
+  PageWithData,
+  ResponseCookie,
+} from "#veryfront/data/types.ts";
+import {
+  attachDataResponseMetadata,
+  mergeDataResponseMetadata,
+} from "#veryfront/data/response-metadata.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
@@ -161,6 +170,8 @@ interface DataResolutionResult {
   params: Record<string, string | string[]>;
   pageProps: Record<string, unknown>;
   layoutProps: Map<string, Record<string, unknown>>;
+  headers?: Record<string, string>;
+  cookies?: ResponseCookie[];
 }
 
 interface MdxMetadataResult {
@@ -584,9 +595,14 @@ export class RenderPipeline {
         ),
     );
 
-    this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
+    const responseMetadata = this.applyFetchedDataResults(
+      slug,
+      dataResults,
+      pageProps,
+      layoutProps,
+    );
 
-    return { params, pageProps, layoutProps };
+    return { params, pageProps, layoutProps, ...responseMetadata };
   }
 
   /**
@@ -635,23 +651,43 @@ export class RenderPipeline {
     dataResults: FetchedDataResult[],
     pageProps: Record<string, unknown>,
     layoutProps: Map<string, Record<string, unknown>>,
-  ): void {
-    for (const { type, id, result, error } of dataResults) {
+  ): DataResponseMetadata {
+    for (const { error } of dataResults) {
       if (error) throw error;
+    }
+
+    // Layouts are collected outermost to innermost. Apply them in that order,
+    // then the page, so the closest owner wins a duplicate custom header.
+    // Cookies remain distinct and preserve the same outer-to-inner-to-page order.
+    const responseMetadata = mergeDataResponseMetadata(
+      [
+        ...dataResults.filter(({ type }) => type === "layout"),
+        ...dataResults.filter(({ type }) => type === "page"),
+      ]
+        .flatMap(({ result }) => result ? [result] : []),
+    );
+
+    for (const { type, id, result } of dataResults) {
       if (!result) continue;
 
       if (result.notFound) {
-        throw FILE_NOT_FOUND.create({
-          detail: "Page/Layout returned notFound",
-          context: { slug, component: id },
-        });
+        throw attachDataResponseMetadata(
+          FILE_NOT_FOUND.create({
+            detail: "Page/Layout returned notFound",
+            context: { slug, component: id },
+          }),
+          responseMetadata,
+        );
       }
 
       if (result.redirect) {
-        throw RENDER_ERROR.create({
-          detail: `Redirect to ${result.redirect.destination}`,
-          context: { slug, redirect: result.redirect },
-        });
+        throw attachDataResponseMetadata(
+          RENDER_ERROR.create({
+            detail: `Redirect to ${result.redirect.destination}`,
+            context: { slug, redirect: result.redirect },
+          }),
+          responseMetadata,
+        );
       }
 
       if (!result.props) continue;
@@ -662,6 +698,8 @@ export class RenderPipeline {
         layoutProps.set(id, result.props as Record<string, unknown>);
       }
     }
+
+    return responseMetadata;
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -766,6 +804,8 @@ export class RenderPipeline {
                 ? { ...options.params }
                 : {};
               let layoutDataMap = new Map<string, Record<string, unknown>>();
+              let responseHeaders: Record<string, string> | undefined;
+              let responseCookies: ResponseCookie[] | undefined;
 
               const dataFetchStart = performance.now();
               const internalPreResolvedData = (options as InternalRenderOptions | undefined)?.[
@@ -780,6 +820,8 @@ export class RenderPipeline {
                   ? internalPreResolvedData.pageProps
                   : undefined;
                 layoutDataMap = internalPreResolvedData.layoutProps;
+                responseHeaders = internalPreResolvedData.headers;
+                responseCookies = internalPreResolvedData.cookies;
               } else if (options?.url && (options.request || options.staticDataOnly)) {
                 await profilePhase(
                   "render.data_fetching",
@@ -799,6 +841,8 @@ export class RenderPipeline {
                             ? dataResolution.pageProps
                             : undefined;
                           layoutDataMap = dataResolution.layoutProps;
+                          responseHeaders = dataResolution.headers;
+                          responseCookies = dataResolution.cookies;
                         } catch (error) {
                           if (error instanceof VeryfrontError) throw error;
 
@@ -971,6 +1015,8 @@ export class RenderPipeline {
                 cacheCoordinator: this.config.cacheCoordinator,
                 logger: renderPipelineLog,
                 nonce: renderOptions.nonce,
+                headers: responseHeaders,
+                cookies: responseCookies,
               });
 
               timing.total = Math.round(performance.now() - pipelineStartTime);

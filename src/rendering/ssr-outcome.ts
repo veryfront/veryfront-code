@@ -1,14 +1,18 @@
 import { isDataControlResult } from "#veryfront/data/helpers.ts";
-import type { DataResult } from "#veryfront/data/types.ts";
+import type { DataResponseMetadata, DataResult } from "#veryfront/data/types.ts";
+import {
+  getAttachedDataResponseMetadata,
+  normalizeDataResponseMetadata,
+} from "#veryfront/data/response-metadata.ts";
 import { VeryfrontError } from "#veryfront/errors";
 
 export type SSRControlOutcome =
-  | { kind: "not-found" }
+  | ({ kind: "not-found" } & DataResponseMetadata)
   | {
     kind: "redirect";
     location: string;
     permanent: boolean;
-  };
+  } & DataResponseMetadata;
 
 export type SSRFailureOutcome =
   | SSRControlOutcome
@@ -42,6 +46,8 @@ interface RedirectResultContext {
     destination?: unknown;
     permanent?: unknown;
   };
+  headers?: unknown;
+  cookies?: unknown;
 }
 
 interface ErrorBoundarySignal {
@@ -93,7 +99,12 @@ export function resolveSSRControlOutcome(error: unknown): SSRControlOutcome | nu
   const control = findSSRControlOutcome(error);
   if (control) return control;
 
-  if (isFileNotFoundError(error)) return { kind: "not-found" };
+  if (isFileNotFoundError(error)) {
+    return {
+      kind: "not-found",
+      ...getAttachedDataResponseMetadata(error),
+    };
+  }
 
   if (error instanceof VeryfrontError && error.slug === "render-error") {
     const redirect = extractRedirectLocation(error);
@@ -102,6 +113,7 @@ export function resolveSSRControlOutcome(error: unknown): SSRControlOutcome | nu
         kind: "redirect",
         location: redirect.destination,
         permanent: redirect.permanent,
+        ...redirect.responseMetadata,
       };
     }
   }
@@ -172,25 +184,39 @@ function toSSRControlOutcome(result: DataResult): SSRControlOutcome {
       kind: "redirect",
       location: result.redirect.destination,
       permanent: result.redirect.permanent === true,
+      ...normalizeDataResponseMetadata(result),
     };
   }
 
-  return { kind: "not-found" };
+  return {
+    kind: "not-found",
+    ...normalizeDataResponseMetadata(result),
+  };
 }
 
 function extractRedirectLocation(
   error: VeryfrontError,
-): { destination: string; permanent: boolean } | null {
-  const redirect = (error.context as RedirectResultContext | undefined)?.redirect;
+): {
+  destination: string;
+  permanent: boolean;
+  responseMetadata: DataResponseMetadata;
+} | null {
+  const context = error.context as RedirectResultContext | undefined;
+  const redirect = context?.redirect;
   if (!redirect || typeof redirect.destination !== "string") return null;
 
-  return {
-    destination: redirect.destination,
-    permanent: redirect.permanent === true,
-  };
+  try {
+    return {
+      destination: redirect.destination,
+      permanent: redirect.permanent === true,
+      responseMetadata: getAttachedDataResponseMetadata(error),
+    };
+  } catch {
+    return null;
+  }
 }
 
-function isFileNotFoundError(error: unknown): boolean {
+function isFileNotFoundError(error: unknown): error is VeryfrontError {
   return error instanceof VeryfrontError && error.slug === "file-not-found";
 }
 

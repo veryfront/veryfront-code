@@ -21,7 +21,7 @@ import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 import type { WorkerEgressBroker } from "./worker-egress-guard.ts";
 import { computeHash } from "#veryfront/utils";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
-import { validateDataResult } from "#veryfront/data/helpers.ts";
+import { validateDataResult } from "#veryfront/data/data-result-validation.ts";
 import { fromFileUrl, join, toFileUrl } from "#veryfront/compat/path";
 
 const testSuite = isDeno ? describe : describe.skip;
@@ -1650,6 +1650,52 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       notFound: false,
       revalidate: 30,
     });
+  });
+
+  it("preserves response metadata across the isolated data boundary", async () => {
+    const response = await executeIsolatedDataModule(
+      `export function getServerData() {
+        return {
+          props: { ok: true },
+          headers: { "x-page-state": "fresh" },
+          cookies: [{
+            name: "session",
+            value: "abc",
+            path: "/",
+            httpOnly: true,
+            sameSite: "lax",
+          }],
+        };
+      }`,
+      "response-metadata-data-result",
+    );
+
+    assertEquals(response.type, "data-result");
+    if (response.type !== "data-result") throw new Error("expected data result response");
+    assertEquals(response.result, {
+      props: { ok: true },
+      headers: { "x-page-state": "fresh" },
+      cookies: [{
+        name: "session",
+        value: "abc",
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+      }],
+    });
+  });
+
+  it("rejects unknown isolated response cookie fields", async () => {
+    const response = await executeIsolatedDataModule(
+      `export function getServerData() {
+        return {
+          props: {},
+          cookies: [{ name: "session", value: "abc", ignored: true }],
+        };
+      }`,
+      "unknown-response-cookie-field",
+    );
+    assertInvalidIsolatedDataResult(response);
   });
 
   it("rejects direct Deno file reads outside scoped worker read permissions", async () => {

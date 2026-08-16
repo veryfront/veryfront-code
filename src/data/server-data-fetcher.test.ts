@@ -226,6 +226,52 @@ describe("ServerDataFetcher", () => {
       assertEquals(result.revalidate, 60);
     });
 
+    it("preserves response metadata returned from getServerData", async () => {
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: (): DataResult => ({
+          props: { ok: true },
+          headers: { "x-page-state": "fresh" },
+          cookies: [{
+            name: "session",
+            value: "abc",
+            path: "/",
+            httpOnly: true,
+            sameSite: "lax",
+          }],
+        }),
+      };
+
+      const result = await fetcher.fetch(pageModule, createContext());
+
+      assertEquals(result.headers, { "x-page-state": "fresh" });
+      assertEquals(result.cookies, [{
+        name: "session",
+        value: "abc",
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+      }]);
+    });
+
+    it("rejects framework-owned headers from getServerData", async () => {
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => ({
+          props: {},
+          headers: { "set-cookie": "session=unsafe" },
+        } as DataResult & { headers: Record<string, string> }),
+      };
+
+      await assertRejects(
+        () => fetcher.fetch(pageModule, createContext()),
+        TypeError,
+        'getServerData cannot set framework-owned response header "set-cookie"',
+      );
+    });
+
     it("should handle revalidate: false", async () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -498,6 +544,24 @@ describe("ServerDataFetcher", () => {
       assertEquals(result.notFound, undefined);
     });
 
+    it("preserves response metadata from a thrown redirect()", async () => {
+      const fetcher = new ServerDataFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getServerData: () => {
+          throw redirect("/account", false, {
+            headers: { "x-auth-result": "signed-in" },
+            cookies: [{ name: "session", value: "abc", path: "/" }],
+          });
+        },
+      };
+
+      const result = await fetcher.fetch(pageModule, createContext());
+
+      assertEquals(result.headers, { "x-auth-result": "signed-in" });
+      assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
+    });
+
     it("still propagates a genuine Error", async () => {
       const fetcher = new ServerDataFetcher();
       const pageModule: PageWithData = {
@@ -702,7 +766,11 @@ describe("ServerDataFetcher", () => {
       it("treats a thrown redirect() as a redirect result", async () => {
         const { modulePath, projectDir: dir } = await writeIsolatedPage(
           `export function getServerData() {
-             const result = { redirect: { destination: "/login", permanent: true } };
+             const result = {
+               redirect: { destination: "/login", permanent: true },
+               headers: { "x-auth-result": "signed-in" },
+               cookies: [{ name: "session", value: "abc", path: "/" }],
+             };
              ${BRAND_SOURCE}
              throw result;
            }
@@ -714,6 +782,8 @@ describe("ServerDataFetcher", () => {
         assertEquals(result.redirect?.destination, "/login");
         assertEquals(result.redirect?.permanent, true);
         assertEquals(result.notFound, undefined);
+        assertEquals(result.headers, { "x-auth-result": "signed-in" });
+        assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
       });
 
       it("still propagates a genuine Error thrown in the worker", async () => {

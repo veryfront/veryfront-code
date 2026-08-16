@@ -81,6 +81,24 @@ describe("types.ts", () => {
 
       assertEquals(result.revalidate, false);
     });
+
+    it("should support document response headers and cookies", () => {
+      const result: DataResult = {
+        props: {},
+        headers: { "x-page-state": "fresh" },
+        cookies: [{
+          name: "session",
+          value: "abc",
+          path: "/",
+          httpOnly: true,
+          secure: true,
+          sameSite: "lax",
+        }],
+      };
+
+      assertEquals(result.headers?.["x-page-state"], "fresh");
+      assertEquals(result.cookies?.[0]?.name, "session");
+    });
   });
 
   describe("PageWithData", () => {

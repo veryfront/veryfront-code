@@ -48,6 +48,7 @@ import {
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 const logger = serverLogger.component("ssr");
 
@@ -303,6 +304,7 @@ export class SSRHandler extends BaseHandler {
               slug,
               nonce,
               dependencySnapshot,
+              rendered,
             );
           case "overloaded":
           case "runtime":
@@ -339,7 +341,7 @@ export class SSRHandler extends BaseHandler {
     location: string,
     nonce: string,
   ): HandlerResult {
-    const response = this.createSnapshotResponseBuilder(
+    const builder = this.createSnapshotResponseBuilder(
       ctx,
       nonce,
       result.dependencyPinningCacheKey,
@@ -347,8 +349,9 @@ export class SSRHandler extends BaseHandler {
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache(result.cacheStrategy)
-      .withHeaders({ Location: location })
-      .build(null, result.status);
+      .withHeaders({ Location: location });
+    appendDataResponseMetadata(builder.headers, result);
+    const response = builder.build(null, result.status);
 
     return this.respond(response);
   }
@@ -359,6 +362,7 @@ export class SSRHandler extends BaseHandler {
     slug: string,
     nonce: string,
     dependencySnapshot: DependencyPinningSnapshot,
+    result: SSRRenderResult,
   ): Promise<HandlerResult> {
     const builder = this.createSnapshotResponseBuilder(
       ctx,
@@ -373,15 +377,21 @@ export class SSRHandler extends BaseHandler {
       builder,
       dependencySnapshot,
     );
-    if (notFoundResponse) return this.respond(notFoundResponse);
+    if (notFoundResponse) {
+      appendDataResponseMetadata(notFoundResponse.headers, result);
+      return this.respond(notFoundResponse);
+    }
 
     const customResponse = await tryErrorPageFallback(req, ctx, builder, {
       statusCode: 404,
       pathname: slug || "/",
     }, dependencySnapshot);
-    if (customResponse) return this.respond(customResponse);
+    if (customResponse) {
+      appendDataResponseMetadata(customResponse.headers, result);
+      return this.respond(customResponse);
+    }
 
-    const result: SSRRenderResult = {
+    const fallbackResult: SSRRenderResult = {
       status: 404,
       html: ErrorPages.notFound(slug || "/"),
       htmlProvenance: "framework",
@@ -390,9 +400,12 @@ export class SSRHandler extends BaseHandler {
       failure: { kind: "not-found" },
       slug,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      ...(result.headers ? { headers: result.headers } : {}),
+      ...(result.cookies ? { cookies: result.cookies } : {}),
     };
 
-    return this.buildResponse(req, ctx, result, nonce);
+    const response = await buildSSRResponse(req, ctx, fallbackResult, builder);
+    return this.respond(response);
   }
 
   private async tryCustomErrorFallback(

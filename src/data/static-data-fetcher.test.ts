@@ -81,6 +81,23 @@ describe("StaticDataFetcher", () => {
       assertEquals(receivedUrl.pathname, "/posts/123");
     });
 
+    it("rejects response metadata from getStaticData so caches cannot replay it", async () => {
+      const { fetcher } = createFetcher();
+      const pageModule: PageWithData = {
+        default: () => null,
+        getStaticData: () => ({
+          props: {},
+          cookies: [{ name: "session", value: "stale" }],
+        } as any),
+      };
+
+      await assertRejects(
+        () => withProductionContext(() => fetcher.fetch(pageModule, createContext())),
+        TypeError,
+        "getStaticData cannot return response headers or cookies",
+      );
+    });
+
     it("should NOT pass request or query to getStaticData", async () => {
       const { fetcher } = createFetcher();
       let receivedContext:
@@ -462,6 +479,24 @@ describe("StaticDataFetcher", () => {
         },
       };
     }
+
+    it("rejects response metadata from a thrown static control result", async () => {
+      const { fetcher } = createFetcher();
+
+      await assertRejects(
+        () =>
+          fetcher.fetch(
+            throwing(
+              redirect("/login", false, {
+                cookies: [{ name: "session", value: "stale" }],
+              }),
+            ),
+            createContext(),
+          ),
+        TypeError,
+        "getStaticData cannot return response headers or cookies",
+      );
+    });
 
     it("treats a thrown notFound() as a 404 result without a cache context", async () => {
       const { fetcher } = createFetcher();

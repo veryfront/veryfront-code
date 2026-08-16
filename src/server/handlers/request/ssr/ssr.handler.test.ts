@@ -241,7 +241,13 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html>not found</html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            failure: { kind: "not-found" } as const,
+            failure: {
+              kind: "not-found",
+              headers: { "x-missing-reason": "gone" },
+              cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+            } as const,
+            headers: { "x-missing-reason": "gone" },
+            cookies: [{ name: "visited-missing", value: "1", path: "/" }],
             slug: "missing-page",
           }),
       });
@@ -254,6 +260,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       // The handler's handleNotFound tries fallback pages, but they won't exist in mock;
       // it eventually builds a 404 response.
       assertEquals(result.response!.status, 404);
+      assertEquals(result.response!.headers.get("x-missing-reason"), "gone");
+      assertEquals(result.response!.headers.getSetCookie(), ["visited-missing=1; Path=/"]);
     });
 
     it("returns redirect responses for redirect error type", async () => {
@@ -276,6 +284,36 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response!.status, 302);
       assertEquals(result.response!.headers.get("location"), "/login");
       assertEquals(result.response!.body, null);
+    });
+
+    it("applies response metadata to redirects", async () => {
+      const mockService = createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 302,
+            isStreaming: false,
+            cacheStrategy: "no-cache" as const,
+            failure: {
+              kind: "redirect",
+              location: "/account",
+              permanent: false,
+            } as const,
+            headers: { "x-auth-result": "signed-in" },
+            cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
+            slug: "sign-in",
+          } as any),
+      });
+      const result = await new SSRHandler(mockService).handle(
+        new Request("http://localhost/sign-in"),
+        makeCtx(),
+      );
+
+      assertEquals(result.response!.status, 302);
+      assertEquals(result.response!.headers.get("location"), "/account");
+      assertEquals(result.response!.headers.get("x-auth-result"), "signed-in");
+      assertEquals(result.response!.headers.getSetCookie(), [
+        "session=abc; Path=/; HttpOnly",
+      ]);
     });
 
     it("returns 500 for server-error type", async () => {

@@ -15,6 +15,7 @@ import { ErrorPages } from "../../../utils/error-html.ts";
 import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { serverLogger } from "#veryfront/utils";
+import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 const logger = serverLogger.component("ssr-response-builder");
 
@@ -45,16 +46,17 @@ export async function buildSSRResponse(
 
   // Streaming response path
   if (result.isStreaming && result.stream) {
-    const response = builder
+    const responseBuilder = builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withClientHints()
-      .withCache(result.cacheStrategy)
-      .withContentType(
-        getContentType(".html"),
-        result.stream,
-        result.status,
-      );
+      .withCache(result.cacheStrategy);
+    appendDataResponseMetadata(responseBuilder.headers, result);
+    const response = responseBuilder.withContentType(
+      getContentType(".html"),
+      result.stream,
+      result.status,
+    );
 
     if (!isHeadRequest) return response;
 
@@ -64,11 +66,12 @@ export async function buildSSRResponse(
 
   // ETag match → 304 Not Modified (production only)
   if (!isDev && !builder.nonce && result.etag && hasMatchingEtag(req, result.etag)) {
-    return builder
+    const responseBuilder = builder
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
-      .withCache(result.cacheStrategy)
-      .notModified(result.etag);
+      .withCache(result.cacheStrategy);
+    appendDataResponseMetadata(responseBuilder.headers, result);
+    return responseBuilder.notModified(result.etag);
   }
 
   // Buffered response path
@@ -95,6 +98,7 @@ export async function buildSSRResponse(
 
   if (!result.isStreaming) response = response.withClientHints();
   if (result.etag) response = response.withETag(result.etag);
+  appendDataResponseMetadata(response.headers, result);
 
   const finalResponse = response.withContentType(
     getContentType(".html"),
