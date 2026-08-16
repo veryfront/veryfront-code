@@ -59,6 +59,13 @@ const CHAT_MARKDOWN_DEPENDENCIES: Record<string, string> = {
 };
 
 export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
+  // `minimal` ships app/about/page.mdx. @veryfront/ext-content-mdx is an
+  // optional peer of the npm package (it drags @types/mdx, which breaks
+  // `tsc --noEmit` for every library consumer), so a starter that renders MDX
+  // has to install it or that one route 500s under `npx veryfront dev`.
+  minimal: {
+    firstPartyExtensions: ["@veryfront/ext-content-mdx"],
+  },
   "ai-agent": {
     npmDependencies: { ...CHAT_MARKDOWN_DEPENDENCIES },
   },

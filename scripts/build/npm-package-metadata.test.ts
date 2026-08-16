@@ -203,6 +203,74 @@ it("npm publish version bump pins first-party extension dependencies to the publ
   }
 });
 
+// @veryfront/ext-content-mdx is published as an optional *peer* of the root
+// package. RC builds publish every package under a -rc.N version, so if the
+// bump skips peerDependencies the root package ships pointing at a version that
+// was never published and the optional peer can never be installed.
+it("npm publish version bump pins first-party extension peers to the publish version", async () => {
+  const packageDir = await Deno.makeTempDir();
+  const packagePath = `${packageDir}/package.json`;
+  const publishVersion = "0.1.1240-rc.7";
+
+  try {
+    await Deno.writeTextFile(
+      packagePath,
+      JSON.stringify(
+        {
+          name: "veryfront",
+          version: "0.1.1240",
+          dependencies: {
+            "@veryfront/ext-css-tailwind": "0.1.1240",
+          },
+          peerDependencies: {
+            "@veryfront/ext-content-mdx": "0.1.1240",
+            "@huggingface/transformers": "^4.2.0",
+            react: "^19.0.0",
+          },
+          peerDependenciesMeta: {
+            "@veryfront/ext-content-mdx": { optional: true },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const output = await new Deno.Command("bash", {
+      args: [
+        "-c",
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'VERSION="$PUBLISH_VERSION" update_package_version "$PACKAGE_DIR"',
+        ].join("\n"),
+      ],
+      env: {
+        PACKAGE_DIR: packageDir,
+        PUBLISH_VERSION: publishVersion,
+        SCRIPT_PATH: `${Deno.cwd()}/scripts/ci/publish-npm-packages.sh`,
+      },
+      stderr: "piped",
+      stdout: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+
+    const pkg = JSON.parse(await Deno.readTextFile(packagePath));
+    assertEquals(pkg.peerDependencies, {
+      "@veryfront/ext-content-mdx": publishVersion,
+      // Third-party optional peers keep their compatibility ranges.
+      "@huggingface/transformers": "^4.2.0",
+      react: "^19.0.0",
+    });
+    assertEquals(pkg.peerDependenciesMeta, {
+      "@veryfront/ext-content-mdx": { optional: true },
+    });
+  } finally {
+    await Deno.remove(packageDir, { recursive: true });
+  }
+});
+
 it("npm publish orders extensions before the root package", async () => {
   const packageRoot = await Deno.makeTempDir();
 
@@ -392,6 +460,47 @@ describe("normalizeNpmPackageMetadata", () => {
     });
 
     assertEquals(pkg.files, ["esm", "script", "bin", "README.md"]);
+  });
+
+  // veryfront@0.1.1239 listed @veryfront/ext-content-mdx under runtime
+  // `dependencies`, which drags @mdx-js/mdx -> @types/mdx@2.0.14 into every
+  // consumer's node_modules/@types. That file references the *global* JSX
+  // namespace, which @types/react@19 no longer declares, so `npm install
+  // veryfront` broke a previously-clean `tsc --noEmit` in projects that do not
+  // set skipLibCheck. Nothing in the four TS2503 errors names Veryfront.
+  //
+  // `optionalDependencies` does NOT fix this: npm installs optional
+  // dependencies by default and only tolerates their *failure*. Verified with
+  // npm 11.12.1 — a package.json whose sole entry is
+  // `optionalDependencies: { "@mdx-js/mdx": "3.1.1" }` still produces
+  // node_modules/@types/mdx and still fails `tsc --noEmit` with the same four
+  // errors. Only an optional peer keeps the package out of the tree, which is
+  // the mechanism ROOT_OPTIONAL_RUNTIME_PEERS already uses.
+  it("keeps the MDX content extension out of automatic npm installs", () => {
+    const pkg = normalizeNpmPackageMetadata({
+      dependencies: {
+        "@veryfront/ext-bundler-esbuild": "0.1.1239",
+        "@veryfront/ext-content-mdx": "0.1.1239",
+        "@veryfront/ext-css-tailwind": "0.1.1239",
+        zod: "4.3.6",
+      },
+    });
+
+    assertEquals(pkg.dependencies, {
+      "@veryfront/ext-bundler-esbuild": "0.1.1239",
+      "@veryfront/ext-css-tailwind": "0.1.1239",
+      zod: "4.3.6",
+    });
+    // An optionalDependency would still be installed, so the move has to land
+    // on peerDependencies + peerDependenciesMeta.optional.
+    assertEquals(pkg.optionalDependencies, undefined);
+    assertEquals(
+      pkg.peerDependencies?.["@veryfront/ext-content-mdx"],
+      "0.1.1239",
+    );
+    assertEquals(pkg.peerDependenciesMeta?.["@veryfront/ext-content-mdx"], {
+      optional: true,
+    });
   });
 
   it("keeps opt-in feature packages out of automatic npm installs", () => {

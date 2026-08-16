@@ -132,6 +132,26 @@ describe("templates", () => {
     );
   });
 
+  // @veryfront/ext-content-mdx is an optional peer of the npm package, so it is
+  // no longer installed by a plain `npm install veryfront`. A starter that ships
+  // a .mdx route has to ask for it, or `npx veryfront dev` serves every route
+  // except that one and reports a missing ContentProcessor for it.
+  it("installs the MDX content extension for every starter that ships an .mdx route", async () => {
+    for (const templateName of STARTER_TEMPLATE_NAMES) {
+      const files = await getTemplate(templateName);
+      assertExists(files);
+      if (!files.some((file) => file.path.endsWith(".mdx"))) continue;
+
+      assertEquals(
+        templateConfigs[templateName]?.firstPartyExtensions?.includes(
+          "@veryfront/ext-content-mdx",
+        ),
+        true,
+        `${templateName} ships an .mdx route but does not install @veryfront/ext-content-mdx`,
+      );
+    }
+  });
+
   it("does not make baseline framework extensions starter-specific", async () => {
     const files = await getTemplate("saas-starter");
     assertExists(files);
