@@ -1284,12 +1284,34 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         conflicts: [] as string[],
         applied: [] as string[],
       };
-      const writeVerifiedAppliedSyncTarget = async () => {
-        const latestRemoteFiles = await listAllFiles(
-          client,
-          projectApiReference(config),
-          target.source,
+      const writeConfirmedAppliedSyncTarget = async () => {
+        const appliedUploads = new Set(uploadResult.applied);
+        const appliedDeletes = [...new Set(deleteResult.applied)]
+          .map((path) => ({ path }));
+        await writeAppliedSyncTarget(
+          projectDir,
+          config,
+          project,
+          branchName,
+          managedRemoteFiles,
+          uploadOps.filter((op) => appliedUploads.has(op.path)),
+          appliedDeletes,
         );
+      };
+      const listAllFilesForVerification = async () => {
+        try {
+          return await listAllFiles(
+            client,
+            projectApiReference(config),
+            target.source,
+          );
+        } catch (error) {
+          await writeConfirmedAppliedSyncTarget();
+          throw error;
+        }
+      };
+      const writeVerifiedAppliedSyncTarget = async () => {
+        const latestRemoteFiles = await listAllFilesForVerification();
         const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
           latestRemoteFiles,
           ignoreChecker,
@@ -1398,11 +1420,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       spinner.update("Verifying push target...");
       try {
         if (!force) {
-          const latestRemoteFiles = await listAllFiles(
-            client,
-            projectApiReference(config),
-            target.source,
-          );
+          const latestRemoteFiles = await listAllFilesForVerification();
           const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
             latestRemoteFiles,
             ignoreChecker,
@@ -1433,11 +1451,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           }
           pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
         } else if (pruneRemoteMissing) {
-          const latestRemoteFiles = await listAllFiles(
-            client,
-            projectApiReference(config),
-            target.source,
-          );
+          const latestRemoteFiles = await listAllFilesForVerification();
           let repaired = false;
           const lateUploadResult = await uploadForcedPlannedFiles(
             client,
@@ -1502,11 +1516,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             }
           }
           if (repaired) {
-            const repairedRemoteFiles = await listAllFiles(
-              client,
-              projectApiReference(config),
-              target.source,
-            );
+            const repairedRemoteFiles = await listAllFilesForVerification();
             const repairedConflicts = findRemoteSnapshotChanges(
               buildSyncFileDigestSnapshot(plan.nextFiles),
               await buildManagedRemoteSnapshot(repairedRemoteFiles, ignoreChecker, false),
@@ -1519,11 +1529,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
           }
         } else {
-          let latestRemoteFiles = await listAllFiles(
-            client,
-            projectApiReference(config),
-            target.source,
-          );
+          let latestRemoteFiles = await listAllFilesForVerification();
           const repairUploadResult = await uploadForcedPlannedFiles(
             client,
             projectApiReference(config),
@@ -1550,11 +1556,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             );
           }
           if (repairUploadResult.uploaded > 0) {
-            latestRemoteFiles = await listAllFiles(
-              client,
-              projectApiReference(config),
-              target.source,
-            );
+            latestRemoteFiles = await listAllFilesForVerification();
           }
           const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
             latestRemoteFiles,

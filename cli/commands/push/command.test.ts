@@ -3804,6 +3804,97 @@ describe("push failure ordering", () => {
       _resetEnvironmentConfig();
     }
   });
+
+  it("records confirmed mutations when the final verification read fails", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const remoteApp = "export const remote = true;\n";
+        const staleContent = "export const stale = true;\n";
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": {
+              digest: await computeContentDigest(remoteApp),
+              versionId: "00000000-0000-4000-8000-000000000001",
+            },
+            "stale.ts": {
+              digest: await computeContentDigest(staleContent),
+              versionId: "00000000-0000-4000-8000-000000000002",
+            },
+          },
+        });
+
+        let fileListCalls = 0;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            if (fileListCalls > 2) {
+              return Response.json({ error: "verification unavailable" }, { status: 500 });
+            }
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: remoteApp,
+                  version_id: "00000000-0000-4000-8000-000000000001",
+                },
+                {
+                  path: "stale.ts",
+                  content: staleContent,
+                  version_id: "00000000-0000-4000-8000-000000000002",
+                },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT" || request.method === "DELETE") {
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, branch: "main", prune: true, quiet: true }),
+          Error,
+        );
+
+        assertEquals(fileListCalls > 2, true);
+        assertEquals(await readPushReceipt(projectDir), null);
+        const target = await readSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          branch: "main",
+        });
+        assertEquals(
+          target?.files["app.ts"]?.digest,
+          await computeContentDigest("export const value = 1;\n"),
+        );
+        assertEquals(target?.files["stale.ts"], undefined);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
 });
 
 describe("push deletion ownership", () => {
