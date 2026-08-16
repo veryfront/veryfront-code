@@ -67,6 +67,9 @@ export function assertWorkerReadScopeConfined(
   const physicalRoots: string[] = [];
   for (const root of readScope) {
     try {
+      if (Deno.lstatSync(root).isSymlink) {
+        rejectUnconfinedReadScope();
+      }
       physicalRoots.push(Deno.realPathSync(root));
     } catch (error) {
       // A missing optional support path grants nothing at startup. Project

@@ -50,6 +50,25 @@ describe("worker read scope", () => {
     }
   });
 
+  it("rejects a read root that is itself a symlink", async () => {
+    const sandbox = await Deno.makeTempDir();
+    const targetRoot = join(sandbox, "target", "project");
+    const linkedRoot = join(sandbox, "linked-project");
+    await Deno.mkdir(targetRoot, { recursive: true });
+    await Deno.writeTextFile(join(sandbox, "target", "secret.txt"), "outside secret");
+    await Deno.symlink(targetRoot, linkedRoot, { type: "dir" });
+
+    try {
+      assertThrows(
+        () => assertWorkerReadScopeConfined([linkedRoot]),
+        VeryfrontError,
+        "Worker read scope contains a symlink outside its allowed roots",
+      );
+    } finally {
+      await Deno.remove(sandbox, { recursive: true });
+    }
+  });
+
   it("rejects a directory symlink that can escape through parent traversal", async () => {
     const sandbox = await Deno.makeTempDir();
     const root = join(sandbox, "project");
