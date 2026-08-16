@@ -817,7 +817,24 @@ export async function ensureAuthenticated(
 
   const candidates = await resolveApiCredentialCandidatesForAuth(env, projectDir);
   for (const candidate of candidates) {
-    const credential = await validateCredential(candidate.apiToken, candidate.validationEnv);
+    let credential: AuthIdentity | null;
+    try {
+      credential = await validateCredential(
+        candidate.apiToken,
+        candidate.validationEnv,
+        candidate.apiTokenSource === "token-store"
+          ? { throwOnCredentialValidationUnavailable: true }
+          : undefined,
+      );
+    } catch (error) {
+      if (
+        candidate.apiTokenSource === "token-store" &&
+        error instanceof CredentialValidationUnavailableError
+      ) {
+        return null;
+      }
+      throw error;
+    }
     if (credential) return credential;
 
     if (candidate.apiTokenSource === "env" && humanOutput) {

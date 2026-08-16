@@ -366,6 +366,88 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    for (
+      const { name, rejectValidation } of [
+        {
+          name: "a network failure",
+          rejectValidation: () => new TypeError("network unavailable"),
+        },
+        {
+          name: "a timeout",
+          rejectValidation: () => new DOMException("timed out", "TimeoutError"),
+        },
+        {
+          name: "a 503 response",
+          rejectValidation: null,
+        },
+      ]
+    ) {
+      it(`retains a stored session after ${name}`, async () => {
+        const originalFetch = globalThis.fetch;
+        await saveToken("stored-unavailable-token", testEnv);
+
+        try {
+          setNonInteractive(true);
+          globalThis.fetch = (rejectValidation
+            ? (() =>
+              Promise.reject(rejectValidation()))
+            : (() => Promise.resolve(new Response(null, { status: 503 })))) as typeof fetch;
+
+          const { ensureAuthenticated } = await import("./login.ts");
+          assertEquals(await ensureAuthenticated(testEnv), null);
+          assertEquals(await readToken(testEnv), "stored-unavailable-token");
+        } finally {
+          globalThis.fetch = originalFetch;
+          resetInteractiveMode();
+          await safeDeleteToken();
+        }
+      });
+    }
+
+    it("retains a stored session and propagates unexpected validation failures", async () => {
+      const originalFetch = globalThis.fetch;
+      await saveToken("stored-unexpected-token", testEnv);
+
+      try {
+        setNonInteractive(true);
+        globalThis.fetch = (() =>
+          Promise.reject(new Error("unexpected validation failure"))) as typeof fetch;
+
+        const { ensureAuthenticated } = await import("./login.ts");
+        await assertRejects(
+          () => ensureAuthenticated(testEnv),
+          Error,
+          "unexpected validation failure",
+        );
+        assertEquals(await readToken(testEnv), "stored-unexpected-token");
+      } finally {
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
+    it("deletes stored sessions rejected with 401 or 403", async () => {
+      const originalFetch = globalThis.fetch;
+
+      try {
+        setNonInteractive(true);
+        const { ensureAuthenticated } = await import("./login.ts");
+        for (const status of [401, 403]) {
+          await saveToken(`stored-rejected-${status}`, testEnv);
+          globalThis.fetch = (() =>
+            Promise.resolve(new Response(null, { status }))) as typeof fetch;
+
+          assertEquals(await ensureAuthenticated(testEnv), null);
+          assertEquals(await readToken(testEnv), null);
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        resetInteractiveMode();
+        await safeDeleteToken();
+      }
+    });
+
     it("falls back to a valid project dotenv credential after a rejected stored session", async () => {
       const originalFetch = globalThis.fetch;
       const originalToken = getEnv("VERYFRONT_API_TOKEN");
