@@ -29,8 +29,8 @@ describe("isFingerprintExcluded", () => {
 });
 
 describe("digestEntries", () => {
-  const a = { path: "a.ts", mtime: 1, size: 10 };
-  const b = { path: "b.ts", mtime: 2, size: 20 };
+  const a = { path: "a.ts", digest: "aaa" };
+  const b = { path: "b.ts", digest: "bbb" };
 
   it("is order-independent over entries", async () => {
     assertEquals(
@@ -39,10 +39,9 @@ describe("digestEntries", () => {
     );
   });
 
-  it("changes when an mtime, a size, or the salt changes", async () => {
+  it("changes when a content digest or the salt changes", async () => {
     const base = await digestEntries([a, b], "s");
-    assertNotEquals(base, await digestEntries([{ ...a, mtime: 9 }, b], "s"));
-    assertNotEquals(base, await digestEntries([a, { ...b, size: 9 }], "s"));
+    assertNotEquals(base, await digestEntries([{ ...a, digest: "changed" }, b], "s"));
     assertNotEquals(base, await digestEntries([a, b], "other-deno"));
   });
 });
@@ -56,6 +55,17 @@ describe("selectUnitsToRun", () => {
     );
 
     assertEquals(selected.sort(), ["stale", "unstamped"]);
+  });
+
+  it("selects a stamped unit whose declared output is missing", () => {
+    assertEquals(
+      selectUnitsToRun({ a: "h" }, { a: "h" }, false, (name) => name === "a"),
+      ["a"],
+    );
+    assertEquals(
+      selectUnitsToRun({ a: "h" }, { a: "h" }, false, () => false),
+      [],
+    );
   });
 
   it("selects everything under force", () => {
@@ -83,6 +93,15 @@ describe("UNITS", () => {
       const script = unit.commands[0][unit.commands[0].length - 1];
       if (script.startsWith("scripts/build/")) {
         assertEquals(unit.inputFiles.includes(script), true, unit.name);
+      }
+    }
+  });
+
+  it("declares at least one output per unit, all excluded from fingerprints", () => {
+    for (const unit of UNITS) {
+      assertEquals(unit.outputs.length > 0, true, unit.name);
+      for (const output of unit.outputs) {
+        assertEquals(isFingerprintExcluded(output), true, output);
       }
     }
   });
