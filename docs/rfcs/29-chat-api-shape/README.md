@@ -4,10 +4,10 @@ Reference pages for the proposed `veryfront/chat` surface, accompanying the RFC 
 
 > **Status: RFC 29 - partly landed.** Per-symbol truth for this index, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `mergeProps`, `useChatInput`, `useChatInputContext`, `useChatScroll`, `useMessageBranches`
-> - **Not exported today:** `formatSize`, `getAgentPromptSuggestionItems`
+> - **Exported from `veryfront/chat` today:** `getAgentPromptSuggestionItems`, `mergeProps`, `useChatInput`, `useChatInputContext`, `useChatScroll`, `useMessageBranches`
+> - **Not exported today:** `formatSize`
 >
-> Those five symbols resolve on the public surface today. That is **not** the same as a landed delta - see [reading the status block](#reading-the-status-block). For the deltas that have actually landed, see [what has landed](#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85).
+> Those six symbols resolve on the public surface today. That is **not** the same as a landed delta - see [reading the status block](#reading-the-status-block). For the deltas that have actually landed, see [what has landed](#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85).
 
 ## Reading the status block
 
@@ -42,8 +42,8 @@ The complete set, as of `main`, and checked one delta at a time: every row links
 | [`useChatScroll`](./hooks/use-chat-scroll.md#usechatscroll---new---partly-shipped-srcreactcomponentschatchathooksuse-stick-to-bottomts177)                                       | `partly shipped` | `src/react/components/chat/chat/hooks/use-stick-to-bottom.ts:177`                                                                                    |
 | [`ChatInput.Field` IME guard + native surface](./components/chat-input.md#chatinputfield---changed---partly-shipped-srcreactcomponentschatchatcompositionchat-composertypests18) | `partly shipped` | `src/react/primitives/input-box.tsx:37` (guard); the native surface landed in `src/react/components/chat/chat/composition/chat-composer.types.ts:18` |
 | [`ChatInput` flat sub-part exports](./components/chat-input.md#chatinput-flat-sub-part-exports---new---shipped-srcchatindexts250)                                                | `shipped`        | `src/chat/index.ts:250`                                                                                                                              |
-| [`AttachmentsPanel.Item.Name`](./components/attachments-panel.md#attachmentspanelitemname---new---shipped-srcreactcomponentschatchatcomponentsattachments-paneltsx363)          | `shipped`        | `src/react/components/chat/chat/components/attachments-panel.tsx:363`                                                                                |
-| [`AttachmentsPanel.Item.Size`](./components/attachments-panel.md#attachmentspanelitemsize---new---shipped-srcreactcomponentschatchatcomponentsattachments-paneltsx386)          | `shipped`        | `src/react/components/chat/chat/components/attachments-panel.tsx:386`                                                                                |
+| [`AttachmentsPanel.Item.Name`](./components/attachments-panel.md#attachmentspanelitemname---new---shipped-srcreactcomponentschatchatcomponentsattachments-paneltsx363)           | `shipped`        | `src/react/components/chat/chat/components/attachments-panel.tsx:363`                                                                                |
+| [`AttachmentsPanel.Item.Size`](./components/attachments-panel.md#attachmentspanelitemsize---new---shipped-srcreactcomponentschatchatcomponentsattachments-paneltsx386)           | `shipped`        | `src/react/components/chat/chat/components/attachments-panel.tsx:386`                                                                                |
 
 ## The three layers
 

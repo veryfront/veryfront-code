@@ -4,8 +4,8 @@
 
 > **Status: RFC 29 - partly landed.** This RFC proposes a reset of a library that already shipped, and it is landing piecemeal. Per-symbol truth for this document, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `mergeProps`, `useChatInput`, `useChatInputContext`, `useChatScroll`, `useMessageBranches`
-> - **Not exported today:** `formatSize`, `getAgentPromptSuggestionItems`
+> - **Exported from `veryfront/chat` today:** `getAgentPromptSuggestionItems`, `mergeProps`, `useChatInput`, `useChatInputContext`, `useChatScroll`, `useMessageBranches`
+> - **Not exported today:** `formatSize`
 >
 > The per-piece pages carry the same block plus per-delta `shipped` badges; the roll-up of everything that has landed lives in [the reference index](./29-chat-api-shape/README.md#what-has-landed---shipped-srcreactcomponentschatchathooksuse-chat-inputts85).
 
