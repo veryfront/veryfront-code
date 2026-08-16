@@ -280,8 +280,7 @@ export const useChatSidebarItem = useChatSidebarItemStrict;
 
 /**
  * The row's label: the conversation title (or custom children). Use it inside
- * an `<ChatSidebar.Item>` to compose the row body; its presence tells the item
- * to skip its default title.
+ * an `<ChatSidebar.Item>` to compose the row body and skip its default title.
  */
 export function ChatSidebarItemTitle({
   children,
@@ -372,10 +371,8 @@ export function ChatSidebarItem({
     );
   }
 
-  // A `<ChatSidebar.Item.Title>` child moves the children into the row body;
-  // otherwise they compose the trailing action slot (the shipped behavior).
-  // Fragments are transparent here so title detection and menu extraction use
-  // the same child level and never duplicate or nest the menu trigger.
+  // A Title child moves children into the row body; otherwise they compose the action slot.
+  // Transparent fragments keep title and menu partitioning consistent without duplication.
   const parts = flattenItemParts(children);
   const composesTitle = parts.some(
     (part) => React.isValidElement(part) && part.type === ChatSidebarItemTitle,
