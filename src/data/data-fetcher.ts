@@ -1,7 +1,7 @@
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { CacheManager } from "./data-fetching-cache.ts";
-import { ServerDataFetcher, type ServerDataFetchOptions } from "./server-data-fetcher.ts";
+import type { ServerDataFetcher, ServerDataFetchOptions } from "./server-data-fetcher.ts";
 import { StaticDataFetcher } from "./static-data-fetcher.ts";
 import { StaticPathsFetcher } from "./static-paths-fetcher.ts";
 import type { DataContext, DataResult, PageWithData, StaticPathsResult } from "./types.ts";
@@ -27,13 +27,15 @@ export interface FetchDataOptions {
 
 export class DataFetcher {
   private cacheManager: CacheManager;
-  private serverFetcher: ServerDataFetcher;
+  // Constructed lazily: the server fetcher pulls the sandbox worker pool,
+  // which must stay out of browser bundles.
+  private serverFetcher: ServerDataFetcher | undefined;
   private staticFetcher: StaticDataFetcher;
   private pathsFetcher: StaticPathsFetcher;
 
   constructor(_adapter?: unknown) {
     this.cacheManager = new CacheManager();
-    this.serverFetcher = new ServerDataFetcher();
+
     this.staticFetcher = new StaticDataFetcher(this.cacheManager);
     this.pathsFetcher = new StaticPathsFetcher();
   }
@@ -67,8 +69,14 @@ export class DataFetcher {
 
     return withSpan(
       SpanNames.DATA_FETCH,
-      () => {
-        if (useServer) return this.serverFetcher.fetch(pageModule, context, isolationOptions);
+      async () => {
+        if (useServer) {
+          if (this.serverFetcher === undefined) {
+            const { ServerDataFetcher } = await import("./server-data-fetcher.ts");
+            this.serverFetcher = new ServerDataFetcher();
+          }
+          return this.serverFetcher.fetch(pageModule, context, isolationOptions);
+        }
         if (useStatic) return this.staticFetcher.fetch(pageModule, context, options);
         return Promise.resolve({ props: {} });
       },

@@ -1,4 +1,4 @@
-import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { getHostTelemetryEnv } from "#veryfront/observability/tracing/telemetry-env.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { DEFAULT_DEV_SERVER_PORT, MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
