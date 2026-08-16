@@ -116,6 +116,50 @@ describe("trigger target public type contracts", () => {
       agentMessage: { prompt: "Triage open cases." },
     });
 
+    const explicitlyUndefinedAgent = {
+      kind: "agent" as const,
+      id: "conditional-agent",
+      conversationMode: undefined,
+      conversationId: undefined,
+    };
+    const undefinedAgentSchedule = acceptScheduleConfig({
+      id: "conditional-agent-schedule",
+      schedule: "*/10 * * * *",
+      target: explicitlyUndefinedAgent,
+      agentMessage: { prompt: "Triage open cases." },
+    });
+    const undefinedAgentWebhook = acceptWebhookConfig({
+      id: "conditional-agent-webhook",
+      target: explicitlyUndefinedAgent,
+      agentMessage: { promptTemplate: "Triage {{payload}}." },
+    });
+    const undefinedAgentRun = acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      target: explicitlyUndefinedAgent,
+    });
+
+    const explicitlyUndefinedWorkflow = {
+      kind: "workflow" as const,
+      id: "conditional-workflow",
+      conversationMode: undefined,
+      conversationId: undefined,
+    };
+    const undefinedWorkflowSchedule = acceptScheduleConfig({
+      id: "conditional-workflow-schedule",
+      schedule: "*/10 * * * *",
+      target: explicitlyUndefinedWorkflow,
+    });
+    const undefinedWorkflowWebhook = acceptWebhookConfig({
+      id: "conditional-workflow-webhook",
+      target: explicitlyUndefinedWorkflow,
+    });
+    const undefinedWorkflowRun = acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      target: explicitlyUndefinedWorkflow,
+    });
+
     // @ts-expect-error Task schedules cannot define an agent message.
     const invalidTaskMessage = acceptScheduleConfig({
       id: "bad-task-message",
@@ -162,7 +206,108 @@ describe("trigger target public type contracts", () => {
       target: { kind: "task", id: "sync-helpdesk", conversationMode: "none" },
     });
 
+    const storedWorkflowConversation = {
+      kind: "workflow" as const,
+      id: "billing/sync",
+      conversationMode: "create_new" as const,
+    };
+    const storedWorkflowConversationId = {
+      kind: "workflow" as const,
+      id: "billing/sync",
+      conversationId: null,
+    };
+    const storedTaskConversation = {
+      kind: "task" as const,
+      id: "sync-helpdesk",
+      conversationMode: "create_new" as const,
+    };
+    const storedTaskConversationId = {
+      kind: "task" as const,
+      id: "sync-helpdesk",
+      conversationId: null,
+    };
+
+    acceptScheduleConfig({
+      id: "stored-bad-workflow-schedule",
+      schedule: "0 * * * *",
+      // @ts-expect-error Stored workflow schedule targets cannot carry conversation fields.
+      target: storedWorkflowConversation,
+    });
+
+    acceptWebhookConfig({
+      id: "stored-bad-workflow-webhook",
+      // @ts-expect-error Stored workflow webhook targets cannot carry conversation fields.
+      target: storedWorkflowConversation,
+    });
+
+    acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      // @ts-expect-error Stored workflow runtime targets cannot carry conversation fields.
+      target: storedWorkflowConversation,
+    });
+
+    acceptScheduleConfig({
+      id: "stored-bad-workflow-id-schedule",
+      schedule: "0 * * * *",
+      // @ts-expect-error Stored workflow schedule targets cannot carry conversation fields.
+      target: storedWorkflowConversationId,
+    });
+    acceptWebhookConfig({
+      id: "stored-bad-workflow-id-webhook",
+      // @ts-expect-error Stored workflow webhook targets cannot carry conversation fields.
+      target: storedWorkflowConversationId,
+    });
+    acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      // @ts-expect-error Stored workflow runtime targets cannot carry conversation fields.
+      target: storedWorkflowConversationId,
+    });
+
+    acceptScheduleConfig({
+      id: "stored-bad-task-mode-schedule",
+      schedule: "0 * * * *",
+      // @ts-expect-error Stored task schedule targets cannot carry conversation fields.
+      target: storedTaskConversation,
+    });
+    acceptWebhookConfig({
+      id: "stored-bad-task-mode-webhook",
+      // @ts-expect-error Stored task webhook targets cannot carry conversation fields.
+      target: storedTaskConversation,
+    });
+    acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      // @ts-expect-error Stored task runtime targets cannot carry conversation fields.
+      target: storedTaskConversation,
+    });
+
+    acceptScheduleConfig({
+      id: "stored-bad-task-id-schedule",
+      schedule: "0 * * * *",
+      // @ts-expect-error Stored task schedule targets cannot carry conversation fields.
+      target: storedTaskConversationId,
+    });
+    acceptWebhookConfig({
+      id: "stored-bad-task-id-webhook",
+      // @ts-expect-error Stored task webhook targets cannot carry conversation fields.
+      target: storedTaskConversationId,
+    });
+    acceptRunTriggerTargetOptions({
+      projectDir: "project",
+      adapter,
+      // @ts-expect-error Stored task runtime targets cannot carry conversation fields.
+      target: storedTaskConversationId,
+    });
+
     assertEquals(agentSchedule.target.kind, "agent");
+    assertEquals(undefinedAgentSchedule.target.kind, "agent");
+    assertEquals(undefinedAgentWebhook.target.kind, "agent");
+    assertEquals(undefinedAgentRun.target.kind, "agent");
+    assertEquals(undefinedWorkflowSchedule.target.kind, "workflow");
+    assertEquals(undefinedWorkflowWebhook.target.kind, "workflow");
+    assertEquals(undefinedWorkflowRun.target.kind, "workflow");
     assertEquals(invalidTaskMessage.target.kind, "task");
     assertEquals(invalidWorkflowMessage.target.kind, "workflow");
     assertEquals(invalidStoredTaskMessage.target.kind, "task");

@@ -71,6 +71,30 @@ describe("schedule/factory", () => {
     assertEquals(isScheduleDefinition(definition), true);
   });
 
+  it("treats undefined non-agent conversation fields as omitted", () => {
+    const taskDefinition = schedule({
+      id: "conditional-task",
+      schedule: "0 */6 * * *",
+      target: {
+        kind: "task",
+        id: "run-triage-sweep",
+        conversationMode: undefined,
+      },
+    });
+    const workflowDefinition = schedule({
+      id: "conditional-workflow",
+      schedule: "0 */6 * * *",
+      target: {
+        kind: "workflow",
+        id: "billing/sync",
+        conversationId: undefined,
+      },
+    });
+
+    assertEquals(taskDefinition.target, { kind: "task", id: "run-triage-sweep" });
+    assertEquals(workflowDefinition.target, { kind: "workflow", id: "billing/sync" });
+  });
+
   it("preserves optional execution controls", () => {
     const definition = schedule({
       id: "bounded-sweep",
