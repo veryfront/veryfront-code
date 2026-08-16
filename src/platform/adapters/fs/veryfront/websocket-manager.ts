@@ -375,14 +375,10 @@ export class WebSocketManager {
 
       logger.debug("POKE RECEIVED - checking environment scope", {
         type: message.type,
-        pokeBranchId: normalizedBranchId,
-        pokeBranchName: normalizedBranchName,
+        hasBranchId: normalizedBranchId !== null,
+        hasBranchName: normalizedBranchName !== null,
         isProductionPoke,
         isProductionMode,
-        currentBranch,
-        entityId: payload.entityId,
-        entityType: payload.entityType,
-        action: payload.action,
         connectionId: this.wsConnectionId,
         totalPokesReceived: this.pokeMetrics.received,
         timeSinceLastPokeMs: timeSinceLastPoke,
@@ -395,8 +391,8 @@ export class WebSocketManager {
         logger.debug(
           "[WebSocketManager] POKE ACCEPTED - branch-scoped poke in production mode",
           {
-            pokeBranchId: normalizedBranchId,
-            pokeBranchName: normalizedBranchName,
+            hasBranchId: normalizedBranchId !== null,
+            hasBranchName: normalizedBranchName !== null,
             sourceType: contentContext?.sourceType,
           },
         );
@@ -406,10 +402,7 @@ export class WebSocketManager {
         if (normalizedBranchName && normalizedBranchName !== currentBranch) {
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - different branch name in preview mode",
-            {
-              pokeBranchName: normalizedBranchName,
-              currentBranch,
-            },
+            { hasCurrentBranch: currentBranch !== null },
           );
           return;
         }
@@ -418,14 +411,14 @@ export class WebSocketManager {
           if (currentBranch === null) {
             logger.debug(
               "[WebSocketManager] POKE SKIPPED - branchId-only poke for main preview",
-              { pokeBranchId: normalizedBranchId },
+              { hasBranchId: true },
             );
             return;
           }
 
           logger.debug(
             "[WebSocketManager] POKE ACCEPTED - branchId-only fallback in preview mode",
-            { pokeBranchId: normalizedBranchId, currentBranch },
+            { hasBranchId: true, hasCurrentBranch: true },
           );
         }
 
@@ -439,7 +432,7 @@ export class WebSocketManager {
           // using a different default branch (e.g., "master", "develop").
           logger.debug(
             "[WebSocketManager] POKE SKIPPED - unscoped poke for named branch preview",
-            { currentBranch, defaultBranchName: this.deps.defaultBranchName ?? "main" },
+            { hasCurrentBranch: true },
           );
           return;
         }
@@ -472,13 +465,9 @@ export class WebSocketManager {
 
       logger.info("POKE ACCEPTED - triggering cache invalidation", {
         changedPathsCount: changedPaths?.length || 0,
-        changedPaths: changedPaths || [],
         projectSlug: this.deps.projectSlug,
-        branch: contentContext?.branch,
         isDeploymentPoke,
         isPublishPoke,
-        pokeReleaseId: normalizedPokeReleaseId,
-        pokeEnvironmentName: normalizedPokeEnvironment,
       });
 
       this.beginPreviewInvalidation(contentContext);
@@ -555,10 +544,8 @@ export class WebSocketManager {
 
     logger.info("PUBLISH POKE - clearing persistent cache", {
       projectSlug: this.deps.projectSlug,
-      releaseId,
-      environmentName,
-      deletionPrefixes: Array.from(deletionPrefixes),
-      pendingPrefixes: Array.from(pendingPrefixes),
+      deletionPrefixCount: deletionPrefixes.size,
+      pendingPrefixCount: pendingPrefixes.size,
       pendingInvalidations: getPendingInvalidationsCount(),
     });
 
@@ -573,15 +560,11 @@ export class WebSocketManager {
 
         logger.info("PUBLISH POKE - persistent cache cleared", {
           projectSlug: this.deps.projectSlug,
-          releaseId,
-          environmentName,
           totalDeleted,
         });
       } catch (error) {
         logger.error("PUBLISH POKE - failed to clear persistent cache (stale data may be served)", {
           projectSlug: this.deps.projectSlug,
-          releaseId,
-          environmentName,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
@@ -594,7 +577,7 @@ export class WebSocketManager {
             "PUBLISH POKE - keeping pending invalidations active due to deletion failure",
             {
               projectSlug: this.deps.projectSlug,
-              pendingPrefixes: Array.from(pendingPrefixes),
+              pendingPrefixCount: pendingPrefixes.size,
             },
           );
         }
@@ -651,7 +634,6 @@ export class WebSocketManager {
 
     try {
       logger.debug("Performing selective invalidation", {
-        changedPaths,
         count: changedPaths.length,
       });
 
@@ -685,8 +667,8 @@ export class WebSocketManager {
       await Promise.all(deletionPromises);
 
       logger.debug("Cache entries deleted for changed paths", {
-        changedPaths,
-        parentDirs: Array.from(parentDirs),
+        changedPathsCount: changedPaths.length,
+        parentDirsCount: parentDirs.size,
         prefixes: ["file:", "stat:", "dir:"],
       });
 
@@ -695,7 +677,7 @@ export class WebSocketManager {
         this.deps.invalidationCallbacks.invalidateModulePaths?.(changedPaths),
       ];
       logger.debug("Clearing SSR module cache for HMR", {
-        changedPaths,
+        changedPathsCount: changedPaths.length,
         projectId,
         usePerProject: !!this.deps.invalidationCallbacks.clearSSRModuleCacheForProject,
       });
@@ -764,7 +746,7 @@ export class WebSocketManager {
       logger.info(
         "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
         {
-          changedPaths,
+          changedPathsCount: changedPaths.length,
           projectSlug: this.deps.projectSlug,
           projectId: this.deps.client.getProjectId(),
           hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
@@ -781,7 +763,7 @@ export class WebSocketManager {
       this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
 
       logger.info("Selective invalidation complete - HMR triggered", {
-        changedPaths,
+        changedPathsCount: changedPaths.length,
         durationMs: Date.now() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
       });
