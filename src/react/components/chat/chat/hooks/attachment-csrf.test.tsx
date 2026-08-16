@@ -111,7 +111,7 @@ function installCsrfEdge(
   const statuses = new Map<string, number>();
   const handler = new CsrfHandler();
 
-  globalThis.fetch = async (input, init) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), document.baseURI);
     const headers = new Headers(init?.headers);
     if (document.cookie) headers.set("cookie", document.cookie);
@@ -125,7 +125,7 @@ function installCsrfEdge(
     const response = result.response ?? endpoint(req);
     statuses.set(`${req.method} ${url.pathname}`, response.status);
     return response;
-  };
+  }) as typeof fetch;
 
   return { restore: () => (globalThis.fetch = originalFetch), statuses };
 }
@@ -306,7 +306,7 @@ describe("chat attachment CSRF", () => {
     const originalFetch = globalThis.fetch;
     let sentToken: string | null | undefined;
 
-    globalThis.fetch = (input, init) => {
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       if (method === "POST") sentToken = new Headers(init?.headers).get("x-csrf-token");
       return Promise.resolve(
@@ -314,7 +314,7 @@ describe("chat attachment CSRF", () => {
           ? Response.json({ items: [] })
           : Response.json({ id: "up-1", name: "a.txt", url: `${String(input)}/a.txt`, size: 1 }),
       );
-    };
+    }) as typeof fetch;
     const view = renderAttachments("https://uploads.example.net/api/uploads");
     try {
       view.attachments().upload([new File(["a"], "a.txt", { type: "text/plain" })]);

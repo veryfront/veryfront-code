@@ -283,7 +283,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
   it("allows a cold HTTP module response to exceed five seconds", async () => {
     let fetchCount = 0;
 
-    const mockFetch = ((_input, init) => {
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       fetchCount += 1;
       return new Promise<Response>((resolve, reject) => {
         const signal = init?.signal;
@@ -326,7 +326,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       releaseFetch = resolve;
     });
 
-    const mockFetch = ((_input, init) => {
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       fetchCount += 1;
       markFetchStarted();
       return new Promise<Response>((resolve, reject) => {
@@ -759,7 +759,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     let releaseFetch!: () => void;
     const fetchStarted = Promise.withResolvers<void>();
 
-    const mockFetch = ((_input, init) => {
+    const mockFetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
       fetchCount += 1;
       fetchStarted.resolve();
       return new Promise<Response>((resolve, reject) => {
