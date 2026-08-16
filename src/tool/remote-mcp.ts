@@ -95,7 +95,7 @@ function isJsonRpcErrorObject(
 
 function isJsonRpcToolErrorResult(value: unknown): value is JsonRpcToolErrorResult {
   if (!isRecord(value)) return false;
-  const candidate = value as unknown as Partial<JsonRpcToolErrorResult>;
+  const candidate = value as Partial<JsonRpcToolErrorResult>;
   return candidate[JSON_RPC_TOOL_ERROR_RESULT] === true && isRecord(candidate.result);
 }
 
