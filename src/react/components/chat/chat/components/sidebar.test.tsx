@@ -281,6 +281,16 @@ describe("ChatSidebar.Item.Title: composable row label", () => {
     );
     assert(html.includes(">Row title<"), "the Title leaf renders the conversation title");
     assert(html.includes("data-badge"), "the sibling badge renders next to the title");
+    const primaryActionClass = html.match(/<button[^>]*class="([^"]*)"[^>]*>/)?.[1] ?? "";
+    const titleClass = html.match(/<span[^>]*class="([^"]*)"[^>]*>Row title/)?.[1] ?? "";
+    assert(
+      primaryActionClass.includes("flex items-center gap-1"),
+      "the primary action keeps the composed label and badge on one row",
+    );
+    assert(
+      titleClass.includes("min-w-0 flex-1"),
+      "the title shrinks before its sibling badge",
+    );
     assertEquals(
       html.split(">Row title<").length - 1,
       1,

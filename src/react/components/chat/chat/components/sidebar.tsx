@@ -294,7 +294,7 @@ export function ChatSidebarItemTitle({
     <span
       {...props}
       ref={ref}
-      className={cn("block truncate text-[13px] leading-snug", className)}
+      className={cn("block min-w-0 flex-1 truncate text-[13px] leading-snug", className)}
     >
       {children ?? conversation.title}
     </span>
@@ -393,7 +393,10 @@ export function ChatSidebarItem({
         active={isActive || menuOpen}
         className={className}
         onActivate={() => onSelect(conversation.id)}
-        primaryActionProps={{ "aria-current": isActive ? "page" : undefined }}
+        primaryActionProps={{
+          "aria-current": isActive ? "page" : undefined,
+          className: composesTitle ? "flex items-center gap-1" : undefined,
+        }}
         action={composesTitle
           ? (menuParts.length > 0 ? menuParts : <ChatSidebarItemMenu />)
           : children ?? <ChatSidebarItemMenu />}
