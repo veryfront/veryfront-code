@@ -422,7 +422,7 @@ describe("listTestFiles does not hide a failed traversal", () => {
     if (typeof process.getuid === "function" && process.getuid() === 0) return;
     if (process.platform === "win32") return;
     withFixture(BASE_TREE, (root) => {
-      // A *directory* pattern routes through `listWithFallback` from inside
+      // A *directory* pattern routes through the in-process walk from inside
       // `listTestFiles`'s own try. A broad catch there swallowed the rethrow,
       // so the directory's tests were dropped and only the other explicit
       // pattern survived — reported as a clean pass.

@@ -98,7 +98,17 @@ function walk(dir, onFile) {
     // Inherited from the `rg` behaviour this module used to have to match, and
     // kept on purpose so removing `rg` changes no selection. `node:fs` glob
     // excludes both, which is one more reason it is not a drop-in here.
-    if (entry.isDirectory() && entry.name.startsWith(".")) continue;
+    // `node_modules` is pruned for the same reason as hidden directories: the
+    // resolver no longer consults `.gitignore` (see the module doc), and this
+    // is where every gitignored `*.test.*` in the tree lives — 498 of them,
+    // under `npm/node_modules/` and `node_modules/.deno/`. Nothing under
+    // `src/`, `tests/` or `proxy/` contains a `node_modules`, so this cannot
+    // change what the four consumers select; it makes the guarantee explicit
+    // rather than incidental, and covers `run-affected-tests.mjs`, which can
+    // pass the repo root as a directory pattern when a root-level file changes.
+    if (entry.isDirectory() && (entry.name.startsWith(".") || entry.name === "node_modules")) {
+      continue;
+    }
     const fullPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       walk(fullPath, onFile);
