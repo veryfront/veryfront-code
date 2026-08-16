@@ -228,6 +228,11 @@ describe("generate-api-reference", () => {
         /validatePath\(requestedPath, \{[\s\S]*?adapter,[\s\S]*?baseDir: publicFilesDir/,
         "the confinement example must pass the active adapter to validatePath",
       );
+      assertStringIncludes(
+        fsReference,
+        "return await adapter.fs.readFile(admitted.canonicalPath);",
+        "the confinement example must read through the adapter that validated the path",
+      );
       assertEquals(
         fsReference.indexOf("## Runtime boundary") <
           fsReference.indexOf("## Import"),

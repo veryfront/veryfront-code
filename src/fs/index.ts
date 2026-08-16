@@ -46,7 +46,7 @@
  *
  * @example Confine an untrusted path
  * ```ts
- * import { cwd, readTextFile, resolve } from "veryfront/fs";
+ * import { cwd, resolve } from "veryfront/fs";
  * import { runtime } from "veryfront/platform";
  * import { validatePath } from "veryfront/security";
  *
@@ -63,7 +63,7 @@
  *   if (!admitted.valid || !admitted.canonicalPath) {
  *     throw new Error("Invalid path");
  *   }
- *   return await readTextFile(admitted.canonicalPath);
+ *   return await adapter.fs.readFile(admitted.canonicalPath);
  * }
  * ```
  */
