@@ -6,7 +6,7 @@
  * rendering.
  */
 
-import type { Page } from "npm:playwright@1.59.0/test";
+import type { Page } from "npm:playwright@1.60.0/test";
 import { expect, test } from "./fixtures/playwright.ts";
 import { getProjectsToTest } from "./helpers/projects.ts";
 import { getRuntimeForPlaywrightProject } from "./helpers/runtime.ts";

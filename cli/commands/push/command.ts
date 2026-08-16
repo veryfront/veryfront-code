@@ -53,7 +53,12 @@ import {
 import { buildStudioUrl } from "../studio/command.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { type PlannedDelete, type PlannedUpload, planPushChanges } from "./plan.ts";
-import { preflightSyncState, readSyncTarget, writeSyncTarget } from "../../sync/state.ts";
+import {
+  computeContentDigest,
+  preflightSyncState,
+  readSyncTarget,
+  writeSyncTarget,
+} from "../../sync/state.ts";
 
 const PREVIEW_BRANCH_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const BRANCH_SUFFIX_LENGTH = 6;
@@ -632,6 +637,51 @@ function pushConflictError(paths: readonly string[]): Error {
   });
 }
 
+function requireRemoteContent(file: RemoteFile): string {
+  if (typeof file.content === "string") return file.content;
+  throw new Error(
+    `Veryfront returned invalid content for remote file "${file.path}". No files were pushed.`,
+  );
+}
+
+async function buildManagedRemoteSnapshot(
+  files: readonly RemoteFile[],
+  ignoreChecker: IgnoreChecker,
+): Promise<Map<string, { digest: string; versionId?: string }>> {
+  const snapshot = new Map<string, { digest: string; versionId?: string }>();
+  for (const file of files) {
+    if (!ignoreChecker.isSupportedExtension(file.path) || ignoreChecker.isIgnored(file.path)) {
+      continue;
+    }
+    snapshot.set(file.path, {
+      digest: await computeContentDigest(requireRemoteContent(file)),
+      ...(file.version_id ? { versionId: file.version_id } : {}),
+    });
+  }
+  return snapshot;
+}
+
+function findRemoteSnapshotChanges(
+  expected: Map<string, { digest: string; versionId?: string }>,
+  actual: Map<string, { digest: string; versionId?: string }>,
+): string[] {
+  const paths = new Set([...expected.keys(), ...actual.keys()]);
+  const changed: string[] = [];
+  for (const path of paths) {
+    const expectedFile = expected.get(path);
+    const actualFile = actual.get(path);
+    if (
+      !expectedFile ||
+      !actualFile ||
+      expectedFile.digest !== actualFile.digest ||
+      expectedFile.versionId !== actualFile.versionId
+    ) {
+      changed.push(path);
+    }
+  }
+  return changed.sort();
+}
+
 export async function recordPushReceipt(
   client: ApiClient,
   config: ResolvedConfig,
@@ -963,6 +1013,28 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           logInfo(`Dry run complete. Would ${parts.join(" and ")} files.`);
         }
         return;
+      }
+
+      if (!force) {
+        spinner = quiet || jsonOutput
+          ? createNoopSpinner()
+          : createSpinner("Checking remote files...");
+        try {
+          const latestRemoteFiles = await listAllFiles(
+            client,
+            projectApiReference(config),
+            target.source,
+          );
+          const conflicts = findRemoteSnapshotChanges(
+            await buildManagedRemoteSnapshot(managedRemoteFiles, ignoreChecker),
+            await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker),
+          );
+          if (conflicts.length > 0) {
+            throw pushConflictError(conflicts);
+          }
+        } finally {
+          spinner.stop();
+        }
       }
 
       await clearPushReceipt(projectDir);
