@@ -406,7 +406,9 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
             return Promise.resolve();
           },
         })}
-        onSubmit={() => parentSubmits += 1}
+        onSubmit={() => {
+          parentSubmits += 1;
+        }}
       >
         <ChatInput.Root input="nested draft" setInput={() => {}}>
           <ComposerProbe />
@@ -477,6 +479,45 @@ describe("react/components/chat/chat/composition/chat-composer shared context", 
       if (root) await unmountReactRoot(root);
       restore();
     }
+  });
+
+  it("uses the session sender when isLoading false explicitly re-enables submission", () => {
+    let composer: ReturnType<typeof useChatInputContext> | undefined;
+    let guardedSubmits = 0;
+    let sessionSends = 0;
+    function ComposerProbe(): null {
+      composer = useChatInputContext();
+      return null;
+    }
+
+    renderToString(
+      <Chat.Root
+        chat={makeChat({
+          input: "retry",
+          isLoading: true,
+          handleSubmit: () => {
+            guardedSubmits += 1;
+            return Promise.resolve();
+          },
+          sendMessage: () => {
+            sessionSends += 1;
+            return Promise.resolve();
+          },
+        })}
+      >
+        <ChatInput.Root isLoading={false}>
+          <ComposerProbe />
+        </ChatInput.Root>
+      </Chat.Root>,
+    );
+
+    assert(composer, "Expected the nested composer context to be available");
+    assertEquals(composer.isLoading, false);
+    assertEquals(composer.canSubmit, true);
+    composer.onSubmit({ preventDefault() {} } as FormEvent);
+
+    assertEquals(sessionSends, 1, "the explicitly enabled composer must use the session sender");
+    assertEquals(guardedSubmits, 0, "the inherited loading-guarded submitter must not run");
   });
 
   it("a standalone ChatInput.Root with full explicit props behaves exactly as before", async () => {
