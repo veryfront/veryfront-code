@@ -3334,7 +3334,21 @@ describe("push divergence guard", () => {
             projectId: "project-123",
             branch: "main",
           }),
-          null,
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": {
+                digest: await computeContentDigest("export const value = 1;\n"),
+                versionId: "00000000-0000-4000-8000-000000000011",
+              },
+              "second.ts": {
+                digest: await computeContentDigest("export const second = 2;\n"),
+              },
+            },
+          },
         );
       });
     } finally {
@@ -3791,12 +3805,105 @@ describe("push failure ordering", () => {
         );
         assertEquals(
           target?.files["second.ts"]?.digest,
-          await computeContentDigest("export const racedSecond = true;\n"),
+          await computeContentDigest("export const remoteSecond = true;\n"),
         );
         assertEquals(
           target?.files["remote-only.ts"]?.digest,
           await computeContentDigest("export const preserved = true;\n"),
         );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("records verified mutations when forced prune repair partially fails", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await Deno.writeTextFile(`${projectDir}/second.ts`, "export const second = true;\n");
+        await runGit("add", "second.ts");
+        await runGit("commit", "--quiet", "-m", "add second source file");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const remoteFiles = new Map([
+          ["app.ts", "export const remote = true;\n"],
+          ["second.ts", "export const remoteSecond = true;\n"],
+          ["stale.ts", "export const stale = true;\n"],
+        ]);
+        let fileListCalls = 0;
+        const putCalls = new Map<string, number>();
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            if (fileListCalls === 2) {
+              remoteFiles.set("app.ts", "export const raced = true;\n");
+              remoteFiles.set("second.ts", "export const racedSecond = true;\n");
+            }
+            return Response.json({
+              data: [...remoteFiles].map(([path, content], index) => ({
+                path,
+                content,
+                version_id: `00000000-0000-4000-8000-00000000002${index}`,
+              })),
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+            const count = (putCalls.get(path) ?? 0) + 1;
+            putCalls.set(path, count);
+            if (path === "second.ts" && count === 2) {
+              return Response.json({ error: "repair failed" }, { status: 500 });
+            }
+            const body = await request.json() as { content: string };
+            remoteFiles.set(path, body.content);
+            return Response.json({});
+          }
+          if (request.method === "DELETE") {
+            const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
+            remoteFiles.delete(path);
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, branch: "main", force: true, prune: true, quiet: true }),
+          Error,
+          "during forced prune reconciliation",
+        );
+
+        assertEquals(fileListCalls, 3);
+        assertEquals(await readPushReceipt(projectDir), null);
+        const target = await readSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          branch: "main",
+        });
+        assertEquals(
+          target?.files["app.ts"]?.digest,
+          await computeContentDigest("export const value = 1;\n"),
+        );
+        assertEquals(
+          target?.files["second.ts"]?.digest,
+          await computeContentDigest("export const remoteSecond = true;\n"),
+        );
+        assertEquals(target?.files["stale.ts"], undefined);
       });
     } finally {
       globalThis.fetch = originalFetch;
@@ -4618,7 +4725,15 @@ describe("push deletion ownership", () => {
             projectId: "project-123",
             branch: "main",
           }),
-          null,
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": { digest: await computeContentDigest("stale app") },
+            },
+          },
         );
       });
     } finally {

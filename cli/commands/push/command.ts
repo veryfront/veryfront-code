@@ -1310,26 +1310,29 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           throw error;
         }
       };
-      const writeVerifiedAppliedSyncTarget = async () => {
-        const latestRemoteFiles = await listAllFilesForVerification();
+      const writeVerifiedAppliedSyncTarget = async (
+        knownRemoteFiles?: readonly RemoteFile[],
+      ) => {
+        const latestRemoteFiles = knownRemoteFiles ?? await listAllFilesForVerification();
         const latestRemoteSnapshot = await buildManagedRemoteSnapshot(
           latestRemoteFiles,
           ignoreChecker,
           false,
         );
         const appliedUploads = new Set(uploadResult.applied);
-        const appliedDeletes = new Set(deleteResult.applied);
+        const appliedDeletes = [...new Set(deleteResult.applied)]
+          .map((path) => ({ path }));
         const stillApplied = await filterAppliedChangesStillMatchingRemote(
           latestRemoteSnapshot,
           uploadOps.filter((op) => appliedUploads.has(op.path)),
-          deleteOps.filter((op) => appliedDeletes.has(op.path)),
+          appliedDeletes,
         );
         await writeAppliedSyncTarget(
           projectDir,
           config,
           project,
           branchName,
-          latestRemoteFiles,
+          managedRemoteFiles,
           stillApplied.uploads,
           stillApplied.deletes,
         );
@@ -1474,9 +1477,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               applied: [...uploadResult.applied, ...lateUploadResult.applied],
             };
             if (lateUploadResult.conflicts.length > 0) {
+              await writeVerifiedAppliedSyncTarget();
               throw pushConflictError(lateUploadResult.conflicts);
             }
             if (lateUploadResult.failed > 0) {
+              await writeVerifiedAppliedSyncTarget();
               throw new Error(
                 `Push failed for ${lateUploadResult.failed} file${
                   lateUploadResult.failed === 1 ? "" : "s"
@@ -1505,9 +1510,11 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               applied: [...deleteResult.applied, ...lateDeleteResult.applied],
             };
             if (lateDeleteResult.conflicts.length > 0) {
+              await writeVerifiedAppliedSyncTarget();
               throw pushConflictError(lateDeleteResult.conflicts);
             }
             if (lateDeleteResult.failed > 0) {
+              await writeVerifiedAppliedSyncTarget();
               throw new Error(
                 `Push failed for ${lateDeleteResult.failed} file${
                   lateDeleteResult.failed === 1 ? "" : "s"
@@ -1522,6 +1529,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
               await buildManagedRemoteSnapshot(repairedRemoteFiles, ignoreChecker, false),
             );
             if (repairedConflicts.length > 0) {
+              await writeVerifiedAppliedSyncTarget(repairedRemoteFiles);
               throw pushConflictError(repairedConflicts);
             }
             pushedSourceDigest = await computePushedSourceDigest(ops, repairedRemoteFiles);
@@ -1545,6 +1553,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             applied: [...uploadResult.applied, ...repairUploadResult.applied],
           };
           if (repairUploadResult.conflicts.length > 0) {
+            await writeVerifiedAppliedSyncTarget();
             throw pushConflictError(repairUploadResult.conflicts);
           }
           if (repairUploadResult.failed > 0) {
@@ -1577,6 +1586,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             actualUploadSnapshot,
           );
           if (conflicts.length > 0) {
+            await writeVerifiedAppliedSyncTarget(latestRemoteFiles);
             throw pushConflictError(conflicts);
           }
           pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
