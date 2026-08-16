@@ -68,6 +68,75 @@ npm run eval -- assistant
 The command exits successfully after the agent calls the calculator and returns
 the expected answer.
 
+## Add local delegation
+
+Keep using the same provider key and project. Add a specialist that identifies
+the important facts:
+
+```ts
+// agents/researcher.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "researcher",
+  system:
+    "Identify the three most important facts in the user's request. Return concise bullet points.",
+  maxSteps: 3,
+});
+```
+
+Add a second specialist that turns notes into a clear answer:
+
+```ts
+// agents/writer.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "writer",
+  system: "Turn the supplied notes into a concise, practical answer.",
+  maxSteps: 3,
+});
+```
+
+Replace `agents/assistant.ts` with an orchestrator that can call both
+specialists:
+
+```ts
+// agents/assistant.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "assistant",
+  name: "Assistant",
+  description: "Research a request and turn it into a practical answer.",
+  system:
+    "Use the researcher first. Pass the researcher's notes to the writer, then return the writer's answer.",
+  delegates: ["researcher", "writer"],
+  maxSteps: 10,
+});
+```
+
+Each delegate runs in the same Veryfront process as the assistant. The
+`delegates` list exposes the specialists as `agent_researcher` and
+`agent_writer` tools. It does not create hosted child runs or require a
+Veryfront account.
+
+Start the app again:
+
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) and ask:
+
+```text
+Compare two ways a small team could reduce support response time. Recommend one.
+```
+
+Confirm the run calls `agent_researcher` and `agent_writer`, then returns one
+combined recommendation. For delegation controls and workflow-based
+coordination, see [Multi-agent](../guides/multi-agent.md).
+
 ## Next steps
 
 - [Use another inference provider](../guides/providers.md), including Anthropic,
