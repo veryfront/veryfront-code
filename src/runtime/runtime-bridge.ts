@@ -138,10 +138,22 @@ type DirectStreamResult = {
   stream: ReadableStream<unknown>;
 };
 type DirectTextOptions = GenerateTextOptions | StreamTextOptions;
+type ModelCallRequestSource = Pick<
+  GenerateTextOptions,
+  | "maxOutputTokens"
+  | "temperature"
+  | "topP"
+  | "topK"
+  | "stopSequences"
+  | "seed"
+  | "presencePenalty"
+  | "frequencyPenalty"
+  | "reasoning"
+>;
 type DirectModelOptions = Record<string, unknown> & {
   prompt: ModelCallMessage[];
   tools?: ModelCallTool[];
-};
+} & ModelCallRequestSource;
 
 function readSystemProviderOptions(
   system: object,
@@ -627,7 +639,7 @@ function buildDirectModelOptions(
   };
 }
 
-function buildModelCallRequest(options: DirectTextOptions): ModelCallRequest | undefined {
+function buildModelCallRequest(options: ModelCallRequestSource): ModelCallRequest | undefined {
   const reasoning = options.reasoning;
   const request: ModelCallRequest = {
     ...(options.maxOutputTokens !== undefined ? { maxOutputTokens: options.maxOutputTokens } : {}),
@@ -666,6 +678,7 @@ async function emitModelCallContextEvent(
 ): Promise<void> {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return;
+  const request = buildModelCallRequest(directOptions);
 
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT",
@@ -679,7 +692,7 @@ async function emitModelCallContextEvent(
         },
       }
       : {}),
-    ...(buildModelCallRequest(options) ? { request: buildModelCallRequest(options) } : {}),
+    ...(request ? { request } : {}),
     messages: sanitizeModelCallContextMessages(directOptions.prompt),
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };

@@ -193,9 +193,20 @@ describe("agent/hosted/durable-run-event-sink", () => {
       MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES + 1,
     );
 
-    await createDurableRunEventSink({ mirror: target.result })(event);
+    await createDurableRunEventSink({
+      mirror: target.result,
+      timing: {
+        nowMs: () => 100,
+        startedMs: 100,
+        epochMs: () => 1_786_866_357_364,
+      },
+    })(event);
 
-    assertEquals(target.appended, [[event]]);
+    assertEquals(target.appended, [[{
+      ...event,
+      elapsedMs: 0,
+      emittedAt: 1_786_866_357_364,
+    }]]);
   });
 
   it("accepts the exact append request byte limit and rejects one byte over", async () => {

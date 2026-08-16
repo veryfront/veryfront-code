@@ -257,6 +257,7 @@ describe("runtime-bridge", () => {
       assertEquals(recorded, {
         type: "AGENT_RUN_MODEL_CALL_CONTEXT",
         model: { id: "test/model-call-context", modelProvider: "test" },
+        request: { temperature: 0.7 },
         messages: options.prompt,
         tools: options.tools,
       });
