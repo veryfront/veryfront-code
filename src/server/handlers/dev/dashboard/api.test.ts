@@ -342,6 +342,7 @@ describe("Dashboard API - GET endpoints", () => {
       ".git/config",
       ".env ",
       ".env... ",
+      ".env::$DATA",
       ".aws /credentials",
       ".ssh./id_rsa",
     ]
@@ -374,6 +375,7 @@ describe("Dashboard API - GET endpoints", () => {
       { name: ".gitignore", isDirectory: false },
       { name: ".env", isDirectory: false },
       { name: ".env.local", isDirectory: false },
+      { name: ".env::$DATA", isDirectory: false },
       { name: ".npmrc", isDirectory: false },
       { name: "private.pem", isDirectory: false },
     ];

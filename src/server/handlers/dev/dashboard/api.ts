@@ -120,6 +120,10 @@ function isSensitiveDashboardPath(
   const segments = path.replaceAll("\\", "/").split("/").filter(Boolean).map((segment) =>
     segment.toLowerCase().replace(/[ .]+$/g, "")
   );
+  // A colon addresses an alternate data stream on NTFS. Treat stream paths as
+  // unavailable so a sensitive file cannot be reached through an alias such as
+  // `.env::$DATA`.
+  if (segments.some((segment) => segment.includes(":"))) return true;
   if (segments.some((segment) => SENSITIVE_DASHBOARD_DIRECTORY_NAMES.has(segment))) return true;
   if (kind === "directory") return false;
 
