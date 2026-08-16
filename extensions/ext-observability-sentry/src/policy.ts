@@ -48,6 +48,9 @@ const SENSITIVE_ATTRIBUTE_KEY_PATTERN =
 export type SentryPolicyScope = {
   setContext(name: string, context: Record<string, unknown>): void;
   setFingerprint(fingerprint: string[]): void;
+  // Optional so a third-party adapter written against the previous shape keeps
+  // compiling; `SentryPolicyScope` is part of this package's published surface.
+  setLevel?(level: "error" | "warning"): void;
   setTag(key: string, value: string): void;
 };
 
@@ -120,6 +123,8 @@ export function applySentryScopePolicy(
   scope.setTag("service.name", serviceName);
   if (context.processRole) scope.setTag("process_role", context.processRole);
   scope.setTag("veryfront.boundary", context.boundary);
+  if (context.errorClass) scope.setTag("veryfront.error_class", context.errorClass);
+  if (context.level) scope.setLevel?.(context.level);
   if (context.method) scope.setTag("http.request.method", context.method);
   if (context.requestId) scope.setTag("veryfront.request_id", context.requestId);
   if (context.traceId) {

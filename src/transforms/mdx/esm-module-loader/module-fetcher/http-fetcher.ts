@@ -13,7 +13,11 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteVeryfrontImports } from "./import-rewriter.ts";
-import { findNestedImports, toImportStringLiteral } from "./nested-imports.ts";
+import {
+  dynamicDependencyFailure,
+  findNestedImports,
+  toImportStringLiteral,
+} from "./nested-imports.ts";
 import { replaceSourceSpans, type SourceSpanReplacement } from "../utils/source-spans.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { readHttpModuleText } from "../../../shared/http-module-response.ts";
@@ -22,10 +26,13 @@ import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { parallelMap } from "#veryfront/utils/parallel.ts";
 import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { assertMdxModuleImportCount, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from "./limits.ts";
+import { createStubModule, type DeferredImportErrorDescriptor } from "../utils/stub-module.ts";
 
 export interface FetchModuleViaHttpOptions {
+  esmCacheDir?: string;
   fetchFn?: typeof fetch;
   moduleServerOrigin?: string;
+  strictMissingModules?: boolean;
   timeoutMs?: number;
 }
 
@@ -263,7 +270,27 @@ export async function fetchModuleViaHTTP(
     const results = await parallelMap(
       allImports,
       async ({ original, path, suffix, start, end, isDynamic, isSideEffect, key }) => {
-        const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        let nestedFilePath: string | null;
+        let deferredError: DeferredImportErrorDescriptor | undefined;
+        try {
+          nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        } catch (error) {
+          deferredError = isDynamic
+            ? dynamicDependencyFailure(path, error) ?? undefined
+            : undefined;
+          if (!deferredError || !options.esmCacheDir) throw error;
+          nestedFilePath = null;
+        }
+
+        if (!nestedFilePath && isDynamic && options.esmCacheDir) {
+          nestedFilePath = await createStubModule(
+            path,
+            moduleCode,
+            original,
+            options.esmCacheDir,
+            { failOnImport: options.strictMissingModules ?? true, deferredError },
+          );
+        }
         return {
           original,
           start,

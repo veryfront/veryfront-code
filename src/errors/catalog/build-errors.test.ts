@@ -11,6 +11,7 @@ describe("errors/catalog/build-errors", () => {
         "bundle-error",
         "typescript-error",
         "mdx-compile-error",
+        "markdown-compile-error",
         "asset-optimization-error",
         "ssg-generation-error",
         "sourcemap-error",
@@ -37,8 +38,8 @@ describe("errors/catalog/build-errors", () => {
       }
     });
 
-    it("should have 8 entries", () => {
-      assertEquals(Object.keys(BUILD_ERROR_CATALOG).length, 8);
+    it("should have 9 entries", () => {
+      assertEquals(Object.keys(BUILD_ERROR_CATALOG).length, 9);
     });
 
     it("build-failed should have tips", () => {

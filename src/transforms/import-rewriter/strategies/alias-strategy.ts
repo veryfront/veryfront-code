@@ -7,6 +7,16 @@ import type {
 import { appendDependencyPinningPathKey, normalizeExtension } from "../url-builder.ts";
 import { getProjectRelativePath } from "../project-paths.ts";
 
+/** Rewrite a project alias through the canonical SSR module-path rule. */
+export function rewriteSsrProjectAliasSpecifier(specifier: string): string | null {
+  if (!specifier.startsWith("@/")) return null;
+  let normalizedPath = normalizeExtension(specifier.slice(2));
+  if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
+    normalizedPath = `${normalizedPath}.js`;
+  }
+  return `/_vf_modules/${normalizedPath}`;
+}
+
 export class AliasStrategy implements ImportRewriteStrategy {
   readonly name = "alias";
   readonly priority = 1;
@@ -20,15 +30,10 @@ export class AliasStrategy implements ImportRewriteStrategy {
 
     // SSR uses /_vf_modules/ paths for HTTP module resolution
     if (ctx.target === "ssr") {
-      let normalizedPath = normalizeExtension(path);
-      // Add .js if no extension present
-      if (!/\.(tsx?|jsx?|mjs|cjs|mdx|css)$/.test(normalizedPath)) {
-        normalizedPath = `${normalizedPath}.js`;
-      }
       // The SSR adapter adds `ssr`, routing, cache-buster, and dependency
       // snapshot params together after this strategy runs. Keeping this URL
       // query-free ensures its `.js` matcher still sees the edge.
-      return { specifier: `/_vf_modules/${normalizedPath}` };
+      return { specifier: rewriteSsrProjectAliasSpecifier(info.specifier) ?? info.specifier };
     }
 
     // Browser: Use /_vf_modules/ absolute paths when moduleServerUrl is configured.

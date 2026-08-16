@@ -19,20 +19,49 @@ import {
   rewriteResolvedDependencyImports,
   type TransformedModuleDependency,
 } from "./dependency-resolver.ts";
-import { persistTransformedModule } from "./module-persistence.ts";
+import {
+  persistTransformedModule,
+  readPersistedUnresolvedSpecifiers,
+} from "./module-persistence.ts";
 import { transformModuleCodeWithCache } from "./module-transform-cache.ts";
 import {
   buildModuleTransformCacheVariant,
   getModuleCacheKey,
   resolveCachedModulePath,
 } from "./module-cache-lookup.ts";
-import { markBuildFailure } from "./build-failure.ts";
+import { markBuildFailure, markTenantBuildFailure } from "./build-failure.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
+import { isTenantSourceBuildError } from "#veryfront/errors/tenant-classification.ts";
+import { rewriteSsrProjectAliasSpecifier } from "#veryfront/transforms/import-rewriter/strategies/alias-strategy.ts";
 
 export { isBuildFailure } from "./build-failure.ts";
 
 const logger = rendererLogger.component("module-loader");
+
+/**
+ * Specifiers each transformed module subtree left as authored, keyed by the
+ * root module's transform cache key.
+ *
+ * The transform cache lets a module skip dependency resolution entirely, so the
+ * evidence has to outlive the resolution that produced it — otherwise a
+ * dependency's dangling tenant import is only ever visible on the very first
+ * transform. The memo uses the module cache's entry bound and refreshes access
+ * order on reads, while holding only specifier strings.
+ */
+const unresolvedSpecifiersByCacheKey = new Map<string, readonly string[]>();
+
+function cacheUnresolvedSpecifiers(cacheKey: string, specifiers: readonly string[]): void {
+  unresolvedSpecifiersByCacheKey.delete(cacheKey);
+  unresolvedSpecifiersByCacheKey.set(cacheKey, specifiers);
+
+  while (unresolvedSpecifiersByCacheKey.size > MODULE_CACHE_MAX_ENTRIES) {
+    const oldestKey = unresolvedSpecifiersByCacheKey.keys().next().value;
+    if (oldestKey === undefined) break;
+    unresolvedSpecifiersByCacheKey.delete(oldestKey);
+  }
+}
 
 function throwIfModuleLoadAborted(config: ModuleLoaderConfig): void {
   config.signal?.throwIfAborted();
@@ -82,6 +111,19 @@ export async function transformModuleWithDeps(
   // ancestor that eventually persists that target reads it to write a stable
   // alias the left-as-authored cycle edge can resolve to.
   cycleTargets: Set<string> = new Set(),
+  // Also shared by reference across the whole transform tree: every specifier
+  // the dependency resolver could not resolve and therefore left as authored.
+  // Those are the only specifiers that can survive into the built module and
+  // fail at `import()` time, so this is the evidence that tells a tenant typo
+  // apart from a framework artifact going missing. See `loadModule`.
+  //
+  // A module served from the cache below returns before
+  // `resolveModuleDependencies` runs, so it cannot re-derive its own evidence.
+  // That matters because the retry path invalidates only the *root* module's
+  // cache entry: without a memo, a typo living in a dependency would go
+  // unrecorded on every rebuild and never be attributed to the tenant. The
+  // cache-hit branch therefore replays what the first resolution found.
+  unresolvedSpecifiers: Set<string> = new Set(),
 ): Promise<string> {
   throwIfModuleLoadAborted(config);
   const { moduleCache, projectDir, projectId, contentSourceId, adapter, mode } = config;
@@ -108,9 +150,25 @@ export async function transformModuleWithDeps(
     moduleServerOrigin: config.moduleServerOrigin,
   });
   if (cachedPath) {
+    // Replay the evidence this module produced when it was last resolved. A
+    // cache hit skips `resolveModuleDependencies`, so without this a dependency
+    // that was already transformed contributes nothing and its tenant-authored
+    // dangling import silently loses attribution.
+    const memoizedUnresolvedSpecifiers = unresolvedSpecifiersByCacheKey.get(cacheKey);
+    const cachedUnresolvedSpecifiers = memoizedUnresolvedSpecifiers ??
+      await readPersistedUnresolvedSpecifiers(cachedPath, localAdapter);
+    cacheUnresolvedSpecifiers(cacheKey, cachedUnresolvedSpecifiers);
+    for (const specifier of cachedUnresolvedSpecifiers) {
+      unresolvedSpecifiers.add(specifier);
+    }
     markModuleLoadProgress(config, "module:cache-hit", filePath);
     return cachedPath;
   }
+
+  // Collect this module and every recursively transformed descendant into an
+  // isolated set. Once persistence succeeds, cache that complete subtree and
+  // merge it into the caller's aggregate evidence.
+  const moduleUnresolvedSpecifiers = new Set<string>();
 
   const readAdapter = useLocalAdapter ? localAdapter : adapter;
   let fileContent = decodeFileContent(await readAdapter.fs.readFile(filePath));
@@ -168,6 +226,7 @@ export async function transformModuleWithDeps(
           dep.isLocalLib,
           nextLineage,
           cycleTargets,
+          moduleUnresolvedSpecifiers,
         );
 
         return { ...dep, depTempPath };
@@ -176,6 +235,14 @@ export async function transformModuleWithDeps(
         // dynamic one may never be evaluated, so a module behind an untaken
         // branch must not fail the page that merely mentions it.
         if (!dep.isDynamic) throw error;
+
+        // A tenant-source compile failure is deliberately non-fatal until this
+        // dynamic edge executes. The importer remains authored, so retain that
+        // provenance for the retry classification seam. Infrastructure errors
+        // stay framework-owned even if the resulting edge is later missing.
+        if (isTenantSourceBuildError(error)) {
+          moduleUnresolvedSpecifiers.add(dep.path);
+        }
 
         logger.warn("Leaving an unresolvable dynamic dependency as authored:", {
           path: dep.path,
@@ -198,13 +265,13 @@ export async function transformModuleWithDeps(
 
   for (const dep of resolvedDeps) {
     if (dep.depFilePath) continue;
+    moduleUnresolvedSpecifiers.add(dep.path);
     logger.warn("Could not find dependency:", {
       path: dep.path,
       relativePath: dep.relativePath,
       projectDir,
     });
   }
-
   const effectiveProjectId = projectId ?? projectDir;
   const { code: transformedCode } = await transformModuleCodeWithCache({
     fileContent,
@@ -236,7 +303,10 @@ export async function transformModuleWithDeps(
     moduleServerOrigin: config.moduleServerOrigin,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     isCycleTarget: cycleTargets.has(filePath),
+    unresolvedSpecifiers: [...moduleUnresolvedSpecifiers],
   });
+  cacheUnresolvedSpecifiers(cacheKey, [...moduleUnresolvedSpecifiers]);
+  for (const specifier of moduleUnresolvedSpecifiers) unresolvedSpecifiers.add(specifier);
   markModuleLoadProgress(config, "module:persisted", filePath);
   return persistedPath;
 }
@@ -301,6 +371,100 @@ export function isMissingModuleError(error: unknown): boolean {
 }
 
 /**
+ * Whether a module-not-found failure is a specifier the project authored that
+ * points at nothing, as opposed to framework infrastructure going missing.
+ *
+ * `isMissingModuleError` alone cannot answer this: an `ERR_MODULE_NOT_FOUND`
+ * is raised the same way for a tenant typo, an HTTP bundle miss, a cycle-break
+ * alias that did not resolve, and a rebuilt artifact the runtime failed to
+ * persist. Only the first is the tenant's fault, and only the first may be
+ * downgraded to a warning in observability.
+ *
+ * The discriminator is evidence rather than a guess: `resolveModuleDependencies`
+ * resolves only `@/` aliases and relative imports, and `transformModuleWithDeps`
+ * records every specifier it had to leave as authored. If it left none anywhere
+ * in this module's transform tree, then nothing tenant-authored survived
+ * unrewritten and whatever is missing here is framework-owned.
+ *
+ * Note the runtime reports the *resolved* path, which for a dropped relative
+ * specifier lands inside the build's own temp directory — so a "is this path
+ * ours?" test on the message would reject exactly the case this identifies.
+ */
+/**
+ * The specifier a module-not-found error names as missing.
+ *
+ * Runtimes report it as the first quoted token and then name the importer, so
+ * only the first quote pair identifies what is actually absent. The quote style
+ * differs by runtime and both reach this seam, since `isMissingModuleError`
+ * matches Node's phrasing as well as Deno's:
+ *
+ * - Deno:  `Module not found "file:///…/missing".`
+ * - Node:  `Cannot find module '/…/missing' imported from /…/page.js`
+ *
+ * Note Node leaves the importer unquoted, so a double-quote-only match would
+ * return `""` there and silently disable every check built on this.
+ */
+function missingModuleTarget(message: string): string {
+  const match = message.match(/"([^"]*)"|'([^']*)'/);
+  return match?.[1] ?? match?.[2] ?? "";
+}
+
+function normalizeMissingModuleTarget(message: string): string {
+  const target = missingModuleTarget(message).replace(/[?#].*$/, "");
+  if (target.startsWith("file://")) {
+    try {
+      return decodeURIComponent(new URL(target).pathname);
+    } catch {
+      return target.replace(/^file:\/+/, "/");
+    }
+  }
+  return target;
+}
+
+function normalizeUnresolvedSpecifier(specifier: string): string {
+  const withoutSuffix = specifier.replace(/[?#].*$/, "");
+  return (rewriteSsrProjectAliasSpecifier(withoutSuffix) ?? withoutSuffix)
+    .replace(/^(\.\/|\.\.\/)+/, "")
+    .replace(/^\/+/, "");
+}
+
+function missingTargetMatchesSpecifier(target: string, specifier: string): boolean {
+  const normalizedSpecifier = normalizeUnresolvedSpecifier(specifier);
+  if (!normalizedSpecifier) return false;
+  return target === normalizedSpecifier || target.endsWith(`/${normalizedSpecifier}`);
+}
+
+export function isUnresolvedTenantImport(
+  error: unknown,
+  unresolvedSpecifiers: ReadonlySet<string>,
+  rebuiltArtifactPath?: string,
+): boolean {
+  if (!isMissingModuleError(error)) return false;
+  if (unresolvedSpecifiers.size === 0) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  // An HTTP bundle is framework infrastructure with dedicated recovery on the
+  // outer branch. A miss on one is not the tenant's doing even when the tenant
+  // separately has an unresolved import.
+  if (/veryfront-http-bundle\/http-[a-f0-9]+\.mjs/.test(message)) return false;
+  // The missing module can be the rebuilt artifact *itself* rather than one of
+  // its dependencies — a racing cache sweep or a failing cache volume can evict
+  // it between persist and import. That is repeated cache eviction, which must
+  // stay at error severity however the tenant's own imports look.
+  //
+  // Only the *missing target* may be compared, never the whole message: the
+  // runtime appends the importer's location, and at this seam the importer is
+  // always the rebuilt artifact, so scanning the full message would exclude
+  // every case including the tenant typo this predicate exists to catch.
+  if (rebuiltArtifactPath && missingModuleTarget(message).includes(rebuiltArtifactPath)) {
+    return false;
+  }
+  const missingTarget = normalizeMissingModuleTarget(message);
+  return [...unresolvedSpecifiers].some((specifier) =>
+    missingTargetMatchesSpecifier(missingTarget, specifier)
+  );
+}
+
+/**
  * Load a module by path, transforming it and its dependencies.
  *
  * @param filePath - Path to the module to load
@@ -318,9 +482,23 @@ export async function loadModule(
 
   // Everything up to here compiles and resolves source, so a failure is a build
   // failure. Everything after it is the module running.
+  // Every specifier the resolver had to leave as authored, across this module's
+  // whole transform tree. Read back at the retry seam below to tell a tenant
+  // typo apart from framework infrastructure going missing.
+  const unresolvedSpecifiers = new Set<string>();
+
   let tempFilePath: string;
   try {
-    tempFilePath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+    tempFilePath = await transformModuleWithDeps(
+      filePath,
+      tmpDir,
+      localAdapter,
+      config,
+      false,
+      undefined,
+      undefined,
+      unresolvedSpecifiers,
+    );
   } catch (error) {
     throw markBuildFailure(error);
   }
@@ -396,14 +574,51 @@ export async function loadModule(
         ),
       );
 
+      // Classification at the retry seam must describe the rebuilt graph, not
+      // the artifact that just failed. A dependency may appear between the two
+      // transforms, so retaining its earlier dropped-specifier evidence can
+      // misattribute an unrelated retry failure to the tenant.
+      unresolvedSpecifiers.clear();
+
       let rebuiltPath: string;
       try {
-        rebuiltPath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+        rebuiltPath = await transformModuleWithDeps(
+          filePath,
+          tmpDir,
+          localAdapter,
+          config,
+          false,
+          undefined,
+          undefined,
+          unresolvedSpecifiers,
+        );
       } catch (rebuildError) {
         throw markBuildFailure(rebuildError);
       }
 
-      return await import(`${toFileUrl(rebuiltPath).href}?t=${Date.now()}&rebuilt=1`);
+      try {
+        return await import(`${toFileUrl(rebuiltPath).href}?t=${Date.now()}&rebuilt=1`);
+      } catch (retryError) {
+        // The module was found and ran, so it threw at module scope. That is an
+        // ordinary application error the project's own error page should
+        // present, not a build failure — leave it untagged.
+        if (!isMissingModuleError(retryError)) throw retryError;
+
+        // Still unresolved after a full rebuild from source, and the resolver
+        // recorded leaving a specifier as authored: a path the project wrote
+        // that points at nothing. Classify it explicitly, because
+        // `ERR_MODULE_NOT_FOUND` is not a VeryfrontError and slug-based
+        // classification cannot see it.
+        if (isUnresolvedTenantImport(retryError, unresolvedSpecifiers, rebuiltPath)) {
+          throw markTenantBuildFailure(retryError);
+        }
+
+        // A resolution failure the tenant did not cause: an HTTP bundle miss, a
+        // cycle-break alias that did not resolve, or an artifact the rebuild
+        // failed to persist. Still a build failure, but a framework-owned one,
+        // so it keeps error-level severity.
+        throw markBuildFailure(retryError);
+      }
     }
 
     logger.error("Failed to import module:", {

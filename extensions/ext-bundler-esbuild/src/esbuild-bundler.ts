@@ -33,6 +33,14 @@ import { toEsbuildPlugin } from "./plugin-adapter.ts";
 type EsbuildModule = any;
 
 const ESBUILD_STOP_TIMEOUT_MS = 5_000;
+const ESBUILD_SOURCE_DIAGNOSTIC = Symbol.for(
+  "veryfront.bundler.esbuild-source-diagnostic",
+);
+const ArrayIsArray = Array.isArray;
+const ObjectDefineProperty = Object.defineProperty;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 /**
  * Unexpected service-child deaths tolerated before the adapter gives up.
  *
@@ -95,6 +103,68 @@ const OWNERSHIP_ERROR_MESSAGE =
 const MAX_CAUSE_DETAIL_LENGTH = 200;
 /** Absolute POSIX and Windows paths, reduced to a basename below. */
 const ABSOLUTE_PATH_PATTERN = /(?:[A-Za-z]:)?(?:\/|\\\\)[^\s"']*/g;
+
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return undefined;
+  }
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+    if (
+      descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true
+    ) {
+      return descriptor.value;
+    }
+  } catch {
+    // A hostile proxy cannot provide trusted diagnostic evidence.
+  }
+  return undefined;
+}
+
+/**
+ * Read esbuild's own diagnostic collection at the direct package boundary.
+ *
+ * esbuild exposes `errors` through an own accessor. Invoking that accessor is
+ * safe only here, before the failure crosses into framework classification.
+ */
+function readTrustedEsbuildErrors(error: unknown): unknown {
+  if (error === null || (typeof error !== "object" && typeof error !== "function")) {
+    return undefined;
+  }
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(error, "errors");
+    if (descriptor === undefined) return undefined;
+    if (ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true) {
+      return descriptor.value;
+    }
+    const getter = readOwnDataProperty(descriptor, "get");
+    return typeof getter === "function" ? ReflectApply(getter, error, []) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function markEsbuildSourceDiagnostic(error: unknown): void {
+  const diagnostics = readTrustedEsbuildErrors(error);
+  if (!ArrayIsArray(diagnostics)) return;
+  const length = readOwnDataProperty(diagnostics, "length");
+  if (typeof length !== "number") return;
+  for (let index = 0; index < length; index++) {
+    const diagnostic = readOwnDataProperty(diagnostics, index);
+    const location = readOwnDataProperty(diagnostic, "location");
+    if (typeof location !== "object" || location === null) continue;
+    try {
+      ObjectDefineProperty(error, ESBUILD_SOURCE_DIAGNOSTIC, { value: true });
+    } catch {
+      // Non-extensible failures remain unmarked and classify as infrastructure.
+    }
+    return;
+  }
+}
 
 /**
  * Reduce a cause to a single redacted line.
@@ -508,6 +578,11 @@ export function __recordOwnershipErrorForTests(cause?: unknown): Error {
   return recordOwnershipError(cause);
 }
 
+/** Exercise trusted esbuild diagnostic normalization without starting a service. */
+export function __markEsbuildSourceDiagnosticForTests(error: unknown): void {
+  markEsbuildSourceDiagnostic(error);
+}
+
 export function isLiveEsbuildServiceProcess(
   child: Pick<ChildProcess, "killed" | "exitCode" | "signalCode">,
 ): boolean {
@@ -705,7 +780,12 @@ export class EsbuildBundler implements Bundler {
     return runBundlerOperation(async () => {
       const esbuild = await getEsbuild();
       const { code, ...rest } = options;
-      const result = await invokeEsbuild(() => esbuild.transform(code, rest));
+      const result = await invokeEsbuild(() => esbuild.transform(code, rest)).catch(
+        (error: unknown) => {
+          markEsbuildSourceDiagnostic(error);
+          throw error;
+        },
+      );
       return {
         code: result.code,
         map: result.map,

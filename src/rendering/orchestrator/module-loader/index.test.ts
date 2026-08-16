@@ -10,15 +10,22 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
-import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
   isMissingModuleError,
+  isUnresolvedTenantImport,
   loadModule,
   type ModuleLoaderConfig,
   transformModuleWithDeps,
 } from "./index.ts";
 import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
-import { isBuildFailure } from "./build-failure.ts";
+import {
+  isBuildFailure,
+  isTenantBuildFailure,
+  markBuildFailure,
+  markTenantBuildFailure,
+} from "./build-failure.ts";
 
 async function withModuleLoaderFixture<T>(
   files: Record<string, string>,
@@ -283,6 +290,163 @@ describe("module-loader/transformModuleWithDeps", () => {
 });
 
 describe("module-loader/loadModule build-failure tagging", () => {
+  it("ignores inherited build-failure tags", () => {
+    const buildFailureTag = Symbol.for("veryfront.module-loader.build-failure");
+    const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+    const previousBuildDescriptor = Object.getOwnPropertyDescriptor(
+      Error.prototype,
+      buildFailureTag,
+    );
+    const previousTenantDescriptor = Object.getOwnPropertyDescriptor(
+      Error.prototype,
+      tenantBuildFailureTag,
+    );
+    Object.defineProperty(Error.prototype, buildFailureTag, { configurable: true, value: true });
+    Object.defineProperty(Error.prototype, tenantBuildFailureTag, {
+      configurable: true,
+      value: true,
+    });
+
+    try {
+      const frameworkError = new Error("framework failed");
+      assertEquals(isBuildFailure(frameworkError), false);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+
+      const tenantError = new Error("tenant failed");
+      assertStrictEquals(markTenantBuildFailure(tenantError), tenantError);
+      assertEquals(isBuildFailure(tenantError), true);
+      assertEquals(isTenantBuildFailure(tenantError), true);
+
+      const accessorTagError = new Error("framework failed");
+      let buildGetterRead = false;
+      let tenantGetterRead = false;
+      Object.defineProperty(accessorTagError, buildFailureTag, {
+        configurable: true,
+        get() {
+          buildGetterRead = true;
+          return true;
+        },
+      });
+      Object.defineProperty(accessorTagError, tenantBuildFailureTag, {
+        configurable: true,
+        get() {
+          tenantGetterRead = true;
+          return true;
+        },
+      });
+
+      assertEquals(isBuildFailure(accessorTagError), false);
+      assertEquals(isTenantBuildFailure(accessorTagError), false);
+      assertEquals(buildGetterRead, false);
+      assertEquals(tenantGetterRead, false);
+    } finally {
+      if (previousBuildDescriptor) {
+        Object.defineProperty(Error.prototype, buildFailureTag, previousBuildDescriptor);
+      } else {
+        delete (Error.prototype as { [buildFailureTag]?: unknown })[buildFailureTag];
+      }
+      if (previousTenantDescriptor) {
+        Object.defineProperty(Error.prototype, tenantBuildFailureTag, previousTenantDescriptor);
+      } else {
+        delete (Error.prototype as { [tenantBuildFailureTag]?: unknown })[tenantBuildFailureTag];
+      }
+    }
+  });
+
+  it("rejects prototype-polluted accessor tag descriptors", () => {
+    const buildFailureTag = Symbol.for("veryfront.module-loader.build-failure");
+    const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+    const previousDescriptorValue = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    const previousHasOwnProperty = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "hasOwnProperty",
+    );
+    assert(previousHasOwnProperty);
+    const frameworkError = new Error("framework failed");
+    Object.defineProperty(frameworkError, buildFailureTag, {
+      configurable: true,
+      get: undefined,
+      set: undefined,
+    });
+    Object.defineProperty(frameworkError, tenantBuildFailureTag, {
+      configurable: true,
+      get: undefined,
+      set: undefined,
+    });
+    Object.defineProperty(Object.prototype, "hasOwnProperty", {
+      ...previousHasOwnProperty,
+      value: () => true,
+    });
+    Object.defineProperty(Object.prototype, "value", { configurable: true, value: true });
+
+    try {
+      assertEquals(isBuildFailure(frameworkError), false);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+    } finally {
+      if (previousDescriptorValue) {
+        Object.defineProperty(Object.prototype, "value", previousDescriptorValue);
+      } else {
+        delete (Object.prototype as { value?: unknown }).value;
+      }
+      Object.defineProperty(Object.prototype, "hasOwnProperty", previousHasOwnProperty);
+    }
+  });
+
+  it("ignores poisoned Reflect descriptor lookups when reading build-failure tags", () => {
+    const previousDescriptor = Object.getOwnPropertyDescriptor(
+      Reflect,
+      "getOwnPropertyDescriptor",
+    );
+    assert(previousDescriptor);
+    Object.defineProperty(Reflect, "getOwnPropertyDescriptor", {
+      ...previousDescriptor,
+      value: () => ({
+        configurable: true,
+        enumerable: false,
+        value: true,
+        writable: false,
+      }),
+    });
+
+    try {
+      const frameworkError = new Error("framework failed");
+      assertEquals(isBuildFailure(frameworkError), false);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+    } finally {
+      Object.defineProperty(Reflect, "getOwnPropertyDescriptor", previousDescriptor);
+    }
+  });
+
+  it("uses the definition intrinsic captured during module initialization", () => {
+    const tenantBuildFailureTag = Symbol.for("veryfront.module-loader.tenant-build-failure");
+    const defineProperty = Object.defineProperty;
+    const previous = Object.getOwnPropertyDescriptor(Object, "defineProperty");
+    if (!previous || typeof previous.value !== "function") {
+      throw new Error("Expected Object.defineProperty descriptor");
+    }
+    defineProperty(Object, "defineProperty", {
+      ...previous,
+      value: (target: object, tag: PropertyKey, descriptor: PropertyDescriptor) => {
+        defineProperty(target, tenantBuildFailureTag, { configurable: true, value: true });
+        return defineProperty(target, tag, descriptor);
+      },
+    });
+
+    try {
+      const frameworkError = new Error("framework failed");
+      assertStrictEquals(markBuildFailure(frameworkError), frameworkError);
+      assertEquals(isBuildFailure(frameworkError), true);
+      assertEquals(isTenantBuildFailure(frameworkError), false);
+
+      const tenantError = new Error("tenant failed");
+      assertStrictEquals(markTenantBuildFailure(tenantError), tenantError);
+      assertEquals(isBuildFailure(tenantError), true);
+      assertEquals(isTenantBuildFailure(tenantError), true);
+    } finally {
+      defineProperty(Object, "defineProperty", previous);
+    }
+  });
+
   // Compiling a real page module starts esbuild's child process; stop it so the
   // test does not leak the handle rather than opting out of the sanitizer.
   afterAll(async () => {
@@ -334,6 +498,552 @@ describe("module-loader/loadModule build-failure tagging", () => {
         });
       },
     );
+  });
+
+  // A relative import that resolves to nothing is dropped by
+  // `resolveModuleDependencies` and survives into the built module as authored,
+  // so the failure only surfaces at `import()` time as ERR_MODULE_NOT_FOUND —
+  // after the self-heal rebuild has already retried it. That rejection used to
+  // leave `loadModule` untagged, so a tenant typo in an import path was
+  // reported at error level forever.
+  it("tags a missing local static import as a tenant build failure", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./missing";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  it("tags a missing bare side-effect import as a tenant build failure", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import "./missing";`,
+          `export default function Page() { return null; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  it("tags a missing project alias import as a tenant build failure", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "@/components/Missing";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  it("tags a missing project alias import with an explicit source extension", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "@/components/Missing.tsx";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  it("tags missing side-effect imports in every legal declaration position", async () => {
+    for (
+      const source of [
+        `const ready = true; import "./missing"; export default ready;`,
+        `import /* preload */ "./missing"; export default null;`,
+      ]
+    ) {
+      await withModuleLoaderFixture(
+        { "app/page.tsx": source },
+        async ({ projectDir, tmpDir, config }) => {
+          await runWithCacheDir(tmpDir, async () => {
+            const error = await assertRejects(
+              () => loadModule(join(projectDir, "app/page.tsx"), config),
+              Error,
+            );
+
+            assertEquals(isMissingModuleError(error), true);
+            assertEquals(isBuildFailure(error), true);
+            assertEquals(isTenantBuildFailure(error), true);
+          });
+        },
+      );
+    }
+  });
+
+  it("classifies retry failures from only the rebuilt dependency graph", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./late";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let createdLateDependency = false;
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () =>
+              loadModule(join(projectDir, "app/page.tsx"), {
+                ...config,
+                onProgress: ({ phase, filePath }) => {
+                  if (
+                    createdLateDependency ||
+                    phase !== "module:persisted" ||
+                    filePath !== join(projectDir, "app/page.tsx")
+                  ) return;
+
+                  createdLateDependency = true;
+                  Deno.writeTextFileSync(
+                    join(projectDir, "app/late.ts"),
+                    [
+                      `import "./framework-missing";`,
+                      `export const label = "late";`,
+                    ].join("\n"),
+                  );
+                },
+              }),
+            Error,
+          );
+
+          assertEquals(createdLateDependency, true);
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          // The first transform dropped `./late`, but the rebuild resolved it.
+          // Classification must come from the dependency's separate bare
+          // side-effect failure, not stale evidence from build one.
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  // A transform cache hit skips dependency resolution, and the retry path
+  // invalidates only the root module's cache entry — so on the rebuild the
+  // dependency holding the typo is served from cache and contributes no
+  // evidence. Combined with clearing the set before the rebuild, that would
+  // leave a dependency-level typo permanently unattributed, including on the
+  // very first load. The cache-hit branch replays each module's recorded
+  // specifiers to close it. Both loads must classify identically.
+  it("attributes a typo in a cached dependency on every load", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { gone } from "./gone";`,
+          `export const label = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.tsx");
+
+          const first = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(first), true);
+          assertEquals(isTenantBuildFailure(first), true);
+
+          // Same config, so `config.moduleCache` is warm for `app/dep.tsx`.
+          const second = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(second), true);
+          // Identical failure must not get weaker attribution just because a
+          // dependency happened to be cached.
+          assertEquals(isTenantBuildFailure(second), true);
+        });
+      },
+    );
+  });
+
+  it("attributes a typo below a cached dependency on every load", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { nested } from "./nested";`,
+          `export const label = nested;`,
+        ].join("\n"),
+        "app/nested.tsx": [
+          `import { gone } from "./gone";`,
+          `export const nested = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.tsx");
+
+          const first = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(first), true);
+          assertEquals(isTenantBuildFailure(first), true);
+
+          const second = await assertRejects(() => loadModule(pagePath, config), Error);
+          assertEquals(isBuildFailure(second), true);
+          assertEquals(isTenantBuildFailure(second), true);
+        });
+      },
+    );
+  });
+
+  it("attributes a typo replayed from a disk-cached dependency", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { gone } from "./gone";`,
+          `export const label = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.tsx");
+          const diskConfig = {
+            ...config,
+            projectId: "disk-cache-project",
+            contentSourceId: "main",
+          };
+
+          const first = await assertRejects(() => loadModule(pagePath, diskConfig), Error);
+          assertEquals(isTenantBuildFailure(first), true);
+
+          // Mode is part of the process-local cache key but not the persisted
+          // MDX path-cache key. Switching it gives this simulated new worker an
+          // empty evidence memo while reusing the dependency from _index.json.
+          const restartedConfig = {
+            ...diskConfig,
+            mode: "production" as const,
+            moduleCache: new Map<string, string>(),
+          };
+          const second = await assertRejects(() => loadModule(pagePath, restartedConfig), Error);
+          assertEquals(isBuildFailure(second), true);
+          assertEquals(isTenantBuildFailure(second), true);
+        });
+      },
+    );
+  });
+
+  it("ignores legacy disk cache entries that predate unresolved-import sidecars", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { label } from "./dep";`,
+          `export default function Page() { return label; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `import { gone } from "./gone";`,
+          `export const label = gone;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const diskConfig = {
+            ...config,
+            projectId: "legacy-cache-project",
+            contentSourceId: "main",
+          };
+          const legacyCacheDir = join(
+            getMdxEsmCacheDir(),
+            encodeURIComponent(diskConfig.projectId),
+            encodeURIComponent(diskConfig.contentSourceId),
+          );
+          await Deno.mkdir(join(legacyCacheDir, "app"), { recursive: true });
+          const legacyDepArtifact = join(legacyCacheDir, "app/dep.legacy.js");
+          await Deno.writeTextFile(
+            legacyDepArtifact,
+            [`import { gone } from "./gone";`, `export const label = gone;`].join("\n"),
+          );
+          const legacyPathKey = `mdx-esm-ec841873:19.1.1:_vf_modules/app/dep.js`;
+          assertEquals(
+            legacyPathKey === buildMdxEsmPathCacheKey("_vf_modules/app/dep.js", "19.1.1"),
+            false,
+          );
+          await Deno.writeTextFile(
+            join(legacyCacheDir, "_index.json"),
+            JSON.stringify({ [legacyPathKey]: legacyDepArtifact }),
+          );
+
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), diskConfig),
+            Error,
+          );
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  it("attributes an executed dynamic dependency that failed to transform", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `const dependency = await import("./broken");`,
+          `export const value = dependency.value;`,
+        ].join("\n"),
+        "app/broken.ts": `export const value: = "broken";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.ts"), config),
+            Error,
+          );
+
+          assertEquals(isMissingModuleError(error), true);
+          assertEquals(isBuildFailure(error), true);
+          assertEquals(isTenantBuildFailure(error), true);
+        });
+      },
+    );
+  });
+
+  // The same seam must not launder a framework fault. A module whose imports
+  // all resolve, and which then throws while executing, is an application
+  // error: it must come back out of `loadModule` untagged on both predicates.
+  // Asserting this through the real fixture rather than on a hand-built error
+  // is the point — a constructed Error never enters `loadModule`, so it would
+  // pass identically if the classification branch were deleted or inverted.
+  it("leaves a resolvable import that throws at module scope untagged", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.tsx": [
+          `import { boom } from "./dep";`,
+          `export default function Page() { return boom; }`,
+        ].join("\n"),
+        "app/dep.tsx": [
+          `throw new Error("dependency exploded at module scope");`,
+          `export const boom = "unreachable";`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const error = await assertRejects(
+            () => loadModule(join(projectDir, "app/page.tsx"), config),
+            Error,
+            "dependency exploded at module scope",
+          );
+
+          assertEquals(isMissingModuleError(error), false);
+          assertEquals(isBuildFailure(error), false);
+          assertEquals(isTenantBuildFailure(error), false);
+        });
+      },
+    );
+  });
+});
+
+// The retry seam sees `ERR_MODULE_NOT_FOUND` for four different causes and may
+// only downgrade one of them. `isMissingModuleError` cannot tell them apart, so
+// the discrimination is driven by the specifiers the resolver recorded dropping.
+describe("module-loader/isUnresolvedTenantImport", () => {
+  const REBUILT = "/tmp/out/veryfront-modules/proj-a/app/page.7f3c1d92.js";
+
+  // The runtime names the missing target first and then appends the importer's
+  // own location. At this seam the importer is always the rebuilt artifact, so
+  // every real message mentions REBUILT somewhere — which is exactly why the
+  // predicate may only inspect the first quoted token.
+  const missing = () =>
+    Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/app/missing".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+  it("classifies a dropped tenant specifier as tenant source", () => {
+    assertEquals(isUnresolvedTenantImport(missing(), new Set(["./missing"])), true);
+  });
+
+  it("classifies a dropped project alias after its SSR rewrite", () => {
+    const aliasMissing = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/_vf_modules/components/Foo.js".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(
+      isUnresolvedTenantImport(aliasMissing, new Set(["@/components/Foo"]), REBUILT),
+      true,
+    );
+  });
+
+  it("classifies an explicit project alias source extension after its SSR rewrite", () => {
+    const aliasMissing = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/_vf_modules/components/Missing.js".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(
+      isUnresolvedTenantImport(aliasMissing, new Set(["@/components/Missing.tsx"]), REBUILT),
+      true,
+    );
+  });
+
+  it("does not classify an unrelated missing target alongside a dropped specifier", () => {
+    const unrelated = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/out/veryfront-modules/proj-a/app/cycle-alias".\n' +
+          `    at file://${REBUILT}:1:23`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(unrelated, new Set(["./missing"]), REBUILT), false);
+  });
+
+  // The cycle-breaking branch leaves a resolved target's specifier as authored
+  // and relies on an alias the code itself marks as not runtime-verified. That
+  // target resolved, so it is never recorded as dropped — and a framework path
+  // the repo openly marks unverified must not page as a tenant warning.
+  it("does not classify a failure when the resolver dropped nothing", () => {
+    assertEquals(isUnresolvedTenantImport(missing(), new Set()), false);
+  });
+
+  // Bundle misses are framework infrastructure with dedicated recovery on the
+  // outer branch, which the inner catch does not re-check. Exclude them even
+  // when the tenant separately has an unresolved import.
+  it("does not classify an HTTP-bundle miss even alongside a dropped specifier", () => {
+    const bundleError = Object.assign(
+      new TypeError(
+        'Module not found "file:///tmp/veryfront-http-bundle/http-2b1f9c4e.mjs".',
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(bundleError, new Set(["./missing"])), false);
+  });
+
+  // The missing module can be the rebuilt artifact itself rather than one of
+  // its dependencies: a racing cache sweep or a failing cache volume can evict
+  // it between persist and import. That is repeated cache eviction — framework
+  // infrastructure — and must stay at error severity even when the tenant
+  // separately has an unresolved import.
+  it("does not classify an evicted rebuilt artifact, even alongside a dropped specifier", () => {
+    const evicted = Object.assign(
+      new TypeError(`Module not found "file://${REBUILT}?t=1&rebuilt=1".`),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(evicted, new Set(["./missing"]), REBUILT), false);
+    assertEquals(isUnresolvedTenantImport(evicted, new Set(["./missing"])), false);
+  });
+
+  // The regression this pins: the importer line also names the rebuilt
+  // artifact, so a whole-message `includes` would classify a tenant typo as
+  // framework and silently undo the fix.
+  it("still classifies a dropped specifier whose importer is the rebuilt artifact", () => {
+    const error = missing();
+
+    assertEquals(error.message.includes(REBUILT), true);
+    assertEquals(isUnresolvedTenantImport(error, new Set(["./missing"]), REBUILT), true);
+  });
+
+  // Node quotes the missing target with single quotes and leaves the importer
+  // unquoted: `Cannot find module '/…/missing' imported from /…/page.js`.
+  // A double-quote-only match returns "" there, which silently disables the
+  // eviction guard on the Node runtime while every Deno test still passes.
+  it("reads a single-quoted Node target so the eviction guard still fires", () => {
+    const evictedOnNode = Object.assign(
+      new Error(`Cannot find module '${REBUILT}' imported from ${REBUILT}`),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(evictedOnNode, new Set(["./missing"]), REBUILT), false);
+  });
+
+  it("classifies a single-quoted Node target that is a dropped specifier", () => {
+    const nodeMissing = Object.assign(
+      new Error(
+        `Cannot find module '/tmp/out/veryfront-modules/proj-a/app/missing' ` +
+          `imported from ${REBUILT}`,
+      ),
+      { code: "ERR_MODULE_NOT_FOUND" },
+    );
+
+    assertEquals(isUnresolvedTenantImport(nodeMissing, new Set(["./missing"]), REBUILT), true);
+  });
+
+  it("does not classify a failure that is not a resolution failure", () => {
+    assertEquals(
+      isUnresolvedTenantImport(new TypeError("x is not a function"), new Set(["./missing"])),
+      false,
+    );
+  });
+
+  // The runtime reports the *resolved* path, which for a dropped relative
+  // specifier lands inside the build's own temp directory. A "does the message
+  // mention our temp dir?" heuristic would therefore reject the one case this
+  // predicate exists to catch. Pinned so nobody reintroduces it.
+  it("classifies a dropped specifier whose resolved path is inside the build temp dir", () => {
+    const tmpDir = "/tmp/out";
+    const error = missing();
+
+    assertEquals(error.message.includes(tmpDir), true);
+    assertEquals(isUnresolvedTenantImport(error, new Set(["./missing"])), true);
   });
 });
 

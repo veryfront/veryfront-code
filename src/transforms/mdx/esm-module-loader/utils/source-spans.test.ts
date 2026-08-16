@@ -12,6 +12,29 @@ import {
 // it collects, opt out of the bound explicitly.
 const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
+function countStartsWithCalls(callback: () => void): number {
+  const original = String.prototype.startsWith;
+  let calls = 0;
+  Object.defineProperty(String.prototype, "startsWith", {
+    configurable: true,
+    writable: true,
+    value(this: string, searchString: string, position?: number) {
+      calls++;
+      return original.call(this, searchString, position);
+    },
+  });
+  try {
+    callback();
+  } finally {
+    Object.defineProperty(String.prototype, "startsWith", {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  }
+  return calls;
+}
+
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   it("keeps static imports inside regexes hidden after local type export lists", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
@@ -248,6 +271,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("keeps value and type re-export forms eligible for from clauses", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          'export * from "./all.js"; export type { Value } from "./types.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./all.js", "./types.js"],
+      );
+    });
+
     it("finds static imports after top-level block declarations", () => {
       assertEquals(
         findStaticImportFromSpans(
@@ -256,6 +290,62 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           UNBOUNDED,
         ).map((span) => span.path),
         ["./after-function.js"],
+      );
+    });
+
+    it("ignores import-from examples in JSX text after an expression", () => {
+      assertEquals(
+        findStaticImportFromSpans(
+          `export function Example() {
+  return <code>{label}import value from /* note */ "./example.js";</code>;
+}
+import real from "./real.js";`,
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
+    it("keeps JSX closing-tag checks linear for repeated angle assertions", () => {
+      const repeatedAssertions = Array.from(
+        { length: 3_000 },
+        (_, index) => `const value${index} = <Type${index}>input${index};`,
+      ).join("\n");
+      const source = `${repeatedAssertions}\nimport real from "./real.js";`;
+      let paths: string[] = [];
+
+      const startsWithCalls = countStartsWithCalls(() => {
+        paths = findStaticImportFromSpans(source, matchRelative, UNBOUNDED)
+          .map((span) => span.path);
+      });
+
+      assertEquals(paths, ["./real.js"]);
+      assert(
+        startsWithCalls < source.length * 3,
+        `Expected a linear static import scan, got ${startsWithCalls} startsWith calls ` +
+          `for ${source.length} source characters`,
+      );
+    });
+
+    it("keeps side-effect JSX closing-tag checks linear for repeated angle assertions", () => {
+      const repeatedAssertions = Array.from(
+        { length: 3_000 },
+        (_, index) => `const value${index} = <Type${index}>input${index};`,
+      ).join("\n");
+      const source = `${repeatedAssertions}\nimport "./real.js";`;
+      let paths: string[] = [];
+
+      const startsWithCalls = countStartsWithCalls(() => {
+        paths = findStaticSideEffectImportSpans(source, matchRelative, UNBOUNDED)
+          .map((span) => span.path);
+      });
+
+      assertEquals(paths, ["./real.js"]);
+      assert(
+        startsWithCalls < source.length * 3,
+        `Expected a linear side-effect import scan, got ${startsWithCalls} startsWith calls ` +
+          `for ${source.length} source characters`,
       );
     });
 
@@ -1083,6 +1173,69 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       );
     });
 
+    it("ignores import-looking regex text after exported declarations at ASI boundaries", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'export function f() {}\n/import("\\/_vf_modules\\/fake-function.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export class C {}\n/import("\\/_vf_modules\\/fake-class.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export default function () {}\n/import("\\/_vf_modules\\/fake-default-function.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'export default class {}\n/import("\\/_vf_modules\\/fake-default-class.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
+    it("ignores import-looking regex text after export lists at ASI boundaries", () => {
+      assertEquals(
+        specifiers(
+          'const value = 1; export { value }\n/import("\\.\\/fake-export-list.js")/.test(input);',
+        ),
+        [],
+      );
+      assertEquals(
+        vfModuleSpecifiers(
+          'const value = 1; export { value }\n/import("\\/_vf_modules\\/fake-export-list.js")/.test(input);',
+        ),
+        [],
+      );
+    });
+
+    it("ignores import-looking regex text after Unicode declaration names", () => {
+      assertEquals(
+        specifiers('function λ() {}\n/import("\\.\\/fake-function.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
+        specifiers('class Ω {}\n/import("\\.\\/fake-class.js")/.test(value);'),
+        [],
+      );
+      assertEquals(
+        specifiers(
+          'function \\u0061() {}\n/import("\\.\\/fake-escaped-function.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        specifiers('class \\u{41} {}\n/import("\\.\\/fake-escaped-class.js")/.test(value);'),
+        [],
+      );
+    });
+
     it("recognizes Unicode line terminators in declaration comments", () => {
       for (const lineTerminator of ["\u2028", "\u2029"]) {
         assertEquals(
@@ -1131,6 +1284,121 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
           'const html = `${(() => { while (ok) /}/.test(x); })() && import("./after-while-regex.js")}`;',
         ),
         ["./after-while-regex.js"],
+      );
+    });
+
+    it("ignores import-looking regex text after for-await loops", () => {
+      assertEquals(
+        specifiers(
+          'for await (const value of []) {}\n/import("\\.\\/fake.js")/.test(value);',
+        ),
+        [],
+      );
+      assertEquals(
+        specifiers(
+          'for /* stream */ await (const value of []) {}\n/import("\\.\\/commented-fake.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
+    it("finds the tenant alias import after division by a default property", () => {
+      const spans = findDynamicImportSpans(
+        'const half = mod.default / 2; const L = lazy(() => import("@/components/Chart"));',
+        (specifier) => specifier.startsWith("@/") ? specifier : null,
+        UNBOUNDED,
+      );
+
+      assertEquals(spans.map((span) => span.path), ["@/components/Chart"]);
+    });
+
+    it("finds imports after commented reserved-name member divisions", () => {
+      assertEquals(
+        specifiers(
+          'const direct = mod./* note */default / 2; import("./after-direct.js");',
+        ),
+        ["./after-direct.js"],
+      );
+      assertEquals(
+        specifiers(
+          'const optional = mod?./* note */default / 2; import("./after-optional.js");',
+        ),
+        ["./after-optional.js"],
+      );
+      assertEquals(
+        specifiers(
+          'const direct = mod.// note\ntypeof / 2; import("./after-line-direct.js");',
+        ),
+        ["./after-line-direct.js"],
+      );
+      assertEquals(
+        specifiers(
+          'const optional = mod?.// note\ntypeof / 2; import("./after-line-optional.js");',
+        ),
+        ["./after-line-optional.js"],
+      );
+    });
+
+    it("still treats genuine keyword positions as regex prefixes", () => {
+      assertEquals(
+        specifiers('const t = typeof /re/; import("./after-typeof-keyword.js");'),
+        ["./after-typeof-keyword.js"],
+      );
+      assertEquals(
+        specifiers(
+          'function f() { return /re/.test(x); } import("./after-return-keyword.js");',
+        ),
+        ["./after-return-keyword.js"],
+      );
+      assertEquals(
+        specifiers(
+          '[...typeof /import(".\\/fake-spread.js")/]; import("./after-spread.js");',
+        ),
+        ["./after-spread.js"],
+      );
+      assertEquals(
+        specifiers(
+          'switch (v) { case /re/.source: break; } import("./after-case-keyword.js");',
+        ),
+        ["./after-case-keyword.js"],
+      );
+      assertEquals(
+        specifiers(
+          'for (const x of /re/.exec(s) ?? []) {} import("./after-for-of-regex.js");',
+        ),
+        ["./after-for-of-regex.js"],
+      );
+    });
+
+    // The for-await search runs over raw text, so it also finds a `for` that is
+    // not code. A block comment cannot fool it because the `*/` terminator
+    // stops the adjacency scan. A line comment ends at a newline, which the scan
+    // treats as ordinary whitespace and walks straight through. A comment whose
+    // last word is `for` sitting above a top-level `await (...)` therefore read as
+    // a for-await header, and the `/` that actually divides was taken as a regex
+    // opening, hiding a real dynamic import inside it.
+    it("does not read a line comment ending in for as a for-await header", () => {
+      assertEquals(
+        specifiers('// for\nawait (ready)\n/import(".\\/after-line-comment.js")/.source;'),
+        ["./after-line-comment.js"],
+      );
+      assertEquals(
+        specifiers(
+          '// what we are waiting for\nawait (ready)\n/import(".\\/after-prose-comment.js")/.source;',
+        ),
+        ["./after-prose-comment.js"],
+      );
+    });
+
+    // The converse over-correction: `//` inside a string is not a comment, so a
+    // URL on the same line must not stop a genuine for-await header from being
+    // recognized. Otherwise, the phantom-import bug would return.
+    it("still reads a for-await header on a line holding a url string", () => {
+      assertEquals(
+        specifiers(
+          'const origin = "http://example.test"; for await (const value of source) {}\n/import(".\\/url-line-fake.js")/.test(value);',
+        ),
+        [],
       );
     });
 
@@ -1612,6 +1880,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       }
     });
 
+    it("keeps class context across nested extends braces", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'class Loader extends mixin({}) {} /import("\\/_vf_modules\\/fake.js")/.test(value);',
+        ),
+        [],
+      );
+    });
+
     it("treats Unicode identifier parts as import boundaries", () => {
       for (
         const source of [
@@ -1639,6 +1916,15 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       ) {
         assertEquals(vfModuleSpecifiers(source), []);
       }
+    });
+
+    it("recognizes regex literals after arrow function bodies at ASI boundaries", () => {
+      assertEquals(
+        vfModuleSpecifiers(
+          'const load = () => {}\n/import("\\/_vf_modules\\/fake.js")/.test(value);',
+        ),
+        [],
+      );
     });
 
     it("does not read keyword suffixes in longer identifiers as regex prefixes", () => {
@@ -1906,6 +2192,17 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
       }
     });
 
+    it("finds side-effect imports after block comments with line terminators", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const ready = true /* note\n */ import "/_vf_modules/after-comment.js";',
+          (specifier) => specifier.startsWith("/_vf_modules/") ? specifier : null,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["/_vf_modules/after-comment.js"],
+      );
+    });
+
     it("ignores side-effect import text inside regex literals", () => {
       assertEquals(
         findStaticSideEffectImportSpans(
@@ -1915,6 +2212,93 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
         ),
         [],
       );
+    });
+
+    it("ignores semicolon-terminated side-effect import text in JSX children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'export function Example() { return <code>{label}import "./example.js";</code>; } import "./real.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
+    it("ignores side-effect import text in namespaced JSX children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'export function Example() { return <svg:path>{label}import "./example.js";</svg:path>; } import "./real.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
+    it("ignores side-effect import text in Unicode namespaced JSX children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'export function Example() { return <svg:路径>{label}import "./example.js";</svg:路径>; } import "./real.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
+    it("ignores side-effect import text in Unicode-leading JSX children", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'export function Example() { return <路径>{label}import "./example.js";</路径>; } import "./real.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./real.js"],
+      );
+    });
+
+    it("keeps scanning after a TypeScript angle-bracket assertion", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = <Value>"</Value>"; import "./after-assertion.js";',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-assertion.js"],
+      );
+    });
+
+    it("does not treat regex syntax as an assertion closing JSX tag", () => {
+      assertEquals(
+        findStaticSideEffectImportSpans(
+          'const value = <Value>thing; import "./after-assertion.js"; const ok = x </Value>foo/.test(source);',
+          matchRelative,
+          UNBOUNDED,
+        ).map((span) => span.path),
+        ["./after-assertion.js"],
+      );
+    });
+
+    it("recognizes regex syntax followed by binary operators", () => {
+      for (
+        const continuation of [
+          "&& ready",
+          "+ offset",
+          "=== expected",
+          "in expressions",
+          "instanceof RegExp",
+        ]
+      ) {
+        assertEquals(
+          findStaticSideEffectImportSpans(
+            `const value = <Value>thing; import "./after-assertion.js"; const ok = x </Value>foo/ ${continuation};`,
+            matchRelative,
+            UNBOUNDED,
+          ).map((span) => span.path),
+          ["./after-assertion.js"],
+        );
+      }
     });
 
     it("ignores side-effect import text in regex literals after comments", () => {

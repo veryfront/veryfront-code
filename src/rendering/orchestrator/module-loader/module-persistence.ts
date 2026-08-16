@@ -8,12 +8,17 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { isCacheWriteRaceError } from "#veryfront/utils/cache-file-ops.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
-import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { isMemberNameBefore } from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
@@ -72,6 +77,8 @@ export interface PersistTransformedModuleInput {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
+  /** Tenant-authored imports left unresolved in this module subtree. */
+  unresolvedSpecifiers?: readonly string[];
   /**
    * True when a dynamic import elsewhere closes a cycle back onto this module.
    * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
@@ -80,15 +87,399 @@ export interface PersistTransformedModuleInput {
   isCycleTarget?: boolean;
 }
 
+/** Read unresolved-import evidence stored beside a transformed artifact. */
+export async function readPersistedUnresolvedSpecifiers(
+  modulePath: string,
+  localAdapter: RuntimeAdapter,
+): Promise<readonly string[]> {
+  try {
+    const content = await localAdapter.fs.readFile(
+      `${modulePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
+    );
+    const decoded = typeof content === "string" ? content : new TextDecoder().decode(content);
+    const parsed: unknown = JSON.parse(decoded);
+    if (!Array.isArray(parsed) || !parsed.every((value) => typeof value === "string")) {
+      return [];
+    }
+    return parsed;
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    logger.debug("Unresolved-import cache evidence unavailable", {
+      modulePath: modulePath.slice(-60),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
 /**
  * Whether transformed output exposes a default export, so a cycle alias knows
  * to re-export it. Covers esbuild's `export default …`, `… as default`, and
  * `export { default } from …` forms.
  */
 function hasDefaultExport(code: string): boolean {
-  return /\bexport\s+default\b/.test(code) ||
-    /\bas\s+default\b/.test(code) ||
-    /\bexport\s*\{[^}]*\bdefault\b[^}]*\}/.test(code);
+  let previousTokenIndex = -1;
+  const controlConditionCloseParens = new Set<number>();
+  const statementBlockCloseBraces = new Set<number>();
+  const openParens: boolean[] = [];
+  const openBraces: boolean[] = [];
+  let openBracketCount = 0;
+  let pendingDeclaration:
+    | {
+      kind: "class" | "function";
+      braceDepth: number;
+      parenDepth: number;
+      bracketDepth: number;
+      parameterListClosed: boolean;
+    }
+    | undefined;
+
+  for (let index = 0; index < code.length;) {
+    index = skipTrivia(code, index);
+    if (index >= code.length) break;
+
+    if (startsIdentifier(code, index, "export")) {
+      const exportIndex = index;
+      index = skipTrivia(code, index + "export".length);
+      if (startsIdentifier(code, index, "default")) return true;
+      if (code[index] === "{" && exportListExposesDefault(code, index)) return true;
+      if (code[index] === "*") {
+        index = skipTrivia(code, index + 1);
+        if (startsIdentifier(code, index, "as")) {
+          index = skipTrivia(code, index + "as".length);
+          if (startsIdentifier(code, index, "default")) return true;
+        }
+      }
+      index = exportIndex + "export".length;
+      continue;
+    }
+
+    const next = skipTextToken(code, index, {
+      previousTokenIndex,
+      controlConditionCloseParens,
+      statementBlockCloseBraces,
+    });
+    if (next !== index) {
+      previousTokenIndex = next - 1;
+      index = next;
+      continue;
+    }
+
+    if (isIdentifierStart(code[index])) {
+      const identifierStart = index;
+      index++;
+      while (index < code.length && isIdentifierPart(code[index])) index++;
+      const identifier = code.slice(identifierStart, index);
+      if (
+        (identifier === "function" || identifier === "class") &&
+        startsDeclaration(code, previousTokenIndex, controlConditionCloseParens)
+      ) {
+        pendingDeclaration = {
+          kind: identifier,
+          braceDepth: openBraces.length,
+          parenDepth: openParens.length,
+          bracketDepth: openBracketCount,
+          parameterListClosed: false,
+        };
+      }
+      previousTokenIndex = index - 1;
+      continue;
+    }
+
+    if (code[index] === "(") {
+      const keyword = identifierBefore(code, previousTokenIndex);
+      openParens.push(
+        keyword === "if" || keyword === "while" || keyword === "for" ||
+          keyword === "with" || keyword === "switch" || keyword === "catch",
+      );
+    } else if (code[index] === ")") {
+      if (openParens.pop() === true) controlConditionCloseParens.add(index);
+      if (
+        pendingDeclaration?.kind === "function" &&
+        openParens.length === pendingDeclaration.parenDepth
+      ) {
+        pendingDeclaration.parameterListClosed = true;
+      }
+    } else if (code[index] === "[") {
+      openBracketCount++;
+    } else if (code[index] === "]") {
+      openBracketCount = Math.max(0, openBracketCount - 1);
+    } else if (code[index] === "{") {
+      const opensDeclarationBody = pendingDeclaration !== undefined &&
+        openBraces.length === pendingDeclaration.braceDepth &&
+        openParens.length === pendingDeclaration.parenDepth &&
+        openBracketCount === pendingDeclaration.bracketDepth &&
+        (pendingDeclaration.kind === "class" || pendingDeclaration.parameterListClosed);
+      openBraces.push(
+        opensDeclarationBody ||
+          code[previousTokenIndex] === ")" &&
+            controlConditionCloseParens.has(previousTokenIndex),
+      );
+      if (opensDeclarationBody) pendingDeclaration = undefined;
+    } else if (code[index] === "}" && openBraces.pop() === true) {
+      statementBlockCloseBraces.add(index);
+    }
+
+    previousTokenIndex = index;
+    index++;
+  }
+
+  return false;
+}
+
+function startsDeclaration(
+  code: string,
+  previousTokenIndex: number,
+  controlConditionCloseParens: ReadonlySet<number>,
+): boolean {
+  if (previousTokenIndex < 0) return true;
+  if (";{}:".includes(code[previousTokenIndex] ?? "")) return true;
+  if (controlConditionCloseParens.has(previousTokenIndex)) return true;
+  return ["async", "default", "export"].includes(
+    identifierBefore(code, previousTokenIndex) ?? "",
+  );
+}
+
+function exportListExposesDefault(code: string, openBraceIndex: number): boolean {
+  const closeBraceIndex = findExportListCloseBrace(code, openBraceIndex);
+  if (closeBraceIndex === -1) return false;
+
+  const specifiers = splitExportSpecifiers(code.slice(openBraceIndex + 1, closeBraceIndex));
+  return specifiers.some((specifier) => exportedName(specifier) === "default");
+}
+
+function findExportListCloseBrace(code: string, openBraceIndex: number): number {
+  for (let index = openBraceIndex + 1; index < code.length;) {
+    const next = skipTextToken(code, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (code[index] === "}") return index;
+    index++;
+  }
+  return -1;
+}
+
+function splitExportSpecifiers(list: string): string[] {
+  const specifiers: string[] = [];
+  let start = 0;
+
+  for (let index = 0; index < list.length;) {
+    const next = skipTextToken(list, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (list[index] === ",") {
+      specifiers.push(list.slice(start, index));
+      start = index + 1;
+    }
+    index++;
+  }
+
+  specifiers.push(list.slice(start));
+  return specifiers;
+}
+
+function exportedName(specifier: string): string | undefined {
+  const tokens = identifierTokens(specifier);
+  if (tokens.length === 0) return undefined;
+
+  for (let index = tokens.length - 2; index >= 0; index--) {
+    if (tokens[index] === "as") return tokens[index + 1];
+  }
+
+  return tokens.length === 1 ? tokens[0] : undefined;
+}
+
+function identifierTokens(source: string): string[] {
+  const tokens: string[] = [];
+
+  for (let index = 0; index < source.length;) {
+    const next = skipTextToken(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+    if (isIdentifierStart(source[index])) {
+      const start = index;
+      index++;
+      while (index < source.length && isIdentifierPart(source[index])) index++;
+      tokens.push(source.slice(start, index));
+      continue;
+    }
+    index++;
+  }
+
+  return tokens;
+}
+
+function skipTrivia(source: string, index: number): number {
+  while (index < source.length) {
+    const char = source[index];
+    if (char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f") {
+      index++;
+      continue;
+    }
+
+    const next = skipComment(source, index);
+    if (next !== index) {
+      index = next;
+      continue;
+    }
+
+    break;
+  }
+  return index;
+}
+
+interface RegexScanContext {
+  previousTokenIndex: number;
+  controlConditionCloseParens: ReadonlySet<number>;
+  statementBlockCloseBraces: ReadonlySet<number>;
+}
+
+function skipTextToken(
+  source: string,
+  index: number,
+  context?: RegexScanContext,
+): number {
+  const commentEnd = skipComment(source, index);
+  if (commentEnd !== index) return commentEnd;
+
+  const regexEnd = skipRegexToken(source, index, context);
+  if (regexEnd !== index) return regexEnd;
+
+  const char = source[index];
+  if (char !== '"' && char !== "'" && char !== "`") return index;
+
+  for (index++; index < source.length; index++) {
+    if (source[index] === "\\") {
+      index++;
+      continue;
+    }
+    if (source[index] === char) return index + 1;
+  }
+
+  return source.length;
+}
+
+function skipRegexToken(
+  source: string,
+  index: number,
+  context?: RegexScanContext,
+): number {
+  if (source[index] !== "/" || source[index + 1] === "/" || source[index + 1] === "*") {
+    return index;
+  }
+
+  const previous = context?.previousTokenIndex ?? previousSignificantIndex(source, index);
+  if (previous >= 0) {
+    const char = source[previous]!;
+    if (char === ")" && context?.controlConditionCloseParens.has(previous)) {
+      // A statement can start with a regex immediately after a control
+      // condition, for example `if (ready) /pattern/.test(value)`.
+    } else if (char === "}" && context?.statementBlockCloseBraces.has(previous)) {
+      // The same is true after the braced form, for example
+      // `if (ready) {} /pattern/.test(value)` or
+      // `function ready() {} /pattern/.test(value)`.
+    } else if (!"([{=,:;!~?&|+-*%^<>".includes(char)) {
+      const keyword = identifierBefore(source, previous);
+      if (keyword !== null && isMemberNameBefore(source, previous)) return index;
+      if (
+        ![
+          "case",
+          "delete",
+          "do",
+          "else",
+          "extends",
+          "in",
+          "instanceof",
+          "new",
+          "await",
+          "return",
+          "throw",
+          "typeof",
+          "void",
+          "yield",
+        ].includes(keyword ?? "")
+      ) return index;
+    }
+  }
+
+  let cursor = index + 1;
+  let inCharacterClass = false;
+  while (cursor < source.length) {
+    const char = source[cursor]!;
+    if (char === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (char === "[" && !inCharacterClass) {
+      inCharacterClass = true;
+      cursor++;
+      continue;
+    }
+    if (char === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      cursor++;
+      continue;
+    }
+    if (char === "/" && !inCharacterClass) {
+      cursor++;
+      while (isIdentifierPart(source[cursor])) cursor++;
+      return cursor;
+    }
+    if (char === "\n" || char === "\r") return index;
+    cursor++;
+  }
+
+  return index;
+}
+
+function previousSignificantIndex(source: string, index: number): number {
+  let cursor = index - 1;
+  while (cursor >= 0 && /\s/.test(source[cursor] ?? "")) cursor--;
+  return cursor;
+}
+
+function identifierBefore(source: string, endIndex: number): string | null {
+  const end = endIndex + 1;
+  let start = end;
+  while (start > 0 && isIdentifierPart(source[start - 1])) start--;
+  return start === end ? null : source.slice(start, end);
+}
+
+function skipComment(source: string, index: number): number {
+  if (source[index] !== "/" || index + 1 >= source.length) return index;
+  if (source[index + 1] === "/") {
+    const newlineIndex = source.indexOf("\n", index + 2);
+    return newlineIndex === -1 ? source.length : newlineIndex + 1;
+  }
+  if (source[index + 1] === "*") {
+    const closeIndex = source.indexOf("*/", index + 2);
+    return closeIndex === -1 ? source.length : closeIndex + 2;
+  }
+  return index;
+}
+
+function startsIdentifier(source: string, index: number, identifier: string): boolean {
+  if (source.slice(index, index + identifier.length) !== identifier) return false;
+  const before = index > 0 ? source[index - 1] : "";
+  const after = source[index + identifier.length] ?? "";
+  return !isIdentifierPart(before) && !isIdentifierPart(after);
+}
+
+function isIdentifierStart(char: string | undefined): boolean {
+  if (char === undefined) return false;
+  return char === "$" || char === "_" ||
+    (char >= "A" && char <= "Z") ||
+    (char >= "a" && char <= "z");
+}
+
+function isIdentifierPart(char: string | undefined): boolean {
+  return isIdentifierStart(char) || (char !== undefined && char >= "0" && char <= "9");
 }
 
 /**
@@ -135,7 +526,15 @@ async function writeCycleTargetAlias(
 export async function persistTransformedModule(
   input: PersistTransformedModuleInput,
 ): Promise<string> {
-  const transformedHash = hashCodeHex(input.transformedCode).slice(0, 8);
+  const unresolvedSpecifiers = [...new Set(input.unresolvedSpecifiers ?? [])].sort();
+  const serializedUnresolvedSpecifiers = JSON.stringify(unresolvedSpecifiers);
+  // Evidence changes the artifact identity only when evidence exists. This
+  // keeps the common no-evidence path stable and prevents concurrent writers
+  // with different classification data from sharing one mutable sidecar.
+  const transformedIdentity = unresolvedSpecifiers.length === 0
+    ? input.transformedCode
+    : `${input.transformedCode}\0${serializedUnresolvedSpecifiers}`;
+  const transformedHash = hashCodeHex(transformedIdentity).slice(0, 8);
 
   const relativePath = input.filePath.startsWith(input.projectDir)
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
@@ -185,7 +584,26 @@ export async function persistTransformedModule(
     }
   }
 
-  if (input.contentSourceId) {
+  // Publish the path cache only after its tenant-attribution evidence is
+  // durable. A new worker can otherwise reuse the transformed artifact from
+  // _index.json without knowing which authored imports remained unresolved.
+  let shouldPublishReusableCache = true;
+  if (unresolvedSpecifiers.length > 0) {
+    try {
+      await input.localAdapter.fs.writeFile(
+        `${tempFilePath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`,
+        serializedUnresolvedSpecifiers,
+      );
+    } catch (error) {
+      shouldPublishReusableCache = false;
+      logger.warn("Failed to persist unresolved-import evidence", {
+        filePath: input.filePath.slice(-40),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (shouldPublishReusableCache && input.contentSourceId) {
     const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
     const mdxCacheKey = buildMdxEsmPathCacheKey(
       normalizedPath,
@@ -209,7 +627,9 @@ export async function persistTransformedModule(
     });
   }
 
-  input.moduleCache.set(input.cacheKey, tempFilePath);
+  if (shouldPublishReusableCache) {
+    input.moduleCache.set(input.cacheKey, tempFilePath);
+  }
 
   if (input.isCycleTarget) {
     const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);

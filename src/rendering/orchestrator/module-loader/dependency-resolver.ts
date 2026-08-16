@@ -4,6 +4,7 @@ import { parallelMap, rendererLogger } from "#veryfront/utils";
 import {
   findDynamicImportSpans,
   findStaticImportFromSpans,
+  findStaticSideEffectImportSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
   type StaticImportSpan,
@@ -40,6 +41,7 @@ type AliasImport = {
   start: number;
   end: number;
   isDynamic: boolean;
+  isSideEffect: boolean;
 };
 type RelativeImport = {
   full: string;
@@ -48,6 +50,7 @@ type RelativeImport = {
   start: number;
   end: number;
   isDynamic: boolean;
+  isSideEffect: boolean;
 };
 
 /** Resolved local module dependency discovered in a source module. */
@@ -61,6 +64,8 @@ export type ResolvedModuleDependency = {
   isLocalLib: boolean;
   /** True when discovered inside `import("…")` rather than a static import. */
   isDynamic: boolean;
+  /** True when discovered in a bare `import "…"` statement. */
+  isSideEffect?: boolean;
 };
 
 /** Resolved dependency after its source module has been transformed to a temp file. */
@@ -80,7 +85,7 @@ const matchAlias = (specifier: string) => specifier.startsWith("@/") ? specifier
 const matchRelative = (specifier: string) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1];
 
 function collectAliasImports(fileContent: string): AliasImport[] {
-  const toAlias = (isDynamic: boolean) =>
+  const toAlias = (isDynamic: boolean, isSideEffect = false) =>
   (
     { original, path, start, end }: {
       original: string;
@@ -88,13 +93,17 @@ function collectAliasImports(fileContent: string): AliasImport[] {
       start: number;
       end: number;
     },
-  ): AliasImport => ({ full: original, path, start, end, isDynamic });
+  ): AliasImport => ({ full: original, path, start, end, isDynamic, isSideEffect });
 
   return [
     ...collectBoundedSpans(
       (maxMatches) => findStaticImportFromSpans(fileContent, matchAlias, maxMatches),
       "static alias",
     ).map(toAlias(false)),
+    ...collectBoundedSpans(
+      (maxMatches) => findStaticSideEffectImportSpans(fileContent, matchAlias, maxMatches),
+      "side-effect alias",
+    ).map(toAlias(false, true)),
     ...collectBoundedSpans(
       (maxMatches) => findDynamicImportSpans(fileContent, matchAlias, maxMatches),
       "dynamic alias",
@@ -103,7 +112,7 @@ function collectAliasImports(fileContent: string): AliasImport[] {
 }
 
 function collectRelativeImports(fileContent: string, fileDir: string): RelativeImport[] {
-  const toRelative = (isDynamic: boolean) =>
+  const toRelative = (isDynamic: boolean, isSideEffect = false) =>
   (
     { original, path, start, end }: {
       original: string;
@@ -111,13 +120,25 @@ function collectRelativeImports(fileContent: string, fileDir: string): RelativeI
       start: number;
       end: number;
     },
-  ): RelativeImport => ({ full: original, path, fromDir: fileDir, start, end, isDynamic });
+  ): RelativeImport => ({
+    full: original,
+    path,
+    fromDir: fileDir,
+    start,
+    end,
+    isDynamic,
+    isSideEffect,
+  });
 
   return [
     ...collectBoundedSpans(
       (maxMatches) => findStaticImportFromSpans(fileContent, matchRelative, maxMatches),
       "static relative",
     ).map(toRelative(false)),
+    ...collectBoundedSpans(
+      (maxMatches) => findStaticSideEffectImportSpans(fileContent, matchRelative, maxMatches),
+      "side-effect relative",
+    ).map(toRelative(false, true)),
     ...collectBoundedSpans(
       (maxMatches) => findDynamicImportSpans(fileContent, matchRelative, maxMatches),
       "dynamic relative",
@@ -191,6 +212,7 @@ async function resolveRelativeImport(
     depFilePath,
     isLocalLib: false,
     isDynamic: imp.isDynamic,
+    isSideEffect: imp.isSideEffect,
   };
 }
 
@@ -233,9 +255,13 @@ export function rewriteResolvedDependencyImports(
       start: dep.start,
       end: dep.end,
       expected: dep.full,
-      // A dynamic span covers only the quoted specifier; a static one covers the
-      // whole `from "…"` clause.
-      replacement: dep.isDynamic ? `"${moduleUrl}"` : `from "${moduleUrl}"`,
+      // A dynamic span covers only the quoted specifier, a side-effect span
+      // covers the bare import, and a static binding span covers `from "…"`.
+      replacement: dep.isSideEffect
+        ? `import "${moduleUrl}"`
+        : dep.isDynamic
+        ? `"${moduleUrl}"`
+        : `from "${moduleUrl}"`,
     };
   });
   return replaceSourceSpans(fileContent, replacements);

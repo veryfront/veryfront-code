@@ -53,6 +53,7 @@ import {
   describeHtmlModuleResponse,
   ensureAbsoluteDir,
   ensurePreparedHttpCacheRequestOptions,
+  fingerprintHttpModuleRequest,
   getEffectiveHttpCacheRequest,
   hashHttpCacheIdentity,
   hasIncompatibleFilePaths,
@@ -181,10 +182,17 @@ interface HttpModuleFetchResult {
   contentType: string;
 }
 
-function terminalHttpModuleFetchError(detail: string): VeryfrontError {
+function terminalHttpModuleFetchError(
+  detail: string,
+  context: {
+    httpStatus?: number;
+    httpModuleUrl?: string;
+    httpModuleRequestFingerprint?: string;
+  } = {},
+): VeryfrontError {
   return BUILD_FAILED.create({
     detail,
-    context: { phase: "http-module-fetch" },
+    context: { phase: "http-module-fetch", ...context },
   });
 }
 
@@ -316,7 +324,14 @@ async function fetchHttpModule(
     );
   } catch (error) {
     if (error instanceof HttpModuleResponseError) {
-      throw terminalHttpModuleFetchError(`Failed to fetch ${safeUrl}: ${error.status}`);
+      throw terminalHttpModuleFetchError(
+        `Failed to fetch ${safeUrl}: ${error.status}`,
+        {
+          httpStatus: error.status,
+          httpModuleUrl: safeUrl,
+          httpModuleRequestFingerprint: await fingerprintHttpModuleRequest(url),
+        },
+      );
     }
     if (error instanceof HttpModuleRequestError) {
       throw terminalHttpModuleFetchError(

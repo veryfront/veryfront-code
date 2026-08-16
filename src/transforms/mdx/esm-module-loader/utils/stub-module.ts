@@ -69,36 +69,74 @@ ${namedExports}
 `;
 }
 
+export interface DeferredImportErrorDescriptor {
+  name: string;
+  message: string;
+}
+
+function generateDeferredImportFailureCode(
+  modulePath: string,
+  deferredError?: DeferredImportErrorDescriptor,
+): string {
+  const message = JSON.stringify(
+    deferredError?.message ??
+      `[Veryfront] Missing module: ${modulePath}. This module or file does not exist in your project.`,
+  );
+  const name = JSON.stringify(deferredError?.name ?? "MissingModuleError");
+  return `const error = new Error(${message});
+error.name = ${name};
+throw error;
+`;
+}
+
+export interface CreateStubModuleOptions {
+  /** Reject a dynamic import when it executes instead of exporting fallback values. */
+  failOnImport?: boolean;
+  /** Sanitized typed error to throw when a strict dynamic import executes. */
+  deferredError?: DeferredImportErrorDescriptor;
+}
+
 export async function createStubModule(
   modulePath: string,
   code: string,
   importStatement: string,
   esmCacheDir: string,
+  options: CreateStubModuleOptions = {},
 ): Promise<string | null> {
   const namedImports = extractNamedImports(code, importStatement);
-  const stubHash = hashString(`stub:${modulePath}:${namedImports.join(",")}`);
+  const behavior = options.failOnImport ? "fail-on-import" : "fallback";
+  const deferredIdentity = options.deferredError
+    ? `${options.deferredError.name}:${options.deferredError.message}`
+    : "";
+  const stubHash = hashString(
+    `stub:${behavior}:${modulePath}:${namedImports.join(",")}:${deferredIdentity}`,
+  );
   const stubPath = join(esmCacheDir, `stub-${stubHash}.mjs`);
-  const stubCode = generateStubCode(modulePath, namedImports);
+  const stubCode = options.failOnImport
+    ? generateDeferredImportFailureCode(modulePath, options.deferredError)
+    : generateStubCode(modulePath, namedImports);
 
   try {
     await getLocalFs().writeTextFile(stubPath, stubCode);
 
-    const errorMessage = namedImports.length
-      ? `Missing module: ${modulePath} (imports: ${namedImports.join(", ")})`
-      : `Missing module: ${modulePath}`;
+    if (!options.failOnImport) {
+      const errorMessage = namedImports.length
+        ? `Missing module: ${modulePath} (imports: ${namedImports.join(", ")})`
+        : `Missing module: ${modulePath}`;
 
-    try {
-      getErrorCollector().addModuleError(errorMessage, modulePath, {
+      try {
+        getErrorCollector().addModuleError(errorMessage, modulePath, {
+          namedImports,
+          importStatement,
+        });
+      } catch (_) {
+        /* expected: error collector may not be initialized in all contexts */
+      }
+
+      logger.error(`${LOG_PREFIX_MDX_LOADER} Missing module: ${modulePath}`, {
         namedImports,
-        importStatement,
       });
-    } catch (_) {
-      /* expected: error collector may not be initialized in all contexts */
     }
-
-    logger.error(`${LOG_PREFIX_MDX_LOADER} Missing module: ${modulePath}`, {
-      namedImports,
-    });
 
     return stubPath;
   } catch (error) {
