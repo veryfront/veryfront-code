@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { afterAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { RSCDevServerHandler } from "./handler.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
@@ -46,8 +47,8 @@ describe(
           };
         }).renderHandler.moduleOptions;
 
-        expect(moduleOptions.isLocalProject).toBe(true);
-        expect(moduleOptions.serverExternalPackages).toEqual(["knex"]);
+        assertEquals(moduleOptions.isLocalProject, true);
+        assertEquals(moduleOptions.serverExternalPackages, ["knex"]);
       });
     });
 

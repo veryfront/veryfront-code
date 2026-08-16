@@ -180,6 +180,25 @@ describe("rewriteMdxRootDependencyImports", () => {
     );
   });
 
+  it("keeps configured server external packages unchanged", async () => {
+    const code = [
+      `import knex from "knex";`,
+      `import prisma from "@prisma/client";`,
+      `const queryBuilder = import("knex/query");`,
+    ].join("\n");
+
+    const result = await rewriteMdxRootDependencyImports(
+      code,
+      { imports: {} },
+      {
+        ...baseOptions,
+        serverExternalPackages: ["knex", "@prisma/client"],
+      },
+    );
+
+    assertEquals(result, code);
+  });
+
   it("keeps every supported bare Node builtin and its node: form unchanged", async () => {
     const code = NODE_BUILTINS.flatMap((specifier) => [
       `import "${specifier}";`,

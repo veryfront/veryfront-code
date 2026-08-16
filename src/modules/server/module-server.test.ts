@@ -2095,37 +2095,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("applies configured server external packages to served project modules", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-server-external-package-" });
-
-    try {
-      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
-      await Deno.writeTextFile(
-        `${projectDir}/components/Database.ts`,
-        `import knex from "knex"; export default knex;\n`,
-      );
-
-      const { serveModule } = await import("./module-server.ts");
-      const response = await serveModule(
-        new Request("http://localhost:3000/_vf_modules/components/Database.js"),
-        {
-          projectId: "server-external-package",
-          projectDir,
-          adapter: denoAdapter,
-          isLocalProject: true,
-          config: { build: { serverExternalPackages: ["knex"] } },
-        },
-      );
-
-      assertEquals(response.status, 200);
-      const text = await response.text();
-      assertStringIncludes(text, 'from "knex"');
-      assertEquals(text.includes("esm.sh/knex"), false);
-    } finally {
-      await Deno.remove(projectDir, { recursive: true });
-    }
-  });
-
   it("adds a default export for filename-matched browser modules", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-client-default-module-" });
 

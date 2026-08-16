@@ -240,6 +240,7 @@ export async function doLoadModuleESM(
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
+      serverExternalPackages: effectiveContext.serverExternalPackages,
     });
     rewritten = await pinSameOriginSSRModuleImports(
       rewritten,
