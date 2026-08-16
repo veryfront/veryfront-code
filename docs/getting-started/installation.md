@@ -87,6 +87,12 @@ Veryfront expects, including `"jsx": "react-jsx"` and
 }
 ```
 
+The base config sets `"noEmit": true` because Veryfront bundles your routes. If
+your existing build uses `tsc` to emit JavaScript, do not use this extends form:
+the build exits 0 but stops emitting. Keep your existing config and add the
+required compiler options, or set `"noEmit": false` in the config your build
+uses. See [Add to an existing project](./add-to-existing-project.md).
+
 ### Add a page and run it
 
 Veryfront discovers routes under `app/`. Create a home page:

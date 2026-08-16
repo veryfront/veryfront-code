@@ -1072,6 +1072,14 @@ describe("Guide: installation.md", () => {
       assertStringIncludes(guide, heading);
     }
   });
+
+  it("warns emitting projects about the inherited noEmit setting", async () => {
+    const guide = await readGuide("installation.md");
+
+    assertStringIncludes(guide, '"noEmit": true');
+    assertStringIncludes(guide, "stops emitting");
+    assertStringIncludes(guide, "./add-to-existing-project.md");
+  });
 });
 
 describe("Guide: create-project.md", () => {
