@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 
 const TEST_FILE_RE = /\.test\.[cm]?[jt]sx?$/i;
 const GLOB_CHARS_RE = /[\*\?\[]/;
@@ -124,6 +124,18 @@ function isMissingPathError(error) {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
+/**
+ * True when `target` sits under a dot-prefixed directory relative to `cwd`.
+ *
+ * Only segments below `cwd` count: a checkout that itself lives under a hidden
+ * directory is not thereby invisible to its own test runner.
+ */
+function hasHiddenSegment(target, cwd) {
+  const relativePath = relative(cwd, target);
+  if (relativePath === "" || relativePath.startsWith("..")) return false;
+  return toPosixPath(relativePath).split("/").some((segment) => segment.startsWith("."));
+}
+
 function listWithFallback(patterns, cwd) {
   const files = new Set();
   for (const pattern of patterns) {
@@ -151,6 +163,11 @@ function listWithFallback(patterns, cwd) {
     }
 
     const baseDir = getBaseDir(pattern, cwd);
+    // `rg` prunes hidden directories before the glob is applied, so a pattern
+    // whose literal prefix descends into one matches nothing at all — verified
+    // with rg 15: `-g 'src/.fixtures/**/*.test.ts'` returns no files. `walk`
+    // starts *inside* the base, so the per-entry hidden check never sees it.
+    if (hasHiddenSegment(baseDir, cwd)) continue;
     // A glob whose base does not exist contributes nothing, the same as the
     // non-glob branch above. This is checked up front rather than by catching
     // around the walk: a failure *inside* the traversal (an unreadable

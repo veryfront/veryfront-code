@@ -251,6 +251,18 @@ describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
     });
   });
 
+  it("matches nothing when the glob's literal prefix is a hidden directory", () => {
+    // rg prunes the hidden directory before applying the glob, so this pattern
+    // returns no files at all. `walk` starts inside the base, so the per-entry
+    // check never sees `.fixtures` — the base itself has to be rejected.
+    withFixture(DOTFILE_TREE, (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesWithoutRipgrep(["src/.fixtures/**/*.test.ts"], root), root),
+        [],
+      );
+    });
+  });
+
   it("still prunes a hidden directory", () => {
     withFixture(DOTFILE_TREE, (root) => {
       const selected = relativeSorted(
