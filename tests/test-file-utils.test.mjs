@@ -241,9 +241,41 @@ describe("listTestFiles does not hide a failed traversal", () => {
   // raised *during* traversal after files had already been collected, so the
   // runner could execute a partial selection and report success — the same
   // silent-omission failure this module is being fixed for.
+  it("propagates an unreadable glob base instead of dropping the pattern", () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return;
+    if (process.platform === "win32") return;
+    withFixture(BASE_TREE, (root) => {
+      // The glob's base is `src/`, reached through an ancestor we cannot
+      // search. `statSync` raises EACCES rather than ENOENT, and treating that
+      // as "missing" would drop the whole pattern — leaving an empty selection
+      // that the runner reports as a clean pass.
+      const gate = join(root, "src");
+      chmodSync(gate, 0o000);
+      try {
+        const result = runListTestFilesProbe(["src/nested/**/*.test.ts"], root);
+        ok(
+          result.status !== 0,
+          `expected a non-zero exit, got ${result.status} with stdout: ${result.stdout}`,
+        );
+        ok(
+          /EACCES|EPERM/.test(result.stderr),
+          `expected a permission error to surface, got: ${result.stderr}`,
+        );
+      } finally {
+        chmodSync(gate, 0o755);
+      }
+    });
+  });
+
   it("propagates an unreadable subdirectory instead of returning a partial set", () => {
     if (typeof process.getuid === "function" && process.getuid() === 0) {
       // root ignores the mode bits, so the error cannot be provoked.
+      return;
+    }
+    if (process.platform === "win32") {
+      // `chmod 000` does not deny directory traversal on Windows, so the child
+      // would succeed and the assertion below would fail for the wrong reason.
+      // No CI runner is Windows today; this is for local runs.
       return;
     }
     withFixture(BASE_TREE, (root) => {

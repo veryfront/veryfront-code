@@ -104,6 +104,18 @@ function getBaseDir(pattern, cwd) {
   return resolve(cwd, base || ".");
 }
 
+/**
+ * A base path that does not exist contributes nothing. Anything else —
+ * `EACCES` on an ancestor, a device error — has to propagate: swallowing it
+ * would drop the whole pattern, and if that left the selection empty the
+ * runner would exit 0 having run nothing. That silent-omission failure is the
+ * reason this module is being fixed.
+ */
+function isMissingPathError(error) {
+  const code = error?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 function listWithFallback(patterns, cwd) {
   const files = new Set();
   for (const pattern of patterns) {
@@ -119,8 +131,10 @@ function listWithFallback(patterns, cwd) {
         } else if (stats.isFile() && TEST_FILE_RE.test(absolute)) {
           files.add(absolute);
         }
-      } catch {
-        // Ignore missing paths.
+      } catch (error) {
+        // Same rule as the glob branch below: a missing path contributes
+        // nothing, anything else propagates.
+        if (!isMissingPathError(error)) throw error;
       }
       continue;
     }
@@ -136,7 +150,8 @@ function listWithFallback(patterns, cwd) {
     // errors propagate.
     try {
       if (!statSync(baseDir).isDirectory()) continue;
-    } catch {
+    } catch (error) {
+      if (!isMissingPathError(error)) throw error;
       continue;
     }
     const matcher = globToRegex(toPosixPath(pattern));
