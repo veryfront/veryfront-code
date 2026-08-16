@@ -1,7 +1,35 @@
 /**
- * Public filesystem, path, and cwd utilities.
+ * Runtime-native filesystem, path, and cwd utilities.
  *
  * @module fs
+ *
+ * @remarks
+ * ## Runtime boundary
+ *
+ * `veryfront/fs` uses the native process filesystem selected for Deno, Node, or Bun.
+ * It does not delegate to the `runtime.get().fs` adapter. Custom adapters
+ * configured with `runtime.set()` affect adapter-consuming APIs, not these
+ * compatibility functions.
+ *
+ * `veryfront/fs` does not add a project-root sandbox, block `.env` or other
+ * secret-file names, or validate paths from untrusted input. Relative paths
+ * resolve from `cwd()`. Absolute paths and `..` segments can reach any location
+ * that the runtime permits.
+ *
+ * Runtime permissions remain the outer boundary. Hosted project secrets are
+ * supplied through request-owned environment data rather than `.env` files.
+ * Isolated Pages route `ctx.fs` is a separate, read-only, project-confined
+ * capability. Those protections do not change the contract of `veryfront/fs`.
+ *
+ * Canonicalize a trusted root and candidate with `realPath`, then use
+ * `validateLexicalPath` from `veryfront/security` before reading a
+ * user-influenced path. Canonicalization follows existing symlinks before the
+ * containment check.
+ *
+ * Path admission is not an operating-system sandbox.
+ * The trusted root must not be writable by untrusted or project code while a
+ * validated path is in use. Otherwise, concurrent filesystem changes can
+ * create a time-of-check/time-of-use race between validation and reading.
  *
  * @example File operations
  * ```ts
@@ -25,6 +53,27 @@
  * import { cwd, resolve } from "veryfront/fs";
  *
  * const configPath = resolve(cwd(), "veryfront.config.ts");
+ * ```
+ *
+ * @example Confine an untrusted path
+ * ```ts
+ * import { cwd, readTextFile, realPath, resolve } from "veryfront/fs";
+ * import { validateLexicalPath } from "veryfront/security";
+ *
+ * const publicFilesDir = await realPath(resolve(cwd(), "public-data"));
+ *
+ * export async function readPublicFile(requestedPath: string): Promise<string> {
+ *   const candidate = resolve(publicFilesDir, requestedPath);
+ *   const canonicalPath = await realPath(candidate);
+ *   const admitted = validateLexicalPath(canonicalPath, {
+ *     baseDir: publicFilesDir,
+ *     allowAbsolute: true,
+ *   });
+ *   if (!admitted.valid || !admitted.canonicalPath) {
+ *     throw new Error("Invalid path");
+ *   }
+ *   return await readTextFile(admitted.canonicalPath);
+ * }
  * ```
  */
 

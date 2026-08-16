@@ -5,6 +5,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#std/testing/bdd";
 import { compile } from "npm:@mdx-js/mdx@3.1.1";
+import { parseBarrelJSDoc } from "./barrel-jsdoc.ts";
 
 const CHECK_TEMP_PREFIX = "veryfront-api-reference-check-";
 
@@ -82,6 +83,98 @@ async function assertGeneratedReferenceIsFormatted(
 }
 
 describe("generate-api-reference", () => {
+  it("preserves JSDoc tags inside fenced examples", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * Example module.
+ *
+ * @module example
+ *
+ * @example Decorated class
+ * \`\`\`ts
+ * @sealed
+ * class Example {}
+ * \`\`\`
+ *
+ * @remarks
+ * The example remains intact.
+ */`);
+
+    assertEquals(parsed.examples, [{
+      title: "Decorated class",
+      code: "```ts\n@sealed\nclass Example {}\n```\n",
+    }]);
+    assertEquals(parsed.remarks, "The example remains intact.");
+  });
+
+  it("preserves JSDoc tags inside tilde-fenced examples", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * @module example
+ * @example Decorated class
+ * ~~~ts
+ * @sealed
+ * class Example {}
+ * ~~~
+ * @remarks
+ * The example remains intact.
+ */`);
+
+    assertEquals(parsed.examples, [{
+      title: "Decorated class",
+      code: "~~~ts\n@sealed\nclass Example {}\n~~~",
+    }]);
+    assertEquals(parsed.remarks, "The example remains intact.");
+  });
+
+  it("preserves JSDoc tags inside fenced remarks", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * @module example
+ * @remarks
+ * The literal tag stays in this example:
+ * ~~~md
+ * @example This is Markdown content
+ * ~~~
+ * @example Actual example
+ * ~~~ts
+ * export const value = true;
+ * ~~~
+ * @returns Nothing.
+ */`);
+
+    assertEquals(
+      parsed.remarks,
+      "The literal tag stays in this example:\n~~~md\n@example This is Markdown content\n~~~",
+    );
+    assertEquals(parsed.examples, [{
+      title: "Actual example",
+      code: "~~~ts\nexport const value = true;\n~~~",
+    }]);
+  });
+
+  it("does not close a fence on a delimiter indented by four spaces", () => {
+    const parsed = parseBarrelJSDoc(`/**
+ * @module example
+ * @example Nested Markdown
+ * ~~~md
+ *     ~~~
+ * @literal
+ * ~~~
+ * @returns Nothing.
+ */`);
+
+    assertEquals(parsed.examples, [{
+      title: "Nested Markdown",
+      code: "~~~md\n    ~~~\n@literal\n~~~",
+    }]);
+  });
+
+  it("uses a safe Markdown code span for linked labels containing backticks", () => {
+    const parsed = parseBarrelJSDoc(
+      "/**\n * Uses {@link Example|C:\\path<T>`name}.\n */",
+    );
+
+    assertEquals(parsed.description, "Uses ``C:\\path<T>`name``.");
+  });
+
   it("removes check output when generation fails", async () => {
     const sandboxRoot = await Deno.makeTempDir();
     const emptyRoot = `${sandboxRoot}/cwd`;
@@ -160,6 +253,9 @@ describe("generate-api-reference", () => {
       const chatReference = await Deno.readTextFile(
         `${outputDir}/veryfront/chat.md`,
       );
+      const fsReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/fs.md`,
+      );
       const agentReference = await Deno.readTextFile(
         `${outputDir}/veryfront/agent.md`,
       );
@@ -182,13 +278,63 @@ describe("generate-api-reference", () => {
         false,
         "generated client reference must not expose internal import specifiers",
       );
+      assertStringIncludes(fsReference, "## Runtime boundary");
+      assertStringIncludes(
+        fsReference,
+        "uses the native process filesystem selected for Deno, Node, or Bun",
+      );
+      assertStringIncludes(
+        fsReference,
+        "does not delegate to the `runtime.get().fs` adapter",
+      );
+      assertMatch(
+        fsReference,
+        /does not add a\s+project-root sandbox, block `\.env` or other\s+secret-file names/,
+      );
+      assertMatch(
+        fsReference,
+        /Isolated Pages route `ctx\.fs` is a separate, read-only, project-confined\s+capability/,
+      );
+      assertStringIncludes(
+        fsReference,
+        'import { cwd, readTextFile, realPath, resolve } from "veryfront/fs";',
+      );
+      assertStringIncludes(
+        fsReference,
+        'import { validateLexicalPath } from "veryfront/security";',
+      );
+      assertEquals(
+        fsReference.includes('from "veryfront/platform"'),
+        false,
+        "the copyable example must use only published package exports",
+      );
+      assertStringIncludes(
+        fsReference,
+        'const publicFilesDir = await realPath(resolve(cwd(), "public-data"));',
+      );
+      assertMatch(
+        fsReference,
+        /const candidate = resolve\(publicFilesDir, requestedPath\);[\s\S]*?const canonicalPath = await realPath\(candidate\);[\s\S]*?validateLexicalPath\(canonicalPath, \{[\s\S]*?baseDir: publicFilesDir/,
+        "the confinement example must validate the physically resolved path",
+      );
+      assertStringIncludes(
+        fsReference,
+        "return await readTextFile(admitted.canonicalPath);",
+        "the confinement example must read the admitted canonical path",
+      );
+      assertEquals(
+        fsReference.indexOf("## Runtime boundary") <
+          fsReference.indexOf("## Import"),
+        true,
+        "runtime boundary guidance must precede imports",
+      );
       assertMatch(
         uiReference,
         /^\|\s*`AppShellProps`\s*\|\s*Props accepted by `AppShell`\.\s*\|/m,
       );
       assertMatch(
         uiReference,
-        /import type \{\s*DisclosureParts,\s*DisclosureProps,\s*MultipleToggleGroupRootProps,?\s*\} from "veryfront\/ui\/adapter";/m,
+        /import type \{\s*[A-Za-z][A-Za-z0-9]*(?:,\s*[A-Za-z][A-Za-z0-9]*){0,2},?\s*\} from "veryfront\/ui\/adapter";/m,
         "type-only deep exports must use a copyable type import",
       );
       for (
