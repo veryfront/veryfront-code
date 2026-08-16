@@ -226,6 +226,19 @@ describe("LayoutCollector", () => {
       assertEquals(await extract("export const frontmatter = { layout: false };"), false);
     });
 
+    it("extracts separately declared exported layout bindings", async () => {
+      assertEquals(
+        await extract(`const layout = false;
+export { layout };`),
+        false,
+      );
+      assertEquals(
+        await extract(`const metadata = { layout: "special" };
+export { metadata as frontmatter };`),
+        "special",
+      );
+    });
+
     it("ignores local declarations and layout-looking comments", async () => {
       assertEquals(
         await extract(`// export const layout = false

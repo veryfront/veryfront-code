@@ -136,13 +136,40 @@ export async function extractTsxLayoutSignal(
     return undefined;
   }
 
-  let directLayout: boolean | string | undefined;
-  let frontmatterLayout: boolean | string | undefined;
+  const constBindings = new Map<string, unknown>();
+  const exportedBindings = new Map<"layout" | "frontmatter", string>();
   for (const statement of getProgramBody(ast)) {
-    if (statement.type !== "ExportNamedDeclaration" || !isAstNode(statement.declaration)) {
-      continue;
+    let declaration = statement;
+    let isInlineExport = false;
+
+    if (statement.type === "ExportNamedDeclaration") {
+      if (
+        statement.exportKind !== "type" && statement.source == null &&
+        Array.isArray(statement.specifiers)
+      ) {
+        for (const specifier of statement.specifiers) {
+          if (
+            !isAstNode(specifier) || specifier.type !== "ExportSpecifier" ||
+            specifier.exportKind === "type"
+          ) {
+            continue;
+          }
+          const exportedName = getIdentifierName(specifier.exported);
+          const localName = getIdentifierName(specifier.local);
+          if (
+            (exportedName === "layout" || exportedName === "frontmatter") &&
+            localName && !exportedBindings.has(exportedName)
+          ) {
+            exportedBindings.set(exportedName, localName);
+          }
+        }
+      }
+
+      if (!isAstNode(statement.declaration)) continue;
+      declaration = statement.declaration;
+      isInlineExport = true;
     }
-    const declaration = statement.declaration;
+
     if (
       declaration.type !== "VariableDeclaration" || declaration.kind !== "const" ||
       !Array.isArray(declaration.declarations)
@@ -153,14 +180,25 @@ export async function extractTsxLayoutSignal(
     for (const declarator of declaration.declarations) {
       if (!isAstNode(declarator) || declarator.type !== "VariableDeclarator") continue;
       const name = getIdentifierName(declarator.id);
-      if (name === "frontmatter" && frontmatterLayout === undefined) {
-        frontmatterLayout = getObjectLayoutValue(declarator.init);
-      } else if (name === "layout" && directLayout === undefined) {
-        directLayout = getLiteralLayoutValue(declarator.init);
+      if (!name) continue;
+      if (!constBindings.has(name)) constBindings.set(name, declarator.init);
+      if (
+        isInlineExport && (name === "layout" || name === "frontmatter") &&
+        !exportedBindings.has(name)
+      ) {
+        exportedBindings.set(name, name);
       }
     }
   }
 
+  const frontmatterBinding = exportedBindings.get("frontmatter");
+  const directBinding = exportedBindings.get("layout");
+  const frontmatterLayout = frontmatterBinding
+    ? getObjectLayoutValue(constBindings.get(frontmatterBinding))
+    : undefined;
+  const directLayout = directBinding
+    ? getLiteralLayoutValue(constBindings.get(directBinding))
+    : undefined;
   return frontmatterLayout ?? directLayout;
 }
 
