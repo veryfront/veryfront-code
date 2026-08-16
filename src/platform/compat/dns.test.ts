@@ -2,9 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __resetHostAddressCacheForTests,
   createHostAddressResolver,
   HOST_ADDRESS_CACHE_MAX_ENTRIES,
   HOST_ADDRESS_CACHE_TTL_MS,
+  resolveHostAddresses,
+  resolveLoopbackAddresses,
 } from "./dns.ts";
 
 /** Deferred promise so a test can hold a resolution open and observe fan-in. */
@@ -190,5 +193,82 @@ describe("createHostAddressResolver", () => {
     // must hold a realistic dependency fan-out.
     assertEquals(HOST_ADDRESS_CACHE_TTL_MS >= 5_000, true);
     assertEquals(HOST_ADDRESS_CACHE_MAX_ENTRIES >= 64, true);
+  });
+});
+
+describe("platform/compat/dns loopback names", () => {
+  // #3785. The Node/Bun branch used dns.resolve4/resolve6, which query
+  // nameservers directly, so `localhost` was unresolvable wherever the
+  // configured resolver does not answer for it — and the guarded-egress
+  // resolver sits behind a security control, so it 302'd/blocked instead.
+  //
+  // Deno's resolveDns answers for `localhost` but NOT for other /etc/hosts
+  // entries (measured: `broadcasthost` is in /etc/hosts and returns NotFound),
+  // so "consult the hosts file" is not what Deno does and is not the parity
+  // target. The parity target is: real DNS, plus the loopback names RFC 6761
+  // §6.3 reserves, resolved without a round trip. Same answer in every
+  // runtime, by construction rather than by whatever each resolver
+  // special-cases.
+  // These four are runtime-independent: they assert the rule itself rather
+  // than what the host's resolver happens to answer. That matters because the
+  // end-to-end cases below pass under Deno both before and after the fix —
+  // Deno was never broken — so they cannot carry the regression on their own.
+  it("answers the reserved loopback names for both families", () => {
+    assertEquals(resolveLoopbackAddresses("localhost", ["A", "AAAA"]), ["127.0.0.1", "::1"]);
+    assertEquals(resolveLoopbackAddresses("LocalHost", ["A"]), ["127.0.0.1"]);
+    assertEquals(resolveLoopbackAddresses("localhost.", ["AAAA"]), ["::1"]);
+  });
+
+  it("answers RFC 6761 .localhost subdomains", () => {
+    assertEquals(resolveLoopbackAddresses("api.localhost", ["A"]), ["127.0.0.1"]);
+    assertEquals(resolveLoopbackAddresses("a.b.localhost", ["A", "AAAA"]), ["127.0.0.1", "::1"]);
+  });
+
+  it("declines every other name, including /etc/hosts entries", () => {
+    // `broadcasthost` is in /etc/hosts on macOS. Deno's resolveDns returns
+    // NotFound for it, so the hosts file is not the parity target and must not
+    // become one — that would widen what the egress guard can reach.
+    assertEquals(resolveLoopbackAddresses("broadcasthost", ["A"]), null);
+    assertEquals(resolveLoopbackAddresses("example.com", ["A"]), null);
+    assertEquals(resolveLoopbackAddresses("notlocalhost", ["A"]), null);
+  });
+
+  it("does not treat a name merely containing localhost as reserved", () => {
+    assertEquals(resolveLoopbackAddresses("localhost.evil.com", ["A"]), null);
+    assertEquals(resolveLoopbackAddresses("mylocalhost", ["A"]), null);
+  });
+
+  it("resolves localhost to loopback without a nameserver query", async () => {
+    __resetHostAddressCacheForTests();
+    const addresses = await resolveHostAddresses("localhost");
+    assertEquals(addresses.includes("127.0.0.1"), true, `got ${JSON.stringify(addresses)}`);
+    assertEquals(addresses.includes("::1"), true, `got ${JSON.stringify(addresses)}`);
+    __resetHostAddressCacheForTests();
+  });
+
+  it("honours the requested record types for a loopback name", async () => {
+    __resetHostAddressCacheForTests();
+    assertEquals(await resolveHostAddresses("localhost", { recordTypes: ["A"] }), ["127.0.0.1"]);
+    __resetHostAddressCacheForTests();
+    assertEquals(await resolveHostAddresses("localhost", { recordTypes: ["AAAA"] }), ["::1"]);
+    __resetHostAddressCacheForTests();
+  });
+
+  it("treats RFC 6761 .localhost subdomains as loopback", async () => {
+    __resetHostAddressCacheForTests();
+    const addresses = await resolveHostAddresses("api.localhost", { recordTypes: ["A"] });
+    assertEquals(addresses, ["127.0.0.1"]);
+    __resetHostAddressCacheForTests();
+  });
+
+  it("does not give other /etc/hosts entries any authority", async () => {
+    // The refuted fix switched Node to dns.lookup, which reads /etc/hosts and
+    // would resolve this on macOS while Deno returns nothing — inverting the
+    // divergence instead of closing it. Loopback names are special-cased; the
+    // hosts file is not consulted.
+    __resetHostAddressCacheForTests();
+    const addresses = await resolveHostAddresses("broadcasthost", { recordTypes: ["A"] });
+    assertEquals(addresses, [], `got ${JSON.stringify(addresses)}`);
+    __resetHostAddressCacheForTests();
   });
 });

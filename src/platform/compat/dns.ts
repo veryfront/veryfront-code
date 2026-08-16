@@ -154,11 +154,60 @@ export function createHostAddressResolver(
   };
 }
 
+/**
+ * Loopback addresses per family, for the names RFC 6761 §6.3 reserves.
+ */
+const LOOPBACK_ADDRESSES: Readonly<Record<DnsAddressRecordType, string>> = {
+  A: "127.0.0.1",
+  AAAA: "::1",
+};
+
+/**
+ * True for `localhost` and any `*.localhost` subdomain.
+ *
+ * RFC 6761 §6.3 reserves these names and requires that they resolve to
+ * loopback, so a resolver may answer for them without a nameserver query.
+ * Matches `isLocalhostName` in `security/sandbox/worker-egress-guard.ts`; a
+ * trailing dot (the fully-qualified form) is accepted here because a caller
+ * can legitimately pass one.
+ */
+function isLoopbackName(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
+  return normalized === "localhost" || normalized.endsWith(".localhost");
+}
+
+/**
+ * Loopback answers for a reserved name, or `null` when the name is not one.
+ *
+ * Exported for tests: the runtimes disagreed here (#3785) and the fix has to
+ * be assertable without depending on what the host's resolver happens to
+ * answer, which is the very thing that made the divergence invisible.
+ *
+ * @internal
+ */
+export function resolveLoopbackAddresses(
+  hostname: string,
+  recordTypes: readonly DnsAddressRecordType[],
+): string[] | null {
+  if (!isLoopbackName(hostname)) return null;
+  return recordTypes.map((recordType) => LOOPBACK_ADDRESSES[recordType]);
+}
+
 async function resolveHostAddressesUncached(
   hostname: string,
   options: { recordTypes: readonly DnsAddressRecordType[] },
 ): Promise<string[]> {
   const results: string[] = [];
+
+  // Answered before any runtime branch, so every runtime returns the same
+  // addresses for these names. `Deno.resolveDns` answers for `localhost` while
+  // Node's `resolve4`/`resolve6` query nameservers and do not — which is the
+  // whole of #3785. Note this is NOT "consult the hosts file": `resolveDns`
+  // does not (measured — `broadcasthost` is in /etc/hosts and returns
+  // NotFound), and giving the hosts file authority over a resolver that sits
+  // behind the egress guard would widen what that guard can reach.
+  const loopback = resolveLoopbackAddresses(hostname, options.recordTypes);
+  if (loopback !== null) return loopback;
 
   if (isDeno) {
     const deno = getDenoRuntime();
