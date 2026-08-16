@@ -30,6 +30,7 @@ const MAX_REMOTE_MCP_TOOL_SCHEMA_BYTES = 16_384;
 const MAX_REMOTE_MCP_TOOL_SCHEMA_DEPTH = 64;
 const MAX_REMOTE_MCP_TOOL_SCHEMA_NODES = 4_096;
 const MAX_REMOTE_MCP_CURSOR_LENGTH = 4_096;
+const MAX_REMOTE_MCP_CORRELATION_ID_LENGTH = 256;
 const UTF8_ENCODER = new TextEncoder();
 
 class RemoteMCPHttpError extends Error {
@@ -58,8 +59,16 @@ export interface RemoteMCPToolSourceConfig {
 }
 
 interface JsonRpcErrorObject {
+  code?: unknown;
   message?: unknown;
   data?: unknown;
+}
+
+const JSON_RPC_TOOL_ERROR_RESULT = Symbol("veryfront.remote-mcp.json-rpc-tool-error");
+
+interface JsonRpcToolErrorResult {
+  [JSON_RPC_TOOL_ERROR_RESULT]: true;
+  result: Record<string, unknown>;
 }
 
 interface JsonRpcCallToolContentItem {
@@ -72,6 +81,22 @@ interface SseEvent {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isJsonRpcErrorObject(
+  value: unknown,
+): value is JsonRpcErrorObject & { code: number; message: string } {
+  return isRecord(value) &&
+    typeof value.code === "number" &&
+    Number.isInteger(value.code) &&
+    typeof value.message === "string" &&
+    value.message.trim().length > 0;
+}
+
+function isJsonRpcToolErrorResult(value: unknown): value is JsonRpcToolErrorResult {
+  if (!isRecord(value)) return false;
+  const candidate = value as unknown as Partial<JsonRpcToolErrorResult>;
+  return candidate[JSON_RPC_TOOL_ERROR_RESULT] === true && isRecord(candidate.result);
 }
 
 function isResolver<T>(
@@ -275,6 +300,32 @@ function parseJsonText(text: string): unknown | undefined {
   return snapshot.success ? snapshot.value : undefined;
 }
 
+const MCP_ERROR_CODE = /^[a-z][a-z0-9_-]{0,63}$/;
+const MCP_ERROR_CODE_PREFIX = /^\[([a-z][a-z0-9_-]{0,63})\](?:\s|$)/;
+
+function parseCallToolErrorText(
+  text: string,
+  context?: ToolExecutionContext,
+  fallbackCode?: string,
+): unknown {
+  const parsed = parseJsonText(text);
+  if (parsed !== undefined) return parsed;
+
+  const code = fallbackCode && MCP_ERROR_CODE.test(fallbackCode)
+    ? fallbackCode
+    : MCP_ERROR_CODE_PREFIX.exec(text)?.[1] ?? "tool_error";
+  return {
+    error: code,
+    code,
+    message: text,
+    ...(context?.toolCallId
+      ? {
+        correlation_id: context.toolCallId.slice(0, MAX_REMOTE_MCP_CORRELATION_ID_LENGTH),
+      }
+      : {}),
+  };
+}
+
 function isOauthExpiredMessage(value: unknown): boolean {
   const snapshot = snapshotBoundedJsonValue(value);
   const safeValue = snapshot.success ? snapshot.value : undefined;
@@ -414,6 +465,33 @@ function extractJsonRpcErrorMessage(payload: Record<string, unknown>): string {
   }
 
   return "Remote MCP server returned an error";
+}
+
+function extractJsonRpcToolError(payload: Record<string, unknown>): Record<string, unknown> {
+  const rawError = isRecord(payload.error) ? payload.error as JsonRpcErrorObject : {};
+  const dataSnapshot = snapshotBoundedJsonValue(rawError.data);
+  const data = dataSnapshot.success ? dataSnapshot.value : undefined;
+  const dataRecord = isRecord(data) ? data : undefined;
+  const dataCode = typeof dataRecord?.code === "string" && MCP_ERROR_CODE.test(dataRecord.code)
+    ? dataRecord.code
+    : undefined;
+  const rawRequestId = typeof dataRecord?.request_id === "string"
+    ? dataRecord.request_id
+    : typeof dataRecord?.requestId === "string"
+    ? dataRecord.requestId
+    : undefined;
+  const requestId = rawRequestId && rawRequestId.length <= MAX_REMOTE_MCP_CORRELATION_ID_LENGTH
+    ? rawRequestId
+    : undefined;
+  const code = dataCode ?? "remote_mcp_json_rpc_error";
+
+  return {
+    error: code,
+    code,
+    message: extractJsonRpcErrorMessage(payload).slice(0, MAX_ERROR_BODY_LENGTH),
+    ...(requestId ? { request_id: requestId } : {}),
+    ...(typeof rawError.code === "number" ? { json_rpc_code: rawError.code } : {}),
+  };
 }
 
 function parseSseEvents(text: string): SseEvent[] {
@@ -724,7 +802,11 @@ async function postJsonRpc(
   }
 }
 
-function getJsonRpcResult(payload: unknown, expectedId: string): unknown {
+function getJsonRpcResult(
+  payload: unknown,
+  expectedId: string,
+  preserveToolErrors = false,
+): unknown {
   if (!isRecord(payload)) {
     throw NETWORK_ERROR.create({ detail: "Remote MCP response was not a JSON object" });
   }
@@ -744,6 +826,17 @@ function getJsonRpcResult(payload: unknown, expectedId: string): unknown {
     throw protocolError("Remote MCP response cannot include both result and error");
   }
   if (hasError) {
+    if (!isJsonRpcErrorObject(payload.error)) {
+      throw protocolError("Remote MCP response included a malformed JSON-RPC error object");
+    }
+    if (preserveToolErrors) {
+      // Tool execution errors are recoverable model-visible results. Discovery
+      // and other protocol operations keep the existing NETWORK_ERROR path.
+      return {
+        [JSON_RPC_TOOL_ERROR_RESULT]: true,
+        result: extractJsonRpcToolError(payload),
+      } satisfies JsonRpcToolErrorResult;
+    }
     throw NETWORK_ERROR.create({ detail: extractJsonRpcErrorMessage(payload) });
   }
 
@@ -776,9 +869,20 @@ function normalizeCallToolResult(input: {
     );
 
     if (isError) {
-      const errorBody = "structuredContent" in result
-        ? result.structuredContent
-        : parseJsonText(text) ?? { error: "tool_error", message: text };
+      const contentErrorBody = parseCallToolErrorText(
+        text,
+        input.context,
+        typeof result.error === "string" && result.error.trim().length > 0
+          ? result.error
+          : undefined,
+      );
+      const structuredErrorBody = result.structuredContent;
+      const hasStructuredErrorDetails = Object.hasOwn(result, "structuredContent") &&
+        structuredErrorBody !== undefined &&
+        structuredErrorBody !== null &&
+        !(typeof structuredErrorBody === "string" && structuredErrorBody.trim().length === 0) &&
+        !(isRecord(structuredErrorBody) && Object.keys(structuredErrorBody).length === 0);
+      const errorBody = hasStructuredErrorDetails ? structuredErrorBody : contentErrorBody;
       return preserveToolExecutionErrorMarker(
         normalizeKnownToolError(errorBody, input.toolName, input.endpoint, input.context),
       );
@@ -956,7 +1060,12 @@ function createRemoteMCPToolSourceWithFetch(
           MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
         );
 
-        const result = getJsonRpcResult(payload, requestId);
+        const result = getJsonRpcResult(payload, requestId, true);
+        if (isJsonRpcToolErrorResult(result)) {
+          return preserveToolExecutionErrorMarker(
+            normalizeKnownToolError(result.result, toolName, endpoint, context),
+          );
+        }
         const resultSnapshot = snapshotBoundedJsonValue(result);
         if (!resultSnapshot.success) {
           throw protocolError("Remote MCP tools/call returned an unbounded JSON result");
@@ -972,7 +1081,6 @@ function createRemoteMCPToolSourceWithFetch(
         if (normalizedError) {
           return normalizedError;
         }
-
         throw error;
       }
     },

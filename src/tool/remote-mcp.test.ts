@@ -16,6 +16,7 @@ import {
   MAX_REMOTE_MCP_TOOL_LIST_PAGES,
   MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
 } from "./remote-mcp.ts";
+import { getToolResultError } from "./result.ts";
 
 describe("tool/remote-mcp", () => {
   it("uses host transport only for an exact trusted endpoint", async () => {
@@ -522,6 +523,65 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("falls back to MCP text diagnostics when structuredContent is empty", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:create_agent",
+        result: {
+          isError: true,
+          structuredContent: {},
+          content: [{
+            text: "[already_exists] Agent already exists",
+          }],
+        },
+      }), async () =>
+      await source.executeTool("create_agent", { id: "writer" }, {
+        toolCallId: "tool-call-123",
+      }));
+
+    assertEquals(result, {
+      error: "already_exists",
+      code: "already_exists",
+      message: "[already_exists] Agent already exists",
+      correlation_id: "tool-call-123",
+    });
+    assertEquals(getToolResultError(result), "[already_exists] Agent already exists");
+  });
+
+  it("bounds local tool-call correlation ids in text error results", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+    const oversizedToolCallId = `tool-${"x".repeat(252)}`;
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:create_agent",
+        result: {
+          isError: true,
+          content: [{ text: "Agent already exists" }],
+        },
+      }), async () =>
+      await source.executeTool("create_agent", { id: "writer" }, {
+        toolCallId: oversizedToolCallId,
+      }));
+
+    assertEquals(result, {
+      error: "tool_error",
+      code: "tool_error",
+      message: "Agent already exists",
+      correlation_id: oversizedToolCallId.slice(0, 256),
+    });
+  });
+
   it("wraps non-object structured MCP errors with a canonical marker", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
@@ -565,7 +625,8 @@ describe("tool/remote-mcp", () => {
       }), async () => await source.executeTool("search_docs", { query: "auth" }));
 
     assertEquals(result, {
-      error: "tool_error",
+      error: "rate_limited",
+      code: "rate_limited",
       message: "Try again later",
     });
   });
@@ -633,6 +694,68 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("returns structured JSON-RPC tool errors with correlation context", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "veryfront-mcp:tools:call:update_skill",
+        error: {
+          code: -32602,
+          message: "Skill validation failed",
+          data: {
+            code: "invalid_skill",
+            request_id: "request-123",
+            field: "instructions",
+          },
+        },
+      }), async () => await source.executeTool("update_skill", { skill_id: "writer" }));
+
+    assertEquals(result, {
+      error: "invalid_skill",
+      code: "invalid_skill",
+      message: "Skill validation failed",
+      request_id: "request-123",
+      json_rpc_code: -32602,
+    });
+    assertEquals(getToolResultError(result), "Skill validation failed");
+  });
+
+  it("rejects malformed JSON-RPC tool error envelopes", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    for (
+      const error of [
+        null,
+        "failed",
+        { message: "Missing error code" },
+        { code: -32603, message: " " },
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          withMockFetch(
+            async () =>
+              Response.json({
+                jsonrpc: "2.0",
+                id: "veryfront-mcp:tools:call:update_skill",
+                error,
+              }),
+            async () => await source.executeTool("update_skill", {}),
+          ),
+        Error,
+        "malformed JSON-RPC error object",
+      );
+    }
+  });
+
   it("normalizes HTTP invalid_grant failures into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
@@ -674,6 +797,25 @@ describe("tool/remote-mcp", () => {
 
     assertInstanceOf(error, Error);
     assertEquals(error.message, "Remote MCP request failed (500)");
+  });
+
+  it("keeps unexpected tool transport failures on the exception path", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://93.184.216.34/mcp",
+    });
+
+    const error = await assertRejects(
+      () =>
+        withMockFetch(
+          async () => new Response("private payload <TOKEN>", { status: 503 }),
+          async () => await source.executeTool("create_agent", { id: "writer" }),
+        ),
+      Error,
+    );
+
+    assertInstanceOf(error, Error);
+    assertEquals(error.message, "Remote MCP request failed (503)");
   });
 
   it("preserves caller accept types while adding the MCP-required media types", async () => {
