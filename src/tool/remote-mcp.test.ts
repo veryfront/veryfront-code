@@ -814,6 +814,7 @@ describe("tool/remote-mcp", () => {
       Error,
     );
 
+    assertInstanceOf(error, Error);
     assertEquals(error.message, "Remote MCP request failed (503)");
   });
 
