@@ -1157,6 +1157,13 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
                   target.source,
                 );
               }
+              const conflicts = findRemoteSnapshotChanges(
+                buildSyncFileDigestSnapshot(plan.nextFiles),
+                await buildManagedRemoteSnapshot(latestRemoteFiles, ignoreChecker, false),
+              );
+              if (conflicts.length > 0) {
+                throw pushConflictError(conflicts);
+              }
               pushedSourceDigest = await computePushedSourceDigest(ops, latestRemoteFiles);
             }
             await clearPushReceipt(projectDir);
