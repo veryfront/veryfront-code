@@ -2643,6 +2643,62 @@ describe("internal-agents/run-stream", () => {
     assertEquals(sessionManager.getRunStatus(input.runId), null);
   });
 
+  it("logs an expected runtime cancellation as lifecycle info", async () => {
+    const logs = captureConsoleJsonLogs();
+    try {
+      await withJsonDebugLogFormat(async () => {
+        const sessionManager = new AgentRunSessionManager();
+        const agent = {
+          id: "cancelled-agent",
+          config: {
+            id: "cancelled-agent",
+            model: "anthropic/claude-opus-4-6",
+            system: "test",
+          },
+        } as unknown as Agent;
+        const input = {
+          agentId: agent.id,
+          threadId: crypto.randomUUID(),
+          runId: "run_cancelled",
+          messages: [],
+          tools: [],
+          context: [],
+        } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+        const response = await createRuntimeAgentStreamResponse(input, agent, {
+          sessionManager,
+          createRuntime: () => ({
+            stream: async () => {
+              sessionManager.cancelRun(input.runId);
+              return new ReadableStream<Uint8Array>();
+            },
+          }),
+        });
+        await response.text();
+      });
+    } finally {
+      logs.restore();
+    }
+
+    const entries = logs.getEntries();
+    const cancellationEntry = entries.find((entry) =>
+      entry.message === "Internal agent runtime session cancelled"
+    );
+    assertEquals(cancellationEntry?.level, "info");
+    assertEquals(cancellationEntry?.context?.status, "cancelled");
+    assertEquals(cancellationEntry?.context?.error, undefined);
+    assertEquals(
+      entries.find((entry) => entry.message === "Internal agent runtime stream aborted")?.level,
+      "debug",
+    );
+    assertEquals(
+      entries.some((entry) =>
+        entry.level === "warn" && entry.message === "Internal agent runtime stream cancelled"
+      ),
+      false,
+    );
+  });
+
   it("cancels and releases a runtime reader after a non-EOF mapping failure", async () => {
     const sessionManager = new AgentRunSessionManager();
     const agent = {
