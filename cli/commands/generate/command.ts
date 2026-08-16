@@ -6,6 +6,8 @@ import { exists, join, readTextFile } from "veryfront/fs";
 import { generateIntegration } from "./integration-generator.ts";
 import { isScaffoldType, scaffoldProjectFile } from "../../scaffold/engine.ts";
 
+const MDX_EXTENSION_PACKAGE = "@veryfront/ext-content-mdx";
+
 const PROJECT_MARKERS = [
   "veryfront.config.ts",
   "veryfront.config.js",
@@ -160,10 +162,19 @@ async function warnIfMdxExtensionMissing(
       manifest.devDependencies,
       manifest.peerDependencies,
       manifest.optionalDependencies,
-    ].some((group) => group?.["@veryfront/ext-content-mdx"] !== undefined);
+    ].some((group) => group?.[MDX_EXTENSION_PACKAGE] !== undefined);
     if (declared) return;
+    // Lockfile-aware: hard-coding `npm install` in a pnpm/yarn/bun project
+    // writes a competing package-lock.json and leaves the real lockfile stale.
+    const { detectProjectInstallTarget, formatInstallCommand } = await import(
+      "#veryfront/extensions/install-command.ts"
+    );
+    const install = formatInstallCommand(
+      MDX_EXTENSION_PACKAGE,
+      detectProjectInstallTarget(projectDir),
+    );
     cliLogger.warn(
-      "This project does not depend on @veryfront/ext-content-mdx, so the generated .mdx file will not render. Install it with: npm install @veryfront/ext-content-mdx",
+      `This project does not depend on ${MDX_EXTENSION_PACKAGE}, so the generated .mdx file will not render. Install it with: ${install}`,
     );
   } catch {
     // No readable package.json: say nothing rather than warn wrongly.
