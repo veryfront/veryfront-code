@@ -780,6 +780,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       '"moduleResolution": "bundler"',
       '"jsx": "react-jsx"',
       '"skipLibCheck": true',
+      '"noEmit": true',
       "@types/mdx",
       "// app/page.tsx",
       "npx veryfront dev",

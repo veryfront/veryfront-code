@@ -1134,6 +1134,21 @@ describe("Guide: add-to-existing-project.md", () => {
     assertStringIncludes(dnt, './tsconfig.json"] = "./tsconfig.json"');
   });
 
+  it("warns that the published base config disables emit", async () => {
+    // The shipped `veryfront/tsconfig.json` sets `noEmit: true`. A host
+    // project whose build is `tsc -p ...` keeps exiting 0 after switching to
+    // `extends` but silently stops emitting to its outDir — the page must
+    // steer emitting projects away from the extends route.
+    const dnt = await Deno.readTextFile(
+      new URL("../../scripts/build/build-npm-dnt.ts", import.meta.url),
+    );
+    assertStringIncludes(dnt, "noEmit: true");
+
+    const guide = await readGuide("add-to-existing-project.md");
+    assertStringIncludes(guide, '"noEmit": true');
+    assertStringIncludes(guide, "stops emitting");
+  });
+
   it("documents the install command and the entry route the server needs", async () => {
     const guide = await readGuide("add-to-existing-project.md");
 

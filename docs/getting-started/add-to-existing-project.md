@@ -42,9 +42,17 @@ the shortest correct route:
 Make sure `include` covers wherever you keep your own source as well as your
 routes.
 
+The base config sets `"noEmit": true`: Veryfront bundles your routes itself and
+uses `tsc` only for typechecking. If your existing build emits JavaScript with
+`tsc`, do not replace your config with the extends form: the build keeps
+exiting 0 but silently stops emitting, and your output directory goes stale.
+Keep your own config and add the three options below instead, or set
+`"noEmit": false` in the config your build compiles with.
+
 ### Setting the options yourself
 
-If your project cannot extend that config, three settings matter:
+If your project cannot extend that config, including when your build emits
+with `tsc`, three settings matter:
 
 ```json
 {
@@ -130,6 +138,10 @@ runs:
 ```bash
 npm run build
 ```
+
+If that build emits files, check that its output was actually regenerated. A
+`tsc` build that inherited `"noEmit": true` still exits 0 while writing
+nothing.
 
 ## Next steps
 
