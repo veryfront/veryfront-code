@@ -3341,14 +3341,20 @@ describe("push deletion ownership", () => {
         _resetEnvironmentConfig();
 
         const deleted: string[] = [];
+        let uploadedApp = false;
+        let fileListCalls = 0;
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
 
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
             return Response.json({
               data: [
-                { path: "app.ts", content: "stale app" },
+                {
+                  path: "app.ts",
+                  content: uploadedApp ? "export const value = 1;\n" : "stale app",
+                },
                 ...(deleted.includes("stale.ts")
                   ? []
                   : [{ path: "stale.ts", content: "stale source" }]),
@@ -3361,7 +3367,10 @@ describe("push deletion ownership", () => {
           if (request.method === "GET" && url.pathname === "/projects/my-project") {
             return Response.json({ id: "project-123", slug: "my-project" });
           }
-          if (request.method === "PUT") return Response.json({});
+          if (request.method === "PUT") {
+            uploadedApp = true;
+            return Response.json({});
+          }
           if (request.method === "DELETE") {
             deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
             return Response.json({});
@@ -3403,18 +3412,24 @@ describe("push deletion ownership", () => {
         _resetEnvironmentConfig();
 
         const deleted: string[] = [];
+        let uploadedApp = false;
+        let fileListCalls = 0;
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
 
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
             return Response.json({
               data: [
-                { path: "app.ts", content: "stale app" },
+                {
+                  path: "app.ts",
+                  content: uploadedApp ? "export const value = 1;\n" : "stale app",
+                },
                 ...(deleted.includes("stale.ts")
                   ? []
                   : [{ path: "stale.ts", content: "stale source" }]),
-                { path: "assets/logo.png", content: "<PNG>" },
+                ...(fileListCalls > 1 ? [{ path: "assets/logo.png", content: "<PNG>" }] : []),
               ],
               page_info: {},
             });
@@ -3422,7 +3437,10 @@ describe("push deletion ownership", () => {
           if (request.method === "GET" && url.pathname === "/projects/my-project") {
             return Response.json({ id: "project-123", slug: "my-project" });
           }
-          if (request.method === "PUT") return Response.json({});
+          if (request.method === "PUT") {
+            uploadedApp = true;
+            return Response.json({});
+          }
           if (request.method === "DELETE") {
             deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
             return Response.json({});
@@ -3432,6 +3450,7 @@ describe("push deletion ownership", () => {
 
         await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
+        assertEquals(fileListCalls, 2);
         assertEquals(deleted, ["stale.ts"]);
         const receipt = await readPushReceipt(projectDir);
         assertExists(receipt);
@@ -3441,6 +3460,69 @@ describe("push deletion ownership", () => {
             { path: "app.ts", content: "export const value = 1;\n" },
             { path: "assets/logo.png", content: "<PNG>" },
           ]),
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("includes late unsupported files in no-op forced prune receipts", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir, runGit }) => {
+        await runGit("rm", "--quiet", "app.ts");
+        await runGit("commit", "--quiet", "-m", "remove local source");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: fileListCalls > 1 ? [{ path: "assets/logo.png", content: "<PNG>" }] : [],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+
+        assertEquals(fileListCalls, 2);
+        const receipt = await readPushReceipt(projectDir);
+        assertExists(receipt);
+        assertEquals(
+          receipt.sourceDigest,
+          await computeSourceDigest([{ path: "assets/logo.png", content: "<PNG>" }]),
+        );
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {},
+          },
         );
       });
     } finally {
@@ -3464,6 +3546,7 @@ describe("push deletion ownership", () => {
 
         let fileListCalls = 0;
         const deleted: string[] = [];
+        let uploadedApp = false;
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
@@ -3472,9 +3555,14 @@ describe("push deletion ownership", () => {
             fileListCalls++;
             return Response.json({
               data: [
-                { path: "app.ts", content: "stale app" },
-                { path: "stale.ts", content: "stale source" },
-                ...(fileListCalls > 1
+                {
+                  path: "app.ts",
+                  content: uploadedApp ? "export const value = 1;\n" : "stale app",
+                },
+                ...(deleted.filter((path) => path === "stale.ts").length >= 2
+                  ? []
+                  : [{ path: "stale.ts", content: "stale source" }]),
+                ...(fileListCalls > 1 && !deleted.includes("late-remote.ts")
                   ? [{ path: "late-remote.ts", content: "late remote source" }]
                   : []),
               ],
@@ -3484,7 +3572,10 @@ describe("push deletion ownership", () => {
           if (request.method === "GET" && url.pathname === "/projects/my-project") {
             return Response.json({ id: "project-123", slug: "my-project" });
           }
-          if (request.method === "PUT") return Response.json({});
+          if (request.method === "PUT") {
+            uploadedApp = true;
+            return Response.json({});
+          }
           if (request.method === "DELETE") {
             deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
             return Response.json({});
@@ -3494,8 +3585,171 @@ describe("push deletion ownership", () => {
 
         await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
-        assertEquals(fileListCalls, 2);
+        assertEquals(fileListCalls, 3);
         assertEquals(deleted.sort(), ["late-remote.ts", "stale.ts", "stale.ts"]);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            },
+          },
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("restores a planned file overwritten during forced prune reconciliation", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        const putBodies: unknown[] = [];
+        const deleted: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: [
+                {
+                  path: "app.ts",
+                  content: fileListCalls === 1
+                    ? "stale app"
+                    : fileListCalls === 2
+                    ? "studio overwrite"
+                    : "export const value = 1;\n",
+                },
+                ...(fileListCalls === 1 ? [{ path: "stale.ts", content: "stale source" }] : []),
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") {
+            putBodies.push(await request.json());
+            return Response.json({});
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+
+        assertEquals(fileListCalls, 3);
+        assertEquals(putBodies, [
+          { content: "export const value = 1;\n" },
+          { content: "export const value = 1;\n" },
+        ]);
+        assertEquals(deleted, ["stale.ts"]);
+        assertExists(await readPushReceipt(projectDir));
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+            },
+          },
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("restores a planned file deleted during forced prune reconciliation", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let fileListCalls = 0;
+        const putBodies: unknown[] = [];
+        const deleted: string[] = [];
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            return Response.json({
+              data: fileListCalls === 1
+                ? [
+                  { path: "app.ts", content: "stale app" },
+                  { path: "stale.ts", content: "stale source" },
+                ]
+                : fileListCalls === 2
+                ? []
+                : [{ path: "app.ts", content: "export const value = 1;\n" }],
+              page_info: {},
+            });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "PUT") {
+            putBodies.push(await request.json());
+            return Response.json({});
+          }
+          if (request.method === "DELETE") {
+            deleted.push(decodeURIComponent(url.pathname.split("/files/")[1] ?? ""));
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
+
+        assertEquals(fileListCalls, 3);
+        assertEquals(putBodies, [
+          { content: "export const value = 1;\n" },
+          { content: "export const value = 1;\n" },
+        ]);
+        assertEquals(deleted, ["stale.ts"]);
+        assertExists(await readPushReceipt(projectDir));
         assertEquals(
           await readSyncTarget(projectDir, {
             controlPlane: "https://control.example.test",
@@ -3544,7 +3798,7 @@ describe("push deletion ownership", () => {
             fileListCalls++;
             return Response.json({
               data: [
-                ...(fileListCalls > 1
+                ...(fileListCalls > 1 && !deleted.includes("late-remote.ts")
                   ? [{ path: "late-remote.ts", content: "late remote source" }]
                   : []),
               ],
@@ -3563,7 +3817,7 @@ describe("push deletion ownership", () => {
 
         await pushCommand({ projectDir, branch: "main", prune: true, force: true, quiet: true });
 
-        assertEquals(fileListCalls, 2);
+        assertEquals(fileListCalls, 3);
         assertEquals(deleted, ["late-remote.ts"]);
         const receipt = await readPushReceipt(projectDir);
         assertExists(receipt);
