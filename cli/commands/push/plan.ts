@@ -81,17 +81,17 @@ export async function planPushChanges(
     const remote = remoteByPath.get(local.path);
     const baseline = options.baselineFiles[local.path];
 
+    if (options.force) {
+      uploads.push({ path: local.path, content: local.content });
+      nextFiles[local.path] = { digest: localDigest };
+      continue;
+    }
+
     if (remote && remoteDigests.get(local.path) === localDigest) {
       nextFiles[local.path] = {
         digest: localDigest,
         ...(remote.version_id ? { versionId: remote.version_id } : {}),
       };
-      continue;
-    }
-
-    if (options.force) {
-      uploads.push({ path: local.path, content: local.content });
-      nextFiles[local.path] = { digest: localDigest };
       continue;
     }
 

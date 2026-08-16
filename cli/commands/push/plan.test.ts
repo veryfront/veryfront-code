@@ -204,6 +204,24 @@ describe("planPushChanges", () => {
     assertEquals(plan.nextFiles, { "app.ts": { digest: localDigest } });
   });
 
+  it("uploads identical managed files when force is set", async () => {
+    const localDigest = await computeContentDigest("same\n");
+    const plan = await planPushChanges({
+      localFiles: [{ path: "app.ts", content: "same\n" }],
+      remoteFiles: [{ path: "app.ts", content: "same\n", version_id: VERSION_2 }],
+      baselineFiles: {
+        "app.ts": { digest: await computeContentDigest("before\n"), versionId: VERSION_1 },
+      },
+      deletePaths: [],
+      force: true,
+    });
+
+    assertEquals(plan.uploads, [{ path: "app.ts", content: "same\n" }]);
+    assertEquals(plan.deletes, []);
+    assertEquals(plan.conflicts, []);
+    assertEquals(plan.nextFiles, { "app.ts": { digest: localDigest } });
+  });
+
   it("fails closed when a changed remote file has no version ID", async () => {
     const digest = await computeContentDigest("before\n");
     await assertRejects(
