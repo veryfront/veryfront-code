@@ -31,8 +31,9 @@ export type ConversationsContextValue =
     /**
      * True once the full active record has resolved for the current
      * `activeConversationId` (`activeConversationId != null &&
-     * activeConversation?.id === activeConversationId`); false while it is
-     * loading or mismatched, and false when there is no active id.
+     * activeConversation?.id === activeConversationId`) from the current
+     * store; false while it is loading or mismatched, and false when there is
+     * no active id.
      */
     activeReady?: boolean;
   };
@@ -69,7 +70,13 @@ export function ConversationsProvider(
   { children, ...options }: ConversationsProviderProps,
 ): React.ReactElement {
   const conversations = useConversations(options);
-  const activeReady = conversations.activeConversationId != null &&
+  const storeScope = options.store ?? options.storageKey ?? null;
+  const committedStoreScope = React.useRef(storeScope);
+  const storeScopeReady = Object.is(committedStoreScope.current, storeScope);
+  React.useEffect(() => {
+    committedStoreScope.current = storeScope;
+  }, [storeScope]);
+  const activeReady = storeScopeReady && conversations.activeConversationId != null &&
     conversations.activeConversation?.id === conversations.activeConversationId;
   const value = React.useMemo(
     () => ({ ...conversations, activeReady }),

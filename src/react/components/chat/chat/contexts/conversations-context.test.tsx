@@ -161,7 +161,7 @@ function summaryOf(record: Conversation): ConversationSummary {
 }
 
 describe("ConversationsProvider — activeReady", () => {
-  it("is false with no active id, false while the active record loads, true on match", async () => {
+  it("is false until the active record loads from the current store", async () => {
     const restoreDom = installDom();
     const recordA = conversation("a", "Alpha");
     const pendingLoads = new Map<string, (value: Conversation | null) => void>();
@@ -174,6 +174,12 @@ describe("ConversationsProvider — activeReady", () => {
       save: () => Promise.resolve(),
       delete: () => Promise.resolve(),
     };
+    const replacement: ConversationStore = {
+      list: () => new Promise(() => {}),
+      load: () => new Promise(() => {}),
+      save: () => Promise.resolve(),
+      delete: () => Promise.resolve(),
+    };
 
     let latest: ConversationsContextValue | null = null;
     let id: string | null = null;
@@ -181,20 +187,20 @@ describe("ConversationsProvider — activeReady", () => {
       latest = useConversationsContext();
       return null;
     };
-    const App = () => (
+    const App = ({ store }: { store: ConversationStore }) => (
       <ConversationsProvider store={store} id={id}>
         <Capture />
       </ConversationsProvider>
     );
     const root = createRoot(document.getElementById("root")!);
     try {
-      flushSync(() => root.render(<App />));
+      flushSync(() => root.render(<App store={store} />));
       await settle();
       assertEquals(latest!.activeId, null);
       assertEquals(latest!.activeReady, false, "no active id means not ready");
 
       id = "a";
-      flushSync(() => root.render(<App />));
+      flushSync(() => root.render(<App store={store} />));
       await settle();
       assertEquals(latest!.activeId, "a");
       assertEquals(
@@ -208,14 +214,11 @@ describe("ConversationsProvider — activeReady", () => {
       assertEquals(latest!.active?.id, "a");
       assertEquals(latest!.activeReady, true, "a matching active record is ready");
 
-      id = "b";
-      flushSync(() => root.render(<App />));
-      await settle();
-      assertEquals(latest!.activeId, "b");
+      flushSync(() => root.render(<App store={replacement} />));
       assertEquals(
         latest!.activeReady,
         false,
-        "a mismatched active record is not ready",
+        "a record loaded from the retired store is not ready for the replacement store",
       );
 
       await unmountReactRoot(root);
