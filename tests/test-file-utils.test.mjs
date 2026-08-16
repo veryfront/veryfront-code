@@ -20,6 +20,10 @@ const BASE_TREE = [
   "src/nested/b.test.ts",
   "src/nested/deep/c.test.ts",
   "src/not-a-test.ts",
+  // Hidden directory: both `rg` (without --hidden) and node:fs glob skip these,
+  // so the in-process fallback must too or selection depends on whether
+  // ripgrep happens to be installed.
+  "src/.fixtures/hidden.test.ts",
   "extra/explicit.test.mjs",
 ];
 
@@ -241,6 +245,32 @@ describe("listTestFiles does not hide a failed traversal", () => {
   // raised *during* traversal after files had already been collected, so the
   // runner could execute a partial selection and report success — the same
   // silent-omission failure this module is being fixed for.
+  it("propagates an unreadable descendant of a directory pattern", () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return;
+    if (process.platform === "win32") return;
+    withFixture(BASE_TREE, (root) => {
+      // A *directory* pattern routes through `listWithFallback` from inside
+      // `listTestFiles`'s own try. A broad catch there swallowed the rethrow,
+      // so the directory's tests were dropped and only the other explicit
+      // pattern survived — reported as a clean pass.
+      const blocked = join(root, "src", "nested");
+      chmodSync(blocked, 0o000);
+      try {
+        const result = runListTestFilesProbe(["src", "extra/explicit.test.mjs"], root);
+        ok(
+          result.status !== 0,
+          `expected a non-zero exit, got ${result.status} with stdout: ${result.stdout}`,
+        );
+        ok(
+          /EACCES|EPERM/.test(result.stderr),
+          `expected a permission error to surface, got: ${result.stderr}`,
+        );
+      } finally {
+        chmodSync(blocked, 0o755);
+      }
+    });
+  });
+
   it("propagates an unreadable glob base instead of dropping the pattern", () => {
     if (typeof process.getuid === "function" && process.getuid() === 0) return;
     if (process.platform === "win32") return;

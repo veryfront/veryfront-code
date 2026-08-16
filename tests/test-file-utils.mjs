@@ -85,6 +85,11 @@ function globToRegex(glob) {
 function walk(dir, onFile) {
   const entries = readdirSync(dir, { withFileTypes: true });
   for (const entry of entries) {
+    // `rg` skips hidden entries unless `--hidden` is passed, and node:fs glob
+    // skips them too. The fallback has to match, or the selected test set
+    // depends on whether ripgrep happens to be installed — which is the exact
+    // class of divergence this module is being fixed for.
+    if (entry.name.startsWith(".")) continue;
     const fullPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       walk(fullPath, onFile);
@@ -198,8 +203,12 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
           for (const file of listWithFallback([absolute], cwd)) files.add(file);
         }
       }
-    } catch {
-      // Ignore missing paths or stat failures.
+    } catch (error) {
+      // Same rule as `listWithFallback`: a missing path contributes nothing,
+      // anything else propagates. A broad catch here also swallowed the
+      // rethrow from the `listWithFallback` call above, so a directory with an
+      // unreadable descendant was silently omitted.
+      if (!isMissingPathError(error)) throw error;
     }
   }
 
