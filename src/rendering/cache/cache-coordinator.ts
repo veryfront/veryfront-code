@@ -216,6 +216,7 @@ export class CacheCoordinator {
             stream: null,
             ssrHash: result.ssrHash,
             pageModule: result.pageModule,
+            ...(result.headers ? { headers: result.headers } : {}),
           },
           ...(sealedHtml.placeholder === undefined
             ? {}

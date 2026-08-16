@@ -97,6 +97,7 @@ import {
   resolveDependencyWritebackTarget,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { bindHtmlNonceFromCache, sealHtmlNonceForCache } from "#veryfront/html/nonce-injection.ts";
+import { getAttachedDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -825,6 +826,25 @@ export class Renderer {
         )
         : await runRender();
     } catch (error) {
+      if (
+        isFollower && error instanceof Error &&
+        getAttachedDataResponseMetadata(error).cookies?.length
+      ) {
+        logger.debug("Rerendering follower after cookie-bearing render failure", {
+          slug,
+          projectId: ctx.projectId,
+        });
+        return await this.doRenderPage(
+          slug,
+          ctx,
+          options,
+          startTime,
+          null,
+          callerSignal,
+          admission,
+          false,
+        );
+      }
       if (
         retryBackgroundOverload &&
         admission === "foreground" &&
