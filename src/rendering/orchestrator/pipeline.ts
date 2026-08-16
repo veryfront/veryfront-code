@@ -59,6 +59,7 @@ import type {
 import {
   attachDataResponseMetadata,
   mergeDataResponseMetadata,
+  unwrapDataResponseMetadataError,
   wrapDataResponseMetadataError,
 } from "#veryfront/data/response-metadata.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
@@ -653,10 +654,6 @@ export class RenderPipeline {
     pageProps: Record<string, unknown>,
     layoutProps: Map<string, Record<string, unknown>>,
   ): DataResponseMetadata {
-    for (const { error } of dataResults) {
-      if (error) throw error;
-    }
-
     // Layouts are collected outermost to innermost. Apply them in that order,
     // then the page, so the closest owner wins a duplicate custom header.
     // Cookies remain distinct and preserve the same outer-to-inner-to-page order.
@@ -667,6 +664,14 @@ export class RenderPipeline {
       ]
         .flatMap(({ result }) => result ? [result] : []),
     );
+
+    const failedResult = dataResults.find(({ error }) => error);
+    if (failedResult?.error) {
+      if (responseMetadata.headers || responseMetadata.cookies) {
+        throw wrapDataResponseMetadataError(failedResult.error, responseMetadata);
+      }
+      throw failedResult.error;
+    }
 
     for (const { type, id, result } of dataResults) {
       if (!result) continue;
@@ -1026,18 +1031,20 @@ export class RenderPipeline {
               return result;
             } catch (error) {
               if (error instanceof Error) {
-                (error as Error & { sourceFile?: string }).sourceFile = sourceFile;
-                if (responseHeaders || responseCookies) {
-                  throw wrapDataResponseMetadataError(
-                    error,
-                    mergeDataResponseMetadata([
-                      {
-                        ...(responseHeaders ? { headers: responseHeaders } : {}),
-                        ...(responseCookies ? { cookies: responseCookies } : {}),
-                      },
-                    ]),
-                  );
-                }
+                const classifiedError = unwrapDataResponseMetadataError(error);
+                const sourceError = classifiedError instanceof Error ? classifiedError : error;
+                (sourceError as Error & { sourceFile?: string }).sourceFile = sourceFile;
+              }
+              if (responseHeaders || responseCookies) {
+                throw wrapDataResponseMetadataError(
+                  error,
+                  mergeDataResponseMetadata([
+                    {
+                      ...(responseHeaders ? { headers: responseHeaders } : {}),
+                      ...(responseCookies ? { cookies: responseCookies } : {}),
+                    },
+                  ]),
+                );
               }
               throw error;
             }

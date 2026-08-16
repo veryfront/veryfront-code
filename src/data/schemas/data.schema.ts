@@ -38,7 +38,7 @@ export const getDataResultSchema = defineSchema((v) =>
     props: v.unknown().optional(),
     redirect: getRedirectSchema().optional(),
     notFound: v.boolean().optional(),
-    revalidate: v.union([v.number(), v.literal(false)]).optional(),
+    revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
     headers: v.record(v.string(), v.string()).optional(),
     cookies: v.array(getResponseCookieSchema()).optional(),
   })
@@ -50,7 +50,7 @@ export const getStaticDataResultSchema = defineSchema((v) =>
     props: v.unknown().optional(),
     redirect: getRedirectSchema().optional(),
     notFound: v.boolean().optional(),
-    revalidate: v.union([v.number(), v.literal(false)]).optional(),
+    revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
   })
 );
 

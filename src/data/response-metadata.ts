@@ -17,7 +17,7 @@ const regexpTest = RegExp.prototype.test;
 const reflectApply = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const attachedResponseMetadata = new WeakMap<object, DataResponseMetadata>();
-const responseMetadataErrorCauses = new WeakMap<Error, Error>();
+const responseMetadataErrorCauses = new WeakMap<Error, unknown>();
 
 const FRAMEWORK_OWNED_RESPONSE_HEADERS = new Set([
   "accept-ch",
@@ -328,19 +328,24 @@ export function attachDataResponseMetadata<T extends Error>(
  * error for classification, reporting, and stack rendering.
  */
 export function wrapDataResponseMetadataError(
-  error: Error,
+  error: unknown,
   metadata: DataResponseMetadata,
 ): Error {
-  const carrier = new Error(error.message, { cause: error });
-  carrier.name = error.name;
-  carrier.stack = error.stack;
-  responseMetadataErrorCauses.set(carrier, unwrapDataResponseMetadataError(error));
+  const classifiedError = error instanceof Error ? unwrapDataResponseMetadataError(error) : error;
+  const carrier = classifiedError instanceof Error
+    ? new Error(classifiedError.message, { cause: classifiedError })
+    : new Error("Non-Error render failure");
+  if (classifiedError instanceof Error) {
+    carrier.name = classifiedError.name;
+    carrier.stack = classifiedError.stack;
+  }
+  responseMetadataErrorCauses.set(carrier, classifiedError);
   return attachDataResponseMetadata(carrier, metadata);
 }
 
-/** Return the project error carried by {@link wrapDataResponseMetadataError}. */
-export function unwrapDataResponseMetadataError(error: Error): Error {
-  return responseMetadataErrorCauses.get(error) ?? error;
+/** Return the project failure carried by {@link wrapDataResponseMetadataError}. */
+export function unwrapDataResponseMetadataError(error: Error): unknown {
+  return responseMetadataErrorCauses.has(error) ? responseMetadataErrorCauses.get(error) : error;
 }
 
 /** Read response metadata attached by {@link attachDataResponseMetadata}. */

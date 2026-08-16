@@ -3,9 +3,12 @@ import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   appendDataResponseMetadata,
+  getAttachedDataResponseMetadata,
   mergeDataResponseMetadata,
   normalizeDataResponseMetadata,
   serializeResponseCookie,
+  unwrapDataResponseMetadataError,
+  wrapDataResponseMetadataError,
 } from "./response-metadata.ts";
 
 describe("data response metadata", () => {
@@ -135,5 +138,19 @@ describe("data response metadata", () => {
       TypeError,
       'with sameSite "none" must set secure',
     );
+  });
+
+  it("carries an undefined failure without exposing metadata in the error", () => {
+    const carrier = wrapDataResponseMetadataError(undefined, {
+      headers: { "x-page-state": "resolved" },
+      cookies: [{ name: "page-seen", value: "1", path: "/" }],
+    });
+
+    assertEquals(carrier.message, "Non-Error render failure");
+    assertEquals(unwrapDataResponseMetadataError(carrier), undefined);
+    assertEquals(getAttachedDataResponseMetadata(carrier), {
+      headers: { "x-page-state": "resolved" },
+      cookies: [{ name: "page-seen", value: "1", path: "/" }],
+    });
   });
 });
