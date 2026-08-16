@@ -20,7 +20,7 @@ import { createPortal, flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { Popover, PopoverContent, PopoverTrigger } from "../popover.tsx";
 import { composeRefs, Slot } from "../slot.tsx";
 import { UIAdapterProvider } from "./context.tsx";
@@ -119,6 +119,12 @@ export function runPopoverConformance(
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
   describe(`Popover adapter conformance - ${label}`, () => {
+    afterEach(async () => {
+      // jsdom defers selection updates after focus. Drain that timer before
+      // Deno's leak sanitizer closes the surrounding conformance group.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
     it("open trigger reveals content with role=dialog, portalled into the token scope", () => {
       const { scope, clickTrigger, cleanup } = mountInScope(
         <Wrap>
