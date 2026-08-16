@@ -121,7 +121,8 @@ Each delegate runs in the same Veryfront process as the assistant. The
 `agent_writer` tools. It does not create hosted child runs or require a
 Veryfront account.
 
-Start the app again:
+If the development server is still running, keep using it. If you stopped the
+server for the eval, start it again:
 
 ```bash
 npm run dev

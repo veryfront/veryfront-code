@@ -129,6 +129,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(quickstart, "`agent_researcher`");
     assertStringIncludes(quickstart, "`agent_writer`");
     assertStringIncludes(quickstart, "runs in the same Veryfront process");
+    assertStringIncludes(quickstart, "If the development server is still running");
     assertEquals(quickstart.includes("tools: { invoke_agent: true }"), false);
 
     assertStringIncludes(
@@ -218,10 +219,14 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "kubectl create namespace veryfront-app");
     assertStringIncludes(guide, "kubectl create secret generic provider-credentials");
     assertStringIncludes(guide, "--from-env-file=.env");
+    assertStringIncludes(guide, "--dry-run=client -o yaml | kubectl apply -f -");
+    assertStringIncludes(guide, "Replace `<API_KEY>`");
     assertStringIncludes(guide, "apiVersion: apps/v1");
     assertStringIncludes(guide, "kind: Deployment");
+    assertStringIncludes(guide, "startupProbe:");
     assertStringIncludes(guide, "tcpSocket:");
     assertStringIncludes(guide, "kubectl apply -f k8s.yaml");
+    assertStringIncludes(guide, "rollout restart deployment/veryfront-app");
     assertStringIncludes(
       guide,
       "kubectl -n veryfront-app port-forward service/veryfront-app 3000:80",

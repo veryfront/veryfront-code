@@ -326,6 +326,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Remote integration tools",
       "Deploy to Kubernetes",
       "--from-env-file=.env",
+      "startupProbe:",
+      "rollout restart deployment/veryfront-app",
       "kubectl apply -f k8s.yaml",
     ],
   },

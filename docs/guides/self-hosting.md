@@ -93,6 +93,9 @@ Create `.env` with the runtime credentials. Do not commit this file:
 OPENAI_API_KEY=<API_KEY>
 ```
 
+Replace `<API_KEY>` with your OpenAI API key before you run the container or
+Kubernetes commands.
+
 Build and run the image:
 
 ```bash
@@ -115,10 +118,11 @@ docker push <REGISTRY>/veryfront-app:<TAG>
 Create a namespace and a Secret from the same uncommitted `.env` file:
 
 ```bash
-kubectl create namespace veryfront-app
+kubectl create namespace veryfront-app --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic provider-credentials \
   --namespace veryfront-app \
-  --from-env-file=.env
+  --from-env-file=.env \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
 Add `k8s.yaml`. Replace the image placeholder with the immutable tag you
@@ -149,6 +153,11 @@ spec:
           envFrom:
             - secretRef:
                 name: provider-credentials
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
           readinessProbe:
             tcpSocket:
               port: http
@@ -174,11 +183,24 @@ spec:
       targetPort: http
 ```
 
-Apply the resources and open a local tunnel to the Service:
+Apply the resources and wait for the Deployment:
 
 ```bash
 kubectl apply -f k8s.yaml
 kubectl -n veryfront-app rollout status deployment/veryfront-app
+```
+
+When you change `.env`, rerun the Secret command above, then restart the
+Deployment so new Pods read the updated values:
+
+```bash
+kubectl -n veryfront-app rollout restart deployment/veryfront-app
+kubectl -n veryfront-app rollout status deployment/veryfront-app
+```
+
+Open a local tunnel to the Service:
+
+```bash
 kubectl -n veryfront-app port-forward service/veryfront-app 3000:80
 ```
 
