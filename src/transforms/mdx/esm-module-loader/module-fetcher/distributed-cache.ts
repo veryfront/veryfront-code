@@ -116,6 +116,7 @@ export async function readDistributedCache(
   projectDir: string,
   reactVersion: string | undefined,
   log: Logger,
+  serverExternalPackages?: readonly string[],
 ): Promise<DistributedCacheReadResult | null> {
   const distributedCache = await getDistributedTransformBackend();
   if (!distributedCache) return null;
@@ -225,6 +226,7 @@ export async function readDistributedCache(
         cacheDir: getHttpBundleCacheDir(),
         importMap,
         reactVersion,
+        serverExternalPackages,
       });
       if (cacheResult.code !== moduleCode) {
         log.debug(`${LOG_PREFIX_MDX_LOADER} Converted HTTP imports from legacy cache entry`, {

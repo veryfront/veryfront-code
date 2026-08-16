@@ -29,6 +29,7 @@ import {
 } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
 import { replaySSRDependencyResolutionObservations } from "#veryfront/transforms/import-rewriter/ssr-adapter.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -61,6 +62,7 @@ interface TransformOptions {
   ssr: boolean;
   reactVersion?: string;
   moduleServerOrigin?: string;
+  serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
@@ -143,6 +145,7 @@ export interface TransformModuleCodeWithCacheInput {
   adapter: RuntimeAdapter;
   reactVersion?: string;
   moduleServerOrigin?: string;
+  serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
@@ -217,8 +220,14 @@ export async function transformModuleCodeWithCache(
     input.mode,
     reactVersion,
   ];
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    input.serverExternalPackages,
+  );
+  const extendedConfig = serverExternalPackagesIdentity
+    ? [...legacyConfig, `server-externals:${serverExternalPackagesIdentity}`]
+    : legacyConfig;
   const configHash = hashCodeHex(JSON.stringify(
-    cacheVariant ? [...legacyConfig, cacheVariant] : legacyConfig,
+    cacheVariant ? [...extendedConfig, cacheVariant] : extendedConfig,
   ));
   const cacheKey = generateTransformCacheKey(
     scopedPath,
@@ -237,6 +246,7 @@ export async function transformModuleCodeWithCache(
     ssr: true,
     reactVersion,
     moduleServerOrigin,
+    serverExternalPackages: input.serverExternalPackages,
     dependencyPinningCacheKey: input.dependencyPinningCacheKey,
     dependencyPinningDependencies: input.dependencyPinningDependencies,
     dependencyPinningSource: input.dependencyPinningSource,

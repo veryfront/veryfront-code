@@ -85,7 +85,7 @@ describe("module-loader/module-transform-cache", () => {
     assertEquals(observedSignal, transformController.signal);
   });
 
-  it("isolates outer transform cache keys by React, runtime, and dependency-pin state", async () => {
+  it("isolates outer transform cache keys by React, runtime, pins, and server externals", async () => {
     const cacheKeys: string[] = [];
     const deps = createDeps({
       getOrComputeTransform: async (
@@ -151,8 +151,20 @@ describe("module-loader/module-transform-cache", () => {
       dependencyPinningCacheKey: CHANGED_PIN_KEY,
       moduleServerOrigin: "https://b.example",
     });
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "production",
+      reactVersion: "18.3.1",
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+    await transformModuleCodeWithCache({
+      ...baseInput,
+      mode: "production",
+      reactVersion: "18.3.1",
+      serverExternalPackages: ["@prisma/client", "knex"],
+    });
 
-    assertEquals(new Set(cacheKeys).size, 6);
+    assertEquals(new Set(cacheKeys).size, 7);
   });
 
   it("preserves the legacy outer transform identity when pinning is off", async () => {

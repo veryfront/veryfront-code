@@ -96,6 +96,28 @@ describe("transforms/esm/http-cache-helpers", () => {
       );
     });
 
+    it("partitions HTTP modules by the configured server external package set", async () => {
+      const url = "https://modules.example.com/root.js";
+      const importMap = { imports: {}, scopes: {} };
+      const baseline = await buildHttpCacheIdentity(url, { importMap });
+      const knex = await buildHttpCacheIdentity(url, {
+        importMap,
+        serverExternalPackages: ["knex"],
+      });
+      const prismaAndKnex = await buildHttpCacheIdentity(url, {
+        importMap,
+        serverExternalPackages: ["@prisma/client", "knex"],
+      });
+      const reordered = await buildHttpCacheIdentity(url, {
+        importMap,
+        serverExternalPackages: ["knex", "@prisma/client"],
+      });
+
+      assertNotEquals(knex, baseline);
+      assertNotEquals(prismaAndKnex, knex);
+      assertEquals(reordered, prismaAndKnex);
+    });
+
     it("does not consult mutable JSON or array hooks for final identities", async () => {
       const importMap = { imports: {}, scopes: {} };
       const baseline = await buildHttpCacheIdentity(

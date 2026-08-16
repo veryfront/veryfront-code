@@ -6,15 +6,24 @@
 
 import { buildMdxEsmPathCacheKey, buildMdxEsmTransformCacheKey } from "../cache-format.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 export function getMdxModuleCacheVariant(
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): string | undefined {
-  return buildDependencyPinningCacheVariant(
+  const pinVariant = buildDependencyPinningCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
   );
+  const externalIdentity = buildServerExternalPackagesIdentity(serverExternalPackages);
+  if (!externalIdentity) return pinVariant;
+
+  // MDX cache variants use the `on:` prefix to opt into the variant segment.
+  const externalVariant = `on:server-externals-${hashString(externalIdentity)}`;
+  return pinVariant ? `${pinVariant}:${externalVariant}` : externalVariant;
 }
 
 /**
@@ -32,6 +41,7 @@ export function getTransformCacheKey(
   contentHash: string,
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): string {
   return buildMdxEsmTransformCacheKey(
     projectId,
@@ -39,7 +49,11 @@ export function getTransformCacheKey(
     reactVersion,
     normalizedPath,
     contentHash,
-    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
+    getMdxModuleCacheVariant(
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+      serverExternalPackages,
+    ),
   );
 }
 
@@ -48,10 +62,15 @@ export function getVersionedPathCacheKey(
   reactVersion: string,
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): string {
   return buildMdxEsmPathCacheKey(
     normalizedPath,
     reactVersion,
-    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
+    getMdxModuleCacheVariant(
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+      serverExternalPackages,
+    ),
   );
 }

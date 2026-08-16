@@ -32,6 +32,7 @@ export interface MDXLoadModuleOptions {
   projectSlug?: string;
   contentSourceId?: string;
   reactVersion?: string;
+  serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
@@ -106,6 +107,7 @@ export class MDXRenderer {
       projectSlug,
       contentSourceId,
       reactVersion,
+      serverExternalPackages,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
       dependencyPinningSource,
@@ -127,6 +129,7 @@ export class MDXRenderer {
       projectSlug,
       contentSourceId,
       reactVersion,
+      serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource: resolvedDependencyPinningSource,

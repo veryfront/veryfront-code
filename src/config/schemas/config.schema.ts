@@ -52,6 +52,12 @@ import {
 } from "#veryfront/utils/discovery-path-policy.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isCanonicalProjectRelativePath } from "#veryfront/utils/project-relative-path.ts";
+import {
+  hasUniqueServerExternalPackages,
+  isValidServerExternalPackageName,
+  MAX_SERVER_EXTERNAL_PACKAGE_COUNT,
+  MAX_SERVER_EXTERNAL_PACKAGE_NAME_LENGTH,
+} from "#veryfront/config/server-external-packages.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 const MAX_CSRF_EXCLUDE_PATH_COUNT = 64;
@@ -356,6 +362,25 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
         .object({
           outDir: v.string().optional(),
           trailingSlash: v.boolean().optional(),
+          /** Bare npm package roots that the runtime resolves instead of bundling. */
+          serverExternalPackages: v
+            .array(
+              v
+                .string()
+                .min(1)
+                .max(MAX_SERVER_EXTERNAL_PACKAGE_NAME_LENGTH)
+                .refine(
+                  isValidServerExternalPackageName,
+                  "Expected a bare npm package name without a version or subpath",
+                ),
+            )
+            .min(1)
+            .max(MAX_SERVER_EXTERNAL_PACKAGE_COUNT)
+            .refine(
+              hasUniqueServerExternalPackages,
+              "Server external package names must be unique",
+            )
+            .optional(),
           /**
            * Generate static HTML for all routes during `veryfront build`.
            * Defaults to true; disabling it produces no pages, so only turn it

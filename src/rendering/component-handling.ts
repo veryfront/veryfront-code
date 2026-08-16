@@ -15,6 +15,7 @@ import { getDependencyPinningCacheKey } from "#veryfront/transforms/esm/package-
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 
 interface ComponentPageResult {
   pageElement: BundledReact.ReactElement;
@@ -47,6 +48,7 @@ interface BundleComponentForClientDeps {
       moduleServerUrl?: string;
       moduleServerOrigin?: string;
       reactVersion?: string;
+      serverExternalPackages?: readonly string[];
       dependencyPinningCacheKey?: string;
       dependencyPinningDependencies?: Readonly<Record<string, string>>;
       dependencyPinningSource?: DependencyPinningSourceInput;
@@ -66,14 +68,23 @@ async function buildComponentHydrationCacheHash(
   source: string,
   moduleServerUrl?: string,
   reactVersion?: string,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   const sourceHash = await computeHash(source);
   const effectiveReactVersion = reactVersion ?? DEFAULT_REACT_VERSION;
-  const cacheIdentity = JSON.stringify([
+  const legacyCacheIdentity = [
     sourceHash,
     moduleServerUrl ?? null,
     effectiveReactVersion,
-  ]);
+  ];
+  const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+    serverExternalPackages,
+  );
+  const cacheIdentity = JSON.stringify(
+    serverExternalPackagesIdentity
+      ? [...legacyCacheIdentity, serverExternalPackagesIdentity]
+      : legacyCacheIdentity,
+  );
   return (await computeHash(cacheIdentity)).slice(0, 16);
 }
 
@@ -108,6 +119,8 @@ export async function handleComponentPage(
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
+    /** Bare npm package roots that the runtime resolves without bundling. */
+    serverExternalPackages?: readonly string[];
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -134,6 +147,7 @@ export async function handleComponentPage(
         dependencyPinningCacheKey,
         options?.dependencyPinningDependencies,
         options?.dependencyPinningSource,
+        options?.serverExternalPackages,
       ));
 
     const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
@@ -151,6 +165,7 @@ export async function handleComponentPage(
         ssr: true,
         contentSourceId: options?.contentSourceId,
         reactVersion: options?.reactVersion,
+        serverExternalPackages: options?.serverExternalPackages,
         dependencyPinningCacheKey,
         dependencyPinningDependencies: options?.dependencyPinningDependencies,
         dependencyPinningSource: options?.dependencyPinningSource,
@@ -207,12 +222,14 @@ export async function bundleComponentForClient(
   dependencyPinningCacheKey = "off",
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   try {
     const cacheHash = await buildComponentHydrationCacheHash(
       source,
       moduleServerUrl,
       reactVersion,
+      serverExternalPackages,
     );
     const cacheKey = buildComponentCacheKey(
       projectId ?? projectDir,
@@ -238,6 +255,7 @@ export async function bundleComponentForClient(
           moduleServerUrl,
           moduleServerOrigin,
           reactVersion,
+          serverExternalPackages,
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
           dependencyPinningSource,

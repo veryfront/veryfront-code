@@ -146,6 +146,7 @@ describe("transforms/esm/http-cache-wrapper", () => {
             url,
             importMap,
             importMapFingerprint,
+            serverExternalPackages: ["knex"],
           });
         }
 
@@ -158,6 +159,12 @@ describe("transforms/esm/http-cache-wrapper", () => {
           identityValues.every((value) => value.importMapFingerprint === importMapFingerprint),
           true,
         );
+        assertEquals(
+          identityValues.every((value) =>
+            JSON.stringify(value.serverExternalPackages) === JSON.stringify(["knex"])
+          ),
+          true,
+        );
 
         const importMapEntries = [...backend.entries]
           .filter(([key]) => key.includes(":import-map:"));
@@ -166,6 +173,7 @@ describe("transforms/esm/http-cache-wrapper", () => {
         assertEquals(await httpBundleCache.getIdentityMetadata("bundle-a"), {
           url: "https://modules.example.com/a.js",
           reactVersion: undefined,
+          serverExternalPackages: ["knex"],
           importMap,
           importMapFingerprint,
         });

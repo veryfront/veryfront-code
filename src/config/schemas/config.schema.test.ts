@@ -478,6 +478,33 @@ describe("configSchema", () => {
     );
   });
 
+  it("accepts bare package names in build.serverExternalPackages", () => {
+    const config = validateVeryfrontConfig({
+      build: {
+        serverExternalPackages: ["knex", "@prisma/client"],
+      },
+    });
+
+    assertEquals(config.build?.serverExternalPackages, ["knex", "@prisma/client"]);
+  });
+
+  it("rejects versions, subpaths, duplicates, and empty server external packages", () => {
+    for (
+      const serverExternalPackages of [
+        ["knex@3.1.0"],
+        ["@prisma/client/runtime"],
+        ["knex", "knex"],
+        [],
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ build: { serverExternalPackages } }),
+        Error,
+        "Invalid veryfront.config at build.serverExternalPackages",
+      );
+    }
+  });
+
   it("returns registered validation errors without retaining the full config", () => {
     const input = {
       dev: { port: "invalid" },

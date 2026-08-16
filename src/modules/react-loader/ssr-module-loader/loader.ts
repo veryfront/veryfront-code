@@ -67,7 +67,7 @@ import {
   createDependencyHashCache,
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
-import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { getMdxModuleCacheVariant } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
@@ -136,11 +136,15 @@ function publishTransformCacheIfCurrent(input: {
 }
 
 function getMdxEsmCacheVariant(
-  options: Pick<SSRModuleLoaderOptions, "dependencyPinningCacheKey" | "moduleServerOrigin">,
+  options: Pick<
+    SSRModuleLoaderOptions,
+    "dependencyPinningCacheKey" | "moduleServerOrigin" | "serverExternalPackages"
+  >,
 ): string | undefined {
-  return buildDependencyPinningCacheVariant(
+  return getMdxModuleCacheVariant(
     options.dependencyPinningCacheKey,
     options.moduleServerOrigin,
+    options.serverExternalPackages,
   );
 }
 
@@ -811,6 +815,7 @@ export class SSRModuleLoader {
           apiBaseUrl: this.options.apiBaseUrl,
           moduleServerOrigin: this.options.moduleServerOrigin,
           reactVersion: this.options.reactVersion,
+          serverExternalPackages: this.options.serverExternalPackages,
           dependencyHashCache,
           dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
           dependencyPinningDependencies: this.options.dependencyPinningDependencies,

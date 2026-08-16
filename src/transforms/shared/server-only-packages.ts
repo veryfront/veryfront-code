@@ -34,6 +34,7 @@ const SERVER_ONLY_PACKAGES: ReadonlySet<string> = new Set([
 ]);
 const ReflectApply = Reflect.apply;
 const SetHas = Set.prototype.has;
+const ArrayIncludes = Array.prototype.includes;
 const StringSlice = String.prototype.slice;
 const StringStartsWith = String.prototype.startsWith;
 
@@ -57,11 +58,16 @@ function stringStartsWith(value: string, search: string): boolean {
  * carry an `npm:` prefix, e.g. `npm:redis`). The `npm:` prefix is stripped
  * before matching so both `redis` and `npm:redis@5.11.0` are recognized.
  */
-export function isServerOnlyPackage(packageName: string): boolean {
+export function isServerOnlyPackage(
+  packageName: string,
+  configuredPackages?: readonly string[],
+): boolean {
   const bare = stringStartsWith(packageName, "npm:")
     ? stringSlice(packageName, "npm:".length)
     : packageName;
-  return setHas(SERVER_ONLY_PACKAGES, bare);
+  return setHas(SERVER_ONLY_PACKAGES, bare) ||
+    (configuredPackages !== undefined &&
+      ReflectApply(ArrayIncludes, configuredPackages, [bare]) as boolean);
 }
 
 export { SERVER_ONLY_PACKAGES };

@@ -125,6 +125,7 @@ export interface MdxRootDependencyRewriteOptions {
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   dependencyPinningSource?: DependencyPinningSourceInput;
+  serverExternalPackages?: readonly string[];
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void;
@@ -153,6 +154,7 @@ export async function rewriteMdxRootDependencyImports(
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
     dependencyPinningSource: options.dependencyPinningSource,
+    serverExternalPackages: options.serverExternalPackages,
     onDependencyResolutionObserved: options.onDependencyResolutionObserved,
   });
 }

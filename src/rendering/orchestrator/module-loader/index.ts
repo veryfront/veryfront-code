@@ -136,6 +136,7 @@ export async function transformModuleWithDeps(
     mode,
     config.dependencyPinningCacheKey,
     config.moduleServerOrigin,
+    config.serverExternalPackages,
   );
 
   const cachedPath = await resolveCachedModulePath({
@@ -148,6 +149,7 @@ export async function transformModuleWithDeps(
     reactVersion: config.reactVersion,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     moduleServerOrigin: config.moduleServerOrigin,
+    serverExternalPackages: config.serverExternalPackages,
   });
   if (cachedPath) {
     // Replay the evidence this module produced when it was last resolved. A
@@ -282,6 +284,7 @@ export async function transformModuleWithDeps(
     adapter,
     reactVersion: config.reactVersion,
     moduleServerOrigin: config.moduleServerOrigin,
+    serverExternalPackages: config.serverExternalPackages,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     dependencyPinningDependencies: config.dependencyPinningDependencies,
     dependencyPinningSource: config.dependencyPinningSource,
@@ -302,6 +305,7 @@ export async function transformModuleWithDeps(
     reactVersion: config.reactVersion,
     moduleServerOrigin: config.moduleServerOrigin,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
+    serverExternalPackages: config.serverExternalPackages,
     isCycleTarget: cycleTargets.has(filePath),
     unresolvedSpecifiers: [...moduleUnresolvedSpecifiers],
   });
@@ -323,6 +327,8 @@ export interface ModuleLoaderConfig {
   reactVersion?: string;
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Stable VERYFRONT_DEPENDENCY_PINNING + package dependency-map state. */
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
@@ -558,6 +564,7 @@ export async function loadModule(
           config.mode,
           config.dependencyPinningCacheKey,
           config.moduleServerOrigin,
+          config.serverExternalPackages,
         ),
       );
       // tmpDir is the exact cache dir this module was registered under, so the
@@ -571,6 +578,7 @@ export async function loadModule(
         buildModuleTransformCacheVariant(
           config.dependencyPinningCacheKey,
           config.moduleServerOrigin,
+          config.serverExternalPackages,
         ),
       );
 

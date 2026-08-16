@@ -113,6 +113,26 @@ describe(
           buildModuleTransformCacheKey("project", "pages/index.js", false),
         );
       });
+
+      it("isolates transforms by the configured server external package set", () => {
+        const args = [
+          "project",
+          "pages/index.js",
+          false,
+          "off",
+          "release-a",
+          "content-a",
+          "https://app.example",
+        ] as const;
+        const baseline = buildBatchTransformCacheKey(...args);
+        const knex = buildBatchTransformCacheKey(...args, ["knex"]);
+        const prismaAndKnex = buildBatchTransformCacheKey(...args, ["@prisma/client", "knex"]);
+        const reordered = buildBatchTransformCacheKey(...args, ["knex", "@prisma/client"]);
+
+        assertEquals(knex === baseline, false);
+        assertEquals(prismaAndKnex === knex, false);
+        assertEquals(reordered, prismaAndKnex);
+      });
     });
 
     describe("clearBatchCache / getBatchCacheStats", () => {

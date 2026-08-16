@@ -156,6 +156,8 @@ export function handleMDXPage(
     dependencyPinningDependencies?: Readonly<Record<string, string>>;
     /** Exact package source namespace paired with the immutable snapshot. */
     dependencyPinningSource?: DependencyPinningSourceInput;
+    /** Bare npm package roots that the runtime resolves without bundling. */
+    serverExternalPackages?: readonly string[];
     /** Server-trusted local-project identity for dev-only module-server fallback. */
     isLocalProject?: boolean;
   },
@@ -179,6 +181,7 @@ export function handleMDXPage(
           projectSlug: options?.projectSlug,
           contentSourceId: options?.contentSourceId,
           reactVersion: options?.reactVersion,
+          serverExternalPackages: options?.serverExternalPackages,
           dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
           dependencyPinningDependencies: options?.dependencyPinningDependencies,
           dependencyPinningSource: options?.dependencyPinningSource,

@@ -132,6 +132,26 @@ describe("release module response cache", () => {
     assertEquals(flagOff, unkeyed);
   });
 
+  it("isolates responses by the configured server external package set", () => {
+    const baseline = buildReleaseModuleResponseCacheKey(baseKeyOptions("@vite/env"));
+    const knex = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      serverExternalPackages: ["knex"],
+    });
+    const prismaAndKnex = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      serverExternalPackages: ["@prisma/client", "knex"],
+    });
+    const reordered = buildReleaseModuleResponseCacheKey({
+      ...baseKeyOptions("@vite/env"),
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+
+    assertEquals(knex === baseline, false);
+    assertEquals(prismaAndKnex === knex, false);
+    assertEquals(reordered, prismaAndKnex);
+  });
+
   it("isolates pin-on responses by module server origin without changing flag-off keys", () => {
     const unkeyed = buildReleaseModuleResponseCacheKey(
       baseKeyOptions("@vite/env"),

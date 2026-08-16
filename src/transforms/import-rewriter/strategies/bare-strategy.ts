@@ -120,7 +120,7 @@ export class BareStrategy implements ImportRewriteStrategy {
     // resolves them natively (node_modules on Node, npm: on Deno). The
     // framework's adapters only `import()` these behind a lazy, configured code
     // path, so an app that does not use the backend never loads them at all.
-    if (parsed && isServerOnlyPackage(parsed.packageName)) {
+    if (parsed && isServerOnlyPackage(parsed.packageName, ctx.serverExternalPackages)) {
       return { specifier: null };
     }
 

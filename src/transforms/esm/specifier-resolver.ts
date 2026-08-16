@@ -187,7 +187,10 @@ async function resolveSpecifier(
     ? stringSlice(specifier, 4)
     : specifier;
   const serverOnlyParsed = parseBarePackageSpecifier(serverOnlyCandidate);
-  if (serverOnlyParsed && isServerOnlyPackage(serverOnlyParsed.packageName)) return null;
+  if (
+    serverOnlyParsed &&
+    isServerOnlyPackage(serverOnlyParsed.packageName, options.serverExternalPackages)
+  ) return null;
 
   if (isInternalBare(specifier)) {
     const mapped = resolveImport(specifier, options.importMap);

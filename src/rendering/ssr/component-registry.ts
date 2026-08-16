@@ -11,6 +11,8 @@ import {
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 interface DeferredComponentSource {
   source: string;
@@ -208,15 +210,22 @@ export class ComponentRegistry {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    serverExternalPackages?: readonly string[],
   ): Promise<string> {
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       (dependencyPinningSource ?? this.projectDir) || undefined,
       dependencyPinningCacheKey,
       dependencyPinningDependencies,
     );
-    const snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
+    let snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
       ? `${dependencySnapshot.cacheKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
       : dependencySnapshot.cacheKey;
+    const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
+      serverExternalPackages,
+    );
+    if (serverExternalPackagesIdentity) {
+      snapshotKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
+    }
     const sourceGeneration = this.componentSourceGeneration;
     if (
       this.dependencySnapshotGenerations.get(snapshotKey) === sourceGeneration
@@ -240,6 +249,7 @@ export class ComponentRegistry {
       sourceGeneration,
       dependencyPinningSource,
       moduleServerOrigin,
+      serverExternalPackages,
     ).finally(() => {
       if (this.dependencySnapshotLoads.get(loadKey) === load) {
         this.dependencySnapshotLoads.delete(loadKey);
@@ -257,6 +267,7 @@ export class ComponentRegistry {
     sourceGeneration: number,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    serverExternalPackages?: readonly string[],
   ): Promise<void> {
     const adapter = this.adapter;
     if (!adapter) {
@@ -282,6 +293,7 @@ export class ComponentRegistry {
             dependencySnapshot,
             dependencyPinningSource,
             moduleServerOrigin,
+            serverExternalPackages,
           ),
         );
 
@@ -390,6 +402,7 @@ export class ComponentRegistry {
     dependencySnapshot?: DependencyPinningSnapshot,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    serverExternalPackages?: readonly string[],
   ): LoadComponentOptions {
     return {
       projectId: this.projectId ?? projectRoot,
@@ -401,6 +414,7 @@ export class ComponentRegistry {
       dependencyPinningCacheKey: dependencySnapshot?.cacheKey,
       dependencyPinningDependencies: dependencySnapshot?.dependencies,
       dependencyPinningSource,
+      serverExternalPackages,
     };
   }
 

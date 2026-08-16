@@ -220,6 +220,7 @@ export class LayoutOrchestrator {
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
+                  this.config.config.build?.serverExternalPackages,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -356,6 +357,7 @@ export class LayoutOrchestrator {
               dependencyPinningDependencies,
               dependencyPinningSource,
               requestUrl?.origin,
+              this.config.config.build?.serverExternalPackages,
             ),
           )
           : this.config.componentRegistry;

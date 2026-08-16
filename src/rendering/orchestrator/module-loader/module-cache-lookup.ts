@@ -14,17 +14,19 @@ import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { UNRESOLVED_VF_MODULES_RE } from "./module-transform-cache.ts";
-import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { getMdxModuleCacheVariant } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 
 const logger = rendererLogger.component("module-loader");
 
 export function buildModuleTransformCacheVariant(
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): string | undefined {
-  return buildDependencyPinningCacheVariant(
+  return getMdxModuleCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
+    serverExternalPackages,
   );
 }
 
@@ -37,6 +39,7 @@ export function getModuleCacheKey(
   mode?: "development" | "production",
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
+  serverExternalPackages?: readonly string[],
 ): string {
   const base = projectId ?? projectDir ?? "default";
   const source = contentSourceId ?? "default";
@@ -49,6 +52,7 @@ export function getModuleCacheKey(
   const cacheVariant = buildModuleTransformCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
+    serverExternalPackages,
   );
   return JSON.stringify(cacheVariant ? [...fields, cacheVariant, filePath] : [...fields, filePath]);
 }
@@ -65,6 +69,7 @@ export interface ResolveCachedModulePathInput {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
+  serverExternalPackages?: readonly string[];
   moduleCache: Map<string, string>;
   readTextFile?: (path: string) => Promise<string>;
   fileSystem?: FileSystemReader;
@@ -126,6 +131,7 @@ async function resolveMdxEsmCachedPath(
     buildModuleTransformCacheVariant(
       input.dependencyPinningCacheKey,
       input.moduleServerOrigin,
+      input.serverExternalPackages,
     ),
   );
 

@@ -671,6 +671,7 @@ export class HTMLGenerator {
         context.options?.dependencyPinningDependencies,
         context.options?.dependencyPinningSource,
         context.options?.url?.origin,
+        this.config.config?.build?.serverExternalPackages,
       );
       if (!loaded) return null;
 

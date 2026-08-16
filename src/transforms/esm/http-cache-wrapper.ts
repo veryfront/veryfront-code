@@ -37,6 +37,12 @@ import {
 import { looksLikeHtmlContent as looksLikeHtml } from "./html-content.ts";
 import { fingerprintImportMap, type HttpCacheIdentityMetadata } from "./http-cache-helpers.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import {
+  canonicalizeServerExternalPackages,
+  hasUniqueServerExternalPackages,
+  isValidServerExternalPackageName,
+  MAX_SERVER_EXTERNAL_PACKAGE_COUNT,
+} from "#veryfront/config/server-external-packages.ts";
 
 const logger = rendererLogger.component("http-cache-wrapper");
 
@@ -89,7 +95,23 @@ function parseImportMap(value: unknown): ImportMapConfig | null {
 interface HttpCacheIdentityReference {
   url: string;
   reactVersion?: string;
+  serverExternalPackages?: readonly string[];
   importMapFingerprint: string;
+}
+
+function parseServerExternalPackages(value: unknown): readonly string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !Array.isArray(value) || value.length === 0 ||
+    value.length > MAX_SERVER_EXTERNAL_PACKAGE_COUNT
+  ) return null;
+  const packages = value as unknown[];
+  for (let index = 0; index < packages.length; index++) {
+    const entry = packages[index];
+    if (typeof entry !== "string" || !isValidServerExternalPackageName(entry)) return null;
+  }
+  if (!hasUniqueServerExternalPackages(packages as string[])) return null;
+  return canonicalizeServerExternalPackages(packages as string[]);
 }
 
 function parseIdentityMetadata(
@@ -99,6 +121,8 @@ function parseIdentityMetadata(
     const parsed = JSON.parse(value) as Record<string, unknown>;
     if (!parsed || typeof parsed !== "object" || typeof parsed.url !== "string") return null;
     if (parsed.reactVersion !== undefined && typeof parsed.reactVersion !== "string") return null;
+    const serverExternalPackages = parseServerExternalPackages(parsed.serverExternalPackages);
+    if (serverExternalPackages === null) return null;
 
     // Backward compatibility for v2 records written before import maps were shared.
     if (parsed.importMap !== undefined) {
@@ -107,6 +131,7 @@ function parseIdentityMetadata(
         ? {
           url: parsed.url,
           reactVersion: parsed.reactVersion as string | undefined,
+          ...(serverExternalPackages ? { serverExternalPackages } : {}),
           importMap,
         }
         : null;
@@ -116,6 +141,7 @@ function parseIdentityMetadata(
     return {
       url: parsed.url,
       reactVersion: parsed.reactVersion as string | undefined,
+      ...(serverExternalPackages ? { serverExternalPackages } : {}),
       importMapFingerprint: parsed.importMapFingerprint,
     };
   } catch {
@@ -393,6 +419,7 @@ class HttpBundleCache {
             JSON.stringify({
               url: identityMetadata.url,
               reactVersion: identityMetadata.reactVersion,
+              serverExternalPackages: identityMetadata.serverExternalPackages,
               importMapFingerprint,
             }),
             ttl,

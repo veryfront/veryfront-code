@@ -65,6 +65,8 @@ export interface TransformOptions {
   studioEmbed?: boolean;
   /** React version to use (detected from project package.json if not provided) */
   reactVersion?: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Immutable import-map snapshot already selected for this render. */
   preloadedImportMap?: ImportMapConfig;
   /** Adapter used to load and cache the project import map before SSR cache identity. */
@@ -132,6 +134,8 @@ export interface TransformContext {
   studioEmbed?: boolean;
   /** React version to use for esm.sh URLs */
   reactVersion: string;
+  /** Immutable bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Internal stable flag + package dependency-map key for cache isolation. */
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */

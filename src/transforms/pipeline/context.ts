@@ -6,6 +6,7 @@ import type {
   TransformStage,
   TransformTarget,
 } from "./types.ts";
+import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
 
 function buildContext(
   source: string,
@@ -36,6 +37,7 @@ function buildContext(
     metadata: new Map(),
     studioEmbed: options.studioEmbed,
     reactVersion,
+    serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
     dependencyPinningCacheKey: options.dependencyPinningCacheKey,
     dependencyPinningDependencies: options.dependencyPinningDependencies,
     dependencyPinningSource: options.dependencyPinningSource,

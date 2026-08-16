@@ -140,6 +140,26 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       assertEquals(originA === originB, false);
       assertEquals(flagOffWithOrigin, flagOff);
     });
+
+    it("isolates transforms by the configured server external package set", () => {
+      const base = [
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        "off",
+        undefined,
+      ] as const;
+      const baseline = getTransformCacheKey(...base);
+      const knex = getTransformCacheKey(...base, ["knex"]);
+      const combined = getTransformCacheKey(...base, ["knex", "@prisma/client"]);
+      const reordered = getTransformCacheKey(...base, ["@prisma/client", "knex"]);
+
+      assertEquals(knex === baseline, false);
+      assertEquals(combined === knex, false);
+      assertEquals(reordered, combined);
+    });
   });
 
   describe("getVersionedPathCacheKey", () => {
@@ -205,6 +225,35 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
 
       assertEquals(originA === originB, false);
       assertEquals(flagOffWithOrigin, flagOff);
+    });
+
+    it("isolates local paths by the configured server external package set", () => {
+      const baseline = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
+      const knex = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        "off",
+        undefined,
+        ["knex"],
+      );
+      const combined = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        "off",
+        undefined,
+        ["knex", "@prisma/client"],
+      );
+      const reordered = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        "off",
+        undefined,
+        ["@prisma/client", "knex"],
+      );
+
+      assertEquals(knex === baseline, false);
+      assertEquals(combined === knex, false);
+      assertEquals(reordered, combined);
     });
   });
 });

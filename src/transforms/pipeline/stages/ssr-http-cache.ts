@@ -33,6 +33,7 @@ export const ssrHttpCachePlugin: TransformPlugin = {
       cacheDir: getHttpBundleCacheDir(),
       importMap,
       reactVersion: ctx.reactVersion,
+      serverExternalPackages: ctx.serverExternalPackages,
       moduleServerOrigin: ctx.moduleServerOrigin,
       dependencyPinningCacheKey: ctx.dependencyPinningCacheKey,
       abortSignal: ctx.abortSignal,

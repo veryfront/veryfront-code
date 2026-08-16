@@ -21,6 +21,7 @@ import { buildEsmShUrl } from "../import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { canonicalizeServerExternalPackages } from "#veryfront/config/server-external-packages.ts";
 
 const logger = rendererLogger.component("http-cache");
 const ArrayIncludes = Array.prototype.includes;
@@ -253,6 +254,8 @@ export type CacheOptions = {
   importMap: ImportMapConfig;
   /** React version to use for esm.sh URLs (defaults to DEFAULT_REACT_VERSION) */
   reactVersion?: string;
+  /** Bare npm package roots that the runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Absolute request origin used to identify same-origin module-server URLs. */
   moduleServerOrigin?: string;
   /** Request-scoped dependency-pinning state used to isolate module-server URLs. */
@@ -263,7 +266,10 @@ export type CacheOptions = {
   onProgress?: TransformProgressListener;
 };
 
-export type HttpCacheIdentityOptions = Pick<CacheOptions, "importMap" | "reactVersion">;
+export type HttpCacheIdentityOptions = Pick<
+  CacheOptions,
+  "importMap" | "reactVersion" | "serverExternalPackages"
+>;
 
 export interface HttpCacheIdentityMetadata extends HttpCacheIdentityOptions {
   url: string;
@@ -296,6 +302,7 @@ function compareImportMapKeys(left: [string, string], right: [string, string]): 
 
 const HTTP_IMPORT_MAP_FINGERPRINT_NAMESPACE = "veryfront:http-import-map:v2";
 const HTTP_CACHE_IDENTITY_NAMESPACE = "veryfront:http-module:v2";
+const HTTP_CACHE_EXTERNAL_IDENTITY_NAMESPACE = "veryfront:http-module:v3";
 const HTTP_CACHE_FILE_HASH_NAMESPACE = "veryfront:http-module-file:v2";
 
 /** Build an order-independent fingerprint covering imports and scoped imports. */
@@ -368,7 +375,10 @@ function getHttpCacheRequestIdentityContext(
  * Callers must create a fresh prepared options object for each top-level request.
  */
 export function prepareHttpCacheRequestOptions<T extends CacheOptions>(options: T): T {
-  const prepared = { ...options } as T;
+  const prepared = {
+    ...options,
+    serverExternalPackages: canonicalizeServerExternalPackages(options.serverExternalPackages),
+  } as T;
   return attachHttpCacheRequestIdentityContext(prepared, {});
 }
 
@@ -415,9 +425,20 @@ export async function buildHttpCacheIdentity(
   const normalizedUrl = normalizeHttpUrl(effective.url);
   const importMapFingerprint = await getRequestImportMapFingerprint(url, effective.options);
   const reactVersion = effective.options.reactVersion;
-  return `${HTTP_CACHE_IDENTITY_NAMESPACE}:[${JSONStringify(normalizedUrl)},${
+  const base = `[${JSONStringify(normalizedUrl)},${
     reactVersion === undefined ? "null" : JSONStringify(reactVersion)
-  },${JSONStringify(importMapFingerprint)}]`;
+  },${JSONStringify(importMapFingerprint)}`;
+  const serverExternalPackages = canonicalizeServerExternalPackages(
+    effective.options.serverExternalPackages,
+  );
+  if (!serverExternalPackages) return `${HTTP_CACHE_IDENTITY_NAMESPACE}:${base}]`;
+
+  let identity = `${HTTP_CACHE_EXTERNAL_IDENTITY_NAMESPACE}:${base},[`;
+  for (let index = 0; index < serverExternalPackages.length; index++) {
+    if (index > 0) identity += ",";
+    identity += JSONStringify(serverExternalPackages[index]);
+  }
+  return `${identity}]]`;
 }
 
 /** Build recoverable metadata while reusing the request graph's import-map fingerprint. */
@@ -430,6 +451,9 @@ export async function buildHttpCacheIdentityMetadata(
     url: normalizeHttpUrl(effective.url),
     importMap: effective.options.importMap,
     reactVersion: effective.options.reactVersion,
+    serverExternalPackages: canonicalizeServerExternalPackages(
+      effective.options.serverExternalPackages,
+    ),
     importMapFingerprint: await getRequestImportMapFingerprint(url, effective.options),
   };
 }

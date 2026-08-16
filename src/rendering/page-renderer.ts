@@ -97,6 +97,7 @@ export class PageRenderer {
       dependencyPinningDependencies,
       dependencyPinningSource,
       moduleServerOrigin,
+      this.config.build?.serverExternalPackages,
     );
     return {
       ...createDefaultMDXComponents(),
@@ -229,6 +230,7 @@ export class PageRenderer {
                   dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                   dependencyPinningDependencies: options?.dependencyPinningDependencies,
                   dependencyPinningSource: options?.dependencyPinningSource,
+                  serverExternalPackages: this.config.build?.serverExternalPackages,
                 },
               ),
             { "render.component_path": pageInfo.entity.path },
@@ -267,6 +269,7 @@ export class PageRenderer {
                 projectSlug: options?.projectSlug,
                 contentSourceId: options?.contentSourceId,
                 reactVersion,
+                serverExternalPackages: this.config.build?.serverExternalPackages,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
                 dependencyPinningSource: options?.dependencyPinningSource,

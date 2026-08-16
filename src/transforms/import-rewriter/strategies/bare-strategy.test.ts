@@ -141,6 +141,32 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier, null);
     });
 
+    it("leaves a configured server external package and its subpaths external", () => {
+      const ctx = makeCtx({
+        target: "browser",
+        serverExternalPackages: ["knex", "@prisma/client"],
+      });
+
+      assertEquals(bareStrategy.rewrite(makeInfo("knex"), ctx).specifier, null);
+      assertEquals(bareStrategy.rewrite(makeInfo("npm:knex@3.1.0"), ctx).specifier, null);
+      assertEquals(
+        bareStrategy.rewrite(makeInfo("@prisma/client/runtime/library"), ctx).specifier,
+        null,
+      );
+    });
+
+    it("still rewrites an undeclared package when server externals are configured", () => {
+      const result = bareStrategy.rewrite(
+        makeInfo("sequelize"),
+        makeCtx({ target: "browser", serverExternalPackages: ["knex"] }),
+      );
+
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/sequelize?external=react,react-dom&target=es2022",
+      );
+    });
+
     // The `npm:` scheme alone does not mean server-only. A browser-safe package
     // imported Deno-style (`npm:zod@4.0.0`) must still flow through esm.sh — the
     // `npm:` prefix is stripped and the package rewritten like a bare import, so

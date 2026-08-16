@@ -591,6 +591,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
               dependencyPinningSource: dependencySource,
+              serverExternalPackages: config?.build?.serverExternalPackages,
             },
             isSSR,
             ssrRewriteOptions: {
@@ -722,6 +723,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
               dependencyPinningSource: dependencySource,
+              serverExternalPackages: config?.build?.serverExternalPackages,
             },
             isSSR,
             ssrRewriteOptions: {
@@ -848,6 +850,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             reactVersion: state.reactVersion,
             dependencyPinningCacheKey: state.dependencyPinningCacheKey,
             moduleServerOrigin: url.origin,
+            serverExternalPackages: config?.build?.serverExternalPackages,
             releaseDependencyManifestVersion,
             modulePath,
           })
@@ -1142,6 +1145,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               dependencyPinningCacheKey,
               dependencyPinningDependencies,
               dependencyPinningSource: dependencySource,
+              serverExternalPackages: config?.build?.serverExternalPackages,
             };
 
             // The dev-module path has two post-steps that stay outside

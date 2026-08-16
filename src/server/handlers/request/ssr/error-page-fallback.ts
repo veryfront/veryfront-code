@@ -321,6 +321,7 @@ async function loadErrorComponent(
       dev: isLocal,
       contentSourceId,
       reactVersion,
+      serverExternalPackages: ctx.config?.build?.serverExternalPackages,
       moduleServerOrigin,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,

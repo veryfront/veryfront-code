@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { afterAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { RSCDevServerHandler } from "./handler.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
@@ -32,15 +33,22 @@ describe(
         expect(handler).toBeDefined();
       });
 
-      it("passes the trusted local-project identity to the render handler", () => {
+      it("passes project module options to the render handler", () => {
         const localHandler = new RSCDevServerHandler("/tmp/test-project", {
           isLocalProject: true,
+          config: { build: { serverExternalPackages: ["knex"] } },
         });
-        const isLocalProject = (localHandler as unknown as {
-          renderHandler: { moduleOptions: { isLocalProject?: boolean } };
-        }).renderHandler.moduleOptions.isLocalProject;
+        const moduleOptions = (localHandler as unknown as {
+          renderHandler: {
+            moduleOptions: {
+              isLocalProject?: boolean;
+              serverExternalPackages?: readonly string[];
+            };
+          };
+        }).renderHandler.moduleOptions;
 
-        expect(isLocalProject).toBe(true);
+        assertEquals(moduleOptions.isLocalProject, true);
+        assertEquals(moduleOptions.serverExternalPackages, ["knex"]);
       });
     });
 

@@ -27,6 +27,7 @@ export interface ResolveUnresolvedModuleViaHttpFallbackInput {
   reactVersion?: string;
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
+  serverExternalPackages?: readonly string[];
   fetchViaHttp?: FetchModuleViaHttpFn;
   cacheLocalModule?: CacheLocalModuleFn;
 }
@@ -65,6 +66,7 @@ export async function resolveUnresolvedModuleViaHttpFallback(
       input.reactVersion,
       input.dependencyPinningCacheKey,
       input.moduleServerOrigin,
+      input.serverExternalPackages,
     );
   }
 

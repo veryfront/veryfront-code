@@ -182,6 +182,14 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       }),
       undefined,
     );
+    const externalA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+    const externalB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      serverExternalPackages: ["@prisma/client", "knex"],
+    });
+    assertEquals(externalB, externalA);
+    assert(externalA?.startsWith("on:server-externals-"));
   });
 
   it("invalidates stale cache entries with missing local dependencies and retransforms", async () => {
