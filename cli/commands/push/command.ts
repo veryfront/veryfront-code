@@ -1272,16 +1272,8 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             throw pushConflictError(conflicts);
           }
         }
-        await recordPushReceipt(
-          client,
-          config,
-          projectDir,
-          branchName,
-          sourceSnapshot,
-          ignoreChecker,
-          pushedSourceDigest,
-        );
-        if (project) {
+        const writePlannedSyncTarget = async () => {
+          if (!project) return;
           await writeSyncTarget(projectDir, {
             controlPlane: config.apiUrl,
             projectId: project.id,
@@ -1289,7 +1281,22 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
             branch: branchName,
             files: plan.nextFiles,
           });
+        };
+        try {
+          await recordPushReceipt(
+            client,
+            config,
+            projectDir,
+            branchName,
+            sourceSnapshot,
+            ignoreChecker,
+            pushedSourceDigest,
+          );
+        } catch (error) {
+          await writePlannedSyncTarget();
+          throw error;
         }
+        await writePlannedSyncTarget();
       } finally {
         spinner.stop();
       }

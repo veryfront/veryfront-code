@@ -3002,6 +3002,88 @@ describe("push divergence guard", () => {
     }
   });
 
+  it("records the applied baseline when local source changes after remote writes", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+        await writeSyncTarget(projectDir, {
+          controlPlane: "https://control.example.test",
+          projectId: "project-123",
+          projectSlug: "my-project",
+          branch: "main",
+          files: {
+            "app.ts": { digest: await computeContentDigest("export const value = 1;\n") },
+          },
+        });
+
+        let fileListCalls = 0;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            fileListCalls++;
+            const applied = fileListCalls === 3;
+            if (applied) {
+              await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 3;\n");
+            }
+            return Response.json({
+              data: [{
+                path: "app.ts",
+                content: applied ? "export const value = 2;\n" : "export const value = 1;\n",
+                version_id: applied
+                  ? "00000000-0000-4000-8000-000000000011"
+                  : "00000000-0000-4000-8000-000000000010",
+              }],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") return Response.json({});
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, quiet: true }),
+          Error,
+          "Local source changed during push",
+        );
+
+        assertEquals(fileListCalls, 3);
+        assertEquals(await readPushReceipt(projectDir), null);
+        assertEquals(
+          await readSyncTarget(projectDir, {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            branch: "main",
+          }),
+          {
+            controlPlane: "https://control.example.test",
+            projectId: "project-123",
+            projectSlug: "my-project",
+            branch: "main",
+            files: {
+              "app.ts": { digest: await computeContentDigest("export const value = 2;\n") },
+            },
+          },
+        );
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("lets --force intentionally overwrite without a precondition", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
