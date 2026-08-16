@@ -680,25 +680,30 @@ function resolvePersistedReasoning(
   model: ModelRuntime,
   options: DirectModelOptions,
 ): RuntimeReasoningOption | undefined {
-  if (options.reasoning || resolveModelProvider(model) !== "anthropic") {
+  // The Anthropic request builder only gives neutral reasoning precedence when
+  // it enables thinking; otherwise a raw provider thinking config remains effective.
+  if (resolveModelProvider(model) !== "anthropic" || options.reasoning?.enabled === true) {
     return options.reasoning;
   }
 
   const providerOptions = options.providerOptions;
   if (!providerOptions || typeof providerOptions !== "object" || Array.isArray(providerOptions)) {
-    return undefined;
+    return options.reasoning;
   }
   const anthropic = readOwnEnumerableDataDescriptor(providerOptions, "anthropic")?.value;
   if (!anthropic || typeof anthropic !== "object" || Array.isArray(anthropic)) {
-    return undefined;
+    return options.reasoning;
   }
   const thinking = readOwnEnumerableDataDescriptor(anthropic, "thinking")?.value;
   if (!thinking || typeof thinking !== "object" || Array.isArray(thinking)) {
-    return undefined;
+    return options.reasoning;
   }
   const thinkingType = readOwnEnumerableDataDescriptor(thinking, "type")?.value;
+  if (thinkingType === "disabled") {
+    return { enabled: false };
+  }
   if (thinkingType !== "adaptive" && thinkingType !== "enabled") {
-    return undefined;
+    return options.reasoning;
   }
 
   if (thinkingType === "enabled") {

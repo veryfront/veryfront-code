@@ -855,6 +855,49 @@ describe("runtime-bridge", () => {
     assertEquals(recorded?.request, { reasoning: { enabled: true, budgetTokens: 2048 } });
   });
 
+  it("persists raw enabled Anthropic thinking when neutral reasoning has no effect", async () => {
+    for (const reasoning of [{}, { enabled: false }] as const) {
+      let recorded: AgentRunEvent | undefined;
+      const providerOptions = {
+        anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } },
+      };
+      const model: ModelRuntime = {
+        provider: "veryfront-cloud",
+        modelId: "anthropic/claude-sonnet-4-6",
+        modelProvider: "anthropic",
+        async doGenerate(options) {
+          const dispatched = options as {
+            reasoning?: unknown;
+            providerOptions?: Record<string, unknown>;
+          };
+          assertEquals(dispatched.reasoning, reasoning);
+          assertEquals(dispatched.providerOptions, providerOptions);
+          return { content: [], finishReason: "stop", usage: {} };
+        },
+        async doStream() {
+          throw new Error("unexpected stream dispatch");
+        },
+      };
+
+      await runWithRunEventSink(
+        (event) => {
+          recorded = event;
+        },
+        () =>
+          generateText({
+            model,
+            messages: [{ role: "user", content: "Hello" }],
+            providerOptions,
+            reasoning,
+          }),
+      );
+
+      assertEquals(recorded?.request, {
+        reasoning: { enabled: true, budgetTokens: 2048 },
+      });
+    }
+  });
+
   it("calls a sink shared by both lanes only once", async () => {
     let calls = 0;
     const sink = () => {

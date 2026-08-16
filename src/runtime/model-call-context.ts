@@ -117,16 +117,33 @@ export function createTimedAgentRunEventSink(
   const nowMs = options.nowMs ?? (() => performance.now());
   const epochMs = options.epochMs ?? (() => Date.now());
   const startedMs = options.startedMs ?? nowMs();
-  return (event) =>
-    sink({
+  return (event) => {
+    const hasElapsedMs = Object.hasOwn(event, "elapsedMs");
+    const hasEmittedAt = Object.hasOwn(event, "emittedAt");
+    if (hasElapsedMs) assertValidElapsedMs(event.elapsedMs);
+    if (hasEmittedAt) assertValidEmittedAt(event.emittedAt);
+
+    const elapsedMs = hasElapsedMs ? event.elapsedMs : Math.max(0, Math.round(nowMs() - startedMs));
+    const emittedAt = hasEmittedAt ? event.emittedAt : Math.round(epochMs());
+    assertValidElapsedMs(elapsedMs);
+    assertValidEmittedAt(emittedAt);
+
+    return sink({
       ...event,
-      elapsedMs: typeof event.elapsedMs === "number" && Number.isFinite(event.elapsedMs) &&
-          event.elapsedMs >= 0
-        ? event.elapsedMs
-        : Math.max(0, Math.round(nowMs() - startedMs)),
-      emittedAt: typeof event.emittedAt === "number" && Number.isInteger(event.emittedAt) &&
-          event.emittedAt >= 0
-        ? event.emittedAt
-        : Math.round(epochMs()),
+      elapsedMs,
+      emittedAt,
     });
+  };
+}
+
+function assertValidElapsedMs(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("elapsedMs must be a finite non-negative number");
+  }
+}
+
+function assertValidEmittedAt(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new TypeError("emittedAt must be a non-negative integer");
+  }
 }

@@ -166,28 +166,30 @@ export class ConversationRunEventEncoder {
   // is treated alike -- including the ones this encoder synthesises, such as the
   // terminal result for a provider-executed call the provider never resolved.
   private stampElapsed(events: ConversationRunEvent[]): ConversationRunEvent[] {
-    if ((!this.nowMs || this.startedMs === undefined) && !this.epochMs) {
+    if (events.length === 0) {
       return events;
     }
 
-    const elapsedMs = this.nowMs && this.startedMs !== undefined
+    for (const event of events) {
+      if (Object.hasOwn(event, "elapsedMs")) assertValidElapsedMs(event.elapsedMs);
+      if (Object.hasOwn(event, "emittedAt")) assertValidEmittedAt(event.emittedAt);
+    }
+
+    const needsElapsedMs = events.some((event) => !Object.hasOwn(event, "elapsedMs"));
+    const needsEmittedAt = events.some((event) => !Object.hasOwn(event, "emittedAt"));
+    const elapsedMs = needsElapsedMs && this.nowMs && this.startedMs !== undefined
       ? Math.max(0, Math.round(this.nowMs() - this.startedMs))
       : undefined;
-    const emittedAt = this.epochMs ? Math.round(this.epochMs()) : undefined;
+    const emittedAt = needsEmittedAt && this.epochMs ? Math.round(this.epochMs()) : undefined;
+    if (elapsedMs !== undefined) assertValidElapsedMs(elapsedMs);
+    if (emittedAt !== undefined) assertValidEmittedAt(emittedAt);
+    if (elapsedMs === undefined && emittedAt === undefined) {
+      return events;
+    }
     return events.map((event) => ({
       ...event,
-      ...(typeof event.elapsedMs === "number" && Number.isFinite(event.elapsedMs) &&
-          event.elapsedMs >= 0
-        ? { elapsedMs: event.elapsedMs }
-        : elapsedMs === undefined
-        ? {}
-        : { elapsedMs }),
-      ...(typeof event.emittedAt === "number" && Number.isInteger(event.emittedAt) &&
-          event.emittedAt >= 0
-        ? { emittedAt: event.emittedAt }
-        : emittedAt === undefined
-        ? {}
-        : { emittedAt }),
+      ...(elapsedMs !== undefined && !Object.hasOwn(event, "elapsedMs") ? { elapsedMs } : {}),
+      ...(emittedAt !== undefined && !Object.hasOwn(event, "emittedAt") ? { emittedAt } : {}),
     }));
   }
 
@@ -372,6 +374,18 @@ export class ConversationRunEventEncoder {
       default:
         return chunk.type.startsWith("data-") ? encodeCustomDataEvent(chunk) : [];
     }
+  }
+}
+
+function assertValidElapsedMs(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new TypeError("elapsedMs must be a finite non-negative number");
+  }
+}
+
+function assertValidEmittedAt(value: unknown): asserts value is number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new TypeError("emittedAt must be a non-negative integer");
   }
 }
 
