@@ -1182,6 +1182,93 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, 'loadSecret("server")');
     });
 
+    it("drops a runtime TypeScript enum used only by a stripped hook", async () => {
+      const code = [
+        `import { randomUUID } from "node:crypto";`,
+        `enum ServerStatus { Ready = randomUUID() }`,
+        `export async function getServerData() { return ServerStatus.Ready; }`,
+        `export default function Page() { return "client"; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "node:crypto");
+      assertNotIncludes(result, "ServerStatus");
+      assertNotIncludes(result, "randomUUID");
+    });
+
+    it("keeps an import read by a runtime TypeScript enum used by the client", async () => {
+      const code = [
+        `import { randomUUID } from "node:crypto";`,
+        `enum ClientStatus { Ready = randomUUID() }`,
+        `export async function getServerData() { return randomUUID(); }`,
+        `export default function Page() { return ClientStatus.Ready; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import { randomUUID } from "node:crypto"');
+      assertStringIncludes(result, "enum ClientStatus");
+      assertStringIncludes(result, "randomUUID()");
+    });
+
+    it("drops a runtime TypeScript namespace used only by a stripped hook", async () => {
+      const code = [
+        `import { randomUUID } from "node:crypto";`,
+        `namespace ServerStatus { export const Ready = randomUUID(); }`,
+        `export async function getServerData() { return ServerStatus.Ready; }`,
+        `export default function Page() { return "client"; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "node:crypto");
+      assertNotIncludes(result, "ServerStatus");
+      assertNotIncludes(result, "randomUUID");
+    });
+
+    it("keeps an import read by a runtime TypeScript namespace used by the client", async () => {
+      const code = [
+        `import { randomUUID } from "node:crypto";`,
+        `namespace ClientStatus { export const Ready = randomUUID(); }`,
+        `export async function getServerData() { return randomUUID(); }`,
+        `export default function Page() { return ClientStatus.Ready; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import { randomUUID } from "node:crypto"');
+      assertStringIncludes(result, "namespace ClientStatus");
+      assertStringIncludes(result, "randomUUID()");
+    });
+
+    it("drops a TypeScript import-equals binding used only by a stripped hook", async () => {
+      const code = [
+        `import crypto = require("node:crypto");`,
+        `export async function getServerData() { return crypto.randomUUID(); }`,
+        `export default function Page() { return "client"; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "node:crypto");
+      assertNotIncludes(result, "import crypto");
+      assertNotIncludes(result, "crypto.randomUUID");
+    });
+
+    it("keeps a TypeScript import-equals binding used by the client", async () => {
+      const code = [
+        `import crypto = require("node:crypto");`,
+        `export async function getServerData() { return crypto.randomUUID(); }`,
+        `export default function Page() { return crypto.randomUUID(); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import crypto = require("node:crypto")');
+      assertStringIncludes(result, "return crypto.randomUUID()");
+    });
+
     it("binds the name introduced by a TypeScript parameter property", async () => {
       const code = [
         `import { value } from "../server/secrets.ts";`,

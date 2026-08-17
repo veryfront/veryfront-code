@@ -197,6 +197,15 @@ function bodyOf(ast: ASTNode): Node[] {
   return Array.isArray(body) ? body.filter(isNode) : [];
 }
 
+function isRuntimeTsModuleDeclaration(node: Node): boolean {
+  return node.type === "TSModuleDeclaration" && node.declare !== true &&
+    node.global !== true && nodeName(node.id) !== null;
+}
+
+function isRuntimeTsImportEqualsDeclaration(node: Node): boolean {
+  return node.type === "TSImportEqualsDeclaration" && node.importKind !== "type";
+}
+
 /** The stub nodes this pass splices in, parsed rather than constructed. */
 interface Stubs {
   /** Hook function body: `{ throw new Error("server-only") }`. */
@@ -535,11 +544,30 @@ function moduleScopeBindingSites(
     if (statement.type === "ImportDeclaration") continue;
 
     const exported = statement.type === "ExportNamedDeclaration" ||
-      statement.type === "ExportDefaultDeclaration";
-    const declaration = exported ? statement.declaration : statement;
+      statement.type === "ExportDefaultDeclaration" ||
+      (isRuntimeTsImportEqualsDeclaration(statement) && statement.isExport === true);
+    const declaration = statement.type === "ExportNamedDeclaration" ||
+        statement.type === "ExportDefaultDeclaration"
+      ? statement.declaration
+      : statement;
     if (!isNode(declaration)) continue;
 
     if (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") {
+      const name = nodeName(declaration.id);
+      if (name) {
+        sites.push({
+          names: [name],
+          references: freeReferencedIdentifiers(declaration),
+          node: statement,
+          exported,
+          remove: exported ? null : () => removeStatement(statement),
+        });
+      }
+    } else if (
+      (declaration.type === "TSEnumDeclaration" && declaration.declare !== true) ||
+      isRuntimeTsModuleDeclaration(declaration) ||
+      isRuntimeTsImportEqualsDeclaration(declaration)
+    ) {
       const name = nodeName(declaration.id);
       if (name) {
         sites.push({
@@ -642,7 +670,10 @@ function moduleScopeBindingNames(body: Node[]): Set<string> {
     if (!isNode(declaration)) continue;
 
     if (
-      declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration"
+      declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration" ||
+      (declaration.type === "TSEnumDeclaration" && declaration.declare !== true) ||
+      isRuntimeTsModuleDeclaration(declaration) ||
+      isRuntimeTsImportEqualsDeclaration(declaration)
     ) {
       const name = nodeName(declaration.id);
       if (name) names.add(name);
@@ -711,12 +742,23 @@ function freeReferencedIdentifiers(
   const bindDirectStatements = (scope: LexicalScope, statements: unknown[]): void => {
     for (const statement of statements) {
       if (!isNode(statement) || elided.has(statement)) continue;
-      if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
-        bindPatternNames(scope, statement.id);
+      const declaration = statement.type === "ExportNamedDeclaration" ||
+          statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement;
+      if (!isNode(declaration)) continue;
+      if (
+        declaration.type === "FunctionDeclaration" ||
+        declaration.type === "ClassDeclaration" ||
+        declaration.type === "TSEnumDeclaration" ||
+        isRuntimeTsModuleDeclaration(declaration) ||
+        isRuntimeTsImportEqualsDeclaration(declaration)
+      ) {
+        bindPatternNames(scope, declaration.id);
         continue;
       }
-      if (statement.type !== "VariableDeclaration") continue;
-      for (const declarator of declaratorsOf(statement)) {
+      if (declaration.type !== "VariableDeclaration") continue;
+      for (const declarator of declaratorsOf(declaration)) {
         if (!elided.has(declarator)) bindPatternNames(scope, declarator.id);
       }
     }
@@ -907,8 +949,73 @@ function freeReferencedIdentifiers(
     return false;
   };
 
+  const visitTsEnum = (node: Node, scopes: LexicalScope[]): void => {
+    bindPatternNames(scopes[0] ?? rootScope, node.id);
+
+    const enumScope: LexicalScope = { kind: "block", names: new Set() };
+    bindPatternNames(enumScope, node.id);
+    for (const member of Array.isArray(node.members) ? node.members : []) {
+      if (isNode(member) && isNode(member.id) && member.id.type === "Identifier") {
+        bindPatternNames(enumScope, member.id);
+      }
+    }
+
+    const enumScopes = [enumScope, ...scopes];
+    for (const member of Array.isArray(node.members) ? node.members : []) {
+      if (isNode(member) && isNode(member.initializer)) {
+        visit(member.initializer, enumScopes);
+      }
+    }
+  };
+
+  const visitTsModule = (node: Node, scopes: LexicalScope[]): void => {
+    if (!isRuntimeTsModuleDeclaration(node)) return;
+
+    bindPatternNames(scopes[0] ?? rootScope, node.id);
+    const moduleScope: LexicalScope = { kind: "block", names: new Set() };
+    bindPatternNames(moduleScope, node.id);
+    const moduleScopes = [moduleScope, ...scopes];
+
+    const body = node.body;
+    if (!isNode(body)) return;
+    if (body.type === "TSModuleBlock") {
+      bindDirectDeclarations(moduleScope, body);
+      for (const statement of Array.isArray(body.body) ? body.body : []) {
+        if (isNode(statement)) visit(statement, moduleScopes);
+      }
+      return;
+    }
+    if (body.type === "TSModuleDeclaration") visitTsModule(body, moduleScopes);
+  };
+
+  const visitTsEntityName = (node: Node, scopes: LexicalScope[]): void => {
+    if (node.type === "TSQualifiedName" && isNode(node.left)) {
+      visitTsEntityName(node.left, scopes);
+      return;
+    }
+    if (node.type === "Identifier") visit(node, scopes);
+  };
+
+  const visitTsImportEquals = (node: Node, scopes: LexicalScope[]): void => {
+    if (!isRuntimeTsImportEqualsDeclaration(node)) return;
+    bindPatternNames(scopes[0] ?? rootScope, node.id);
+    if (isNode(node.moduleReference)) visitTsEntityName(node.moduleReference, scopes);
+  };
+
   const visit = (node: Node, scopes: LexicalScope[]): void => {
     if (node.type === "ImportDeclaration" || elided.has(node)) return;
+    if (node.type === "TSEnumDeclaration") {
+      visitTsEnum(node, scopes);
+      return;
+    }
+    if (node.type === "TSModuleDeclaration") {
+      visitTsModule(node, scopes);
+      return;
+    }
+    if (node.type === "TSImportEqualsDeclaration") {
+      visitTsImportEquals(node, scopes);
+      return;
+    }
     if (visitTsExpression(node, scopes)) return;
 
     if (node.type === "Identifier" || node.type === "JSXIdentifier") {
