@@ -1,5 +1,5 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
+import { createError, ROUTE_CONFLICT, toError } from "#veryfront/errors";
 import * as esbuild from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
@@ -8,11 +8,29 @@ import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts"
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 
+/**
+ * The manifest `file` of the bundled shell entry — the artifact that serves `/`.
+ *
+ * `findOrCreateEntryPath` resolves the root page (`app/page.mdx`, `app/page.md`,
+ * `pages/index.mdx`, `pages/index.md`) as the shell entry, so on a project that has
+ * a root page this artifact *is* that page compiled, and — unlike the per-route
+ * artifacts — with its imports bundled. Being the one entry that loads standalone
+ * is why it, and not a per-route copy, owns `/`.
+ */
+const EMBEDDED_APP_SHELL_FILE = "embedded/app.js";
+
 export interface BuildEmbeddedOptions {
   projectDir: string;
   outDir: string;
   runtime: "deno" | "node" | "bun";
   config?: VeryfrontConfig;
+}
+
+interface EmbeddedDiscoveredRoute {
+  router: "app" | "pages";
+  routePath: string;
+  filePath: string;
+  sourcePath: string;
 }
 
 /**
@@ -21,11 +39,16 @@ export interface BuildEmbeddedOptions {
  * - outDir/embedded/manifest.json
  * - outDir/embedded/app.js (SSR entry)
  * - outDir/embedded/rsc/*.js (RSC support)
+ *
+ * Every entry in `manifest.routes` has a distinct `path`: a consumer needs no
+ * precedence rule to resolve one. `/` is always the shell entry, `embedded/app.js`.
  */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
-): Promise<{ manifest: EmbeddedBundleManifest }> {
-  let buildResult: { manifest: EmbeddedBundleManifest } | undefined;
+): Promise<{ manifest: EmbeddedBundleManifest; pagesIndexIsShell: boolean }> {
+  let buildResult:
+    | { manifest: EmbeddedBundleManifest; pagesIndexIsShell: boolean }
+    | undefined;
   let buildFailed = false;
   let buildError: unknown;
 
@@ -46,7 +69,12 @@ export async function buildEmbeddedPreset(
       projectDir,
       appDirectory,
       pagesDirectory,
+      config.router,
     );
+    const pagesIndexIsShell = [
+      join(projectDir, pagesDirectory, "index.mdx"),
+      join(projectDir, pagesDirectory, "index.md"),
+    ].includes(entryPath);
     const appOut = join(embeddedDir, "app.js");
     const bundledAppCode = await bundleEmbeddedApp({
       fs,
@@ -58,12 +86,49 @@ export async function buildEmbeddedPreset(
     await fs.writeTextFile(appOut, bundledAppCode);
 
     const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
-    const discovered = [
-      ...(await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)),
-      ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
-    ];
+    const discovered = config.router === "pages"
+      ? await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)
+      : config.router === "app"
+      ? await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)
+      : [
+        ...(await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)),
+        ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
+      ];
+
+    const routeCounts = new Map<string, number>();
+    for (const route of discovered) {
+      const key = `${route.router}:${route.routePath}`;
+      routeCounts.set(key, (routeCounts.get(key) ?? 0) + 1);
+    }
+
+    // Every route path is published exactly once, first claim wins.
+    //
+    // `/` is seeded because it belongs to the bundled shell entry, which IS the
+    // root page when the project has one. Without the seed the root page was
+    // compiled a second time into a per-route artifact: that copy published `/`
+    // twice, and because a root page's path relative to `app/` is empty it landed
+    // on the dotfile `embedded/app/.js`.
+    //
+    // The gate spans app AND pages routes in automatic mode, so it also settles
+    // a collision that previously emitted duplicates. Explicit router modes
+    // discover only their configured directory; automatic mode lists app routes
+    // first and keeps pages routes as fallbacks, matching runtime precedence.
+    const claimedPaths = new Set<string>(["/"]);
 
     for (const r of discovered) {
+      const hasRouterConflict = (routeCounts.get(`${r.router}:${r.routePath}`) ?? 0) > 1;
+      if (r.router === "pages" && hasRouterConflict && !claimedPaths.has(r.routePath)) {
+        throw ROUTE_CONFLICT.create({
+          detail: `Multiple Pages Router files resolve to "${r.routePath}"`,
+          context: {
+            candidateCount: routeCounts.get(`${r.router}:${r.routePath}`),
+            routePath: r.routePath,
+            router: r.router,
+          },
+        });
+      }
+      if (claimedPaths.has(r.routePath)) continue;
+
       try {
         const mdxContent = await fs.readTextFile(r.sourcePath);
         const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
@@ -81,6 +146,7 @@ export async function buildEmbeddedPreset(
           file: `embedded/${fileRel}`,
           type: "page",
         });
+        claimedPaths.add(r.routePath);
       } catch (e) {
         logger.warn("embedded: failed to compile route MDX", {
           route: r.routePath,
@@ -89,7 +155,7 @@ export async function buildEmbeddedPreset(
       }
     }
 
-    routes.unshift({ path: "/", file: "embedded/app.js", type: "page" });
+    routes.unshift({ path: "/", file: EMBEDDED_APP_SHELL_FILE, type: "page" });
 
     const rscFiles = [
       new URL("../../rendering/rsc/client-dom.ts", import.meta.url),
@@ -136,7 +202,7 @@ export async function buildEmbeddedPreset(
 
     logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
 
-    buildResult = { manifest };
+    buildResult = { manifest, pagesIndexIsShell };
   } catch (error) {
     buildFailed = true;
     buildError = error;
@@ -198,13 +264,21 @@ async function findOrCreateEntryPath(
   projectDir: string,
   appDirectory: string,
   pagesDirectory: string,
+  router: VeryfrontConfig["router"],
 ): Promise<string> {
-  const candidates = [
+  const appCandidates = [
     join(projectDir, appDirectory, "page.mdx"),
     join(projectDir, appDirectory, "page.md"),
+  ];
+  const pagesCandidates = [
     join(projectDir, pagesDirectory, "index.mdx"),
     join(projectDir, pagesDirectory, "index.md"),
   ];
+  const candidates = router === "pages"
+    ? pagesCandidates
+    : router === "app"
+    ? appCandidates
+    : [...appCandidates, ...pagesCandidates];
 
   for (const c of candidates) {
     try {
@@ -288,8 +362,8 @@ async function discoverAppRoutes(
   projectDir: string,
   embeddedDir: string,
   appDirectory: string,
-): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
-  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
+): Promise<EmbeddedDiscoveredRoute[]> {
+  const results = new Map<string, EmbeddedDiscoveredRoute>();
   const base = join(projectDir, appDirectory);
 
   async function walk(dir: string, rel = ""): Promise<void> {
@@ -307,8 +381,17 @@ async function discoverAppRoutes(
       const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
       const norm = normalizeAppRoutePath(routePath);
 
-      const filePath = join(embeddedDir, routePath === "" ? "app.js" : `app${norm}.js`);
-      results.push({ routePath: norm, filePath, sourcePath: abs });
+      // `/` is claimed by the shell entry before this list is compiled, so the
+      // root page never reaches a per-route artifact and this name is never used
+      // for it. Kept as the plain form rather than special-cased: a special case
+      // here would be dead code that reads as if it were load-bearing.
+      const filePath = join(embeddedDir, `app${norm}.js`);
+      // The runtime resolves page.mdx before page.md. Collapse the extension
+      // variants here so embedded builds publish the same source.
+      const existing = results.get(norm);
+      if (!existing || ent.name === "page.mdx") {
+        results.set(norm, { router: "app", routePath: norm, filePath, sourcePath: abs });
+      }
     }
   }
 
@@ -318,7 +401,7 @@ async function discoverAppRoutes(
     /* expected: no app directory */
   }
 
-  return results;
+  return [...results.values()];
 }
 
 async function discoverPagesRoutes(
@@ -326,8 +409,8 @@ async function discoverPagesRoutes(
   projectDir: string,
   embeddedDir: string,
   pagesDirectory: string,
-): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
-  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
+): Promise<EmbeddedDiscoveredRoute[]> {
+  const results: EmbeddedDiscoveredRoute[] = [];
   const base = join(projectDir, pagesDirectory);
 
   async function walk(dir: string, rel = ""): Promise<void> {
@@ -345,7 +428,7 @@ async function discoverPagesRoutes(
 
       const routePath = normalizePageRoutePath(relNext);
       const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
-      results.push({ routePath, filePath, sourcePath: abs });
+      results.push({ router: "pages", routePath, filePath, sourcePath: abs });
     }
   }
 

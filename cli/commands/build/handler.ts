@@ -149,26 +149,26 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   });
 }
 
-/** The synthetic shell route `buildEmbeddedPreset` prepends to every manifest. */
-const EMBEDDED_APP_SHELL_FILE = "embedded/app.js";
-
 /**
  * Total bytes of the artifacts the embedded manifest declares.
  *
  * The production build reports the size of what it emitted, so the embedded
  * preset reports the same thing rather than leaving the field at zero. The
  * manifest is the artifact list, so it cannot drift from what was written.
- * A file the preset failed to emit is skipped: `buildEmbeddedPreset` only warns
- * when an RSC bundle or a route fails, and a size roll-up must not turn that
- * warning into a hard error.
+ * A missing file is skipped because `buildEmbeddedPreset` only warns when an
+ * RSC bundle or route fails. Other filesystem errors still fail the build so
+ * JSON output cannot report a partial size as a successful result.
+ *
+ * @internal
  */
-async function sumEmbeddedOutputSize(
+export async function sumEmbeddedOutputSize(
   outDir: string,
   manifest: { routes: ReadonlyArray<{ file: string }>; assets: ReadonlyArray<{ file: string }> },
+  fileSystem?: { stat(path: string): Promise<{ size: number }> },
 ): Promise<number> {
   const { join } = await import("veryfront/platform/path");
-  const { createFileSystem } = await import("veryfront/platform");
-  const fs = createFileSystem();
+  const { createFileSystem, isNotFoundError } = await import("veryfront/platform");
+  const fs = fileSystem ?? createFileSystem();
 
   const files = new Set<string>(["embedded/manifest.json"]);
   for (const route of manifest.routes) files.add(route.file);
@@ -178,11 +178,23 @@ async function sumEmbeddedOutputSize(
   for (const file of files) {
     try {
       total += (await fs.stat(join(outDir, file))).size;
-    } catch {
-      // Not emitted — already reported by the preset as a warning.
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      // Not emitted, already reported by the preset as a warning.
     }
   }
   return total;
+}
+
+/** @internal */
+export function countEmbeddedPages(
+  manifest: { routes: ReadonlyArray<{ type: string; file: string }> },
+  pagesIndexIsShell: boolean,
+): number {
+  return manifest.routes.filter((route) =>
+    route.type === "page" &&
+    (!pagesIndexIsShell || route.file !== "embedded/pages/index.js")
+  ).length;
 }
 
 /**
@@ -250,7 +262,7 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
     }
   }
 
-  const { manifest } = await buildEmbeddedPreset({
+  const { manifest, pagesIndexIsShell } = await buildEmbeddedPreset({
     projectDir,
     outDir: finalOutput,
     runtime: "deno",
@@ -258,6 +270,7 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
   });
 
   if (json) {
+    const totalSize = await sumEmbeddedOutputSize(finalOutput, manifest);
     const elapsed = Date.now() - startTime;
     streamJsonLine({
       type: "step",
@@ -271,21 +284,17 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
       type: "result",
       success: true,
       data: {
-        // `buildEmbeddedPreset` unshifts a synthetic `/` -> `embedded/app.js`
-        // shell route on top of the discovered ones, so counting every
-        // `type: "page"` reports one more page than the project has. Measured
-        // on a two-page fixture: routes are the shell, `/about`, and `/`, so
-        // the naive count says 3.
-        pages: manifest.routes.filter((route) =>
-          route.type === "page" && route.file !== EMBEDDED_APP_SHELL_FILE
-        ).length,
+        // The shell serves `/` and is itself a page. Exclude a discovered Pages
+        // index only when that same source supplied the shell. If the App Router
+        // supplied the shell, `/index` is a distinct emitted page and still counts.
+        pages: countEmbeddedPages(manifest, pagesIndexIsShell),
         // The default path reports 0 for a build with no splitting stage, and
         // the embedded preset has none — which is why `--split` is rejected for
         // it above. Reporting 1 here would answer the same field differently
         // from the command this is supposed to match.
         chunks: 0,
         assets: manifest.assets.length,
-        totalSize: await sumEmbeddedOutputSize(finalOutput, manifest),
+        totalSize,
         duration_ms: elapsed,
         outputDir: finalOutput,
         // `--dry-run` is rejected for this preset, so a build that got here ran.
