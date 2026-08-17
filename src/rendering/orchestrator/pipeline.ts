@@ -665,15 +665,13 @@ export class RenderPipeline {
         .flatMap(({ result }) => result ? [result] : []),
     );
 
-    const failedResult = dataResults.find(({ error }) => error);
-    if (failedResult?.error) {
-      if (responseMetadata.headers || responseMetadata.cookies) {
-        throw wrapDataResponseMetadataError(failedResult.error, responseMetadata);
+    for (const { type, id, result, error } of dataResults) {
+      if (error) {
+        if (responseMetadata.headers || responseMetadata.cookies) {
+          throw wrapDataResponseMetadataError(error, responseMetadata);
+        }
+        throw error;
       }
-      throw failedResult.error;
-    }
-
-    for (const { type, id, result } of dataResults) {
       if (!result) continue;
 
       if (result.notFound) {

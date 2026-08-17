@@ -690,6 +690,57 @@ describe("RenderPipeline behavior", () => {
     });
   });
 
+  it("preserves an earlier page control when later layout data fails", async () => {
+    const pagePath = "/project/pages/page-control-before-layout-error.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const pipeline = createPipeline(pagePath, {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+    });
+    (pipeline as any).loadModule = async (path: string) => ({
+      getServerData: () => {
+        if (path === pagePath) {
+          return {
+            notFound: true,
+            headers: { "x-missing-reason": "page-control" },
+          };
+        }
+        throw new Error("Layout data failed after page control");
+      },
+    });
+
+    const error = await assertRejects(
+      () =>
+        pipeline.resolvePageData("/page-control-before-layout-error", {
+          request: new Request("http://localhost/page-control-before-layout-error"),
+          url: new URL("http://localhost/page-control-before-layout-error"),
+        }),
+      Error,
+      "Page/Layout returned notFound",
+    );
+
+    assertEquals(resolveSSRControlOutcome(error), {
+      kind: "not-found",
+      headers: { "x-missing-reason": "page-control" },
+    });
+  });
+
   it("attaches resolved response metadata when SSR later fails", async () => {
     const pagePath = "/project/pages/response-metadata-error.tsx";
     const sharedRenderError = new Error("SSR failed after data resolution");
