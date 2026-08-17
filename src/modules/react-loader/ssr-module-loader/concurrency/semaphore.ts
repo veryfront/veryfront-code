@@ -1,8 +1,19 @@
 /** Default timeout for acquiring a semaphore permit (ms) */
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
 
+/** Result of an acquire attempt, with the queue depth it observed. */
+export interface SemaphoreAcquireReport {
+  acquired: boolean;
+  /**
+   * Queue depth at the moment the attempt settled, counting the waiter itself.
+   * A timed-out waiter leaves the queue before its caller resumes, so reading
+   * {@link Semaphore.waiting} afterwards understates the real depth.
+   */
+  waiting: number;
+}
+
 interface SemaphoreWaiter {
-  resolve: (acquired: boolean) => void;
+  resolve: (report: SemaphoreAcquireReport) => void;
   reject: (reason?: unknown) => void;
   settled: boolean;
   timeoutId?: ReturnType<typeof setTimeout>;
@@ -24,6 +35,17 @@ export class Semaphore {
     timeoutMs = DEFAULT_ACQUIRE_TIMEOUT_MS,
     options: { signal?: AbortSignal } = {},
   ): Promise<boolean> {
+    return this.tryAcquireWithReport(timeoutMs, options).then((report) => report.acquired);
+  }
+
+  /**
+   * Acquire a permit and report the queue depth the attempt observed. Use this
+   * instead of {@link tryAcquire} when a failure needs an accurate diagnostic.
+   */
+  tryAcquireWithReport(
+    timeoutMs = DEFAULT_ACQUIRE_TIMEOUT_MS,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<SemaphoreAcquireReport> {
     const { signal } = options;
     if (signal?.aborted) {
       return Promise.reject(
@@ -33,18 +55,18 @@ export class Semaphore {
 
     if (this.permits > 0) {
       this.permits--;
-      return Promise.resolve(true);
+      return Promise.resolve({ acquired: true, waiting: this.waitQueue.length });
     }
 
     if (timeoutMs <= 0) {
-      return Promise.resolve(false);
+      return Promise.resolve({ acquired: false, waiting: this.waitQueue.length });
     }
 
     if (this.waitQueue.length >= this.maxQueueSize) {
-      return Promise.resolve(false);
+      return Promise.resolve({ acquired: false, waiting: this.waitQueue.length });
     }
 
-    return new Promise<boolean>((resolve, reject) => {
+    return new Promise<SemaphoreAcquireReport>((resolve, reject) => {
       const waiter: SemaphoreWaiter = {
         resolve,
         reject,
@@ -82,9 +104,12 @@ export class Semaphore {
         waiter.timeoutId = setTimeout(() => {
           if (waiter.settled) return;
           waiter.settled = true;
+          // Read the depth before this waiter leaves the queue, otherwise the
+          // last waiter standing reports an empty queue it was still part of.
+          const waiting = this.waitQueue.length;
           removeWaiter();
           cleanup();
-          resolve(false);
+          resolve({ acquired: false, waiting });
         }, timeoutMs);
       }
 
@@ -101,7 +126,7 @@ export class Semaphore {
       if (next.signal && next.onAbort) {
         next.signal.removeEventListener("abort", next.onAbort);
       }
-      next.resolve(true);
+      next.resolve({ acquired: true, waiting: this.waitQueue.length });
       return;
     }
 

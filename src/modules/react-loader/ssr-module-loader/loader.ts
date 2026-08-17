@@ -28,8 +28,8 @@ import {
 } from "./loader-helpers.ts";
 import {
   getMaxConcurrentTransforms,
+  getTransformAcquireTimeoutMs,
   MAX_TRANSFORM_DEPTH,
-  TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
@@ -232,11 +232,15 @@ export class SSRModuleLoader {
     // false "at capacity" failures when a cold-cache render fans out across
     // the framework tree. Bypass it in dev; the global semaphore still bounds
     // total concurrency.
-    const bypassProjectLimit = this.options.dev === true;
+    const dev = this.options.dev === true;
+    const bypassProjectLimit = dev;
 
-    if (
-      !await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS, bypassProjectLimit)
-    ) {
+    // Dev queues on the global semaphore instead of failing the render, so a
+    // burst of concurrent refreshes is slower rather than an error page.
+    // Production keeps the short deadline as multi-tenant back-pressure.
+    const acquireTimeoutMs = getTransformAcquireTimeoutMs(dev);
+
+    if (!await tryAcquireTransformSlot(projectId, acquireTimeoutMs, bypassProjectLimit)) {
       throw createTransformCapacityError(
         mode,
         `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
@@ -246,11 +250,12 @@ export class SSRModuleLoader {
 
     try {
       if (semaphore) {
-        semaphoreAcquired = await semaphore.tryAcquire(TRANSFORM_ACQUIRE_TIMEOUT_MS);
+        const report = await semaphore.tryAcquireWithReport(acquireTimeoutMs);
+        semaphoreAcquired = report.acquired;
         if (!semaphoreAcquired) {
           throw createTransformCapacityError(
             mode,
-            `Transform capacity exceeded (${semaphore.waiting} waiting). Service is overloaded.`,
+            `Transform capacity exceeded (${report.waiting} waiting). Service is overloaded.`,
             filePath,
           );
         }

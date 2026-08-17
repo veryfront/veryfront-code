@@ -62,6 +62,20 @@ export function resetCachedTransformLimits(): void {
 // dependency; this remains well below the module-load and render hard caps.
 export const TRANSFORM_ACQUIRE_TIMEOUT_MS = 5_000;
 
+// The dev server is single tenant, so shedding load protects nobody: a burst of
+// concurrent refreshes on a cold cache must queue and stay slow instead of
+// failing the render. The wait stays below the module-load hard cap so a wedged
+// transform still surfaces as a load failure.
+export const TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS = 30_000;
+
+/**
+ * Time a transform waits for capacity. Dev queues; production sheds load so one
+ * tenant cannot stall the others.
+ */
+export function getTransformAcquireTimeoutMs(dev: boolean): number {
+  return dev ? TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS : TRANSFORM_ACQUIRE_TIMEOUT_MS;
+}
+
 // Bound waits on a shared cold transform leader. If the leader promise never
 // settles, callers should detach and allow later requests to retry cleanly.
 export const TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS = 45_000;

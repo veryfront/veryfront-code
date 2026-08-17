@@ -166,6 +166,35 @@ describe("modules/react-loader/ssr-module-loader/concurrency/semaphore", () => {
       await Promise.all([p1, p2]);
     });
 
+    it("should report the queue depth a timed-out waiter observed", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+      const report = await sem.tryAcquireWithReport(5);
+
+      assertEquals(report.acquired, false);
+      assertEquals(report.waiting, 1, "the waiter that timed out must count itself");
+      assertEquals(sem.waiting, 0, "a timed-out waiter still leaves the queue");
+
+      sem.release();
+      assertEquals(sem.available, 1);
+    });
+
+    it("should report every queued waiter present when an acquire times out", async () => {
+      const sem = new Semaphore(1);
+
+      await sem.tryAcquire();
+      const firstReport = sem.tryAcquireWithReport(5);
+      const secondReport = sem.tryAcquireWithReport(200);
+      assertEquals(sem.waiting, 2);
+
+      assertEquals((await firstReport).waiting, 2, "both queued waiters must be counted");
+
+      sem.release();
+      assertEquals((await secondReport).acquired, true);
+      sem.release();
+    });
+
     it("should remove timed-out waiters from queue", async () => {
       const sem = new Semaphore(1);
 
