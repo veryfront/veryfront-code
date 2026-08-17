@@ -149,6 +149,9 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   });
 }
 
+/** The synthetic shell route `buildEmbeddedPreset` prepends to every manifest. */
+const EMBEDDED_APP_SHELL_FILE = "embedded/app.js";
+
 /**
  * Total bytes of the artifacts the embedded manifest declares.
  *
@@ -219,12 +222,29 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
     }
   }
 
-  const { manifest } = await buildEmbeddedPreset({
-    projectDir,
-    outDir: finalOutput,
-    runtime: "deno",
-    config,
-  });
+  let manifest;
+  try {
+    ({ manifest } = await buildEmbeddedPreset({
+      projectDir,
+      outDir: finalOutput,
+      runtime: "deno",
+      config,
+    }));
+  } catch (error) {
+    // The default path closes the stream with its own error result rather than
+    // letting the router answer. Without this, a failed `--json` build has
+    // already written `step` lines to stdout and then gets the router's
+    // differently-shaped envelope appended — a hybrid stream no consumer can
+    // parse. Rethrown afterwards so the exit code is unchanged.
+    if (json) {
+      streamJsonLine({
+        type: "result",
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw error;
+  }
 
   if (json) {
     const elapsed = Date.now() - startTime;
@@ -240,10 +260,19 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
       type: "result",
       success: true,
       data: {
-        pages: manifest.routes.filter((route) => route.type === "page").length,
-        // The preset emits one esbuild bundle and has no splitting stage —
-        // which is why `--split` is rejected for it above.
-        chunks: 1,
+        // `buildEmbeddedPreset` unshifts a synthetic `/` -> `embedded/app.js`
+        // shell route on top of the discovered ones, so counting every
+        // `type: "page"` reports one more page than the project has. Measured
+        // on a two-page fixture: routes are the shell, `/about`, and `/`, so
+        // the naive count says 3.
+        pages: manifest.routes.filter((route) =>
+          route.type === "page" && route.file !== EMBEDDED_APP_SHELL_FILE
+        ).length,
+        // The default path reports 0 for a build with no splitting stage, and
+        // the embedded preset has none — which is why `--split` is rejected for
+        // it above. Reporting 1 here would answer the same field differently
+        // from the command this is supposed to match.
+        chunks: 0,
         assets: manifest.assets.length,
         totalSize: await sumEmbeddedOutputSize(finalOutput, manifest),
         duration_ms: elapsed,

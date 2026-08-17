@@ -134,10 +134,21 @@ describe("commands/build embedded preset --json", () => {
       expectedOutputDir,
       "outputDir must be the directory the preset wrote",
     );
+    // Exact, not `>= 1`. The fixture ships one page, and the preset unshifts a
+    // synthetic `/` -> `embedded/app.js` shell route on top of the discovered
+    // ones — so a `>= 1` assertion passes just as happily on the naive count
+    // that reports 2 for a one-page project.
     assertEquals(
-      (data.pages as number) >= 1,
+      data.pages,
+      1,
+      `one page in, one page reported: ${JSON.stringify(data)}`,
+    );
+    // The default path reports 0 chunks for a build with no splitting stage.
+    assertEquals(data.chunks, 0, `embedded has no splitting stage: ${JSON.stringify(data)}`);
+    assertEquals(
+      (data.totalSize as number) > 0,
       true,
-      `the built page must be counted: ${JSON.stringify(data)}`,
+      `totalSize must reflect real artifacts: ${JSON.stringify(data)}`,
     );
   });
 });
