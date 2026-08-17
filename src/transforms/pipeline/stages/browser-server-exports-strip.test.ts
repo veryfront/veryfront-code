@@ -1093,6 +1093,31 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `setName(Page, "Page")`);
     });
 
+    it("does not treat a module-local Object.defineProperty call as compiler metadata", async () => {
+      const code = [
+        `const Object = {`,
+        `  defineProperty(target, key, descriptor) {`,
+        `    globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `    return target;`,
+        `  },`,
+        `};`,
+        `var defineName = Object.defineProperty;`,
+        `var setName = (target, value) => defineName(target, "name", { value, configurable: true });`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "globalThis.nameRegistrations");
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [
@@ -1899,6 +1924,29 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes(result, "REGION");
       assertStringIncludes(result, "getEnv");
+    });
+
+    it("keeps a nested var destructuring that reads a block-local shadow", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `{`,
+        `  const KEY = {`,
+        `    get value() { globalThis.reads = (globalThis.reads ?? 0) + 1; return "client"; },`,
+        `  };`,
+        `  var { value } = KEY;`,
+        `}`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "globalThis.reads");
+      assertStringIncludes(result, "var {");
+      assertStringIncludes(result, "} = KEY;");
+      assertNotIncludes(result, "SECRET_KEY");
+      assertNotIncludes(result, `from "veryfront"`);
     });
 
     // A `for…of` head declares the binding the loop assigns to, so there is no

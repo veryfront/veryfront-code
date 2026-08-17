@@ -533,14 +533,25 @@ function declaratorBoundNames(declarator: Node): string[] | null {
  * one-declarator declaration rather than the declarator node keeps the pattern
  * in binding position: a default that reads a *sibling* of the same pattern
  * (`const { token, auth = token } = …`) is bound, not free, so it never counts
- * as an outside consumer of the declaration it lives in.
+ * as an outside consumer of the declaration it lives in. A nested `var` also
+ * receives the lexical bindings visible where it was written, so a block-local
+ * shadow cannot be mistaken for a module binding with the same name.
  */
-function declaratorReferences(declaration: Node, declarator: Node): Set<string> {
-  return freeReferencedIdentifiers({
-    type: "VariableDeclaration",
-    kind: declaration.kind,
-    declarations: [declarator],
-  });
+function declaratorReferences(
+  declaration: Node,
+  declarator: Node,
+  enclosingBindings: ReadonlySet<string> = NO_BOUND_NAMES,
+): Set<string> {
+  return freeReferencedIdentifiers(
+    {
+      type: "VariableDeclaration",
+      kind: declaration.kind,
+      declarations: [declarator],
+    },
+    NOTHING_ELIDED,
+    NOTHING_ELIDED,
+    enclosingBindings,
+  );
 }
 
 /**
@@ -568,6 +579,7 @@ function moduleScopeBindingSites(
     exported: boolean,
     detach: (() => void) | null,
     nested = false,
+    enclosingBindings: ReadonlySet<string> = NO_BOUND_NAMES,
   ): void => {
     for (const declarator of declaratorsOf(declaration)) {
       const names = declaratorBoundNames(declarator);
@@ -575,7 +587,7 @@ function moduleScopeBindingSites(
 
       sites.push({
         names,
-        references: declaratorReferences(declaration, declarator),
+        references: declaratorReferences(declaration, declarator, enclosingBindings),
         node: declarator,
         exported,
         nested,
@@ -636,8 +648,8 @@ function moduleScopeBindingSites(
     collectHoistedVarSites(
       declaration,
       stubs,
-      (nestedDeclaration, nestedExported, detach) =>
-        addDeclarators(nestedDeclaration, nestedExported, detach, true),
+      (nestedDeclaration, nestedExported, detach, enclosingBindings) =>
+        addDeclarators(nestedDeclaration, nestedExported, detach, true, enclosingBindings),
     );
   }
 
@@ -653,6 +665,64 @@ function startsVarScope(node: Node): boolean {
     node.type.startsWith("TS");
 }
 
+/** Lexical bindings introduced by the control-flow scope `node` opens. */
+function directLexicalBindingNames(node: Node): Set<string> {
+  const names = new Set<string>();
+
+  const bindDeclaration = (statement: Node): void => {
+    const declaration = statement.type === "ExportNamedDeclaration" ||
+        statement.type === "ExportDefaultDeclaration"
+      ? statement.declaration
+      : statement;
+    if (!isNode(declaration)) return;
+
+    if (declaration.type === "VariableDeclaration") {
+      if (declaration.kind === "var") return;
+      for (const declarator of declaratorsOf(declaration)) {
+        if (!isNode(declarator.id)) continue;
+        for (const name of patternBoundNames(declarator.id)) names.add(name);
+      }
+      return;
+    }
+
+    if (
+      declaration.type === "FunctionDeclaration" ||
+      declaration.type === "ClassDeclaration" ||
+      declaration.type === "TSEnumDeclaration" ||
+      isRuntimeTsModuleDeclaration(declaration) ||
+      isRuntimeTsImportEqualsDeclaration(declaration)
+    ) {
+      const name = nodeName(declaration.id);
+      if (name) names.add(name);
+    }
+  };
+
+  if (node.type === "BlockStatement") {
+    for (const statement of Array.isArray(node.body) ? node.body : []) {
+      if (isNode(statement)) bindDeclaration(statement);
+    }
+  } else if (node.type === "SwitchStatement") {
+    for (const caseNode of Array.isArray(node.cases) ? node.cases : []) {
+      if (!isNode(caseNode)) continue;
+      for (const statement of Array.isArray(caseNode.consequent) ? caseNode.consequent : []) {
+        if (isNode(statement)) bindDeclaration(statement);
+      }
+    }
+  } else if (node.type === "CatchClause" && isNode(node.param)) {
+    for (const name of patternBoundNames(node.param)) names.add(name);
+  } else if (
+    node.type === "ForStatement" || node.type === "ForInStatement" ||
+    node.type === "ForOfStatement"
+  ) {
+    const declaration = node.init ?? node.left;
+    if (isNode(declaration) && declaration.type === "VariableDeclaration") {
+      bindDeclaration(declaration);
+    }
+  }
+
+  return names;
+}
+
 /**
  * `var` declarations *below* a top-level statement, which hoist into module
  * scope all the same. Each is registered with the edit that removes it: an
@@ -662,12 +732,19 @@ function startsVarScope(node: Node): boolean {
  *
  * A `for…in`/`for…of` head has no such edit — the binding is what the loop
  * assigns to — so those sites are registered as unremovable and the caller
- * fails the build rather than shipping the value they hold.
+ * fails the build rather than shipping the value they hold. The callback also
+ * receives the lexical bindings surrounding each site, so reference analysis
+ * resolves block-local shadows instead of similarly named module bindings.
  */
 function collectHoistedVarSites(
   root: Node,
   stubs: Stubs,
-  add: (declaration: Node, exported: boolean, detach: (() => void) | null) => void,
+  add: (
+    declaration: Node,
+    exported: boolean,
+    detach: (() => void) | null,
+    enclosingBindings: ReadonlySet<string>,
+  ) => void,
 ): void {
   if (startsVarScope(root)) return;
 
@@ -685,7 +762,12 @@ function collectHoistedVarSites(
     return null;
   };
 
-  const descend = (node: Node): void => {
+  const descend = (node: Node, enclosingBindings: ReadonlySet<string>): void => {
+    const directBindings = directLexicalBindingNames(node);
+    const scopedBindings = directBindings.size === 0
+      ? enclosingBindings
+      : new Set([...enclosingBindings, ...directBindings]);
+
     for (const [key, value] of Object.entries(node)) {
       if (key === "loc" || key === "leadingComments" || key === "trailingComments") continue;
 
@@ -694,24 +776,28 @@ function collectHoistedVarSites(
           if (!isNode(entry) || startsVarScope(entry)) continue;
           visitChild(entry, () => {
             node[key] = (node[key] as unknown[]).filter((candidate) => candidate !== entry);
-          });
+          }, scopedBindings);
         }
         continue;
       }
 
       if (!isNode(value) || startsVarScope(value)) continue;
-      visitChild(value, slotDetach(node, key));
+      visitChild(value, slotDetach(node, key), scopedBindings);
     }
   };
 
-  const visitChild = (child: Node, detach: (() => void) | null): void => {
+  const visitChild = (
+    child: Node,
+    detach: (() => void) | null,
+    enclosingBindings: ReadonlySet<string>,
+  ): void => {
     if (child.type === "VariableDeclaration" && child.kind === "var") {
-      add(child, false, detach);
+      add(child, false, detach, enclosingBindings);
     }
-    descend(child);
+    descend(child, enclosingBindings);
   };
 
-  descend(root);
+  descend(root, NO_BOUND_NAMES);
 }
 
 /** Every binding declared directly by the module, including exported declarations. */
@@ -759,6 +845,7 @@ function isLexicallyBound(name: string, scopes: LexicalScope[]): boolean {
 }
 
 const NOTHING_ELIDED: ReadonlySet<Node> = new Set<Node>();
+const NO_BOUND_NAMES: ReadonlySet<string> = new Set<string>();
 
 /**
  * Free identifiers genuinely *read* by a subtree — the edges of the
@@ -784,14 +871,19 @@ const NOTHING_ELIDED: ReadonlySet<Node> = new Set<Node>();
  * run where they are written. Their reads are still reads — they are just not
  * reads the *module evaluation* performs, which is the difference between the
  * roots of the liveness walk and the edges of it.
+ *
+ * `initiallyBound` supplies the lexical context around a subtree analyzed on
+ * its own. Nested hoisted `var` sites use it to preserve their enclosing block,
+ * catch and loop scopes.
  */
 function freeReferencedIdentifiers(
   root: Node,
   elided: ReadonlySet<Node> = NOTHING_ELIDED,
   deferred: ReadonlySet<Node> = NOTHING_ELIDED,
+  initiallyBound: ReadonlySet<string> = NO_BOUND_NAMES,
 ): Set<string> {
   const free = new Set<string>();
-  const rootScope: LexicalScope = { kind: "var", names: new Set() };
+  const rootScope: LexicalScope = { kind: "var", names: new Set(initiallyBound) };
 
   const currentVarScope = (scopes: LexicalScope[]): LexicalScope =>
     scopes.find((scope) => scope.kind === "var") ?? scopes[0] ?? rootScope;
@@ -1544,6 +1636,19 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  * minified binding name.
  */
 function compilerNameHelperBindings(body: Node[]): Set<string> {
+  // The helper esbuild emits calls the global intrinsic. A runtime module
+  // binding named `Object` changes those semantics completely, so fail closed
+  // and treat every apparent registration as ordinary user code.
+  const importsRuntimeObject = body.some((statement) =>
+    statement.type === "ImportDeclaration" && statement.importKind !== "type" &&
+    (Array.isArray(statement.specifiers) ? statement.specifiers : []).some((specifier) =>
+      isNode(specifier) && specifier.importKind !== "type" && nodeName(specifier.local) === "Object"
+    )
+  );
+  const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
+    hoistedVarNames(body).has("Object") || importsRuntimeObject;
+  if (objectIsModuleLocal) return new Set<string>();
+
   const initializers = new Map<string, Node>();
   for (const statement of body) {
     if (statement.type !== "VariableDeclaration") continue;
