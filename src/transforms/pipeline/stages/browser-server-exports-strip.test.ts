@@ -1182,6 +1182,22 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, 'loadSecret("server")');
     });
 
+    it("keeps an import read by a parameter-property decorator shadowed by the parameter", async () => {
+      const code = [
+        `import { secret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return secret("server"); }`,
+        `export default class Page {`,
+        `  constructor(@inject(secret) private secret: string) {}`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import { secret } from "../server/secrets.ts"');
+      assertStringIncludes(result, "@inject(secret)");
+      assertNotIncludes(result, 'secret("server")');
+    });
+
     it("drops a runtime TypeScript enum used only by a stripped hook", async () => {
       const code = [
         `import { randomUUID } from "node:crypto";`,
@@ -1240,6 +1256,43 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, 'import { randomUUID } from "node:crypto"');
       assertStringIncludes(result, "namespace ClientStatus");
       assertStringIncludes(result, "randomUUID()");
+    });
+
+    it("binds a hoisted var nested inside a runtime TypeScript namespace", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `const publicValue = "client";`,
+        `namespace Client {`,
+        `  export const value = loadSecret;`,
+        `  if (globalThis.cond) { var loadSecret = publicValue; }`,
+        `}`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default function Page() { return Client.value; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, "namespace Client");
+      assertStringIncludes(result, "var loadSecret = publicValue");
+      assertStringIncludes(result, "export const value = loadSecret");
+    });
+
+    it("does not hoist a namespace var into the enclosing module", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `namespace Client {`,
+        `  if (globalThis.cond) { var loadSecret = "client"; }`,
+        `  export const value = loadSecret;`,
+        `}`,
+        `export async function getServerData() { return "server"; }`,
+        `export default function Page() { return loadSecret(); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import { loadSecret } from "../server/secrets.ts"');
+      assertStringIncludes(result, "return loadSecret()");
     });
 
     it("drops a TypeScript import-equals binding used only by a stripped hook", async () => {
