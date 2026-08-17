@@ -53,6 +53,14 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   };
 }
 
+function staleVersionedPath(): string {
+  const currentPath = getProdHydrationModulePath();
+  const currentHash = currentPath.match(/hydration-runtime\.([0-9a-f]{8})\.js$/)?.[1];
+  assertExists(currentHash);
+  const staleHash = currentHash === "00000000" ? "11111111" : "00000000";
+  return `/_veryfront/hydration-runtime.${staleHash}.js`;
+}
+
 describe("server/handlers/request/prod-hydration-module.handler", () => {
   it("serves the versioned production hydration runtime module with immutable caching", async () => {
     const handler = new ProdHydrationModuleHandler();
@@ -111,5 +119,67 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
     assertEquals(second.response?.headers.get("cache-control"), IMMUTABLE_CACHE_CONTROL);
     assertEquals(second.response?.headers.get("pragma"), null);
     assertEquals(second.response?.headers.get("expires"), null);
+  });
+
+  it("rejects a versioned path whose hash does not match the current runtime", async () => {
+    const handler = new ProdHydrationModuleHandler();
+    const result = await handler.handle(
+      new Request(`http://localhost${staleVersionedPath()}`),
+      makeCtx(),
+    );
+
+    assertEquals(result.continue, false, "the handler owns the versioned path space");
+    assertExists(result.response);
+    assertEquals(
+      result.response.status,
+      404,
+      "an unknown hash must be rejected, not served current-runtime bytes",
+    );
+    assertEquals(
+      result.response.headers.get("cache-control"),
+      NO_CACHE_CONTROL,
+      "a rejection must never be cached as immutable",
+    );
+
+    const body = await result.response.text();
+    assertEquals(
+      body.includes("renderPage"),
+      false,
+      "a stale content address must not resolve to unrelated runtime bytes",
+    );
+  });
+
+  it("does not answer 304 for a stale hash even when the current ETag matches", async () => {
+    const handler = new ProdHydrationModuleHandler();
+    const current = await handler.handle(
+      new Request(`http://localhost${getProdHydrationModulePath()}`),
+      makeCtx(),
+    );
+    const etag = current.response?.headers.get("etag");
+    assertExists(etag);
+
+    const stale = await handler.handle(
+      new Request(`http://localhost${staleVersionedPath()}`, {
+        headers: { "if-none-match": etag },
+      }),
+      makeCtx(),
+    );
+
+    assertEquals(
+      stale.response?.status,
+      404,
+      "the hash invariant is checked before ETag revalidation",
+    );
+  });
+
+  it("rejects a stale hash on HEAD requests without a body", async () => {
+    const handler = new ProdHydrationModuleHandler();
+    const result = await handler.handle(
+      new Request(`http://localhost${staleVersionedPath()}`, { method: "HEAD" }),
+      makeCtx(),
+    );
+
+    assertEquals(result.response?.status, 404, "HEAD must agree with GET on rejection");
+    assertEquals(await result.response?.text(), "", "HEAD responses carry no body");
   });
 });
