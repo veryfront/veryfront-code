@@ -454,6 +454,32 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(Object.isFrozen(registered.outputSchema?.properties), true);
     });
 
+    it("preserves record-compatible schemas with callbacks and non-enumerable fields", () => {
+      const parse = (value: unknown) => value;
+      const inputSchema = { parse } as Record<string, unknown>;
+      Object.defineProperty(inputSchema, "schemaVersion", {
+        value: 7,
+        enumerable: false,
+      });
+
+      const task = { run() {}, inputSchema };
+      assertEquals(isTaskDefinition(task), true);
+      const registered = taskHandler.register(
+        "compatible-schema",
+        task,
+        "tasks/compatible-schema.ts",
+        "tasks",
+      );
+
+      inputSchema.parse = () => "mutated";
+      assertEquals(registered.inputSchema?.parse === parse, true);
+      assertEquals(
+        Object.getOwnPropertyDescriptor(registered.inputSchema, "schemaVersion")?.value,
+        7,
+      );
+      assertEquals(Object.isFrozen(registered.inputSchema), true);
+    });
+
     it("registers detached immutable integration requirement metadata", () => {
       const integrationRequirements = [{
         integration: "slack",

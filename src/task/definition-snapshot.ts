@@ -19,6 +19,10 @@ const TASK_DEFINITION_KEYS = Object.keys(
 const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const OBJECT_PROTOTYPE = Object.prototype;
 const hasOwn = Object.hasOwn;
+const objectCreate = Object.create;
+const objectDefineProperties = Object.defineProperties;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
@@ -103,12 +107,19 @@ function optionalRecord(
   }
   const snapshot = snapshotBoundedJsonValue(value);
   if (
-    !snapshot.success || snapshot.value === null ||
-    typeof snapshot.value !== "object" || Array.isArray(snapshot.value)
+    snapshot.success && snapshot.value !== null &&
+    typeof snapshot.value === "object" && !Array.isArray(snapshot.value)
   ) {
-    fail(`${label} must be a bounded JSON object.`);
+    return freezeJsonSnapshot(snapshot.value) as Record<string, unknown>;
   }
-  return freezeJsonSnapshot(snapshot.value) as Record<string, unknown>;
+
+  // Task schemas have always accepted the public Record<string, unknown>
+  // contract, including parser callbacks and non-enumerable data. Preserve
+  // that compatibility while detaching the retained top-level record. JSON
+  // schemas still take the deeper bounded snapshot path above.
+  const copy = objectCreate(reflectGetPrototypeOf(value));
+  objectDefineProperties(copy, objectGetOwnPropertyDescriptors(value));
+  return objectFreeze(copy) as Record<string, unknown>;
 }
 
 function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
