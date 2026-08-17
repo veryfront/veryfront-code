@@ -481,6 +481,142 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     );
   });
 
+  it("treats null tool-call id, type, name, and arguments as absent", async () => {
+    // Verbatim tool-call chunk shape from the Veryfront Cloud Moonshot gateway
+    // (`kimi-k2.6`): only the opening fragment carries `id` and `function.name`;
+    // every continuation fragment repeats them as `null`.
+    assertEquals(
+      await collectParts(streamFromText([
+        data({
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: "functions.list_events:0",
+                index: 0,
+                type: "function",
+                function: { name: "list_events", arguments: '{"date":"' },
+              }],
+            },
+            logprobs: null,
+            finish_reason: null,
+            matched_stop: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: null,
+                index: 0,
+                type: "function",
+                function: { name: null, arguments: "2026-08" },
+              }],
+            },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                id: null,
+                index: 0,
+                type: null,
+                function: { name: null, arguments: '-18"}' },
+              }],
+            },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: null },
+            logprobs: null,
+            finish_reason: "tool_calls",
+            matched_stop: 163586,
+          }],
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        {
+          type: "tool-input-start",
+          id: "functions.list_events:0",
+          toolName: "list_events",
+        },
+        { type: "tool-input-delta", id: "functions.list_events:0", delta: '{"date":"' },
+        { type: "tool-input-delta", id: "functions.list_events:0", delta: "2026-08" },
+        { type: "tool-input-delta", id: "functions.list_events:0", delta: '-18"}' },
+        {
+          type: "tool-call",
+          toolCallId: "functions.list_events:0",
+          toolName: "list_events",
+          input: '{"date":"2026-08-18"}',
+        },
+        {
+          type: "finish",
+          finishReason: { unified: "tool-calls", raw: "tool_calls" },
+        },
+      ],
+    );
+  });
+
+  it("still rejects tool-call fields of a genuinely wrong type", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { tool_calls: [{ index: 0, id: 42 }] } }],
+        }))),
+      ProviderRequestError,
+      "tool call id was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{ index: 0, id: "call_1", function: { name: 7 } }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call function name was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: "call_1",
+                function: { name: "lookup", arguments: 5 },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call arguments delta was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: { tool_calls: [{ index: 0, id: "call_1", type: "not_function" }] },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call type was not function",
+    );
+  });
+
   it("still rejects reasoning and role deltas of a genuinely wrong type", async () => {
     await assertRejects(
       () =>

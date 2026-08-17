@@ -369,8 +369,12 @@ export async function* streamOpenAICompatibleParts(
         throw invalidOpenAIStream(context, "tool call index was malformed");
       }
       const toolCallIndex = index as number;
+      // As with the reasoning delta above, gateways repeat `id`, `type`, and
+      // `function.name` as `null` on continuation fragments instead of omitting
+      // them; only the opening fragment carries real values. Treat `null` as
+      // absent so the fragment merges into the call already being assembled.
       if (
-        toolCallRecord.id !== undefined &&
+        toolCallRecord.id !== undefined && toolCallRecord.id !== null &&
         !isBoundedOpenAIStreamString(
           toolCallRecord.id,
           MAX_OPENAI_STREAM_IDENTIFIER_BYTES,
@@ -379,7 +383,7 @@ export async function* streamOpenAICompatibleParts(
         throw invalidOpenAIStream(context, "tool call id was malformed");
       }
       if (
-        toolCallRecord.type !== undefined &&
+        toolCallRecord.type !== undefined && toolCallRecord.type !== null &&
         toolCallRecord.type !== "function"
       ) {
         throw invalidOpenAIStream(context, "tool call type was not function");
@@ -415,7 +419,7 @@ export async function* streamOpenAICompatibleParts(
           throw invalidOpenAIStream(context, "tool call function was not an object");
         }
         if (
-          fn.name !== undefined &&
+          fn.name !== undefined && fn.name !== null &&
           !isBoundedOpenAIStreamString(fn.name, MAX_OPENAI_STREAM_TOOL_NAME_BYTES)
         ) {
           throw invalidOpenAIStream(context, "tool call function name was malformed");
@@ -436,7 +440,10 @@ export async function* streamOpenAICompatibleParts(
           };
         }
 
-        if (fn.arguments !== undefined && typeof fn.arguments !== "string") {
+        if (
+          fn.arguments !== undefined && fn.arguments !== null &&
+          typeof fn.arguments !== "string"
+        ) {
           throw invalidOpenAIStream(context, "tool call arguments delta was malformed");
         }
         if (typeof fn.arguments === "string") {
