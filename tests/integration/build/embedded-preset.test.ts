@@ -5,6 +5,7 @@ import { mkdir, readTextFile, writeTextFile } from "#veryfront/testing/deno-comp
 import { buildEmbeddedPreset, presetBasename } from "../../../src/build/embedded/preset.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 // Dynamic imports of built JSX code require react/jsx-runtime resolution
 // which only works reliably in Deno (can resolve npm packages from anywhere)
@@ -260,7 +261,7 @@ describe(
         await Deno.writeTextFile(join(projectDir, "pages/about.mdx"), "# MDX about\n");
         await Deno.writeTextFile(join(projectDir, "pages/about.md"), "# MD about\n");
 
-        await assertRejects(
+        const error = await assertRejects(
           () =>
             buildEmbeddedPreset({
               projectDir,
@@ -268,9 +269,10 @@ describe(
               runtime: "deno",
               config: { router: "pages" },
             }),
-          Error,
+          VeryfrontError,
           'Multiple Pages Router files resolve to "/about"',
         );
+        assertEquals(error.slug, "route-conflict");
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

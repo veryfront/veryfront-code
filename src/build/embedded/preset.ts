@@ -1,5 +1,5 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import { createError, toError } from "#veryfront/errors";
+import { createError, ROUTE_CONFLICT, toError } from "#veryfront/errors";
 import * as esbuild from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
 import { compileMDXToJS } from "../compiler/index.ts";
@@ -119,12 +119,14 @@ export async function buildEmbeddedPreset(
       const hasRouterConflict = (routeCounts.get(`${r.router}:${r.routePath}`) ?? 0) > 1;
       if (hasRouterConflict && (r.router === "app" || !claimedPaths.has(r.routePath))) {
         const routerName = r.router === "app" ? "App Router" : "Pages Router";
-        throw toError(
-          createError({
-            type: "build",
-            message: `Multiple ${routerName} files resolve to "${r.routePath}"`,
-          }),
-        );
+        throw ROUTE_CONFLICT.create({
+          detail: `Multiple ${routerName} files resolve to "${r.routePath}"`,
+          context: {
+            candidateCount: routeCounts.get(`${r.router}:${r.routePath}`),
+            routePath: r.routePath,
+            router: r.router,
+          },
+        });
       }
       if (claimedPaths.has(r.routePath)) continue;
 
