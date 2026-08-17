@@ -966,6 +966,11 @@ function freeReferencedIdentifiers(
         continue;
       }
       if (declaration.type !== "VariableDeclaration") continue;
+      // `var` belongs to the nearest var scope, not to this lexical block.
+      // `bindNestedVarDeclarations` pre-binds it in that scope before the
+      // block is visited, so binding it here would give declarations and
+      // references two different identities.
+      if (declaration.kind === "var" && scope.kind === "block") continue;
       for (const declarator of declaratorsOf(declaration)) {
         if (!elided.has(declarator)) bindPatternNames(scope, declarator.id);
       }
@@ -1447,6 +1452,7 @@ function freeReferencedIdentifiers(
   };
 
   bindDirectDeclarations(rootScope, root);
+  bindNestedVarDeclarations(rootScope, root);
   visit(root, [rootScope]);
   return free;
 }
@@ -1884,7 +1890,7 @@ interface NormalizedCall {
  * `.apply` wrappers. Unknown spreads and apply lists stay explicitly unknown
  * so a mutation check can fail closed instead of guessing argument positions.
  */
-function normalizeCall(node: Node): NormalizedCall | null {
+function normalizeCall(node: Node, globals: ReadonlySet<Node>): NormalizedCall | null {
   if (node.type !== "CallExpression" && node.type !== "OptionalCallExpression") return null;
   if (!isNode(node.callee)) return null;
 
@@ -1901,6 +1907,32 @@ function normalizeCall(node: Node): NormalizedCall | null {
     if ((wrapper !== "call" && wrapper !== "apply") || !isNode(callee.object)) break;
 
     const invoked = unwrapTransparent(callee.object);
+    // `Reflect.apply(fn, thisArg, args)` is a standard invocation primitive,
+    // not `Reflect` being invoked through Function.prototype.apply. Preserve
+    // the actual function and argument list so intrinsic mutation checks see
+    // the same call JavaScript evaluates.
+    if (wrapper === "apply" && isUnshadowedGlobalIdentifier(invoked, "Reflect", globals)) {
+      const target = args[0] ? unwrapTransparent(args[0]) : undefined;
+      if (!target) return { callee: invoked, args: [], unknownArgs: true };
+      if (unknownArgs) return { callee: target, args: [], unknownArgs: true };
+
+      const list = args[2] ? unwrapTransparent(args[2]) : undefined;
+      if (list?.type !== "ArrayExpression" || !Array.isArray(list.elements)) {
+        return { callee: target, args: [], unknownArgs: true };
+      }
+      const reflected: Node[] = [];
+      for (const element of list.elements) {
+        if (!isNode(element) || element.type === "SpreadElement") {
+          return { callee: target, args: [], unknownArgs: true };
+        }
+        reflected.push(element);
+      }
+      args = reflected;
+      unknownArgs = false;
+      callee = target;
+      continue;
+    }
+
     if (wrapper === "call") {
       args = args.slice(1);
       callee = invoked;
@@ -2009,7 +2041,7 @@ function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): b
     walk(statement, (node) => {
       if (writes) return false;
 
-      const invocation = normalizeCall(node);
+      const invocation = normalizeCall(node, globals);
       if (invocation && isIntrinsicDefinePropertyCall(invocation.callee, globals)) {
         if (invocation.unknownArgs) {
           writes = true;
@@ -2021,8 +2053,8 @@ function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): b
           isGlobalObjectSlot(args[0], globals);
         const targetIsGlobal = isUnshadowedGlobalObject(args[0], globals);
         if (
-          (targetIsObject && key === "defineProperty") ||
-          (targetIsGlobal && key === "Object")
+          (targetIsObject && (key === null || key === "defineProperty")) ||
+          (targetIsGlobal && (key === null || key === "Object"))
         ) {
           writes = true;
           return false;
@@ -2114,92 +2146,6 @@ function memberPathRoot(node: Node): Node | null {
     current = unwrapTransparent(current.object);
   }
   return current.type === "Identifier" ? current : null;
-}
-
-/**
- * Whether a name the module binds the intrinsic to is one it writes a property
- * through, matched by name rather than by lexical binding.
- *
- * `intrinsicEscapesToWritableSlot` resolves both halves to a concrete binding,
- * which is the precise answer and the one that keeps a shadowed name from
- * counting. It is also the answer that disappears when the two halves resolve
- * to different scopes: a module-scope `var` is bound once where the enclosing
- * body prebinds its direct declarations and again in the var scope, so
- * `var intrinsic = Object; intrinsic.defineProperty = record` had a write that
- * never met its declaration and the module stayed inside the recognised set.
- *
- * This is the coarse backstop for that: a name bound to the intrinsic anywhere,
- * closed over its own aliases, and written through anywhere. It can only add
- * rejections, so the cost of its imprecision is a helper kept, never a call
- * deleted. A name that is never bound to an unshadowed intrinsic read is not in
- * the set at all, which is what keeps `function configure(Object) { Object
- * .defineProperty = … }` out of it.
- */
-function intrinsicAliasWrittenThrough(
-  body: Node[],
-  globals: ReadonlySet<Node>,
-  bindings: LexicalBindingIndex,
-): boolean {
-  const isIntrinsic = (node: Node): boolean =>
-    isUnshadowedGlobalIdentifier(node, "Object", globals) ||
-    isGlobalObjectSlot(node, globals) || isUnshadowedGlobalObject(node, globals);
-
-  // Only names the module itself binds are in play, so a nested local that
-  // happens to share one of them cannot put its own value into the set.
-  const moduleNames = moduleScopeBindingNames(body);
-  for (const name of hoistedVarNames(body)) moduleNames.add(name);
-
-  const writtenThrough = new Set<string>();
-  for (const target of propertyWriteTargets(body)) {
-    const member = unwrapTransparent(target);
-    if (member.type !== "MemberExpression" && member.type !== "OptionalMemberExpression") continue;
-    const root = memberPathRoot(member);
-    const name = root ? nodeName(root) : null;
-    if (!name || !moduleNames.has(name)) continue;
-    // The write has to reach the module's own binding. A parameter or a local
-    // that shadows the name reaches something else entirely, and the lexical
-    // index is what tells the two apart.
-    if (bindings.reference(root as Node)?.scope.module !== true) continue;
-    writtenThrough.add(name);
-  }
-  if (writtenThrough.size === 0) return false;
-
-  const aliasBindings: Array<{ name: string; value: Node }> = [];
-  for (const statement of body) {
-    if (statement.type === "ImportDeclaration") continue;
-    walk(statement, (node) => {
-      if (node.type === "VariableDeclarator" && isNode(node.init) && isNode(node.id)) {
-        const name = nodeName(unwrapTransparent(node.id));
-        if (name && moduleNames.has(name)) aliasBindings.push({ name, value: node.init });
-      }
-      if (
-        (node.type === "AssignmentExpression" || node.type === "AssignmentPattern") &&
-        isNode(node.left) && isNode(node.right)
-      ) {
-        const left = unwrapTransparent(node.left);
-        const name = left.type === "Identifier" ? nodeName(left) : null;
-        if (name && moduleNames.has(name)) aliasBindings.push({ name, value: node.right });
-      }
-    });
-  }
-
-  const derived = new Set<string>();
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const binding of aliasBindings) {
-      if (derived.has(binding.name)) continue;
-      const value = unwrapTransparent(binding.value);
-      const carries = isIntrinsic(value) ||
-        (value.type === "Identifier" && derived.has(nodeName(value) ?? ""));
-      if (!carries) continue;
-      derived.add(binding.name);
-      grew = true;
-    }
-  }
-
-  for (const name of derived) if (writtenThrough.has(name)) return true;
-  return false;
 }
 
 /** Bindings the module writes a property through, at any depth of member path. */
@@ -2433,16 +2379,16 @@ function memberKey(node: Node): string | null {
   return node.computed === true ? stringLiteralText(property) : nodeName(property);
 }
 
-/** Parameter bindings of every non-generator function this module immediately invokes. */
+/** Parameter bindings whose function bodies this module immediately executes. */
 function invokedFunctionParameterBindings(
   body: Node[],
   bindings: LexicalBindingIndex,
 ): Set<LexicalBindingIdentity> {
   const invoked = new Set<LexicalBindingIdentity>();
-  const collect = (callee: unknown): void => {
+  const collect = (callee: unknown, runGenerator: boolean): void => {
     if (!isNode(callee)) return;
     let target = unwrapTransparent(callee);
-    if (
+    while (
       (target.type === "MemberExpression" || target.type === "OptionalMemberExpression") &&
       (memberKey(target) === "call" || memberKey(target) === "apply") &&
       isNode(target.object)
@@ -2451,8 +2397,8 @@ function invokedFunctionParameterBindings(
     }
     if (target.type !== "FunctionExpression" && target.type !== "ArrowFunctionExpression") return;
     // Invoking a generator only creates its iterator. Its body remains deferred
-    // until a later `next()`, so its parameters do not receive values here.
-    if (target.generator === true) return;
+    // until `next()` advances that exact call result.
+    if (target.generator === true && !runGenerator) return;
     for (const param of Array.isArray(target.params) ? target.params : []) {
       if (!isNode(param)) continue;
       for (const identifier of patternBindingIdentifiers(param)) {
@@ -2469,7 +2415,22 @@ function invokedFunctionParameterBindings(
         node.type === "CallExpression" || node.type === "OptionalCallExpression" ||
         node.type === "NewExpression"
       ) {
-        collect(node.callee);
+        const callee = isNode(node.callee) ? unwrapTransparent(node.callee) : undefined;
+        if (
+          callee &&
+          (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
+          memberKey(callee) === "next" && isNode(callee.object)
+        ) {
+          const iterator = unwrapTransparent(callee.object);
+          if (
+            (iterator.type === "CallExpression" ||
+              iterator.type === "OptionalCallExpression") &&
+            isNode(iterator.callee)
+          ) {
+            collect(iterator.callee, true);
+          }
+        }
+        collect(node.callee, false);
       }
     });
   }
@@ -2579,7 +2540,7 @@ function mergesGuardedKeyOntoIntrinsic(body: Node[], globals: ReadonlySet<Node>)
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
       if (merges) return false;
-      const invocation = normalizeCall(node);
+      const invocation = normalizeCall(node, globals);
       if (!invocation) return true;
       const callee = invocation.callee;
       if (
@@ -2775,8 +2736,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     mergesGuardedKeyOntoIntrinsic(body, globals) ||
     hasReflectionRoute(body, globals) ||
     intrinsicEscapesToWritableSlot(body, "Object", globals, bindings) ||
-    intrinsicEscapesToWritableSlot(body, "global", globals, bindings) ||
-    intrinsicAliasWrittenThrough(body, globals, bindings);
+    intrinsicEscapesToWritableSlot(body, "global", globals, bindings);
   if (objectIsModuleLocal) return new Set<string>();
 
   // A `var` may be declared more than once, and only the initialiser that ran

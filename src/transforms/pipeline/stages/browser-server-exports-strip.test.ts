@@ -2285,6 +2285,14 @@ describe("browser-server-exports-strip", () => {
         ["a computed write on a local", `const bag = {};\nfor (const k of ["a"]) { bag[k] = 1; }`],
         ["an index write on a local array", `const arr = [];\narr[0] = 1;`],
         ["a member write on an instance", `class Box { fill() { this.items = []; } }`],
+        [
+          "an intrinsic held only by a shadowed nested binding",
+          [
+            `var intrinsic = {};`,
+            `function getIntrinsic() { const intrinsic = Object; return intrinsic; }`,
+            `intrinsic.defineProperty = () => {};`,
+          ].join("\n"),
+        ],
       ]
     ) {
       it(`still strips compiler metadata past ${label}`, async () => {
@@ -2306,6 +2314,58 @@ describe("browser-server-exports-strip", () => {
         assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
         assertEquals(occurrences(result, "KEY"), 0);
         assertEquals(occurrences(result, "getEnv"), 0);
+      });
+    }
+
+    for (
+      const [label, mutation] of [
+        [
+          "a dynamic intrinsic property name",
+          [
+            `const propertyName = "defineProperty";`,
+            `Object.defineProperty(`,
+            `  Object, propertyName, { value: recordAndReturn },`,
+            `);`,
+          ].join("\n"),
+        ],
+        [
+          "a Reflect.apply intrinsic mutation",
+          `Reflect.apply(` +
+          `Object.defineProperty, null, ` +
+          `[Object, "defineProperty", { value: recordAndReturn }])`,
+        ],
+        [
+          "an immediately advanced generator mutation",
+          [
+            `(function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object).next();`,
+          ].join("\n"),
+        ],
+      ]
+    ) {
+      it(`does not treat ${label} as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          mutation,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
       });
     }
 
@@ -2336,7 +2396,7 @@ describe("browser-server-exports-strip", () => {
             `applyPatch();`,
           ],
         ],
-      ]
+      ] as const
     ) {
       it(`does not treat ${label} as compiler metadata`, async () => {
         const code = [
@@ -4434,10 +4494,6 @@ describe("browser-server-exports-strip", () => {
   // cases compile first, so a regression that only shows up after esbuild
   // cannot pass unnoticed.
   describe("compiled input", () => {
-    afterAll(async () => {
-      await stopEsbuild();
-    });
-
     function ctx(code: string, filePath: string): TransformContext {
       return {
         code,
