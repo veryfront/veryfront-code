@@ -685,6 +685,40 @@ describe("ext-llm-openai/openai-chat-stream", () => {
       ProviderRequestError,
       "tool call arguments arrived before its id and name",
     );
+
+    // A null fragment must not launder an id into a second index.
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "call_dup",
+                  function: { name: "lookup", arguments: "{}" },
+                }],
+              },
+            }],
+          }),
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{ index: 1, id: null, function: { name: null } }],
+              },
+            }],
+          }),
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{ index: 1, id: "call_dup", function: { name: "other" } }],
+              },
+            }],
+          }),
+        ].join(""))),
+      ProviderRequestError,
+      "tool call id was reused at another index",
+    );
   });
 
   it("still rejects reasoning and role deltas of a genuinely wrong type", async () => {
