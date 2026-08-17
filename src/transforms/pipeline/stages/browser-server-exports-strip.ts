@@ -36,9 +36,13 @@
  * as "is this name mentioned somewhere else". The nodes are every module-scope
  * binding — including a `var` that hoists out of a block, `if`, `try`,
  * `switch`, loop or label, which binds module scope exactly as a top-level
- * declaration does. The roots are what the module still reads once every
- * removal candidate is elided: its surviving exports, the client component, and
- * any side-effectful top-level statement, which keeps whatever it references.
+ * declaration does. The roots are what the module still *runs*: its surviving
+ * exports, the client component, and any side-effectful top-level statement,
+ * which keeps whatever it references. A declaration that merely introduces a
+ * name — a function, a `var dead = helper`, a plain class — runs nothing, so it
+ * is elided from the roots and cannot vouch for anything: a private helper the
+ * module never calls used to be treated as unconditionally live and kept
+ * `const KEY = getEnv(…)` and its `node:crypto` import in the browser artifact.
  * The edges are genuine reads, which is narrower than "identifier occurrences":
  * a statement label, the *exported* half of an export specifier
  * (`export { other as KEY }`), a non-computed property or JSX attribute name,
@@ -98,10 +102,16 @@
  * `const API_KEY = getEnv(...)` nor `const { apiKey } = getEnv(...)` nor
  * `if (cond) { var API_KEY = getEnv(...) }` used only by `getServerData`
  * reaches the browser — and removes the hook-only imports that leaves unused.
- * What it does NOT do: reason about a value that is *also* read by browser
- * code, one a surviving side-effectful top-level statement still references
- * (`Object.defineProperty(box, "run", …)` reads what it is given), or one
- * reached only through an existing bare side-effect import — those are kept.
+ * Unreachable code holding those bindings goes with them, however far it sits
+ * from the hook: a private helper nothing calls, a dead class, a dead helper
+ * cycle, a `if (…) { var debug = … }` dev aid. What it does NOT do: reason
+ * about a value that is *also* read by browser code, or one a surviving
+ * side-effectful top-level statement still references — including a
+ * declaration whose own initialiser runs something outside the hooks' closure
+ * (`Object.defineProperty(box, "run", …)` and `const boot = initAnalytics(KEY)`
+ * both read what they are given), or one reached only through an existing bare
+ * side-effect import — those are kept. Nor is it a dead-code eliminator: an
+ * unreachable declaration that holds nothing server-only stays where it is.
  * Nor does it model `eval`. It is not a general guarantee that every secret
  * stays on the server, but a value used solely by a server-only hook no longer
  * leaks.
@@ -1453,8 +1463,10 @@ interface CompilerNameRegistration {
   targetName: string;
 }
 
-function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
-  const helpers = compilerNameHelperBindings(body);
+function compilerNameRegistrations(
+  body: Node[],
+  helpers: ReadonlySet<string>,
+): CompilerNameRegistration[] {
   if (helpers.size === 0) return [];
 
   const registrations: CompilerNameRegistration[] = [];
@@ -1511,18 +1523,224 @@ function reachableNames(roots: Iterable<string>, sites: BindingSite[]): Set<stri
   return reachable;
 }
 
+/** Whether a node carries at least one decorator, which runs where it sits. */
+function hasDecorators(node: Node): boolean {
+  return Array.isArray(node.decorators) && node.decorators.length > 0;
+}
+
+/**
+ * `__name(<value>, "name")` — esbuild's `keepNames` helper applied inline, the
+ * shape a dev build wraps every initialiser in. It defines a `name` property on
+ * the value it is handed and returns it, so it is compiler metadata rather than
+ * a call the module makes, and it is exactly as inert as its first argument.
+ */
+function isNameRegistrationCall(node: Node, helpers: ReadonlySet<string>): boolean {
+  if (node.type !== "CallExpression" || !isNode(node.callee)) return false;
+  if (!helpers.has(nodeName(node.callee) ?? "")) return false;
+
+  const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
+  return args.length === 2 && stringLiteralText(args[1]) !== null;
+}
+
+/** `static { __name(this, "Loader") }` — the class form of that same metadata. */
+function isNameRegistrationBlock(node: Node, helpers: ReadonlySet<string>): boolean {
+  const statements = Array.isArray(node.body) ? node.body.filter(isNode) : [];
+  return statements.every((statement) => {
+    if (statement.type !== "ExpressionStatement" || !isNode(statement.expression)) return false;
+    const call = statement.expression;
+    if (!isNameRegistrationCall(call, helpers)) return false;
+    const [target] = Array.isArray(call.arguments) ? call.arguments.filter(isNode) : [];
+    return target?.type === "ThisExpression";
+  });
+}
+
+/**
+ * A class whose *definition* runs nothing: no decorator, no superclass to
+ * validate, no computed member key and no static initialiser. Method bodies and
+ * instance field initialisers run at construction time, not at module load.
+ */
+function isInertClass(node: Node, helpers: ReadonlySet<string>): boolean {
+  if (hasDecorators(node) || isNode(node.superClass)) return false;
+
+  const members = isNode(node.body) && Array.isArray(node.body.body) ? node.body.body : [];
+  return members.every((member) => {
+    if (!isNode(member)) return false;
+    if (hasDecorators(member) || member.computed === true) return false;
+    if (member.type === "StaticBlock") return isNameRegistrationBlock(member, helpers);
+    if (member.static !== true) return true;
+    return isInertExpression(isNode(member.value) ? member.value : undefined, helpers);
+  });
+}
+
+/** Expressions whose evaluation cannot run user code. A whitelist, by design. */
+function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>): boolean {
+  if (!node) return true;
+
+  const inner = (value: unknown): Node | undefined => isNode(value) ? value : undefined;
+
+  switch (node.type) {
+    case "Identifier":
+    case "ThisExpression":
+    case "StringLiteral":
+    case "NumericLiteral":
+    case "BooleanLiteral":
+    case "NullLiteral":
+    case "BigIntLiteral":
+    case "DecimalLiteral":
+    case "RegExpLiteral":
+    case "FunctionExpression":
+    case "ArrowFunctionExpression":
+      return true;
+    case "ClassExpression":
+      return isInertClass(node, helpers);
+    case "CallExpression":
+      return isNameRegistrationCall(node, helpers) &&
+        isInertExpression(inner((node.arguments as unknown[])[0]), helpers);
+    // Interpolation coerces its values to strings, which calls `toString`.
+    case "TemplateLiteral":
+      return !Array.isArray(node.expressions) || node.expressions.length === 0;
+    // `typeof`, `void` and `!` are the operators that never reach `valueOf`;
+    // `-x` and `+x` do, and `delete` mutates.
+    case "UnaryExpression":
+      return (node.operator === "typeof" || node.operator === "void" ||
+        node.operator === "!") && isInertExpression(inner(node.argument), helpers);
+    case "ArrayExpression":
+      return (Array.isArray(node.elements) ? node.elements : []).every((element) =>
+        element === null || element === undefined ||
+        (isNode(element) && element.type !== "SpreadElement" &&
+          isInertExpression(element, helpers))
+      );
+    case "ObjectExpression":
+      return (Array.isArray(node.properties) ? node.properties : []).every((property) => {
+        // A spread iterates its source and a computed key is coerced to a
+        // property key; both run user code. Defining a method does not.
+        if (!isNode(property) || property.computed === true) return false;
+        if (property.type === "ObjectMethod") return true;
+        return property.type === "ObjectProperty" &&
+          isInertExpression(inner(property.value), helpers);
+      });
+    case "TSAsExpression":
+    case "TSSatisfiesExpression":
+    case "TSNonNullExpression":
+    case "TSTypeAssertion":
+    case "TSInstantiationExpression":
+    case "ParenthesizedExpression":
+      return isInertExpression(inner(node.expression), helpers);
+    default:
+      return false;
+  }
+}
+
+/**
+ * Whether a declaration *runs* when the module is evaluated.
+ *
+ * This is the line between the two halves of an unused declaration. One that
+ * only introduces a name — a function, a `var dead = helper`, a class with no
+ * decorator, superclass or static initialiser — does nothing at module-load
+ * time, so an unreachable one is not surviving code and has no business being
+ * asked what the module still reads. One whose initialiser runs
+ * (`const clientInit = bootClientAnalytics()`) is a top-level side effect
+ * wearing a binding: it survives, and it keeps whatever it references exactly
+ * as the bare `registerClientHandler(…)` statement beside it would.
+ *
+ * Anything not proven inert counts as a side effect, which keeps its reads.
+ */
+function evaluationIsInert(node: Node, helpers: ReadonlySet<string>): boolean {
+  if (node.type === "FunctionDeclaration") return true;
+  if (node.type === "ClassDeclaration") return isInertClass(node, helpers);
+  // A runtime enum, namespace or import-equals evaluates a body at module load.
+  if (node.type !== "VariableDeclarator") return false;
+
+  // A destructuring pattern reads properties off the initialiser, which runs
+  // getters and throws on `null`, so only a plain identifier binding is inert.
+  if (!isNode(node.id) || node.id.type !== "Identifier") return false;
+  return isInertExpression(isNode(node.init) ? node.init : undefined, helpers);
+}
+
+/**
+ * Whether a declaration can be left out of the root computation — whether the
+ * module reading a name *there* is a reason to keep that name alive.
+ *
+ * Three shapes say it is not:
+ *
+ * - The declaration is already in the hooks' dependency closure by name. This
+ *   is what the pass exists to drop: `const API_KEY = getEnv(…)` goes, impure
+ *   initialiser and all.
+ * - Everything it evaluates is in that closure too, so it is server-only code
+ *   by construction however it is written. `switch (…) { case 1: var dead =
+ *   createHash("md5") }` does run at module load, but the only binding it can
+ *   pin is one this pass already owns — and if client code reads that binding
+ *   as well, the client read roots it anyway.
+ * - Its declaration does not run at all, so it is not surviving code.
+ *
+ * Anything else evaluates something outside the closure when the module loads,
+ * and roots what it reads like any other side-effectful top-level statement.
+ * That is what keeps `const clientInit = bootClientAnalytics()` — and the
+ * helper it calls — in the browser artifact.
+ */
+function isElidableFromRoots(
+  site: BindingSite,
+  hookClosure: ReadonlySet<string>,
+  helpers: ReadonlySet<string>,
+): boolean {
+  if (site.names.some((name) => hookClosure.has(name))) return true;
+  if ([...site.references].every((name) => hookClosure.has(name))) return true;
+  return evaluationIsInert(site.node, helpers);
+}
+
+/**
+ * The dead declarations this pass is entitled to remove: the ones still holding
+ * on to the hooks' dependency closure.
+ *
+ * Reachability finds every dead declaration, but removing all of them would
+ * make this stage a general dead-code eliminator and take unrelated client code
+ * with it. What it must remove is narrower and forced: a dead declaration that
+ * reads a hook-closure binding is precisely what keeps a secret and its import
+ * in the browser artifact, and once it goes, every dead declaration that read
+ * *it* has to go too or the output references a binding that is no longer
+ * there. So the set grows outwards from the closure until it stops.
+ */
+function serverTaintedSites(
+  dead: BindingSite[],
+  hookClosure: ReadonlySet<string>,
+): Set<BindingSite> {
+  const tainted = new Set<BindingSite>();
+  const taintedNames = new Set<string>();
+  const touched = (name: string): boolean => hookClosure.has(name) || taintedNames.has(name);
+
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const site of dead) {
+      if (tainted.has(site)) continue;
+      if (!site.names.some(touched) && ![...site.references].some(touched)) continue;
+
+      tainted.add(site);
+      for (const name of site.names) taintedNames.add(name);
+      grew = true;
+    }
+  }
+
+  return tainted;
+}
+
 /**
  * Drop the module-scope bindings the emptied server-only hooks closed over.
  *
  * Liveness is reachability from the code that survives, not "is this name
- * mentioned elsewhere". The roots are what the rest of the module still reads
- * once every candidate is elided — surviving exports, the client component and
- * any side-effectful top-level statement, which keeps whatever it references.
- * The edges are genuine reads. Anything the roots cannot reach is dead.
+ * mentioned elsewhere". The roots are what the module still *runs* once every
+ * declaration that merely introduces a name is elided — surviving exports, the
+ * client component and any side-effectful top-level statement, which keeps
+ * whatever it references. The edges are genuine reads. Anything the roots
+ * cannot reach is dead.
  *
- * Candidacy stays scoped to the stripped hooks' dependency closure, so an
- * unrelated `const _ = bootClientAnalytics()` — unreachable, but never part of
- * the hook graph — keeps its side effect. Inside that closure the pass is
+ * Elision and removal are scoped differently on purpose. Every declaration that
+ * does not run, or that runs only inside the hooks' dependency closure, is
+ * elided from the roots, because a dead declaration must not be able to pin a
+ * secret: a private helper nothing calls used to be treated as unconditionally
+ * live and kept `const KEY = getEnv(…)` and its `node:crypto` import in the
+ * browser artifact. Removal stays scoped to the closure, so an unrelated
+ * `const clientInit = bootClientAnalytics()` — unreachable, but never part of
+ * the hook graph — keeps its side effect. Inside the closure the pass is
  * exhaustive: `const API_KEY = getEnv(...)` read only by `getServerData` goes,
  * which is what lets `dropUnusedImportBindings` drop the import next.
  *
@@ -1538,19 +1756,22 @@ function dropUnreachableModuleScopeBindings(
   removeStatement: (statement: Node) => void,
   removedNames: Set<string>,
 ): string[] {
-  const candidates = sites.filter((site) =>
-    !site.exported && site.names.some((name) => hookClosure.has(name))
+  const nameHelpers = compilerNameHelperBindings(body);
+  const elidable = sites.filter((site) =>
+    !site.exported && isElidableFromRoots(site, hookClosure, nameHelpers)
   );
-  if (candidates.length === 0) return [];
+  if (elidable.length === 0) return [];
 
-  // Esbuild's generated name-registration call is metadata for a declaration,
-  // not an independent browser consumer of it: it is elided from the roots and
-  // removed together with the declaration it names.
-  const registrations = compilerNameRegistrations(body);
-  const candidateNames = new Set(candidates.flatMap((site) => site.names));
-  const elided = new Set<Node>(candidates.map((site) => site.node));
+  // Esbuild's generated name-registration call is metadata for the declaration
+  // it names, not an independent browser consumer of it, so its *target* is
+  // elided from the roots and the call is removed together with the
+  // declaration. The call itself still reads the helper that performs it, which
+  // stays alive for as long as any registration survives.
+  const registrations = compilerNameRegistrations(body, nameHelpers);
+  const elidableNames = new Set(elidable.flatMap((site) => site.names));
+  const elided = new Set<Node>(elidable.map((site) => site.node));
   for (const registration of registrations) {
-    if (candidateNames.has(registration.targetName)) elided.add(registration.statement);
+    if (elidableNames.has(registration.targetName)) elided.add(registration.target);
   }
 
   const roots = freeReferencedIdentifiers({ type: "Program", body }, elided);
@@ -1558,21 +1779,26 @@ function dropUnreachableModuleScopeBindings(
     if (site.exported) { for (const name of site.names) roots.add(name); }
   }
 
-  const reachable = reachableNames(roots, candidates);
-  const dead = candidates.filter((site) => site.names.every((name) => !reachable.has(name)));
-  if (dead.length === 0) return [];
+  // Every site carries edges, so an elided declaration the roots do reach still
+  // keeps what it reads: `const shared = KEY.trim()` read by the client roots
+  // `shared`, and `shared` roots `KEY` in turn.
+  const reachable = reachableNames(roots, sites);
+  const dead = elidable.filter((site) => site.names.every((name) => !reachable.has(name)));
+  const tainted = serverTaintedSites(dead, hookClosure);
+  const removable = dead.filter((site) => tainted.has(site));
+  if (removable.length === 0) return [];
 
   // A name written down in more than one place is only safe to drop when every
-  // one of its declarations is dead, and only when each of them can be cut out
+  // one of its declarations goes, and only when each of them can be cut out
   // at all — a `for (var KEY of …)` head declares the binding the loop assigns
   // to and has no removable declaration.
-  const deadSites = new Set(dead);
+  const removableSites = new Set(removable);
   const survivingNames = new Set(
-    sites.filter((site) => !deadSites.has(site)).flatMap((site) => site.names),
+    sites.filter((site) => !removableSites.has(site)).flatMap((site) => site.names),
   );
 
   const blocked: string[] = [];
-  for (const site of dead) {
+  for (const site of removable) {
     const shared = site.names.find((name) => survivingNames.has(name));
     if (shared) {
       blocked.push(`\`${shared}\` is declared more than once and only one declaration is dead`);
@@ -1587,7 +1813,7 @@ function dropUnreachableModuleScopeBindings(
   }
   if (blocked.length > 0) return blocked;
 
-  for (const site of dead) {
+  for (const site of removable) {
     for (const name of site.names) removedNames.add(name);
     site.remove?.();
   }
