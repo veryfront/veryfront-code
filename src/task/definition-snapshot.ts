@@ -2,12 +2,6 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import { captureScheduleIntegrationRequirementsConfig } from "#veryfront/schedule/validation.ts";
 import type { TaskDefinition } from "./types.ts";
 
-const apply = Reflect.apply;
-const getOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
-const getPrototypeOf = Reflect.getPrototypeOf;
-const objectPrototype = Object.prototype;
-const MAX_TASK_PROTOTYPE_CHAIN_DEPTH = 100;
-
 const TASK_DEFINITION_KEYS = [
   "name",
   "description",
@@ -18,54 +12,72 @@ const TASK_DEFINITION_KEYS = [
   "run",
 ] as const;
 
+const MAX_TASK_PROTOTYPE_DEPTH = 32;
+const OBJECT_PROTOTYPE = Object.prototype;
+
+type TaskObject = Record<PropertyKey, unknown>;
+
 function fail(detail: string): never {
   throw new TypeError(detail);
 }
 
-function findTaskPropertyDescriptor(
-  value: object,
-  key: string,
-): PropertyDescriptor | undefined {
-  let current: object | null = value;
-  for (
-    let depth = 0;
-    current !== null && current !== objectPrototype && depth < MAX_TASK_PROTOTYPE_CHAIN_DEPTH;
-    depth++
-  ) {
-    if (isProxyWithoutHooks(current)) {
-      fail("Task definition must not use Proxy objects in its prototype chain.");
-    }
-
-    const descriptor = getOwnPropertyDescriptor(current, key);
-    if (descriptor !== undefined) return descriptor;
-    current = getPrototypeOf(current);
-  }
-  if (current !== null && current !== objectPrototype) {
-    fail("Task definition prototype chain is too deep.");
-  }
-  return undefined;
-}
-
-function inspectTaskDefinition(
-  value: unknown,
-): { source: object; fields: Map<string, unknown> } {
+function inspectTaskObject(value: unknown): TaskObject {
   if (
     typeof value !== "object" || value === null || Array.isArray(value) ||
     isProxyWithoutHooks(value)
   ) {
     fail("Task definition must be a non-Proxy object.");
   }
+  return value as TaskObject;
+}
+
+function findTaskPropertyDescriptor(
+  value: TaskObject,
+  key: PropertyKey,
+): PropertyDescriptor | undefined {
+  const visited = new Set<TaskObject>();
+  let owner: TaskObject | null = value;
+
+  for (let depth = 0; owner !== null && owner !== OBJECT_PROTOTYPE; depth++) {
+    if (
+      depth >= MAX_TASK_PROTOTYPE_DEPTH || visited.has(owner) ||
+      isProxyWithoutHooks(owner)
+    ) {
+      fail("Task definition has an invalid prototype chain.");
+    }
+    visited.add(owner);
+
+    const descriptor = Reflect.getOwnPropertyDescriptor(owner, key);
+    if (descriptor !== undefined) return descriptor;
+    owner = Reflect.getPrototypeOf(owner) as TaskObject | null;
+  }
+
+  return undefined;
+}
+
+function inspectTaskDefinition(value: unknown): Map<string, unknown> {
+  const task = inspectTaskObject(value);
 
   const fields = new Map<string, unknown>();
   for (const key of TASK_DEFINITION_KEYS) {
-    const descriptor = findTaskPropertyDescriptor(value, key);
+    const descriptor = key === "run"
+      ? findTaskPropertyDescriptor(task, key)
+      : Reflect.getOwnPropertyDescriptor(task, key);
     if (descriptor === undefined) continue;
+    const inheritedRun = key === "run" && !Object.hasOwn(task, key);
     if (!("value" in descriptor)) {
-      fail(`Task definition ${key} must be a data property.`);
+      fail(
+        inheritedRun
+          ? "Task definition run must resolve to a data property."
+          : `Task definition ${key} must be a data property.`,
+      );
+    }
+    if (!inheritedRun && !descriptor.enumerable) {
+      fail(`Task definition ${key} must be an own enumerable data property.`);
     }
     fields.set(key, descriptor.value);
   }
-  return { source: value, fields };
+  return fields;
 }
 
 function optionalString(value: unknown, label: string): string | undefined {
@@ -91,9 +103,11 @@ function optionalRecord(
 
 /** Validate and capture the task metadata that crosses discovery boundaries. */
 export function captureTaskDefinition(value: unknown): TaskDefinition {
-  const { source, fields } = inspectTaskDefinition(value);
+  const task = inspectTaskObject(value);
+  const fields = inspectTaskDefinition(task);
   const run = fields.get("run");
   if (typeof run !== "function") fail("Task definition run must be a function.");
+  const runWithReceiver: TaskDefinition["run"] = (ctx) => Reflect.apply(run, task, [ctx]);
 
   const name = optionalString(fields.get("name"), "Task definition name");
   const description = optionalString(
@@ -115,7 +129,6 @@ export function captureTaskDefinition(value: unknown): TaskDefinition {
   const integrationRequirements = captureScheduleIntegrationRequirementsConfig(
     fields.get("integrationRequirements"),
   );
-  const invokeRun: TaskDefinition["run"] = (context) => apply(run, source, [context]);
 
   return Object.freeze({
     ...(fields.has("name") ? { name } : {}),
@@ -124,21 +137,14 @@ export function captureTaskDefinition(value: unknown): TaskDefinition {
     ...(fields.has("outputSchema") ? { outputSchema } : {}),
     ...(integrationRequirements === undefined ? {} : { integrationRequirements }),
     ...(fields.has("schedulable") ? { schedulable } : {}),
-    run: invokeRun,
+    run: runWithReceiver,
   }) as TaskDefinition;
 }
 
 /** Identify structural task exports without executing accessors. */
-export function isTaskDefinitionCandidate(value: unknown): value is object {
-  if (
-    typeof value !== "object" || value === null || Array.isArray(value) ||
-    isProxyWithoutHooks(value)
-  ) {
-    return false;
-  }
-
+export function isTaskDefinitionCandidate(value: unknown): value is TaskObject {
   try {
-    return findTaskPropertyDescriptor(value, "run") !== undefined;
+    return findTaskPropertyDescriptor(inspectTaskObject(value), "run") !== undefined;
   } catch {
     return false;
   }

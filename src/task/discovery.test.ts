@@ -224,10 +224,10 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
     it("keeps class-instance task definitions structurally valid", () => {
       class StatefulTask {
-        private readonly prefix = "stateful";
+        readonly #prefix = "stateful";
 
         run(): string {
-          return this.prefix;
+          return this.#prefix;
         }
       }
 
@@ -370,6 +370,30 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(result.tasks.map((task) => task.id), ["a-first", "z-last"]);
   });
 
+  it("reports invalid integration requirement metadata during legacy discovery", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/invalid.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks, []);
+    assertEquals(result.errors.length, 1);
+    assertEquals(
+      result.errors[0]?.error.includes("must use a lowercase integration identifier"),
+      true,
+    );
+  });
+
   it("reports invalid integration requirement metadata during unified discovery", async () => {
     const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-requirements-" });
 
@@ -395,6 +419,53 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(
         result.errors[0]?.error.message.includes(
           "must use a lowercase integration identifier",
+        ),
+        true,
+      );
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps valid sibling tasks after malformed unified candidates", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-task-invalid-sibling-" });
+
+    try {
+      await Deno.mkdir(`${tempDir}/tasks`, { recursive: true });
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/default-first.ts`,
+        [
+          "export default {",
+          "  run() {},",
+          '  integrationRequirements: [{ integration: "Slack" }],',
+          "};",
+          'export const validDefaultSibling = { run() { return "default sibling"; } };',
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(
+        `${tempDir}/tasks/named-first.ts`,
+        [
+          "export const aBroken = {",
+          "  run() {},",
+          '  integrationRequirements: [{ integration: "Slack" }],',
+          "};",
+          'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals([...result.tasks.keys()].sort(), [
+        "default-first",
+        "named-first",
+      ]);
+      assertEquals(result.errors.length, 2);
+      assertEquals(
+        result.errors.every((entry) =>
+          entry.error.message.includes("must use a lowercase integration identifier")
         ),
         true,
       );

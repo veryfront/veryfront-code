@@ -61,12 +61,12 @@ function collectDiscoveryCandidates<T, Candidate>(
   module: unknown,
   handler: DiscoveryHandler<T, Candidate>,
 ): DiscoveryCandidate<Candidate>[] {
+  const candidates: DiscoveryCandidate<Candidate>[] = [];
   const defaultItem = (module as { default?: unknown }).default;
   if (handler.validate(defaultItem)) {
-    return [{ exportName: "default", item: defaultItem }];
+    candidates.push({ exportName: "default", item: defaultItem });
   }
 
-  const candidates: DiscoveryCandidate<Candidate>[] = [];
   for (const [exportName, value] of Object.entries(module as Record<string, unknown>)) {
     if (exportName === "default") continue;
     if (!handler.validate(value)) continue;
@@ -109,30 +109,42 @@ async function discoverItems<T, Candidate>(
   }
 
   for (const file of files) {
+    let candidates: DiscoveryCandidate<Candidate>[];
     try {
       const module = await importModule(file, context);
-      const candidates = collectDiscoveryCandidates(module, handler);
-      if (candidates.length === 0) {
-        if (verbose) {
-          logger.warn(`${file} does not export a valid ${handler.typeName}`);
-        }
-        continue;
-      }
+      candidates = collectDiscoveryCandidates(module, handler);
+    } catch (error) {
+      result.errors.push({ file, error: ensureError(error) });
 
-      const useExportNameFallback = candidates.length > 1 || isIndexModule(file);
-      for (const candidate of candidates) {
+      if (verbose) {
+        logger.error(`Error loading ${file}:`, error);
+      }
+      continue;
+    }
+
+    if (candidates.length === 0) {
+      if (verbose) {
+        logger.warn(`${file} does not export a valid ${handler.typeName}`);
+      }
+      continue;
+    }
+
+    const useExportNameFallback = candidates.length > 1 || isIndexModule(file);
+    for (const candidate of candidates) {
+      try {
         const id = getCandidateId(
           candidate,
           file,
           dir,
           handler,
-          useExportNameFallback,
+          candidate.exportName === "default" ? isIndexModule(file) : useExportNameFallback,
         );
 
         if (resultMap.has(id)) {
           if (verbose) {
             logger.warn(`Duplicate ${handler.typeName} "${id}" in ${file}; keeping first`);
           }
+          if (candidate.exportName === "default") break;
           continue;
         }
 
@@ -151,12 +163,13 @@ async function discoverItems<T, Candidate>(
             : ` (export: ${candidate.exportName})`;
           logger.info(`Registered ${handler.typeName}: ${id}${exportSuffix}`);
         }
-      }
-    } catch (error) {
-      result.errors.push({ file, error: ensureError(error) });
+        if (candidate.exportName === "default") break;
+      } catch (error) {
+        result.errors.push({ file, error: ensureError(error) });
 
-      if (verbose) {
-        logger.error(`Error loading ${file}:`, error);
+        if (verbose) {
+          logger.error(`Error registering ${handler.typeName} from ${file}:`, error);
+        }
       }
     }
   }

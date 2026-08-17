@@ -27,8 +27,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import type { TaskDefinition } from "./types.ts";
-import { isTaskDefinition } from "./types.ts";
-import { captureTaskDefinition } from "./definition-snapshot.ts";
+import { captureTaskDefinition, isTaskDefinitionCandidate } from "./definition-snapshot.ts";
 
 const logger = baseLogger.component("task-discovery");
 const TASK_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
@@ -148,12 +147,12 @@ function extractTaskExport(
   module: Record<string, unknown>,
 ): { exportName: string; definition: TaskDefinition } | null {
   const defaultExport = module.default;
-  if (isTaskDefinition(defaultExport)) {
+  if (isTaskDefinitionCandidate(defaultExport)) {
     return { exportName: "default", definition: captureTaskDefinition(defaultExport) };
   }
 
   for (const [exportName, value] of Object.entries(module)) {
-    if (exportName !== "default" && isTaskDefinition(value)) {
+    if (exportName !== "default" && isTaskDefinitionCandidate(value)) {
       return { exportName, definition: captureTaskDefinition(value) };
     }
   }
