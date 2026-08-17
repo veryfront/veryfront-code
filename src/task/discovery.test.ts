@@ -288,6 +288,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
     it("uses captured validation primitives after module initialization", () => {
       const originalMap = Array.prototype.map;
+      const originalIterator = Array.prototype[Symbol.iterator];
       const originalApply = Reflect.apply;
       const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
       const originalGetPrototypeOf = Reflect.getPrototypeOf;
@@ -311,6 +312,10 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         poisonCalls++;
         return [];
       } as typeof Array.prototype.map;
+      const iteratorPoison = function <T>(): ArrayIterator<T> {
+        poisonCalls++;
+        return originalApply(originalIterator, [], []) as ArrayIterator<T>;
+      };
       let output: unknown;
       let inputSchema: TaskDefinition["inputSchema"];
       let requirements: TaskDefinition["integrationRequirements"];
@@ -322,6 +327,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
       try {
         Array.prototype.map = mapPoison;
+        Array.prototype[Symbol.iterator] = iteratorPoison;
         Reflect.apply = poison;
         Reflect.getOwnPropertyDescriptor = poison;
         Reflect.getPrototypeOf = poison;
@@ -357,6 +363,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         requirements = registered.integrationRequirements;
       } finally {
         Array.prototype.map = originalMap;
+        Array.prototype[Symbol.iterator] = originalIterator;
         Reflect.apply = originalApply;
         Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
         Reflect.getPrototypeOf = originalGetPrototypeOf;

@@ -70,7 +70,8 @@ function inspectTaskDefinition(value: unknown): Map<string, unknown> {
   const task = inspectTaskObject(value);
 
   const fields = new Map<string, unknown>();
-  for (const key of TASK_DEFINITION_KEYS) {
+  for (let index = 0; index < TASK_DEFINITION_KEYS.length; index++) {
+    const key = TASK_DEFINITION_KEYS[index]!;
     const descriptor = findTaskPropertyDescriptor(task, key);
     if (descriptor === undefined) continue;
     const inherited = !hasOwn(task, key);

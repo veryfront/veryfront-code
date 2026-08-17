@@ -116,9 +116,13 @@ function snapshotDataRecord(
     invalid(`${label} must be a plain object.`);
   }
 
-  const allowed = new Set(allowedKeys);
+  const allowed = new Set<string>();
+  for (let index = 0; index < allowedKeys.length; index++) {
+    allowed.add(allowedKeys[index]!);
+  }
   const ownKeys = reflectOwnKeys(value);
-  for (const key of ownKeys) {
+  for (let index = 0; index < ownKeys.length; index++) {
+    const key = ownKeys[index]!;
     if (typeof key === "symbol") {
       invalid(`${label} must not define symbol properties.`);
     }
@@ -127,9 +131,13 @@ function snapshotDataRecord(
     }
   }
 
-  const listedKeys = new Set(ownKeys);
+  const listedKeys = new Set<PropertyKey>();
+  for (let index = 0; index < ownKeys.length; index++) {
+    listedKeys.add(ownKeys[index]!);
+  }
   const snapshot: Record<string, unknown> = objectCreate(null);
-  for (const key of allowedKeys) {
+  for (let index = 0; index < allowedKeys.length; index++) {
+    const key = allowedKeys[index]!;
     const descriptor = reflectGetOwnPropertyDescriptor(value, key);
     const listed = listedKeys.has(key);
     const descriptorExists = descriptor !== undefined;
@@ -272,7 +280,8 @@ function snapshotDataArray(
     invalid(`${label} must contain at most ${maxLength} entries.`);
   }
 
-  const allowedKeys = new Set<PropertyKey>(["length"]);
+  const allowedKeys = new Set<PropertyKey>();
+  allowedKeys.add("length");
   for (let index = 0; index < length; index++) {
     allowedKeys.add(String(index));
   }
