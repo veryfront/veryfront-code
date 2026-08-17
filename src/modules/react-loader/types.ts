@@ -26,6 +26,8 @@ export interface LoadComponentOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Request mode ("preview" | "production") for studio features */
   mode?: string;
+  /** Cooperative cancellation for request-scoped SSR transforms. */
+  signal?: AbortSignal;
 }
 
 export interface ComponentSource {
