@@ -2555,6 +2555,55 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "export default Page");
     });
 
+    it("keeps a hook-owned binding reached through a default export expression", async () => {
+      const code = [
+        `import { memo } from "react";`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default memo(() => KEY);`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "export default memo(() => KEY)");
+    });
+
+    it("keeps bindings selected by a conditional default export", async () => {
+      const code = [
+        `import { forwardRef } from "react";`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const Page = forwardRef(() => KEY);`,
+        `const Fallback = () => null;`,
+        `const flag = globalThis.usePage;`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default (flag ? Page : Fallback);`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "forwardRef(() => KEY)");
+      assertStringIncludes(result, "flag ? Page : Fallback");
+    });
+
+    it("keeps a hook-owned binding read by an anonymous default function", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function () { return KEY; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "export default function");
+      assertStringIncludes(result, "return KEY");
+    });
+
     // An immediately invoked function is not deferred: its body runs where it
     // is written, so the secret it reads is genuinely read at module load.
     it("keeps a secret an immediately invoked initialiser reads", async () => {
