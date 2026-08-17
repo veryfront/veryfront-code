@@ -51,7 +51,8 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
     const filePath = options.filePath?.toLowerCase() ?? "";
     const ast = parser.parse(options.code, {
       sourceType: "unambiguous",
-      allowReturnOutsideFunction: /\.(?:cjs|js)$/.test(filePath),
+      allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
+        /\.(?:cjs|js)$/.test(filePath),
       plugins: pickPlugins(options.filePath),
     });
     const node: { type: string } = ast;

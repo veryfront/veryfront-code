@@ -227,6 +227,30 @@ describe("ext-parser-babel", () => {
       ]);
     });
 
+    it("analyzes top-level CommonJS returns for every browser script loader", async () => {
+      for (
+        const filePath of [
+          "entry.js",
+          "entry.jsx",
+          "entry.mjs",
+          "entry.cjs",
+          "entry.ts",
+          "entry.tsx",
+          "entry.mts",
+          "entry.cts",
+        ]
+      ) {
+        assertEquals(
+          await parser.findStaticCommonJsImports?.({
+            code: 'if (module.parent) return; module.exports = require("knex");',
+            filePath,
+          }),
+          ["knex"],
+          filePath,
+        );
+      }
+    });
+
     it("fails closed when CommonJS array primitives have changed", async () => {
       const isArray = Object.getOwnPropertyDescriptor(Array, "isArray")!;
       const push = Object.getOwnPropertyDescriptor(Array.prototype, "push")!;
