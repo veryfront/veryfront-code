@@ -1,17 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
-import { agent } from "../factory.ts";
-import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
-import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
-import type { ModelTransportRequest } from "../types.ts";
+import { tool } from "#veryfront/tool";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
+import { createGoogleModelRuntime } from "../../../extensions/ext-llm-google/src/google-provider.ts";
+import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
+import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
+import { agent } from "../factory.ts";
+import type { ModelTransportRequest } from "../types.ts";
 
 const originalLogLevel = Deno.env.get("LOG_LEVEL");
 
@@ -29,6 +32,17 @@ function createTextStream(
     | { type: "finish"; finishReason?: string; totalUsage?: Record<string, unknown> }
   >,
 ) {
+  return new ReadableStream<unknown>({
+    start(controller) {
+      for (const part of parts) {
+        controller.enqueue(part);
+      }
+      controller.close();
+    },
+  });
+}
+
+function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
     start(controller) {
       for (const part of parts) {
@@ -129,6 +143,252 @@ describe("agent provider transport hooks", () => {
     assertEquals(captured.generateOptions.providerOptions, {
       veryfront: { projectSlug: "demo-project" },
     });
+  });
+
+  it("replays provider metadata on the generate tool-result leg", async () => {
+    const providerMetadata = {
+      google: {
+        rawAssistantParts: [{
+          functionCall: { id: "lookup-1", name: "lookup", args: { value: "alpha" } },
+          thoughtSignature: "signed-tool-turn-generate",
+        }],
+      },
+    };
+    let callCount = 0;
+    let replayedProviderMetadata: unknown;
+    const modelCallContexts: AgentRunModelCallContextEvent[] = [];
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-metadata-generate",
+      async doGenerate(options: unknown) {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "lookup-1",
+              toolName: "lookup",
+              input: '{"value":"alpha"}',
+            }],
+            finishReason: "tool-calls",
+            providerMetadata,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        const prompt = (options as {
+          prompt?: Array<{ role?: string; providerMetadata?: unknown }>;
+        }).prompt ?? [];
+        replayedProviderMetadata = prompt.find((message) => message.role === "assistant")
+          ?.providerMetadata;
+        return {
+          content: [{ type: "text", text: "generate replay complete" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const lookup = tool({
+      id: "lookup",
+      description: "Look up a value",
+      inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+      execute: ({ value }) => ({ value }),
+    });
+    const assistant = agent(
+      {
+        model: "hosted/provider-metadata-generate",
+        system: "Use the lookup tool.",
+        tools: { lookup },
+        maxSteps: 2,
+        resolveModelTransport: () => ({ model: transportModel }),
+        __vfToolLoadingMode: "eager",
+      } as Parameters<typeof agent>[0],
+    );
+
+    const result = await runWithRunEventSink(
+      (event) => {
+        modelCallContexts.push(event as AgentRunModelCallContextEvent);
+      },
+      () => assistant.generate({ input: "Look up alpha." }),
+    );
+
+    assertEquals(result.text, "generate replay complete");
+    assertEquals(callCount, 2);
+    assertEquals(replayedProviderMetadata, providerMetadata);
+    assertEquals(modelCallContexts.length, 2);
+    const replayContextAssistant = modelCallContexts[1]?.messages.find((message) =>
+      message.role === "assistant"
+    );
+    assertEquals(
+      replayContextAssistant && "providerMetadata" in replayContextAssistant,
+      false,
+    );
+  });
+
+  it("replays provider metadata without exposing it on the streamed response", async () => {
+    const providerMetadata = {
+      google: {
+        rawAssistantParts: [{
+          functionCall: { id: "lookup-1", name: "lookup", args: { value: "beta" } },
+          thoughtSignature: "signed-tool-turn-stream",
+        }],
+      },
+    };
+    let callCount = 0;
+    let replayedProviderMetadata: unknown;
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/provider-metadata-stream",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options: unknown) {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              { type: "tool-input-start", id: "lookup-1", toolName: "lookup" },
+              {
+                type: "tool-input-delta",
+                id: "lookup-1",
+                delta: '{"value":"beta"}',
+              },
+              { type: "tool-input-end", id: "lookup-1" },
+              {
+                type: "tool-call",
+                toolCallId: "lookup-1",
+                toolName: "lookup",
+                input: { value: "beta" },
+              },
+              { type: "finish", finishReason: "tool-calls", providerMetadata },
+            ]),
+          };
+        }
+
+        const prompt = (options as {
+          prompt?: Array<{ role?: string; providerMetadata?: unknown }>;
+        }).prompt ?? [];
+        replayedProviderMetadata = prompt.find((message) => message.role === "assistant")
+          ?.providerMetadata;
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "stream replay complete" },
+            { type: "finish", finishReason: "stop" },
+          ]),
+        };
+      },
+    };
+    const lookup = tool({
+      id: "lookup",
+      description: "Look up a value",
+      inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+      execute: ({ value }) => ({ value }),
+    });
+    const assistant = agent(
+      {
+        model: "hosted/provider-metadata-stream",
+        system: "Use the lookup tool.",
+        tools: { lookup },
+        maxSteps: 2,
+        resolveModelTransport: () => ({ model: transportModel }),
+        __vfToolLoadingMode: "eager",
+      } as Parameters<typeof agent>[0],
+    );
+
+    const response = (await assistant.stream({ input: "Look up beta." })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertStringIncludes(body, "stream replay complete");
+    assertEquals(body.includes("signed-tool-turn-stream"), false);
+    assertEquals(callCount, 2);
+    assertEquals(replayedProviderMetadata, providerMetadata);
+  });
+
+  it("replays the exact signed Gemini tool call before its function response", async () => {
+    const encoder = new TextEncoder();
+    const rawAssistantParts = [{
+      functionCall: { id: "lookup-1", name: "lookup", args: { value: "gamma" } },
+      thoughtSignature: "gemini-3-signed-tool-turn",
+    }];
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const googleRuntime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: (_input, init) => {
+        requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        const responseParts = requestBodies.length === 1
+          ? [
+            encoder.encode(
+              `data: ${
+                JSON.stringify({
+                  candidates: [{ content: { role: "model", parts: rawAssistantParts } }],
+                })
+              }\n\n`,
+            ),
+            encoder.encode(
+              'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}\n\n',
+            ),
+          ]
+          : [
+            encoder.encode(
+              'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"wire replay complete"}]}}]}\n\n',
+            ),
+            encoder.encode(
+              'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}\n\n',
+            ),
+          ];
+        return Promise.resolve(
+          new Response(
+            ReadableStream.from([...responseParts, encoder.encode("data: [DONE]\n\n")]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    }, "gemini-3.5-flash");
+    const lookup = tool({
+      id: "lookup",
+      description: "Look up a value",
+      inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+      execute: ({ value }) => ({ value }),
+    });
+    const assistant = agent(
+      {
+        model: "google-ai-studio/gemini-3.5-flash",
+        system: "Use the lookup tool.",
+        tools: { lookup },
+        maxSteps: 2,
+        resolveModelTransport: () => ({ model: googleRuntime }),
+        __vfToolLoadingMode: "eager",
+      } as Parameters<typeof agent>[0],
+    );
+
+    const response = (await assistant.stream({ input: "Look up gamma." })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertStringIncludes(body, "wire replay complete");
+    assertEquals(body.includes("gemini-3-signed-tool-turn"), false);
+    assertEquals(requestBodies.length, 2);
+    const continuationContents = requestBodies[1]?.contents as unknown[] | undefined;
+    assertEquals(continuationContents?.slice(-2), [
+      { role: "model", parts: rawAssistantParts },
+      {
+        role: "user",
+        parts: [{
+          functionResponse: {
+            id: "lookup-1",
+            name: "lookup",
+            response: { result: { value: "gamma" } },
+          },
+        }],
+      },
+    ]);
   });
 
   it("records equivalent context through cloud and server-local runtime paths", async () => {

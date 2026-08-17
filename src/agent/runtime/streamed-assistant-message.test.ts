@@ -9,6 +9,9 @@ import {
 
 describe("agent/streamed-assistant-message", () => {
   it("builds an assistant message from completed stream state", () => {
+    const providerMetadata = {
+      google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+    };
     const state: ChatStreamState = {
       accumulatedText: "Final answer",
       reasoningParts: [
@@ -17,6 +20,7 @@ describe("agent/streamed-assistant-message", () => {
         { id: "reasoning_redacted", text: "", redactedData: "redacted_1" },
       ],
       finishReason: "tool-calls",
+      providerMetadata,
       toolCalls: new Map([
         [
           "call_1",
@@ -52,6 +56,7 @@ describe("agent/streamed-assistant-message", () => {
       id: "msg_fixed",
       role: "assistant",
       timestamp: 123,
+      providerOptions: providerMetadata,
       parts: [
         { type: "reasoning", text: "internal note", signature: "sig_1" },
         { type: "reasoning", redactedData: "redacted_1" },

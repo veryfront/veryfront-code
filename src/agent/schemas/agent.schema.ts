@@ -162,6 +162,7 @@ export const getMessageSchema = defineSchema((v) =>
     parts: v.array(getMessagePartSchema()),
     timestamp: v.number().int().nonnegative().optional(),
     metadata: v.record(v.string(), v.unknown()).optional(),
+    providerOptions: v.record(v.string(), v.unknown()).optional(),
   })
 );
 

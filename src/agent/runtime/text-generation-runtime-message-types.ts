@@ -48,6 +48,7 @@ export interface TextGenerationRuntimeUserMessage {
 export interface TextGenerationRuntimeAssistantMessage {
   role: "assistant";
   content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart>;
+  providerOptions?: Record<string, unknown>;
 }
 
 export interface TextGenerationRuntimeToolMessage {

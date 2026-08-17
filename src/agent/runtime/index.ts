@@ -597,6 +597,7 @@ function buildGeneratedAssistantMessage(
     ...metadata,
     role: "assistant",
     parts,
+    ...(response.providerMetadata ? { providerOptions: response.providerMetadata } : {}),
   };
 }
 

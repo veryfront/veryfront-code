@@ -94,6 +94,19 @@ describe("stream lifecycle reducer", () => {
     assertEquals(reduced.state.snapshot.phase, "awaiting_tool_input");
   });
 
+  it("retains provider replay metadata in the terminal snapshot", () => {
+    const providerMetadata = {
+      google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+    };
+    const state = reduceStreamSignal(
+      createInitialReducerState(),
+      protocol({ type: "step_finish", finishReason: "stop", providerMetadata }),
+      1,
+    ).state;
+
+    assertEquals(state.snapshot.providerMetadata, providerMetadata);
+  });
+
   it("keeps parallel tool inputs independent and hands off only valid local calls", () => {
     let state = createInitialReducerState();
     for (

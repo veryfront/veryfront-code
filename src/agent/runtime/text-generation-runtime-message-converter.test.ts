@@ -211,6 +211,26 @@ describe("text-generation-runtime-message-converter", () => {
       assertEquals(content[0], { type: "text", text: "Sure, I can help." });
     });
 
+    it("preserves assistant provider options for exact provider replay", () => {
+      const providerOptions = {
+        google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+      };
+
+      assertEquals(
+        convertToTextGenerationRuntimeMessage({
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Calling a tool" }],
+          providerOptions,
+        }),
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Calling a tool" }],
+          providerOptions,
+        },
+      );
+    });
+
     it("converts an assistant message with tool calls", () => {
       const msg: Message = {
         id: "a2",
@@ -693,6 +713,41 @@ describe("text-generation-runtime-message-converter", () => {
           },
         ],
       });
+    });
+
+    it("does not attach whole-turn provider options to split assistant messages", () => {
+      const providerOptions = {
+        google: { rawAssistantParts: [{ thoughtSignature: "signed-whole-turn" }] },
+      };
+
+      const converted = convertToTextGenerationRuntimeMessages([{
+        id: "assistant-split",
+        role: "assistant",
+        providerOptions,
+        parts: [
+          { type: "text", text: "Before" },
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            args: { value: "alpha" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "lookup",
+            result: { value: "alpha" },
+          },
+          { type: "text", text: "After" },
+        ],
+      }]);
+
+      assertEquals(
+        converted.filter((message) => message.role === "assistant").map((message) =>
+          "providerOptions" in message ? message.providerOptions : undefined
+        ),
+        [undefined, undefined],
+      );
     });
 
     it("groups consecutive tool result messages after one assistant turn", () => {

@@ -448,6 +448,7 @@ function reduceNonTextProtocolEvent(
       state.snapshot = {
         ...state.snapshot,
         finishReason: event.finishReason,
+        ...(event.providerMetadata ? { providerMetadata: event.providerMetadata } : {}),
         phase: terminalPhase,
         hasSemanticProgress: true,
       };

@@ -321,6 +321,7 @@ export function convertToTextGenerationRuntimeMessage(
       const assistantMessage: TextGenerationRuntimeAssistantMessage = {
         role: "assistant",
         content,
+        ...(msg.providerOptions ? { providerOptions: msg.providerOptions } : {}),
       };
       return assistantMessage;
     }
@@ -467,6 +468,12 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   flushAssistantMessage(assistantContent);
   flushToolMessage();
   flushAssistantMessage(deferredAssistantContent);
+
+  const assistantMessages = messages.filter((candidate) => candidate.role === "assistant");
+  const replayAssistantMessage = assistantMessages.length === 1 ? assistantMessages[0] : undefined;
+  if (replayAssistantMessage && message.providerOptions) {
+    replayAssistantMessage.providerOptions = message.providerOptions;
+  }
 
   return messages;
 }

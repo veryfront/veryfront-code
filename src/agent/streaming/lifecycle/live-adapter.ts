@@ -225,6 +225,7 @@ export function applyLifecycleSnapshotToChatStreamState(
   state.accumulatedText = snapshot.accumulatedText;
   state.reasoningParts = snapshot.reasoning.map((part) => ({ ...part }));
   state.finishReason = snapshot.finishReason;
+  state.providerMetadata = snapshot.providerMetadata;
   state.toolCalls = new Map(
     snapshot.tools.filter(isAvailableTool).map((tool) => [
       tool.id,

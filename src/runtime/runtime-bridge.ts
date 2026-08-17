@@ -134,12 +134,18 @@ type DirectGenerateResult = {
   >;
   finishReason?: string | { unified?: string | null } | null;
   usage?: unknown;
+  providerMetadata?: Record<string, unknown>;
 };
 
 type DirectStreamResult = {
   stream: ReadableStream<unknown>;
 };
 type DirectTextOptions = GenerateTextOptions | StreamTextOptions;
+type DirectPromptMessage =
+  | ModelCallMessage
+  | (Extract<ModelCallMessage, { role: "assistant" }> & {
+    providerMetadata?: Record<string, unknown>;
+  });
 type ModelCallRequestSource = Pick<
   GenerateTextOptions,
   | "maxOutputTokens"
@@ -153,7 +159,7 @@ type ModelCallRequestSource = Pick<
   | "reasoning"
 >;
 type DirectModelOptions = Record<string, unknown> & {
-  prompt: ModelCallMessage[];
+  prompt: DirectPromptMessage[];
   tools?: ModelCallTool[];
 } & ModelCallRequestSource;
 
@@ -236,8 +242,8 @@ function getProviderRequestMessages(
 function toRuntimePrompt(
   system: readonly ChatSystemMessage[],
   messages: TextGenerationRuntimeMessage[],
-): ModelCallMessage[] {
-  const prompt: ModelCallMessage[] = system.map((message) => ({
+): DirectPromptMessage[] {
+  const prompt: DirectPromptMessage[] = system.map((message) => ({
     role: "system",
     content: message.content,
     ...(message.providerOptions === undefined ? {} : { providerOptions: message.providerOptions }),
@@ -267,6 +273,9 @@ function toRuntimePrompt(
               input: part.input,
             }
           ),
+          ...(message.providerOptions === undefined
+            ? {}
+            : { providerMetadata: message.providerOptions }),
         });
         break;
       case "tool":
@@ -368,9 +377,12 @@ function sanitizePersistedProviderOptions(
 }
 
 function sanitizeModelCallContextMessages(
-  messages: readonly ModelCallMessage[],
+  messages: readonly DirectPromptMessage[],
 ): ModelCallMessage[] {
   return messages.map((message) => {
+    if (message.role === "assistant") {
+      return { role: "assistant", content: message.content };
+    }
     if (message.role !== "system") {
       return message;
     }
@@ -881,6 +893,7 @@ function buildDirectGenerateResult(
     ...(toolResults.length > 0 ? { toolResults } : {}),
     usage: normalizeUsage(result.usage),
     finishReason: normalizeFinishReason(result.finishReason),
+    ...(result.providerMetadata ? { providerMetadata: result.providerMetadata } : {}),
   };
 }
 
@@ -957,6 +970,7 @@ async function buildGenerateResultFromStream(
   let text = "";
   let usage: RuntimeGenerateTextResult["usage"];
   let finishReason: string | null = null;
+  let providerMetadata: Record<string, unknown> | undefined;
   const toolCalls = new Map<string, NonNullable<RuntimeGenerateTextResult["toolCalls"]>[number]>();
   const toolInputs = new Map<string, { toolCallId: string; toolName: string; input: string }>();
   const toolResults: NonNullable<RuntimeGenerateTextResult["toolResults"]> = [];
@@ -1046,6 +1060,7 @@ async function buildGenerateResultFromStream(
       case "finish":
         finishReason = part.finishReason ?? null;
         usage = streamUsageToGenerateUsage(part.totalUsage);
+        providerMetadata = part.providerMetadata;
         break;
     }
   }
@@ -1058,6 +1073,7 @@ async function buildGenerateResultFromStream(
     ...(toolResults.length > 0 ? { toolResults } : {}),
     usage,
     finishReason,
+    ...(providerMetadata ? { providerMetadata } : {}),
   };
 }
 
@@ -1086,6 +1102,7 @@ function normalizeStreamPart(part: unknown): unknown {
     usage?: unknown;
     totalUsage?: unknown;
     finishReason?: unknown;
+    providerMetadata?: unknown;
   };
   const usage = normalizeUsage(finishPart.usage) ?? normalizeUsage(finishPart.totalUsage);
   const recomputedTotal = usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : undefined;
@@ -1093,6 +1110,10 @@ function normalizeStreamPart(part: unknown): unknown {
   return {
     type: "finish",
     finishReason: normalizeFinishReason(finishPart.finishReason),
+    ...(finishPart.providerMetadata && typeof finishPart.providerMetadata === "object" &&
+        !Array.isArray(finishPart.providerMetadata)
+      ? { providerMetadata: finishPart.providerMetadata as Record<string, unknown> }
+      : {}),
     ...(usage
       ? {
         totalUsage: {

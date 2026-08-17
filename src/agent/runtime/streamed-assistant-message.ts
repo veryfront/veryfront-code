@@ -34,7 +34,10 @@ export function isPersistedReasoningPart(part: StreamingReasoningPart): boolean 
 }
 
 export function buildStreamedAssistantMessage(
-  state: Pick<ChatStreamState, "accumulatedText" | "reasoningParts" | "toolCalls">,
+  state: Pick<
+    ChatStreamState,
+    "accumulatedText" | "reasoningParts" | "toolCalls" | "providerMetadata"
+  >,
   identity: StreamedAssistantMessageIdentity,
   options: { preserveRecoverablePlaceholderToolCalls?: boolean } = {},
 ): Message {
@@ -71,5 +74,6 @@ export function buildStreamedAssistantMessage(
     role: "assistant",
     parts,
     timestamp: identity.timestamp,
+    ...(state.providerMetadata ? { providerOptions: state.providerMetadata } : {}),
   };
 }

@@ -36,6 +36,24 @@ describe("runtime stream Provider Adapter", () => {
     );
   });
 
+  it("keeps provider replay metadata on the internal finish signal", () => {
+    const providerMetadata = {
+      google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+    };
+
+    assertEquals(
+      decodeRuntimeStreamPart(
+        { type: "finish", finishReason: "tool-calls", providerMetadata },
+        snapshot,
+        options,
+      ),
+      [{
+        kind: "protocol",
+        event: { type: "step_finish", finishReason: "tool-calls", providerMetadata },
+      }],
+    );
+  });
+
   it("normalizes result and output payload names", () => {
     const toolSnapshot = {
       ...snapshot,

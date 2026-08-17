@@ -310,6 +310,9 @@ describe("stream lifecycle live adapter", () => {
         },
       ],
       finishReason: "tool-calls",
+      providerMetadata: {
+        google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+      },
       usage: {
         inputTokens: 10,
         outputTokens: 20,
@@ -329,6 +332,9 @@ describe("stream lifecycle live adapter", () => {
     assertEquals(state.accumulatedText, "answer");
     assertEquals(state.reasoningParts, [{ id: "r1", text: "thinking" }]);
     assertEquals(state.finishReason, "tool-calls");
+    assertEquals(state.providerMetadata, {
+      google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+    });
     assertEquals([...state.toolCalls.keys()], [
       "local-1",
       "native-1",

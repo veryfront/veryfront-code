@@ -18,6 +18,22 @@ import {
 } from "./agent.schema.ts";
 
 describe("agent/schema", () => {
+  it("accepts provider replay options on assistant messages", () => {
+    const providerOptions = {
+      google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+    };
+
+    assertEquals(
+      getMessageSchema().parse({
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "Calling a tool" }],
+        providerOptions,
+      }).providerOptions,
+      providerOptions,
+    );
+  });
+
   describe("modelProviderSchema", () => {
     it("should accept all valid providers", () => {
       const providers = ["openai", "anthropic", "google", "local"];
