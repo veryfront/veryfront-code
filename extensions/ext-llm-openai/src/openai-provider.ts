@@ -39,6 +39,7 @@ import {
 } from "veryfront/provider/shared";
 import {
   buildOpenAIChatRequest,
+  type OpenAIChatRequestCapabilities,
   type OpenAICompatibleLanguageOptions,
 } from "./openai-chat-request-builder.ts";
 import { MAX_OPENAI_STREAM_TOOL_CALLS, streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
@@ -87,6 +88,7 @@ export interface OpenAIRuntimeConfig {
   name?: string;
   /** Provider identity for OpenAI request defaults. Defaults to `name` in low-level factories. */
   providerName?: string;
+  chatRequestCapabilities?: OpenAIChatRequestCapabilities;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -1062,6 +1064,7 @@ export function createOpenAIModelRuntime(
         options,
         false,
         warnings,
+        config.chatRequestCapabilities,
       );
       return requestJson({
         url,
@@ -1091,6 +1094,7 @@ export function createOpenAIModelRuntime(
         options,
         true,
         warnings,
+        config.chatRequestCapabilities,
       );
       const providerAbortScope = createOpenAIProviderAbortScope(options.abortSignal);
       try {
@@ -1334,6 +1338,11 @@ export class OpenAIProvider implements LLMProvider {
       baseURL: config.baseURL,
       name: providerLabel,
       providerName,
+      chatRequestCapabilities: typeof config.openAIChatReasoningWithFunctionTools === "boolean"
+        ? {
+          reasoningWithFunctionTools: config.openAIChatReasoningWithFunctionTools,
+        }
+        : undefined,
       fetch: config.fetch,
     };
     const responsesRuntime = createOpenAIResponsesRuntime(

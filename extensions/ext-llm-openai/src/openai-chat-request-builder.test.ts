@@ -57,6 +57,108 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), ["temperature"]);
   });
 
+  it("omits reasoning when function tools exceed the transport capability", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "gpt-5.5",
+      "veryfront-cloud",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Use the tool." }] }],
+        tools: [{
+          type: "function",
+          name: "lookup",
+          inputSchema: { jsonSchema: { type: "object", properties: {} } },
+        }],
+        providerOptions: {
+          "veryfront-cloud": { reasoning_effort: "high" },
+        },
+      },
+      true,
+      warnings,
+      { reasoningWithFunctionTools: false },
+    );
+
+    assertEquals(body.tools?.[0]?.function.name, "lookup");
+    assertEquals(body.reasoning_effort, undefined);
+    assertEquals(
+      warnings.drain().map((warning) => warning.setting),
+      ["reasoning"],
+    );
+  });
+
+  it("retains reasoning when the restricted transport has no function tools", () => {
+    const warnings = createWarningCollector();
+
+    const body = buildOpenAIChatRequest(
+      "gpt-5.5",
+      "veryfront-cloud",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think carefully." }] }],
+      },
+      true,
+      warnings,
+      { reasoningWithFunctionTools: false },
+    );
+
+    assertEquals(body.reasoning_effort, "medium");
+    assertEquals(warnings.drain(), []);
+  });
+
+  it("uses the final provider-options tool list for reasoning compatibility", () => {
+    for (const stream of [false, true]) {
+      const injectedToolWarnings = createWarningCollector();
+      const withInjectedTool = buildOpenAIChatRequest(
+        "gpt-5.5",
+        "veryfront-cloud",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "Use the tool." }] }],
+          providerOptions: {
+            "veryfront-cloud": {
+              tools: [{
+                type: "function",
+                function: {
+                  name: "lookup",
+                  parameters: { type: "object", properties: {} },
+                },
+              }],
+            },
+          },
+        },
+        stream,
+        injectedToolWarnings,
+        { reasoningWithFunctionTools: false },
+      );
+
+      assertEquals(withInjectedTool.reasoning_effort, undefined);
+      assertEquals(
+        injectedToolWarnings.drain().map((warning) => warning.setting),
+        ["reasoning"],
+      );
+
+      const removedToolWarnings = createWarningCollector();
+      const withRemovedTool = buildOpenAIChatRequest(
+        "gpt-5.5",
+        "veryfront-cloud",
+        {
+          prompt: [{ role: "user", content: [{ type: "text", text: "No tool." }] }],
+          tools: [{
+            type: "function",
+            name: "lookup",
+            inputSchema: { jsonSchema: { type: "object", properties: {} } },
+          }],
+          providerOptions: { "veryfront-cloud": { tools: [] } },
+        },
+        stream,
+        removedToolWarnings,
+        { reasoningWithFunctionTools: false },
+      );
+
+      assertEquals(withRemovedTool.reasoning_effort, "medium");
+      assertEquals(removedToolWarnings.drain(), []);
+    }
+  });
+
   it("does not set default reasoning effort for GPT-5 chat snapshots", () => {
     const warnings = createWarningCollector();
 

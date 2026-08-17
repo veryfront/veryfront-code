@@ -6,6 +6,7 @@ const openLLMProvider = new OpenAIProvider();
 interface VeryfrontCloudOpenAIConfig {
   apiToken: string;
   baseURL: string;
+  openAIChatReasoningWithFunctionTools?: boolean;
   openAITransport?: "chat-completions" | "responses";
   fetch: typeof globalThis.fetch;
 }
@@ -19,6 +20,7 @@ export function createVeryfrontCloudOpenAIModel(
     baseURL: config.baseURL,
     name: "veryfront-cloud",
     providerName: "veryfront-cloud",
+    openAIChatReasoningWithFunctionTools: config.openAIChatReasoningWithFunctionTools,
     openAITransport: config.openAITransport,
     fetch: config.fetch,
   });

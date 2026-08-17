@@ -1052,6 +1052,49 @@ describe("openai-provider", () => {
     assertEquals(fetchCalled, false);
   });
 
+  it("applies Chat function-tool reasoning capabilities to generate requests", async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const provider = new OpenAIProvider();
+    const runtime = provider.createModel("gpt-5.5", {
+      credential: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      name: "veryfront-cloud",
+      providerName: "veryfront-cloud",
+      openAITransport: "chat-completions",
+      openAIChatReasoningWithFunctionTools: false,
+      fetch: (_input, init) => {
+        requestBody = JSON.parse(readRequestBody(init) ?? "{}");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "stop",
+                message: { role: "assistant", content: "Done." },
+              }],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    });
+
+    await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Use the tool." }] }],
+      tools: [{
+        type: "function",
+        name: "lookup",
+        inputSchema: { type: "object", properties: {} },
+      }],
+    });
+
+    assertEquals(requestBody?.reasoning_effort, undefined);
+    assertEquals(
+      (requestBody?.tools as Array<{ function?: { name?: string } }> | undefined)?.[0]
+        ?.function?.name,
+      "lookup",
+    );
+  });
+
   it("keeps OpenAI-compatible provider identity separate from display labels", async () => {
     const encoder = new TextEncoder();
     let requestedUrl = "";
