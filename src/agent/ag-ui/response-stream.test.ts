@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiBrowserResponseStream } from "./browser-response-stream.ts";
+import { createAgUiResponseStream } from "./response-stream.ts";
 import { createAgUiChunkEncoderBridge } from "./chunk-encoder-bridge.ts";
 import type { AgUiSseEvent } from "./host-support.ts";
 
@@ -35,9 +35,9 @@ function parseSseFrames(body: string): Array<{ event: string; data: Record<strin
   });
 }
 
-describe("agent/ag-ui-browser-response-stream", () => {
+describe("agent/ag-ui-response-stream", () => {
   it("writes bootstrap events, encoded chunk events, and finalize events", async () => {
-    const stream = createAgUiBrowserResponseStream({
+    const stream = createAgUiResponseStream({
       agUiInput: {
         runId: "run-1",
         threadId: "thread-1",
@@ -87,7 +87,7 @@ describe("agent/ag-ui-browser-response-stream", () => {
     });
 
     now = 150;
-    const stream = createAgUiBrowserResponseStream({
+    const stream = createAgUiResponseStream({
       agUiInput: {
         runId: "run-timing",
         threadId: "thread-timing",
@@ -124,7 +124,7 @@ describe("agent/ag-ui-browser-response-stream", () => {
   });
 
   it("emits RunError and swallows execution.fail rejections", async () => {
-    const stream = createAgUiBrowserResponseStream({
+    const stream = createAgUiResponseStream({
       agUiInput: {
         runId: "run-2",
         threadId: "thread-2",
@@ -161,7 +161,7 @@ describe("agent/ag-ui-browser-response-stream", () => {
   it("passes accumulated state into getFinalResponse", async () => {
     let finalSeen: string[] | undefined;
 
-    const stream = createAgUiBrowserResponseStream({
+    const stream = createAgUiResponseStream({
       agUiInput: {
         runId: "run-3",
         threadId: "thread-3",
@@ -197,7 +197,7 @@ describe("agent/ag-ui-browser-response-stream", () => {
   });
 
   it("normalizes missing state to an empty snapshot object", async () => {
-    const stream = createAgUiBrowserResponseStream({
+    const stream = createAgUiResponseStream({
       agUiInput: {
         runId: "run-4",
         threadId: "thread-4",
@@ -244,7 +244,7 @@ describe("agent/ag-ui-browser-response-stream", () => {
     let seenChunks = 0;
     let waitForFinishCalls = 0;
 
-    const stream = createAgUiBrowserResponseStream({
+    const stream = createAgUiResponseStream({
       agUiInput: {
         runId: "run-5",
         threadId: "thread-5",

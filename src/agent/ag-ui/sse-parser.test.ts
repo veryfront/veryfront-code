@@ -22,7 +22,7 @@ function createSseResponse(chunks: string[], status = 200): Response {
 }
 
 describe("agent/ag-ui-sse-parser", () => {
-  it("parses browser-wire SSE chunks incrementally and reports progress", async () => {
+  it("parses SSE chunks incrementally and reports progress", async () => {
     const progressEventCounts: number[] = [];
     const response = createSseResponse([
       'id: 1\nevent: RunStarted\ndata: {"runId":"run-1"}\n\n',

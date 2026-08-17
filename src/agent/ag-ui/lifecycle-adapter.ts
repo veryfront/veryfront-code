@@ -3,22 +3,22 @@ import type {
   StreamOutcome,
   StreamUsage,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
-import type { AgUiBrowserEncodedEvent, AgUiBrowserRunFinishedMetadata } from "./browser-encoder.ts";
+import type { AgUiEncodedEvent, AgUiRunFinishedMetadata } from "./encoder.ts";
 
 /** Formatting-only state kept by the lifecycle AG-UI adapter. */
-export interface LifecycleAgUiBrowserState {
+export interface LifecycleAgUiState {
   messageId: string;
   activeStepName: string | null;
   stepCount: number;
   streamedToolInputIds: Set<string>;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
-  metadata: AgUiBrowserRunFinishedMetadata;
+  metadata: AgUiRunFinishedMetadata;
 }
 
 /** Canonical-frame AG-UI projection with explicit terminal handling. */
-export interface LifecycleAgUiBrowserAdapter {
-  encode(frame: StreamLifecycleFrame): AgUiBrowserEncodedEvent[];
+export interface LifecycleAgUiAdapter {
+  encode(frame: StreamLifecycleFrame): AgUiEncodedEvent[];
   finalize(
     input:
       | { outcome: StreamOutcome; terminalStatus?: never }
@@ -26,8 +26,8 @@ export interface LifecycleAgUiBrowserAdapter {
         outcome?: never;
         terminalStatus: "completed" | "failed" | "cancelled";
       },
-  ): AgUiBrowserEncodedEvent[];
-  getState(): Readonly<LifecycleAgUiBrowserState>;
+  ): AgUiEncodedEvent[];
+  getState(): Readonly<LifecycleAgUiState>;
 }
 
 function safeJson(value: unknown): unknown {
@@ -41,9 +41,9 @@ function safeJson(value: unknown): unknown {
 }
 
 function mergeUsageMetadata(
-  metadata: AgUiBrowserRunFinishedMetadata,
+  metadata: AgUiRunFinishedMetadata,
   usage: StreamUsage,
-): AgUiBrowserRunFinishedMetadata {
+): AgUiRunFinishedMetadata {
   return {
     ...metadata,
     inputTokens: usage.inputTokens,
@@ -82,13 +82,13 @@ function mergeUsageMetadata(
   };
 }
 
-/** Create a pure lifecycle-frame AG-UI browser adapter. */
-export function createLifecycleAgUiBrowserAdapter(input: {
+/** Create a pure lifecycle-frame AG-UI adapter. */
+export function createLifecycleAgUiAdapter(input: {
   messageId: string;
   provider?: string;
   model?: string;
-}): LifecycleAgUiBrowserAdapter {
-  const state: LifecycleAgUiBrowserState = {
+}): LifecycleAgUiAdapter {
+  const state: LifecycleAgUiState = {
     messageId: input.messageId,
     activeStepName: null,
     stepCount: 0,
@@ -142,7 +142,7 @@ export function createLifecycleAgUiBrowserAdapter(input: {
 
   const encodeSemantic = (
     event: Extract<StreamLifecycleFrame, { class: "semantic" }>["event"],
-  ): AgUiBrowserEncodedEvent[] => {
+  ): AgUiEncodedEvent[] => {
     switch (event.type) {
       case "message_start":
         if (event.messageId) state.messageId = event.messageId;
@@ -196,8 +196,8 @@ export function createLifecycleAgUiBrowserAdapter(input: {
         state.sawVisibleOutput = true;
         // A delta with no span open still opens one, so emit its start too.
         // Consumers key on ReasoningMessageStart to create the block and drop
-        // content for a messageId they never saw begin. Matches browser-encoder.
-        const events: AgUiBrowserEncodedEvent[] = [];
+        // content for a messageId they never saw begin. Matches encoder.
+        const events: AgUiEncodedEvent[] = [];
         if (activeReasoningMessageId === null) {
           events.push({
             event: "ReasoningMessageStart",
@@ -238,7 +238,7 @@ export function createLifecycleAgUiBrowserAdapter(input: {
         }];
       case "tool_input_ready": {
         state.sawVisibleOutput = true;
-        const events: AgUiBrowserEncodedEvent[] = [];
+        const events: AgUiEncodedEvent[] = [];
         if (!state.streamedToolInputIds.has(event.toolCallId)) {
           events.push({
             event: "ToolCallArgs",

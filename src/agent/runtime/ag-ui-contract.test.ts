@@ -3,7 +3,7 @@ import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getAgUiRuntimeRequestSchema,
-  normalizeAgUiBrowserRuntimeRequest,
+  normalizeAgUiRuntimeRequest,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "../index.ts";
@@ -77,8 +77,8 @@ describe("agent/runtime-ag-ui-contract", () => {
     assertEquals(parsed.messages.length, 1);
   });
 
-  it("normalizes runtime browser request defaults without leaking non-object state", () => {
-    const normalized = normalizeAgUiBrowserRuntimeRequest(
+  it("normalizes runtime request defaults without leaking non-object state", () => {
+    const normalized = normalizeAgUiRuntimeRequest(
       getAgUiRuntimeRequestSchema().parse({
         threadId: crypto.randomUUID(),
         runId: "run_1",

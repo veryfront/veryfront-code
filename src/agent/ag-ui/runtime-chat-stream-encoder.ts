@@ -3,7 +3,7 @@ import {
   parseToolInputObject,
   stripLeadingEmptyObjectPlaceholder,
 } from "../streaming/data-stream.ts";
-import type { AgUiRuntimeStreamEvent } from "./browser-encoder.ts";
+import type { AgUiRuntimeStreamEvent } from "./encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { mapFinishReason, toRenderableCustomChunk } from "../../chat/ag-ui-helpers.ts";
 

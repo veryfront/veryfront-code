@@ -1,21 +1,21 @@
 import {
-  type AgUiBrowserEncodedEvent,
-  type AgUiBrowserEncoderState,
-  type AgUiBrowserEncoderStateOptions,
+  type AgUiEncodedEvent,
+  type AgUiEncoderState,
+  type AgUiEncoderStateOptions,
   type AgUiRuntimeStreamEvent,
-  createAgUiBrowserEncoderState,
-  finalizeAgUiBrowserEvents,
-  mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "./browser-encoder.ts";
+  createAgUiEncoderState,
+  finalizeAgUiEvents,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "./encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
 /** Public API contract for AG-UI chunk encoder bridge. */
 export interface AgUiChunkEncoderBridge<TChunk> {
-  encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
-  finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
-  state: AgUiBrowserEncoderState;
-  /** Timing anchor consumed by the browser response composition root. */
-  timingState: AgUiBrowserEncoderState;
+  encode: (chunk: TChunk) => AgUiEncodedEvent[];
+  finalize: (response: AgentResponse | null) => AgUiEncodedEvent[];
+  state: AgUiEncoderState;
+  /** Timing anchor consumed by the response composition root. */
+  timingState: AgUiEncoderState;
 }
 
 /** Options accepted by create AG-UI chunk encoder bridge. */
@@ -23,25 +23,25 @@ export interface CreateAgUiChunkEncoderBridgeOptions<TChunk> {
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
   /**
    * Timing clocks forwarded verbatim to the encoder state. A single object so
-   * that adding a clock is one edit in `AgUiBrowserEncoderStateOptions`, not a
+   * that adding a clock is one edit in `AgUiEncoderStateOptions`, not a
    * sweep through every wrapper that happens to sit in between.
    */
-  timing?: AgUiBrowserEncoderStateOptions;
+  timing?: AgUiEncoderStateOptions;
 }
 
 /** Create AG-UI chunk encoder bridge. */
 export function createAgUiChunkEncoderBridge<TChunk>(
   options: CreateAgUiChunkEncoderBridgeOptions<TChunk>,
 ): AgUiChunkEncoderBridge<TChunk> {
-  const state = createAgUiBrowserEncoderState(options.timing ?? {});
+  const state = createAgUiEncoderState(options.timing ?? {});
 
   return {
     state,
     timingState: state,
     encode: (chunk) =>
       options.getRuntimeEvents(chunk).flatMap((event) =>
-        mapRuntimeStreamEventToAgUiBrowserEvents(state, event)
+        mapRuntimeStreamEventToAgUiEvents(state, event)
       ),
-    finalize: (response) => finalizeAgUiBrowserEvents(state, response),
+    finalize: (response) => finalizeAgUiEvents(state, response),
   };
 }

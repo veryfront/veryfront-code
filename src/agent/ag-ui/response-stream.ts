@@ -1,10 +1,6 @@
 import type { AgentResponse } from "../types.ts";
 import type { AgUiSseEvent } from "./host-support.ts";
-import {
-  type AgUiBrowserEncoderState,
-  createAgUiBrowserEncoderState,
-  stampAgUiBrowserEventTiming,
-} from "./browser-encoder.ts";
+import { type AgUiEncoderState, createAgUiEncoderState, stampAgUiEventTiming } from "./encoder.ts";
 
 const encoder = new TextEncoder();
 
@@ -22,35 +18,35 @@ function invokeFailWithoutLeaking(
   return fail(error).catch(() => undefined);
 }
 
-/** State for AG-UI browser response request. */
-export interface AgUiBrowserResponseRequestState {
+/** State for AG-UI response request. */
+export interface AgUiResponseRequestState {
   runId?: string;
   threadId?: string;
   state?: unknown;
   messages: unknown[];
 }
 
-/** Public API contract for AG-UI browser response execution. */
-export interface AgUiBrowserResponseExecution<TChunk> {
+/** Public API contract for AG-UI response execution. */
+export interface AgUiResponseExecution<TChunk> {
   agentUIStream: AsyncIterable<TChunk>;
   fail: (error: unknown) => Promise<void>;
   waitForFinish: () => Promise<void>;
 }
 
-/** Public API contract for AG-UI browser response encoder. */
-export interface AgUiBrowserResponseEncoder<TChunk> {
+/** Public API contract for AG-UI response encoder. */
+export interface AgUiResponseEncoder<TChunk> {
   encode: (chunk: TChunk) => AgUiSseEvent[];
   finalize: (response: AgentResponse | null) => AgUiSseEvent[];
   /** Shared timing anchor for bootstrap, chunk, and final events. */
-  timingState?: AgUiBrowserEncoderState;
+  timingState?: AgUiEncoderState;
 }
 
-/** Input payload for create AG-UI browser response stream. */
-export interface CreateAgUiBrowserResponseStreamInput<TChunk, TState> {
-  agUiInput: AgUiBrowserResponseRequestState;
+/** Input payload for create AG-UI response stream. */
+export interface CreateAgUiResponseStreamInput<TChunk, TState> {
+  agUiInput: AgUiResponseRequestState;
   agentId: string;
-  execution: AgUiBrowserResponseExecution<TChunk>;
-  encoder: AgUiBrowserResponseEncoder<TChunk>;
+  execution: AgUiResponseExecution<TChunk>;
+  encoder: AgUiResponseEncoder<TChunk>;
   initialState: TState;
   onChunk?: (state: TState, chunk: TChunk) => void;
   getFinalResponse?: (state: TState) => AgentResponse | null;
@@ -64,23 +60,23 @@ function normalizeSnapshot(snapshot: unknown): Record<string, unknown> {
   return isRecord(snapshot) ? snapshot : {};
 }
 
-/** Create AG-UI browser response stream. */
-export function createAgUiBrowserResponseStream<TChunk, TState>(
-  input: CreateAgUiBrowserResponseStreamInput<TChunk, TState>,
+/** Create AG-UI response stream. */
+export function createAgUiResponseStream<TChunk, TState>(
+  input: CreateAgUiResponseStreamInput<TChunk, TState>,
 ): ReadableStream<Uint8Array> {
   let streamClosed = false;
   let nextEventId = 1;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      const timingState = input.encoder.timingState ?? createAgUiBrowserEncoderState();
+      const timingState = input.encoder.timingState ?? createAgUiEncoderState();
       const writeEvent = (event: AgUiSseEvent) => {
         if (streamClosed) {
           return false;
         }
 
         try {
-          const [timed] = stampAgUiBrowserEventTiming(timingState, [event]);
+          const [timed] = stampAgUiEventTiming(timingState, [event]);
           controller.enqueue(formatAgUiSseEventWithId(timed ?? event, nextEventId));
           nextEventId += 1;
           return true;

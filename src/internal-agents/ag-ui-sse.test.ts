@@ -182,7 +182,7 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(finalizeRunEvents(state, null), []);
   });
 
-  it("maps browser-facing custom, tool fallback, and tool error events", () => {
+  it("maps consumer-facing custom, tool fallback, and tool error events", () => {
     const state = createStreamTransformState({ nowMs: null, epochMs: null });
 
     assertEquals(

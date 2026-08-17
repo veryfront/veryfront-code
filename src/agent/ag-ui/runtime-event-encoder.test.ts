@@ -63,7 +63,7 @@ describe("agent/ag-ui-runtime-event-encoder", () => {
     );
   });
 
-  it("seeds metadata into the shared browser encoder state", () => {
+  it("seeds metadata into the shared encoder state", () => {
     const encoder = createAgUiRuntimeEventEncoder({
       timing: { nowMs: null, epochMs: null },
       initialMetadata: {

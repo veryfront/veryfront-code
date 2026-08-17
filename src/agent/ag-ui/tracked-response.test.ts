@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts";
-import { createAgUiChunkEncoderBridge } from "./chunk-encoder-bridge.ts";
-import { createAgUiTrackedBrowserResponse } from "./tracked-browser-response.ts";
+import { createAgUiFinalizeTracker } from "#veryfront/agent/ag-ui/finalize-tracker.ts";
+import { createAgUiChunkEncoderBridge } from "#veryfront/agent/ag-ui/chunk-encoder-bridge.ts";
+import { createAgUiTrackedResponse } from "#veryfront/agent/ag-ui/tracked-response.ts";
 
 function parseSseFrames(body: string): Array<{ event: string; data: Record<string, unknown> }> {
   return body.split("\n\n").flatMap((frame) => {
@@ -13,8 +13,8 @@ function parseSseFrames(body: string): Array<{ event: string; data: Record<strin
   });
 }
 
-describe("agent/ag-ui-tracked-browser-response", () => {
-  it("combines chunk encoding and finalize tracking into one browser response helper", async () => {
+describe("agent/ag-ui-tracked-response", () => {
+  it("combines chunk encoding and finalize tracking into one response helper", async () => {
     type Chunk = {
       id: string;
       text: string;
@@ -22,7 +22,7 @@ describe("agent/ag-ui-tracked-browser-response", () => {
       finishReason?: string;
     };
 
-    const response = createAgUiTrackedBrowserResponse({
+    const response = createAgUiTrackedResponse({
       agUiInput: {
         threadId: crypto.randomUUID(),
         runId: "run_1",
@@ -53,7 +53,7 @@ describe("agent/ag-ui-tracked-browser-response", () => {
           { type: "text-end", id: chunk.id },
         ],
       }),
-      finalizeTracker: createAgUiBrowserFinalizeTracker<Chunk>({
+      finalizeTracker: createAgUiFinalizeTracker<Chunk>({
         getMetadataFromChunk: (chunk) => ({
           inputTokens: chunk.usage?.inputTokens,
           outputTokens: chunk.usage?.outputTokens,
@@ -69,7 +69,7 @@ describe("agent/ag-ui-tracked-browser-response", () => {
   });
 
   it("supports legacy custom encoders without timingState", async () => {
-    const response = createAgUiTrackedBrowserResponse({
+    const response = createAgUiTrackedResponse({
       agUiInput: {
         threadId: crypto.randomUUID(),
         runId: "run_1",
@@ -91,7 +91,7 @@ describe("agent/ag-ui-tracked-browser-response", () => {
         encode: () => [{ event: "RunError", payload: { message: "boom" } }],
         finalize: () => [],
       },
-      finalizeTracker: createAgUiBrowserFinalizeTracker({
+      finalizeTracker: createAgUiFinalizeTracker({
         getMetadataFromChunk: () => ({ finishReason: "stop" }),
       }),
     });
@@ -107,7 +107,7 @@ describe("agent/ag-ui-tracked-browser-response", () => {
 
   it("shares an injected run timing anchor across bootstrap, chunk, and final events", async () => {
     let now = 150;
-    const response = createAgUiTrackedBrowserResponse({
+    const response = createAgUiTrackedResponse({
       agUiInput: {
         threadId: "thread-timing",
         runId: "run-timing",
@@ -135,7 +135,7 @@ describe("agent/ag-ui-tracked-browser-response", () => {
         ],
         timing: { nowMs: () => now, epochMs: null, startedMs: 100 },
       }),
-      finalizeTracker: createAgUiBrowserFinalizeTracker({
+      finalizeTracker: createAgUiFinalizeTracker({
         getMetadataFromChunk: () => ({ finishReason: "stop" }),
       }),
     });
