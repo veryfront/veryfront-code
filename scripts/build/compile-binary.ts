@@ -328,8 +328,7 @@ async function assertArtifactContracts(
     failures.push(
       `Compiled binary was not built with V8 flag(s): ${missingV8Flags.join(", ")}.\n` +
         "Compiled binaries ignore DENO_V8_FLAGS at runtime, so without the baked flag " +
-        "production runs at V8's ~2 GiB default heap limit and dies there " +
-        "(veryfront-issue-inbox#269).",
+        "production runs at V8's ~2 GiB default heap limit and dies there.",
     );
   }
   if (failures.length > 0) {
