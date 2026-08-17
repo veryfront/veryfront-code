@@ -1472,6 +1472,21 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "this.#loadSecret");
     });
 
+    it("does not treat an auto-accessor name as an import read", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default class Page {`,
+        `  accessor loadSecret = "client";`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, 'accessor loadSecret = "client"');
+    });
+
     it("scopes private method parameters before pruning imports", async () => {
       const code = [
         `import { loadSecret } from "../server/secrets.ts";`,
