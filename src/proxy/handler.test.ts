@@ -2370,9 +2370,8 @@ describe("Proxy Handler", () => {
     });
 
     it("logs a warning when a signed control-plane branch binding is rejected", async () => {
-      // Regression for the VERYFRONT-STUDIO-60 diagnosis gap: the proxy turned
-      // ControlPlaneBranchBindingError into a 400 whose body only the calling
-      // control plane sees, leaving no server-side trace of the rejection.
+      // The proxy returns the rejection body only to the calling control plane,
+      // so the warning must keep the rejection observable server-side.
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
 
@@ -2419,14 +2418,15 @@ describe("Proxy Handler", () => {
           },
           agentSource: { type: "branch", branch: "main" },
         });
-        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
+        const requestPath = "/api/control-plane/runs/sensitive-run-id/stream";
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body, requestPath });
         Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
         const { logger, entries } = createRecordingLogger();
         handler = createHandler(port, "", logger);
 
         const ctx = await handler.processRequest(
           new Request(
-            "http://protected.example.com/api/control-plane/runs/run_1/stream",
+            `http://protected.example.com${requestPath}`,
             {
               method: "POST",
               headers: {
@@ -2453,7 +2453,7 @@ describe("Proxy Handler", () => {
           projectSlug: "protected-project",
           projectId: "proj-123",
           host: "protected.example.com",
-          pathname: "/api/control-plane/runs/run_1/stream",
+          pathname: "/api/control-plane/runs/<RUN_ID>/stream",
         });
 
         await handler.close();
