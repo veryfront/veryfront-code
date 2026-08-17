@@ -262,10 +262,13 @@ export async function* streamOpenAICompatibleParts(
     if (!Array.isArray(record.choices)) {
       throw invalidOpenAIStream(context, "choices was not an array");
     }
+    // An empty `choices` array carries no content. Usage-only frames use this
+    // shape, and so does Azure OpenAI's `prompt_filter_results` preamble, which
+    // arrives before the first content chunk with neither choices nor usage.
+    // Both are informational, so skip the frame instead of failing the stream.
+    // The `choices` key being absent entirely is still rejected above — that is
+    // a malformed event rather than a content-free one.
     if (record.choices.length === 0) {
-      if (!usageRecord) {
-        throw invalidOpenAIStream(context, "empty choices event had no usage");
-      }
       return;
     }
     if (sawFinishReason) {
