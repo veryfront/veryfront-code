@@ -1889,7 +1889,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
  *   the module even when it happens to call the same import as the hook, and
  *   eliding it from the roots is not on its own a licence to delete it — see
  *   `dropUnreachableModuleScopeBindings`, which still keeps the statement when
- *   everything it calls survives.
+ *   any binding it evaluates survives.
  *
  * Anything else roots what it evaluates like any other side-effectful top-level
  * statement. That is what keeps `const clientInit = bootClientAnalytics()` —
@@ -1972,9 +1972,9 @@ function serverTaintedSites(
  * `node:crypto` import in the browser artifact. Removal stays scoped to the
  * closure, so an unrelated direct `const clientInit = bootClientAnalytics()`
  * keeps its side effect even if the hook calls the same binding — and a
- * hoisted `var` elided by that second rule is only cut when something it calls
- * is going away too, because `if (dev) { var d = boot() }` is client code the
- * moment `boot` survives. Inside the closure the pass is exhaustive:
+ * hoisted `var` elided by that second rule is only cut when every binding it
+ * evaluates is going away too, because `if (dev) { var d = boot(secret()) }`
+ * is still client code when `boot` survives. Inside the closure the pass is exhaustive:
  * `const API_KEY = getEnv(...)` read only by `getServerData` goes, which is
  * what lets `dropUnusedImportBindings` drop the import next.
  *
@@ -2038,11 +2038,13 @@ function dropUnreachableModuleScopeBindings(
     if (!tainted.has(site)) return false;
     if (reasons.get(site) !== "closure-only-evaluation") return true;
     // This site's initialiser still runs — eliding it from the roots only
-    // stopped it vouching for what it calls. Cutting it out is justified when
-    // it would otherwise be left calling something this pass is taking away,
-    // and is plain over-pruning when everything it calls survives because
-    // browser code calls it too.
-    return [...site.references].some((name) => !reachable.has(name));
+    // stopped it vouching for what it calls. Cutting it out is justified only
+    // when everything it evaluates is going away. If even one called binding
+    // survives for browser code, deleting the whole initializer can delete an
+    // observable client-side call; the blocked-path check below then fails
+    // closed for any dead binding the surviving initializer still reads.
+    return site.references.size > 0 &&
+      [...site.references].every((name) => !reachable.has(name));
   });
   if (removable.length === 0) return [];
 

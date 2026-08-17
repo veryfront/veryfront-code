@@ -2511,6 +2511,24 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "./boot.ts");
       assertStringIncludes(result, `boot("client")`);
     });
+
+    it("keeps a hoisted var that mixes live and hook-only calls", async () => {
+      const code = [
+        `import { boot, loadSecret } from "./boot.ts";`,
+        `if (globalThis.debug) { var dead = boot(loadSecret("dev-only-mark")); }`,
+        `export async function getServerData() {`,
+        `  return { props: { b: boot("server"), k: loadSecret("server") } };`,
+        `}`,
+        `export default function Page() { return boot("client"); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/leak.tsx");
+
+      assertStringIncludes(result, "dev-only-mark");
+      assertStringIncludes(result, "loadSecret");
+      assertStringIncludes(result, `boot("client")`);
+      assertStringIncludes(result, "./boot.ts");
+    });
   });
 
   describe("plugin", () => {
