@@ -1,6 +1,6 @@
 import { join } from "veryfront/platform/path";
 import { getConfig } from "veryfront/config";
-import { runtime } from "veryfront/platform";
+import { getEnv, runtime } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
 import { DEFAULT_CACHE_DIR } from "veryfront/utils/constants/server";
 import { getProjectCacheDir } from "veryfront/utils/cache-dir";
@@ -86,6 +86,17 @@ async function cleanDirectory(path: string): Promise<void> {
   }
 }
 
+function getFrameworkCacheDirectories(projectDir: string): string[] {
+  const frameworkRoot = getEnv("VERYFRONT_CACHE_DIR") ?? getEnv("VF_CACHE_DIR") ??
+    getProjectCacheDir(projectDir);
+  const diskRoot = getEnv("VF_DISK_CACHE_DIR") ?? frameworkRoot;
+  return [
+    join(frameworkRoot, "veryfront-mdx-esm"),
+    join(frameworkRoot, "veryfront-http-bundle"),
+    join(diskRoot, "veryfront-files"),
+  ];
+}
+
 async function cleanCacheStore(projectDir: string): Promise<void> {
   try {
     const adapter = await runtime.get();
@@ -109,8 +120,9 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
     await cleanDirectory(join(projectDir, cacheDir));
     // The framework cache root is separate from the render cache store and
     // holds the compiled modules a dev server keeps across restarts, so a
-    // cache clean that leaves it in place is not a clean.
-    await cleanDirectory(getProjectCacheDir(projectDir));
+    // cache clean that leaves them in place is not a clean. Remove only
+    // Veryfront-owned directories because other tools can share `.cache`.
+    await Promise.all(getFrameworkCacheDirectories(projectDir).map(cleanDirectory));
   } catch (error) {
     cliLogger.error("Failed to clean cache store:", error);
     throw error;
