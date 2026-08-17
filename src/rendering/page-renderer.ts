@@ -37,6 +37,8 @@ interface PageRenderOptions {
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact package source namespace paired with the immutable snapshot. */
   dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Internal signal for the render owner's total deadline. */
+  abortSignal?: AbortSignal;
 }
 
 interface PageBundleResult {
@@ -234,6 +236,7 @@ export class PageRenderer {
                   dependencyPinningDependencies: options?.dependencyPinningDependencies,
                   dependencyPinningSource: options?.dependencyPinningSource,
                   serverExternalPackages: this.config.build?.serverExternalPackages,
+                  signal: options?.abortSignal,
                 },
               ),
             { "render.component_path": pageInfo.entity.path },

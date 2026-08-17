@@ -59,6 +59,7 @@ export async function loadModuleFromSource(
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource,
           mode: options?.mode,
+          signal: options?.signal,
         });
 
         return await loader.loadRawModule(filePath, source);

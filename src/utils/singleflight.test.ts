@@ -18,6 +18,47 @@ describe("Singleflight", () => {
     assertEquals(await follower, 42);
   });
 
+  it("cancels shared work only after its final abortable waiter detaches", async () => {
+    const sf = new Singleflight<number>();
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+    let operationSignal: AbortSignal | undefined;
+    let operationCalls = 0;
+
+    const operation = (control: { signal: AbortSignal }): Promise<number> => {
+      operationCalls++;
+      operationSignal = control.signal;
+      return new Promise((_resolve, reject) => {
+        control.signal.addEventListener(
+          "abort",
+          () => reject(control.signal.reason),
+          { once: true },
+        );
+      });
+    };
+
+    const first = sf.do("key", operation, {
+      signal: firstController.signal,
+      cancelWhenUnobserved: true,
+    });
+    const second = sf.do("key", operation, {
+      signal: secondController.signal,
+      cancelWhenUnobserved: true,
+    });
+
+    const firstReason = new DOMException("first render cancelled", "AbortError");
+    firstController.abort(firstReason);
+    await assertRejects(() => first, Error, "first render cancelled");
+    assertEquals(operationSignal?.aborted, false);
+
+    const secondReason = new DOMException("second render cancelled", "AbortError");
+    secondController.abort(secondReason);
+    await assertRejects(() => second, Error, "second render cancelled");
+    assertEquals(operationSignal?.aborted, true);
+    assertEquals(operationSignal?.reason, secondReason);
+    assertEquals(operationCalls, 1);
+  });
+
   it("should execute operation and return result", async () => {
     const sf = new Singleflight<number>();
     const result = await sf.do("key", () => Promise.resolve(42));

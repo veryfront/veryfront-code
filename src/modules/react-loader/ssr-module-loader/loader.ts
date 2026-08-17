@@ -92,6 +92,46 @@ function deleteInProgressTransformIfCurrent(
   return globalInProgress.delete(key);
 }
 
+interface InProgressTransformObserverState {
+  key: string;
+  transformPromise: Promise<ModuleCacheEntry>;
+  controller: AbortController;
+  observerCount: number;
+  settled: boolean;
+}
+
+const inProgressTransformObservers = new WeakMap<
+  Promise<ModuleCacheEntry>,
+  InProgressTransformObserverState
+>();
+
+function signalAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+}
+
+function registerInProgressTransformObservers(
+  key: string,
+  transformPromise: Promise<ModuleCacheEntry>,
+): AbortSignal {
+  const existing = inProgressTransformObservers.get(transformPromise);
+  if (existing) return existing.controller.signal;
+
+  const state: InProgressTransformObserverState = {
+    key,
+    transformPromise,
+    controller: new AbortController(),
+    observerCount: 0,
+    settled: false,
+  };
+  inProgressTransformObservers.set(transformPromise, state);
+  return state.controller.signal;
+}
+
+function markInProgressTransformSettled(transformPromise: Promise<ModuleCacheEntry>): void {
+  const state = inProgressTransformObservers.get(transformPromise);
+  if (state) state.settled = true;
+}
+
 function shouldRetryRejectedInProgressTransform(rejectedLeaderCount: number): boolean {
   return rejectedLeaderCount <= MAX_REJECTED_IN_PROGRESS_RETRIES;
 }
@@ -153,6 +193,7 @@ export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
   getMdxEsmCacheVariant,
   publishTransformCacheIfCurrent,
+  registerInProgressTransformObservers,
   scheduleStaleInProgressTransformEviction,
   shouldRetryRejectedInProgressTransform,
   waitForInProgressTransform,
@@ -161,20 +202,56 @@ export const __ssrModuleLoaderInternals = {
 async function waitForInProgressTransform(
   transformPromise: Promise<ModuleCacheEntry>,
   filePath: string,
+  signal?: AbortSignal,
 ): Promise<ModuleCacheEntry> {
+  const observerState = inProgressTransformObservers.get(transformPromise);
+  if (observerState) observerState.observerCount++;
+
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let releaseReason: unknown;
+  let removeAbortListener: (() => void) | undefined;
   try {
-    return await Promise.race([
+    const waits: Promise<ModuleCacheEntry>[] = [
       transformPromise,
       new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new InProgressTransformWaitTimeoutError(filePath)),
-          TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
-        );
+        timeoutId = setTimeout(() => {
+          releaseReason = new InProgressTransformWaitTimeoutError(filePath);
+          reject(releaseReason);
+        }, TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS);
       }),
-    ]);
+    ];
+
+    if (signal) {
+      waits.push(
+        new Promise<never>((_, reject) => {
+          const onAbort = (): void => {
+            releaseReason = signalAbortReason(signal);
+            reject(releaseReason);
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+          if (signal.aborted) onAbort();
+        }),
+      );
+    }
+
+    return await Promise.race(waits);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    removeAbortListener?.();
+    if (observerState) {
+      observerState.observerCount--;
+      if (
+        observerState.observerCount === 0 && !observerState.settled &&
+        !observerState.controller.signal.aborted
+      ) {
+        observerState.controller.abort(releaseReason);
+        deleteInProgressTransformIfCurrent(
+          observerState.key,
+          observerState.transformPromise,
+        );
+      }
+    }
   }
 }
 
@@ -209,9 +286,9 @@ export class SSRModuleLoader {
   constructor(private options: SSRModuleLoaderOptions) {
     this.cache = new SSRCacheManager(options);
     this.depValidator = new SSRDependencyValidator(
-      (filePath, source, depth, dependencyHashCache) =>
-        this.transformWithDependencies(filePath, source, depth, dependencyHashCache),
-      (crossImport) => this.transformCrossProjectImport(crossImport),
+      (filePath, source, depth, dependencyHashCache, signal) =>
+        this.transformWithDependencies(filePath, source, depth, dependencyHashCache, signal),
+      (crossImport, signal) => this.transformCrossProjectImport(crossImport, signal),
       options.adapter,
       options.projectDir,
     );
@@ -221,6 +298,7 @@ export class SSRModuleLoader {
     filePath: string,
     mode: TransformCapacityErrorMode,
     operation: () => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
     const useSemaphore = getMaxConcurrentTransforms() > 0;
     const projectId = this.options.projectId;
@@ -250,7 +328,7 @@ export class SSRModuleLoader {
 
     try {
       if (semaphore) {
-        const report = await semaphore.tryAcquireWithReport(acquireTimeoutMs);
+        const report = await semaphore.tryAcquireWithReport(acquireTimeoutMs, { signal });
         semaphoreAcquired = report.acquired;
         if (!semaphoreAcquired) {
           throw createTransformCapacityError(
@@ -261,6 +339,7 @@ export class SSRModuleLoader {
         }
       }
 
+      signal?.throwIfAborted();
       return await operation();
     } finally {
       if (semaphore && semaphoreAcquired) {
@@ -476,6 +555,7 @@ export class SSRModuleLoader {
             source,
             0,
             dependencyHashCache,
+            this.options.signal,
           );
           this.throwMissingDependencies(filePath);
 
@@ -500,6 +580,7 @@ export class SSRModuleLoader {
               source,
               0,
               retryDependencyHashCache,
+              this.options.signal,
             );
             this.throwMissingDependencies(filePath);
             const mod = await this.importModuleFromCacheEntry(filePath, fileName, retryCacheEntry);
@@ -508,7 +589,9 @@ export class SSRModuleLoader {
             return mod;
           }
         } catch (error) {
-          this.circuitBreaker.recordFailure(circuitKey);
+          const requestCancelled = this.options.signal?.aborted === true &&
+            error === this.options.signal.reason;
+          if (!requestCancelled) this.circuitBreaker.recordFailure(circuitKey);
           throw error;
         }
       },
@@ -530,13 +613,14 @@ export class SSRModuleLoader {
 
   private async transformCrossProjectImport(
     crossProjectImport: CrossProjectImport,
+    signal?: AbortSignal,
   ): Promise<string> {
     return transformCrossProjectImportFlow({
       crossProjectImport,
       options: this.options,
       cache: this.cache,
       withTransformCapacity: (syntheticFilePath, operation) =>
-        this.withTransformCapacity(syntheticFilePath, "plain", operation),
+        this.withTransformCapacity(syntheticFilePath, "plain", operation, signal),
     });
   }
 
@@ -545,12 +629,13 @@ export class SSRModuleLoader {
     source?: string,
     depth: number = 0,
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
+    signal?: AbortSignal,
   ): Promise<ModuleCacheEntry> {
     const fileName = filePath.split("/").pop() || filePath;
 
     return withSpan(
       SpanNames.SSR_TRANSFORM_DEPENDENCIES,
-      () => this.doTransformWithDependencies(filePath, source, depth, dependencyHashCache),
+      () => this.doTransformWithDependencies(filePath, source, depth, dependencyHashCache, signal),
       {
         "ssr.file": fileName,
         "ssr.depth": depth,
@@ -563,7 +648,9 @@ export class SSRModuleLoader {
     source?: string,
     depth: number = 0,
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
+    observerSignal?: AbortSignal,
   ): Promise<ModuleCacheEntry> {
+    observerSignal?.throwIfAborted();
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("Max transform depth exceeded", {
         file: logPath(filePath),
@@ -607,7 +694,7 @@ export class SSRModuleLoader {
         )
       ) {
         globalModuleCache.set(filePathCacheKey, cachedEntry);
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+        await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
         return cachedEntry;
       }
     }
@@ -642,7 +729,7 @@ export class SSRModuleLoader {
 
             logger.debug("Redis cache hit", { file: logPath(filePath) });
 
-            await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+            await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
             return entry;
           }
           // writeCacheFile returned false — fall through to fresh transform
@@ -679,7 +766,7 @@ export class SSRModuleLoader {
           cachedPath: mdxCacheResult.path.slice(-60),
         });
 
-        await this.depValidator.ensureDependenciesExist(code, filePath, depth);
+        await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
         return entry;
       }
 
@@ -699,10 +786,11 @@ export class SSRModuleLoader {
       try {
         return await withSpan(
           SpanNames.SSR_WAIT_IN_PROGRESS,
-          () => waitForInProgressTransform(existingTransform, filePath),
+          () => waitForInProgressTransform(existingTransform, filePath, observerSignal),
           { "ssr.file": filePath.split("/").pop() || filePath },
         );
       } catch (error) {
+        if (observerSignal?.aborted) throw signalAbortReason(observerSignal);
         if (error instanceof InProgressTransformWaitTimeoutError) {
           logger.warn("In-progress transform wait timed out", {
             file: logPath(filePath),
@@ -749,209 +837,225 @@ export class SSRModuleLoader {
       });
     });
     globalInProgress.set(inProgressKey, transformPromise);
+    const sharedSignal = registerInProgressTransformObservers(inProgressKey, transformPromise);
+    const leaderWait = waitForInProgressTransform(
+      transformPromise,
+      filePath,
+      observerSignal,
+    );
     const staleEvictionTimer = scheduleStaleInProgressTransformEviction(
       inProgressKey,
       transformPromise,
       filePath,
     );
 
-    try {
-      let parseResult = await parseLocalImports(
-        code,
-        filePath,
-        this.options.projectDir,
-        this.options.adapter,
-      );
-
-      // Register CSS imports for later inclusion in HTML output.
-      // CSS files are not JS modules — skip them in the dependency graph.
-      for (const cssImport of parseResult.cssImports) {
-        registerCSSImport(cssImport.absolutePath);
-      }
-
-      if (parseResult.missing.length > 0) {
-        this.depValidator.missingDependencies.push(...parseResult.missing);
-      }
-
-      if (parseResult.imports.length > 0) {
-        const { validImports, missingImports: preflightMissing } = await preflightLocalImports(
-          parseResult.imports,
-          filePath,
-          this.options.adapter.fs,
-        );
-
-        if (preflightMissing.length > 0) {
-          logger.warn("Pre-flight: some dependencies missing, skipping them", {
-            file: logPath(filePath),
-            missing: preflightMissing.map((m) => m.specifier),
-            depth,
-          });
-          this.depValidator.missingDependencies.push(...preflightMissing);
-          parseResult = { ...parseResult, imports: validImports };
-        }
-      }
-
-      // Process recursive imports FIRST, without holding a project slot.
-      // Each recursive child acquires its own slot for its own transform only.
-      // This prevents hierarchical deadlock where parent holds a slot while
-      // children also need slots (10 batch x 2 depth = 21 slots, but limit is 17).
-      const localFs = createFileSystem();
-
-      const localImportPaths = await this.depValidator.processLocalImports(
-        parseResult.imports,
-        filePath,
-        depth,
-        localFs,
-        dependencyHashCache,
-      );
-
-      const crossProjectPaths = await this.depValidator.processCrossProjectImports(
-        parseResult.crossProjectImports,
-        filePath,
-      );
-
-      // Hold project slots only around the actual transform and file write.
-      const entry = await this.withTransformCapacity(filePath, "build", async () => {
-        const projectId = this.options.projectId;
-        const transformOpts: TransformOptions = {
-          projectId,
-          dev: this.options.dev,
-          ssr: true,
-          apiBaseUrl: this.options.apiBaseUrl,
-          moduleServerOrigin: this.options.moduleServerOrigin,
-          reactVersion: this.options.reactVersion,
-          serverExternalPackages: this.options.serverExternalPackages,
-          dependencyHashCache,
-          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
-          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
-          dependencyPinningSource: this.options.dependencyPinningSource,
-        };
-
-        let transformed = await withSpan(
-          SpanNames.SSR_TRANSFORM_SINGLE,
-          () =>
-            transformToESM(
-              code,
-              filePath,
-              this.options.projectDir,
-              this.options.adapter,
-              transformOpts,
-            ),
-          { "ssr.file": filePath.split("/").pop() || filePath },
-        );
-
-        for (const [specifier, tempPath] of crossProjectPaths.entries()) {
-          transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
-        }
-
-        transformed = await rewriteLocalImports(
-          transformed,
-          localImportPaths,
+    const runTransformLeader = async (): Promise<void> => {
+      try {
+        sharedSignal.throwIfAborted();
+        let parseResult = await parseLocalImports(
+          code,
           filePath,
           this.options.projectDir,
+          this.options.adapter,
         );
 
-        transformed = await resolveVfModuleImports(transformed, {
-          filePath,
-          projectId: this.options.projectId,
-          contentSourceId: this.options.contentSourceId!,
-          adapter: this.options.adapter,
-          projectDir: this.options.projectDir,
-          reactVersion: this.options.reactVersion,
-          moduleServerOrigin: this.options.moduleServerOrigin,
-          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
-          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
-          dependencyPinningSource: this.options.dependencyPinningSource,
-        });
+        // Register CSS imports for later inclusion in HTML output.
+        // CSS files are not JS modules — skip them in the dependency graph.
+        for (const cssImport of parseResult.cssImports) {
+          registerCSSImport(cssImport.absolutePath);
+        }
 
-        // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
-        const bundlePaths = extractHttpBundlePaths(transformed);
-        if (bundlePaths.length > 0) {
-          const cacheDir = getHttpBundleCacheDir();
-          const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
-          if (failed.length > 0) {
-            logger.error("Unrecoverable HTTP bundles", {
+        if (parseResult.missing.length > 0) {
+          this.depValidator.missingDependencies.push(...parseResult.missing);
+        }
+
+        if (parseResult.imports.length > 0) {
+          const { validImports, missingImports: preflightMissing } = await preflightLocalImports(
+            parseResult.imports,
+            filePath,
+            this.options.adapter.fs,
+          );
+
+          if (preflightMissing.length > 0) {
+            logger.warn("Pre-flight: some dependencies missing, skipping them", {
               file: logPath(filePath),
-              failed,
-              totalBundles: bundlePaths.length,
-              cacheDir,
-              source: "fresh-transform",
+              missing: preflightMissing.map((m) => m.specifier),
+              depth,
             });
-            throw toError(
-              createError({
-                type: "build",
-                message: `Missing HTTP bundles after transform (${failed.length}).`,
-                context: {
-                  file: filePath,
-                  phase: "http-bundle-validation",
-                  failed,
-                  cacheDir,
-                },
-              }),
-            );
+            this.depValidator.missingDependencies.push(...preflightMissing);
+            parseResult = { ...parseResult, imports: validImports };
           }
         }
 
-        const transformedHash = await this.cache.hashContentAsync(transformed);
+        // Process recursive imports FIRST, without holding a project slot.
+        // Each recursive child acquires its own slot for its own transform only.
+        // This prevents hierarchical deadlock where parent holds a slot while
+        // children also need slots (10 batch x 2 depth = 21 slots, but limit is 17).
+        const localFs = createFileSystem();
 
-        const tempPath = await this.cache.getTempPath(filePath, transformedHash);
-        const written = await writeCacheFile(
-          this.cache.getFs(),
-          tempPath,
-          transformed,
-          "SSR-MODULE-LOADER",
+        const localImportPaths = await this.depValidator.processLocalImports(
+          parseResult.imports,
+          filePath,
+          depth,
+          localFs,
+          dependencyHashCache,
+          sharedSignal,
         );
-        if (!written) {
-          throw toError(
-            createError({
-              type: "build",
-              message: `Failed to transform module: ${filePath}`,
-              context: { file: filePath, phase: "transform" },
-            }),
+
+        const crossProjectPaths = await this.depValidator.processCrossProjectImports(
+          parseResult.crossProjectImports,
+          filePath,
+          sharedSignal,
+        );
+
+        // Hold project slots only around the actual transform and file write.
+        const entry = await this.withTransformCapacity(filePath, "build", async () => {
+          const projectId = this.options.projectId;
+          const transformOpts: TransformOptions = {
+            projectId,
+            dev: this.options.dev,
+            ssr: true,
+            apiBaseUrl: this.options.apiBaseUrl,
+            moduleServerOrigin: this.options.moduleServerOrigin,
+            reactVersion: this.options.reactVersion,
+            serverExternalPackages: this.options.serverExternalPackages,
+            dependencyHashCache,
+            dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+            dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+            dependencyPinningSource: this.options.dependencyPinningSource,
+          };
+
+          let transformed = await withSpan(
+            SpanNames.SSR_TRANSFORM_SINGLE,
+            () =>
+              transformToESM(
+                code,
+                filePath,
+                this.options.projectDir,
+                this.options.adapter,
+                transformOpts,
+              ),
+            { "ssr.file": filePath.split("/").pop() || filePath },
           );
-        }
+          sharedSignal.throwIfAborted();
 
-        const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-        const published = publishTransformCacheIfCurrent({
-          inProgressKey,
-          transformPromise,
-          staleEvictionTimer,
-          contentCacheKey,
-          filePathCacheKey,
-          entry,
-          ...(isSSRDistributedCacheEnabled()
-            ? {
-              publishDistributed: () => {
-                void setInRedis(contentCacheKey, transformed, {
-                  isProduction: this.cache.isProductionContentSource(),
-                }).catch((error) => {
-                  logger.debug("Distributed cache set failed", {
-                    key: contentCacheKey,
-                    error,
-                  });
-                });
-              },
-            }
-            : {}),
-        });
-        if (!published) {
-          logger.debug("Skipped cache publication from stale transform leader", {
-            file: logPath(filePath),
+          for (const [specifier, tempPath] of crossProjectPaths.entries()) {
+            transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
+          }
+
+          transformed = await rewriteLocalImports(
+            transformed,
+            localImportPaths,
+            filePath,
+            this.options.projectDir,
+          );
+
+          transformed = await resolveVfModuleImports(transformed, {
+            filePath,
+            projectId: this.options.projectId,
+            contentSourceId: this.options.contentSourceId!,
+            adapter: this.options.adapter,
+            projectDir: this.options.projectDir,
+            reactVersion: this.options.reactVersion,
+            moduleServerOrigin: this.options.moduleServerOrigin,
+            dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+            dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+            dependencyPinningSource: this.options.dependencyPinningSource,
           });
-        }
-        // A revoked leader must not update shared caches, but its immutable
-        // output is still valid for requests that joined this singleflight.
-        return entry;
-      });
 
-      resolveTransform(entry);
-      return entry;
-    } catch (error) {
-      rejectTransform(error instanceof Error ? error : new Error(String(error)));
-      throw error;
-    } finally {
-      clearTimeout(staleEvictionTimer);
-      deleteInProgressTransformIfCurrent(inProgressKey, transformPromise);
-    }
+          // Ensure HTTP bundles exist for this transform (handles nested bundle deps)
+          const bundlePaths = extractHttpBundlePaths(transformed);
+          if (bundlePaths.length > 0) {
+            const cacheDir = getHttpBundleCacheDir();
+            const failed = await ensureHttpBundlesExist(bundlePaths, cacheDir);
+            if (failed.length > 0) {
+              logger.error("Unrecoverable HTTP bundles", {
+                file: logPath(filePath),
+                failed,
+                totalBundles: bundlePaths.length,
+                cacheDir,
+                source: "fresh-transform",
+              });
+              throw toError(
+                createError({
+                  type: "build",
+                  message: `Missing HTTP bundles after transform (${failed.length}).`,
+                  context: {
+                    file: filePath,
+                    phase: "http-bundle-validation",
+                    failed,
+                    cacheDir,
+                  },
+                }),
+              );
+            }
+          }
+
+          const transformedHash = await this.cache.hashContentAsync(transformed);
+
+          const tempPath = await this.cache.getTempPath(filePath, transformedHash);
+          const written = await writeCacheFile(
+            this.cache.getFs(),
+            tempPath,
+            transformed,
+            "SSR-MODULE-LOADER",
+          );
+          if (!written) {
+            throw toError(
+              createError({
+                type: "build",
+                message: `Failed to transform module: ${filePath}`,
+                context: { file: filePath, phase: "transform" },
+              }),
+            );
+          }
+
+          const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+          sharedSignal.throwIfAborted();
+          const published = publishTransformCacheIfCurrent({
+            inProgressKey,
+            transformPromise,
+            staleEvictionTimer,
+            contentCacheKey,
+            filePathCacheKey,
+            entry,
+            ...(isSSRDistributedCacheEnabled()
+              ? {
+                publishDistributed: () => {
+                  void setInRedis(contentCacheKey, transformed, {
+                    isProduction: this.cache.isProductionContentSource(),
+                  }).catch((error) => {
+                    logger.debug("Distributed cache set failed", {
+                      key: contentCacheKey,
+                      error,
+                    });
+                  });
+                },
+              }
+              : {}),
+          });
+          if (!published) {
+            logger.debug("Skipped cache publication from stale transform leader", {
+              file: logPath(filePath),
+            });
+          }
+          // A revoked leader must not update shared caches, but its immutable
+          // output is still valid for requests that joined this singleflight.
+          return entry;
+        }, sharedSignal);
+
+        markInProgressTransformSettled(transformPromise);
+        resolveTransform(entry);
+      } catch (error) {
+        markInProgressTransformSettled(transformPromise);
+        rejectTransform(error instanceof Error ? error : new Error(String(error)));
+      } finally {
+        clearTimeout(staleEvictionTimer);
+        deleteInProgressTransformIfCurrent(inProgressKey, transformPromise);
+      }
+    };
+
+    void runTransformLeader();
+    return await leaderWait;
   }
 }

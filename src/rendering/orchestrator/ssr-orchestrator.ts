@@ -249,6 +249,7 @@ export class SSROrchestrator {
         renderOptions?.dependencyPinningCacheKey,
         renderOptions?.dependencyPinningDependencies,
         renderOptions?.dependencyPinningSource,
+        renderOptions?.abortSignal,
       )
       : errorInfo.element;
 

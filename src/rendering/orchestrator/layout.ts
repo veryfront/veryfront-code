@@ -134,10 +134,12 @@ export class LayoutOrchestrator {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    signal?: AbortSignal,
   ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
       async () => {
+        signal?.throwIfAborted();
         const tsxLayouts = nestedLayouts.filter(
           (layout) => layout.kind === "tsx" && layout.componentPath,
         );
@@ -189,6 +191,7 @@ export class LayoutOrchestrator {
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
               } catch (error) {
+                signal?.throwIfAborted();
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload import map", {
                   error: errorMsg,
@@ -221,9 +224,11 @@ export class LayoutOrchestrator {
                   dependencyPinningSource,
                   moduleServerOrigin,
                   this.config.config.build?.serverExternalPackages,
+                  signal,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
+                signal?.throwIfAborted();
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload TSX layout", {
                   path: componentPath,
@@ -262,6 +267,7 @@ export class LayoutOrchestrator {
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
+                signal?.throwIfAborted();
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload MDX layout", {
                   path: layout.path,
@@ -340,10 +346,12 @@ export class LayoutOrchestrator {
     dependencyPinningCacheKey?: string,
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
+    signal?: AbortSignal,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
+        signal?.throwIfAborted();
         const reactVersion = await this.getReactVersion(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -388,6 +396,7 @@ export class LayoutOrchestrator {
           dependencyPinningDependencies,
           dependencyPinningSource,
           isLocalProject: this.config.isLocalProject === true,
+          signal,
         });
 
         const pageType = pageElement.type;

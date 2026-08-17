@@ -163,6 +163,53 @@ describe("RenderPipeline behavior", () => {
     clearReleaseAssetManifestCache();
   });
 
+  it("threads render cancellation through layout preload and application", async () => {
+    const controller = new AbortController();
+    let preloadSignal: AbortSignal | undefined;
+    let applySignal: AbortSignal | undefined;
+    const pipeline = createPipeline("/project/pages/cancel-layout.tsx", {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: "/project/layout.tsx" }],
+        }),
+        preloadLayoutModules: async (
+          _layouts: unknown,
+          _pinKey: unknown,
+          _dependencies: unknown,
+          _source: unknown,
+          _origin: unknown,
+          signal: AbortSignal | undefined,
+        ) => {
+          preloadSignal = signal;
+          return {
+            tsxTotal: 1,
+            tsxSuccess: 1,
+            tsxFailures: [],
+            mdxTotal: 0,
+            mdxSuccess: 0,
+            mdxFailures: [],
+            importMapSuccess: true,
+            durationMs: 0,
+            allSuccess: true,
+          };
+        },
+        applyLayoutsAndWrappers: async (...args: unknown[]) => {
+          applySignal = args[15] as AbortSignal | undefined;
+          return args[0];
+        },
+      } as any,
+    });
+
+    await pipeline.renderPage("/cancel-layout", {
+      delivery: "string",
+      abortSignal: controller.signal,
+    });
+
+    assertEquals(preloadSignal, controller.signal);
+    assertEquals(applySignal, controller.signal);
+  });
+
   it("resolves request-scoped module loader identity and the configured React version", async () => {
     const pipeline = createPipeline("/project/pages/index.tsx", {
       projectId: "project-config-id",

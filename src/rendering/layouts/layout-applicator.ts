@@ -58,6 +58,8 @@ export interface LayoutApplicationOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Server-trusted local-project identity. */
   isLocalProject?: boolean;
+  /** Cooperative cancellation for request-scoped SSR module loads. */
+  signal?: AbortSignal;
 }
 
 export class LayoutApplicator {
@@ -81,6 +83,7 @@ export class LayoutApplicator {
   private readonly dependencyPinningDependencies?: Readonly<Record<string, string>>;
   private readonly dependencyPinningSource?: DependencyPinningSourceInput;
   private readonly isLocalProject: boolean;
+  private readonly signal?: AbortSignal;
   private reactVersionPromise: Promise<string> | null = null;
   private frameworkProviderModulesPromise?: Promise<{
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
@@ -108,6 +111,7 @@ export class LayoutApplicator {
     this.dependencyPinningDependencies = options.dependencyPinningDependencies;
     this.dependencyPinningSource = options.dependencyPinningSource;
     this.isLocalProject = options.isLocalProject === true;
+    this.signal = options.signal;
   }
 
   private getReactVersion(): Promise<string> {
@@ -294,6 +298,7 @@ export class LayoutApplicator {
             this.requestUrl?.origin,
             this.config,
             this.isLocalProject,
+            this.signal,
           );
         }
 
@@ -315,6 +320,7 @@ export class LayoutApplicator {
           this.dependencyPinningSource,
           this.requestUrl?.origin,
           this.config,
+          this.signal,
         );
       },
       {
@@ -367,6 +373,7 @@ export class LayoutApplicator {
       dependencyPinningDependencies: this.dependencyPinningDependencies,
       dependencyPinningSource: this.dependencyPinningSource,
       moduleServerOrigin: this.requestUrl?.origin,
+      signal: this.signal,
     } as const;
 
     const [contextModule, routerModule] = await Promise.all([
@@ -440,6 +447,7 @@ export class LayoutApplicator {
                 dependencyPinningDependencies: this.dependencyPinningDependencies,
                 dependencyPinningSource: this.dependencyPinningSource,
                 serverExternalPackages: this.config?.build?.serverExternalPackages,
+                signal: this.signal,
               },
             );
           }
@@ -450,6 +458,7 @@ export class LayoutApplicator {
           logger.debug("Wrapped page with App component");
           return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
         } catch (error) {
+          this.signal?.throwIfAborted();
           logger.warn("Failed to load App component:", error);
           return pageElement;
         }
@@ -497,9 +506,11 @@ export class LayoutApplicator {
           dependencyPinningDependencies: this.dependencyPinningDependencies,
           dependencyPinningSource: this.dependencyPinningSource,
           serverExternalPackages: this.config?.build?.serverExternalPackages,
+          signal: this.signal,
         },
       );
     } catch (error) {
+      this.signal?.throwIfAborted();
       logger.error("Failed to compile MDX app component:", error);
       return null;
     }
@@ -537,6 +548,8 @@ export class LayoutApplicator {
               this.dependencyPinningDependencies,
               this.dependencyPinningSource,
               this.requestUrl?.origin,
+              this.config?.build?.serverExternalPackages,
+              this.signal,
             ),
             tryLoadReservedInDirs(
               searchDirs,
@@ -551,6 +564,8 @@ export class LayoutApplicator {
               this.dependencyPinningDependencies,
               this.dependencyPinningSource,
               this.requestUrl?.origin,
+              this.config?.build?.serverExternalPackages,
+              this.signal,
             ),
           ]);
 
@@ -572,6 +587,7 @@ export class LayoutApplicator {
             ) as BundledReact.ReactElement;
           }
         } catch (error) {
+          this.signal?.throwIfAborted();
           logger.warn("Failed applying reserved loading/error components", error);
         }
 

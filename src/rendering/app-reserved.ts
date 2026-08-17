@@ -93,7 +93,9 @@ export async function loadReservedWithPath(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
+  signal?.throwIfAborted();
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
   const { loadComponentFromSource } = await import(
@@ -115,11 +117,13 @@ export async function loadReservedWithPath(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
           dependencyPinningSource,
+          signal,
         });
         if (typeof Cmp === "function") {
           return { component: Cmp as ReservedComponent, filePath: file };
         }
       } catch (_) {
+        signal?.throwIfAborted();
         /* expected: component not found in this path, continue to next */
       }
     }
@@ -142,6 +146,7 @@ export async function tryLoadReservedInDirs(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -157,6 +162,7 @@ export async function tryLoadReservedInDirs(
     dependencyPinningSource,
     moduleServerOrigin,
     serverExternalPackages,
+    signal,
   );
   return loaded?.component ?? null;
 }

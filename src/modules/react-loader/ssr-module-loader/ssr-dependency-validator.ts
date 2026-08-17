@@ -65,9 +65,11 @@ export class SSRDependencyValidator {
       source: string | undefined,
       depth: number,
       dependencyHashCache: DependencyHashCache,
+      signal?: AbortSignal,
     ) => Promise<ModuleCacheEntry>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
+      signal?: AbortSignal,
     ) => Promise<string>,
     private adapter: RuntimeAdapter,
     private projectDir: string,
@@ -113,7 +115,9 @@ export class SSRDependencyValidator {
     code: string,
     filePath: string,
     depth: number = 0,
+    signal?: AbortSignal,
   ): Promise<void> {
+    signal?.throwIfAborted();
     if (depth > MAX_TRANSFORM_DEPTH) return;
 
     const parseResult = await parseLocalImports(
@@ -139,9 +143,11 @@ export class SSRDependencyValidator {
       depth,
       localFs,
       createDependencyHashCache(),
+      signal,
     );
 
-    await this.processCrossProjectImports(parseResult.crossProjectImports, filePath);
+    await this.processCrossProjectImports(parseResult.crossProjectImports, filePath, signal);
+    signal?.throwIfAborted();
   }
 
   /**
@@ -157,7 +163,9 @@ export class SSRDependencyValidator {
   async processCrossProjectImports(
     crossProjectImports: CrossProjectImport[],
     filePath: string,
+    signal?: AbortSignal,
   ): Promise<Map<string, string>> {
+    signal?.throwIfAborted();
     const crossProjectPaths = new Map<string, string>();
 
     for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -165,9 +173,10 @@ export class SSRDependencyValidator {
       const results = await Promise.allSettled(
         batch.map(async (crossImport) => {
           try {
-            const tempPath = await this.transformCrossProjectImport(crossImport);
+            const tempPath = await this.transformCrossProjectImport(crossImport, signal);
             crossProjectPaths.set(crossImport.specifier, tempPath);
           } catch (error) {
+            signal?.throwIfAborted();
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: crossImport.specifier,
@@ -181,6 +190,7 @@ export class SSRDependencyValidator {
       );
       const failure = selectPropagatedFailure(results);
       if (failure) throw failure.reason;
+      signal?.throwIfAborted();
     }
 
     return crossProjectPaths;
@@ -196,7 +206,9 @@ export class SSRDependencyValidator {
     depth: number,
     localFs: ReturnType<typeof createFileSystem>,
     dependencyHashCache: DependencyHashCache,
+    signal?: AbortSignal,
   ): Promise<Map<string, string>> {
+    signal?.throwIfAborted();
     const importPathMap = new Map<string, string>();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -211,11 +223,13 @@ export class SSRDependencyValidator {
               depSource,
               depth + 1,
               dependencyHashCache,
+              signal,
             );
 
             importPathMap.set(imp.specifier, depEntry.tempPath);
             importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {
+            signal?.throwIfAborted();
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: imp.specifier,
@@ -229,6 +243,7 @@ export class SSRDependencyValidator {
       );
       const failure = selectPropagatedFailure(results);
       if (failure) throw failure.reason;
+      signal?.throwIfAborted();
     }
 
     return importPathMap;

@@ -294,6 +294,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       let wrappedProjectSlug: string | undefined;
       let wrappedClientPageIsland: unknown;
       let wrappedFrontmatter: Record<string, unknown> | undefined;
+      let wrappedSignal: AbortSignal | undefined;
 
       const config = createMockConfig({
         ssrRenderer: {
@@ -330,6 +331,10 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
             projectSlug: string | undefined,
             clientPageIsland: unknown,
             props: Record<string, unknown> | undefined,
+            _pinKey: unknown,
+            _dependencies: unknown,
+            _source: unknown,
+            abortSignal: AbortSignal | undefined,
           ) => {
             wrappedUrl = url;
             wrappedParams = params;
@@ -337,6 +342,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
             wrappedClientPageIsland = clientPageIsland;
             wrappedProps = props;
             wrappedFrontmatter = frontmatter;
+            wrappedSignal = abortSignal;
             return React.createElement("section", null, element as React.ReactNode);
           },
         } as unknown as SSROrchestratorConfig["layoutOrchestrator"],
@@ -345,6 +351,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       const orchestrator = new SSROrchestrator(config);
       const url = new URL("http://localhost/blog/hello?draft=1");
       const clientPageIsland = { mode: "client-page" };
+      const controller = new AbortController();
       let signal: (Error & { errorBoundaryHtml?: string }) | undefined;
 
       try {
@@ -376,6 +383,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
               props: { preview: true },
               projectSlug: "docs",
               clientPageIsland: clientPageIsland as any,
+              abortSignal: controller.signal,
             },
           } as any,
         );
@@ -393,6 +401,7 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(wrappedClientPageIsland, clientPageIsland);
       assertEquals(wrappedProps, { preview: true });
       assertEquals(wrappedFrontmatter, { section: "blog", title: "Hello" });
+      assertEquals(wrappedSignal, controller.signal);
     });
   });
 });

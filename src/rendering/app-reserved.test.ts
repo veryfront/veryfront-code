@@ -1,10 +1,53 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { collectAncestorDirs, createErrorBoundary, RESERVED_COMPONENTS } from "./app-reserved.ts";
+import {
+  collectAncestorDirs,
+  createErrorBoundary,
+  loadReservedWithPath,
+  RESERVED_COMPONENTS,
+} from "./app-reserved.ts";
 import * as React from "react";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 describe("rendering/app-reserved", () => {
+  it("does not search reserved component paths after request cancellation", async () => {
+    let reads = 0;
+    const adapter = {
+      fs: {
+        readFile: () => {
+          reads++;
+          return Promise.reject(new Error("not found"));
+        },
+      },
+    } as unknown as RuntimeAdapter;
+    const controller = new AbortController();
+    controller.abort(new DOMException("render cancelled", "AbortError"));
+
+    await assertRejects(
+      () =>
+        loadReservedWithPath(
+          ["/project/app/blog", "/project/app"],
+          "loading",
+          "/project",
+          "development",
+          adapter,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          controller.signal,
+        ),
+      Error,
+      "render cancelled",
+    );
+    assertEquals(reads, 0);
+  });
+
   describe("RESERVED_COMPONENTS", () => {
     it("should define loading, error, and notFound components", () => {
       assertEquals(RESERVED_COMPONENTS.loading, "loading.tsx");

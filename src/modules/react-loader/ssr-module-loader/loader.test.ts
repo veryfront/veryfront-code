@@ -13,7 +13,12 @@ import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { clearSSRModuleCache, clearSSRModuleCacheForProject, SSRModuleLoader } from "./index.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
-import { globalCrossProjectCache, globalInProgress, globalModuleCache } from "./cache/memory.ts";
+import {
+  failedComponents,
+  globalCrossProjectCache,
+  globalInProgress,
+  globalModuleCache,
+} from "./cache/memory.ts";
 import {
   TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
@@ -121,6 +126,28 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
 }
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("does not count request cancellation as a component failure", async () => {
+    clearSSRModuleCache();
+    const controller = new AbortController();
+    const reason = new DOMException("render cancelled", "AbortError");
+    controller.abort(reason);
+    const loader = new SSRModuleLoader({
+      projectDir: "/project",
+      projectId: "cancelled-project",
+      contentSourceId: "local-main",
+      adapter: denoAdapter,
+      dev: true,
+      signal: controller.signal,
+    });
+
+    await assertRejects(
+      () => loader.loadRawModule("/project/Page.tsx", "export default () => null"),
+      Error,
+      "render cancelled",
+    );
+    assertEquals(failedComponents.size, 0);
+  });
+
   it("isolates cache by projectId", async () => {
     clearSSRModuleCache();
 
@@ -1240,6 +1267,43 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       await time.tickAsync(TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS);
       await waitRejected;
       assertEquals(globalInProgress.get(key), pending);
+    } finally {
+      globalInProgress.delete(key);
+    }
+  });
+
+  it("cancels an in-progress transform only after its final observer detaches", async () => {
+    const key = "test:observed-shared-transform";
+    const pending = new Promise<ModuleCacheEntry>(() => {});
+    globalInProgress.set(key, pending);
+    const sharedSignal = __ssrModuleLoaderInternals.registerInProgressTransformObservers(
+      key,
+      pending,
+    );
+    const firstController = new AbortController();
+    const secondController = new AbortController();
+
+    try {
+      const first = __ssrModuleLoaderInternals.waitForInProgressTransform(
+        pending,
+        "/app/SharedLayout.tsx",
+        firstController.signal,
+      );
+      const second = __ssrModuleLoaderInternals.waitForInProgressTransform(
+        pending,
+        "/app/SharedLayout.tsx",
+        secondController.signal,
+      );
+
+      firstController.abort(new DOMException("first render cancelled", "AbortError"));
+      await assertRejects(() => first, Error, "first render cancelled");
+      assertEquals(sharedSignal.aborted, false);
+      assertEquals(globalInProgress.get(key), pending);
+
+      secondController.abort(new DOMException("second render cancelled", "AbortError"));
+      await assertRejects(() => second, Error, "second render cancelled");
+      assertEquals(sharedSignal.aborted, true);
+      assertEquals(globalInProgress.has(key), false);
     } finally {
       globalInProgress.delete(key);
     }

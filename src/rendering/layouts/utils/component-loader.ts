@@ -265,7 +265,9 @@ export async function loadTSXComponent(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<BundledReact.ComponentType> {
+  signal?.throwIfAborted();
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
     dependencyPinningSource ?? projectDir,
@@ -288,12 +290,14 @@ export async function loadTSXComponent(
     cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
   }
 
+  signal?.throwIfAborted();
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const loaded = await getTSXComponentFlights(cache).do(
     cacheKey,
     async (control) => {
+      control.signal.throwIfAborted();
       const cachedDuringFlight = cache.get(cacheKey);
       if (cachedDuringFlight) return cachedDuringFlight;
 
@@ -314,6 +318,7 @@ export async function loadTSXComponent(
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencyPinningSource ?? projectDir,
+          signal: control.signal,
         },
       );
 
@@ -338,6 +343,8 @@ export async function loadTSXComponent(
           componentPath,
         });
       },
+      signal,
+      cancelWhenUnobserved: true,
     },
   );
   return loaded;
@@ -463,6 +470,7 @@ export async function applyTSXLayout(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -492,6 +500,7 @@ export async function applyTSXLayout(
       dependencyPinningSource,
       moduleServerOrigin,
       serverExternalPackages,
+      signal,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
