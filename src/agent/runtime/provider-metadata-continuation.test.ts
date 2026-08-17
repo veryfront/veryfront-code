@@ -658,4 +658,113 @@ describe("agent provider metadata continuation", () => {
       },
     });
   });
+
+  // Wire shape modelled on a real gemini-3.1-pro-preview streamGenerateContent
+  // response: the signature rides the functionCall part in the first chunk, and
+  // a trailing empty-text part arrives in a separate chunk alongside the finish
+  // reason. Gemini 3.x rejects the tool-result leg with HTTP 400 "Function call
+  // is missing a thought_signature in functionCall parts" unless that exact
+  // model turn is replayed, while 2.5 accepts an unsigned replay. The signature
+  // itself is opaque to the replay path, so this fixture carries a fabricated
+  // placeholder rather than a captured provider value.
+  it("replays a Gemini 3.x signed tool call in the live wire shape", async () => {
+    const encoder = new TextEncoder();
+    const signedFunctionCallPart = {
+      functionCall: {
+        name: "lookup",
+        args: { query: "Veryfront" },
+        id: "call_2874307",
+      },
+      thoughtSignature: "dGVzdC1nZW1pbmktMy10aG91Z2h0LXNpZ25hdHVyZS1wbGFjZWhvbGRlcg==",
+    };
+    const requestBodies: Array<Record<string, unknown>> = [];
+    const googleRuntime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: (_input, init) => {
+        requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        const responseParts = requestBodies.length === 1
+          ? [
+            encoder.encode(
+              `data: ${
+                JSON.stringify({
+                  candidates: [{
+                    content: { parts: [signedFunctionCallPart], role: "model" },
+                    index: 0,
+                  }],
+                  usageMetadata: {
+                    promptTokenCount: 57,
+                    candidatesTokenCount: 16,
+                    totalTokenCount: 165,
+                    thoughtsTokenCount: 92,
+                  },
+                  modelVersion: "gemini-3.1-pro-preview",
+                })
+              }\n\n`,
+            ),
+            encoder.encode(
+              `data: ${
+                JSON.stringify({
+                  candidates: [{
+                    content: { parts: [{ text: "" }], role: "model" },
+                    finishReason: "STOP",
+                    index: 0,
+                  }],
+                  usageMetadata: {
+                    promptTokenCount: 57,
+                    candidatesTokenCount: 16,
+                    totalTokenCount: 165,
+                  },
+                })
+              }\n\n`,
+            ),
+          ]
+          : [
+            encoder.encode(
+              'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]}}]}\n\n',
+            ),
+            encoder.encode(
+              'data: {"candidates":[{"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}}\n\n',
+            ),
+          ];
+        return Promise.resolve(
+          new Response(
+            ReadableStream.from([...responseParts, encoder.encode("data: [DONE]\n\n")]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    }, "gemini-3.1-pro-preview");
+    const assistant = agent({
+      model: "google/gemini-3.1-pro-preview",
+      system: "Use the lookup tool.",
+      tools: { lookup: createLookupTool() },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model: googleRuntime }),
+    });
+
+    const body = await (await assistant.stream({ input: "Look up Veryfront" }))
+      .toDataStreamResponse().text();
+
+    assertStringIncludes(body, "Done");
+    assertEquals(requestBodies.length, 2);
+    // The signature must never surface in the client-facing stream.
+    assertEquals(body.includes(signedFunctionCallPart.thoughtSignature), false);
+    // The tool-result leg must carry the signed model turn verbatim, trailing
+    // empty-text part included, which is what the live API accepts.
+    const continuationContents = requestBodies[1]?.contents as unknown[] | undefined;
+    assertEquals(continuationContents?.slice(-2), [
+      { role: "model", parts: [signedFunctionCallPart, { text: "" }] },
+      {
+        role: "user",
+        parts: [{
+          functionResponse: {
+            id: "call_2874307",
+            name: "lookup",
+            response: { result: { value: "Veryfront" } },
+          },
+        }],
+      },
+    ]);
+  });
 });
