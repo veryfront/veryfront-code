@@ -523,11 +523,40 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 
+  it("encodes path-, query-, and fragment-relative redirects for SPA navigation", async () => {
+    for (const destination of ["login", "../login", "?next=1", "#details"]) {
+      setRendererInitializer(
+        createInitializer(() => Promise.reject(redirect(destination))),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://runtime.internal/_veryfront/page-data/account.json"),
+        makeCtx({
+          requestOrigin: "https://app.example.com",
+          securityConfig: { redirects: { allowedOrigins: [] } },
+        }),
+      );
+
+      assertEquals(res.status, 200);
+      assertEquals(await res.json(), {
+        redirect: { destination, permanent: false },
+      });
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
   it("does not encode a non-http(s) redirect destination for the client to follow", async () => {
     // The client follows the destination with window.location.href, which would
     // EXECUTE a javascript:/data: URL. Such destinations must NOT be emitted as a
     // 200 redirect payload — they fall through to normal error handling instead.
-    for (const destination of ["javascript:alert(1)", "data:text/html,x", "//evil.example"]) {
+    for (
+      const destination of [
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "https:evil.example",
+        "//evil.example",
+      ]
+    ) {
       setRendererInitializer(
         createInitializer(() =>
           Promise.reject(

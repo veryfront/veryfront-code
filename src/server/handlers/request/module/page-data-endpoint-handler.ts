@@ -440,23 +440,36 @@ function refreshStalePageData(
 }
 
 /**
- * Only http(s) and root-relative destinations may be encoded for the client to
- * follow. The client follows the destination with `window.location.href`, which
- * would EXECUTE a `javascript:`/`data:` URL — unlike the full-page 302 path where
- * the browser ignores such a Location. Protocol-relative `//host` is rejected too
- * (it is easy to smuggle past a naive "starts with /" check). Blocked
- * destinations fall through to normal error handling instead of being followed.
+ * Only absolute http(s) or same-origin relative destinations may be encoded for
+ * the client to follow. The client follows the destination with
+ * `window.location.href`, which would execute a `javascript:` or `data:` URL.
+ * Protocol-relative and backslash-normalized cross-origin values are rejected.
+ * Blocked destinations fall through to normal error handling.
  */
 function isFollowableRedirect(destination: string): boolean {
-  if (destination.startsWith("/")) {
-    const baseOrigin = "https://veryfront.local";
-    try {
-      return new URL(destination, baseOrigin).origin === baseOrigin;
-    } catch {
+  if (!destination || destination.trim() !== destination) return false;
+  for (let index = 0; index < destination.length; index++) {
+    const codeUnit = destination.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) return false;
+  }
+
+  const isAbsoluteHttpUrl = /^https?:\/\//i.test(destination);
+  if (/^[a-z][a-z\d+.-]*:/i.test(destination) && !isAbsoluteHttpUrl) return false;
+
+  const base = new URL("https://veryfront.local/current/page");
+  try {
+    const target = new URL(destination, base);
+    if (
+      (target.protocol !== "http:" && target.protocol !== "https:") ||
+      target.username !== "" ||
+      target.password !== ""
+    ) {
       return false;
     }
+    return isAbsoluteHttpUrl || target.origin === base.origin;
+  } catch {
+    return false;
   }
-  return /^https?:\/\//i.test(destination);
 }
 
 function buildPageDataCacheKey(

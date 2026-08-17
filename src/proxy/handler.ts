@@ -35,7 +35,7 @@ import {
   ProxyLookupAuthError,
   ProxyLookupFailure,
 } from "./project-metadata-client.ts";
-import { resolveProxyRequestHost } from "./request-host.ts";
+import { resolveProxyRequestAuthority, resolveProxyRequestHost } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 import { withProxyStreamingBodyDuplex } from "./request-init.ts";
 
@@ -123,6 +123,7 @@ export interface ProxyContext {
   contentSourceId: string;
   localPath?: string;
   host: string;
+  requestAuthority?: string;
   parsedDomain: ParsedDomain;
   isLocalProject: boolean;
   error?: {
@@ -770,9 +771,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
   ): Promise<ProxyContext> {
     const url = options.url ?? new URL(req.url);
     const host = resolveProxyRequestHost(req, url);
+    const requestAuthority = resolveProxyRequestAuthority(req, url);
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
-    const base = { scope, host, parsedDomain };
+    const base = { scope, host, requestAuthority, parsedDomain };
 
     const internalRouteKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
     if (internalRouteKind === "reserved") {
@@ -845,6 +847,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         contentSourceId: "no-project",
         localPath: undefined,
         host,
+        requestAuthority,
         parsedDomain,
         isLocalProject: false,
       };
@@ -1253,7 +1256,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         host,
         environment: scope,
       });
-      return createReleaseNotFoundProxyContext({ scope, host, parsedDomain }, token);
+      return createReleaseNotFoundProxyContext(base, token);
     }
 
     const contentSourceId = computeContentSourceId(
@@ -1277,6 +1280,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       environment: scope,
       localPath,
       host,
+      requestAuthority,
       parsedDomain,
       isLocalProject,
     };
@@ -1360,7 +1364,7 @@ export function createProxyContextHeaders(
   headers.set("x-project-slug", ctx.projectSlug ?? "");
   headers.set("x-environment", ctx.environment);
   headers.set("x-content-source-id", ctx.contentSourceId);
-  headers.set("x-forwarded-host", ctx.host);
+  headers.set("x-forwarded-host", ctx.requestAuthority ?? ctx.host);
   if (ctx.localPath) headers.set("x-project-path", ctx.localPath);
 
   if (ctx.projectId) headers.set("x-project-id", ctx.projectId);

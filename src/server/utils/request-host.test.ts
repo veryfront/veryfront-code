@@ -78,12 +78,12 @@ describe("server/utils/request-host", () => {
       const req = new Request("http://runtime.internal/test", {
         headers: {
           "host": "runtime.internal",
-          "x-forwarded-host": "app.example.com",
+          "x-forwarded-host": "app.example.com:8443",
           "x-forwarded-proto": "https",
         },
       });
 
-      assertEquals(getEffectiveRequestOrigin(req, undefined, true), "https://app.example.com");
+      assertEquals(getEffectiveRequestOrigin(req, undefined, true), "https://app.example.com:8443");
       assertEquals(getEffectiveRequestOrigin(req), "http://runtime.internal");
     });
 

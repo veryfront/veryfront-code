@@ -10,6 +10,7 @@ export type ProxyErrorSlug =
 export interface ProxyErrorContextBase {
   scope: TokenScope;
   host: string;
+  requestAuthority?: string;
   parsedDomain: ParsedDomain;
 }
 
@@ -33,6 +34,7 @@ export function createProxyErrorContext(
     contentSourceId: "error",
     localPath: undefined,
     host: base.host,
+    requestAuthority: base.requestAuthority,
     parsedDomain: base.parsedDomain,
     isLocalProject: false,
     error: {
