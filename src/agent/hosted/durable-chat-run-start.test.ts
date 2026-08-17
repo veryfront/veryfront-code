@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AGENT_NOT_FOUND,
   NETWORK_ERROR,
+  NOT_SUPPORTED,
   PERMISSION_DENIED,
   TIMEOUT_ERROR,
 } from "#veryfront/errors";
@@ -331,6 +332,21 @@ describe("agent/hosted-durable-chat-run-start", () => {
       assertEquals(response.status, status);
       assertEquals(await readJson(response), { errorCode });
     }
+  });
+
+  it("preserves not-supported status for unsupported hosted models", async () => {
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      prepareExecution: async () => {
+        throw NOT_SUPPORTED.create({ detail: "Unsupported hosted model" });
+      },
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(response.status, 501);
+    assertEquals(await readJson(response), { errorCode: "NOT_SUPPORTED" });
   });
 
   it("keeps error-level logging for setup failures that resolve to 5xx", async () => {

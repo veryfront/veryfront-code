@@ -26,6 +26,7 @@ export type HostedDurableRunSetupErrorStatusCode =
   | 413
   | 429
   | 500
+  | 501
   | 502
   | 503;
 
@@ -84,7 +85,7 @@ function isDurableRunSetupErrorStatusCode(
 ): status is HostedDurableRunSetupErrorStatusCode {
   return status === 400 || status === 402 || status === 403 || status === 404 ||
     status === 408 || status === 413 || status === 429 || status === 500 ||
-    status === 502 || status === 503;
+    status === 501 || status === 502 || status === 503;
 }
 
 /**
