@@ -804,7 +804,9 @@ export class WebSocketManager {
           previewInvalidationPrefixes,
           previewInvalidationVersion,
         );
-        this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        if (!reloadSuperseded) {
+          this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        }
       }
     }
   }
@@ -991,7 +993,9 @@ export class WebSocketManager {
           previewInvalidationPrefixes,
           previewInvalidationVersion,
         );
-        this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        if (!reloadSuperseded) {
+          this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        }
       }
     }
   }

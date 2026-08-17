@@ -1046,6 +1046,7 @@ describe("WebSocketManager", () => {
     let sourceSnapshotVersion = 1;
     let publishedStyleHash: string | undefined;
     let reloadCalls = 0;
+    let evictCalls = 0;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => Promise.resolve([makeProjectFile("app/page.tsx", "v1")]),
@@ -1066,6 +1067,10 @@ describe("WebSocketManager", () => {
         triggerReload: (_changedPaths, project) => {
           reloadCalls++;
           publishedStyleHash = project?.styleArtifactHash;
+        },
+        evictCurrentAdapter: () => {
+          evictCalls++;
+          manager.dispose();
         },
       },
     });
@@ -1096,7 +1101,16 @@ describe("WebSocketManager", () => {
 
     assertEquals(publishedStyleHash, undefined);
     assertEquals(reloadCalls, 0, "a superseded selective invalidation must not publish a reload");
-    manager.dispose();
+    assertEquals(evictCalls, 0, "a superseded invalidation must not cancel the newer poke");
+
+    assertEquals(
+      runOnlyScheduledTimer(),
+      100,
+      "the newer selective invalidation must remain queued",
+    );
+    await flushMicrotasks();
+    assertEquals(reloadCalls, 1, "the newer selective invalidation must publish its reload");
+    assertEquals(evictCalls, 1, "the adapter may be evicted after the newer invalidation succeeds");
   });
 
   it("discards full styles superseded during pregeneration", async () => {
@@ -1112,6 +1126,7 @@ describe("WebSocketManager", () => {
     let pregenerateCalls = 0;
     let publishedStyleHash: string | undefined;
     let reloadCalls = 0;
+    let evictCalls = 0;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => {
@@ -1140,6 +1155,9 @@ describe("WebSocketManager", () => {
         triggerReload: (_changedPaths, project) => {
           reloadCalls++;
           publishedStyleHash = project?.styleArtifactHash;
+        },
+        evictCurrentAdapter: () => {
+          evictCalls++;
         },
       },
     });
@@ -1184,6 +1202,7 @@ describe("WebSocketManager", () => {
     assertEquals(pregenerateCalls, 1);
     assertEquals(publishedStyleHash, undefined);
     assertEquals(reloadCalls, 0, "a superseded full invalidation must not publish a reload");
+    assertEquals(evictCalls, 0, "a superseded full invalidation must preserve the newer poke");
     manager.dispose();
   });
 
