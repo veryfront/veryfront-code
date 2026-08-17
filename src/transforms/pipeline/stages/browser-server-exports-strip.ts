@@ -2328,11 +2328,15 @@ function mergesGuardedKeyOntoIntrinsic(body: Node[], globals: ReadonlySet<Node>)
       const targetsIntrinsic = isUnshadowedGlobalIdentifier(target, "Object", globals) ||
         isGlobalObjectSlot(target, globals) || isUnshadowedGlobalObject(target, globals);
       const sources = args.slice(1);
-      const unprovenAssignSource = method === "assign" &&
+      // `assign` copies a source's own keys onto the target and
+      // `defineProperties` installs a descriptor map's keys the same way, so
+      // both land whatever the source holds. A source this stage cannot read
+      // key by key (a name, a call's result) is not a proven one.
+      const unprovenSource = (method === "assign" || method === "defineProperties") &&
         sources.some((source) => unwrapTransparent(source).type !== "ObjectExpression");
       if (
         targetsIntrinsic &&
-        (unprovenAssignSource || sources.some((source) => literalCarriesGuardedKey(source)))
+        (unprovenSource || sources.some((source) => literalCarriesGuardedKey(source)))
       ) {
         merges = true;
         return false;
@@ -2427,11 +2431,14 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  *    `Function`).
  * 3. No property write reaches `defineProperty`, `defineProperties`, or
  *    `Object` through a base this stage cannot bound to a value the module
- *    itself made.
- * 4. No `defineProperty`-shaped call and no merge of an object carrying one of
- *    those keys targets the intrinsic or a global object.
+ *    itself made. A parameter of a function the module immediately invokes,
+ *    through `.call` and `.apply` included, is not such a value.
+ * 4. No `defineProperty`-shaped call targets the intrinsic or a global object,
+ *    and no `assign` or `defineProperties` onto either takes a source whose own
+ *    keys this stage cannot read one by one.
  * 5. The intrinsic never reaches a slot the module can write back through: a
- *    property, a namespace binding, or a name it writes a member of.
+ *    property, a namespace binding, or a name it writes a member of. Names are
+ *    closed over their aliases first, so a chain of bindings counts as one.
  *
  * Everything outside that set keeps its helpers, their registrations, and
  * whatever those pin. A route nobody has thought of yet is outside it by
