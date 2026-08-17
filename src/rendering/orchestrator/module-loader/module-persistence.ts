@@ -80,12 +80,34 @@ export interface PersistTransformedModuleInput {
   serverExternalPackages?: readonly string[];
   /** Tenant-authored imports left unresolved in this module subtree. */
   unresolvedSpecifiers?: readonly string[];
-  /**
-   * True when a dynamic import elsewhere closes a cycle back onto this module.
-   * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
-   * stable, non-hashed alias next to the content-hashed artifact to resolve to.
-   */
-  isCycleTarget?: boolean;
+  /** Exact graph-content-addressed path for a cycle-dependent artifact. */
+  cycleArtifactPath?: string;
+  /** Delay cache visibility until the caller commits its full module graph. */
+  deferCachePublication?: (publication: () => Promise<void>) => void;
+}
+
+type ModuleOutputInput = Pick<
+  PersistTransformedModuleInput,
+  | "filePath"
+  | "projectDir"
+  | "tmpDir"
+  | "dependencyPinningCacheKey"
+  | "moduleServerOrigin"
+  | "serverExternalPackages"
+>;
+
+function getOutputRelativePath(input: ModuleOutputInput): string {
+  const relativePath = input.filePath.startsWith(input.projectDir)
+    ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
+    : input.filePath.replace(/^\/+/, "");
+  const cacheVariant = buildModuleTransformCacheVariant(
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
+    input.serverExternalPackages,
+  );
+  return cacheVariant
+    ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
+    : relativePath;
 }
 
 /** Read unresolved-import evidence stored beside a transformed artifact. */
@@ -114,11 +136,11 @@ export async function readPersistedUnresolvedSpecifiers(
 }
 
 /**
- * Whether transformed output exposes a default export, so a cycle alias knows
- * to re-export it. Covers esbuild's `export default …`, `… as default`, and
- * `export { default } from …` forms.
+ * Whether transformed output exposes a default export, so a cycle-manifest
+ * entry can re-export it. Covers esbuild's `export default …`, `… as default`,
+ * and `export { default } from …` forms.
  */
-function hasDefaultExport(code: string): boolean {
+export function transformedModuleHasDefaultExport(code: string): boolean {
   let previousTokenIndex = -1;
   const controlConditionCloseParens = new Set<number>();
   const statementBlockCloseBraces = new Set<number>();
@@ -483,46 +505,6 @@ function isIdentifierPart(char: string | undefined): boolean {
   return isIdentifierStart(char) || (char !== undefined && char >= "0" && char <= "9");
 }
 
-/**
- * Write a stable, non-hashed alias next to a cycle target's hashed artifact.
- *
- * A dynamic import that closes an import cycle is left as the author wrote it
- * (see the module loader), so esbuild normalises it to a relative `.js` path
- * (`../app/page.js`) that does not match the content-hashed artifact
- * (`../app/page.<hash>.js`). The alias sits at that relative path and re-exports
- * the real artifact, so the edge resolves if the branch runs. Best-effort: a
- * failed alias just leaves the pre-existing (unresolved) cycle edge in place.
- */
-async function writeCycleTargetAlias(
-  input: PersistTransformedModuleInput,
-  outputRelativePath: string,
-  hashedFileName: string,
-): Promise<void> {
-  const aliasRelativePath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-  // Same extension in and out means nothing was renamed (already `.js`): the
-  // authored edge already points at the real artifact, so no alias is needed.
-  if (aliasRelativePath === outputRelativePath) return;
-
-  const aliasPath = join(input.tmpDir, aliasRelativePath);
-  const lines = [`export * from "./${hashedFileName}";`];
-  if (hasDefaultExport(input.transformedCode)) {
-    lines.push(`export { default } from "./${hashedFileName}";`);
-  }
-
-  try {
-    await input.localAdapter.fs.writeFile(aliasPath, lines.join("\n"));
-    logger.debug("Wrote cycle-target alias", {
-      alias: aliasRelativePath,
-      target: hashedFileName,
-    });
-  } catch (error) {
-    logger.warn("Failed to write cycle-target alias", {
-      filePath: input.filePath.slice(-40),
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
 /** Write a transformed module artifact and register cache pointers. */
 export async function persistTransformedModule(
   input: PersistTransformedModuleInput,
@@ -540,17 +522,11 @@ export async function persistTransformedModule(
   const relativePath = input.filePath.startsWith(input.projectDir)
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
     : input.filePath.replace(/^\/+/, "");
-
-  const cacheVariant = buildModuleTransformCacheVariant(
-    input.dependencyPinningCacheKey,
-    input.moduleServerOrigin,
-    input.serverExternalPackages,
-  );
-  const outputRelativePath = cacheVariant
-    ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
-    : relativePath;
+  const outputRelativePath = getOutputRelativePath(input);
   const jsPath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
-  const tempFilePath = join(input.tmpDir, jsPath);
+  const tempFilePath = input.cycleArtifactPath
+    ? input.cycleArtifactPath
+    : join(input.tmpDir, jsPath);
 
   const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
   await ensureDir(input.localAdapter, tempDir).catch(() => {
@@ -605,38 +581,38 @@ export async function persistTransformedModule(
     }
   }
 
-  if (shouldPublishReusableCache && input.contentSourceId) {
-    const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
-    const mdxCacheKey = buildMdxEsmPathCacheKey(
-      normalizedPath,
-      input.reactVersion,
-      buildModuleTransformCacheVariant(
-        input.dependencyPinningCacheKey,
-        input.moduleServerOrigin,
-        input.serverExternalPackages,
-      ),
-    );
-    const cache = await getModulePathCache(input.tmpDir);
-    cache.set(mdxCacheKey, tempFilePath);
-
-    saveModulePathCache(input.tmpDir).catch((err) => {
-      logger.debug("Failed to save module cache", { error: String(err) });
-    });
-
-    logger.debug("Registered module in MDX-ESM cache", {
-      file: input.filePath.slice(-40),
-      mdxCacheKey,
-      tempFilePath: tempFilePath.slice(-60),
-    });
-  }
-
   if (shouldPublishReusableCache) {
-    input.moduleCache.set(input.cacheKey, tempFilePath);
-  }
+    const publish = async () => {
+      if (input.contentSourceId) {
+        const normalizedPath = `_vf_modules/${relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js")}`;
+        const mdxCacheKey = buildMdxEsmPathCacheKey(
+          normalizedPath,
+          input.reactVersion,
+          buildModuleTransformCacheVariant(
+            input.dependencyPinningCacheKey,
+            input.moduleServerOrigin,
+            input.serverExternalPackages,
+          ),
+        );
+        const cache = await getModulePathCache(input.tmpDir);
+        cache.set(mdxCacheKey, tempFilePath);
 
-  if (input.isCycleTarget) {
-    const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
-    await writeCycleTargetAlias(input, outputRelativePath, hashedFileName);
+        saveModulePathCache(input.tmpDir).catch((err) => {
+          logger.debug("Failed to save module cache", { error: String(err) });
+        });
+
+        logger.debug("Registered module in MDX-ESM cache", {
+          file: input.filePath.slice(-40),
+          mdxCacheKey,
+          tempFilePath: tempFilePath.slice(-60),
+        });
+      }
+
+      input.moduleCache.set(input.cacheKey, tempFilePath);
+    };
+
+    if (input.deferCachePublication) input.deferCachePublication(publish);
+    else await publish();
   }
 
   return tempFilePath;

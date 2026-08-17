@@ -9,9 +9,20 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
-import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
+import { dirname, fromFileUrl, join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  getCycleManifestCacheDir,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import {
+  clearModulePathCache,
+  getLocalFs,
+  getModulePathCache,
+  invalidateModulePaths,
+  saveModulePathCache,
+  waitForDiskCleanup,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   isMissingModuleError,
   isUnresolvedTenantImport,
@@ -20,6 +31,7 @@ import {
   transformModuleWithDeps,
 } from "./index.ts";
 import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
+import { CYCLE_MANIFEST_SIDECAR_SUFFIX, inspectCycleManifestCache } from "./cycle-manifest.ts";
 import {
   isBuildFailure,
   isTenantBuildFailure,
@@ -56,6 +68,7 @@ async function withModuleLoaderFixture<T>(
   } finally {
     await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
     await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    await Deno.remove(getCycleManifestCacheDir(tmpDir), { recursive: true }).catch(() => undefined);
   }
 }
 
@@ -204,26 +217,23 @@ describe("module-loader/transformModuleWithDeps", () => {
     );
   });
 
-  // The `.ts` counterpart of the cycle case, which the `.json` shape above does
-  // not exercise: a `.ts` module is persisted as a *content-hashed* `.js`
-  // artifact (`app/page.<hash>.js`), and the cycle edge — left un-transformed to
-  // break the recursion — is normalised by esbuild to a relative `../app/page.js`
-  // that does not match the hashed name. To make that edge resolvable, the cycle
-  // target persists a stable non-hashed alias (`app/page.js`) that re-exports
-  // its hashed artifact. This test pins both halves: the edge shape and the
-  // alias that backs it. (The alias is not yet runtime-verified end to end; if
-  // it does not resolve in a real runtime the branch stays broken, no worse than
-  // before.)
-  it("writes a resolvable alias when a dynamic import closes a .ts cycle", async () => {
+  it("resolves a lazy .ts cycle to its hashed artifact without a mutable alias", async () => {
     await withModuleLoaderFixture(
       {
         "app/page.ts": [
-          `import { a } from "../lib/a.ts";`,
+          `import { a, later } from "../lib/a.ts";`,
           `export const pageValue = a;`,
+          `export const moduleUrl = import.meta.url;`,
+          `export let count = 0;`,
+          `export function increment() { count += 1; }`,
+          `export { later };`,
+          `export default "default-cycle";`,
         ].join("\n"),
         "lib/a.ts": [
           `export const a = "cycle";`,
-          `export async function later() { return await import("../app/page.ts"); }`,
+          "export async function later() {",
+          "  return await import(/* cycle */ `../app/page.ts` /* deferred */);",
+          "}",
         ].join("\n"),
       },
       async ({ projectDir, tmpDir, config }) => {
@@ -243,22 +253,1202 @@ describe("module-loader/transformModuleWithDeps", () => {
         // The static import to lib/a resolves to its content-hashed artifact.
         const depArtifactPath = assertTransformedImportPath(
           await Deno.readTextFile(transformed),
-          "/lib/a.",
+          "/veryfront-cycle-manifests/",
         );
-        assert(/\/lib\/a\.[0-9a-f]{1,8}\.js$/.test(depArtifactPath), depArtifactPath);
+        assert(
+          /\/veryfront-cycle-manifests\/[^/]+\/[^/]+\/artifacts\/[0-9a-z]+\.[0-9a-f]{1,8}\.js$/
+            .test(
+              depArtifactPath,
+            ),
+          depArtifactPath,
+        );
+        assert(
+          /\/veryfront-cycle-manifests\/[^/]+\/[^/]+\/artifacts\/[0-9a-z]+\.[0-9a-f]{1,8}\.js$/
+            .test(
+              transformed,
+            ),
+          transformed,
+        );
 
-        // The cycle edge survives as the relative `.js` specifier esbuild leaves.
+        // The deferred edge resolves at runtime to the same content-hashed root
+        // artifact, without publishing the old logical `app/page.js` alias.
         const depCode = await Deno.readTextFile(depArtifactPath);
-        assertStringIncludes(depCode, `import("../app/page.js")`);
-
-        // The alias the edge points at exists next to the hashed artifact and
-        // re-exports it, so `../app/page.js` resolves to the real module.
-        const aliasPath = join(tmpDir, "app/page.js");
-        const aliasCode = await Deno.readTextFile(aliasPath);
-        assertStringIncludes(
-          aliasCode,
-          `export * from "./${basename(transformed)}";`,
+        const rootNamespace = await import(toFileUrl(transformed).href);
+        const cycleNamespace = await rootNamespace.later();
+        const cachedTransform = await transformModuleWithDeps(
+          join(projectDir, "app/page.ts"),
+          tmpDir,
+          config.adapter,
+          config,
         );
+        assertStrictEquals(cachedTransform, transformed);
+        assertStrictEquals(cycleNamespace, rootNamespace);
+        assertEquals(cycleNamespace.pageValue, "cycle");
+        assertEquals(cycleNamespace.default, "default-cycle");
+        assertEquals(cycleNamespace.moduleUrl, toFileUrl(transformed).href);
+        rootNamespace.increment();
+        assertEquals(cycleNamespace.count, 1);
+        assertEquals(await config.adapter.fs.exists(join(tmpDir, "app/page.js")), false);
+        assert(!depCode.includes(`import("../app/page.js")`), depCode);
+      },
+    );
+  });
+
+  it("preserves the root module namespace across a static cycle edge", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import * as branch from "../lib/b.ts";`,
+          `export { branch };`,
+          `export default "root-default";`,
+          `export let count = 0;`,
+          `export function increment() { count += 1; }`,
+        ].join("\n"),
+        "lib/b.ts": [
+          `import * as root from "../app/page.ts";`,
+          `export { root };`,
+          `export function read() { return [root.default, root.count]; }`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const transformed = await transformModuleWithDeps(
+          join(projectDir, "app/page.ts"),
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const root = await import(toFileUrl(transformed).href);
+        assertEquals(
+          await inspectCycleManifestCache(transformed, tmpDir, config.adapter),
+          "valid-root",
+        );
+        const cached = await transformModuleWithDeps(
+          join(projectDir, "app/page.ts"),
+          tmpDir,
+          config.adapter,
+          config,
+        );
+
+        assertStrictEquals(cached, transformed);
+        assertStrictEquals(root.branch.root, root);
+        assertEquals(root.branch.read(), ["root-default", 0]);
+        root.increment();
+        assertEquals(root.branch.read(), ["root-default", 1]);
+      },
+    );
+  });
+
+  it("does not reuse a cached cycle member across root generations", async () => {
+    const pageSource = (version: string) =>
+      [
+        `import { later } from "../lib/a.ts";`,
+        `export const version = ${JSON.stringify(version)};`,
+        `export { later };`,
+      ].join("\n");
+
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": pageSource("first"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const firstPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+
+        config.moduleCache.delete(
+          getModuleCacheKey(
+            pagePath,
+            config.projectId,
+            config.projectDir,
+            config.contentSourceId,
+            config.reactVersion,
+            config.mode,
+          ),
+        );
+        await Deno.writeTextFile(pagePath, pageSource("second"));
+
+        const secondPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const secondNamespace = await import(toFileUrl(secondPath).href);
+        const cycleNamespace = await secondNamespace.later();
+
+        assertNotStrictEquals(secondPath, firstPath);
+        assertEquals(secondNamespace.version, "second");
+        assertEquals(cycleNamespace.version, "second");
+      },
+    );
+  });
+
+  it("rebuilds a cached cycle root when only a member source changes", async () => {
+    const memberSource = (version: string) =>
+      [
+        `export const version = ${JSON.stringify(version)};`,
+        `export async function later() { return await import("../app/page.ts"); }`,
+      ].join("\n");
+
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later, version as memberVersion } from "../lib/a.ts";`,
+          `export { later, memberVersion };`,
+        ].join("\n"),
+        "lib/a.ts": memberSource("old"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.ts");
+          const memberPath = join(projectDir, "lib/a.ts");
+          const diskConfig = {
+            ...config,
+            projectId: "cycle-member-edit",
+            contentSourceId: "main",
+          };
+          const cacheDir = join(
+            getMdxEsmCacheDir(),
+            encodeURIComponent(diskConfig.projectId),
+            encodeURIComponent(diskConfig.contentSourceId),
+          );
+          await Deno.mkdir(cacheDir, { recursive: true });
+          const firstPath = await transformModuleWithDeps(
+            pagePath,
+            cacheDir,
+            diskConfig.adapter,
+            diskConfig,
+          );
+          await saveModulePathCache(cacheDir);
+          clearModulePathCache();
+          await getModulePathCache(cacheDir);
+
+          await Deno.writeTextFile(memberPath, memberSource("new"));
+          invalidateModulePaths(["lib/a.ts"]);
+          await waitForDiskCleanup();
+
+          const secondPath = await transformModuleWithDeps(
+            pagePath,
+            cacheDir,
+            diskConfig.adapter,
+            { ...diskConfig, moduleCache: new Map() },
+          );
+          const second = await import(toFileUrl(secondPath).href);
+
+          assertNotStrictEquals(secondPath, firstPath);
+          assertEquals(second.memberVersion, "new");
+          assertStrictEquals(await second.later(), second);
+
+          await waitForDiskCleanup();
+          const graphDirectories: string[] = [];
+          for await (const entry of Deno.readDir(getCycleManifestCacheDir(cacheDir))) {
+            if (entry.isDirectory) graphDirectories.push(entry.name);
+          }
+          assertEquals(
+            graphDirectories.length,
+            1,
+            `expected one current cycle graph, found ${graphDirectories.join(", ")}`,
+          );
+        });
+      },
+    );
+  });
+
+  it("does not return a cycle artifact queued for invalidation cleanup", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later } from "../lib/a.ts";`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.ts");
+          const diskConfig = {
+            ...config,
+            projectId: "cycle-invalidation-race",
+            contentSourceId: "main",
+          };
+          const cacheDir = join(
+            getMdxEsmCacheDir(),
+            encodeURIComponent(diskConfig.projectId),
+            encodeURIComponent(diskConfig.contentSourceId),
+          );
+          await Deno.mkdir(cacheDir, { recursive: true });
+          const firstPath = await transformModuleWithDeps(
+            pagePath,
+            cacheDir,
+            diskConfig.adapter,
+            diskConfig,
+          );
+          const localFs = getLocalFs();
+          const originalRemove = localFs.remove.bind(localFs);
+          let releaseRemoval!: () => void;
+          const removalReleased = new Promise<void>((resolve) => {
+            releaseRemoval = resolve;
+          });
+          let reportRemovalStarted!: () => void;
+          const removalStarted = new Promise<void>((resolve) => {
+            reportRemovalStarted = resolve;
+          });
+
+          try {
+            localFs.remove = async (path, options) => {
+              if (path === firstPath) {
+                reportRemovalStarted();
+                await removalReleased;
+              }
+              await originalRemove(path, options);
+            };
+
+            invalidateModulePaths(["app/page.ts"]);
+            await removalStarted;
+            const secondPath = await transformModuleWithDeps(
+              pagePath,
+              cacheDir,
+              diskConfig.adapter,
+              diskConfig,
+            );
+            releaseRemoval();
+            await waitForDiskCleanup();
+
+            assertNotStrictEquals(secondPath, firstPath);
+            assertEquals(await diskConfig.adapter.fs.exists(secondPath), true);
+          } finally {
+            releaseRemoval();
+            localFs.remove = originalRemove;
+          }
+        });
+      },
+    );
+  });
+
+  it("re-resolves an ordinary cached dependency that becomes a cycle member", async () => {
+    const pageSource = (version: string, importsCycle: boolean) =>
+      importsCycle
+        ? [
+          `import { later } from "../lib/a.ts";`,
+          `export const version = ${JSON.stringify(version)};`,
+          `export { later };`,
+        ].join("\n")
+        : `export const version = ${JSON.stringify(version)};`;
+
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": pageSource("old", false),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const memberPath = join(projectDir, "lib/a.ts");
+        await transformModuleWithDeps(memberPath, tmpDir, config.adapter, config);
+
+        config.moduleCache.delete(
+          getModuleCacheKey(
+            pagePath,
+            config.projectId,
+            config.projectDir,
+            config.contentSourceId,
+            config.reactVersion,
+            config.mode,
+          ),
+        );
+        await Deno.writeTextFile(pagePath, pageSource("new", true));
+
+        const currentPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const currentNamespace = await import(toFileUrl(currentPath).href);
+        const cycleNamespace = await currentNamespace.later();
+
+        assertStrictEquals(cycleNamespace, currentNamespace);
+        assertEquals(cycleNamespace.version, "new");
+      },
+    );
+  });
+
+  it("isolates concurrent cycle closures with immutable JavaScript identity", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import {`,
+          `  aliasUrl, assetUrl, bracketUrl, filename, later,`,
+          `  readSelf, resolvedAssetUrl, wrapperUrl,`,
+          `} from "../lib/wrapper.js";`,
+          `export {`,
+          `  aliasUrl, assetUrl, bracketUrl, filename, later,`,
+          `  readSelf, resolvedAssetUrl, wrapperUrl,`,
+          `};`,
+          `export const version = "current";`,
+        ].join("\n"),
+        "lib/wrapper.js": [
+          `import { later } from "./a.ts";`,
+          `export { later };`,
+          `const meta = import.meta;`,
+          `export const wrapperUrl = import.meta.url;`,
+          `export const bracketUrl = import.meta["url"];`,
+          `export const aliasUrl = meta.url;`,
+          `export const filename = import.meta.filename;`,
+          `export const assetUrl = new URL("./asset.txt", meta.url).href;`,
+          `export const resolvedAssetUrl = import.meta.resolve("./asset.txt");`,
+          `export function readSelf() { return Deno.readTextFile(new URL(import.meta.url)); }`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const [firstPath, secondPath] = await Promise.all([
+          transformModuleWithDeps(
+            pagePath,
+            tmpDir,
+            config.adapter,
+            { ...config, moduleCache: new Map() },
+          ),
+          transformModuleWithDeps(
+            pagePath,
+            tmpDir,
+            config.adapter,
+            { ...config, moduleCache: new Map() },
+          ),
+        ]);
+        assertStrictEquals(firstPath, secondPath);
+
+        const [firstNamespace, secondNamespace] = await Promise.all([
+          import(toFileUrl(firstPath).href),
+          import(toFileUrl(secondPath).href),
+        ]);
+        const [firstCycleNamespace, secondCycleNamespace] = await Promise.all([
+          firstNamespace.later(),
+          secondNamespace.later(),
+        ]);
+
+        assertStrictEquals(firstNamespace, secondNamespace);
+        assertStrictEquals(firstCycleNamespace, firstNamespace);
+        assertStrictEquals(secondCycleNamespace, secondNamespace);
+        for (const namespace of [firstNamespace, secondNamespace]) {
+          const wrapperUrl = namespace.wrapperUrl as string;
+          const wrapperPath = fromFileUrl(wrapperUrl);
+          assertStringIncludes(wrapperUrl, "/veryfront-cycle-manifests/");
+          assertEquals(namespace.wrapperUrl, wrapperUrl);
+          assertEquals(namespace.bracketUrl, wrapperUrl);
+          assertEquals(namespace.aliasUrl, wrapperUrl);
+          assertEquals(namespace.filename, wrapperPath);
+          assertEquals(
+            namespace.assetUrl,
+            toFileUrl(join(dirname(wrapperPath), "asset.txt")).href,
+          );
+          assertEquals(
+            namespace.resolvedAssetUrl,
+            toFileUrl(join(dirname(wrapperPath), "asset.txt")).href,
+          );
+          assertStringIncludes(await namespace.readSelf(), `veryfront-cycle-member`);
+        }
+      },
+    );
+  });
+
+  it("isolates concurrent source generations across a JavaScript cycle ancestor", async () => {
+    const pageSource = (version: string) =>
+      [
+        `import { later, readSelf, wrapperVersion } from "../lib/wrapper.js";`,
+        `export { later, readSelf, wrapperVersion };`,
+        `export const version = ${JSON.stringify(version)};`,
+      ].join("\n");
+    const wrapperSource = (version: string) =>
+      [
+        `export { later } from "./a.ts";`,
+        `export const wrapperVersion = ${JSON.stringify(version)};`,
+        `export function readSelf() { return Deno.readTextFile(new URL(import.meta.url)); }`,
+      ].join("\n");
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": pageSource("disk"),
+        "lib/wrapper.js": wrapperSource("disk"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const wrapperPath = join(projectDir, "lib/wrapper.js");
+        const adapterFor = (version: string) => {
+          const fs = Object.assign(Object.create(config.adapter.fs), {
+            readFile(path: string): Promise<string | Uint8Array> {
+              if (path === pagePath) return Promise.resolve(pageSource(version));
+              if (path === wrapperPath) return Promise.resolve(wrapperSource(version));
+              return config.adapter.fs.readFile(path);
+            },
+          });
+          return { ...config.adapter, fs };
+        };
+        const firstAdapter = adapterFor("one");
+        const secondAdapter = adapterFor("two");
+        const [firstPath, secondPath] = await Promise.all([
+          transformModuleWithDeps(pagePath, tmpDir, firstAdapter, {
+            ...config,
+            adapter: firstAdapter,
+            moduleCache: new Map(),
+          }),
+          transformModuleWithDeps(pagePath, tmpDir, secondAdapter, {
+            ...config,
+            adapter: secondAdapter,
+            moduleCache: new Map(),
+          }),
+        ]);
+        const [first, second] = await Promise.all([
+          import(toFileUrl(firstPath).href),
+          import(toFileUrl(secondPath).href),
+        ]);
+        const [firstCycle, secondCycle] = await Promise.all([
+          first.later(),
+          second.later(),
+        ]);
+
+        assertNotStrictEquals(firstPath, secondPath);
+        assertStrictEquals(firstCycle, first);
+        assertStrictEquals(secondCycle, second);
+        assertEquals(firstCycle.version, "one");
+        assertEquals(secondCycle.version, "two");
+        assertEquals(first.wrapperVersion, "one");
+        assertEquals(second.wrapperVersion, "two");
+        assertStringIncludes(await first.readSelf(), `wrapperVersion = "one"`);
+        assertStringIncludes(await second.readSelf(), `wrapperVersion = "two"`);
+      },
+    );
+  });
+
+  it("reuses the matching source generation from a shared disk path cache", async () => {
+    const pageSource = (version: string) =>
+      [
+        `import { later } from "../lib/a.ts";`,
+        `export { later };`,
+        `export const version = ${JSON.stringify(version)};`,
+      ].join("\n");
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": pageSource("disk"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.ts");
+          const adapterFor = (version: string) => {
+            const fs = Object.assign(Object.create(config.adapter.fs), {
+              readFile(path: string): Promise<string | Uint8Array> {
+                if (path === pagePath) return Promise.resolve(pageSource(version));
+                return config.adapter.fs.readFile(path);
+              },
+            });
+            return { ...config.adapter, fs };
+          };
+          const firstAdapter = adapterFor("one");
+          const secondAdapter = adapterFor("two");
+          const sharedConfig = {
+            ...config,
+            projectId: "cycle-snapshots",
+            contentSourceId: "main",
+          };
+          const cacheDir = join(
+            getMdxEsmCacheDir(),
+            encodeURIComponent(sharedConfig.projectId),
+            encodeURIComponent(sharedConfig.contentSourceId),
+          );
+          await Deno.mkdir(cacheDir, { recursive: true });
+          const [firstPath, secondPath] = await Promise.all([
+            transformModuleWithDeps(pagePath, cacheDir, firstAdapter, {
+              ...sharedConfig,
+              adapter: firstAdapter,
+              moduleCache: new Map(),
+            }),
+            transformModuleWithDeps(pagePath, cacheDir, secondAdapter, {
+              ...sharedConfig,
+              adapter: secondAdapter,
+              moduleCache: new Map(),
+            }),
+          ]);
+
+          const againFirstPath = await transformModuleWithDeps(
+            pagePath,
+            cacheDir,
+            firstAdapter,
+            {
+              ...sharedConfig,
+              adapter: firstAdapter,
+              moduleCache: new Map(),
+            },
+          );
+          const againSecondPath = await transformModuleWithDeps(
+            pagePath,
+            cacheDir,
+            secondAdapter,
+            {
+              ...sharedConfig,
+              adapter: secondAdapter,
+              moduleCache: new Map(),
+            },
+          );
+
+          assertStrictEquals(againFirstPath, firstPath);
+          assertStrictEquals(againSecondPath, secondPath);
+          assertEquals((await import(toFileUrl(againFirstPath).href)).version, "one");
+          assertEquals((await import(toFileUrl(againSecondPath).href)).version, "two");
+        });
+      },
+    );
+  });
+
+  it("bounds source reads linearly when cached siblings share a dependency closure", async () => {
+    const width = 12;
+    const files: Record<string, string> = {};
+    for (let index = 0; index < width; index++) {
+      files[`lib/chain-${index}.ts`] = index + 1 < width
+        ? `import "./chain-${index + 1}.ts"; export const value${index} = ${index};`
+        : `export const value${index} = ${index};`;
+      files[`lib/sibling-${index}.ts`] =
+        `import "./chain-0.ts"; export const sibling${index} = ${index};`;
+    }
+    files["app/page.ts"] = Array.from(
+      { length: width },
+      (_, index) => `import "../lib/sibling-${index}.ts";`,
+    ).join("\n") + `\nexport const ready = true;`;
+
+    await withModuleLoaderFixture(
+      files,
+      async ({ projectDir, tmpDir, config }) => {
+        for (let index = 0; index < width; index++) {
+          await transformModuleWithDeps(
+            join(projectDir, `lib/sibling-${index}.ts`),
+            tmpDir,
+            config.adapter,
+            config,
+          );
+        }
+
+        let projectSourceReads = 0;
+        const readsByPath = new Map<string, number>();
+        const countingFs = Object.assign(Object.create(config.adapter.fs), {
+          async readFile(path: string): Promise<string | Uint8Array> {
+            if (path.startsWith(projectDir) && path.endsWith(".ts")) {
+              projectSourceReads++;
+              readsByPath.set(path, (readsByPath.get(path) ?? 0) + 1);
+            }
+            return await config.adapter.fs.readFile(path);
+          },
+        });
+        const countingAdapter = { ...config.adapter, fs: countingFs };
+        await transformModuleWithDeps(
+          join(projectDir, "app/page.ts"),
+          tmpDir,
+          countingAdapter,
+          { ...config, adapter: countingAdapter },
+        );
+
+        assert(
+          projectSourceReads <= width * 2 + 2,
+          `expected linear reads for ${width * 2 + 1} sources, got ${projectSourceReads}: ${
+            JSON.stringify([...readsByPath])
+          }`,
+        );
+      },
+    );
+  });
+
+  it("transforms a cold converging cycle graph once per source", async () => {
+    const layerCount = 10;
+    const files: Record<string, string> = {};
+    for (let layer = 0; layer < layerCount; layer++) {
+      for (const branch of ["a", "b"]) {
+        files[`lib/${branch}-${layer}.ts`] = layer + 1 < layerCount
+          ? [
+            `import "./a-${layer + 1}.ts";`,
+            `import "./b-${layer + 1}.ts";`,
+            `export const value = "${branch}-${layer}";`,
+          ].join("\n")
+          : [
+            `export async function later() { return await import("../app/page.ts"); }`,
+            `export const value = "${branch}-${layer}";`,
+          ].join("\n");
+      }
+    }
+    files["app/page.ts"] = [
+      `import "../lib/a-0.ts";`,
+      `import "../lib/b-0.ts";`,
+      `export const ready = true;`,
+    ].join("\n");
+
+    await withModuleLoaderFixture(
+      files,
+      async ({ projectDir, tmpDir, config }) => {
+        const phaseCounts = new Map<string, number>();
+        await transformModuleWithDeps(
+          join(projectDir, "app/page.ts"),
+          tmpDir,
+          config.adapter,
+          {
+            ...config,
+            onProgress: (progress) => {
+              phaseCounts.set(progress.phase, (phaseCounts.get(progress.phase) ?? 0) + 1);
+            },
+          },
+        );
+
+        const sourceCount = layerCount * 2 + 1;
+        assertEquals(phaseCounts.get("module:source-read"), sourceCount);
+        assertEquals(phaseCounts.get("module:dependencies-transformed"), sourceCount);
+        assertEquals(phaseCounts.get("module:persisted"), sourceCount);
+      },
+    );
+  });
+
+  it("shares one live namespace across converging cycle branches", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import * as a from "../lib/a.ts";`,
+          `import * as b from "../lib/b.ts";`,
+          `export { a, b };`,
+        ].join("\n"),
+        "lib/a.ts": [
+          `import { later } from "./c.ts";`,
+          `export let count = 0;`,
+          `export function increment() { count += 1; }`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/b.ts": [
+          `import { later } from "./c.ts";`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/c.ts": `export async function later() { return await import("./a.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const rootPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.ts"),
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const root = await import(toFileUrl(rootPath).href);
+        const [fromA, fromB] = await Promise.all([root.a.later(), root.b.later()]);
+
+        assertStrictEquals(fromA, root.a);
+        assertStrictEquals(fromB, root.a);
+        root.a.increment();
+        assertEquals(fromB.count, 1);
+      },
+    );
+  });
+
+  it("breaks a cycle formed through a converging in-flight dependency", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import * as a from "../lib/a.ts";`,
+          `import * as b from "../lib/b.ts";`,
+          `export { a, b };`,
+        ].join("\n"),
+        "lib/a.ts": `export { later } from "./c.ts";`,
+        "lib/b.ts": `export { later } from "./c.ts"; export const branch = "b";`,
+        "lib/c.ts": `export async function later() { return await import("./b.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        let timer = 0;
+        const rootPath = await Promise.race([
+          transformModuleWithDeps(
+            join(projectDir, "app/page.ts"),
+            tmpDir,
+            config.adapter,
+            config,
+          ),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("converging cycle deadlocked")), 2_000);
+          }),
+        ]).finally(() => clearTimeout(timer));
+        const root = await import(toFileUrl(rootPath).href);
+        const [fromA, fromB] = await Promise.all([root.a.later(), root.b.later()]);
+
+        assertStrictEquals(fromA, root.b);
+        assertStrictEquals(fromB, root.b);
+      },
+    );
+  });
+
+  it("loads a TypeScript cycle below an authored JavaScript root", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.js": [
+          `import { later } from "../lib/b.ts";`,
+          `export { later };`,
+          `export const rootUrl = import.meta.url;`,
+        ].join("\n"),
+        "lib/b.ts": [
+          `import { later } from "./c.ts";`,
+          `export { later };`,
+          `export const member = "b";`,
+        ].join("\n"),
+        "lib/c.ts": `export async function later() { return await import("./b.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const rootPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.js"),
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const rootNamespace = await import(toFileUrl(rootPath).href);
+        const cycleNamespace = await rootNamespace.later();
+
+        assertStringIncludes(rootPath, "/veryfront-cycle-manifests/");
+        assertEquals(rootNamespace.rootUrl, toFileUrl(rootPath).href);
+        assertEquals(cycleNamespace.member, "b");
+      },
+    );
+  });
+
+  it("isolates concurrent JavaScript roots above a TypeScript cycle", async () => {
+    const pageSource = (version: string) =>
+      [
+        `import { later } from "../lib/b.ts";`,
+        `export { later };`,
+        `export const version = ${JSON.stringify(version)};`,
+        `export function readSelf() { return Deno.readTextFile(new URL(import.meta.url)); }`,
+      ].join("\n");
+    await withModuleLoaderFixture(
+      {
+        "app/page.js": pageSource("disk"),
+        "lib/b.ts": `export { later } from "./c.ts";`,
+        "lib/c.ts": `export async function later() { return await import("./b.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.js");
+        const adapterFor = (version: string) => {
+          const fs = Object.assign(Object.create(config.adapter.fs), {
+            readFile(path: string): Promise<string | Uint8Array> {
+              return path === pagePath
+                ? Promise.resolve(pageSource(version))
+                : config.adapter.fs.readFile(path);
+            },
+          });
+          return { ...config.adapter, fs };
+        };
+        const firstAdapter = adapterFor("one");
+        const secondAdapter = adapterFor("two");
+
+        const [firstPath, secondPath] = await Promise.all([
+          transformModuleWithDeps(pagePath, tmpDir, firstAdapter, {
+            ...config,
+            adapter: firstAdapter,
+            moduleCache: new Map(),
+          }),
+          transformModuleWithDeps(pagePath, tmpDir, secondAdapter, {
+            ...config,
+            adapter: secondAdapter,
+            moduleCache: new Map(),
+          }),
+        ]);
+        const [first, second] = await Promise.all([
+          import(toFileUrl(firstPath).href),
+          import(toFileUrl(secondPath).href),
+        ]);
+
+        assertNotStrictEquals(firstPath, secondPath);
+        assertEquals(first.version, "one");
+        assertEquals(second.version, "two");
+        assertStringIncludes(await first.readSelf(), `version = "one"`);
+        assertStringIncludes(await second.readSelf(), `version = "two"`);
+      },
+    );
+  });
+
+  it("does not reuse a former cycle member when it becomes the graph root", async () => {
+    const pageSource = (version: string) =>
+      [
+        `import later from "../lib/a.ts";`,
+        `export const version = ${JSON.stringify(version)};`,
+        `export { later };`,
+      ].join("\n");
+
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": pageSource("first"),
+        "lib/a.ts": [
+          `export async function later() { return await import("../app/page.ts"); }`,
+          `export default later;`,
+        ].join("\n"),
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const memberPath = join(projectDir, "lib/a.ts");
+        await transformModuleWithDeps(pagePath, tmpDir, config.adapter, config);
+
+        config.moduleCache.delete(
+          getModuleCacheKey(
+            pagePath,
+            config.projectId,
+            config.projectDir,
+            config.contentSourceId,
+            config.reactVersion,
+            config.mode,
+          ),
+        );
+        await Deno.writeTextFile(pagePath, pageSource("second"));
+
+        const newRootPath = await transformModuleWithDeps(
+          memberPath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const memberNamespace = await import(toFileUrl(newRootPath).href);
+        const pageNamespace = await memberNamespace.later();
+
+        assertEquals(pageNamespace.version, "second");
+      },
+    );
+  });
+
+  it("does not mistake authored marker text for cycle cache evidence", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": `export const authored = "//# veryfront-cycle-manifest:v1";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        let sourceReads = 0;
+        config.onProgress = (event) => {
+          if (event.phase === "module:source-read" && event.filePath === pagePath) {
+            sourceReads++;
+          }
+        };
+
+        const firstPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const secondPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+
+        assertStrictEquals(secondPath, firstPath);
+        assertEquals(sourceReads, 1);
+      },
+    );
+  });
+
+  it("keeps authored JavaScript reusable when its path resembles manifest storage", async () => {
+    const relativePath = "_cycle-manifests/authored/artifacts/0.deadbeef.js";
+    await withModuleLoaderFixture(
+      { [relativePath]: `export const authored = true;` },
+      async ({ projectDir, tmpDir, config }) => {
+        let sourceReads = 0;
+        const countingConfig: ModuleLoaderConfig = {
+          ...config,
+          onProgress: (progress) => {
+            if (progress.phase === "module:source-read") sourceReads++;
+          },
+        };
+        const sourcePath = join(projectDir, relativePath);
+        const firstPath = await transformModuleWithDeps(
+          sourcePath,
+          tmpDir,
+          config.adapter,
+          countingConfig,
+        );
+        const secondPath = await transformModuleWithDeps(
+          sourcePath,
+          tmpDir,
+          config.adapter,
+          countingConfig,
+        );
+
+        assertStrictEquals(secondPath, firstPath);
+        assertEquals(sourceReads, 1);
+      },
+    );
+  });
+
+  it("reuses an authored filename that resembles the retired cycle suffix", async () => {
+    await withModuleLoaderFixture(
+      {
+        "lib/authored.cycle.deadbeef.js": `export const owner = "authored";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "lib/authored.cycle.deadbeef.js");
+        let sourceReads = 0;
+        config.onProgress = (event) => {
+          if (event.phase === "module:source-read" && event.filePath === filePath) {
+            sourceReads++;
+          }
+        };
+
+        const firstPath = await transformModuleWithDeps(
+          filePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const secondPath = await transformModuleWithDeps(
+          filePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+
+        assertStrictEquals(secondPath, firstPath);
+        assertEquals(sourceReads, 1);
+      },
+    );
+  });
+
+  it("rebuilds a cached cycle closure when its manifest entry disappears", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later } from "../lib/a.ts";`,
+          `export const value = "recovered";`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const firstPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const depPath = assertTransformedImportPath(
+          await Deno.readTextFile(firstPath),
+          "/veryfront-cycle-manifests/",
+        );
+        const depCode = await Deno.readTextFile(depPath);
+        const manifestUrl = depCode.match(
+          /import\("(file:\/\/[^"\n]+\/veryfront-cycle-manifests\/[^"\n]+)"\)/,
+        )
+          ?.[1];
+        assert(manifestUrl, depCode);
+        await Deno.remove(fromFileUrl(manifestUrl));
+
+        const rebuiltPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const rebuiltNamespace = await import(toFileUrl(rebuiltPath).href);
+        const cycleNamespace = await rebuiltNamespace.later();
+
+        assertNotStrictEquals(rebuiltPath, firstPath);
+        assertEquals(cycleNamespace.value, "recovered");
+      },
+    );
+  });
+
+  it("rebuilds a cached cycle closure when a static member artifact disappears", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later } from "../lib/a.ts";`,
+          `export const value = "recovered";`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const firstPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const memberPath = assertTransformedImportPath(
+          await Deno.readTextFile(firstPath),
+          "/veryfront-cycle-manifests/",
+        );
+        await Deno.remove(memberPath);
+
+        const rebuiltPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const rebuilt = await import(toFileUrl(rebuiltPath).href);
+
+        assertNotStrictEquals(rebuiltPath, firstPath);
+        assertStrictEquals(await rebuilt.later(), rebuilt);
+      },
+    );
+  });
+
+  it("rejects a cached cycle closure whose member bytes are corrupted", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later } from "../lib/a.ts";`,
+          `export const value = "original";`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const rootPath = await transformModuleWithDeps(
+          join(projectDir, "app/page.ts"),
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const memberPath = assertTransformedImportPath(
+          await Deno.readTextFile(rootPath),
+          "/veryfront-cycle-manifests/",
+        );
+        await Deno.writeTextFile(memberPath, `export const corrupted = true;`);
+
+        assertEquals(
+          await inspectCycleManifestCache(rootPath, tmpDir, config.adapter),
+          "invalid",
+        );
+      },
+    );
+  });
+
+  it("rebuilds when both a cycle entry and its cache evidence disappear", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later } from "../lib/a.ts";`,
+          `export const value = "recovered";`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const firstPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const depPath = assertTransformedImportPath(
+          await Deno.readTextFile(firstPath),
+          "/veryfront-cycle-manifests/",
+        );
+        const depCode = await Deno.readTextFile(depPath);
+        const manifestUrl = depCode.match(
+          /import\("(file:\/\/[^"\n]+\/veryfront-cycle-manifests\/[^"\n]+)"\)/,
+        )
+          ?.[1];
+        assert(manifestUrl, depCode);
+        await Deno.remove(fromFileUrl(manifestUrl));
+        await Deno.remove(`${firstPath}${CYCLE_MANIFEST_SIDECAR_SUFFIX}`);
+
+        const rebuiltPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const rebuiltNamespace = await import(toFileUrl(rebuiltPath).href);
+        const cycleNamespace = await rebuiltNamespace.later();
+
+        assertNotStrictEquals(rebuiltPath, firstPath);
+        assertStrictEquals(cycleNamespace, rebuiltNamespace);
+        assertEquals(cycleNamespace.value, "recovered");
+      },
+    );
+  });
+
+  it("rebuilds a cached cycle closure when its manifest entry is corrupted", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later } from "../lib/a.ts";`,
+          `export const value = "original";`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const firstPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const depPath = assertTransformedImportPath(
+          await Deno.readTextFile(firstPath),
+          "/veryfront-cycle-manifests/",
+        );
+        const depCode = await Deno.readTextFile(depPath);
+        const manifestUrl = depCode.match(
+          /import\("(file:\/\/[^"\n]+\/veryfront-cycle-manifests\/[^"\n]+)"\)/,
+        )
+          ?.[1];
+        assert(manifestUrl, depCode);
+        await Deno.writeTextFile(
+          fromFileUrl(manifestUrl),
+          `export const value = "corrupted"; export default "wrong";`,
+        );
+
+        const rebuiltPath = await transformModuleWithDeps(
+          pagePath,
+          tmpDir,
+          config.adapter,
+          config,
+        );
+        const rebuiltNamespace = await import(toFileUrl(rebuiltPath).href);
+        const cycleNamespace = await rebuiltNamespace.later();
+
+        assertNotStrictEquals(rebuiltPath, firstPath);
+        assertStrictEquals(cycleNamespace, rebuiltNamespace);
+        assertEquals(cycleNamespace.value, "original");
+      },
+    );
+  });
+
+  it("keeps an unrelated cached leaf reusable after a cyclic graph", async () => {
+    await withModuleLoaderFixture(
+      {
+        "app/page.ts": [
+          `import { later } from "../lib/a.ts";`,
+          `import { shared } from "../lib/shared.ts";`,
+          `export const value = shared;`,
+          `export { later };`,
+        ].join("\n"),
+        "lib/a.ts": `export async function later() { return await import("../app/page.ts"); }`,
+        "lib/shared.ts": `export const shared = "shared";`,
+      },
+      async ({ projectDir, tmpDir, config }) => {
+        const pagePath = join(projectDir, "app/page.ts");
+        const sharedPath = join(projectDir, "lib/shared.ts");
+        await transformModuleWithDeps(pagePath, tmpDir, config.adapter, config);
+
+        let sharedSourceReads = 0;
+        config.onProgress = (event) => {
+          if (event.phase === "module:source-read" && event.filePath === sharedPath) {
+            sharedSourceReads++;
+          }
+        };
+        await transformModuleWithDeps(sharedPath, tmpDir, config.adapter, config);
+        await transformModuleWithDeps(sharedPath, tmpDir, config.adapter, config);
+
+        assertEquals(sharedSourceReads, 0);
       },
     );
   });
@@ -955,10 +2145,8 @@ describe("module-loader/isUnresolvedTenantImport", () => {
     assertEquals(isUnresolvedTenantImport(unrelated, new Set(["./missing"]), REBUILT), false);
   });
 
-  // The cycle-breaking branch leaves a resolved target's specifier as authored
-  // and relies on an alias the code itself marks as not runtime-verified. That
-  // target resolved, so it is never recorded as dropped — and a framework path
-  // the repo openly marks unverified must not page as a tenant warning.
+  // A resolved cycle target is never recorded as dropped. A later framework
+  // failure on that branch must therefore not be reported as a tenant warning.
   it("does not classify a failure when the resolver dropped nothing", () => {
     assertEquals(isUnresolvedTenantImport(missing(), new Set()), false);
   });
