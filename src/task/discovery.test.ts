@@ -471,41 +471,32 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         "tasks",
       );
 
-      inputSchema.parse = () => "mutated";
-      assertEquals(
-        (registered.inputSchema?.parse as (value: unknown) => unknown)("stable"),
-        parse("stable"),
-      );
+      assertEquals(registered.inputSchema === inputSchema, true);
+      assertEquals(registered.inputSchema?.parse === parse, true);
       assertEquals(
         Object.getOwnPropertyDescriptor(registered.inputSchema, "schemaVersion")?.value,
         7,
       );
-      assertEquals(Object.isFrozen(registered.inputSchema), true);
     });
 
-    it("preserves callback schema receivers", () => {
-      const parserState = new WeakMap<object, string>();
+    it("preserves the receiver of record-compatible schema methods", () => {
+      const states = new WeakMap<object, string>();
       const inputSchema = {
-        parse(this: object, value: unknown) {
-          return `${parserState.get(this)}:${String(value)}`;
+        parse(this: object) {
+          return states.get(this);
         },
       };
-      parserState.set(inputSchema, "ready");
+      states.set(inputSchema, "original receiver");
 
       const registered = taskHandler.register(
-        "receiver-schema",
+        "stateful-schema",
         { run() {}, inputSchema },
-        "tasks/receiver-schema.ts",
+        "tasks/stateful-schema.ts",
         "tasks",
       );
 
-      const registeredInputSchema = registered.inputSchema;
-      if (!registeredInputSchema) throw new Error("Expected captured input schema");
-      const parse = registeredInputSchema.parse as (
-        this: Record<string, unknown>,
-        value: unknown,
-      ) => string;
-      assertEquals(parse.call(registeredInputSchema, "value"), "ready:value");
+      const parse = registered.inputSchema?.parse as () => unknown;
+      assertEquals(parse.call(registered.inputSchema), "original receiver");
     });
 
     it("preserves inherited callback schema receivers", () => {

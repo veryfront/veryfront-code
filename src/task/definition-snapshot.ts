@@ -19,15 +19,10 @@ const TASK_DEFINITION_KEYS = Object.keys(
 const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const OBJECT_PROTOTYPE = Object.prototype;
 const hasOwn = Object.hasOwn;
-const objectCreate = Object.create;
-const objectDefineProperties = Object.defineProperties;
 const objectFreeze = Object.freeze;
-const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-const functionBind = Function.prototype.bind;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
-const reflectOwnKeys = Reflect.ownKeys;
 
 type TaskObject = Record<PropertyKey, unknown>;
 
@@ -116,59 +111,11 @@ function optionalRecord(
   }
 
   // Task schemas have always accepted the public Record<string, unknown>
-  // contract, including parser callbacks and non-enumerable data. Preserve
-  // that compatibility while detaching the retained top-level record. A
-  // callback can keep receiver-keyed state, so retained functions must run
-  // against their source schema instead of the detached copy. JSON schemas
-  // still take the deeper bounded snapshot path above.
-  const descriptors = objectGetOwnPropertyDescriptors(value) as Record<
-    PropertyKey,
-    PropertyDescriptor
-  >;
-  const visibleKeys = new Set<PropertyKey>(reflectOwnKeys(descriptors));
-  for (const key of visibleKeys) {
-    const descriptor = descriptors[key];
-    if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "function") {
-      continue;
-    }
-    const callback = descriptor.value;
-    descriptor.value = reflectApply(functionBind, callback, [value]);
-  }
-
-  const inheritedCallbacks = objectCreate(null) as Record<PropertyKey, PropertyDescriptor>;
-  const visited = new Set<object>();
-  let owner = reflectGetPrototypeOf(value);
-  for (let depth = 0; owner !== null && owner !== OBJECT_PROTOTYPE; depth++) {
-    if (
-      depth >= MAX_TASK_PROTOTYPE_DEPTH || visited.has(owner) ||
-      isProxyWithoutHooks(owner)
-    ) {
-      fail(`${label} has an invalid prototype chain.`);
-    }
-    visited.add(owner);
-
-    const ownerDescriptors = objectGetOwnPropertyDescriptors(owner) as Record<
-      PropertyKey,
-      PropertyDescriptor
-    >;
-    for (const key of reflectOwnKeys(ownerDescriptors)) {
-      if (key === "constructor" || visibleKeys.has(key)) continue;
-      visibleKeys.add(key);
-      const descriptor = ownerDescriptors[key];
-      if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "function") {
-        continue;
-      }
-      const callback = descriptor.value;
-      descriptor.value = reflectApply(functionBind, callback, [value]);
-      inheritedCallbacks[key] = descriptor;
-    }
-    owner = reflectGetPrototypeOf(owner);
-  }
-
-  const copy = objectCreate(reflectGetPrototypeOf(value));
-  objectDefineProperties(copy, descriptors);
-  objectDefineProperties(copy, inheritedCallbacks);
-  return objectFreeze(copy) as Record<string, unknown>;
+  // contract. Arbitrary schema instances can keep parser state keyed by object
+  // identity, so cloning them cannot preserve their public behavior. Retain
+  // those instances unchanged; JSON schemas still take the detached, deeply
+  // frozen snapshot path above.
+  return value as Record<string, unknown>;
 }
 
 function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
@@ -176,7 +123,7 @@ function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
   for (const nested of Array.isArray(value) ? value : Object.values(value)) {
     freezeJsonSnapshot(nested);
   }
-  Object.freeze(value);
+  objectFreeze(value);
   return value;
 }
 
@@ -210,7 +157,7 @@ export function captureTaskDefinition(value: unknown): TaskDefinition {
     "Task",
   );
 
-  return Object.freeze({
+  return objectFreeze({
     ...(fields.has("name") ? { name } : {}),
     ...(fields.has("description") ? { description } : {}),
     ...(fields.has("inputSchema") ? { inputSchema } : {}),
