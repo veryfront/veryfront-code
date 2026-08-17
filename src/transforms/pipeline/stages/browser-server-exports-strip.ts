@@ -801,6 +801,15 @@ function freeReferencedIdentifiers(
     for (const name of patternBoundNames(value)) scope.names.add(name);
   };
 
+  const addFreeName = (name: string | null, scopes: LexicalScope[]): void => {
+    if (name && !isLexicallyBound(name, scopes)) free.add(name);
+  };
+
+  const isIntrinsicJsxTagName = (name: string): boolean => {
+    const first = name.charCodeAt(0);
+    return (first >= 97 && first <= 122) || name.includes("-");
+  };
+
   const bindDirectStatements = (scope: LexicalScope, statements: unknown[]): void => {
     for (const statement of statements) {
       if (!isNode(statement) || elided.has(statement)) continue;
@@ -1109,9 +1118,14 @@ function freeReferencedIdentifiers(
     }
     if (visitTsExpression(node, scopes)) return;
 
-    if (node.type === "Identifier" || node.type === "JSXIdentifier") {
+    if (node.type === "Identifier") {
+      addFreeName(nodeName(node), scopes);
+      return;
+    }
+
+    if (node.type === "JSXIdentifier") {
       const name = nodeName(node);
-      if (name && !isLexicallyBound(name, scopes)) free.add(name);
+      if (name && !isIntrinsicJsxTagName(name)) addFreeName(name, scopes);
       return;
     }
 
@@ -1145,9 +1159,15 @@ function freeReferencedIdentifiers(
       return;
     }
     if (node.type === "JSXMemberExpression") {
-      if (isNode(node.object)) visit(node.object, scopes);
+      let object = node.object;
+      while (isNode(object) && object.type === "JSXMemberExpression") object = object.object;
+      if (isNode(object)) {
+        if (object.type === "JSXIdentifier") addFreeName(nodeName(object), scopes);
+        else visit(object, scopes);
+      }
       return;
     }
+    if (node.type === "JSXNamespacedName") return;
 
     if (node.type === "Program" || node.type === "BlockStatement") {
       const scope: LexicalScope = { kind: "block", names: new Set() };
