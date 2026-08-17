@@ -14,6 +14,7 @@ import {
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
@@ -196,6 +197,23 @@ describe("provider/veryfront-cloud/model-catalog", () => {
         assertEquals(model.thinkingBudgetTokens > 0, true);
       }
     }
+  });
+
+  it("resolves model-specific OpenAI transport overrides", () => {
+    for (
+      const modelId of [
+        "openai/gpt-5.4",
+        "veryfront-cloud/openai/gpt-5.4",
+        "openai/gpt-5.5",
+        "veryfront-cloud/openai/gpt-5.5",
+      ]
+    ) {
+      assertEquals(resolveVeryfrontCloudOpenAITransport(modelId), "chat-completions");
+    }
+
+    assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.2"), undefined);
+    assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.4-mini"), undefined);
+    assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.4-nano"), undefined);
   });
 
   it("rejects non-positive and non-safe thinking budgets", () => {

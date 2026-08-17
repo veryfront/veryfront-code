@@ -115,6 +115,17 @@ function getLLMOpenAIProviderName(config: LLMProviderConfig): string {
   return normalizeOpenAIProviderName(config.providerName) ?? "openai";
 }
 
+type OpenAIModelTransport = "auto" | "chat-completions" | "responses";
+
+function getOpenAIModelTransport(config: LLMProviderConfig): OpenAIModelTransport {
+  const transport = config.openAITransport;
+  if (transport === undefined) return "auto";
+  if (transport === "chat-completions" || transport === "responses") {
+    return transport;
+  }
+  throw new TypeError('OpenAI transport must be "chat-completions" or "responses"');
+}
+
 type OpenAICompatibleProviderKind = "openai" | "mistral" | "moonshotai";
 
 type OpenAIResponseContext = {
@@ -1218,6 +1229,30 @@ function requestUsesOpenAIHostedTool(optionsForRuntime: OpenAICompatibleLanguage
   ) !== undefined;
 }
 
+function createOpenAIChatCompletionsOnlyRuntime(
+  chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
+): ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart> {
+  function assertHostedToolsSupported(options: OpenAICompatibleLanguageOptions): void {
+    if (requestUsesOpenAIHostedTool(options)) {
+      throw new TypeError(
+        "OpenAI hosted tools require the Responses API and are unavailable with Chat Completions",
+      );
+    }
+  }
+
+  return {
+    ...chatRuntime,
+    async doGenerate(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      assertHostedToolsSupported(optionsForRuntime);
+      return await chatRuntime.doGenerate(optionsForRuntime);
+    },
+    async doStream(optionsForRuntime: OpenAICompatibleLanguageOptions) {
+      assertHostedToolsSupported(optionsForRuntime);
+      return await chatRuntime.doStream(optionsForRuntime);
+    },
+  };
+}
+
 function createOpenAIAdaptiveModelRuntime(
   chatRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
   responsesRuntime: ModelRuntime<OpenAICompatibleLanguageOptions, RuntimeAssistantContentPart>,
@@ -1305,12 +1340,20 @@ export class OpenAIProvider implements LLMProvider {
       runtimeConfig,
       modelId,
     );
-    if (isOpenAIReasoningModel(modelId, providerName)) {
+    const chatRuntime = createOpenAIModelRuntime(runtimeConfig, modelId);
+    const transport = getOpenAIModelTransport(config);
+    if (
+      transport === "responses" ||
+      (transport === "auto" && isOpenAIReasoningModel(modelId, providerName))
+    ) {
       return responsesRuntime;
+    }
+    if (transport === "chat-completions") {
+      return createOpenAIChatCompletionsOnlyRuntime(chatRuntime);
     }
 
     return createOpenAIAdaptiveModelRuntime(
-      createOpenAIModelRuntime(runtimeConfig, modelId),
+      chatRuntime,
       responsesRuntime,
     );
   }
