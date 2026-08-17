@@ -802,6 +802,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
           }
 
           await this.cache.setAsync(effectiveCacheKey, files);
+          // A poke can advance the generation while a distributed cache write
+          // is pending. Remove the value that just landed before releasing the
+          // mutation lock, so neither this waiter nor a later read sees it.
+          if (
+            this.contentContext !== warmupContext ||
+            this.sourceSnapshotVersion !== warmupSnapshotVersion
+          ) {
+            await this.cache.deleteAsync(effectiveCacheKey);
+            return false;
+          }
           this.retainFileList(effectiveCacheKey, files);
           return true;
         });

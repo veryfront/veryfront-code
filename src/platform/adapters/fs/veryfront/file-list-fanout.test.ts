@@ -408,4 +408,50 @@ describe("file list fan-out (issue inbox#32)", () => {
       "the invalidated warmup must fall back to a fresh exact-file read",
     );
   });
+
+  it("discards a warmup when a poke lands during its cache write", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default 'v1';" },
+    ];
+    const { adapter, counts } = createDraftAdapter(files);
+
+    let markSetStarted: (() => void) | undefined;
+    const setStarted = new Promise<void>((resolve) => {
+      markSetStarted = resolve;
+    });
+    let releaseSet: (() => void) | undefined;
+    const setReleased = new Promise<void>((resolve) => {
+      releaseSet = resolve;
+    });
+    const internals = adapter as unknown as {
+      cache: {
+        setAsync: (key: string, value: unknown) => Promise<void>;
+      };
+      clearMemoryCaches: () => void;
+    };
+    const setAsync = internals.cache.setAsync.bind(internals.cache);
+    internals.cache.setAsync = async (key, value) => {
+      markSetStarted?.();
+      await setReleased;
+      await setAsync(key, value);
+    };
+
+    const readPromise = adapter.readTextFile("pages/index.tsx");
+    await setStarted;
+
+    files[0] = { path: "pages/index.tsx", content: "export default 'v2';" };
+    internals.clearMemoryCaches();
+    releaseSet?.();
+
+    assertEquals(
+      await readPromise,
+      "export default 'v2';",
+      "a cache write that finishes after the poke must not publish its old listing",
+    );
+    assertEquals(
+      counts.getFileContent,
+      1,
+      "the superseded cache write must fall back to a fresh exact-file read",
+    );
+  });
 });
