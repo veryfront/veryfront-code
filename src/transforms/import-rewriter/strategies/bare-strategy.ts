@@ -5,6 +5,12 @@
  * Handles: lodash, @tanstack/react-query, etc.
  */
 
+import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  isConfiguredServerExternalPackage,
+  isServerOnlyPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
 import { rendererLogger } from "#veryfront/utils";
 import type {
   ImportRewriteStrategy,
@@ -13,13 +19,11 @@ import type {
   RewriteResult,
 } from "../types.ts";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
-import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
-import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
-import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
 import {
   isPinningEnabledForRewrite,
   resolveDependencyPinForImport,
 } from "../dependency-resolution.ts";
+import { throwConfiguredServerExternalBrowserViolation } from "../commonjs-policy.ts";
 
 const logger = rendererLogger.component("esm");
 
@@ -111,6 +115,22 @@ export class BareStrategy implements ImportRewriteStrategy {
         ...ctx,
         dependencyResolutionObservationOnly: true,
       });
+    }
+
+    // Explicit declarations are a project-owned server/client boundary. Unlike
+    // the compatibility list below, crossing that boundary is actionable and
+    // must fail during the browser transform instead of leaving a bare import
+    // that crashes later during hydration.
+    if (
+      ctx.target === "browser" &&
+      parsed &&
+      isConfiguredServerExternalPackage(parsed.packageName, ctx.serverExternalPackages)
+    ) {
+      throwConfiguredServerExternalBrowserViolation(
+        info.specifier,
+        parsed.packageName,
+        ctx,
+      );
     }
 
     // Known server-only packages (`redis`, `pg`, …), including their explicit

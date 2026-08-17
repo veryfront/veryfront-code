@@ -4,10 +4,19 @@ export interface ParsedBarePackageSpecifier {
   subpath: string | null;
 }
 
+const ReflectApply = Reflect.apply;
+const RegExpExec = RegExp.prototype.exec;
+const SCOPED_PACKAGE_SPECIFIER = /^(@[^/]+\/[^/@]+)(?:@([^/]+))?(\/.*)?$/;
+const UNSCOPED_PACKAGE_SPECIFIER = /^([^/@][^/@]*?)(?:@([^/]+))?(\/.*)?$/;
+
+function regExpExec(pattern: RegExp, value: string): RegExpExecArray | null {
+  return ReflectApply(RegExpExec, pattern, [value]) as RegExpExecArray | null;
+}
+
 export function parseBarePackageSpecifier(
   specifier: string,
 ): ParsedBarePackageSpecifier | null {
-  const scopedMatch = specifier.match(/^(@[^/]+\/[^/@]+)(?:@([^/]+))?(\/.*)?$/);
+  const scopedMatch = regExpExec(SCOPED_PACKAGE_SPECIFIER, specifier);
   if (scopedMatch?.[1]) {
     return {
       packageName: scopedMatch[1],
@@ -16,7 +25,7 @@ export function parseBarePackageSpecifier(
     };
   }
 
-  const unscopedMatch = specifier.match(/^([^/@][^/@]*?)(?:@([^/]+))?(\/.*)?$/);
+  const unscopedMatch = regExpExec(UNSCOPED_PACKAGE_SPECIFIER, specifier);
   if (unscopedMatch?.[1]) {
     return {
       packageName: unscopedMatch[1],

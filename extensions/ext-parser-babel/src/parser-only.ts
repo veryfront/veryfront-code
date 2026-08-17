@@ -48,9 +48,11 @@ function pickPlugins(filePath?: string): parser.ParserPlugin[] {
  */
 export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
   parse(options: ParseOptions): Promise<ASTNode> {
+    const filePath = options.filePath?.toLowerCase() ?? "";
     const ast = parser.parse(options.code, {
       sourceType: "unambiguous",
-      allowReturnOutsideFunction: options.filePath?.toLowerCase().endsWith(".cjs") === true,
+      allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
+        /\.(?:cjs|js)$/.test(filePath),
       plugins: pickPlugins(options.filePath),
     });
     const node: { type: string } = ast;

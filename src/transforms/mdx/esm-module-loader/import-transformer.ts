@@ -8,11 +8,28 @@
  */
 
 import { join } from "#veryfront/compat/path";
-import { rendererLogger as logger } from "#veryfront/utils";
-import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
-import { parseImports, replaceSpecifiers } from "../../esm/lexer.ts";
+import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import { getLocalReactPaths, isReactSpecifier } from "#veryfront/platform/compat/react-paths.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { DependencyResolutionObservation } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import { assertNoConfiguredCommonJsBrowserImports } from "#veryfront/transforms/import-rewriter/commonjs-policy.ts";
+import {
+  bareStrategy,
+  UnifiedImportRewriter,
+} from "#veryfront/transforms/import-rewriter/index.ts";
+import type { ImportRewriteStrategy } from "#veryfront/transforms/import-rewriter/index.ts";
+import { isNodeBuiltinSpecifier } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
+import { appendSameOriginSSRDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  describeServerExternalBrowserViolation,
+  getConfiguredServerExternalPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
+import { rendererLogger as logger } from "#veryfront/utils";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import { parseImports, replaceSpecifiers } from "../../esm/lexer.ts";
 import {
   ESBUILD_JSX_FACTORY,
   ESBUILD_JSX_FRAGMENT,
@@ -22,17 +39,12 @@ import {
 import { getLocalFs } from "./cache/index.ts";
 import { buildMdxJsxCacheFileName } from "./cache-format.ts";
 import { rewriteDntImports } from "./module-fetcher/index.ts";
+import {
+  assertMdxModuleImportCount,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+} from "./module-fetcher/limits.ts";
 import { ensureCachedJsxModulePatched } from "./jsx-cache.ts";
 import type { ESMLoaderContext } from "./types.ts";
-import { appendSameOriginSSRDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
-import {
-  bareStrategy,
-  UnifiedImportRewriter,
-} from "#veryfront/transforms/import-rewriter/index.ts";
-import type { ImportRewriteStrategy } from "#veryfront/transforms/import-rewriter/index.ts";
-import type { DependencyResolutionObservation } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
-import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
-import { isNodeBuiltinSpecifier } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
 
@@ -54,12 +66,6 @@ const mdxRootBareDependencyStrategy: ImportRewriteStrategy = {
 const mdxRootDependencyRewriter = new UnifiedImportRewriter({
   strategies: [mdxRootBareDependencyStrategy],
 });
-import { parallelMap } from "#veryfront/utils/parallel.ts";
-import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
-import {
-  assertMdxModuleImportCount,
-  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
-} from "./module-fetcher/limits.ts";
 
 /**
  * Rewrite @/ aliased imports to /_vf_modules/ paths.
@@ -131,6 +137,37 @@ export interface MdxRootDependencyRewriteOptions {
   ) => void;
 }
 
+async function assertNoConfiguredServerExternalImports(
+  code: string,
+  options: MdxRootDependencyRewriteOptions,
+): Promise<void> {
+  if (options.serverExternalPackages === undefined) return;
+  const sourceModule = `${options.projectDir}/__veryfront_mdx_root__.mjs`;
+
+  for (const imported of await parseImports(code)) {
+    const specifier = imported.n;
+    if (!specifier) continue;
+    const configuredPackage = getConfiguredServerExternalPackage(
+      specifier,
+      options.serverExternalPackages,
+    );
+    if (configuredPackage === undefined) continue;
+
+    const violation = describeServerExternalBrowserViolation(
+      specifier,
+      sourceModule,
+      options.projectDir,
+    );
+    throw SERVER_ONLY_IN_CLIENT.create({
+      message: violation.message,
+      detail:
+        `Declared server external package reached an MDX browser transform: ${configuredPackage}`,
+      instance: violation.sourceIdentity,
+      context: { packageName: configuredPackage },
+    });
+  }
+}
+
 /**
  * Apply the existing MDX import-map behavior first, then pin remaining bare
  * dependencies with the parser-backed import rewriter. Flag-off code keeps
@@ -141,7 +178,15 @@ export async function rewriteMdxRootDependencyImports(
   importMap: ImportMapConfig,
   options: MdxRootDependencyRewriteOptions,
 ): Promise<string> {
+  await assertNoConfiguredServerExternalImports(code, options);
+
   const importMapped = transformImports(code, importMap);
+  await assertNoConfiguredServerExternalImports(importMapped, options);
+  await assertNoConfiguredCommonJsBrowserImports(importMapped, {
+    filePath: `${options.projectDir}/__veryfront_mdx_root__.mjs`,
+    projectDir: options.projectDir,
+    serverExternalPackages: options.serverExternalPackages,
+  });
   if (!options.dependencyPinningCacheKey?.startsWith("on:")) return importMapped;
 
   return await mdxRootDependencyRewriter.rewrite(importMapped, {

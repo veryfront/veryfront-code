@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
@@ -10,6 +11,199 @@ import {
 } from "#veryfront/transforms/esm/npm-registry-client.ts";
 import { rewriteSSRImportsCompat, rewriteSSRImportsCompatAsync } from "./ssr-adapter.ts";
 import type { DependencyResolutionObservation } from "./dependency-resolution.ts";
+
+describe("ssr-adapter — server external packages", () => {
+  it("keeps configured server external imports for the runtime", () => {
+    const code = [
+      `import knex from "knex";`,
+      `import prisma from "@prisma/client/runtime/library";`,
+      `import zod from "zod";`,
+    ].join("\n");
+
+    const result = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+
+    assertEquals(result.includes(`from "knex"`), true);
+    assertEquals(result.includes(`from "@prisma/client/runtime/library"`), true);
+    assertEquals(result.includes(`from "https://esm.sh/zod?external=react&target=es2022"`), true);
+  });
+
+  it("keeps configured special packages external for the runtime", () => {
+    const code = [
+      `import React from "react";`,
+      `import client from "react-dom/client";`,
+      `import framework from "veryfront";`,
+      `import similarName from "veryfrontend";`,
+    ].join("\n");
+
+    assertEquals(
+      rewriteSSRImportsCompat(code, {
+        serverExternalPackages: ["react", "react-dom", "veryfront", "veryfrontend"],
+      }),
+      code,
+    );
+  });
+
+  it("normalizes configured canonical esm.sh imports for the runtime", () => {
+    const code = [
+      `import knex from "https://esm.sh/knex@3.1.0";`,
+      `import prisma from "https://esm.sh/@prisma/client@6.0.0/runtime/library?target=es2022";`,
+      `import versioned from "https://esm.sh/v135/knex@3.1.0/";`,
+      `import encoded from "https://esm.sh/%40prisma%2Fclient@6.0.0/runtime/library";`,
+    ].join("\n");
+
+    const result = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+
+    assertEquals(result.includes(`from "knex"`), true);
+    assertEquals(result.includes(`from "@prisma/client/runtime/library"`), true);
+    assertEquals(result.includes("esm.sh"), false);
+  });
+
+  it("drops esm.sh build artifact paths from configured runtime imports", async () => {
+    const code = [
+      `import knex from "https://esm.sh/v135/knex@3.1.0/es2022/knex.mjs";`,
+      `const prisma = import("https://esm.sh/stable/@prisma/client@6.0.0/es2022/client.mjs");`,
+      `import currentKnex from "https://esm.sh/knex@3.1.0/es2022/knex.mjs";`,
+    ].join("\n");
+    const expected = [
+      `import knex from "knex";`,
+      `const prisma = import("@prisma/client");`,
+      `import currentKnex from "knex";`,
+    ].join("\n");
+    const options = { serverExternalPackages: ["knex", "@prisma/client"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
+  it("preserves prefixed and target-named configured package subpaths", async () => {
+    const code = [
+      `import query from "https://esm.sh/v135/knex@3.1.0/query";`,
+      `const plugin = import("https://esm.sh/v135/knex@3.1.0/node/plugins/index.mjs");`,
+    ].join("\n");
+    const expected = [
+      `import query from "knex/query";`,
+      `const plugin = import("knex/node/plugins/index.mjs");`,
+    ].join("\n");
+    const options = { serverExternalPackages: ["knex"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
+  it("normalizes configured versioned bare imports to installed runtime packages", async () => {
+    const code = [
+      `import knex from "knex@3.1.0";`,
+      `import "@prisma/client@6.0.0/runtime/library";`,
+      `const query = import("knex@3.1.0/query");`,
+    ].join("\n");
+    const expected = [
+      `import knex from "knex";`,
+      `import "@prisma/client/runtime/library";`,
+      `const query = import("knex/query");`,
+    ].join("\n");
+    const options = { serverExternalPackages: ["knex", "@prisma/client"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
+  it("normalizes configured esm.sh side-effect and dynamic imports", async () => {
+    const code = [
+      `import "https://esm.sh/knex@3.1.0";`,
+      `const query = import("https://esm.sh/knex@3.1.0/query?target=es2022");`,
+    ].join("\n");
+    const expected = [`import "knex";`, `const query = import("knex/query");`].join("\n");
+    const options = { serverExternalPackages: ["knex"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
+  it("normalizes configured esm.sh build artifacts", async () => {
+    const code = [
+      `import knex from "https://esm.sh/v135/knex@3.1.0/es2022/knex.mjs";`,
+      `import external from "https://esm.sh/*knex@3.1.0/es2022/knex.mjs";`,
+      `const server = import("https://esm.sh/stable/react-dom@18.3.1/es2022/server.mjs");`,
+    ].join("\n");
+    const expected = [
+      `import knex from "knex";`,
+      `import external from "knex";`,
+      `const server = import("react-dom/server");`,
+    ].join("\n");
+    const options = { serverExternalPackages: ["knex", "react-dom"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
+  it("does not rewrite import text in comments or literals", () => {
+    const url = "https://esm.sh/knex@3.1.0";
+    const code = [
+      `// import("${url}")`,
+      `const source = 'import("${url}")';`,
+      `const pattern = /import\\("${url.replaceAll("/", "\\/")} "\\)/;`,
+      `const template = \`import("${url}")\`;`,
+      `/* import "${url}" */`,
+    ].join("\n");
+
+    assertEquals(
+      rewriteSSRImportsCompat(code, { serverExternalPackages: ["knex"] }),
+      code,
+    );
+  });
+
+  it("reports the registered bundle error when configured imports exceed the scan limit", () => {
+    const code = Array.from(
+      { length: 501 },
+      (_, index) => `import value${index} from "https://esm.sh/knex@3.1.0/query${index}";`,
+    ).join("\n");
+
+    const error = assertThrows(
+      () => rewriteSSRImportsCompat(code, { serverExternalPackages: ["knex"] }),
+      VeryfrontError,
+    );
+    assert(error instanceof VeryfrontError);
+    assertEquals(error.slug, "bundle-error");
+  });
+
+  it("partitions default child module URLs by the canonical external package set", () => {
+    const code = `import Child from "@/components/Child";`;
+    const knex = rewriteSSRImportsCompat(code, { serverExternalPackages: ["knex"] });
+    const prisma = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["@prisma/client"],
+    });
+    const ordered = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+    const reordered = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["@prisma/client", "knex"],
+    });
+
+    assertEquals(knex === prisma, false);
+    assertEquals(ordered, reordered);
+  });
+
+  it("partitions resolved child module URLs by the canonical external package set", async () => {
+    const code = `import Child from "@/components/Child";`;
+    const rewrite = (serverExternalPackages: readonly string[]) =>
+      rewriteSSRImportsCompatAsync(code, {
+        serverExternalPackages,
+        resolveCacheBuster: () => "child-source-hash",
+      });
+
+    const knex = await rewrite(["knex"]);
+    const prisma = await rewrite(["@prisma/client"]);
+    const ordered = await rewrite(["knex", "@prisma/client"]);
+    const reordered = await rewrite(["@prisma/client", "knex"]);
+
+    assertEquals(knex === prisma, false);
+    assertEquals(ordered, reordered);
+  });
+});
 
 describe("ssr-adapter — child module snapshot propagation", () => {
   const code = [

@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../release-assets/constants.ts";
@@ -141,9 +142,39 @@ describe("BareStrategy", () => {
       assertEquals(result.specifier, null);
     });
 
-    it("leaves a configured server external package and its subpaths external", () => {
+    it("rejects configured server external packages in browser modules", () => {
       const ctx = makeCtx({
+        filePath: "/redacted-project-root/pages/index.tsx",
+        projectDir: "/redacted-project-root",
         target: "browser",
+        serverExternalPackages: ["knex", "@prisma/client"],
+      });
+
+      for (
+        const specifier of [
+          "knex",
+          "npm:knex@3.1.0",
+          "@prisma/client/runtime/library",
+        ]
+      ) {
+        const error = assertThrows(() => bareStrategy.rewrite(makeInfo(specifier), ctx));
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, "server-only-in-client");
+        assertEquals(
+          (error as VeryfrontError).message.includes("build.serverExternalPackages"),
+          true,
+        );
+        assertEquals((error as VeryfrontError).message.includes(specifier), true);
+        assertEquals((error as VeryfrontError).message.includes("pages/index.tsx"), true);
+        assertEquals((error as VeryfrontError).message.includes(ctx.projectDir), false);
+        assertEquals((error as VeryfrontError).instance, "pages/index.tsx");
+      }
+    });
+
+    it("keeps configured server external packages external for SSR", () => {
+      const ctx = makeCtx({
+        target: "ssr",
         serverExternalPackages: ["knex", "@prisma/client"],
       });
 
@@ -153,6 +184,19 @@ describe("BareStrategy", () => {
         bareStrategy.rewrite(makeInfo("@prisma/client/runtime/library"), ctx).specifier,
         null,
       );
+    });
+
+    it("redacts a browser importer outside the project root", () => {
+      const ctx = makeCtx({
+        filePath: "/redacted-external-root/generated/page.tsx",
+        projectDir: "/redacted-project-root",
+        serverExternalPackages: ["knex"],
+      });
+      const error = assertThrows(() => bareStrategy.rewrite(makeInfo("knex"), ctx));
+
+      assertEquals((error as VeryfrontError).message.includes(ctx.filePath), false);
+      assertEquals((error as VeryfrontError).message.includes("generated/page.tsx"), false);
+      assertEquals((error as VeryfrontError).instance, undefined);
     });
 
     it("still rewrites an undeclared package when server externals are configured", () => {

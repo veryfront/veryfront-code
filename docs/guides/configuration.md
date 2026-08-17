@@ -97,9 +97,17 @@ defineConfig({
 
 Use `serverExternalPackages` for npm packages that must run only on the server,
 such as database, cache, or messaging clients. Veryfront leaves these imports
-external so the runtime resolves the installed package instead of sending it
-through the browser module CDN. Use package roots only. Do not include versions
-or subpaths.
+external during server rendering so the runtime resolves the installed package
+instead of sending it through the module CDN. If a declared package or one of
+its subpaths reaches a browser transform, Veryfront stops with a
+`server-only-in-client` error that names the import and source module.
+
+When adopting this option, move shared imports behind a server-only boundary
+first: for example, into server data hooks, API routes, or server components.
+Declaring a package does not make it browser-safe and does not silently stub it.
+Undeclared packages keep their existing browser-compatible resolution behavior;
+Veryfront does not infer additional server-only packages from source code. Use
+package roots only. Do not include versions or subpaths.
 
 ### Layout
 

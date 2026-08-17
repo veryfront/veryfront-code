@@ -104,6 +104,15 @@ export interface CodeParser {
    */
   hasFunctionDirective?(options: FunctionDirectiveOptions): Promise<boolean>;
   /**
+   * Return statically named packages loaded through unbound CommonJS globals.
+   *
+   * Parser ownership keeps lexical binding and syntax semantics out of generic
+   * callers. The capability is optional for backward compatibility; callers
+   * that require enforcement must use a capable first-party fallback when the
+   * active parser predates it.
+   */
+  findStaticCommonJsImports?(options: ParseOptions): Promise<readonly string[]>;
+  /**
    * Inject `data-node-*` attributes into every JSX element in the source,
    * enabling Studio Navigator to map rendered elements back to their
    * source positions. Parsing failures return the input unchanged.

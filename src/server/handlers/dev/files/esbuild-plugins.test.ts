@@ -27,7 +27,12 @@ import {
 } from "./esbuild-plugins.ts";
 import type { LockfileManager } from "#veryfront/utils/import-lockfile.ts";
 import * as esbuild from "veryfront/extensions/bundler";
-import type { OnLoadArgs, PluginBuild, ResolveResult } from "veryfront/extensions/bundler";
+import type {
+  OnLoadArgs,
+  OnResolveArgs,
+  PluginBuild,
+  ResolveResult,
+} from "veryfront/extensions/bundler";
 
 function createMockBuild(
   onLoad: PluginBuild["onLoad"],
@@ -52,6 +57,80 @@ function createMockBuild(
     onDispose: () => {},
     esbuild,
   } as unknown as PluginBuild;
+}
+
+async function resolveWithBareExternalPlugin(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"] = "import-statement",
+): Promise<string> {
+  let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
+  const plugin = createBareExternalPlugin({ projectDir, serverExternalPackages });
+  const build = createMockBuild(() => {});
+  build.onResolve = (_options, handler) => {
+    resolveHandler = handler;
+  };
+  plugin.setup(build);
+  assertExists(resolveHandler);
+
+  const result = await resolveHandler({
+    path,
+    importer,
+    namespace: "file",
+    resolveDir: projectDir,
+    kind,
+    pluginData: undefined,
+  }) as { errors?: Array<{ text: string }> };
+
+  assertExists(result.errors?.[0]);
+  return result.errors[0].text;
+}
+
+async function runHttpExternalResolver(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"],
+): Promise<{ errors?: Array<{ text: string }> } | undefined> {
+  let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
+  const plugin = createHttpExternalPlugin({ projectDir, serverExternalPackages });
+  const build = createMockBuild(() => {});
+  build.onResolve = (_options, handler) => {
+    resolveHandler = handler;
+  };
+  plugin.setup(build);
+  assertExists(resolveHandler);
+
+  return await resolveHandler({
+    path,
+    importer,
+    namespace: "file",
+    resolveDir: projectDir,
+    kind,
+    pluginData: undefined,
+  }) as { errors?: Array<{ text: string }> } | undefined;
+}
+
+async function resolveWithHttpExternalPlugin(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"],
+): Promise<string> {
+  const result = await runHttpExternalResolver(
+    path,
+    importer,
+    projectDir,
+    serverExternalPackages,
+    kind,
+  );
+
+  assertExists(result?.errors?.[0]);
+  return result.errors[0].text;
 }
 
 function writableDependencySource(
@@ -80,6 +159,7 @@ function writableDependencySource(
 async function bundleWithPlugin(
   contents: string,
   importMapImports: Record<string, string>,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   const { build } = await import("veryfront/extensions/bundler");
   const result = await build({
@@ -94,7 +174,10 @@ async function bundleWithPlugin(
       sourcefile: "/project/app/page.js",
       resolveDir: "/project/app",
     },
-    plugins: [createBareExternalPlugin({ importMapImports }), createHttpExternalPlugin()],
+    plugins: [
+      createBareExternalPlugin({ importMapImports, serverExternalPackages }),
+      createHttpExternalPlugin({ serverExternalPackages }),
+    ],
   });
 
   return result.outputFiles?.[0]?.text ?? "";
@@ -211,6 +294,126 @@ describe(
       const output = await bundleWithPlugin(
         'import x from "lodash"; console.log(x);',
         {},
+      );
+
+      assertEquals(output.includes("esm.sh/lodash"), true);
+    });
+
+    it("fails loud when a declared server external reaches a browser bundle", async () => {
+      const cases = [
+        ["knex", 'import knex from "knex"; console.log(knex);'],
+        ["knex", 'export const load = () => import("knex");'],
+        ["knex", 'const knex = require("knex"); console.log(knex);'],
+        [
+          "knex",
+          'const knex = require("https://esm.sh/knex@3.1.0"); console.log(knex);',
+        ],
+        [
+          "npm:@prisma/client",
+          'import prisma from "npm:@prisma/client"; console.log(prisma);',
+        ],
+        [
+          "npm:@prisma/client/runtime/library",
+          'export const load = () => import("npm:@prisma/client/runtime/library");',
+        ],
+        [
+          "@prisma/client/runtime/library",
+          'import prisma from "@prisma/client/runtime/library"; console.log(prisma);',
+        ],
+      ] as const;
+
+      for (const [specifier, source] of cases) {
+        const error = await assertRejects(() =>
+          bundleWithPlugin(source, {}, ["knex", "@prisma/client"])
+        );
+        const message = error instanceof Error ? error.message : String(error);
+        assertEquals(message.includes(specifier), true);
+        assertEquals(message.includes("build.serverExternalPackages"), true);
+        assertEquals(message.includes("server-only-in-client"), true);
+      }
+    });
+
+    it("reports a project-relative importer for declared server externals", async () => {
+      const projectDir = "/redacted-project-root";
+      const message = await resolveWithBareExternalPlugin(
+        "knex",
+        `${projectDir}/app/page.js`,
+        projectDir,
+        ["knex"],
+      );
+
+      assertEquals(message.includes("app/page.js"), true);
+      assertEquals(message.includes(projectDir), false);
+    });
+
+    it("rejects declared server externals loaded through CommonJS", async () => {
+      const message = await resolveWithBareExternalPlugin(
+        "zod",
+        "/redacted-project-root/app/page.js",
+        "/redacted-project-root",
+        ["zod"],
+        "require-call",
+      );
+
+      assertEquals(message.includes("server-only-in-client"), true);
+      assertEquals(message.includes("zod"), true);
+    });
+
+    it("rejects delivered declared HTTP externals for CommonJS resolve kinds", async () => {
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        const message = await resolveWithHttpExternalPlugin(
+          "https://esm.sh/knex@3.1.0",
+          "/redacted-project-root/app/page.js",
+          "/redacted-project-root",
+          ["knex"],
+          kind,
+        );
+        assertEquals(message.includes("server-only-in-client"), true);
+        assertEquals(message.includes("knex"), true);
+      }
+    });
+
+    it("preserves undeclared CommonJS URL resolver behavior", async () => {
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        assertEquals(
+          await runHttpExternalResolver(
+            "https://esm.sh/lodash@4.17.21",
+            "/redacted-project-root/app/page.js",
+            "/redacted-project-root",
+            ["knex"],
+            kind,
+          ),
+          undefined,
+        );
+      }
+    });
+
+    it("does not let an import map bypass a declared server external", async () => {
+      const error = await assertRejects(() =>
+        bundleWithPlugin(
+          'import knex from "knex"; console.log(knex);',
+          { knex: "https://cdn.example/knex.js" },
+          ["knex"],
+        )
+      );
+
+      assertEquals(String(error).includes("build.serverExternalPackages"), true);
+
+      const scopedNpmError = await assertRejects(() =>
+        bundleWithPlugin(
+          'import prisma from "npm:@prisma/client/runtime/library"; console.log(prisma);',
+          { "npm:@prisma/client/runtime/library": "https://cdn.example/prisma.js" },
+          ["@prisma/client"],
+        )
+      );
+      assertEquals(String(scopedNpmError).includes("server-only-in-client"), true);
+    });
+
+    it("keeps undeclared packages browser-compatible when declarations exist", async () => {
+      const output = await bundleWithPlugin(
+        'import x from "lodash"; console.log(x);',
+        {},
+        ["knex"],
       );
 
       assertEquals(output.includes("esm.sh/lodash"), true);

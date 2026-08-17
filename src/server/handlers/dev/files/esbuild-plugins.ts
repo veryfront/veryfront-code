@@ -1,5 +1,5 @@
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/extensions/bundler";
-import { NETWORK_ERROR } from "#veryfront/errors";
+import { isVeryfrontError, NETWORK_ERROR, SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -22,6 +22,7 @@ import {
   importMapOwnsSpecifier,
   mergeBrowserImportMapImports,
 } from "#veryfront/utils/import-map.ts";
+import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   describeBrowserModuleBoundaryViolation,
@@ -32,7 +33,12 @@ import {
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { resolveDependencyPinForImport } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
+import { assertNoConfiguredCommonJsBrowserImports } from "#veryfront/transforms/import-rewriter/commonjs-policy.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  describeServerExternalBrowserViolation,
+  getConfiguredServerExternalPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
 import { appendSameOriginDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 const logger = serverLogger.component("bare-ext");
@@ -58,6 +64,7 @@ interface ProjectFsPluginData {
 
 export interface RelativeFsPluginOptions {
   enforceBrowserBoundaries?: boolean;
+  serverExternalPackages?: readonly string[];
   /**
    * Root-bound, symlink-safe, bounded read authority for browser builds. When
    * supplied, the read itself replaces mutable directory-walk admission.
@@ -259,6 +266,22 @@ export function createRelativeFsPlugin(
             ? await options.readBrowserModule(filePath)
             : await adapter.fs.readFile(filePath);
           if (enforceBrowserBoundaries) {
+            try {
+              await assertNoConfiguredCommonJsBrowserImports(contents, {
+                filePath,
+                projectDir,
+                serverExternalPackages: options.serverExternalPackages,
+              });
+            } catch (error) {
+              return {
+                errors: [{
+                  text: isVeryfrontError(error)
+                    ? `[${error.slug}] ${error.message}`
+                    : "Browser dependency could not be safely analyzed",
+                  location: null,
+                }],
+              };
+            }
             const violation = await inspectBrowserModuleBoundary(contents, filePath);
             if (violation) {
               return {
@@ -384,6 +407,8 @@ interface BareExternalPluginOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   strict?: boolean;
   importMapImports?: Record<string, string>;
+  /** Bare npm package roots explicitly declared as server-only by the project. */
+  serverExternalPackages?: readonly string[];
 }
 
 function isBareImport(path: string): boolean {
@@ -497,7 +522,9 @@ export function createBareExternalPlugin(
     setup(build: PluginBuild) {
       build.onResolve({ filter: /.*/ }, async (args: OnResolveArgs) => {
         if (!isBareImport(args.path)) return undefined;
-        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+        const isEsmImport = args.kind === "import-statement" || args.kind === "dynamic-import";
+        const isCommonJsImport = args.kind === "require-call" || args.kind === "require-resolve";
+        if (!isEsmImport && !isCommonJsImport) return undefined;
 
         // Fail closed on Node built-ins. This plugin only runs for browser
         // bundles (platform: "browser"), where a server-only `node:*` import can
@@ -515,6 +542,27 @@ export function createBareExternalPlugin(
           };
         }
 
+        const configuredPackage = getConfiguredServerExternalPackage(
+          args.path,
+          opts.serverExternalPackages,
+        );
+        if (configuredPackage !== undefined) {
+          const violation = describeServerExternalBrowserViolation(
+            args.path,
+            args.importer || undefined,
+            opts.projectDir,
+          );
+          return {
+            errors: [{
+              text: `[${SERVER_ONLY_IN_CLIENT.slug}] ${violation.message}`,
+            }],
+          };
+        }
+
+        // Preserve the existing handling of undeclared CommonJS imports. The
+        // policy only makes explicit server-only declarations fail loudly.
+        if (!isEsmImport) return undefined;
+
         // Ensure the package.json dep cache is warm before consulting it for
         // a version pin. The warmup Promise resolves immediately on warm paths.
         const snapshot = await dependencySnapshot;
@@ -524,6 +572,23 @@ export function createBareExternalPlugin(
         // and Veryfront still need to report their raw declarations before this
         // winning branch returns.
         if (importMapOwnsSpecifier(args.path, importMapImports)) {
+          const mappedSpecifier = resolveImport(args.path, { imports: importMapImports });
+          const mappedConfiguredPackage = getConfiguredServerExternalPackage(
+            mappedSpecifier,
+            opts.serverExternalPackages,
+          );
+          if (mappedConfiguredPackage !== undefined) {
+            const violation = describeServerExternalBrowserViolation(
+              mappedSpecifier,
+              args.importer || undefined,
+              opts.projectDir,
+            );
+            return {
+              errors: [{
+                text: `[${SERVER_ONLY_IN_CLIENT.slug}] ${violation.message}`,
+              }],
+            };
+          }
           observeImportMapDependency(
             args.path,
             opts,
@@ -624,6 +689,8 @@ export function createBareExternalPlugin(
 interface HttpExternalPluginOptions {
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
+  projectDir?: string;
+  serverExternalPackages?: readonly string[];
 }
 
 export function createHttpExternalPlugin(options: HttpExternalPluginOptions = {}): Plugin {
@@ -631,7 +698,26 @@ export function createHttpExternalPlugin(options: HttpExternalPluginOptions = {}
     name: "veryfront-http-ext",
     setup(build: PluginBuild) {
       build.onResolve({ filter: /^(?:https?:)?\/\//i }, (args: OnResolveArgs) => {
-        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+        const isEsmImport = args.kind === "import-statement" || args.kind === "dynamic-import";
+        const isCommonJsImport = args.kind === "require-call" || args.kind === "require-resolve";
+        if (!isEsmImport && !isCommonJsImport) return undefined;
+        const configuredPackage = getConfiguredServerExternalPackage(
+          args.path,
+          options.serverExternalPackages,
+        );
+        if (configuredPackage !== undefined) {
+          const violation = describeServerExternalBrowserViolation(
+            args.path,
+            args.importer || undefined,
+            options.projectDir,
+          );
+          return {
+            errors: [{
+              text: `[${SERVER_ONLY_IN_CLIENT.slug}] ${violation.message}`,
+            }],
+          };
+        }
+        if (!isEsmImport) return undefined;
         return {
           path: appendSameOriginDependencyPinningPathKey(
             args.path,
