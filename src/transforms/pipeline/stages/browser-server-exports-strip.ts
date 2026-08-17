@@ -405,7 +405,6 @@ interface ModuleScopeDecl {
   statement: Node;
   declarator?: Node;
   names: string[];
-  bindingIds: Node[];
 }
 
 /**
@@ -430,7 +429,7 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
     if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
       const id = statement.id;
       const name = nodeName(id);
-      if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
+      if (name && isNode(id)) decls.push({ statement, names: [name] });
       continue;
     }
 
@@ -453,12 +452,43 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
         // Either way the declarator simply stays.
         if (names.length === 0 || names.length !== bindingIds.length) continue;
 
-        decls.push({ statement, declarator, names, bindingIds });
+        decls.push({ statement, declarator, names });
       }
     }
   }
 
   return decls;
+}
+
+/** Every binding declared directly by the module, including exported declarations. */
+function moduleScopeBindingNames(body: Node[]): Set<string> {
+  const names = new Set<string>();
+
+  for (const statement of body) {
+    const declaration = statement.type === "ExportNamedDeclaration" ||
+        statement.type === "ExportDefaultDeclaration"
+      ? statement.declaration
+      : statement;
+    if (!isNode(declaration)) continue;
+
+    if (
+      declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration"
+    ) {
+      const name = nodeName(declaration.id);
+      if (name) names.add(name);
+      continue;
+    }
+
+    if (declaration.type !== "VariableDeclaration") continue;
+    for (
+      const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
+    ) {
+      if (!isNode(declarator) || !isNode(declarator.id)) continue;
+      for (const name of patternBoundNames(declarator.id)) names.add(name);
+    }
+  }
+
+  return names;
 }
 
 /** Whether a name is bound in the current lexical stack. */
@@ -1013,6 +1043,45 @@ function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
 }
 
 /**
+ * References to a module declaration after removing only that declaration and
+ * its compiler-generated name registration from the analysis tree. A real
+ * module read becomes free; a same-named binding inside client code remains
+ * lexically bound and does not keep server state alive.
+ */
+function referencesOutsideModuleScopeDeclaration(
+  body: Node[],
+  declaration: ModuleScopeDecl,
+  nameRegistrations: CompilerNameRegistration[],
+): Set<string> {
+  const ignoredStatements = new Set(
+    nameRegistrations.filter((registration) => declaration.names.includes(registration.targetName))
+      .map((registration) => registration.statement),
+  );
+  const remainingBody: Node[] = [];
+
+  for (const statement of body) {
+    if (ignoredStatements.has(statement)) continue;
+    if (statement !== declaration.statement) {
+      remainingBody.push(statement);
+      continue;
+    }
+    if (!declaration.declarator) continue;
+
+    const declarators = Array.isArray(statement.declarations)
+      ? statement.declarations.filter(isNode)
+      : [];
+    const remainingDeclarators = declarators.filter((candidate) =>
+      candidate !== declaration.declarator
+    );
+    if (remainingDeclarators.length > 0) {
+      remainingBody.push({ ...statement, declarations: remainingDeclarators });
+    }
+  }
+
+  return freeReferencedIdentifiers({ type: "Program", body: remainingBody });
+}
+
+/**
  * Drop the top-level declarations the emptied server-only hooks closed over.
  *
  * Scope is the *dependency closure of the stripped hooks*, not "everything
@@ -1041,29 +1110,25 @@ function dropUnusedModuleScopeBindings(
     const decls = moduleScopeDeclarations(current);
     if (decls.length === 0) return current;
 
-    const excluded = new WeakSet<Node>();
-    for (const decl of decls) for (const id of decl.bindingIds) excluded.add(id);
-
     // Esbuild's generated name-registration call is metadata for a declaration,
     // not an independent browser consumer of it. Ignore that target reference
     // when deciding liveness, and remove the call together with a declaration
     // that proves hook-only.
     const nameRegistrations = compilerNameRegistrations(current);
-    for (const registration of nameRegistrations) excluded.add(registration.target);
-
-    const referenced = referencedIdentifiers(current, excluded);
 
     const removableStatements = new Set<Node>();
     const removableDeclarators = new Map<Node, Set<Node>>();
     const removedDecls: ModuleScopeDecl[] = [];
     for (const decl of decls) {
       const inClosure = decl.names.some((name) => hookClosure.has(name));
-      const id = decl.declarator?.id;
-      const externalReferences = isNode(id) && id.type !== "Identifier"
-        ? referencedIdentifiers(current, excluded, decl.declarator)
-        : referenced;
+      if (!inClosure) continue;
+      const externalReferences = referencesOutsideModuleScopeDeclaration(
+        current,
+        decl,
+        nameRegistrations,
+      );
       const unused = decl.names.every((name) => !externalReferences.has(name));
-      if (!inClosure || !unused) continue;
+      if (!unused) continue;
 
       removedDecls.push(decl);
       for (const registration of nameRegistrations) {
@@ -1317,7 +1382,8 @@ export async function stripServerOnlyExports(
       );
     }
 
-    const residual = referencedIdentifiers(emittedBody);
+    const residual = freeReferencedIdentifiers({ type: "Program", body: emittedBody });
+    for (const binding of moduleScopeBindingNames(emittedBody)) residual.add(binding);
     for (const statement of emittedBody) {
       if (statement.type !== "ImportDeclaration") continue;
       for (const binding of importedBindings(statement)) residual.add(binding);
