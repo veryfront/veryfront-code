@@ -13,7 +13,18 @@
  *
  * esbuild cannot solve this for us: in transform mode (as opposed to bundle
  * mode) it never drops an import, because it cannot see that the binding was
- * used only by a server-only hook that this pass just emptied.
+ * used only by a server-only hook that this pass just emptied. Nor can its
+ * tree-shaker own the rest of the job (verified against esbuild 0.28.1, both
+ * modes): a destructured module-scope value (`const { a } = getEnv(…)`) is
+ * never shaken — even `@__PURE__`-annotated — because destructuring may
+ * trigger getters or throw; an impure hook-only initialiser is
+ * indistinguishable from client init (`getEnv(…)` vs `bootClientAnalytics()`)
+ * without exactly the closure analysis below; keepNames registration calls
+ * pin hook-only helpers alive; and no esbuild mode reduces an unrelated
+ * unused import to a bare side-effect import while deleting a hook-owned one.
+ * The distinction that drives every one of those decisions — membership in
+ * the stripped hook's dependency closure — is not expressible in a bundler's
+ * side-effect model, so this stage computes it itself.
  *
  * The pass runs on the AST from the `CodeParser` contract, for the same reason
  * `rendering/rsc/export-extractor.ts` does: a module is not text. Matching
@@ -43,16 +54,22 @@
  * A module that names a server-only export and cannot be analysed fails the
  * build. This is a server/client boundary: emitting the module unchanged would
  * put the loader, its imports and any credential it closes over into the
- * browser bundle, and a silent leak is worse than a stopped build.
+ * browser bundle, and a silent leak is worse than a stopped build. The same
+ * rule covers a hook this pass can *see* but cannot *stub* (a class, an
+ * imported binding re-exported under a hook name): the build stops rather than
+ * shipping the declaration. As a final fail-closed check, the pass verifies
+ * that no binding it decided to drop still appears in the output it is about
+ * to emit — a violated invariant fails the build instead of leaking.
  *
  * What this pass does: it empties hook bodies, drops the module-scope
- * declarations the hooks were the last reader of (so `const API_KEY =
- * getEnv(...)` used only by `getServerData` does not reach the browser), and
- * removes the hook-only imports that leaves unused. What it does NOT do: reason
- * about a value that is *also* read by browser code, or one reached only through
- * an existing bare side-effect import — those are kept. It is not a general
- * guarantee that every secret stays on the server, but a value used solely by a
- * server-only hook no longer leaks.
+ * declarations the hooks were the last reader of — including destructured
+ * ones, so neither `const API_KEY = getEnv(...)` nor `const { apiKey } =
+ * getEnv(...)` used only by `getServerData` reaches the browser — and removes
+ * the hook-only imports that leaves unused. What it does NOT do: reason about
+ * a value that is *also* read by browser code, or one reached only through an
+ * existing bare side-effect import — those are kept. It is not a general
+ * guarantee that every secret stays on the server, but a value used solely by
+ * a server-only hook no longer leaks.
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -147,14 +164,13 @@ async function parseStubs(parser: CodeParser): Promise<{ body: Node; init: Node 
   return { body, init };
 }
 
-/** Every binding name a destructuring pattern introduces. */
-function patternBoundNames(pattern: Node): string[] {
-  const names: string[] = [];
+/** Every identifier node a destructuring pattern binds (binding positions only). */
+function patternBindingIdentifiers(pattern: Node): Node[] {
+  const ids: Node[] = [];
 
   const collect = (node: Node): void => {
     if (node.type === "Identifier") {
-      const name = nodeName(node);
-      if (name) names.push(name);
+      ids.push(node);
       return;
     }
 
@@ -191,6 +207,16 @@ function patternBoundNames(pattern: Node): string[] {
 
   collect(pattern);
 
+  return ids;
+}
+
+/** Every binding name a destructuring pattern introduces. */
+function patternBoundNames(pattern: Node): string[] {
+  const names: string[] = [];
+  for (const id of patternBindingIdentifiers(pattern)) {
+    const name = nodeName(id);
+    if (name) names.push(name);
+  }
   return names;
 }
 
@@ -265,15 +291,20 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
 /**
  * Empty the body of every exported server-only hook. Emptying rather than
  * deleting keeps the binding, so an export clause or re-export stays valid.
+ *
+ * Returns the set of hook names that were actually emptied. The caller
+ * compares it against the full target set: a hook this pass identified but
+ * could not stub (a class declaration, an imported binding re-exported under
+ * a hook name) must fail the build, because emitting it unchanged would ship
+ * the server declaration to the browser.
  */
 function emptyServerOnlyHooks(
   body: Node[],
   targets: Set<string>,
   stubs: { body: Node; init: Node },
-): boolean {
-  if (targets.size === 0) return false;
-
-  let changed = false;
+): Set<string> {
+  const emptied = new Set<string>();
+  if (targets.size === 0) return emptied;
 
   const declarationsIn = (statement: Node): Node[] => {
     const declaration = statement.type === "ExportNamedDeclaration"
@@ -289,7 +320,7 @@ function emptyServerOnlyHooks(
         if (!name || !targets.has(name)) continue;
         declaration.params = [];
         declaration.body = structuredClone(stubs.body);
-        changed = true;
+        emptied.add(name);
         continue;
       }
 
@@ -302,12 +333,12 @@ function emptyServerOnlyHooks(
         const name = nodeName(declarator.id);
         if (!name || !targets.has(name)) continue;
         declarator.init = structuredClone(stubs.init);
-        changed = true;
+        emptied.add(name);
       }
     }
   }
 
-  return changed;
+  return emptied;
 }
 
 /**
@@ -371,8 +402,15 @@ interface ModuleScopeDecl {
  * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
  * whose bindings we could safely drop if nothing references them. Exported
  * declarations are part of the module's contract and are never candidates.
- * Destructuring declarations are skipped — a pattern can carry default-value
- * references, and a partial removal is not worth the risk.
+ *
+ * A destructuring declarator (`const { apiKey } = getEnv(...)`) is a candidate
+ * as a single unit carrying every name its pattern binds: it is removed only
+ * when *all* of them fall out of use, so a pattern the client still partly
+ * reads survives whole. This is what stops a destructured server value from
+ * shipping — esbuild's tree-shaker never removes a destructuring of a call,
+ * even a `@__PURE__`-annotated one, because the pattern itself may trigger
+ * getters or throw. Default-value and computed-key references inside the
+ * pattern are runtime reads and count against liveness like any other.
  */
 function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
   const decls: ModuleScopeDecl[] = [];
@@ -386,23 +424,26 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
     }
 
     if (statement.type === "VariableDeclaration") {
-      const variableDecls: ModuleScopeDecl[] = [];
-
       for (
         const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
       ) {
         if (!isNode(declarator)) continue;
         const id = declarator.id;
-        if (isNode(id) && id.type === "Identifier") {
-          const name = nodeName(id);
-          if (name) variableDecls.push({ statement, declarator, names: [name], bindingIds: [id] });
-        } else {
-          variableDecls.length = 0;
-          break;
-        }
-      }
+        if (!isNode(id)) continue;
 
-      decls.push(...variableDecls);
+        const bindingIds = id.type === "Identifier" ? [id] : patternBindingIdentifiers(id);
+        const names: string[] = [];
+        for (const bindingId of bindingIds) {
+          const name = nodeName(bindingId);
+          if (name) names.push(name);
+        }
+        // A pattern with an unnameable binding cannot be reasoned about; a
+        // pattern binding nothing (`const {} = …`) has no dead name to chase.
+        // Either way the declarator simply stays.
+        if (names.length === 0 || names.length !== bindingIds.length) continue;
+
+        decls.push({ statement, declarator, names, bindingIds });
+      }
     }
   }
 
@@ -894,8 +935,16 @@ function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
  * the hook graph — is left intact along with its side effect. Iterates to a
  * fixpoint: removing one binding can leave a helper it was the last user of
  * newly dead *within the closure*.
+ *
+ * Every binding name a removal takes out is added to `removedNames`, so the
+ * caller can verify — fail-closed — that none of them survives in the final
+ * output.
  */
-function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): Node[] {
+function dropUnusedModuleScopeBindings(
+  body: Node[],
+  hookClosure: Set<string>,
+  removedNames: Set<string>,
+): Node[] {
   let current = body;
 
   for (;;) {
@@ -957,6 +1006,7 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
     // chain that only fed the hook (`const RAW = getEnv(); const TOKEN = RAW…`)
     // is pruned end to end while unrelated declarations stay outside it.
     for (const decl of removedDecls) {
+      for (const name of decl.names) removedNames.add(name);
       for (const name of freeReferencedIdentifiers(decl.declarator ?? decl.statement)) {
         hookClosure.add(name);
       }
@@ -994,8 +1044,15 @@ function importedBindings(statement: Node): string[] {
  * bare side-effect import would keep its transitive graph in the browser
  * artifact, which is exactly what this stage strips. Other unused imports keep
  * the legacy conservative side-effect rewrite.
+ *
+ * Every binding a deletion or reduction removes is added to `removedNames` for
+ * the caller's fail-closed output verification.
  */
-function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[] {
+function dropUnusedImportBindings(
+  body: Node[],
+  hookClosure: Set<string>,
+  removedNames: Set<string>,
+): Node[] {
   const referenced = referencedIdentifiers(body);
 
   return body.filter((statement) => {
@@ -1006,6 +1063,8 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
     // Already a side-effect import: nothing to drop.
     if (bindings.length === 0) return true;
     if (bindings.some((binding) => referenced.has(binding))) return true;
+
+    for (const binding of bindings) removedNames.add(binding);
 
     const source = isNode(statement.source) ? statement.source.value : undefined;
     const isKnownDroppableSource = typeof source === "string" &&
@@ -1093,19 +1152,49 @@ export async function stripServerOnlyExports(
   if (unhandled.length > 0) {
     throw new ServerExportStripError(filePath, `it is exported as \`${unhandled[0]}\``);
   }
+  if (locals.size === 0) return code;
 
   // Capture what the hooks reference *before* emptying them, so pruning is
   // scoped to the hooks' dependency closure and never touches unrelated
   // top-level declarations (which may run browser side effects).
   const hookClosure = hookReferencedIdentifiers(body, locals);
 
-  if (!emptyServerOnlyHooks(body, locals, stubs)) return code;
+  // Fail closed on a hook this pass identified but could not stub — a class
+  // declaration, an imported binding re-exported under a hook name, or any
+  // other form outside `emptyServerOnlyHooks`'s reach. Emitting the module
+  // with the declaration intact would ship the loader to the browser.
+  const emptied = emptyServerOnlyHooks(body, locals, stubs);
+  const missed = [...locals].filter((name) => !emptied.has(name));
+  if (missed.length > 0) {
+    throw new ServerExportStripError(
+      filePath,
+      `\`${missed[0]}\` is exported but its declaration is not a function or ` +
+        `variable this pass can stub`,
+    );
+  }
 
   // Drop the module-scope state the emptied hooks were the last user of, then
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
-  const pruned = dropUnusedModuleScopeBindings(body, hookClosure);
-  setBody(ast, dropUnusedImportBindings(pruned, hookClosure));
+  const removedNames = new Set<string>();
+  const pruned = dropUnusedModuleScopeBindings(body, hookClosure, removedNames);
+  const finalBody = dropUnusedImportBindings(pruned, hookClosure, removedNames);
+
+  // Fail-closed output verification: every binding this pass decided to drop
+  // must be gone from the artifact about to be emitted. The prune passes only
+  // remove bindings they counted as unreferenced, so a hit here is a violated
+  // invariant — and the safe response to a violated invariant on a
+  // server/client boundary is a stopped build, not a silent leak.
+  const residual = referencedIdentifiers(finalBody);
+  const leaked = [...removedNames].filter((name) => residual.has(name));
+  if (leaked.length > 0) {
+    throw new ServerExportStripError(
+      filePath,
+      `the server-only binding \`${leaked[0]}\` still appears in the stripped output`,
+    );
+  }
+
+  setBody(ast, finalBody);
 
   const generated = await parser.generate(ast);
   return dropSourceMapSuffix(generated.code);
