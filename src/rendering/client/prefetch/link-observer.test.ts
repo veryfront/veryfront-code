@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
-import { scaleMs } from "#veryfront/testing/timing.ts";
+import { FakeTime } from "#std/testing/time";
 import { LinkObserver } from "./link-observer.ts";
 import type { LinkObserverOptions } from "./link-observer.ts";
 
@@ -455,6 +455,7 @@ describe("LinkObserver", () => {
 
     it("should respect delay option before calling onLinkVisible", async () => {
       await withMocksAsync(async (mocks) => {
+        using time = new FakeTime();
         const link = createLink();
 
         mocks.setDocument({
@@ -462,7 +463,8 @@ describe("LinkObserver", () => {
           body: {},
         });
 
-        const delayMs = scaleMs(50);
+        const delayMs = 50;
+        let callbackCalled = false;
         let callbackTime = 0;
 
         await withObserverAsync(
@@ -470,6 +472,7 @@ describe("LinkObserver", () => {
           createOptions({
             delay: delayMs,
             onLinkVisible: () => {
+              callbackCalled = true;
               callbackTime = Date.now();
             },
           }),
@@ -480,9 +483,12 @@ describe("LinkObserver", () => {
             const startTime = Date.now();
             mocks.getMockIntersectionObserver().triggerIntersection(link as any, true);
 
-            await delay(100);
+            await time.tickAsync(delayMs - 1);
+            assertEquals(callbackCalled, false);
 
-            assertEquals(callbackTime - startTime >= delayMs, true);
+            await time.tickAsync(1);
+            assertEquals(callbackCalled, true);
+            assertEquals(callbackTime - startTime, delayMs);
           },
         );
       });
