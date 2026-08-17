@@ -5,6 +5,7 @@ import { FIRST_PARTY_DEFERRED_BUILTIN_EXTENSION_POLICIES } from "#veryfront/exte
 import {
   createCompileArgs,
   DEFAULT_INCLUDES,
+  findMissingBakedV8Flags,
   PROXY_INCLUDES,
 } from "./compile-binary.ts";
 
@@ -527,6 +528,139 @@ it("proxy binary smoke runs only for same-repository pull requests", async () =>
     true,
     "the pull-request proxy job must not retain checkout credentials",
   );
+});
+
+it("full binary bakes the production heap limit as compile-time V8 flags", () => {
+  // Compiled binaries ignore DENO_V8_FLAGS at runtime, so the production
+  // chart's `--max-old-space-size=4096` never reached the release binary:
+  // every heap OOM in 30 days died at V8's ~2 GiB default while the manifest
+  // verifiably set 4096 (veryfront-issue-inbox#269). `deno compile --v8-flags`
+  // is the only channel through which a compiled artifact gets the flag.
+  // 4096 pins the deployment contract: production pods are sized (5 Gi limit)
+  // around a 4 GiB heap ceiling.
+  const args = createCompileArgs({
+    entrypoint: "cli/main.ts",
+    extraIncludes: [],
+    output: "veryfront",
+  });
+
+  assertEquals(
+    args.includes("--v8-flags=--max-old-space-size=4096"),
+    true,
+    `full profile must bake --max-old-space-size=4096 at compile time, got v8 flag args: ${
+      JSON.stringify(args.filter((arg) => arg.startsWith("--v8-flags")))
+    }`,
+  );
+});
+
+it("proxy binary keeps V8's default heap ceiling", () => {
+  // Proxy pods run under a 1536 MiB memory limit (smoke-proxy-memory.sh pins
+  // it). A baked 4 GiB old-space ceiling would let the heap grow past the
+  // cgroup limit and turn GC back-pressure into OOMKills.
+  const args = createCompileArgs({
+    extraIncludes: [],
+    output: "veryfront-proxy",
+    profile: "proxy",
+  });
+
+  assertEquals(
+    args.some((arg) => arg.startsWith("--v8-flags")),
+    false,
+    "the proxy profile must not inherit the full binary's baked heap ceiling",
+  );
+});
+
+it("compile-time V8 flags govern the compiled binary's real heap limit", async () => {
+  // Two legs, both needed for an honest claim:
+  //
+  // Leg 1 (mechanism): compile a probe with a 3000 MB sentinel old-space and
+  // run it. V8 defaults land near ~2 GiB (small hosts) or ~4 GiB (large
+  // hosts), never ~3 GiB, so the observed limit can only come from the baked
+  // flag -- and the DENO_V8_FLAGS in the child env documents that a runtime
+  // override cannot move it.
+  //
+  // Leg 2 (wiring): compile the same probe with exactly the `--v8-flags`
+  // arguments createCompileArgs emits for the release profile and assert the
+  // flag is serialized into the binary's trailer (`"v8_flags":[...]`). This
+  // is the check that can also run against real release artifacts CI cannot
+  // execute (cross-target), and it fails when the build invocation stops
+  // passing the flag.
+  const dir = await Deno.makeTempDir({ prefix: "veryfront-v8-flags-" });
+  try {
+    const probe = `${dir}/heap-probe.ts`;
+    await Deno.writeTextFile(
+      probe,
+      'const v8 = process.getBuiltinModule("node:v8");\n' +
+        "console.log(Math.round(v8.getHeapStatistics().heap_size_limit / (1024 * 1024)));\n",
+    );
+    const suffix = Deno.build.os === "windows" ? ".exe" : "";
+
+    const compileProbe = async (name: string, v8FlagArgs: string[]) => {
+      const output = `${dir}/${name}`;
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "compile",
+          "--no-config",
+          "--quiet",
+          "--allow-all",
+          ...v8FlagArgs,
+          "--output",
+          output,
+          probe,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        result.success,
+        true,
+        new TextDecoder().decode(result.stderr),
+      );
+      return `${output}${suffix}`;
+    };
+
+    const sentinelBinary = await compileProbe("heap-sentinel", [
+      "--v8-flags=--max-old-space-size=3000",
+    ]);
+    const run = await new Deno.Command(sentinelBinary, {
+      env: { DENO_V8_FLAGS: "--max-old-space-size=8192" },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    assertEquals(run.success, true, new TextDecoder().decode(run.stderr));
+    const limitMb = Number(new TextDecoder().decode(run.stdout).trim());
+    assertEquals(
+      limitMb >= 3000 && limitMb <= 3256,
+      true,
+      `expected heap_size_limit near the 3000 MB sentinel (old space plus young-generation overhead), got ${limitMb} MB -- baked v8-flags do not govern the compiled runtime`,
+    );
+
+    const releaseV8FlagArgs = createCompileArgs({
+      entrypoint: "cli/main.ts",
+      extraIncludes: [],
+      output: "veryfront",
+    }).filter((arg) => arg.startsWith("--v8-flags"));
+    const wiredBinary = await compileProbe(
+      "heap-release-flags",
+      releaseV8FlagArgs,
+    );
+    // The trailer serializes baked flags at the tail of a compact JSON
+    // array, after Deno's own defaults; the guard matches the joined baked
+    // flags plus the closing `]`, so an embedded source file containing the
+    // bare quoted flag cannot satisfy it. This assertion doubles as the
+    // empirical proof that the tail anchor matches a real artifact on the
+    // pinned Deno line.
+    const content = new TextDecoder("latin1").decode(
+      await Deno.readFile(wiredBinary),
+    );
+    assertEquals(
+      findMissingBakedV8Flags(content, ["--max-old-space-size=4096"]),
+      [],
+      "the release compile invocation must serialize --max-old-space-size=4096 into the binary trailer; without it production runs at V8's ~2 GiB default (veryfront-issue-inbox#269)",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 it("full binary remains the default compile profile", () => {
