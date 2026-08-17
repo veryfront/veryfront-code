@@ -149,9 +149,6 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   });
 }
 
-/** The synthetic shell route `buildEmbeddedPreset` prepends to every manifest. */
-const EMBEDDED_APP_SHELL_FILE = "embedded/app.js";
-
 /**
  * Total bytes of the artifacts the embedded manifest declares.
  *
@@ -271,14 +268,14 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
       type: "result",
       success: true,
       data: {
-        // `buildEmbeddedPreset` unshifts a synthetic `/` -> `embedded/app.js`
-        // shell route on top of the discovered ones, so counting every
-        // `type: "page"` reports one more page than the project has. Measured
-        // on a two-page fixture: routes are the shell, `/about`, and `/`, so
-        // the naive count says 3.
-        pages: manifest.routes.filter((route) =>
-          route.type === "page" && route.file !== EMBEDDED_APP_SHELL_FILE
-        ).length,
+        // Every route path is now published exactly once, so a plain count is
+        // correct. This previously excluded the shell route by file, because
+        // the preset published `/` twice — once as the shell and once as a
+        // duplicate dotfile artifact for the root page. With that duplicate
+        // gone the exclusion UNDERCOUNTS: a one-page project reported 0. The
+        // shell serves `/` whether or not the project has a root page, so it
+        // is a page either way.
+        pages: manifest.routes.filter((route) => route.type === "page").length,
         // The default path reports 0 for a build with no splitting stage, and
         // the embedded preset has none — which is why `--split` is rejected for
         // it above. Reporting 1 here would answer the same field differently
