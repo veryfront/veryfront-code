@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   describeServerExternalBrowserViolation,
   getConfiguredServerExternalPackage,
+  getConfiguredServerExternalRuntimeSpecifier,
   isServerOnlyPackage,
 } from "./server-only-packages.ts";
 
@@ -93,6 +94,26 @@ describe("isServerOnlyPackage", () => {
     assertEquals(
       getConfiguredServerExternalPackage("https://esm.sh/knex@3%5Clib", configured),
       "knex",
+    );
+  });
+
+  it("normalizes configured versioned packages for runtimes without npm specifiers", () => {
+    const configured = ["knex", "@prisma/client"];
+
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier("knex@3.1.0/query", configured),
+      "knex/query",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "npm:@prisma/client@6.0.0/runtime/library",
+        configured,
+      ),
+      "@prisma/client/runtime/library",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier("npm:knex@3.1.0/query", configured, true),
+      "npm:knex@3.1.0/query",
     );
   });
 

@@ -277,6 +277,7 @@ function rewriteBareImports(
     const runtimeSpecifier = getConfiguredServerExternalRuntimeSpecifier(
       specifier,
       serverExternalPackages,
+      isDeno,
     );
     if (runtimeSpecifier !== undefined) {
       return `from "${runtimeSpecifier}"`;
@@ -319,6 +320,7 @@ function rewriteConfiguredExternalImports(
     const runtimeSpecifier = getConfiguredServerExternalRuntimeSpecifier(
       specifier,
       serverExternalPackages,
+      isDeno,
     );
     return runtimeSpecifier === undefined || runtimeSpecifier === specifier
       ? null

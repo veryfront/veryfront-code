@@ -214,14 +214,16 @@ export function matchConfiguredServerExternalSpecifier(
       runtimeSpecifier: `${esmSh.packageName}${esmSh.subpath}`,
     };
   }
-  const candidate = stringStartsWith(specifier, "npm:")
-    ? stringSlice(specifier, "npm:".length)
-    : specifier;
+  const hasNpmProtocol = stringStartsWith(specifier, "npm:");
+  const candidate = hasNpmProtocol ? stringSlice(specifier, "npm:".length) : specifier;
   const parsed = parseBarePackageSpecifier(candidate);
   if (!parsed || !isConfiguredServerExternalPackage(parsed.packageName, configuredPackages)) {
     return undefined;
   }
-  return { packageName: parsed.packageName, runtimeSpecifier: specifier };
+  const runtimeSpecifier = hasNpmProtocol || parsed.version !== null
+    ? `${parsed.packageName}${parsed.subpath ?? ""}`
+    : specifier;
+  return { packageName: parsed.packageName, runtimeSpecifier };
 }
 
 /** Return the configured package root matched by a complete import specifier. */
@@ -232,12 +234,24 @@ export function getConfiguredServerExternalPackage(
   return matchConfiguredServerExternalSpecifier(specifier, configuredPackages)?.packageName;
 }
 
-/** Return the server-runtime form of a matched configured external import. */
+/**
+ * Return the server-runtime form of a matched configured external import.
+ *
+ * Installed Node-style packages cannot resolve inline versions or the `npm:`
+ * protocol. Deno may retain an `npm:` specifier because its resolver owns the
+ * declared version.
+ */
 export function getConfiguredServerExternalRuntimeSpecifier(
   specifier: string,
   configuredPackages?: readonly string[],
+  supportsNpmSpecifiers = false,
 ): string | undefined {
-  return matchConfiguredServerExternalSpecifier(specifier, configuredPackages)?.runtimeSpecifier;
+  const match = matchConfiguredServerExternalSpecifier(specifier, configuredPackages);
+  if (match === undefined) return undefined;
+
+  const hasNpmProtocol = stringStartsWith(specifier, "npm:");
+  if (hasNpmProtocol && supportsNpmSpecifiers) return specifier;
+  return match.runtimeSpecifier;
 }
 
 /** Safe, actionable diagnostic for an explicitly declared server package crossing into a client build. */

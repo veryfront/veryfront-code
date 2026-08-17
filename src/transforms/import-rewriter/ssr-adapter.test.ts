@@ -62,6 +62,23 @@ describe("ssr-adapter — server external packages", () => {
     assertEquals(result.includes("esm.sh"), false);
   });
 
+  it("normalizes configured versioned bare imports to installed runtime packages", async () => {
+    const code = [
+      `import knex from "knex@3.1.0";`,
+      `import "@prisma/client@6.0.0/runtime/library";`,
+      `const query = import("knex@3.1.0/query");`,
+    ].join("\n");
+    const expected = [
+      `import knex from "knex";`,
+      `import "@prisma/client/runtime/library";`,
+      `const query = import("knex/query");`,
+    ].join("\n");
+    const options = { serverExternalPackages: ["knex", "@prisma/client"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
   it("normalizes configured esm.sh side-effect and dynamic imports", async () => {
     const code = [
       `import "https://esm.sh/knex@3.1.0";`,

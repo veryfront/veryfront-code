@@ -1,6 +1,8 @@
 import {
+  getConfiguredServerExternalRuntimeSpecifier,
   matchConfiguredServerExternalSpecifier,
 } from "#veryfront/transforms/shared/server-only-packages.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import {
   assertNoConfiguredCommonJsBrowserImports,
   throwConfiguredServerExternalBrowserViolation,
@@ -144,7 +146,14 @@ function rewriteConfiguredServerExternal(
     throwConfiguredServerExternalBrowserViolation(specifier, match.packageName, ctx);
   }
 
-  if (match.runtimeSpecifier !== specifier) return { specifier: match.runtimeSpecifier };
+  const runtimeSpecifier = getConfiguredServerExternalRuntimeSpecifier(
+    specifier,
+    ctx.serverExternalPackages,
+    isDeno,
+  );
+  if (runtimeSpecifier !== undefined && runtimeSpecifier !== specifier) {
+    return { specifier: runtimeSpecifier };
+  }
 
   // A configured server external is terminal even though preserving the
   // original specifier is represented by a null rewrite. Import maps and

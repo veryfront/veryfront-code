@@ -152,6 +152,18 @@ describe("rewriteImports with the default strategies", () => {
     assertEquals(result, code);
   });
 
+  it("normalizes configured versioned bare packages for SSR", async () => {
+    const result = await rewriteImports(
+      `import query from "knex@3.1.0/query";`,
+      defaultCtx({
+        target: "ssr",
+        serverExternalPackages: ["knex"],
+      }),
+    );
+
+    assertEquals(result, `import query from "knex/query";`);
+  });
+
   it("rejects configured canonical esm.sh packages in browser rewrites", async () => {
     for (
       const specifier of [
