@@ -13,6 +13,7 @@ import {
 } from "./openai.ts";
 import {
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
 } from "./model-catalog.ts";
 
@@ -105,6 +106,10 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
       const openAITransport = resolveVeryfrontCloudOpenAITransport(
         `openai/${upstreamModelId}`,
       );
+      const openAIChatReasoningWithFunctionTools =
+        resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
+          `openai/${upstreamModelId}`,
+        );
       if (shouldUseOpenAIResponsesRuntime(upstreamModelId)) {
         if (openai?.createResponses) {
           return wrapVeryfrontCloudModel(
@@ -135,6 +140,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
             baseURL,
             name: "veryfront-cloud",
             providerName: "veryfront-cloud",
+            openAIChatReasoningWithFunctionTools,
             openAITransport,
             fetch,
           }),
@@ -145,6 +151,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
         createVeryfrontCloudOpenAIModel(upstreamModelId, {
           apiToken,
           baseURL,
+          openAIChatReasoningWithFunctionTools,
           openAITransport,
           fetch,
         }),

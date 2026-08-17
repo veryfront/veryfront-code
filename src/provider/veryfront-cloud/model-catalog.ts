@@ -72,6 +72,7 @@ export function normalizeVeryfrontCloudProviderAlias(
 type VeryfrontCloudModelTransportCapabilities = {
   readonly anthropicThinkingMode?: "adaptive";
   readonly openAITransport?: "chat-completions" | "responses";
+  readonly openAIChatReasoningWithFunctionTools?: boolean;
 };
 
 /**
@@ -86,8 +87,20 @@ const VERYFRONT_CLOUD_MODEL_TRANSPORT_CAPABILITIES = new Map<
 >([
   ["anthropic/claude-opus-4-7", Object.freeze({ anthropicThinkingMode: "adaptive" })],
   ["anthropic/claude-opus-4-8", Object.freeze({ anthropicThinkingMode: "adaptive" })],
-  ["openai/gpt-5.4", Object.freeze({ openAITransport: "chat-completions" })],
-  ["openai/gpt-5.5", Object.freeze({ openAITransport: "chat-completions" })],
+  [
+    "openai/gpt-5.4",
+    Object.freeze({
+      openAITransport: "chat-completions",
+      openAIChatReasoningWithFunctionTools: false,
+    }),
+  ],
+  [
+    "openai/gpt-5.5",
+    Object.freeze({
+      openAITransport: "chat-completions",
+      openAIChatReasoningWithFunctionTools: false,
+    }),
+  ],
 ]);
 
 function getVeryfrontCloudModelTransportCapabilities(
@@ -103,6 +116,14 @@ export function resolveVeryfrontCloudOpenAITransport(
   modelId: string,
 ): "chat-completions" | "responses" | undefined {
   return getVeryfrontCloudModelTransportCapabilities(modelId)?.openAITransport;
+}
+
+/** Resolves whether a model's Chat transport can combine reasoning with function tools. */
+export function resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
+  modelId: string,
+): boolean | undefined {
+  return getVeryfrontCloudModelTransportCapabilities(modelId)
+    ?.openAIChatReasoningWithFunctionTools;
 }
 
 /** Returns true if the given model ID is a Mistral model in the catalog. */

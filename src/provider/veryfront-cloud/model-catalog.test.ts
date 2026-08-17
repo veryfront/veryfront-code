@@ -14,6 +14,7 @@ import {
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAIChatFunctionToolReasoning,
   resolveVeryfrontCloudOpenAITransport,
   resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
@@ -214,6 +215,27 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.2"), undefined);
     assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.4-mini"), undefined);
     assertEquals(resolveVeryfrontCloudOpenAITransport("openai/gpt-5.4-nano"), undefined);
+  });
+
+  it("resolves model-specific Chat function-tool reasoning capabilities", () => {
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("openai/gpt-5.5"),
+      false,
+    );
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning(
+        "veryfront-cloud/openai/gpt-5.5",
+      ),
+      false,
+    );
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("openai/gpt-5.4"),
+      false,
+    );
+    assertEquals(
+      resolveVeryfrontCloudOpenAIChatFunctionToolReasoning("openai/gpt-5.4-nano"),
+      undefined,
+    );
   });
 
   it("rejects non-positive and non-safe thinking budgets", () => {

@@ -20,6 +20,10 @@ export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions
   parallelToolCalls?: boolean;
 }
 
+export type OpenAIChatRequestCapabilities = {
+  readonly reasoningWithFunctionTools?: boolean;
+};
+
 /** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider` instead. */
 export type RuntimeToolDefinition = ModelRuntimeToolDefinition;
 
@@ -52,8 +56,34 @@ export function buildOpenAIChatRequest(
   options: OpenAICompatibleLanguageOptions,
   stream: boolean,
   warnings: WarningCollector,
+  capabilities?: OpenAIChatRequestCapabilities,
 ): OpenAICompatibleChatRequest {
-  const reasoning = resolveOpenAIReasoningConfig(modelId, providerName, options.reasoning);
+  const tools = toOpenAICompatibleTools(options.tools);
+  // Env-BYOK users historically registered options under "openai-compatible";
+  // keep merging that bucket at the lowest precedence. max_tokens is normalized
+  // per bucket BEFORE merging so a higher-precedence bucket's max_tokens
+  // override still beats a lower bucket's max_completion_tokens.
+  const bucketNames = [
+    ...(providerName === "openai" ? ["openai-compatible"] : []),
+    "openai",
+    providerName,
+  ];
+  const providerOpts: Record<string, unknown> = {};
+  for (const bucketName of bucketNames) {
+    defineOpenAIProviderOptions(
+      providerOpts,
+      normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
+    );
+  }
+  const finalTools = Object.hasOwn(providerOpts, "tools") ? providerOpts.tools : tools;
+  const resolvedReasoning = resolveOpenAIReasoningConfig(
+    modelId,
+    providerName,
+    options.reasoning,
+  );
+  const suppressReasoningForFunctionTools = hasOpenAIFunctionTools(finalTools) &&
+    capabilities?.reasoningWithFunctionTools === false;
+  const reasoning = suppressReasoningForFunctionTools ? undefined : resolvedReasoning;
   const reasoningEnabled = reasoning !== undefined;
   const samplingRejected = rejectsOpenAISamplingParams(modelId);
   const fixedSampling = isFixedSamplingModel(modelId);
@@ -111,9 +141,7 @@ export function buildOpenAIChatRequest(
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop: [...options.stopSequences] }
       : {}),
-    ...(toOpenAICompatibleTools(options.tools)
-      ? { tools: toOpenAICompatibleTools(options.tools) }
-      : {}),
+    ...(tools ? { tools } : {}),
     ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(!dropSamplingParams && options.presencePenalty !== undefined
@@ -149,23 +177,6 @@ export function buildOpenAIChatRequest(
       : {}),
   };
 
-  // Env-BYOK users historically registered options under "openai-compatible";
-  // keep merging that bucket at the lowest precedence. max_tokens is normalized
-  // per bucket BEFORE merging so a higher-precedence bucket's max_tokens
-  // override still beats a lower bucket's max_completion_tokens.
-  const bucketNames = [
-    ...(providerName === "openai" ? ["openai-compatible"] : []),
-    "openai",
-    providerName,
-  ];
-  const providerOpts: Record<string, unknown> = {};
-  for (const bucketName of bucketNames) {
-    defineOpenAIProviderOptions(
-      providerOpts,
-      normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
-    );
-  }
-
   defineOpenAIProviderOptions(body as Record<string, unknown>, providerOpts);
   // Provider-native options may tune request behavior, but they must not
   // replace the runtime-owned transport mode, model, or conversation.
@@ -178,7 +189,36 @@ export function buildOpenAIChatRequest(
     delete body.stream;
     delete body.stream_options;
   }
+  if (suppressReasoningForFunctionTools) {
+    if (resolvedReasoning !== undefined || body.reasoning_effort !== undefined) {
+      warnings.push({
+        type: "unsupported-setting",
+        provider: "openai",
+        setting: "reasoning",
+        details: "Veryfront drops reasoning because this Chat Completions transport " +
+          "does not support reasoning alongside function tools.",
+      });
+    }
+    delete body.reasoning_effort;
+  }
   return body;
+}
+
+function hasOpenAIFunctionTools(value: unknown): boolean {
+  if (!Array.isArray(value)) {
+    return false;
+  }
+  for (const tool of value) {
+    if (
+      typeof tool === "object" &&
+      tool !== null &&
+      "type" in tool &&
+      tool.type === "function"
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Normalizes max_tokens to max_completion_tokens for native OpenAI models. */

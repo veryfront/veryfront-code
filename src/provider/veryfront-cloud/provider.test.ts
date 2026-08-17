@@ -228,7 +228,7 @@ describe("provider/veryfront-cloud", () => {
         system: "You are concise.",
       });
 
-      const result = await assistant.generate({ input: "Hi" });
+      const result = await assistant.generate({ input: "Hi", maxOutputTokens: 32 });
       assertEquals(result.text, "Hello");
     }
 
@@ -241,7 +241,25 @@ describe("provider/veryfront-cloud", () => {
     );
     assertEquals(
       capturedRequests.map(({ body }) => body.reasoning_effort),
-      ["medium", "medium"],
+      [undefined, undefined],
+    );
+    assertEquals(
+      capturedRequests.map(({ body }) =>
+        (body.tools as Array<{ function?: { name?: string } }> | undefined)?.some(
+          (tool) => tool.function?.name === "load_skill",
+        )
+      ),
+      [true, true],
+    );
+    assertEquals(
+      capturedRequests.map(({ body }) => ({
+        maxTokens: body.max_tokens,
+        maxCompletionTokens: body.max_completion_tokens,
+      })),
+      [
+        { maxTokens: undefined, maxCompletionTokens: 32 },
+        { maxTokens: undefined, maxCompletionTokens: 32 },
+      ],
     );
   });
 
