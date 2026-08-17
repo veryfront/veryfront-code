@@ -1591,9 +1591,31 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
   return nodeName(node.object) === "Object" && propertyName === "defineProperty";
 }
 
+/**
+ * Whether writing to `target` could replace `Object.defineProperty`.
+ *
+ * `isObjectDefineProperty` proves the base is the bare `Object` identifier,
+ * which a write target does not have to be: `globalThis.Object.defineProperty
+ * = record` reaches the same slot through the global object, and
+ * `Object[key] = record` reaches it through a key this stage cannot evaluate.
+ * Neither base can be proven to be something else, so any write to a member
+ * named `defineProperty`, and any computed write on `Object`, fails closed.
+ */
+function writesDefinePropertyMember(target: Node): boolean {
+  if (target.type !== "MemberExpression" && target.type !== "OptionalMemberExpression") {
+    return false;
+  }
+
+  const property = isNode(target.property) ? target.property : undefined;
+  if (target.computed !== true) return nodeName(property) === "defineProperty";
+
+  const key = stringLiteralText(property);
+  return key === null ? nodeName(target.object) === "Object" : key === "defineProperty";
+}
+
 function writesObjectDefineProperty(body: Node[]): boolean {
   const targetWritesDefineProperty = (target: Node): boolean => {
-    if (isObjectDefineProperty(target)) return true;
+    if (writesDefinePropertyMember(target)) return true;
     if (target.type === "AssignmentPattern") {
       return isNode(target.left) && targetWritesDefineProperty(target.left);
     }
@@ -1792,7 +1814,9 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   // (target, value) => Object.defineProperty(…)` the observable first call
   // would be deleted as metadata. A hoisted redeclaration below the top level
   // rebinds the same way without appearing here at all, so both shapes are
-  // rejected and stay ordinary user code.
+  // rejected and stay ordinary user code. A `function` declaration sharing a
+  // `var`'s name needs no entry here: that is a redeclaration a module cannot
+  // have, and the parse failure already stops the build.
   const initializers = new Map<string, Node>();
   const rebound = new Set<string>(hoisted);
   for (const statement of body) {
