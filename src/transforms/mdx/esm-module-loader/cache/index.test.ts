@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path";
 import {
   clearAllLocalCaches,
+  clearESMDiskCache,
   clearMdxEsmCacheNamespace,
   clearModulePathCache,
   getLocalFs,
@@ -20,12 +21,15 @@ import {
 } from "./index.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { exists, readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
-import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { getCycleManifestGeneration } from "../cycle-manifest-lifecycle.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
 import {
   buildMdxEsmModuleFileName,
   buildMdxEsmPathCacheKey,
+  CYCLE_MANIFEST_SIDECAR_SUFFIX,
+  getCycleManifestCacheDir,
   UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
 } from "../cache-format.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
@@ -83,11 +87,17 @@ describe("MDX module path cache", () => {
         const ssrCacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
         const cachedPath = join(cacheDir, "stale.mjs");
         const ssrCachedPath = join(ssrCacheDir, "stale-ssr.mjs");
+        const cycleArtifactPath = join(
+          getCycleManifestCacheDir(cacheDir),
+          "0-stale/artifacts/0.deadbeef.js",
+        );
 
         await getLocalFs().mkdir(cacheDir, { recursive: true });
         await getLocalFs().mkdir(ssrCacheDir, { recursive: true });
         await writeTextFile(cachedPath, "export default function Stale() {}");
         await writeTextFile(ssrCachedPath, "export default function StaleSSR() {}");
+        await getLocalFs().mkdir(join(cycleArtifactPath, ".."), { recursive: true });
+        await writeTextFile(cycleArtifactPath, "export default 'cycle';");
 
         const cache = await getModulePathCache(cacheDir);
         cache.set(cacheKey, cachedPath);
@@ -100,6 +110,7 @@ describe("MDX module path cache", () => {
 
         assertEquals(await exists(cachedPath), false);
         assertEquals(await exists(ssrCachedPath), false);
+        assertEquals(await exists(cycleArtifactPath), false);
         assertEquals((await getModulePathCache(cacheDir)).get(cacheKey), undefined);
         assertEquals((await getModulePathCache(ssrCacheDir)).get(cacheKey), undefined);
         assertEquals(verifiedModuleDeps.get(`${cachedPath}:${cacheKey}`), undefined);
@@ -175,6 +186,14 @@ describe("MDX module path cache", () => {
         const legacyParentPath = join(legacyParentDir, "parent.mjs");
         const legacyChildPath = join(legacyChildDir, "child-legacy.mjs");
         const currentChildPath = join(currentChildDir, "child-current.mjs");
+        const legacyChildCyclePath = join(
+          getCycleManifestCacheDir(legacyChildDir),
+          "0-stale/artifacts/0.deadbeef.js",
+        );
+        const currentChildCyclePath = join(
+          getCycleManifestCacheDir(currentChildDir),
+          "0-current/artifacts/0.cafebabe.js",
+        );
 
         await getLocalFs().mkdir(legacyParentDir, { recursive: true });
         await getLocalFs().mkdir(legacyChildDir, { recursive: true });
@@ -182,6 +201,10 @@ describe("MDX module path cache", () => {
         await writeTextFile(legacyParentPath, "export default 'legacy-parent';");
         await writeTextFile(legacyChildPath, "export default 'legacy-child';");
         await writeTextFile(currentChildPath, "export default 'current-child';");
+        await getLocalFs().mkdir(join(legacyChildCyclePath, ".."), { recursive: true });
+        await getLocalFs().mkdir(join(currentChildCyclePath, ".."), { recursive: true });
+        await writeTextFile(legacyChildCyclePath, "export default 'legacy-cycle';");
+        await writeTextFile(currentChildCyclePath, "export default 'current-cycle';");
 
         const legacyParentCache = await getModulePathCache(legacyParentDir);
         legacyParentCache.set(cacheKey, legacyParentPath);
@@ -198,6 +221,8 @@ describe("MDX module path cache", () => {
         assertEquals(await exists(legacyParentPath), false);
         assertEquals(await exists(legacyChildPath), false);
         assertEquals(await exists(currentChildPath), true);
+        assertEquals(await exists(legacyChildCyclePath), false);
+        assertEquals(await exists(currentChildCyclePath), true);
         assertEquals((await getModulePathCache(legacyParentDir)).get(cacheKey), undefined);
         assertEquals((await getModulePathCache(legacyChildDir)).get(cacheKey), undefined);
         assertEquals((await getModulePathCache(currentChildDir)).get(cacheKey), currentChildPath);
@@ -242,6 +267,52 @@ describe("MDX module path cache", () => {
         remove(cacheDirA, { recursive: true }),
         remove(cacheDirB, { recursive: true }),
       ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("keeps cycle storage outside every content-source namespace", async () => {
+    const cacheBase = await makeTempDir({ prefix: "vf-cycle-namespace-isolation-" });
+
+    try {
+      await runWithCacheDir(cacheBase, () => {
+        const projectDir = join(cacheBase, "veryfront-mdx-esm", "project");
+        const mainCacheDir = join(projectDir, "main");
+        const collidingSourceDir = join(projectDir, "main.veryfront-cycle-manifests");
+
+        assertEquals(getCycleManifestCacheDir(mainCacheDir) === collidingSourceDir, false);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true });
+    }
+  });
+
+  it("removes persisted generations that predate a fresh-process full clear", async () => {
+    const cacheBase = await makeTempDir({ prefix: "vf-cycle-fresh-clear-" });
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const cacheDir = join(getMdxEsmCacheDir(), "project", "source");
+        const staleArtifact = join(
+          getCycleManifestCacheDir(cacheDir),
+          "7-stale/artifacts/0.deadbeef.js",
+        );
+        const futureDatedArtifact = join(
+          getCycleManifestCacheDir(cacheDir),
+          `${Number.MAX_SAFE_INTEGER}-stale/artifacts/0.cafebabe.js`,
+        );
+        await getLocalFs().mkdir(join(staleArtifact, ".."), { recursive: true });
+        await getLocalFs().mkdir(join(futureDatedArtifact, ".."), { recursive: true });
+        await writeTextFile(staleArtifact, `export default "stale";`);
+        await writeTextFile(futureDatedArtifact, `export default "future-stale";`);
+
+        await clearESMDiskCache();
+
+        assertEquals(await exists(staleArtifact), false);
+        assertEquals(await exists(futureDatedArtifact), false);
+      });
+    } finally {
+      await remove(cacheBase, { recursive: true }).catch(() => {});
       clearModulePathCache();
     }
   });
@@ -462,10 +533,12 @@ describe("invalidateModulePaths — disk persistence", () => {
     const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
     const staleMjsPath = join(cacheDir, buildMdxEsmModuleFileName("stale-evidence"));
     const evidencePath = `${staleMjsPath}${UNRESOLVED_IMPORTS_SIDECAR_SUFFIX}`;
+    const cycleEvidencePath = `${staleMjsPath}${CYCLE_MANIFEST_SIDECAR_SUFFIX}`;
 
     try {
       await writeTextFile(staleMjsPath, `export default "stale";`);
       await writeTextFile(evidencePath, JSON.stringify(["./missing"]));
+      await writeTextFile(cycleEvidencePath, `{}`);
       await writeTextFile(
         join(cacheDir, "_index.json"),
         JSON.stringify({ [versionedKey]: staleMjsPath }),
@@ -477,7 +550,185 @@ describe("invalidateModulePaths — disk persistence", () => {
 
       assertEquals(await exists(staleMjsPath), false);
       assertEquals(await exists(evidencePath), false);
+      assertEquals(await exists(cycleEvidencePath), false);
     } finally {
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+      clearModulePathCache();
+    }
+  });
+
+  it("deletes every cycle generation for an affected cache directory", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-invalidate-cycle-" });
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const manifestDir = getCycleManifestCacheDir(cacheDir);
+    const oldGraphDir = join(manifestDir, "0-graph-a");
+    const currentGraphDir = join(manifestDir, "0-graph-b");
+    const staleModulePath = join(currentGraphDir, "artifacts", "0.deadbeef.js");
+
+    try {
+      await Deno.mkdir(join(oldGraphDir, "artifacts"), { recursive: true });
+      await Deno.writeTextFile(
+        join(oldGraphDir, "artifacts", "0.cafebabe.js"),
+        `export default "orphaned";`,
+      );
+      await Deno.mkdir(join(currentGraphDir, "artifacts"), { recursive: true });
+      await writeTextFile(staleModulePath, `export default "stale";`);
+      await writeTextFile(`${staleModulePath}.cycle-manifest.json`, `{}`);
+      await writeTextFile(
+        join(cacheDir, "_index.json"),
+        JSON.stringify({ [versionedKey]: staleModulePath }),
+      );
+      await getModulePathCache(cacheDir);
+
+      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await waitForDiskCleanup();
+
+      assertEquals(await exists(manifestDir), false);
+    } finally {
+      await remove(manifestDir, { recursive: true }).catch(() => {});
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+      clearModulePathCache();
+    }
+  });
+
+  it("does not delete a graph published after invalidation begins", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-invalidate-cycle-race-" });
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const manifestDir = getCycleManifestCacheDir(cacheDir);
+    const staleGeneration = getCycleManifestGeneration(manifestDir);
+    const staleGraphDir = join(manifestDir, `${staleGeneration}-stale`);
+    const freshGraphDir = join(manifestDir, `${staleGeneration + 1}-fresh`);
+    const staleModulePath = join(staleGraphDir, "artifacts", "0.deadbeef.js");
+    const freshModulePath = join(freshGraphDir, "artifacts", "0.cafebabe.js");
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    let releaseRead!: () => void;
+    const readReleased = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let reportReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      reportReadStarted = resolve;
+    });
+
+    try {
+      await Deno.mkdir(join(staleGraphDir, "artifacts"), { recursive: true });
+      await writeTextFile(staleModulePath, `export default "stale";`);
+      await writeTextFile(
+        join(cacheDir, "_index.json"),
+        JSON.stringify({ [versionedKey]: staleModulePath }),
+      );
+      const cache = await getModulePathCache(cacheDir);
+
+      localFs.readDir = (path: string): ReturnType<typeof originalReadDir> => {
+        if (path !== manifestDir) return originalReadDir(path);
+        return (async function* () {
+          reportReadStarted();
+          await readReleased;
+          yield* originalReadDir(path);
+        })();
+      };
+
+      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await readStarted;
+      await Deno.mkdir(join(freshGraphDir, "artifacts"), { recursive: true });
+      await writeTextFile(freshModulePath, `export default "fresh";`);
+      cache.set(versionedKey, freshModulePath);
+      releaseRead();
+      await waitForDiskCleanup();
+
+      assertEquals(await exists(staleGraphDir), false);
+      assertEquals(await exists(freshModulePath), true);
+      assertEquals(cache.get(versionedKey), freshModulePath);
+    } finally {
+      releaseRead();
+      localFs.readDir = originalReadDir;
+      await remove(manifestDir, { recursive: true }).catch(() => {});
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+      clearModulePathCache();
+    }
+  });
+
+  it("does not delete the latest graph after rapid invalidations", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-invalidate-cycle-rapid-" });
+    const versionedKey = buildMdxEsmPathCacheKey("_vf_modules/components/EmptyState.js");
+    const manifestDir = getCycleManifestCacheDir(cacheDir);
+    const initialGeneration = getCycleManifestGeneration(manifestDir);
+    const initialGraphDir = join(manifestDir, `${initialGeneration}-initial`);
+    const initialModulePath = join(initialGraphDir, "artifacts", "0.deadbeef.js");
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    let releaseRead!: () => void;
+    const readReleased = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let reportReadStarted!: () => void;
+    const readStarted = new Promise<void>((resolve) => {
+      reportReadStarted = resolve;
+    });
+
+    try {
+      await Deno.mkdir(join(initialGraphDir, "artifacts"), { recursive: true });
+      await writeTextFile(initialModulePath, `export default "initial";`);
+      await writeTextFile(
+        join(cacheDir, "_index.json"),
+        JSON.stringify({ [versionedKey]: initialModulePath }),
+      );
+      const cache = await getModulePathCache(cacheDir);
+
+      let intercepted = false;
+      localFs.readDir = (path: string): ReturnType<typeof originalReadDir> => {
+        if (path !== manifestDir || intercepted) return originalReadDir(path);
+        intercepted = true;
+        return (async function* () {
+          reportReadStarted();
+          await readReleased;
+          yield* originalReadDir(path);
+        })();
+      };
+
+      invalidateModulePaths(["components/EmptyState.tsx"]);
+      await readStarted;
+
+      const intermediateGeneration = getCycleManifestGeneration(manifestDir);
+      const intermediateGraphDir = join(
+        manifestDir,
+        `${intermediateGeneration}-intermediate`,
+      );
+      const intermediateModulePath = join(
+        intermediateGraphDir,
+        "artifacts",
+        "0.cafebabe.js",
+      );
+      await Deno.mkdir(join(intermediateGraphDir, "artifacts"), { recursive: true });
+      await writeTextFile(intermediateModulePath, `export default "intermediate";`);
+      cache.set(versionedKey, intermediateModulePath);
+
+      invalidateModulePaths(["components/EmptyState.tsx"]);
+      const latestGeneration = getCycleManifestGeneration(manifestDir);
+      const latestGraphDir = join(manifestDir, `${latestGeneration}-latest`);
+      const latestModulePath = join(latestGraphDir, "artifacts", "0.8badf00d.js");
+      await Deno.mkdir(join(latestGraphDir, "artifacts"), { recursive: true });
+      await writeTextFile(latestModulePath, `export default "latest";`);
+      cache.set(versionedKey, latestModulePath);
+
+      releaseRead();
+      await waitForDiskCleanup();
+
+      assertEquals(await exists(initialGraphDir), false);
+      assertEquals(await exists(intermediateGraphDir), false);
+      assertEquals(await exists(latestModulePath), true);
+      assertEquals(cache.get(versionedKey), latestModulePath);
+    } finally {
+      releaseRead();
+      localFs.readDir = originalReadDir;
+      await remove(manifestDir, { recursive: true }).catch(() => {});
       await remove(cacheDir, { recursive: true }).catch(() => {});
       clearModulePathCache();
     }
@@ -1300,7 +1551,14 @@ describe("local cache root version-control hygiene", () => {
 
     try {
       await runWithCacheDir(cacheBase, async () => {
+        const cycleArtifactPath = join(
+          getCycleManifestCacheDir(join(cacheBase, "veryfront-mdx-esm/project/source")),
+          "0-stale/artifacts/0.deadbeef.js",
+        );
+        await getLocalFs().mkdir(join(cycleArtifactPath, ".."), { recursive: true });
+        await writeTextFile(cycleArtifactPath, "export default 'stale-cycle';");
         await clearAllLocalCaches();
+        assertEquals(await exists(cycleArtifactPath), false);
       });
 
       const ignorePath = join(cacheBase, ".gitignore");

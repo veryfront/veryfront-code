@@ -1,5 +1,8 @@
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { hashString as hashCachePath } from "#veryfront/cache/hash.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import {
@@ -13,6 +16,18 @@ const ALL_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+)/.source;
 const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
 const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
 export const UNRESOLVED_IMPORTS_SIDECAR_SUFFIX = ".unresolved-imports.json";
+const CYCLE_MANIFEST_CACHE_DIR = "veryfront-cycle-manifests";
+export const CYCLE_MANIFEST_SIDECAR_SUFFIX = ".cycle-manifest.json";
+
+/** Cache-wide storage that no project or content-source namespace can occupy. */
+export function getCycleManifestCacheRootDir(): string {
+  return join(getCacheBaseDir(), CYCLE_MANIFEST_CACHE_DIR);
+}
+
+/** Storage outside the project-relative artifact namespace for one cache dir. */
+export function getCycleManifestCacheDir(cacheDir: string): string {
+  return join(getCycleManifestCacheRootDir(), hashCachePath(cacheDir));
+}
 const MDX_ESM_PATH_CACHE_ATTRIBUTION_SCHEMA = "unresolved-import-sidecars-v1";
 const PUBLIC_RUNTIME_SPECIFIERS = [
   "veryfront/head",

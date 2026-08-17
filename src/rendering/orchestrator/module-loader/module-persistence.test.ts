@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
@@ -12,6 +12,7 @@ import {
 import {
   persistTransformedModule,
   readPersistedUnresolvedSpecifiers,
+  transformedModuleHasDefaultExport,
 } from "./module-persistence.ts";
 
 describe("module-loader/module-persistence", () => {
@@ -63,7 +64,46 @@ describe("module-loader/module-persistence", () => {
     }
   });
 
-  it("isolates dynamic-cycle artifacts and aliases across dependency snapshots", async () => {
+  it("defers memory and path-cache publication until the graph commits", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.ts");
+    const moduleCache = new Map<string, string>();
+    let publication: (() => Promise<void>) | undefined;
+
+    try {
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const page = 1;",
+        localAdapter,
+        moduleCache,
+        cacheKey: "deferred",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        deferCachePublication: (publish) => {
+          publication = publish;
+        },
+      });
+
+      const pathCache = await getModulePathCache(tmpDir);
+      const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+      assertEquals(moduleCache.has("deferred"), false);
+      assertEquals(pathCache.has(mdxCacheKey), false);
+
+      await publication?.();
+
+      assertEquals(moduleCache.get("deferred"), result);
+      assertEquals(pathCache.get(mdxCacheKey), result);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("isolates artifacts across dependency snapshots", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
@@ -81,7 +121,6 @@ describe("module-loader/module-persistence", () => {
         cacheKey: "snapshot-a",
         dependencyPinningCacheKey: "on:34n9smy47dk9",
         moduleServerOrigin: "https://app.example.test",
-        isCycleTarget: true,
       });
       const snapshotBPath = await persistTransformedModule({
         filePath,
@@ -93,28 +132,18 @@ describe("module-loader/module-persistence", () => {
         cacheKey: "snapshot-b",
         dependencyPinningCacheKey: "on:34n8mjmdp7io",
         moduleServerOrigin: "https://app.example.test",
-        isCycleTarget: true,
       });
 
       assertNotEquals(dirname(snapshotAPath), dirname(snapshotBPath));
-
-      const snapshotAAlias = await Deno.readTextFile(join(dirname(snapshotAPath), "page.js"));
-      const snapshotBAlias = await Deno.readTextFile(join(dirname(snapshotBPath), "page.js"));
-      assertStringIncludes(
-        snapshotAAlias,
-        `export * from "./${basename(snapshotAPath)}";`,
-      );
-      assertStringIncludes(
-        snapshotBAlias,
-        `export * from "./${basename(snapshotBPath)}";`,
-      );
+      assertEquals(await Deno.readTextFile(snapshotAPath), `export const snapshot = "A";`);
+      assertEquals(await Deno.readTextFile(snapshotBPath), `export const snapshot = "B";`);
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
-  it("writes a JavaScript cycle target at the authored stable path", async () => {
+  it("writes JavaScript at its authored path", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
@@ -128,8 +157,7 @@ describe("module-loader/module-persistence", () => {
         transformedCode,
         localAdapter,
         moduleCache: new Map<string, string>(),
-        cacheKey: "javascript-cycle-target",
-        isCycleTarget: true,
+        cacheKey: "javascript-module",
       });
 
       assertEquals(result, join(tmpDir, "app/page.js"));
@@ -140,38 +168,56 @@ describe("module-loader/module-persistence", () => {
     }
   });
 
-  it("does not infer a default cycle alias from string contents", async () => {
+  it("keeps cycle artifacts outside the authored source namespace", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
-    const filePath = join(projectDir, "app/page.ts");
-    const moduleCache = new Map<string, string>();
+    const cycleCode = `export const owner = "cycle";`;
 
     try {
-      const result = await persistTransformedModule({
-        filePath,
+      const cyclePath = await persistTransformedModule({
+        filePath: join(projectDir, "lib/widget.js"),
         projectDir,
         tmpDir,
-        transformedCode: `export const label = "Set as default";`,
+        transformedCode: cycleCode,
         localAdapter,
-        moduleCache,
-        cacheKey: "string-default",
-        isCycleTarget: true,
+        moduleCache: new Map<string, string>(),
+        cacheKey: "cycle-artifact",
+        cycleArtifactPath: join(
+          tmpDir,
+          "_cycle-manifests/snapshot-a/artifacts/0.deadbeef.js",
+        ),
+      });
+      const authoredPath = await persistTransformedModule({
+        filePath: join(projectDir, "lib", basename(cyclePath)),
+        projectDir,
+        tmpDir,
+        transformedCode: `export const owner = "authored";`,
+        localAdapter,
+        moduleCache: new Map<string, string>(),
+        cacheKey: "authored-artifact",
       });
 
-      const aliasCode = await Deno.readTextFile(join(dirname(result), "page.js"));
-      assertEquals(aliasCode, `export * from "./${basename(result)}";`);
+      assertNotEquals(authoredPath, cyclePath);
+      assertEquals(await Deno.readTextFile(cyclePath), cycleCode);
+      assertEquals(
+        authoredPath,
+        join(tmpDir, "lib", basename(cyclePath)),
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
-  it("does not infer a default cycle alias from regex contents", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
-    const localAdapter = await getLocalAdapter();
+  it("does not infer a default export from string contents", () => {
+    assertEquals(
+      transformedModuleHasDefaultExport(`export const label = "Set as default";`),
+      false,
+    );
+  });
 
+  it("does not infer a default export from regex contents", () => {
     const cases = [
       `export const pattern = /export default/;`,
       `if (enabled) /export default/.test(source); export const value = 1;`,
@@ -184,87 +230,40 @@ describe("module-loader/module-persistence", () => {
       `function read() { return // keep the comment\n/export default/.source; }`,
     ] as const;
 
-    try {
-      for (const [index, transformedCode] of cases.entries()) {
-        const filePath = join(projectDir, `app/page-${index}.ts`);
-        const result = await persistTransformedModule({
-          filePath,
-          projectDir,
-          tmpDir,
-          transformedCode,
-          localAdapter,
-          moduleCache: new Map<string, string>(),
-          cacheKey: `regex-default-${index}`,
-          isCycleTarget: true,
-        });
-
-        const aliasCode = await Deno.readTextFile(join(dirname(result), `page-${index}.js`));
-        assertEquals(aliasCode, `export * from "./${basename(result)}";`);
-      }
-    } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    for (const transformedCode of cases) {
+      assertEquals(transformedModuleHasDefaultExport(transformedCode), false);
     }
   });
 
-  it("writes default cycle aliases only when an export exposes default", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
-    const localAdapter = await getLocalAdapter();
-    const moduleCache = new Map<string, string>();
-
+  it("detects whether transformed code exposes a default export", () => {
     const cases = [
       {
-        path: "app/default-declaration.ts",
         transformedCode: `export default function Page() { return null; }`,
         exposesDefault: true,
       },
       {
-        path: "app/division-before-default.ts",
         transformedCode: `const ratio = total / count; export default ratio;`,
         exposesDefault: true,
       },
       {
-        path: "app/member-keyword-division-before-default.ts",
         transformedCode: `const ratio = mod.typeof / 2; export { default } from "./component.js";`,
         exposesDefault: true,
       },
       {
-        path: "app/named-as-default.ts",
         transformedCode: `const Page = () => null;\nexport { Page as default };`,
         exposesDefault: true,
       },
       {
-        path: "app/default-as-named.ts",
         transformedCode: `export { default as Page } from "./component.js";`,
         exposesDefault: false,
       },
     ] as const;
 
-    try {
-      for (const testCase of cases) {
-        const result = await persistTransformedModule({
-          filePath: join(projectDir, testCase.path),
-          projectDir,
-          tmpDir,
-          transformedCode: testCase.transformedCode,
-          localAdapter,
-          moduleCache,
-          cacheKey: testCase.path,
-          isCycleTarget: true,
-        });
-
-        const aliasCode = await Deno.readTextFile(
-          join(dirname(result), basename(testCase.path).replace(/\.ts$/, ".js")),
-        );
-        assertEquals(
-          aliasCode.includes(`export { default } from "./${basename(result)}";`),
-          testCase.exposesDefault,
-        );
-      }
-    } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    for (const testCase of cases) {
+      assertEquals(
+        transformedModuleHasDefaultExport(testCase.transformedCode),
+        testCase.exposesDefault,
+      );
     }
   });
 
@@ -481,12 +480,9 @@ describe("module-loader/module-persistence", () => {
         contentSourceId: "preview-main",
         reactVersion: "19.1.1",
         unresolvedSpecifiers: ["./missing"],
-        isCycleTarget: true,
       });
 
       assertEquals(await Deno.readTextFile(result), transformedCode);
-      const aliasCode = await Deno.readTextFile(join(tmpDir, "lib/evidence.js"));
-      assertStringIncludes(aliasCode, `export * from "./${basename(result)}";`);
       assertEquals(moduleCache.has("evidence"), false);
       assertEquals(await readPersistedUnresolvedSpecifiers(result, stubAdapter), []);
 
