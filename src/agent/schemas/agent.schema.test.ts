@@ -34,6 +34,21 @@ describe("agent/schema", () => {
     );
   });
 
+  it("rejects provider replay options on non-assistant messages", () => {
+    for (const role of ["system", "user", "tool"] as const) {
+      const result = getMessageSchema().safeParse({
+        id: `${role}-1`,
+        role,
+        parts: [{ type: "text", text: "Not an assistant turn" }],
+        providerOptions: {
+          google: { rawAssistantParts: [{ thoughtSignature: "signed-turn" }] },
+        },
+      });
+
+      assertEquals(result.success, false, `${role} must reject assistant replay metadata`);
+    }
+  });
+
   describe("modelProviderSchema", () => {
     it("should accept all valid providers", () => {
       const providers = ["openai", "anthropic", "google", "local"];

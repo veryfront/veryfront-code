@@ -163,6 +163,14 @@ export const getMessageSchema = defineSchema((v) =>
     timestamp: v.number().int().nonnegative().optional(),
     metadata: v.record(v.string(), v.unknown()).optional(),
     providerOptions: v.record(v.string(), v.unknown()).optional(),
+  }).superRefine((message, ctx) => {
+    if (message.providerOptions !== undefined && message.role !== "assistant") {
+      ctx.addIssue({
+        code: "custom",
+        message: "providerOptions are only supported on assistant messages",
+        path: ["providerOptions"],
+      });
+    }
   })
 );
 
