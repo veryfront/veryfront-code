@@ -1,8 +1,10 @@
 /**
  * Remote Integration Tools
  *
- * Fetches integration tool definitions from the API and executes tool calls
- * via the API's /integrations/tools/call endpoint.
+ * Fetches integration tool definitions from the API and executes calls through
+ * integration-scoped and tool-scoped API routes. Discovery keeps the combined list
+ * route during the compatibility window until the API exposes the configured
+ * integration identities needed to issue scoped list requests without an N+1.
  *
  * Design: NO global registration. Tools are fetched per-request because
  * different projects expose different authorized integration tools. The agent runtime
@@ -483,7 +485,6 @@ function snapshotRemoteToolArguments(
 }
 
 function serializeCallRequest(
-  toolName: string,
   args: Record<string, unknown>,
   context: RemoteIntegrationExecutionContext,
 ): string {
@@ -512,7 +513,6 @@ function serializeCallRequest(
   }
 
   const body = {
-    name: toolName,
     arguments: snapshotRemoteToolArguments(args),
     ...(context.runId !== undefined ? { run_id: context.runId } : {}),
     ...(context.agentId !== undefined ? { agent_id: context.agentId } : {}),
@@ -528,10 +528,10 @@ function serializeCallRequest(
 
 /**
  * Issue an authenticated POST to the integration tools API with a bounded
- * timeout. The two endpoints have different response contracts — tools/list
- * throws on failure while tools/call maps failures into a structured result —
+ * timeout. Discovery and execution have different response contracts: tool
+ * listing throws on failure while tool calls map failures into a structured result,
  * so callers own response handling and request-signal lifetime; this
- * centralizes authenticated dispatch. No retry: tools/call is not idempotent
+ * centralizes authenticated dispatch. No retry: tool execution is not idempotent
  * (a retried call could re-send an email or re-create a record).
  */
 async function postIntegrationApi(
@@ -669,16 +669,17 @@ function getRemoteIntegrationToolCatalog(
 async function callRemoteTool(
   baseUrl: string,
   token: string,
-  toolName: string,
+  integration: string,
+  toolId: string,
   args: Record<string, unknown>,
   context: RemoteIntegrationExecutionContext,
 ): Promise<unknown> {
   const requestScope = createIntegrationRequestSignalScope(context.abortSignal);
   try {
-    const serializedBody = serializeCallRequest(toolName, args, context);
+    const serializedBody = serializeCallRequest(args, context);
     const response = await postIntegrationApi(
       baseUrl,
-      "/integrations/tools/call",
+      `/integrations/${encodeURIComponent(integration)}/tools/${encodeURIComponent(toolId)}/call`,
       token,
       serializedBody,
       context,
@@ -831,10 +832,11 @@ export async function executeRemoteIntegrationTool(
 ): Promise<unknown> {
   const requestContext = snapshotToolExecutionContext(context, true);
   requestContext.abortSignal?.throwIfAborted();
+  const identity = typeof toolName === "string" ? parseIntegrationToolIdentity(toolName) : null;
   if (
     typeof toolName !== "string" ||
     toolName.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH ||
-    !isRemoteIntegrationTool(toolName)
+    identity === null
   ) {
     throw new Error(
       `Remote integration tool "${toolName}" must use the canonical integration__tool_id name`,
@@ -858,7 +860,8 @@ export async function executeRemoteIntegrationTool(
   return callRemoteTool(
     baseUrl,
     token,
-    toolName,
+    identity.integration,
+    identity.toolId,
     args,
     requestContext,
   );
