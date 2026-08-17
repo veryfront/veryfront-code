@@ -101,7 +101,7 @@ function createWebSocketManager(options: {
     cacheKey: string,
     files: Array<{ path: string; content?: string }>,
     expectedSnapshotVersion?: number,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
 } = {}): WebSocketManager {
   const cache = {
     deleteByPrefixAsync: async () => 0,
@@ -132,7 +132,7 @@ function createWebSocketManager(options: {
     getProjectDir: () => undefined,
     clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
     getSourceSnapshotVersion: options.getSourceSnapshotVersion,
-    replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => {}),
+    replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => true),
     pregenerateStyles: options.pregenerateStyles,
   });
 }
@@ -664,7 +664,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => true,
     });
 
     manager.connect("project-1");
@@ -726,7 +726,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => true,
     });
 
     manager.connect("project-1");
@@ -765,7 +765,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => true,
     });
 
     manager.connect("project-1");
@@ -804,7 +804,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => true,
     });
 
     manager.connect("project-1");
@@ -843,7 +843,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => true,
     });
 
     manager.connect("project-1");
@@ -932,7 +932,7 @@ describe("WebSocketManager", () => {
       getSourceSnapshotVersion: () => sourceSnapshotVersion,
       replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
         replacementVersion = expectedSnapshotVersion;
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
     });
 
@@ -963,6 +963,67 @@ describe("WebSocketManager", () => {
     manager.dispose();
   });
 
+  it("does not pregenerate styles for a superseded selective snapshot", async () => {
+    const fetchStarted = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<
+      Array<{ path: string; content?: string }>
+    >();
+    let sourceSnapshotVersion = 1;
+    let pregenerateCalls = 0;
+    let publishedStyleHash: string | undefined;
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => {
+          fetchStarted.resolve();
+          return releaseFetch.promise;
+        },
+      },
+      clearMemoryCaches: () => {
+        sourceSnapshotVersion++;
+      },
+      getSourceSnapshotVersion: () => sourceSnapshotVersion,
+      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) =>
+        Promise.resolve(expectedSnapshotVersion === sourceSnapshotVersion),
+      pregenerateStyles: () => {
+        pregenerateCalls++;
+        return Promise.resolve({
+          hash: "stale-hash",
+          assetPath: "/_vf/css/stale-hash.css",
+        });
+      },
+      invalidationCallbacks: {
+        triggerReload: (_changedPaths, project) => {
+          publishedStyleHash = project?.styleArtifactHash;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    const poke = () =>
+      socket.onmessage?.call(
+        socket as unknown as WebSocket,
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "poke",
+            data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+          }),
+        }),
+      );
+
+    poke();
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await fetchStarted.promise;
+    poke();
+    releaseFetch.resolve([{ path: "app/page.tsx", content: "v1" }]);
+    await flushMicrotasks();
+
+    assertEquals(pregenerateCalls, 0);
+    assertEquals(publishedStyleHash, undefined);
+    manager.dispose();
+  });
+
   it("passes the post-clear source generation to full snapshot replacement", async () => {
     const fetchStarted = Promise.withResolvers<void>();
     const releaseFetch = Promise.withResolvers<
@@ -970,6 +1031,8 @@ describe("WebSocketManager", () => {
     >();
     let sourceSnapshotVersion = 1;
     let replacementVersion: number | undefined;
+    let pregenerateCalls = 0;
+    let publishedStyleHash: string | undefined;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => {
@@ -983,7 +1046,19 @@ describe("WebSocketManager", () => {
       getSourceSnapshotVersion: () => sourceSnapshotVersion,
       replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
         replacementVersion = expectedSnapshotVersion;
-        return Promise.resolve();
+        return Promise.resolve(expectedSnapshotVersion === sourceSnapshotVersion);
+      },
+      pregenerateStyles: () => {
+        pregenerateCalls++;
+        return Promise.resolve({
+          hash: "stale-hash",
+          assetPath: "/_vf/css/stale-hash.css",
+        });
+      },
+      invalidationCallbacks: {
+        triggerReload: (_changedPaths, project) => {
+          publishedStyleHash = project?.styleArtifactHash;
+        },
       },
     });
 
@@ -1011,6 +1086,8 @@ describe("WebSocketManager", () => {
       3,
       "replacement must receive the generation captured after the full invalidation clear",
     );
+    assertEquals(pregenerateCalls, 0);
+    assertEquals(publishedStyleHash, undefined);
     manager.dispose();
   });
 

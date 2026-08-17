@@ -65,7 +65,7 @@ interface WebSocketDeps {
     cacheKey: string,
     files: ProjectFile[],
     expectedSnapshotVersion?: number,
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   pregenerateStyles?: (
     files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
@@ -729,14 +729,20 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files, sourceSnapshotVersion);
-          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
-
-          logger.debug("Fresh files cached (memory + Redis)", {
+          const snapshotApplied = await this.deps.replaceSourceSnapshot(
             cacheKey,
-            fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
-          });
+            files,
+            sourceSnapshotVersion,
+          );
+          if (snapshotApplied) {
+            preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+
+            logger.debug("Fresh files cached (memory + Redis)", {
+              cacheKey,
+              fileCount: files.length,
+              styleAssetPath: preparedStyleArtifact?.assetPath,
+            });
+          }
         } catch (error) {
           logger.warn("Failed to fetch files during selective invalidation", {
             error,
@@ -896,14 +902,20 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files, sourceSnapshotVersion);
-          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
-
-          logger.debug("FRESH FILES FETCHED", {
+          const snapshotApplied = await this.deps.replaceSourceSnapshot(
             cacheKey,
-            fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
-          });
+            files,
+            sourceSnapshotVersion,
+          );
+          if (snapshotApplied) {
+            preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+
+            logger.debug("FRESH FILES FETCHED", {
+              cacheKey,
+              fileCount: files.length,
+              styleAssetPath: preparedStyleArtifact?.assetPath,
+            });
+          }
         } catch (error) {
           logger.warn("Failed to fetch files during invalidation", { error });
         }
