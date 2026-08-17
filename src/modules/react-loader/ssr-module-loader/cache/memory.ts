@@ -17,7 +17,7 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
 import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import {
   getMaxConcurrentTransforms,
@@ -211,7 +211,7 @@ export async function tryAcquireTransformSlot(
   bypass = false,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  signal?.throwIfAborted();
+  throwIfAborted(signal);
   if (acquireTransformSlot(projectId, bypass)) return true;
   if (timeoutMs <= 0) return false;
 

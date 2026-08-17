@@ -12,7 +12,7 @@ import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
 import type { ModuleCacheEntry } from "./types.ts";
@@ -117,7 +117,7 @@ export class SSRDependencyValidator {
     depth: number = 0,
     signal?: AbortSignal,
   ): Promise<void> {
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     if (depth > MAX_TRANSFORM_DEPTH) return;
 
     const parseResult = await parseLocalImports(
@@ -147,7 +147,7 @@ export class SSRDependencyValidator {
     );
 
     await this.processCrossProjectImports(parseResult.crossProjectImports, filePath, signal);
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
   }
 
   /**
@@ -165,7 +165,7 @@ export class SSRDependencyValidator {
     filePath: string,
     signal?: AbortSignal,
   ): Promise<Map<string, string>> {
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     const crossProjectPaths = new Map<string, string>();
 
     for (let i = 0; i < crossProjectImports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -176,7 +176,7 @@ export class SSRDependencyValidator {
             const tempPath = await this.transformCrossProjectImport(crossImport, signal);
             crossProjectPaths.set(crossImport.specifier, tempPath);
           } catch (error) {
-            signal?.throwIfAborted();
+            throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: crossImport.specifier,
@@ -190,7 +190,7 @@ export class SSRDependencyValidator {
       );
       const failure = selectPropagatedFailure(results);
       if (failure) throw failure.reason;
-      signal?.throwIfAborted();
+      throwIfAborted(signal);
     }
 
     return crossProjectPaths;
@@ -208,7 +208,7 @@ export class SSRDependencyValidator {
     dependencyHashCache: DependencyHashCache,
     signal?: AbortSignal,
   ): Promise<Map<string, string>> {
-    signal?.throwIfAborted();
+    throwIfAborted(signal);
     const importPathMap = new Map<string, string>();
 
     for (let i = 0; i < imports.length; i += TRANSFORM_BATCH_SIZE) {
@@ -229,7 +229,7 @@ export class SSRDependencyValidator {
             importPathMap.set(imp.specifier, depEntry.tempPath);
             importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {
-            signal?.throwIfAborted();
+            throwIfAborted(signal);
             if (isTerminalHttpModuleFetchFailure(error)) throw error;
             this.missingDependencies.push({
               specifier: imp.specifier,
@@ -243,7 +243,7 @@ export class SSRDependencyValidator {
       );
       const failure = selectPropagatedFailure(results);
       if (failure) throw failure.reason;
-      signal?.throwIfAborted();
+      throwIfAborted(signal);
     }
 
     return importPathMap;

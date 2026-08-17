@@ -22,7 +22,7 @@ import {
   registerCycleManifestSources,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -81,7 +81,7 @@ function cacheUnresolvedSpecifiers(cacheKey: string, specifiers: readonly string
 }
 
 function throwIfModuleLoadAborted(config: ModuleLoaderConfig): void {
-  config.signal?.throwIfAborted();
+  throwIfAborted(config.signal);
 }
 
 function markModuleLoadProgress(

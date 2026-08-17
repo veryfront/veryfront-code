@@ -10,7 +10,7 @@ import type { LayoutComponentCache } from "../layouts/utils/component-loader.ts"
 import { loadTSXComponent, preloadMDXLayoutModule } from "../layouts/utils/component-loader.ts";
 import { clearImportMapCache, preloadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   type DependencyPinningSourceInput,
@@ -139,7 +139,7 @@ export class LayoutOrchestrator {
     return withSpan(
       "layout.preloadModules",
       async () => {
-        signal?.throwIfAborted();
+        throwIfAborted(signal);
         const tsxLayouts = nestedLayouts.filter(
           (layout) => layout.kind === "tsx" && layout.componentPath,
         );
@@ -191,7 +191,7 @@ export class LayoutOrchestrator {
                 this._preloadedImportMap = importMap;
                 return { type: "importMap" as const, success: true };
               } catch (error) {
-                signal?.throwIfAborted();
+                throwIfAborted(signal);
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload import map", {
                   error: errorMsg,
@@ -228,7 +228,7 @@ export class LayoutOrchestrator {
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
-                signal?.throwIfAborted();
+                throwIfAborted(signal);
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload TSX layout", {
                   path: componentPath,
@@ -267,7 +267,7 @@ export class LayoutOrchestrator {
                 );
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
-                signal?.throwIfAborted();
+                throwIfAborted(signal);
                 const errorMsg = error instanceof Error ? error.message : String(error);
                 logger.error("Failed to preload MDX layout", {
                   path: layout.path,
@@ -351,7 +351,7 @@ export class LayoutOrchestrator {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
-        signal?.throwIfAborted();
+        throwIfAborted(signal);
         const reactVersion = await this.getReactVersion(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,

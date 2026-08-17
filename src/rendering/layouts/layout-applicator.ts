@@ -1,5 +1,5 @@
 import { dirname, join } from "#veryfront/compat/path";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { flattenRouteParams } from "#veryfront/routing";
 import * as BundledReact from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -458,7 +458,7 @@ export class LayoutApplicator {
           logger.debug("Wrapped page with App component");
           return React.createElement(App, { children: pageElement }) as BundledReact.ReactElement;
         } catch (error) {
-          this.signal?.throwIfAborted();
+          throwIfAborted(this.signal);
           logger.warn("Failed to load App component:", error);
           return pageElement;
         }
@@ -510,7 +510,7 @@ export class LayoutApplicator {
         },
       );
     } catch (error) {
-      this.signal?.throwIfAborted();
+      throwIfAborted(this.signal);
       logger.error("Failed to compile MDX app component:", error);
       return null;
     }
@@ -587,7 +587,7 @@ export class LayoutApplicator {
             ) as BundledReact.ReactElement;
           }
         } catch (error) {
-          this.signal?.throwIfAborted();
+          throwIfAborted(this.signal);
           logger.warn("Failed applying reserved loading/error components", error);
         }
 

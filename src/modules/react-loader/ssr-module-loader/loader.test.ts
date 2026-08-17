@@ -148,6 +148,36 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(failedComponents.size, 0);
   });
 
+  it("normalizes an aborted host signal without a reason", async () => {
+    clearSSRModuleCache();
+    const signal = {
+      aborted: true,
+      reason: undefined,
+      throwIfAborted: () => {
+        throw undefined;
+      },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as AbortSignal;
+    const loader = new SSRModuleLoader({
+      projectDir: "/project",
+      projectId: "cancelled-host-project",
+      contentSourceId: "local-main",
+      adapter: denoAdapter,
+      dev: true,
+      signal,
+    });
+
+    const error = await assertRejects(
+      () => loader.loadRawModule("/project/Page.tsx", "export default () => null"),
+      DOMException,
+      "The operation was aborted",
+    );
+    assert(error instanceof DOMException);
+    assertEquals(error.name, "AbortError");
+    assertEquals(failedComponents.size, 0);
+  });
+
   it("isolates cache by projectId", async () => {
     clearSSRModuleCache();
 

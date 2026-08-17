@@ -17,7 +17,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { verifyCacheFileExists, writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
 import { createError, toError } from "#veryfront/errors";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger, throwIfAborted } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { extractComponent } from "../extract-component.ts";
@@ -341,7 +341,7 @@ export class SSRModuleLoader {
         }
       }
 
-      signal?.throwIfAborted();
+      throwIfAborted(signal);
       return await operation();
     } finally {
       if (semaphore && semaphoreAcquired) {
@@ -592,7 +592,8 @@ export class SSRModuleLoader {
           }
         } catch (error) {
           const requestCancelled = this.options.signal?.aborted === true &&
-            error === this.options.signal.reason;
+            (error === this.options.signal.reason ||
+              (error instanceof Error && error.name === "AbortError"));
           if (!requestCancelled) this.circuitBreaker.recordFailure(circuitKey);
           throw error;
         }
@@ -652,7 +653,7 @@ export class SSRModuleLoader {
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
     observerSignal?: AbortSignal,
   ): Promise<ModuleCacheEntry> {
-    observerSignal?.throwIfAborted();
+    throwIfAborted(observerSignal);
     if (depth > MAX_TRANSFORM_DEPTH) {
       logger.warn("Max transform depth exceeded", {
         file: logPath(filePath),
@@ -853,7 +854,7 @@ export class SSRModuleLoader {
 
     const runTransformLeader = async (): Promise<void> => {
       try {
-        sharedSignal.throwIfAborted();
+        throwIfAborted(sharedSignal);
         let parseResult = await parseLocalImports(
           code,
           filePath,
@@ -939,7 +940,7 @@ export class SSRModuleLoader {
               ),
             { "ssr.file": filePath.split("/").pop() || filePath },
           );
-          sharedSignal.throwIfAborted();
+          throwIfAborted(sharedSignal);
 
           for (const [specifier, tempPath] of crossProjectPaths.entries()) {
             transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
@@ -1013,7 +1014,7 @@ export class SSRModuleLoader {
           }
 
           const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-          sharedSignal.throwIfAborted();
+          throwIfAborted(sharedSignal);
           const published = publishTransformCacheIfCurrent({
             inProgressKey,
             transformPromise,

@@ -1,6 +1,7 @@
 import {
   computeHash,
   rendererLogger as logger,
+  throwIfAborted,
   TSX_LAYOUT_MAX_ENTRIES,
   TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES,
 } from "#veryfront/utils";
@@ -267,7 +268,7 @@ export async function loadTSXComponent(
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
 ): Promise<BundledReact.ComponentType> {
-  signal?.throwIfAborted();
+  throwIfAborted(signal);
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
     dependencyPinningSource ?? projectDir,
@@ -290,14 +291,14 @@ export async function loadTSXComponent(
     cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
   }
 
-  signal?.throwIfAborted();
+  throwIfAborted(signal);
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const loaded = await getTSXComponentFlights(cache).do(
     cacheKey,
     async (control) => {
-      control.signal.throwIfAborted();
+      throwIfAborted(control.signal);
       const cachedDuringFlight = cache.get(cacheKey);
       if (cachedDuringFlight) return cachedDuringFlight;
 
