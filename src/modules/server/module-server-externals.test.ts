@@ -10,7 +10,7 @@ describe("module server external packages", () => {
     await stop();
   });
 
-  it("preserves configured server externals in served project modules", async () => {
+  it("rejects configured server externals from served browser modules", async () => {
     const projectDir = "/server-external-package";
     const adapter = createMockAdapter();
     adapter.fs.files.set(
@@ -25,6 +25,37 @@ describe("module server external packages", () => {
         projectDir,
         adapter,
         isLocalProject: true,
+        dev: true,
+        config: { build: { serverExternalPackages: ["knex"] } },
+      },
+    );
+
+    assertEquals(response.status, 500);
+    const text = await response.text();
+    assertStringIncludes(text, "knex");
+    assertStringIncludes(text, "build.serverExternalPackages");
+    assertStringIncludes(text, "components/Database.ts");
+    assertEquals(text.includes("esm.sh/knex"), false);
+  });
+
+  it("preserves configured server externals in served SSR modules", async () => {
+    const projectDir = "/server-external-package-ssr";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(
+      `${projectDir}/components/Database.ts`,
+      `import knex from "knex"; export default knex;\n`,
+    );
+
+    const response = await serveModule(
+      new Request("http://localhost:3000/_vf_modules/components/Database.js?ssr=true", {
+        headers: { "user-agent": "Deno/2.4.0" },
+      }),
+      {
+        projectId: "server-external-package-ssr",
+        projectDir,
+        adapter,
+        isLocalProject: true,
+        allowSSRModuleMode: true,
         config: { build: { serverExternalPackages: ["knex"] } },
       },
     );

@@ -1,5 +1,5 @@
 import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/extensions/bundler";
-import { NETWORK_ERROR } from "#veryfront/errors";
+import { NETWORK_ERROR, SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -33,6 +33,10 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { resolveDependencyPinForImport } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  formatServerExternalBrowserViolation,
+  isConfiguredServerExternalPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
 import { appendSameOriginDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 
 const logger = serverLogger.component("bare-ext");
@@ -384,6 +388,8 @@ interface BareExternalPluginOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   strict?: boolean;
   importMapImports?: Record<string, string>;
+  /** Bare npm package roots explicitly declared as server-only by the project. */
+  serverExternalPackages?: readonly string[];
 }
 
 function isBareImport(path: string): boolean {
@@ -511,6 +517,24 @@ export function createBareExternalPlugin(
                 `Node built-in modules are not available on the client. Move it into a ` +
                 `server component, an API route, or middleware — or gate the code behind a ` +
                 `"use client" boundary that does not import it.`,
+            }],
+          };
+        }
+
+        const candidate = args.path.startsWith("npm:") ? args.path.slice(4) : args.path;
+        const parsed = parseBarePackageSpecifier(candidate);
+        if (
+          parsed &&
+          isConfiguredServerExternalPackage(parsed.packageName, opts.serverExternalPackages)
+        ) {
+          return {
+            errors: [{
+              text: `[${SERVER_ONLY_IN_CLIENT.slug}] ${
+                formatServerExternalBrowserViolation(
+                  args.path,
+                  args.importer || undefined,
+                )
+              }`,
             }],
           };
         }

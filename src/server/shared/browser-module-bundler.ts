@@ -900,6 +900,7 @@ export function bundleBrowserModuleWithMetadata(
                 importMapImports: importMap.imports,
                 projectDir: options.projectDir,
                 projectId: options.projectId ?? options.projectSlug,
+                serverExternalPackages: options.config?.build?.serverExternalPackages,
                 dependencyPinningCacheKey,
                 dependencyPinningDependencies,
                 dependencyPinningSource,

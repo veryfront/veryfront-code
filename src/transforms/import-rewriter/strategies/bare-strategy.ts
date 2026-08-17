@@ -12,9 +12,14 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
+import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
 import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
-import { isServerOnlyPackage } from "../../shared/server-only-packages.ts";
+import {
+  formatServerExternalBrowserViolation,
+  isConfiguredServerExternalPackage,
+  isServerOnlyPackage,
+} from "../../shared/server-only-packages.ts";
 import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
 import {
   isPinningEnabledForRewrite,
@@ -110,6 +115,24 @@ export class BareStrategy implements ImportRewriteStrategy {
       resolveDependencyPinForImport(parsed.packageName, {
         ...ctx,
         dependencyResolutionObservationOnly: true,
+      });
+    }
+
+    // Explicit declarations are a project-owned server/client boundary. Unlike
+    // the compatibility list below, crossing that boundary is actionable and
+    // must fail during the browser transform instead of leaving a bare import
+    // that crashes later during hydration.
+    if (
+      ctx.target === "browser" &&
+      parsed &&
+      isConfiguredServerExternalPackage(parsed.packageName, ctx.serverExternalPackages)
+    ) {
+      throw SERVER_ONLY_IN_CLIENT.create({
+        message: formatServerExternalBrowserViolation(info.specifier, ctx.filePath),
+        detail:
+          `Declared server external package reached a browser transform: ${parsed.packageName}`,
+        instance: ctx.filePath,
+        context: { packageName: parsed.packageName },
       });
     }
 

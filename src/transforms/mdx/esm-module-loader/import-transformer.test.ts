@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
 import {
@@ -180,23 +180,29 @@ describe("rewriteMdxRootDependencyImports", () => {
     );
   });
 
-  it("keeps configured server external packages unchanged", async () => {
+  it("rejects configured server external packages with pinning on or off", async () => {
     const code = [
       `import knex from "knex";`,
       `import prisma from "@prisma/client";`,
       `const queryBuilder = import("knex/query");`,
     ].join("\n");
 
-    const result = await rewriteMdxRootDependencyImports(
-      code,
-      { imports: {} },
-      {
-        ...baseOptions,
-        serverExternalPackages: ["knex", "@prisma/client"],
-      },
-    );
-
-    assertEquals(result, code);
+    for (const dependencyPinningCacheKey of ["on:snapshot-a", "off"]) {
+      await assertRejects(
+        () =>
+          rewriteMdxRootDependencyImports(
+            code,
+            { imports: {} },
+            {
+              ...baseOptions,
+              dependencyPinningCacheKey,
+              serverExternalPackages: ["knex", "@prisma/client"],
+            },
+          ),
+        Error,
+        "build.serverExternalPackages",
+      );
+    }
   });
 
   it("keeps every supported bare Node builtin and its node: form unchanged", async () => {

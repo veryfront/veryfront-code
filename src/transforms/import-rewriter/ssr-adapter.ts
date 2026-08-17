@@ -3,7 +3,9 @@ import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import { isConfiguredServerExternalPackage } from "#veryfront/transforms/shared/server-only-packages.ts";
 import {
   type DependencyResolutionObservation,
   resolveDependencyPinForImport,
@@ -66,6 +68,8 @@ export interface SSRRewriteOptions {
   crossProjectRef?: string;
   /** React version to use for import rewrites */
   reactVersion?: string;
+  /** Bare npm package roots that the server runtime resolves without bundling. */
+  serverExternalPackages?: readonly string[];
   /** Project root directory for dependency pin lookup (used when VERYFRONT_DEPENDENCY_PINNING=1). */
   projectDir?: string;
   /** Project reference used by the best-effort platform range resolver. */
@@ -243,6 +247,7 @@ function rewriteBareImports(
   onDependencyResolutionObserved?: (
     observation: DependencyResolutionObservation,
   ) => void,
+  serverExternalPackages?: readonly string[],
 ): string {
   const v = version ?? DEFAULT_REACT_VERSION;
 
@@ -261,6 +266,13 @@ function rewriteBareImports(
 
     const reactUrl = resolveReactForRuntime(bareSpecifier, v);
     if (reactUrl) return `from "${reactUrl}"`;
+
+    const parsed = parseBarePackageSpecifier(bareSpecifier);
+    if (
+      parsed && isConfiguredServerExternalPackage(parsed.packageName, serverExternalPackages)
+    ) {
+      return `from "${specifier}"`;
+    }
 
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
 
@@ -299,14 +311,32 @@ function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewri
   if (options.dependencyPinningCacheKey?.startsWith("on:")) {
     fields.push(options.dependencyPinningCacheKey);
   }
-  return hashString(fields.join("\0"));
+  return scopeCacheBusterByServerExternalPackages(
+    hashString(fields.join("\0")),
+    options.serverExternalPackages,
+  );
+}
+
+function scopeCacheBusterByServerExternalPackages(
+  cacheBuster: string,
+  serverExternalPackages?: readonly string[],
+): string {
+  const identity = buildServerExternalPackagesIdentity(serverExternalPackages);
+  return identity === undefined
+    ? cacheBuster
+    : hashString(`${cacheBuster}\0server-externals\0${identity}`);
 }
 
 function getCacheBusterSync(
   target: SSRImportRewriteTarget,
   options: SSRRewriteOptions,
 ): string {
-  if (options.cacheBuster !== undefined) return String(options.cacheBuster);
+  if (options.cacheBuster !== undefined) {
+    return scopeCacheBusterByServerExternalPackages(
+      String(options.cacheBuster),
+      options.serverExternalPackages,
+    );
+  }
   return getDefaultCacheBuster(target, options);
 }
 
@@ -314,9 +344,19 @@ async function getCacheBusterAsync(
   target: SSRImportRewriteTarget,
   options: SSRRewriteOptions,
 ): Promise<string> {
-  if (options.cacheBuster !== undefined) return String(options.cacheBuster);
+  if (options.cacheBuster !== undefined) {
+    return scopeCacheBusterByServerExternalPackages(
+      String(options.cacheBuster),
+      options.serverExternalPackages,
+    );
+  }
   const resolved = await options.resolveCacheBuster?.(target);
-  if (resolved !== undefined && resolved !== null) return String(resolved);
+  if (resolved !== undefined && resolved !== null) {
+    return scopeCacheBusterByServerExternalPackages(
+      String(resolved),
+      options.serverExternalPackages,
+    );
+  }
   return getDefaultCacheBuster(target, options);
 }
 
@@ -433,6 +473,7 @@ export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions
     options.dependencyPinningDependencies,
     options.dependencyPinningSource,
     options.onDependencyResolutionObserved,
+    options.serverExternalPackages,
   );
   result = rewritePathAliases(result, options);
   result = rewriteRelativeImports(result, options);
@@ -479,6 +520,7 @@ export async function rewriteSSRImportsCompatAsync(
     options.dependencyPinningDependencies,
     options.dependencyPinningSource,
     options.onDependencyResolutionObserved,
+    options.serverExternalPackages,
   );
   result = await rewriteInternalModuleImportsAsync(result, options);
   return result;

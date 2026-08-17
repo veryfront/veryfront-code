@@ -11,6 +11,58 @@ import {
 import { rewriteSSRImportsCompat, rewriteSSRImportsCompatAsync } from "./ssr-adapter.ts";
 import type { DependencyResolutionObservation } from "./dependency-resolution.ts";
 
+describe("ssr-adapter — server external packages", () => {
+  it("keeps configured server external imports for the runtime", () => {
+    const code = [
+      `import knex from "knex";`,
+      `import prisma from "@prisma/client/runtime/library";`,
+      `import zod from "zod";`,
+    ].join("\n");
+
+    const result = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+
+    assertEquals(result.includes(`from "knex"`), true);
+    assertEquals(result.includes(`from "@prisma/client/runtime/library"`), true);
+    assertEquals(result.includes(`from "https://esm.sh/zod?external=react&target=es2022"`), true);
+  });
+
+  it("partitions default child module URLs by the canonical external package set", () => {
+    const code = `import Child from "@/components/Child";`;
+    const knex = rewriteSSRImportsCompat(code, { serverExternalPackages: ["knex"] });
+    const prisma = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["@prisma/client"],
+    });
+    const ordered = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+    const reordered = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["@prisma/client", "knex"],
+    });
+
+    assertEquals(knex === prisma, false);
+    assertEquals(ordered, reordered);
+  });
+
+  it("partitions resolved child module URLs by the canonical external package set", async () => {
+    const code = `import Child from "@/components/Child";`;
+    const rewrite = (serverExternalPackages: readonly string[]) =>
+      rewriteSSRImportsCompatAsync(code, {
+        serverExternalPackages,
+        resolveCacheBuster: () => "child-source-hash",
+      });
+
+    const knex = await rewrite(["knex"]);
+    const prisma = await rewrite(["@prisma/client"]);
+    const ordered = await rewrite(["knex", "@prisma/client"]);
+    const reordered = await rewrite(["@prisma/client", "knex"]);
+
+    assertEquals(knex === prisma, false);
+    assertEquals(ordered, reordered);
+  });
+});
+
 describe("ssr-adapter — child module snapshot propagation", () => {
   const code = [
     `import AliasChild from "@/components/AliasChild";`,

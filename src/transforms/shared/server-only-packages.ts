@@ -66,8 +66,29 @@ export function isServerOnlyPackage(
     ? stringSlice(packageName, "npm:".length)
     : packageName;
   return setHas(SERVER_ONLY_PACKAGES, bare) ||
-    (configuredPackages !== undefined &&
-      ReflectApply(ArrayIncludes, configuredPackages, [bare]) as boolean);
+    isConfiguredServerExternalPackage(bare, configuredPackages);
+}
+
+/** True only when the project explicitly declared this package as server-only. */
+export function isConfiguredServerExternalPackage(
+  packageName: string,
+  configuredPackages?: readonly string[],
+): boolean {
+  if (configuredPackages === undefined) return false;
+  const bare = stringStartsWith(packageName, "npm:")
+    ? stringSlice(packageName, "npm:".length)
+    : packageName;
+  return ReflectApply(ArrayIncludes, configuredPackages, [bare]) as boolean;
+}
+
+/** Actionable diagnostic for an explicitly declared server package crossing into a client build. */
+export function formatServerExternalBrowserViolation(
+  specifier: string,
+  sourceModule?: string,
+): string {
+  const location = sourceModule ? ` from browser module "${sourceModule}"` : " in a browser bundle";
+  return `Cannot import "${specifier}"${location} because its package is declared in build.serverExternalPackages. ` +
+    "Move the import to server-only code, or remove the declaration if the package supports browsers.";
 }
 
 export { SERVER_ONLY_PACKAGES };

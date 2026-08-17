@@ -80,6 +80,7 @@ function writableDependencySource(
 async function bundleWithPlugin(
   contents: string,
   importMapImports: Record<string, string>,
+  serverExternalPackages?: readonly string[],
 ): Promise<string> {
   const { build } = await import("veryfront/extensions/bundler");
   const result = await build({
@@ -94,7 +95,10 @@ async function bundleWithPlugin(
       sourcefile: "/project/app/page.js",
       resolveDir: "/project/app",
     },
-    plugins: [createBareExternalPlugin({ importMapImports }), createHttpExternalPlugin()],
+    plugins: [
+      createBareExternalPlugin({ importMapImports, serverExternalPackages }),
+      createHttpExternalPlugin(),
+    ],
   });
 
   return result.outputFiles?.[0]?.text ?? "";
@@ -211,6 +215,66 @@ describe(
       const output = await bundleWithPlugin(
         'import x from "lodash"; console.log(x);',
         {},
+      );
+
+      assertEquals(output.includes("esm.sh/lodash"), true);
+    });
+
+    it("fails loud when a declared server external reaches a browser bundle", async () => {
+      const cases = [
+        ["knex", 'import knex from "knex"; console.log(knex);'],
+        ["knex", 'export const load = () => import("knex");'],
+        [
+          "npm:@prisma/client",
+          'import prisma from "npm:@prisma/client"; console.log(prisma);',
+        ],
+        [
+          "npm:@prisma/client/runtime/library",
+          'export const load = () => import("npm:@prisma/client/runtime/library");',
+        ],
+        [
+          "@prisma/client/runtime/library",
+          'import prisma from "@prisma/client/runtime/library"; console.log(prisma);',
+        ],
+      ] as const;
+
+      for (const [specifier, source] of cases) {
+        const error = await assertRejects(() =>
+          bundleWithPlugin(source, {}, ["knex", "@prisma/client"])
+        );
+        const message = error instanceof Error ? error.message : String(error);
+        assertEquals(message.includes(specifier), true);
+        assertEquals(message.includes("build.serverExternalPackages"), true);
+        assertEquals(message.includes("server-only-in-client"), true);
+      }
+    });
+
+    it("does not let an import map bypass a declared server external", async () => {
+      const error = await assertRejects(() =>
+        bundleWithPlugin(
+          'import knex from "knex"; console.log(knex);',
+          { knex: "https://cdn.example/knex.js" },
+          ["knex"],
+        )
+      );
+
+      assertEquals(String(error).includes("build.serverExternalPackages"), true);
+
+      const scopedNpmError = await assertRejects(() =>
+        bundleWithPlugin(
+          'import prisma from "npm:@prisma/client/runtime/library"; console.log(prisma);',
+          { "npm:@prisma/client/runtime/library": "https://cdn.example/prisma.js" },
+          ["@prisma/client"],
+        )
+      );
+      assertEquals(String(scopedNpmError).includes("server-only-in-client"), true);
+    });
+
+    it("keeps undeclared packages browser-compatible when declarations exist", async () => {
+      const output = await bundleWithPlugin(
+        'import x from "lodash"; console.log(x);',
+        {},
+        ["knex"],
       );
 
       assertEquals(output.includes("esm.sh/lodash"), true);

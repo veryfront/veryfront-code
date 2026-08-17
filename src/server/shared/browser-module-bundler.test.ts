@@ -239,6 +239,51 @@ describe(
       assertEquals(owned.importMapHash === unowned.importMapHash, false);
     });
 
+    it("rejects declared server externals while preserving undeclared browser packages", async () => {
+      const projectDir = "/project";
+      const declaredPath = `${projectDir}/app/Declared.tsx`;
+      const scopedNpmPath = `${projectDir}/app/ScopedNpm.tsx`;
+      const compatiblePath = `${projectDir}/app/Compatible.tsx`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        declaredPath,
+        '"use client"; import knex from "knex"; export default knex;',
+      );
+      adapter.fs.files.set(
+        scopedNpmPath,
+        '"use client"; import prisma from "npm:@prisma/client/runtime/library"; export default prisma;',
+      );
+      adapter.fs.files.set(
+        compatiblePath,
+        '"use client"; import lodash from "lodash"; export default lodash;',
+      );
+      const config = { build: { serverExternalPackages: ["knex"] } };
+
+      const error = await assertRejects(() =>
+        bundleBrowserModule(declaredPath, { adapter, projectDir, config })
+      );
+      assertStringIncludes(String(error), "knex");
+      assertStringIncludes(String(error), "build.serverExternalPackages");
+      assertStringIncludes(String(error), "server-only-in-client");
+
+      const scopedNpmError = await assertRejects(() =>
+        bundleBrowserModule(scopedNpmPath, {
+          adapter,
+          projectDir,
+          config: { build: { serverExternalPackages: ["@prisma/client"] } },
+        })
+      );
+      assertStringIncludes(String(scopedNpmError), "server-only-in-client");
+      assertStringIncludes(String(scopedNpmError), "npm:@prisma/client/runtime/library");
+
+      const compatible = await bundleBrowserModule(compatiblePath, {
+        adapter,
+        projectDir,
+        config,
+      });
+      assertStringIncludes(compatible, "esm.sh/lodash");
+    });
+
     it("pins direct same-origin HTTP module imports and preserves foreign URLs", async () => {
       const projectDir = "/project";
       const entryPath = `${projectDir}/app/Counter.tsx`;

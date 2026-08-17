@@ -8,6 +8,7 @@
  */
 
 import { join } from "#veryfront/compat/path";
+import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import { rendererLogger as logger } from "#veryfront/utils";
 import { transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/index.ts";
@@ -33,6 +34,11 @@ import type { ImportRewriteStrategy } from "#veryfront/transforms/import-rewrite
 import type { DependencyResolutionObservation } from "#veryfront/transforms/import-rewriter/dependency-resolution.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { isNodeBuiltinSpecifier } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  formatServerExternalBrowserViolation,
+  isConfiguredServerExternalPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
 
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z\d+.-]*:/;
 
@@ -141,6 +147,31 @@ export async function rewriteMdxRootDependencyImports(
   importMap: ImportMapConfig,
   options: MdxRootDependencyRewriteOptions,
 ): Promise<string> {
+  if (options.serverExternalPackages !== undefined) {
+    const sourceModule = `${options.projectDir}/__veryfront_mdx_root__.mjs`;
+    for (const imported of await parseImports(code)) {
+      const specifier = imported.n;
+      if (!specifier) continue;
+      const candidate = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
+      const parsed = parseBarePackageSpecifier(candidate);
+      if (
+        parsed &&
+        isConfiguredServerExternalPackage(
+          parsed.packageName,
+          options.serverExternalPackages,
+        )
+      ) {
+        throw SERVER_ONLY_IN_CLIENT.create({
+          message: formatServerExternalBrowserViolation(specifier, sourceModule),
+          detail:
+            `Declared server external package reached an MDX browser transform: ${parsed.packageName}`,
+          instance: sourceModule,
+          context: { packageName: parsed.packageName },
+        });
+      }
+    }
+  }
+
   const importMapped = transformImports(code, importMap);
   if (!options.dependencyPinningCacheKey?.startsWith("on:")) return importMapped;
 
