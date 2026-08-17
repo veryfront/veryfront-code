@@ -989,11 +989,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const previousVersion = this.sourceSnapshotVersion;
     const files = await fetchFileListForContext(this.client, refreshContext);
     const result = await this.runSourceSnapshotMutation(async () => {
-      if (
+      const isSnapshotSuperseded = () =>
         this.contentContext !== refreshContext ||
         this.getCurrentSourceSnapshotIdentity() !== refreshIdentity ||
-        this.sourceSnapshotVersion !== previousVersion
-      ) {
+        this.sourceSnapshotVersion !== previousVersion;
+      if (isSnapshotSuperseded()) {
         return { applied: false, sourceChanged: false };
       }
 
@@ -1012,13 +1012,23 @@ export class VeryfrontFSAdapter implements FSAdapter {
           this.cache.deleteByPrefixAsync(buildDirCacheKeyPrefix(refreshContext)),
           this.cache.deleteAsync(cacheKey),
         ]);
+        if (isSnapshotSuperseded()) {
+          return { applied: false, sourceChanged: false };
+        }
       }
 
       await this.cache.setAsync(cacheKey, files);
-      this.branchMissRecoveryFailures.clear();
+      if (isSnapshotSuperseded()) {
+        await this.cache.deleteAsync(cacheKey);
+        return { applied: false, sourceChanged: false };
+      }
 
       if (sourceChanged) {
         await this.invalidateDerivedSourceCaches();
+        if (isSnapshotSuperseded()) {
+          await this.cache.deleteAsync(cacheKey);
+          return { applied: false, sourceChanged: false };
+        }
         // Publish freshness only after every cache derived from the previous
         // snapshot has been invalidated. Concurrent followers remain attached
         // to the refresh singleflight until this point.
@@ -1029,6 +1039,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.sourceSnapshotCheckedAt = Date.now();
       }
 
+      this.branchMissRecoveryFailures.clear();
       this.retainFileList(cacheKey, files);
 
       return { applied: true, sourceChanged };
