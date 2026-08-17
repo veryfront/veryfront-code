@@ -2,6 +2,7 @@ import { deepStrictEqual, ok } from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   globSync,
   mkdirSync,
   mkdtempSync,
@@ -20,9 +21,7 @@ const BASE_TREE = [
   "src/nested/b.test.ts",
   "src/nested/deep/c.test.ts",
   "src/not-a-test.ts",
-  // Hidden directory: both `rg` (without --hidden) and node:fs glob skip these,
-  // so the in-process fallback must too or selection depends on whether
-  // ripgrep happens to be installed.
+  // Hidden directory: pruned, so a test file inside it is never selected.
   "src/.fixtures/hidden.test.ts",
   "extra/explicit.test.mjs",
 ];
@@ -33,6 +32,21 @@ const GLOBSTAR_TREE = [
   "src/foo/a.test.ts",
   "src/foo/deep/d.test.ts",
 ];
+
+/**
+ * A tree whose `.gitignore` hides one of its own test files.
+ *
+ * This is the divergence #3784 was opened for: ripgrep honours `.gitignore`
+ * and an in-process walk does not, so the same pattern selected two different
+ * sets depending on whether `rg` happened to be installed.
+ */
+const GITIGNORED_TREE = [
+  "src/a.test.ts",
+  "src/generated/gen.test.ts",
+];
+
+/** The single path the stub `rg` prints; it exists in no fixture. */
+const STUB_RIPGREP_MATCH = "fabricated-by-stub-ripgrep.test.ts";
 
 /**
  * Build a throwaway tree, hand it to `run`, then remove it.
@@ -58,15 +72,14 @@ function withFixture(relativePaths, run) {
 }
 
 /**
- * Resolve patterns with `rg` guaranteed absent.
+ * Resolve patterns in a child process with an explicit `PATH`.
  *
- * `rgAvailable` is module-level state latched on the first ENOENT, so each
- * scenario runs in its own child process with an empty PATH instead of trying
- * to reset it in-process. An empty PATH is what makes `spawnSync("rg", ...)`
- * fail with ENOENT, which is the branch this suite is about — and the branch
- * the CI runners actually take.
+ * `PATH` is the whole point of this suite. Selection must not depend on which
+ * executables happen to be installed, so every scenario is run in a child whose
+ * `PATH` is set deliberately — empty (nothing findable), or a directory holding
+ * a stub that would change the answer if it were consulted.
  */
-function runListTestFilesProbe(patterns, cwd) {
+function runListTestFilesProbe(patterns, cwd, { path = "" } = {}) {
   // The probe goes to a real file rather than `-e`. This suite runs in both
   // the Node lane and the Deno integration lane (which sweeps all of `tests/`),
   // and `process.execPath` is whichever runtime is hosting — so a Node-only
@@ -88,20 +101,47 @@ function runListTestFilesProbe(patterns, cwd) {
   try {
     return spawnSync(process.execPath, args, {
       encoding: "utf8",
-      env: { ...process.env, PATH: "" },
+      env: { ...process.env, PATH: path },
     });
   } finally {
     rmSync(probeDir, { recursive: true, force: true });
   }
 }
 
-function listTestFilesWithoutRipgrep(patterns, cwd) {
-  const result = runListTestFilesProbe(patterns, cwd);
+function listTestFilesInChild(patterns, cwd, options) {
+  const result = runListTestFilesProbe(patterns, cwd, options);
   ok(
     result.status === 0,
     `child listTestFiles failed (status ${result.status}): ${result.stderr}`,
   );
   return JSON.parse(result.stdout);
+}
+
+/**
+ * Hand `run` a directory holding an `rg` executable that records every call and
+ * answers with a path that exists in no fixture.
+ *
+ * A selection that consults it is therefore detectable twice over: the marker
+ * file appears, and the fabricated path shows up in the result. Unlike an empty
+ * `PATH`, this discriminates on machines where ripgrep is genuinely absent, so
+ * the assertion means the same thing on a developer laptop and on CI.
+ */
+function withStubRipgrep(run) {
+  const stubDir = mkdtempSync(join(tmpdir(), "vf-test-file-utils-stub-"));
+  const markerPath = join(stubDir, "invocations.log");
+  const stubPath = join(stubDir, "rg");
+  writeFileSync(
+    stubPath,
+    "#!/bin/sh\n" +
+      `printf '%s\\n' "$*" >> ${JSON.stringify(markerPath)}\n` +
+      `printf '%s\\n' ${JSON.stringify(STUB_RIPGREP_MATCH)}\n`,
+  );
+  chmodSync(stubPath, 0o755);
+  try {
+    run({ stubDir, markerPath });
+  } finally {
+    rmSync(stubDir, { recursive: true, force: true });
+  }
 }
 
 function relativeSorted(files, root) {
@@ -122,11 +162,71 @@ function globFilesSorted(pattern, root) {
     .sort();
 }
 
-describe("listTestFiles without ripgrep", () => {
+describe("listTestFiles resolves patterns in-process, never by subprocess", () => {
+  // #3784. `listTestFiles` used to shell out to `rg` and fall back to an
+  // in-process walk when it was absent, so which tests ran depended on which
+  // binaries were installed. #3780 fixed a run of divergences between the two
+  // across six review rounds, most introduced by the fix for the previous one.
+  // There is now one implementation, and these tests pin that there is no
+  // second one for it to drift from.
+  it("does not consult an `rg` on PATH", () => {
+    if (process.platform === "win32") return; // no `#!/bin/sh` stub there
+    withFixture(BASE_TREE, (root) => {
+      withStubRipgrep(({ stubDir, markerPath }) => {
+        const withStub = listTestFilesInChild(["src/**/*.test.ts"], root, {
+          path: stubDir,
+        });
+        deepStrictEqual(relativeSorted(withStub, root), [
+          "src/a.test.ts",
+          "src/nested/b.test.ts",
+          "src/nested/deep/c.test.ts",
+        ]);
+        deepStrictEqual(existsSync(markerPath), false);
+      });
+    });
+  });
+
+  it("selects the same files whether or not an `rg` is on PATH", () => {
+    if (process.platform === "win32") return;
+    withFixture(BASE_TREE, (root) => {
+      withStubRipgrep(({ stubDir }) => {
+        deepStrictEqual(
+          relativeSorted(
+            listTestFilesInChild(["src", "src/**/*.test.ts"], root, { path: stubDir }),
+            root,
+          ),
+          relativeSorted(listTestFilesInChild(["src", "src/**/*.test.ts"], root), root),
+        );
+      });
+    });
+  });
+
+  it("selects a gitignored test file, the same as any other", () => {
+    withFixture(GITIGNORED_TREE, (root) => {
+      writeFileSync(join(root, ".gitignore"), "src/generated/\n");
+      // ripgrep only honours `.gitignore` inside a git repository, so the
+      // divergence needs a real one to reproduce.
+      const init = spawnSync("git", ["init", "-q", "."], { cwd: root, encoding: "utf8" });
+      if (init.error || init.status !== 0) return;
+      // Resolution walks the filesystem, so an ignore file is just a file.
+      // Pinned deliberately: `rg` would have dropped `src/generated/gen.test.ts`
+      // here, and that difference is what made selection environment-dependent.
+      deepStrictEqual(
+        relativeSorted(
+          listTestFilesInChild(["src/**/*.test.ts"], root, { path: process.env.PATH ?? "" }),
+          root,
+        ),
+        ["src/a.test.ts", "src/generated/gen.test.ts"],
+      );
+    });
+  });
+});
+
+describe("listTestFiles glob resolution", () => {
   it("resolves a glob pattern when no other pattern matched", () => {
     withFixture(BASE_TREE, (root) => {
       deepStrictEqual(
-        relativeSorted(listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root), root),
+        relativeSorted(listTestFilesInChild(["src/**/*.test.ts"], root), root),
         [
           "src/a.test.ts",
           "src/nested/b.test.ts",
@@ -138,10 +238,10 @@ describe("listTestFiles without ripgrep", () => {
 
   it("resolves a glob pattern alongside an explicit file pattern", () => {
     withFixture(BASE_TREE, (root) => {
-      // The regression: the explicit file makes the result set non-empty, so
-      // the whole-result-set fallback never fires and the glob silently
-      // contributes nothing. Selection collapses to the explicit file alone.
-      const files = listTestFilesWithoutRipgrep(
+      // The #3780 regression: the explicit file made the result set non-empty,
+      // so the whole-result-set fallback never fired and the glob silently
+      // contributed nothing. Selection collapsed to the explicit file alone.
+      const files = listTestFilesInChild(
         ["src/**/*.test.ts", "extra/explicit.test.mjs"],
         root,
       );
@@ -156,7 +256,7 @@ describe("listTestFiles without ripgrep", () => {
 
   it("resolves a glob pattern alongside a directory pattern", () => {
     withFixture(BASE_TREE, (root) => {
-      const files = listTestFilesWithoutRipgrep(["src/**/*.test.ts", "extra"], root);
+      const files = listTestFilesInChild(["src/**/*.test.ts", "extra"], root);
       deepStrictEqual(relativeSorted(files, root), [
         "extra/explicit.test.mjs",
         "src/a.test.ts",
@@ -168,7 +268,7 @@ describe("listTestFiles without ripgrep", () => {
 
   it("does not invent matches for a glob that matches nothing", () => {
     withFixture(BASE_TREE, (root) => {
-      const files = listTestFilesWithoutRipgrep(
+      const files = listTestFilesInChild(
         ["does-not-exist/**/*.test.ts", "extra/explicit.test.mjs"],
         root,
       );
@@ -179,11 +279,11 @@ describe("listTestFiles without ripgrep", () => {
   it("keeps a glob's contribution identical with and without an extra pattern", () => {
     withFixture(BASE_TREE, (root) => {
       const globOnly = relativeSorted(
-        listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root),
+        listTestFilesInChild(["src/**/*.test.ts"], root),
         root,
       );
       const withExtra = relativeSorted(
-        listTestFilesWithoutRipgrep(["src/**/*.test.ts", "extra/explicit.test.mjs"], root),
+        listTestFilesInChild(["src/**/*.test.ts", "extra/explicit.test.mjs"], root),
         root,
       ).filter((file) => file.startsWith("src/"));
       deepStrictEqual(withExtra, globOnly);
@@ -208,7 +308,7 @@ describe("listTestFiles treats ** as a globstar only as a complete segment", () 
     it(`resolves ${pattern} the way node:fs glob does`, () => {
       withFixture(GLOBSTAR_TREE, (root) => {
         deepStrictEqual(
-          relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root),
+          relativeSorted(listTestFilesInChild([pattern], root), root),
           globFilesSorted(pattern, root),
         );
       });
@@ -216,16 +316,16 @@ describe("listTestFiles treats ** as a globstar only as a complete segment", () 
   }
 });
 
-describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
-  // `rg` is the oracle for this case, not node:fs glob, because `rg` is what
-  // runs when it is installed — the fallback exists to reproduce its
-  // selection. Verified directly against rg 14:
+describe("listTestFiles on dot-prefixed entries", () => {
+  // Dot-prefixed *files* are selected; hidden *directories* are pruned. These
+  // came from the `rg` behaviour this module used to have to reproduce, and
+  // they are kept unchanged so removing `rg` in #3784 alters no selection.
+  // Against rg 14/15, which is where they came from:
   //   rg --files -g "*.test.*" src        -> includes src/.smoke.test.ts
   //   rg --files -g "src/**/*.test.ts"    -> includes src/.smoke.test.ts
   //   rg --files -g "src/**/*.test.ts"    -> OMITS  src/.fixtures/x.test.ts
-  // `-g/--glob` "always overrides any other ignore logic", so a dot-prefixed
-  // *file* is matched while a hidden *directory* is still pruned. node:fs glob
-  // excludes both, so the globSync-pinned suite below cannot cover this.
+  // `node:fs` glob excludes both, so the globSync-pinned suite below cannot
+  // cover this case — which is also why globSync is not a drop-in replacement.
   const DOTFILE_TREE = [
     "src/a.test.ts",
     "src/.smoke.test.ts",
@@ -236,7 +336,7 @@ describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
   it("keeps a dot-prefixed file matched by a glob pattern", () => {
     withFixture(DOTFILE_TREE, (root) => {
       deepStrictEqual(
-        relativeSorted(listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root), root),
+        relativeSorted(listTestFilesInChild(["src/**/*.test.ts"], root), root),
         ["src/.smoke.test.ts", "src/a.test.ts", "src/nested/b.test.ts"],
       );
     });
@@ -245,19 +345,20 @@ describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
   it("keeps a dot-prefixed file under a directory pattern", () => {
     withFixture(DOTFILE_TREE, (root) => {
       deepStrictEqual(
-        relativeSorted(listTestFilesWithoutRipgrep(["src"], root), root),
+        relativeSorted(listTestFilesInChild(["src"], root), root),
         ["src/.smoke.test.ts", "src/a.test.ts", "src/nested/b.test.ts"],
       );
     });
   });
 
   it("matches nothing when the glob's literal prefix is a hidden directory", () => {
-    // rg prunes the hidden directory before applying the glob, so this pattern
-    // returns no files at all. `walk` starts inside the base, so the per-entry
-    // check never sees `.fixtures` — the base itself has to be rejected.
+    // The hidden directory is pruned before the glob is applied, so this
+    // pattern returns no files at all. `walk` starts inside the base, so the
+    // per-entry check never sees `.fixtures` — the base itself has to be
+    // rejected. Matches `rg -g 'src/.fixtures/**/*.test.ts'`.
     withFixture(DOTFILE_TREE, (root) => {
       deepStrictEqual(
-        relativeSorted(listTestFilesWithoutRipgrep(["src/.fixtures/**/*.test.ts"], root), root),
+        relativeSorted(listTestFilesInChild(["src/.fixtures/**/*.test.ts"], root), root),
         [],
       );
     });
@@ -269,7 +370,7 @@ describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
     // for this pattern.
     withFixture(["..fixtures/a.test.ts", "src/a.test.ts"], (root) => {
       deepStrictEqual(
-        relativeSorted(listTestFilesWithoutRipgrep(["..fixtures/**/*.test.ts"], root), root),
+        relativeSorted(listTestFilesInChild(["..fixtures/**/*.test.ts"], root), root),
         [],
       );
     });
@@ -278,7 +379,7 @@ describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
   it("still prunes a hidden directory", () => {
     withFixture(DOTFILE_TREE, (root) => {
       const selected = relativeSorted(
-        listTestFilesWithoutRipgrep(["src/**/*.test.ts"], root),
+        listTestFilesInChild(["src/**/*.test.ts"], root),
         root,
       );
       deepStrictEqual(selected.includes("src/.fixtures/skipped.test.ts"), false);
@@ -286,10 +387,63 @@ describe("listTestFiles matches ripgrep on dot-prefixed entries", () => {
   });
 });
 
+describe("listTestFiles supports bracket character classes", () => {
+  // `hasGlob` counts `[` as a glob character, but `globToRegex` escaped the
+  // brackets — so every bracket pattern matched nothing. That is worse than a
+  // wrong match: an empty selection is a test run that passes without running
+  // anything. Verified against rg 15, which returns a.test.ts and b.test.ts
+  // for `src/[ab].test.ts` and b/c for the negated form.
+  const CLASS_TREE = ["src/a.test.ts", "src/b.test.ts", "src/c.test.ts"];
+
+  it("matches a positive class the way ripgrep does", () => {
+    withFixture(CLASS_TREE, (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[ab].test.ts"], root), root),
+        ["src/a.test.ts", "src/b.test.ts"],
+      );
+    });
+  });
+
+  it("matches a negated class in both spellings", () => {
+    withFixture(CLASS_TREE, (root) => {
+      const expected = ["src/b.test.ts", "src/c.test.ts"];
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[!a].test.ts"], root), root),
+        expected,
+      );
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[^a].test.ts"], root), root),
+        expected,
+      );
+    });
+  });
+
+  it("never lets a class match a path separator", () => {
+    withFixture(["src/nested/a.test.ts", "src/a.test.ts"], (root) => {
+      // `[a-z/]` must not let the class span a segment boundary.
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[a-z].test.ts"], root), root),
+        ["src/a.test.ts"],
+      );
+    });
+  });
+
+  it("treats an unterminated bracket as a literal", () => {
+    withFixture(["src/[a.test.ts"], (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[a.test.ts"], root), root),
+        ["src/[a.test.ts"],
+      );
+    });
+  });
+});
+
 describe("listTestFiles agrees with the platform glob", () => {
-  // `node:fs` globSync is the reference implementation: ripgrep's `-g` returns
-  // the same set for these patterns, and pinning against a built-in keeps the
-  // assertion deterministic on machines where `rg` is absent.
+  // `node:fs` globSync is a cross-check, not the implementation: it agrees on
+  // the pattern shapes the consumers actually pass, so pinning against it
+  // catches drift in `globToRegex` without adding a second resolver. It is not
+  // used to resolve, because Node, Deno and Bun disagree on `src/**` and on
+  // dot-prefixed entries, and all three load this module (#3784).
   for (
     const pattern of [
       "src/**/*.test.ts",
@@ -302,7 +456,7 @@ describe("listTestFiles agrees with the platform glob", () => {
     it(`resolves ${pattern} the way node:fs glob does`, () => {
       withFixture(BASE_TREE, (root) => {
         deepStrictEqual(
-          relativeSorted(listTestFilesWithoutRipgrep([pattern], root), root),
+          relativeSorted(listTestFilesInChild([pattern], root), root),
           globFilesSorted(pattern, root),
         );
       });
@@ -319,7 +473,7 @@ describe("listTestFiles does not hide a failed traversal", () => {
     if (typeof process.getuid === "function" && process.getuid() === 0) return;
     if (process.platform === "win32") return;
     withFixture(BASE_TREE, (root) => {
-      // A *directory* pattern routes through `listWithFallback` from inside
+      // A *directory* pattern routes through the in-process walk from inside
       // `listTestFiles`'s own try. A broad catch there swallowed the rethrow,
       // so the directory's tests were dropped and only the other explicit
       // pattern survived — reported as a clean pass.
