@@ -5,6 +5,7 @@
  **************************/
 
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import type {
   RetryConfig,
@@ -15,7 +16,6 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { workflowRegistry } from "../registry.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export type { Workflow } from "../types.ts";
 

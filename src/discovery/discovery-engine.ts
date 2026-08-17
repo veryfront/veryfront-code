@@ -8,6 +8,7 @@
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { agentLogger } from "#veryfront/utils";
 import { ensureError } from "#veryfront/errors";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type {
   DiscoveryConfig,
@@ -31,7 +32,6 @@ import {
 } from "./handlers/index.ts";
 import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
 import { filenameToId } from "./discovery-utils.ts";
-import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 const logger = agentLogger.component("discovery");
 
