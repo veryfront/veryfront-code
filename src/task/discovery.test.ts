@@ -20,7 +20,7 @@ import {
   discoverProjectTaskRuntime as discoverProjectTaskRuntimeRaw,
   listProjectRuntimeTasks,
 } from "./project-runtime.ts";
-import { isTaskDefinition } from "./types.ts";
+import { isTaskDefinition, type TaskDefinition } from "./types.ts";
 
 const discoverTasks: typeof discoverTasksRaw = (options) =>
   discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
@@ -291,18 +291,26 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
       const originalGetPrototypeOf = Reflect.getPrototypeOf;
       const originalHasOwn = Object.hasOwn;
+      const originalFreeze = Object.freeze;
       let poisonCalls = 0;
+      let freezePoisonCalls = 0;
       const poison = (): never => {
         poisonCalls++;
         throw new Error("ambient reflection primitive must not run");
       };
+      const freezePoison = (<T>(value: T): Readonly<T> => {
+        freezePoisonCalls++;
+        return value;
+      }) as typeof Object.freeze;
       let output: unknown;
+      let requirements: TaskDefinition["integrationRequirements"];
 
       try {
         Reflect.apply = poison;
         Reflect.getOwnPropertyDescriptor = poison;
         Reflect.getPrototypeOf = poison;
         Object.hasOwn = poison;
+        Object.freeze = freezePoison;
 
         const registered = taskHandler.register(
           "stable",
@@ -310,20 +318,38 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
             run() {
               return "stable";
             },
+            integrationRequirements: [{
+              integration: "slack",
+              requiredScopes: ["channels:read"],
+              resources: [{
+                kind: "channel",
+                id: "C012345",
+                parent: { kind: "workspace", id: "T012345" },
+              }],
+            }],
           },
           "tasks/stable.ts",
           "tasks",
         );
         output = registered.run({ env: {}, config: {} });
+        requirements = registered.integrationRequirements;
       } finally {
         Reflect.apply = originalApply;
         Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
         Reflect.getPrototypeOf = originalGetPrototypeOf;
         Object.hasOwn = originalHasOwn;
+        Object.freeze = originalFreeze;
       }
 
       assertEquals(output, "stable");
       assertEquals(poisonCalls, 0);
+      assertEquals(freezePoisonCalls, 0);
+      assertEquals(Object.isFrozen(requirements), true);
+      assertEquals(Object.isFrozen(requirements?.[0]), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.requiredScopes), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.resources), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.resources?.[0]), true);
+      assertEquals(Object.isFrozen(requirements?.[0]?.resources?.[0]?.parent), true);
     });
 
     it("rejects non-task values", () => {
@@ -523,6 +549,29 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         value: unknown,
       ) => string;
       assertEquals(parse.call(registeredInputSchema, "value"), "ready:value");
+    });
+
+    it("preserves inherited schema methods with private receiver state", () => {
+      class StatefulSchema {
+        #state = "private receiver";
+
+        parse() {
+          return this.#state;
+        }
+      }
+
+      const inputSchema = new StatefulSchema();
+      const schemaRecord = inputSchema as unknown as Record<string, unknown>;
+      const registered = taskHandler.register(
+        "class-schema",
+        { run() {}, inputSchema: schemaRecord },
+        "tasks/class-schema.ts",
+        "tasks",
+      );
+
+      assertEquals(registered.inputSchema === schemaRecord, true);
+      const parse = registered.inputSchema?.parse as () => unknown;
+      assertEquals(parse.call(registered.inputSchema), "private receiver");
     });
 
     it("registers detached immutable integration requirement metadata", () => {

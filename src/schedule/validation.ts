@@ -20,6 +20,14 @@ import type {
   ScheduleIntegrationResourceIdentity,
 } from "./types.ts";
 
+const ARRAY_PROTOTYPE = Array.prototype;
+const OBJECT_PROTOTYPE = Object.prototype;
+const objectCreate = Object.create;
+const objectFreeze = Object.freeze;
+const objectKeys = Object.keys;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const reflectGetPrototypeOf = Reflect.getPrototypeOf;
+const reflectOwnKeys = Reflect.ownKeys;
 const CONCURRENCY_POLICIES = new Set<ScheduleConcurrencyPolicy>([
   "Allow",
   "Forbid",
@@ -100,13 +108,13 @@ function snapshotDataRecord(
     invalid(`${label} is invalid.`);
   }
 
-  const prototype = Reflect.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
+  const prototype = reflectGetPrototypeOf(value);
+  if (prototype !== OBJECT_PROTOTYPE && prototype !== null) {
     invalid(`${label} must be a plain object.`);
   }
 
   const allowed = new Set(allowedKeys);
-  const ownKeys = Reflect.ownKeys(value);
+  const ownKeys = reflectOwnKeys(value);
   for (const key of ownKeys) {
     if (typeof key === "symbol") {
       invalid(`${label} must not define symbol properties.`);
@@ -117,9 +125,9 @@ function snapshotDataRecord(
   }
 
   const listedKeys = new Set(ownKeys);
-  const snapshot: Record<string, unknown> = Object.create(null);
+  const snapshot: Record<string, unknown> = objectCreate(null);
   for (const key of allowedKeys) {
-    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    const descriptor = reflectGetOwnPropertyDescriptor(value, key);
     const listed = listedKeys.has(key);
     const descriptorExists = descriptor !== undefined;
     if (listed !== descriptorExists) {
@@ -241,11 +249,11 @@ function snapshotDataArray(
 ): unknown[] {
   if (!Array.isArray(value)) invalid(`${label} must be an array.`);
   if (isProxyWithoutHooks(value)) invalid(`${label} must be a non-Proxy plain array.`);
-  if (Reflect.getPrototypeOf(value) !== Array.prototype) {
+  if (reflectGetPrototypeOf(value) !== ARRAY_PROTOTYPE) {
     invalid(`${label} must be a plain array.`);
   }
 
-  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+  const lengthDescriptor = reflectGetOwnPropertyDescriptor(value, "length");
   const lengthValue = lengthDescriptor && "value" in lengthDescriptor
     ? lengthDescriptor.value
     : undefined;
@@ -265,13 +273,13 @@ function snapshotDataArray(
   for (let index = 0; index < length; index++) {
     allowedKeys.add(String(index));
   }
-  if (Reflect.ownKeys(value).some((key) => !allowedKeys.has(key))) {
+  if (reflectOwnKeys(value).some((key) => !allowedKeys.has(key))) {
     invalid(`${label} must not define custom properties.`);
   }
 
   const snapshot: unknown[] = [];
   for (let index = 0; index < length; index++) {
-    const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+    const descriptor = reflectGetOwnPropertyDescriptor(value, String(index));
     if (
       descriptor === undefined ||
       !descriptor.enumerable ||
@@ -415,7 +423,7 @@ export function legacyScheduleTargetDiagnostic(
   ) {
     return `${label} must be an object.`;
   }
-  for (const key of Object.keys(legacyTarget)) {
+  for (const key of objectKeys(legacyTarget)) {
     if (!LEGACY_TARGET_KEYS.has(key)) {
       return `${formatDiagnosticProperty(label, key)} is not supported.`;
     }
@@ -624,15 +632,15 @@ export function captureScheduleIntegrationRequirementsConfig(
     if (requirements === undefined) return undefined;
 
     for (const requirement of requirements) {
-      Object.freeze(requirement.requiredScopes);
+      objectFreeze(requirement.requiredScopes);
       for (const resource of requirement.resources) {
-        if (resource.parent !== undefined) Object.freeze(resource.parent);
-        Object.freeze(resource);
+        if (resource.parent !== undefined) objectFreeze(resource.parent);
+        objectFreeze(resource);
       }
-      Object.freeze(requirement.resources);
-      Object.freeze(requirement);
+      objectFreeze(requirement.resources);
+      objectFreeze(requirement);
     }
-    return Object.freeze(requirements) as ScheduleIntegrationRequirement[];
+    return objectFreeze(requirements) as ScheduleIntegrationRequirement[];
   } catch (error) {
     if (error instanceof VeryfrontError && error.slug === SCHEDULE_CONFIG_INVALID.slug) {
       throw error;
