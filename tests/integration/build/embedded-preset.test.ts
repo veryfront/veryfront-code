@@ -2,7 +2,7 @@ import { assert, assertEquals } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, readTextFile, writeTextFile } from "#veryfront/testing/deno-compat";
-import { buildEmbeddedPreset } from "../../../src/build/embedded/preset.ts";
+import { buildEmbeddedPreset, presetBasename } from "../../../src/build/embedded/preset.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
@@ -98,6 +98,55 @@ describe(
           const code = await readTextFile(filePath);
           assert(code.length > 0);
         }
+      });
+    });
+
+    it("publishes a root page once, under a non-empty artifact name", async () => {
+      await withTestContext("embedded-preset-root-page", async (context) => {
+        const outDir = join(context.projectDir, "dist");
+        await mkdir(outDir, { recursive: true });
+
+        await mkdir(join(context.projectDir, "app", "about"), {
+          recursive: true,
+        });
+        await writeTextFile(join(context.projectDir, "app", "page.mdx"), "# Root");
+        await writeTextFile(
+          join(context.projectDir, "app", "about", "page.mdx"),
+          "# About",
+        );
+
+        const { manifest } = await buildEmbeddedPreset({
+          projectDir: context.projectDir,
+          outDir,
+          runtime: "deno",
+        });
+
+        // No route may name an artifact with an empty basename — `embedded/app/.js`
+        // is a dotfile, which consumers that prune dotfiles drop silently.
+        const emptyBasename = manifest.routes.filter((r) => presetBasename(r.file).startsWith("."));
+        assertEquals(
+          emptyBasename,
+          [],
+          `routes must not name dotfile artifacts: ${JSON.stringify(manifest.routes)}`,
+        );
+
+        // `/` must resolve without the consumer having to guess a precedence rule.
+        const rootRoutes = manifest.routes.filter((r) => r.path === "/");
+        assertEquals(
+          rootRoutes.length,
+          1,
+          `"/" must appear once: ${JSON.stringify(manifest.routes)}`,
+        );
+
+        // The one `/` route must point at a real, non-empty artifact.
+        const rootCode = await readTextFile(
+          join(outDir, ...rootRoutes[0].file.split("/")),
+        );
+        assert(rootCode.length > 0);
+
+        // Sibling routes are unaffected.
+        const routePaths = manifest.routes.map((r) => r.path).sort();
+        assertEquals(routePaths, ["/", "/about"]);
       });
     });
 

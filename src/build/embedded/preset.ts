@@ -8,6 +8,17 @@ import type { EmbeddedBundleManifest } from "../renderer/types/bundler-types.ts"
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 
+/**
+ * The manifest `file` of the bundled shell entry — the artifact that serves `/`.
+ *
+ * `findOrCreateEntryPath` resolves the root page (`app/page.mdx`, `app/page.md`,
+ * `pages/index.mdx`, `pages/index.md`) as the shell entry, so on a project that has
+ * a root page this artifact *is* that page compiled, and — unlike the per-route
+ * artifacts — with its imports bundled. Being the one entry that loads standalone
+ * is why it, and not a per-route copy, owns `/`.
+ */
+const EMBEDDED_APP_SHELL_FILE = "embedded/app.js";
+
 export interface BuildEmbeddedOptions {
   projectDir: string;
   outDir: string;
@@ -21,6 +32,9 @@ export interface BuildEmbeddedOptions {
  * - outDir/embedded/manifest.json
  * - outDir/embedded/app.js (SSR entry)
  * - outDir/embedded/rsc/*.js (RSC support)
+ *
+ * Every entry in `manifest.routes` has a distinct `path`: a consumer needs no
+ * precedence rule to resolve one. `/` is always the shell entry, `embedded/app.js`.
  */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
@@ -63,7 +77,18 @@ export async function buildEmbeddedPreset(
       ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
     ];
 
+    // `/` belongs to the bundled shell entry, which is the root page itself when the
+    // project has one. Claiming it up front stops the root page being compiled a
+    // second time into a per-route artifact: that copy published `/` twice, and
+    // because a root page's path relative to `app/` is empty it landed on the
+    // dotfile `embedded/app/.js`. Every route path is published exactly once, and
+    // the first claim wins.
+    const claimedPaths = new Set<string>(["/"]);
+
     for (const r of discovered) {
+      if (claimedPaths.has(r.routePath)) continue;
+      claimedPaths.add(r.routePath);
+
       try {
         const mdxContent = await fs.readTextFile(r.sourcePath);
         const compiled = await compileMDXToJS(r.sourcePath, mdxContent, {
@@ -89,7 +114,7 @@ export async function buildEmbeddedPreset(
       }
     }
 
-    routes.unshift({ path: "/", file: "embedded/app.js", type: "page" });
+    routes.unshift({ path: "/", file: EMBEDDED_APP_SHELL_FILE, type: "page" });
 
     const rscFiles = [
       new URL("../../rendering/rsc/client-dom.ts", import.meta.url),
@@ -307,7 +332,10 @@ async function discoverAppRoutes(
       const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
       const norm = normalizeAppRoutePath(routePath);
 
-      const filePath = join(embeddedDir, routePath === "" ? "app.js" : `app${norm}.js`);
+      // A root page's path relative to `app/` is empty, so naming its artifact from
+      // that segment alone yields the dotfile `app/.js` — a name consumers that
+      // prune dotfiles drop silently.
+      const filePath = join(embeddedDir, norm === "/" ? "app/index.js" : `app${norm}.js`);
       results.push({ routePath: norm, filePath, sourcePath: abs });
     }
   }
