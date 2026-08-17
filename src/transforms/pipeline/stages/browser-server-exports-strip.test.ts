@@ -1401,6 +1401,30 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, 'secret("server")');
     });
 
+    for (
+      const [description, parameter] of [
+        ["identifier", "@inject(loadSecret) value: string"],
+        ["defaulted parameter", '@inject(loadSecret) value = "client"'],
+        ["destructured parameter", "@inject(loadSecret) { value }: { value: string }"],
+      ] as const
+    ) {
+      it(`keeps an import read by an ordinary decorated ${description}`, async () => {
+        const code = [
+          `import { loadSecret } from "../server/secrets.ts";`,
+          `export async function getServerData() { return loadSecret("server"); }`,
+          `export default class Page {`,
+          `  constructor(${parameter}) {}`,
+          `}`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, 'import { loadSecret } from "../server/secrets.ts"');
+        assertStringIncludes(result, "@inject(loadSecret)");
+        assertNotIncludes(result, 'loadSecret("server")');
+      });
+    }
+
     it("drops a runtime TypeScript enum used only by a stripped hook", async () => {
       const code = [
         `import { randomUUID } from "node:crypto";`,
