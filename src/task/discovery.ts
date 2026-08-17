@@ -145,19 +145,32 @@ async function collectTaskFiles(baseDir: string, adapter: RuntimeAdapter): Promi
 
 function extractTaskExport(
   module: Record<string, unknown>,
-): { exportName: string; definition: TaskDefinition } | null {
-  const defaultExport = module.default;
-  if (isTaskDefinitionCandidate(defaultExport)) {
-    return { exportName: "default", definition: captureTaskDefinition(defaultExport) };
-  }
+): {
+  taskExport: { exportName: string; definition: TaskDefinition } | null;
+  errors: unknown[];
+} {
+  const candidates: Array<[string, unknown]> = [["default", module.default]];
+  candidates.push(...Object.entries(module).filter(([exportName]) => exportName !== "default"));
+  const errors: unknown[] = [];
 
-  for (const [exportName, value] of Object.entries(module)) {
-    if (exportName !== "default" && isTaskDefinitionCandidate(value)) {
-      return { exportName, definition: captureTaskDefinition(value) };
+  for (const [exportName, value] of candidates) {
+    if (!isTaskDefinitionCandidate(value)) continue;
+    try {
+      return {
+        taskExport: { exportName, definition: captureTaskDefinition(value) },
+        errors,
+      };
+    } catch (error) {
+      errors.push(error);
     }
   }
 
-  return null;
+  return { taskExport: null, errors };
+}
+
+interface LoadedTaskFile {
+  task: DiscoveredTask | null;
+  errors: unknown[];
 }
 
 async function loadTaskFromFile(
@@ -166,24 +179,27 @@ async function loadTaskFromFile(
   adapter: RuntimeAdapter,
   projectDir: string,
   allowHostProjectCodeExecution?: boolean,
-): Promise<DiscoveredTask | null> {
+): Promise<LoadedTaskFile> {
   const module = await importDiscoveryModule(filePath, {
     adapter,
     projectDir,
     allowHostProjectCodeExecution,
   }) as Record<string, unknown>;
-  const taskExport = extractTaskExport(module);
-  if (!taskExport) return null;
+  const { taskExport, errors } = extractTaskExport(module);
+  if (!taskExport) return { task: null, errors };
 
   return {
-    id,
-    name: typeof taskExport.definition.name === "string" &&
-        taskExport.definition.name.trim().length > 0
-      ? taskExport.definition.name
-      : id,
-    filePath,
-    exportName: taskExport.exportName,
-    definition: taskExport.definition,
+    task: {
+      id,
+      name: typeof taskExport.definition.name === "string" &&
+          taskExport.definition.name.trim().length > 0
+        ? taskExport.definition.name
+        : id,
+      filePath,
+      exportName: taskExport.exportName,
+      definition: taskExport.definition,
+    },
+    errors,
   };
 }
 
@@ -287,13 +303,17 @@ export async function discoverTasks(
 
     for (const file of files) {
       try {
-        const task = await loadTaskFromFile(
+        const loaded = await loadTaskFromFile(
           file.path,
           deriveTaskId(file.path, baseDir),
           adapter,
           projectDir,
           allowHostProjectCodeExecution,
         );
+        for (const error of loaded.errors) {
+          errors.push({ filePath: file.path, error: toErrorMessage(error) });
+        }
+        const task = loaded.task;
         if (task) {
           tasks.push(task);
           logDiscoveredTask(task, debug);
@@ -352,13 +372,19 @@ export async function findTaskById(
       if (id !== taskId) continue;
 
       try {
-        const task = await loadTaskFromFile(
+        const loaded = await loadTaskFromFile(
           file.path,
           id,
           adapter,
           projectDir,
           allowHostProjectCodeExecution,
         );
+        if (debug) {
+          for (const error of loaded.errors) {
+            logger.warn(`Failed to load task export from ${file.path}: ${toErrorMessage(error)}`);
+          }
+        }
+        const task = loaded.task;
         if (task) {
           matches.push(task);
         }

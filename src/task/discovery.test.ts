@@ -242,6 +242,30 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       );
     });
 
+    it("preserves inherited class task metadata", () => {
+      class InheritedMetadataTask {
+        run(): string {
+          return "inherited";
+        }
+      }
+      Object.defineProperties(InheritedMetadataTask.prototype, {
+        name: { value: "Inherited task" },
+        schedulable: { value: true },
+        inputSchema: { value: { type: "object" } },
+      });
+
+      const registered = taskHandler.register(
+        "inherited",
+        new InheritedMetadataTask(),
+        "tasks/inherited.ts",
+        "tasks",
+      );
+
+      assertEquals(registered.name, "Inherited task");
+      assertEquals(registered.schedulable, true);
+      assertEquals(registered.inputSchema, { type: "object" });
+    });
+
     it("rejects non-task values", () => {
       assertEquals(isTaskDefinition(null), false);
       assertEquals(isTaskDefinition(undefined), false);
@@ -436,6 +460,43 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(result.errors.length, 1);
     assertEquals(
       result.errors[0]?.error.includes("must use a lowercase integration identifier"),
+      true,
+    );
+  });
+
+  it("keeps valid sibling tasks after malformed legacy candidates", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/default-first.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const validDefaultSibling = { run() { return "default sibling"; } };',
+      ].join("\n"),
+      "/project/tasks/named-first.ts": [
+        "export const aBroken = {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+        'export const zValidNamedSibling = { run() { return "named sibling"; } };',
+      ].join("\n"),
+    });
+
+    const result = await discoverTasks({
+      projectDir: "/project",
+      adapter,
+      config: { fs: { type: "veryfront-api" } } as never,
+    });
+
+    assertEquals(result.tasks.map((task) => task.id), [
+      "default-first",
+      "named-first",
+    ]);
+    assertEquals(result.errors.length, 2);
+    assertEquals(
+      result.errors.every((entry) =>
+        entry.error.includes("must use a lowercase integration identifier")
+      ),
       true,
     );
   });

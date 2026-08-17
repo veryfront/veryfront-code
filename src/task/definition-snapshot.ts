@@ -3,15 +3,18 @@ import { captureScheduleIntegrationRequirementsConfig } from "#veryfront/schedul
 import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { TaskDefinition } from "./types.ts";
 
-const TASK_DEFINITION_KEYS = [
-  "name",
-  "description",
-  "inputSchema",
-  "outputSchema",
-  "integrationRequirements",
-  "schedulable",
-  "run",
-] as const;
+const TASK_DEFINITION_KEY_COVERAGE = {
+  name: true,
+  description: true,
+  inputSchema: true,
+  outputSchema: true,
+  integrationRequirements: true,
+  schedulable: true,
+  run: true,
+} as const satisfies Record<keyof TaskDefinition, true>;
+const TASK_DEFINITION_KEYS = Object.keys(
+  TASK_DEFINITION_KEY_COVERAGE,
+) as Array<keyof TaskDefinition>;
 
 const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const OBJECT_PROTOTYPE = Object.prototype;
@@ -61,19 +64,17 @@ function inspectTaskDefinition(value: unknown): Map<string, unknown> {
 
   const fields = new Map<string, unknown>();
   for (const key of TASK_DEFINITION_KEYS) {
-    const descriptor = key === "run"
-      ? findTaskPropertyDescriptor(task, key)
-      : Reflect.getOwnPropertyDescriptor(task, key);
+    const descriptor = findTaskPropertyDescriptor(task, key);
     if (descriptor === undefined) continue;
-    const inheritedRun = key === "run" && !Object.hasOwn(task, key);
+    const inherited = !Object.hasOwn(task, key);
     if (!("value" in descriptor)) {
       fail(
-        inheritedRun
-          ? "Task definition run must resolve to a data property."
+        inherited
+          ? `Task definition ${key} must resolve to a data property.`
           : `Task definition ${key} must be a data property.`,
       );
     }
-    if (!inheritedRun && !descriptor.enumerable) {
+    if (!inherited && !descriptor.enumerable) {
       fail(`Task definition ${key} must be an own enumerable data property.`);
     }
     fields.set(key, descriptor.value);
