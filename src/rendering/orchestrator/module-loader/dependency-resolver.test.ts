@@ -3,6 +3,7 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import {
   type ResolvedModuleDependency,
   resolveModuleDependencies,
@@ -243,6 +244,65 @@ describe("module-loader/dependency-resolver", () => {
         assertEquals(deps.length, 2);
         assertStringIncludes(deps[0]?.depFilePath ?? "", "/components/Button.tsx");
         assertStringIncludes(deps[1]?.depFilePath ?? "", "/lib/value.ts");
+      },
+    );
+  });
+
+  it("warns only when a deprecated components alias fallback resolves", async () => {
+    await withDependencyFixture(
+      {
+        "app/page.tsx": [
+          `import { Root } from "@/Root";`,
+          `import { LegacyPrefix } from "@/LegacyPrefix";`,
+          `import { LegacyStrip } from "@/components/LegacyStrip";`,
+          `export const page = Root + LegacyPrefix + LegacyStrip;`,
+        ].join("\n"),
+        "Root.ts": `export const Root = "root";`,
+        "components/LegacyPrefix.ts": `export const LegacyPrefix = "prefix";`,
+        "LegacyStrip.ts": `export const LegacyStrip = "strip";`,
+      },
+      async ({ projectDir }) => {
+        const adapter = await getLocalAdapter();
+        const filePath = join(projectDir, "app/page.tsx");
+        const fileContent = await Deno.readTextFile(filePath);
+        const records: LogEntry[] = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+
+        try {
+          const deps = await resolveModuleDependencies({
+            adapter,
+            fileContent,
+            filePath,
+            projectDir,
+          });
+          assertEquals(deps.every((dependency) => dependency.depFilePath !== null), true);
+        } finally {
+          unsubscribe();
+        }
+
+        const warnings = records
+          .filter((entry) =>
+            entry.component === "module-loader" &&
+            entry.level === "warn" &&
+            entry.message ===
+              "The @/ alias resolved through the deprecated components/ fallback. Update the import to match the project-relative file path."
+          )
+          .map((entry) => ({
+            specifier: entry.context?.specifier,
+            suggestedSpecifier: entry.context?.suggestedSpecifier,
+          }))
+          .sort((left, right) => String(left.specifier) < String(right.specifier) ? -1 : 1);
+
+        assertEquals(warnings, [
+          {
+            specifier: "@/LegacyPrefix",
+            suggestedSpecifier: "@/components/LegacyPrefix",
+          },
+          {
+            specifier: "@/components/LegacyStrip",
+            suggestedSpecifier: "@/LegacyStrip",
+          },
+        ]);
       },
     );
   });

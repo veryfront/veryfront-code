@@ -180,6 +180,16 @@ These directories are not auto-discovered. They are common project conventions.
 | `styles/`     | Global CSS files                    |
 | `middleware/` | Custom middleware functions         |
 
+## Project path aliases
+
+Use `@/` for a project-root-relative import. For example,
+`@/components/Button` resolves to `components/Button` in the project root.
+
+Veryfront temporarily supports legacy imports that add or remove the leading
+`components/` segment during resolution. When this fallback resolves an import,
+Veryfront logs a deprecation warning with the project-root-relative replacement.
+Update the import to the suggested specifier before the fallback is removed.
+
 ## Generated directories
 
 These directories hold derived output only, so deleting them is safe: the next

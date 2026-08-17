@@ -155,8 +155,31 @@ async function resolveAliasImport(
 ): Promise<ResolvedModuleDependency> {
   const relativePath = imp.path.substring(2); // Remove @/ prefix.
 
-  const depFilePath = (await findSourceFile(relativePath, projectDir, adapter)) ??
-    (await findSourceFile(`components/${relativePath}`, projectDir, adapter));
+  const warnLegacyFallback = (suggestedSpecifier: string) => {
+    logger.warn(
+      "The @/ alias resolved through the deprecated components/ fallback. Update the import to match the project-relative file path.",
+      { specifier: imp.path, suggestedSpecifier },
+    );
+  };
+
+  const directPath = await findSourceFile(relativePath, projectDir, adapter, {
+    onLegacyComponentsFallback: () => {
+      warnLegacyFallback(`@/${relativePath.replace(/^components\//, "")}`);
+    },
+  });
+  let depFilePath = directPath;
+
+  if (!depFilePath) {
+    let resolvedThroughStripFallback = false;
+    depFilePath = await findSourceFile(`components/${relativePath}`, projectDir, adapter, {
+      onLegacyComponentsFallback: () => {
+        resolvedThroughStripFallback = true;
+      },
+    });
+    if (depFilePath && !resolvedThroughStripFallback) {
+      warnLegacyFallback(`@/components/${relativePath}`);
+    }
+  }
 
   return { ...imp, relativePath, depFilePath, isLocalLib: false };
 }
