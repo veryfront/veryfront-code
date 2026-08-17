@@ -56,9 +56,11 @@
  * put the loader, its imports and any credential it closes over into the
  * browser bundle, and a silent leak is worse than a stopped build. The same
  * rule covers a hook this pass can *see* but cannot *stub*: a class, an
- * imported binding re-exported under a hook name, and a hook binding the
- * module *reassigns* (`export let getServerData = stub; getServerData =
- * realLoader`) — stubbing the declarator would leave the assignment to put
+ * imported binding re-exported under a hook name, a hook binding the module
+ * *reassigns* (`export let getServerData = stub; getServerData = realLoader`),
+ * and one it *redeclares* through a hoisted `var` below the top level
+ * (`export var getServerData = stub; if (cond) { var getServerData =
+ * realLoader }`) — stubbing the declarator would leave the later write to put
  * the real loader back at module-evaluation time, so the build stops rather
  * than shipping the declaration. As a final fail-closed check, the pass
  * re-parses the output it is about to emit and verifies that no binding it
@@ -858,6 +860,69 @@ function assignedNames(body: Node[]): Set<string> {
   return assigned;
 }
 
+/**
+ * Names a `var` hoists into module scope from somewhere below the top level:
+ * `{ var getServerData = realLoader }`, `if (cond) { var getServerData = … }`,
+ * `for (var getServerData of realLoaders) {}`, and the same inside `switch`,
+ * `try`, `while` and labelled statements.
+ *
+ * `emptyServerOnlyHooks` only rewrites top-level declarations, and
+ * `assignedNames` only sees assignment and update expressions, so a hoisted
+ * redeclaration slipped past both: the stub was emitted *and* the real loader
+ * survived below it, overwriting the stub the moment the module evaluated.
+ * Treating these as binding writes fails the build instead, exactly as a
+ * plain reassignment does.
+ *
+ * Traversal stops at every construct that starts a new `var` scope — function
+ * bodies, class bodies, class static blocks and TypeScript-only nodes — so a
+ * nested `function Page() { var getServerData = 1 }` is a local of `Page` and
+ * is not reported.
+ */
+function hoistedVarNames(body: Node[]): Set<string> {
+  const hoisted = new Set<string>();
+
+  const startsVarScope = (node: Node): boolean =>
+    node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression" || node.type === "ObjectMethod" ||
+    node.type === "ClassMethod" || node.type === "ClassDeclaration" ||
+    node.type === "ClassExpression" || node.type === "StaticBlock" ||
+    node.type.startsWith("TS");
+
+  const collect = (node: Node): void => {
+    for (const child of children(node)) {
+      if (startsVarScope(child)) continue;
+
+      if (child.type === "VariableDeclaration" && child.kind === "var") {
+        for (const declarator of Array.isArray(child.declarations) ? child.declarations : []) {
+          if (!isNode(declarator) || !isNode(declarator.id)) continue;
+          for (const name of patternBoundNames(declarator.id)) hoisted.add(name);
+        }
+      }
+
+      collect(child);
+    }
+  };
+
+  // Only statements *below* the top level hoist past the stubber: a top-level
+  // `var` declaration is a declaration `emptyServerOnlyHooks` already rewrites,
+  // so entering the tree at the unwrapped declaration keeps it out of the set
+  // while still reaching anything nested inside its initialisers.
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+
+    const declaration = statement.type === "ExportNamedDeclaration" ||
+        statement.type === "ExportDefaultDeclaration"
+      ? statement.declaration
+      : statement;
+    const root = isNode(declaration) ? declaration : statement;
+    if (startsVarScope(root)) continue;
+
+    collect(root);
+  }
+
+  return hoisted;
+}
+
 function literalText(node: Node | undefined): string | null {
   if (!node) return null;
   return typeof node.value === "string" ? node.value : nodeName(node);
@@ -1278,6 +1343,23 @@ export async function stripServerOnlyExports(
       filePath,
       `\`${reassigned[0]}\` is reassigned after its declaration, so the assigned ` +
         `server loader would ship to the browser and overwrite the stripped stub`,
+    );
+  }
+
+  // Same failure, reached by hoisting rather than by assignment: a `var`
+  // redeclaration below the top level (`{ var getServerData = realLoader }`,
+  // `if (…) { var … }`, `for (var … of …)`) binds the same module-scope name,
+  // and its initialiser runs after the stubbed declaration. The stubber only
+  // rewrites top-level declarations, so the emitted artifact would carry both
+  // the stub and the real loader.
+  const hoisted = hoistedVarNames(body);
+  const redeclared = [...locals].filter((name) => hoisted.has(name));
+  if (redeclared.length > 0) {
+    throw new ServerExportStripError(
+      filePath,
+      `\`${redeclared[0]}\` is redeclared by a hoisted \`var\` below the module's ` +
+        `top level, so the hoisted server loader would ship to the browser and ` +
+        `overwrite the stripped stub`,
     );
   }
 

@@ -320,6 +320,93 @@ describe("browser-server-exports-strip", () => {
       await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
     });
 
+    // A `var` below the top level binds the same module-scope name as the
+    // exported hook, but the stubber only rewrites top-level declarations and
+    // the assignment scan only sees assignment and update expressions. Both
+    // used to miss it, so the artifact carried the stub *and* the real loader,
+    // and the hoisted initialiser overwrote the stub at module evaluation.
+    const hoistedVarForms: Array<[string, string]> = [
+      ["a bare block", `{ var getServerData = realLoader; }`],
+      ["an if branch", `if (globalThis.cond) { var getServerData = realLoader; }`],
+      ["a for-of head", `for (var getServerData of [realLoader]) {}`],
+      ["a for-in head", `for (var getServerData in { a: realLoader }) {}`],
+      ["a for init", `for (var getServerData = realLoader; false;) {}`],
+      ["a switch case", `switch (globalThis.k) { case 1: var getServerData = realLoader; }`],
+      ["a try block", `try { var getServerData = realLoader; } catch { }`],
+      ["a catch block", `try { } catch (e) { var getServerData = realLoader; }`],
+      ["a finally block", `try { } finally { var getServerData = realLoader; }`],
+      ["a labelled block", `outer: { var getServerData = realLoader; }`],
+      ["a while body", `while (globalThis.cond) { var getServerData = realLoader; }`],
+      ["a nested loop", `if (a) { for (;;) { var getServerData = realLoader; } }`],
+      ["a destructuring pattern", `{ var { getServerData } = { getServerData: realLoader }; }`],
+    ];
+
+    for (const [description, redeclaration] of hoistedVarForms) {
+      it(`fails the build when a hook binding is redeclared by a hoisted var in ${description}`, async () => {
+        const code = [
+          `import { realLoader } from "./server/db.ts";`,
+          `export var getServerData = async () => null;`,
+          redeclaration,
+        ].join("\n");
+
+        const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+        assertStringIncludes((error as Error).message, "getServerData");
+        assertStringIncludes((error as Error).message, "redeclared");
+      });
+    }
+
+    // The mirror image: a `var` inside a function is function-scoped and never
+    // reaches the module binding, so it must not stop the build. Failing closed
+    // on these would reject ordinary client code that happens to reuse a name.
+    it("strips normally when a var with a hook name is local to a nested function", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `export var getServerData = async () => ({ props: { s: getEnv("SECRET_A") } });`,
+        `export default function Page() {`,
+        `  if (globalThis.cond) { var getServerData = 1; }`,
+        `  return getServerData;`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/x.tsx");
+
+      assertStringIncludes(result, `throw new Error("server-only")`);
+      assertEquals(result.includes("SECRET_A"), false);
+      assertEquals(result.includes("veryfront"), false);
+    });
+
+    // A class static block is its own `var` scope, so it does not hoist either.
+    it("strips normally when a var with a hook name is local to a class static block", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `export async function getServerData() { return getEnv("SECRET_A"); }`,
+        `class Registry { static { var getServerData = 1; globalThis.x = getServerData; } }`,
+        `export default function Page() { return Registry; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/x.tsx");
+
+      assertStringIncludes(result, `throw new Error("server-only")`);
+      assertEquals(result.includes("SECRET_A"), false);
+    });
+
+    // `let`/`const` in a block are block-scoped: a same-named binding there is
+    // a different variable and leaves the exported stub alone.
+    it("strips normally when a block-scoped let shadows a hook name", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `export async function getServerData() { return getEnv("SECRET_A"); }`,
+        `{ let getServerData = 1; globalThis.x = getServerData; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/x.tsx");
+
+      assertStringIncludes(result, `throw new Error("server-only")`);
+      assertEquals(result.includes("SECRET_A"), false);
+    });
+
     // The pre-check runs before anything else, so a module with no hook at all
     // is never parsed and can never fail the build.
     it("leaves a module that does not parse alone when it names no hook", async () => {
