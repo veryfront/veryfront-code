@@ -55,11 +55,16 @@
  * build. This is a server/client boundary: emitting the module unchanged would
  * put the loader, its imports and any credential it closes over into the
  * browser bundle, and a silent leak is worse than a stopped build. The same
- * rule covers a hook this pass can *see* but cannot *stub* (a class, an
- * imported binding re-exported under a hook name): the build stops rather than
- * shipping the declaration. As a final fail-closed check, the pass verifies
- * that no binding it decided to drop still appears in the output it is about
- * to emit — a violated invariant fails the build instead of leaking.
+ * rule covers a hook this pass can *see* but cannot *stub*: a class, an
+ * imported binding re-exported under a hook name, and a hook binding the
+ * module *reassigns* (`export let getServerData = stub; getServerData =
+ * realLoader`) — stubbing the declarator would leave the assignment to put
+ * the real loader back at module-evaluation time, so the build stops rather
+ * than shipping the declaration. As a final fail-closed check, the pass
+ * re-parses the output it is about to emit and verifies that no binding it
+ * decided to drop is still imported or referenced in that artifact — a
+ * violated invariant anywhere between the removal decision and the emitted
+ * text fails the build instead of leaking.
  *
  * What this pass does: it empties hook bodies, drops the module-scope
  * declarations the hooks were the last reader of — including destructured
@@ -795,6 +800,85 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
   return referenced;
 }
 
+/**
+ * Names written by assignment-like expressions anywhere in the module:
+ * `getServerData = realLoader`, `({ getServerData } = loaders)`,
+ * `getServerData++`, `for (getServerData of loaders) …`. Member writes
+ * (`obj.getServerData = …`) assign a property, not a binding, and are not
+ * collected. Import statements never contain assignments and are skipped.
+ *
+ * Used to fail closed on a module that reassigns a hook binding: the pass can
+ * stub only the declarator, and the assignment would put the real loader back
+ * at module-evaluation time. Collection is deliberately scope-blind — a nested
+ * local that shadows a hook name and is assigned also stops the build, because
+ * on this boundary a stopped build is recoverable and a shipped loader is not.
+ */
+function assignedNames(body: Node[]): Set<string> {
+  const assigned = new Set<string>();
+
+  const collectTargets = (target: Node): void => {
+    if (target.type === "Identifier") {
+      const name = nodeName(target);
+      if (name) assigned.add(name);
+      return;
+    }
+
+    if (target.type === "AssignmentPattern") {
+      if (isNode(target.left)) collectTargets(target.left);
+      return;
+    }
+
+    if (target.type === "RestElement" || target.type === "SpreadElement") {
+      if (isNode(target.argument)) collectTargets(target.argument);
+      return;
+    }
+
+    // A destructuring assignment target parses as a pattern or, depending on
+    // the parser, as the expression form of the same shape.
+    if (target.type === "ArrayPattern" || target.type === "ArrayExpression") {
+      for (const element of Array.isArray(target.elements) ? target.elements : []) {
+        if (isNode(element)) collectTargets(element);
+      }
+      return;
+    }
+
+    if (target.type === "ObjectPattern" || target.type === "ObjectExpression") {
+      for (const property of Array.isArray(target.properties) ? target.properties : []) {
+        if (!isNode(property)) continue;
+        if (isNode(property.argument)) {
+          collectTargets(property.argument);
+          continue;
+        }
+        if (isNode(property.value)) collectTargets(property.value);
+      }
+      return;
+    }
+
+    if (isNode(target.expression)) collectTargets(target.expression);
+  };
+
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+
+    walk(statement, (node) => {
+      if (node.type === "ImportDeclaration") return false;
+
+      if (node.type === "AssignmentExpression" && isNode(node.left)) collectTargets(node.left);
+      if (node.type === "UpdateExpression" && isNode(node.argument)) collectTargets(node.argument);
+      if (
+        (node.type === "ForInStatement" || node.type === "ForOfStatement") &&
+        isNode(node.left) && node.left.type !== "VariableDeclaration"
+      ) {
+        collectTargets(node.left);
+      }
+
+      return true;
+    });
+  }
+
+  return assigned;
+}
+
 function literalText(node: Node | undefined): string | null {
   if (!node) return null;
   return typeof node.value === "string" ? node.value : nodeName(node);
@@ -1164,6 +1248,22 @@ export async function stripServerOnlyExports(
   }
   if (locals.size === 0) return code;
 
+  // Fail closed on a reassigned hook binding: `export let getServerData =
+  // stub; getServerData = realLoader` leaves nothing this pass can neutralise.
+  // Stubbing the declarator would report the hook as emptied while the
+  // module-scope assignment puts the real loader back at evaluation time, so
+  // the loader body and everything it references would ship to the browser
+  // silently. The build stops instead.
+  const assigned = assignedNames(body);
+  const reassigned = [...locals].filter((name) => assigned.has(name));
+  if (reassigned.length > 0) {
+    throw new ServerExportStripError(
+      filePath,
+      `\`${reassigned[0]}\` is reassigned after its declaration, so the assigned ` +
+        `server loader would ship to the browser and overwrite the stripped stub`,
+    );
+  }
+
   // Capture what the hooks reference *before* emptying them, so pruning is
   // scoped to the hooks' dependency closure and never touches unrelated
   // top-level declarations (which may run browser side effects).
@@ -1190,23 +1290,47 @@ export async function stripServerOnlyExports(
   const pruned = dropUnusedModuleScopeBindings(body, hookClosure, removedNames);
   const finalBody = dropUnusedImportBindings(pruned, hookClosure, removedNames);
 
-  // Fail-closed output verification: every binding this pass decided to drop
-  // must be gone from the artifact about to be emitted. The prune passes only
-  // remove bindings they counted as unreferenced, so a hit here is a violated
-  // invariant — and the safe response to a violated invariant on a
-  // server/client boundary is a stopped build, not a silent leak.
-  const residual = referencedIdentifiers(finalBody);
-  const leaked = [...removedNames].filter((name) => residual.has(name));
-  if (leaked.length > 0) {
-    throw new ServerExportStripError(
-      filePath,
-      `the server-only binding \`${leaked[0]}\` still appears in the stripped output`,
-    );
-  }
-
   setBody(ast, finalBody);
 
   const generated = await parser.generate(ast);
+
+  // Fail-closed output verification, run against the artifact itself: the
+  // emitted code is re-parsed and scanned for every binding this pass decided
+  // to drop, as an import or as a reference. Checking the freshly parsed
+  // output — not the tree the nodes were structurally deleted from — means a
+  // regression anywhere between the removal decision and the emitted text,
+  // the generator included, stops the build instead of leaking.
+  if (removedNames.size > 0) {
+    let emittedBody: Node[];
+    try {
+      const emitted = await parser.parse({
+        code: generated.code,
+        filePath: filePath ?? "module.tsx",
+      });
+      emittedBody = bodyOf(emitted);
+    } catch (error) {
+      throw new ServerExportStripError(
+        filePath,
+        `the stripped output no longer parses: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+
+    const residual = referencedIdentifiers(emittedBody);
+    for (const statement of emittedBody) {
+      if (statement.type !== "ImportDeclaration") continue;
+      for (const binding of importedBindings(statement)) residual.add(binding);
+    }
+    const leaked = [...removedNames].filter((name) => residual.has(name));
+    if (leaked.length > 0) {
+      throw new ServerExportStripError(
+        filePath,
+        `the server-only binding \`${leaked[0]}\` still appears in the stripped output`,
+      );
+    }
+  }
+
   return dropSourceMapSuffix(generated.code);
 }
 

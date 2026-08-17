@@ -269,6 +269,57 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "getServerData");
     });
 
+    // A module-scope reassignment defeats stubbing: the pass empties the
+    // declarator, but the assignment puts the real loader back at
+    // module-evaluation time, so the loader body and its imports would ship to
+    // the browser and overwrite the stub. This form used to be reported as
+    // successfully emptied while the real loader shipped silently; it now
+    // fails closed.
+    it("fails the build when an exported hook binding is reassigned at module scope", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `export let getServerData = async () => null;`,
+        `getServerData = async () => ({ props: { secret: getEnv("SECRET_A") } });`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+      assertStringIncludes((error as Error).message, "reassigned");
+    });
+
+    it("fails the build when a hook is reassigned to an imported server loader", async () => {
+      const code = [
+        `import { realLoader } from "./server/db.ts";`,
+        `export let getServerData;`,
+        `getServerData = realLoader;`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
+    it("fails the build when a separately exported hook binding is reassigned", async () => {
+      const code = [
+        `let getServerData;`,
+        `getServerData = async () => ({ props: { s: readSecret() } });`,
+        `export { getServerData };`,
+      ].join("\n");
+
+      await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+    });
+
+    it("fails the build when a hook binding is written by a destructuring assignment", async () => {
+      const code = [
+        `import { loaders } from "./loaders.ts";`,
+        `export let getServerData = async () => null;`,
+        `({ getServerData } = loaders);`,
+      ].join("\n");
+
+      await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+    });
+
     // The pre-check runs before anything else, so a module with no hook at all
     // is never parsed and can never fail the build.
     it("leaves a module that does not parse alone when it names no hook", async () => {
@@ -901,6 +952,28 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "auth"), 0);
       assertEquals(occurrences(result, "getEnv"), 0);
       assertNotIncludes(result, "CFG");
+    });
+
+    // Regression (review probe): a pattern default that reads a *sibling*
+    // binding of the same pattern used to keep the declarator alive forever —
+    // the self-referential read counted as an external consumer, so the
+    // secret-bearing initialiser call and its import shipped silently even
+    // though only the stripped hook read the bindings.
+    it("drops a pattern whose default multiplies a sibling binding of the same pattern", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { retries, delay = retries * 2 } = getEnv("SERVER_SECRET_CFG");`,
+        `export async function getServerData() { return { props: { retries, delay } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "retries"), 0);
+      assertEquals(occurrences(result, "delay"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertNotIncludes(result, "SERVER_SECRET_CFG");
+      assertNotIncludes(result, `"veryfront"`);
     });
 
     it("drops a chain that flows through a destructured server value", async () => {
