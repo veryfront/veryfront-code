@@ -2457,6 +2457,37 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "pages/leak.tsx");
     });
 
+    it("fails the build when a deferred parameter default is the last secret reader", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import { memo } from "./memo.ts";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const handler = memo((value = KEY) => value);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/leak.tsx"));
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "pages/leak.tsx");
+    });
+
+    it("fails the build when a called generator defers the last secret read", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const dead = (function* () { yield KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/leak.tsx"));
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "pages/leak.tsx");
+    });
+
     // Contrast pin: the same shape is ordinary client code the moment the
     // browser can reach the declaration, and then the secret it closes over is
     // shared state this pass must leave alone.

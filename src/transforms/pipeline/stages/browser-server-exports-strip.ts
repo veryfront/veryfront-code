@@ -935,6 +935,42 @@ function freeReferencedIdentifiers(
     visit(pattern, scopes);
   };
 
+  const visitPatternDecorators = (
+    pattern: Node,
+    decoratorScopes: LexicalScope[],
+  ): void => {
+    visitDecorators(pattern, decoratorScopes);
+
+    if (pattern.type === "TSParameterProperty" && isNode(pattern.parameter)) {
+      visitPatternDecorators(pattern.parameter, decoratorScopes);
+      return;
+    }
+    if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
+      visitPatternDecorators(pattern.left, decoratorScopes);
+      return;
+    }
+    if (pattern.type === "RestElement" && isNode(pattern.argument)) {
+      visitPatternDecorators(pattern.argument, decoratorScopes);
+      return;
+    }
+    if (pattern.type === "ArrayPattern") {
+      for (const element of Array.isArray(pattern.elements) ? pattern.elements : []) {
+        if (isNode(element)) visitPatternDecorators(element, decoratorScopes);
+      }
+      return;
+    }
+    if (pattern.type === "ObjectPattern") {
+      for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
+        if (!isNode(property)) continue;
+        if (property.type === "RestElement" && isNode(property.argument)) {
+          visitPatternDecorators(property.argument, decoratorScopes);
+        } else if (property.type === "ObjectProperty" && isNode(property.value)) {
+          visitPatternDecorators(property.value, decoratorScopes);
+        }
+      }
+    }
+  };
+
   const bindVariableDeclaration = (node: Node, scopes: LexicalScope[]): void => {
     const targetScope = node.kind === "var" ? currentVarScope(scopes) : scopes[0] ?? rootScope;
     for (const declarator of declaratorsOf(node)) {
@@ -953,6 +989,7 @@ function freeReferencedIdentifiers(
 
   const visitFunction = (node: Node, scopes: LexicalScope[]): void => {
     const functionScope: LexicalScope = { kind: "var", names: new Set() };
+    const isDeferred = deferred.has(node);
     if (node.type === "FunctionDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
     bindPatternNames(functionScope, node.id);
 
@@ -961,11 +998,12 @@ function freeReferencedIdentifiers(
     }
     for (const param of Array.isArray(node.params) ? node.params : []) {
       if (isNode(param)) {
-        visitPatternRuntime(param, [functionScope, ...scopes], scopes);
+        if (isDeferred) visitPatternDecorators(param, scopes);
+        else visitPatternRuntime(param, [functionScope, ...scopes], scopes);
       }
     }
 
-    if (deferred.has(node)) return;
+    if (isDeferred) return;
 
     bindDirectDeclarations(functionScope, isNode(node.body) ? node.body : node);
     if (isNode(node.body)) bindNestedVarDeclarations(functionScope, node.body);
@@ -1862,7 +1900,9 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       node.type === "ClassPrivateProperty" || node.type === "ClassAccessorProperty") &&
       node.static !== true;
 
-    if ((isFunction && node !== invoked) || isInstanceField) deferred.add(node);
+    if ((isFunction && (node !== invoked || node.generator === true)) || isInstanceField) {
+      deferred.add(node);
+    }
 
     const nextInvoked = invokedChild(node);
     for (const child of children(node)) walk(child, nextInvoked);
