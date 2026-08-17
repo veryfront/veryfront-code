@@ -682,9 +682,12 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
       if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
+      const classScope: LexicalScope = { kind: "block", names: new Set() };
+      bindPatternNames(classScope, node.id);
+      const classScopes = [classScope, ...scopes];
       const body = node.body;
-      if (isNode(body)) visitChildren(body, scopes);
-      if (isNode(node.superClass)) visit(node.superClass, scopes);
+      if (isNode(node.superClass)) visit(node.superClass, classScopes);
+      if (isNode(body)) visitChildren(body, classScopes);
       return;
     }
 

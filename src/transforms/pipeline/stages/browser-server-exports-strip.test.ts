@@ -968,6 +968,25 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, "const secret =");
     });
 
+    it("drops a hook-only import shadowed by a named client class expression", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `const secret = loadSecret();`,
+        `export async function getServerData() { return { props: { secret } }; }`,
+        `export default function Page() {`,
+        `  const ClientValue = class loadSecret { static self = loadSecret; };`,
+        `  return ClientValue.self;`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "class loadSecret");
+      assertStringIncludes(result, "static self = loadSecret");
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertNotIncludes(result, "const secret =");
+    });
+
     // A pattern default is runtime code: a helper it references is part of the
     // dropped declarator's closure and is pruned with it once nothing else
     // reads it.
