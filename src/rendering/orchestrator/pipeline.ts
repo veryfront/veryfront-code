@@ -802,6 +802,7 @@ export class RenderPipeline {
                   options?.dependencyPinningDependencies,
                   options?.dependencyPinningSource,
                   options?.url?.origin,
+                  options?.abortSignal,
                 )
                 : Promise.resolve();
 
@@ -972,6 +973,7 @@ export class RenderPipeline {
                         options?.dependencyPinningCacheKey,
                         options?.dependencyPinningDependencies,
                         options?.dependencyPinningSource,
+                        options?.abortSignal,
                       ),
                     {
                       "render.slug": slug,

@@ -329,6 +329,48 @@ describe("rendering/layouts/utils/component-loader", () => {
   });
 
   describe("loadTSXComponent", () => {
+    it("threads the request signal into a cold SSR component load", async () => {
+      const cache = createLayoutComponentCache();
+      const controller = new AbortController();
+      let observedSignal: AbortSignal | undefined;
+      const loading = loadTSXComponent(
+        "/project/app/signal-layout.tsx",
+        "/project",
+        cache,
+        layoutAdapter("export default function Layout() { return null; }"),
+        "project-1",
+        "project-slug",
+        "release-1",
+        "19.1.0",
+        {
+          loadComponentFromSource: (_source, _filePath, _projectDir, _adapter, options) => {
+            observedSignal = options?.signal;
+            return new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener(
+                "abort",
+                () => reject(options.signal?.reason),
+                { once: true },
+              );
+            });
+          },
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller.signal,
+      );
+
+      await waitFor(() => observedSignal !== undefined);
+      const reason = new DOMException("layout render cancelled", "AbortError");
+      controller.abort(reason);
+
+      await assertRejects(() => loading, Error, "layout render cancelled");
+      assertEquals(observedSignal?.aborted, true);
+      assertEquals(observedSignal?.reason, reason);
+    });
+
     it("shares one component load for concurrent cold misses", async () => {
       const cache = createLayoutComponentCache();
       const loaded = Promise.withResolvers<React.ComponentType>();

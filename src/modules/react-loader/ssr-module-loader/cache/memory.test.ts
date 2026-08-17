@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   acquireTransformSlot,
@@ -168,6 +168,33 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
         releaseTransformSlot(projectId);
       } finally {
         globalThis.setTimeout = originalSetTimeout;
+        if (previousLimit === undefined) {
+          Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+        } else {
+          Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+        }
+        resetState();
+      }
+    });
+
+    it("should reject and remove a queued acquisition when its signal aborts", async () => {
+      const previousLimit = Deno.env.get("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+      resetState();
+
+      try {
+        const projectId = "test-abort-queued-acquire";
+        const controller = new AbortController();
+        assertEquals(acquireTransformSlot(projectId), true);
+
+        const waiter = tryAcquireTransformSlot(projectId, 10_000, false, controller.signal);
+        controller.abort(new DOMException("render cancelled", "AbortError"));
+        releaseTransformSlot(projectId);
+
+        await assertRejects(() => waiter, DOMException, "render cancelled");
+        assertEquals(await tryAcquireTransformSlot(projectId, 0), true);
+        releaseTransformSlot(projectId);
+      } finally {
         if (previousLimit === undefined) {
           Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
         } else {

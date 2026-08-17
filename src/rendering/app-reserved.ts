@@ -1,5 +1,5 @@
 import * as BundledReact from "react";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger, throwIfAborted } from "#veryfront/utils";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
@@ -93,7 +93,9 @@ export async function loadReservedWithPath(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
+  throwIfAborted(signal);
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
   const { loadComponentFromSource } = await import(
@@ -115,11 +117,13 @@ export async function loadReservedWithPath(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
           dependencyPinningSource,
+          signal,
         });
         if (typeof Cmp === "function") {
           return { component: Cmp as ReservedComponent, filePath: file };
         }
       } catch (_) {
+        throwIfAborted(signal);
         /* expected: component not found in this path, continue to next */
       }
     }
@@ -142,6 +146,7 @@ export async function tryLoadReservedInDirs(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -157,6 +162,7 @@ export async function tryLoadReservedInDirs(
     dependencyPinningSource,
     moduleServerOrigin,
     serverExternalPackages,
+    signal,
   );
   return loaded?.component ?? null;
 }

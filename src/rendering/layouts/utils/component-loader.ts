@@ -1,6 +1,7 @@
 import {
   computeHash,
   rendererLogger as logger,
+  throwIfAborted,
   TSX_LAYOUT_MAX_ENTRIES,
   TSX_LAYOUT_PER_PROJECT_MAX_ENTRIES,
 } from "#veryfront/utils";
@@ -265,7 +266,9 @@ export async function loadTSXComponent(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<BundledReact.ComponentType> {
+  throwIfAborted(signal);
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
     dependencyPinningSource ?? projectDir,
@@ -288,12 +291,14 @@ export async function loadTSXComponent(
     cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
   }
 
+  throwIfAborted(signal);
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const loaded = await getTSXComponentFlights(cache).do(
     cacheKey,
     async (control) => {
+      throwIfAborted(control.signal);
       const cachedDuringFlight = cache.get(cacheKey);
       if (cachedDuringFlight) return cachedDuringFlight;
 
@@ -314,6 +319,7 @@ export async function loadTSXComponent(
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencyPinningSource ?? projectDir,
+          signal: control.signal,
         },
       );
 
@@ -338,6 +344,8 @@ export async function loadTSXComponent(
           componentPath,
         });
       },
+      signal,
+      cancelWhenUnobserved: true,
     },
   );
   return loaded;
@@ -463,6 +471,7 @@ export async function applyTSXLayout(
   dependencyPinningSource?: DependencyPinningSourceInput,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  signal?: AbortSignal,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -492,6 +501,7 @@ export async function applyTSXLayout(
       dependencyPinningSource,
       moduleServerOrigin,
       serverExternalPackages,
+      signal,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
