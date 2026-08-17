@@ -276,11 +276,15 @@ function snapshotDataArray(
   for (let index = 0; index < length; index++) {
     allowedKeys.add(String(index));
   }
-  if (reflectOwnKeys(value).some((key) => !allowedKeys.has(key))) {
-    invalid(`${label} must not define custom properties.`);
+  const ownKeys = reflectOwnKeys(value);
+  for (let index = 0; index < ownKeys.length; index++) {
+    if (!allowedKeys.has(ownKeys[index]!)) {
+      invalid(`${label} must not define custom properties.`);
+    }
   }
 
   const snapshot: unknown[] = [];
+  snapshot.length = length;
   for (let index = 0; index < length; index++) {
     const descriptor = reflectGetOwnPropertyDescriptor(value, String(index));
     if (
@@ -290,7 +294,7 @@ function snapshotDataArray(
     ) {
       invalid(`${label}[${index}] must be an enumerable data property.`);
     }
-    snapshot.push(descriptor.value);
+    snapshot[index] = descriptor.value;
   }
   return snapshot;
 }
@@ -532,7 +536,10 @@ function normalizeIntegrationRequirements(
   );
 
   const integrations = new Set<string>();
-  return requirements.map((value, index) => {
+  const normalizedRequirements: ScheduleIntegrationRequirement[] = [];
+  normalizedRequirements.length = requirements.length;
+  for (let index = 0; index < requirements.length; index++) {
+    const value = requirements[index];
     const label = `${definitionLabel} integrationRequirements[${index}]`;
     const requirement = snapshotDataRecord(value, label, [
       "integration",
@@ -572,33 +579,39 @@ function normalizeIntegrationRequirements(
       MAX_RESOURCES_PER_REQUIREMENT,
     );
 
-    const normalizedScopes = requiredScopes.map((scope, scopeIndex) =>
-      requireContractString(
-        scope,
+    const normalizedScopes: string[] = [];
+    normalizedScopes.length = requiredScopes.length;
+    for (let scopeIndex = 0; scopeIndex < requiredScopes.length; scopeIndex++) {
+      normalizedScopes[scopeIndex] = requireContractString(
+        requiredScopes[scopeIndex],
         `${label}.requiredScopes[${scopeIndex}]`,
         MAX_SCOPE_LENGTH,
         mode,
-      )
-    );
+      );
+    }
     const scopes = new Set<string>();
-    for (const scope of normalizedScopes) {
+    for (let scopeIndex = 0; scopeIndex < normalizedScopes.length; scopeIndex++) {
+      const scope = normalizedScopes[scopeIndex]!;
       if (scopes.has(scope)) {
         invalid(`${label}.requiredScopes contains duplicate scope ${scope}.`);
       }
       scopes.add(scope);
     }
 
-    const normalizedResources = resources.map((resource, resourceIndex) =>
-      normalizeIntegrationResource(
-        resource,
+    const normalizedResources: ScheduleIntegrationResource[] = [];
+    normalizedResources.length = resources.length;
+    for (let resourceIndex = 0; resourceIndex < resources.length; resourceIndex++) {
+      normalizedResources[resourceIndex] = normalizeIntegrationResource(
+        resources[resourceIndex],
         index,
         resourceIndex,
         mode,
         definitionLabel,
-      )
-    );
+      );
+    }
     const resourceIdentities = new Set<string>();
-    for (const resource of normalizedResources) {
+    for (let resourceIndex = 0; resourceIndex < normalizedResources.length; resourceIndex++) {
+      const resource = normalizedResources[resourceIndex]!;
       const identity = jsonStringify([
         resource.kind,
         resource.id,
@@ -611,12 +624,13 @@ function normalizeIntegrationRequirements(
       resourceIdentities.add(identity);
     }
 
-    return {
+    normalizedRequirements[index] = {
       integration,
       requiredScopes: normalizedScopes,
       resources: normalizedResources,
     };
-  });
+  }
+  return normalizedRequirements;
 }
 
 /**
@@ -634,9 +648,11 @@ export function captureScheduleIntegrationRequirementsConfig(
     const requirements = normalizeIntegrationRequirements(value, "config", definitionLabel);
     if (requirements === undefined) return undefined;
 
-    for (const requirement of requirements) {
+    for (let requirementIndex = 0; requirementIndex < requirements.length; requirementIndex++) {
+      const requirement = requirements[requirementIndex]!;
       objectFreeze(requirement.requiredScopes);
-      for (const resource of requirement.resources) {
+      for (let resourceIndex = 0; resourceIndex < requirement.resources.length; resourceIndex++) {
+        const resource = requirement.resources[resourceIndex]!;
         if (resource.parent !== undefined) objectFreeze(resource.parent);
         objectFreeze(resource);
       }

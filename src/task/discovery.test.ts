@@ -286,7 +286,8 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(reads, 0);
     });
 
-    it("uses captured reflection primitives after module initialization", () => {
+    it("uses captured validation primitives after module initialization", () => {
+      const originalMap = Array.prototype.map;
       const originalApply = Reflect.apply;
       const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
       const originalGetPrototypeOf = Reflect.getPrototypeOf;
@@ -306,6 +307,10 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         freezePoisonCalls++;
         return value;
       }) as typeof Object.freeze;
+      const mapPoison = function <T, U>(): U[] {
+        poisonCalls++;
+        return [];
+      } as typeof Array.prototype.map;
       let output: unknown;
       let inputSchema: TaskDefinition["inputSchema"];
       let requirements: TaskDefinition["integrationRequirements"];
@@ -316,6 +321,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       };
 
       try {
+        Array.prototype.map = mapPoison;
         Reflect.apply = poison;
         Reflect.getOwnPropertyDescriptor = poison;
         Reflect.getPrototypeOf = poison;
@@ -350,6 +356,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         inputSchema = registered.inputSchema;
         requirements = registered.integrationRequirements;
       } finally {
+        Array.prototype.map = originalMap;
         Reflect.apply = originalApply;
         Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
         Reflect.getPrototypeOf = originalGetPrototypeOf;
@@ -372,6 +379,15 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         properties: { name: { type: "string" } },
       });
       assertEquals(inputSchema === sourceInputSchema, false);
+      assertEquals(requirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{
+          kind: "channel",
+          id: "C012345",
+          parent: { kind: "workspace", id: "T012345" },
+        }],
+      }]);
       assertEquals(Object.isFrozen(inputSchema), true);
       assertEquals(Object.isFrozen(inputSchema?.required), true);
       assertEquals(Object.isFrozen(inputSchema?.properties), true);
