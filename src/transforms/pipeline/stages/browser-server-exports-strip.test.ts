@@ -2307,6 +2307,157 @@ describe("browser-server-exports-strip", () => {
     });
   });
 
+  // A dead declaration must not be able to vouch for a secret. These are the
+  // shapes where it still could: an initialiser that only *looks* impure, and
+  // one that runs but reads the secret somewhere that never runs with it.
+  describe("what a dead declaration can pin", () => {
+    // Choosing between two values, or comparing them without coercion, calls
+    // nothing. Each of these used to be "not proven inert", so the dead
+    // declaration counted as a top-level side effect and rooted the secret.
+    const inertOperators: Array<[string, string]> = [
+      ["a conditional", `const dead = MARK ? KEY : MARK;`],
+      ["a logical or", `const dead = KEY || MARK;`],
+      ["a nullish coalesce", `const dead = KEY ?? MARK;`],
+      ["a logical and", `const dead = KEY && MARK;`],
+      ["a strict comparison", `const dead = KEY === MARK;`],
+      ["a strict inequality", `const dead = KEY !== MARK;`],
+      ["a sequence", `const dead = (MARK, KEY);`],
+    ];
+
+    for (const [description, declaration] of inertOperators) {
+      it(`drops a hook-only secret ${description} reads in a dead declaration`, async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `const MARK = "client-mark";`,
+          declaration,
+          `export async function getServerData() { return { props: { k: KEY } }; }`,
+          `export default function Page() { return MARK; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertNotIncludes(result, "SECRET_KEY");
+        assertEquals(occurrences(result, "KEY"), 0);
+        assertEquals(occurrences(result, "dead"), 0);
+        assertStringIncludes(result, "client-mark");
+      });
+    }
+
+    // Coercion is the line: `==`, `<` and arithmetic all reach `valueOf`, so
+    // the comparison is a real read of the secret and the declaration stays.
+    it("keeps a hook-only secret a coercing comparison reads in a dead declaration", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const dead = KEY > 1;`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "SECRET_KEY");
+    });
+
+    // Naming a superclass evaluates the heritage expression; when that is a
+    // plain binding the class definition still runs nothing, so a dead class
+    // extending a client class is as elidable as a dead plain one.
+    it("drops a dead class that extends a client class", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `class Base { b() { return "client-mark"; } }`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `class Dead extends Base { m() { return KEY; } }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return new Base().b(); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "Dead"), 0);
+      assertStringIncludes(result, "client-mark");
+      assertStringIncludes(result, "class Base");
+    });
+
+    // A body that never runs is not a read. `memo(…)` is a genuine top-level
+    // side effect, so the declaration stays, but the arrow it is handed only
+    // reads the secret if something calls it — and nothing reaches `handler`.
+    // The pass can neither drop the surviving call nor honestly claim the
+    // secret is gone, so it stops the build.
+    it("fails the build when a secret is read only from an unreachable declaration's body", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import { memo } from "./memo.ts";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const handler = memo(() => KEY);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/leak.tsx"));
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "pages/leak.tsx");
+    });
+
+    // Contrast pin: the same shape is ordinary client code the moment the
+    // browser can reach the declaration, and then the secret it closes over is
+    // shared state this pass must leave alone.
+    it("keeps a secret read from the body of a declaration the client reaches", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import { memo } from "./memo.ts";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const handler = memo(() => KEY);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return handler(); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "SECRET_KEY");
+      assertStringIncludes(result, "handler");
+    });
+
+    // An immediately invoked function is not deferred: its body runs where it
+    // is written, so the secret it reads is genuinely read at module load.
+    it("keeps a secret an immediately invoked initialiser reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const dead = (function () { globalThis.x = KEY; return 1; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "SECRET_KEY");
+    });
+
+    // Over-pruning guard for the hoisted-`var` exception: eliding the site from
+    // the roots stops it pinning a hook-only import, but the call is still the
+    // module's own side effect. When the binding it calls survives — because
+    // browser code calls it too — removing the statement would silently delete
+    // working client code.
+    it("keeps a hoisted var whose initialiser calls an import the client also uses", async () => {
+      const code = [
+        `import { boot } from "./boot.ts";`,
+        `if (globalThis.debug) { var dead = boot("dev-only-mark"); }`,
+        `export async function getServerData() { return { props: { b: boot("server") } }; }`,
+        `export default function Page() { return boot("client"); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "dev-only-mark");
+      assertStringIncludes(result, "./boot.ts");
+      assertStringIncludes(result, `boot("client")`);
+    });
+  });
+
   describe("plugin", () => {
     function ctx(code: string, target: "browser" | "ssr"): TransformContext {
       return { code, target, filePath: "pages/test.tsx", metadata: new Map() } as TransformContext;
