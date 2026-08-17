@@ -1591,6 +1591,56 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
   return nodeName(node.object) === "Object" && propertyName === "defineProperty";
 }
 
+function writesObjectDefineProperty(body: Node[]): boolean {
+  const targetWritesDefineProperty = (target: Node): boolean => {
+    if (isObjectDefineProperty(target)) return true;
+    if (target.type === "AssignmentPattern") {
+      return isNode(target.left) && targetWritesDefineProperty(target.left);
+    }
+    if (target.type === "RestElement" || target.type === "SpreadElement") {
+      return isNode(target.argument) && targetWritesDefineProperty(target.argument);
+    }
+    if (target.type === "ArrayPattern" || target.type === "ArrayExpression") {
+      return (Array.isArray(target.elements) ? target.elements : []).some((element) =>
+        isNode(element) && targetWritesDefineProperty(element)
+      );
+    }
+    if (target.type === "ObjectPattern" || target.type === "ObjectExpression") {
+      return (Array.isArray(target.properties) ? target.properties : []).some((property) => {
+        if (!isNode(property)) return false;
+        if (isNode(property.argument)) return targetWritesDefineProperty(property.argument);
+        return isNode(property.value) && targetWritesDefineProperty(property.value);
+      });
+    }
+    return isNode(target.expression) && targetWritesDefineProperty(target.expression);
+  };
+
+  let writes = false;
+  for (const statement of body) {
+    walk(statement, (node) => {
+      if (writes) return false;
+
+      let target: Node | undefined;
+      if (node.type === "AssignmentExpression" && isNode(node.left)) target = node.left;
+      if (node.type === "UpdateExpression" && isNode(node.argument)) target = node.argument;
+      if (node.type === "UnaryExpression" && node.operator === "delete" && isNode(node.argument)) {
+        target = node.argument;
+      }
+      if (
+        (node.type === "ForInStatement" || node.type === "ForOfStatement") &&
+        isNode(node.left) && node.left.type !== "VariableDeclaration"
+      ) {
+        target = node.left;
+      }
+
+      if (target && targetWritesDefineProperty(target)) writes = true;
+      return !writes;
+    });
+    if (writes) break;
+  }
+  return writes;
+}
+
 function returnedCall(node: Node): Node | null {
   const body = node.body;
   if (!isNode(body)) return null;
@@ -1661,8 +1711,10 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
       isNode(specifier) && specifier.importKind !== "type" && nodeName(specifier.local) === "Object"
     )
   );
+  const reassigned = assignedNames(body);
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
-    hoistedVarNames(body).has("Object") || importsRuntimeObject;
+    hoistedVarNames(body).has("Object") || importsRuntimeObject || reassigned.has("Object") ||
+    writesObjectDefineProperty(body);
   if (objectIsModuleLocal) return new Set<string>();
 
   const initializers = new Map<string, Node>();
@@ -1674,8 +1726,6 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
       if (name) initializers.set(name, declarator.init);
     }
   }
-
-  const reassigned = assignedNames(body);
 
   const definePropertyBindings = new Set<string>();
   for (const [name, init] of initializers) {
