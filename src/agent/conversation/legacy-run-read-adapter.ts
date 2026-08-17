@@ -123,7 +123,12 @@ function readVersion1(
         reduce({ type: "reasoning_end", id: contentId ?? "reasoning" });
         break;
       case "TOOL_CALL_START":
-        reduce({ type: "tool_input_start", toolCallId, toolName });
+        reduce({
+          type: "tool_input_start",
+          toolCallId,
+          toolName,
+          ...(event.providerExecuted === true ? { providerExecuted: true } : {}),
+        });
         break;
       case "TOOL_CALL_ARGS":
         reduce({
@@ -135,12 +140,15 @@ function readVersion1(
       case "TOOL_CALL_END": {
         const stored = toolInputTextFor(reducer, toolCallId);
         const parsed = parseCanonicalToolInput(stored);
+        const providerExecuted = event.providerExecuted === true ||
+          reducer.tools.get(toolCallId)?.providerExecuted === true;
         if (parsed.ok) {
           reduce({
             type: "tool_input_ready",
             toolCallId,
             toolName: toolNameFor(reducer, toolCallId) ?? toolName,
             input: parsed.value,
+            ...(providerExecuted ? { providerExecuted: true } : {}),
           });
         } else {
           reduce({
@@ -193,11 +201,16 @@ function readVersion1(
     }
   }
 
+  // Version 1 did not require a provider-execution marker. Only repair calls
+  // that stored one explicitly, because an unmarked call may be a legitimate
+  // local handoff waiting for a client or later continuation.
   for (const [toolCallId, tool] of reducer.tools) {
-    if (tool.phase !== "input_ready" || resultToolCallIds.has(toolCallId)) continue;
+    if (
+      tool.phase !== "input_ready" || tool.providerExecuted !== true ||
+      resultToolCallIds.has(toolCallId)
+    ) continue;
 
     repairs.add("legacy_missing_tool_result");
-    reducer.tools.set(toolCallId, { ...tool, providerExecuted: true });
     reduce({
       type: "provider_tool_start",
       toolCallId,
