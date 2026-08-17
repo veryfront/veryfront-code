@@ -2038,6 +2038,44 @@ describe("browser-server-exports-strip", () => {
       });
     }
 
+    // The recognised set has to admit what real compiled modules contain. A
+    // CommonJS interop prologue calls the intrinsic on its own exports object,
+    // and ordinary code writes computed keys on locals all the time; neither
+    // can reach `Object.defineProperty`, so neither may cost the module its
+    // compiler metadata.
+    for (
+      const [label, line] of [
+        [
+          "a CommonJS interop marker",
+          `Object.defineProperty(exports, "__esModule", { value: true });`,
+        ],
+        ["a computed write on a local", `const bag = {};\nfor (const k of ["a"]) { bag[k] = 1; }`],
+        ["an index write on a local array", `const arr = [];\narr[0] = 1;`],
+        ["a member write on an instance", `class Box { fill() { this.items = []; } }`],
+      ]
+    ) {
+      it(`still strips compiler metadata past ${label}`, async () => {
+        const code = [
+          line,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertEquals(occurrences(result, "KEY"), 0);
+        assertEquals(occurrences(result, "getEnv"), 0);
+      });
+    }
+
     it("does not treat an eval of a replacement as compiler metadata", async () => {
       const code = [
         `eval("globalThis.Object.defineProperty = (target) => target");`,
