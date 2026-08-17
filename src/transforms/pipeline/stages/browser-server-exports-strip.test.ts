@@ -953,6 +953,21 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, '"veryfront"');
     });
 
+    it("drops a hook-only import when client code shadows the imported binding", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `const secret = loadSecret();`,
+        `export async function getServerData() { return { props: { secret } }; }`,
+        `export default function Page() { const loadSecret = () => "public"; return loadSecret(); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'loadSecret = () => "public"');
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertNotIncludes(result, "const secret =");
+    });
+
     // A pattern default is runtime code: a helper it references is part of the
     // dropped declarator's closure and is pruned with it once nothing else
     // reads it.
