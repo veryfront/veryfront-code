@@ -15,6 +15,8 @@ const MAX_CACHE_KEY_CODE_UNITS = 64 * 1024;
 const KEY_DIGEST_LOG_CHARS = 12;
 const MAX_CACHE_NAMESPACE_BYTES = 240;
 const MAX_DIRECTORY_SCAN_ENTRIES = 100_000;
+const EXPIRY_PRUNE_BATCH_SIZE = 256;
+const EXPIRY_PRUNE_WRITE_INTERVAL = 32;
 const DEFAULT_MAX_VALUE_BYTES = 64 * 1024 * 1024;
 const MAX_CONFIGURED_VALUE_BYTES = 512 * 1024 * 1024;
 const FRAME_HEADER_BYTES = 40;
@@ -314,6 +316,8 @@ export class DiskCacheBackend implements CacheBackend {
   private readonly maxValueBytes: number;
   private readonly maxFileBytes: number;
   private mutationTail: Promise<void> = Promise.resolve();
+  private writesUntilExpiryPrune = 1;
+  private expiryPruneOffset = 0;
 
   constructor(
     baseDir?: string,
@@ -448,6 +452,46 @@ export class DiskCacheBackend implements CacheBackend {
     }
   }
 
+  private async pruneExpiredEntries(): Promise<void> {
+    const { opendir, unlink } = await fsPromises;
+    const directory = await opendir(this.dir);
+    let scanned = 0;
+    let eligible = 0;
+    let processed = 0;
+
+    for await (const entry of directory) {
+      scanned++;
+      if (scanned > MAX_DIRECTORY_SCAN_ENTRIES) break;
+      if (!entry.isFile() || !CACHE_FILE_PATTERN.test(entry.name)) continue;
+      if (eligible++ < this.expiryPruneOffset) continue;
+      if (processed >= EXPIRY_PRUNE_BATCH_SIZE) break;
+      processed++;
+
+      const filePath = join(this.dir, entry.name);
+      try {
+        const envelope = await this.readFramedFile(filePath, undefined, undefined, false);
+        if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
+          await unlink(filePath);
+        }
+      } catch {
+        // Cache files are disposable and may be replaced by another process.
+      }
+    }
+
+    this.expiryPruneOffset = processed < EXPIRY_PRUNE_BATCH_SIZE
+      ? 0
+      : this.expiryPruneOffset + processed;
+  }
+
+  private async maybePruneExpiredEntries(): Promise<void> {
+    if (this.writesUntilExpiryPrune > 0) {
+      this.writesUntilExpiryPrune--;
+      return;
+    }
+    this.writesUntilExpiryPrune = EXPIRY_PRUNE_WRITE_INTERVAL - 1;
+    await this.pruneExpiredEntries();
+  }
+
   async get(key: string): Promise<string | null> {
     try {
       await this.mutationTail;
@@ -560,6 +604,11 @@ export class DiskCacheBackend implements CacheBackend {
         });
         throw error;
       }
+      await this.maybePruneExpiredEntries().catch((error) => {
+        logger.debug("[DiskCache] Expired entry pruning failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     });
   }
 

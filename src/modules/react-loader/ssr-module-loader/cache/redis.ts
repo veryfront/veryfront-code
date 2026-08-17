@@ -8,6 +8,7 @@ import {
   isLocalDevDiskCacheEnabled,
 } from "#veryfront/cache/backend.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const SSR_MODULE_CACHE_PREFIX = "ssr-module";
@@ -23,6 +24,7 @@ const SHA256_KEY_PREFIX = "sha256:";
 const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   () => CacheBackends.ssrModule(),
   "SSR-MODULE-LOADER",
+  getCacheBaseDir,
 );
 
 let distributedCacheEnabled = false;

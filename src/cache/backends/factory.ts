@@ -147,56 +147,75 @@ export function isDistributedBackend(backend: CacheBackend): boolean {
 }
 
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
+const MAX_DISTRIBUTED_CACHE_SCOPES = 128;
+
+interface DistributedCacheAccessorState {
+  backend: CacheBackend | null | undefined;
+  lastFailureTime: number;
+  inflight: Promise<CacheBackend | null> | null;
+}
 
 export function createDistributedCacheAccessor(
   factory: () => Promise<CacheBackend>,
   name: string,
+  getScopeKey?: () => string,
 ): () => Promise<CacheBackend | null> {
-  let backend: CacheBackend | null | undefined;
-  let lastFailureTime = 0;
-
-  let inflight: Promise<CacheBackend | null> | null = null;
+  const states = new Map<string, DistributedCacheAccessorState>();
 
   return () => {
-    if (backend !== undefined) {
+    const scopeKey = getScopeKey?.() ?? "";
+    let state = states.get(scopeKey);
+    if (!state) {
+      if (states.size >= MAX_DISTRIBUTED_CACHE_SCOPES) {
+        const settledScope = [...states].find(([, candidate]) => !candidate.inflight)?.[0];
+        if (settledScope !== undefined) states.delete(settledScope);
+      }
+      state = { backend: undefined, lastFailureTime: 0, inflight: null };
+      states.set(scopeKey, state);
+    } else if (getScopeKey) {
+      states.delete(scopeKey);
+      states.set(scopeKey, state);
+    }
+
+    if (state.backend !== undefined) {
       if (
-        backend === null && lastFailureTime > 0 &&
-        Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
+        state.backend === null && state.lastFailureTime > 0 &&
+        Date.now() - state.lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
       ) {
-        backend = undefined;
+        state.backend = undefined;
         logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
       }
 
-      if (backend !== undefined) return Promise.resolve(backend);
+      if (state.backend !== undefined) return Promise.resolve(state.backend);
     }
 
-    if (!inflight) {
-      inflight = (async () => {
+    if (!state.inflight) {
+      state.inflight = (async () => {
         try {
           const b = await factory();
           if (!isDistributedBackend(b)) {
-            backend = null;
-            lastFailureTime = 0;
+            state.backend = null;
+            state.lastFailureTime = 0;
             logger.debug(`[${name}] No distributed cache available (memory only)`);
             return null;
           }
 
-          backend = b;
-          lastFailureTime = 0;
+          state.backend = b;
+          state.lastFailureTime = 0;
           logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
           return b;
         } catch (error) {
           logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
-          backend = null;
-          lastFailureTime = Date.now();
+          state.backend = null;
+          state.lastFailureTime = Date.now();
           return null;
         }
       })().finally(() => {
-        inflight = null;
+        state.inflight = null;
       });
     }
 
-    return inflight;
+    return state.inflight;
   };
 }
 
@@ -245,8 +264,9 @@ export const CacheBackends = {
 export function createDistributedCodeCacheAccessor(
   factory: () => Promise<CacheBackend>,
   name: string,
+  getScopeKey?: () => string,
 ): () => Promise<TokenizingCacheGateway | null> {
-  const baseAccessor = createDistributedCacheAccessor(factory, name);
+  const baseAccessor = createDistributedCacheAccessor(factory, name, getScopeKey);
 
   return async () => {
     const backend = await baseAccessor();

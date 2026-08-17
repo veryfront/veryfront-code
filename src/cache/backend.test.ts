@@ -1481,6 +1481,31 @@ Deno.test({
 });
 
 Deno.test({
+  name: "createDistributedCacheAccessor isolates memoized backends by scope",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    const { ApiCacheBackend, createDistributedCacheAccessor } = await importBackend();
+    const first = new ApiCacheBackend({});
+    const second = new ApiCacheBackend({});
+    let scope = "first";
+    let callCount = 0;
+    const accessor = createDistributedCacheAccessor(
+      () => Promise.resolve(callCount++ === 0 ? first : second),
+      "test-scoped",
+      () => scope,
+    );
+
+    assertEquals(await accessor(), first);
+    scope = "second";
+    assertEquals(await accessor(), second);
+    scope = "first";
+    assertEquals(await accessor(), first);
+    assertEquals(callCount, 2);
+  },
+});
+
+Deno.test({
   name: "createDistributedCacheAccessor handles factory errors gracefully",
   sanitizeOps: false,
   sanitizeResources: false,

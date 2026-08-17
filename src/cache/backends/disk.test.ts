@@ -129,6 +129,21 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("ttl-zero"), null);
   });
 
+  await t.step("a later write prunes expired entries that are never read again", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "expired-entry-prune-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+
+    await backend.set("expired-content-hash", "old", 0);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    assertEquals((await cacheFileNames(cacheDir)).length, 1);
+
+    await backend.set("fresh-content-hash", "new", 60);
+
+    assertEquals(await backend.get("fresh-content-hash"), "new");
+    assertEquals((await cacheFileNames(cacheDir)).length, 1);
+  });
+
   await t.step("logs expired-entry cleanup failures", async () => {
     const backend = makeBackend();
     const key = "expired-cleanup-fails";

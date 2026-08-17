@@ -62,6 +62,33 @@ describe("SSR module distributed cache on a local dev server", () => {
     });
   });
 
+  it("isolates automatic disk caches by project cache directory", async () => {
+    useLocalDevEnvironment();
+    const firstCacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-first-" });
+    const secondCacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-second-" });
+    const cache = await import("./redis.ts?dev-disk-project-scope");
+
+    try {
+      await runWithCacheDir(firstCacheDir, async () => {
+        assertEquals(await cache.initializeSSRDistributedCache(), true);
+        await cache.setInRedis("shared-key", "export default 'first';");
+      });
+
+      await runWithCacheDir(secondCacheDir, async () => {
+        assertEquals(await cache.initializeSSRDistributedCache(), true);
+        assertEquals(await cache.getFromRedis("shared-key"), null);
+        await cache.setInRedis("shared-key", "export default 'second';");
+      });
+
+      await runWithCacheDir(firstCacheDir, async () => {
+        assertEquals(await cache.getFromRedis("shared-key"), "export default 'first';");
+      });
+    } finally {
+      await remove(firstCacheDir, { recursive: true });
+      await remove(secondCacheDir, { recursive: true });
+    }
+  });
+
   it("rebuilds a cached parent when an imported file changes while stopped", async () => {
     useLocalDevEnvironment();
     const cacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-" });
