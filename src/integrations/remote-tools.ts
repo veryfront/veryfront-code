@@ -816,7 +816,8 @@ export async function getRemoteIntegrationToolDefinitions(
  * Integration tools use "integration__tool_id" format (double underscore separator).
  */
 export function isRemoteIntegrationTool(toolName: string): boolean {
-  return parseIntegrationToolIdentity(toolName) !== null;
+  return toolName.length <= MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH &&
+    parseIntegrationToolIdentity(toolName) !== null;
 }
 
 /**
@@ -832,12 +833,19 @@ export async function executeRemoteIntegrationTool(
 ): Promise<unknown> {
   const requestContext = snapshotToolExecutionContext(context, true);
   requestContext.abortSignal?.throwIfAborted();
-  const identity = typeof toolName === "string" ? parseIntegrationToolIdentity(toolName) : null;
-  if (
-    typeof toolName !== "string" ||
-    toolName.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH ||
-    identity === null
-  ) {
+  if (typeof toolName !== "string") {
+    throw new Error(
+      `Remote integration tool "${toolName}" must use the canonical integration__tool_id name`,
+    );
+  }
+  if (toolName.length > MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH) {
+    throw new Error(
+      `Remote integration tool name must not exceed ${MAX_REMOTE_INTEGRATION_TOOL_NAME_LENGTH} characters`,
+    );
+  }
+
+  const identity = parseIntegrationToolIdentity(toolName);
+  if (identity === null) {
     throw new Error(
       `Remote integration tool "${toolName}" must use the canonical integration__tool_id name`,
     );

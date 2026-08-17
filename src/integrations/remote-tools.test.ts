@@ -459,6 +459,28 @@ describe("integrations/remote-tools", () => {
     assertEquals(dispatchCalls, 0);
   });
 
+  it("rejects oversized remote tool names at the input bound before dispatch", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+    let dispatchCalls = 0;
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () => {
+            dispatchCalls++;
+            return Response.json({ structuredContent: {} });
+          },
+          () => executeRemoteIntegrationTool(`github__${"a".repeat(121)}`, {}),
+        ),
+      Error,
+      "Remote integration tool name must not exceed 128 characters",
+    );
+    assertEquals(dispatchCalls, 0);
+  });
+
   it("uses the environment token only in single-project mode", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
@@ -922,6 +944,7 @@ describe("integrations/remote-tools", () => {
     assertStrictEquals(isRemoteIntegrationTool("__start"), false);
     assertStrictEquals(isRemoteIntegrationTool("end__"), false);
     assertStrictEquals(isRemoteIntegrationTool("middle__middle__name"), false);
+    assertStrictEquals(isRemoteIntegrationTool(`github__${"a".repeat(121)}`), false);
   });
 
   it("omits undefined call tool text entries when joining text content", async () => {
