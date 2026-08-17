@@ -211,7 +211,9 @@ export function matchConfiguredServerExternalSpecifier(
     if (!isConfiguredServerExternalPackage(esmSh.packageName, configuredPackages)) return undefined;
     return {
       packageName: esmSh.packageName,
-      runtimeSpecifier: `${esmSh.packageName}${esmSh.subpath}`,
+      runtimeSpecifier: esmSh.buildArtifact
+        ? esmSh.packageName
+        : `${esmSh.packageName}${esmSh.subpath}`,
     };
   }
   const hasNpmProtocol = stringStartsWith(specifier, "npm:");

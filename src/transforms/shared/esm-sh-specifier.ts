@@ -3,6 +3,8 @@ export interface ParsedEsmShUrl {
   readonly packageName: string;
   readonly version: string | null;
   readonly subpath: string;
+  /** True when the remaining path is an esm.sh build artifact, not an npm subpath. */
+  readonly buildArtifact?: true;
   readonly search: string;
   readonly hash: string;
 }
@@ -10,6 +12,7 @@ export interface ParsedEsmShUrl {
 const ReflectApply = Reflect.apply;
 const SetHas = Set.prototype.has;
 const StringCharCodeAt = String.prototype.charCodeAt;
+const StringEndsWith = String.prototype.endsWith;
 const StringIncludes = String.prototype.includes;
 const StringIndexOf = String.prototype.indexOf;
 const StringLastIndexOf = String.prototype.lastIndexOf;
@@ -41,6 +44,10 @@ function stringIncludes(value: string, search: string): boolean {
 
 function stringCharCodeAt(value: string, index: number): number {
   return ReflectApply(StringCharCodeAt, value, [index]) as number;
+}
+
+function stringEndsWith(value: string, search: string): boolean {
+  return ReflectApply(StringEndsWith, value, [search]) as boolean;
 }
 
 function stringLastIndexOf(value: string, search: string): number {
@@ -78,6 +85,29 @@ function isVersionedBuildPrefix(value: string): boolean {
     if (code < 48 || code > 57) return false;
   }
   return true;
+}
+
+function isBuildTarget(value: string): boolean {
+  if (value === "deno" || value === "denonext" || value === "node" || value === "esnext") {
+    return true;
+  }
+  if (value.length !== 6 || value[0] !== "e" || value[1] !== "s") return false;
+  for (let index = 2; index < value.length; index++) {
+    const code = stringCharCodeAt(value, index);
+    if (code < 48 || code > 57) return false;
+  }
+  return true;
+}
+
+function isBuildArtifactPath(
+  segments: readonly string[],
+  subpathIndex: number,
+  segmentCount: number,
+): boolean {
+  if (segmentCount < subpathIndex + 2 || !isBuildTarget(segments[subpathIndex]!)) return false;
+  const filename = segments[segmentCount - 1]!;
+  return stringEndsWith(filename, ".mjs") || stringEndsWith(filename, ".map") ||
+    stringEndsWith(filename, ".css");
 }
 
 /** Check if a URL is hosted by the canonical esm.sh origin. */
@@ -147,12 +177,14 @@ function parseClassifiedEsmShUrl(
   }
 
   let coordinateIndex = 0;
+  let hasBuildPrefix = false;
   const leading = segments[0];
   if (
     enforcementMode && leading !== undefined &&
     (isVersionedBuildPrefix(leading) || leading === "stable")
   ) {
     coordinateIndex = 1;
+    hasBuildPrefix = true;
   }
   const first = segments[coordinateIndex];
   if (
@@ -176,12 +208,15 @@ function parseClassifiedEsmShUrl(
   for (let index = packageSegmentIndex + 1; index < segmentCount; index++) {
     subpath += `/${segments[index]}`;
   }
+  const buildArtifact = enforcementMode && (hasBuildPrefix ||
+    isBuildArtifactPath(segments, packageSegmentIndex + 1, segmentCount));
 
   return {
     origin: getUrlString(parsed, URLOriginGetter),
     packageName,
     version: version && version.length > 0 ? version : null,
     subpath,
+    ...(buildArtifact ? { buildArtifact: true as const } : {}),
     search: getUrlString(parsed, URLSearchGetter),
     hash: getUrlString(parsed, URLHashGetter),
   };

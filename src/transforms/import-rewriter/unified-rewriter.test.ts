@@ -164,6 +164,18 @@ describe("rewriteImports with the default strategies", () => {
     assertEquals(result, `import query from "knex/query";`);
   });
 
+  it("drops esm.sh build artifact paths from configured SSR packages", async () => {
+    const result = await rewriteImports(
+      `import knex from "https://esm.sh/knex@3.1.0/es2022/knex.mjs";`,
+      defaultCtx({
+        target: "ssr",
+        serverExternalPackages: ["knex"],
+      }),
+    );
+
+    assertEquals(result, `import knex from "knex";`);
+  });
+
   it("rejects configured canonical esm.sh packages in browser rewrites", async () => {
     for (
       const specifier of [
