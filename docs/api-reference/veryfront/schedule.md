@@ -40,7 +40,7 @@ export default schedule({
 | -------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `discoverSchedules`              | Discover and validate canonical schedule definitions from a project directory.         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/discovery.ts#L29)   |
 | `isScheduleDefinition`           | Return true only when every schedule field and nested invariant is valid.              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/types.ts#L121)      |
-| `legacyScheduleTargetDiagnostic` | Describe why the legacy `input._schedule_target` channel is invalid, or return `null`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/validation.ts#L405) |
+| `legacyScheduleTargetDiagnostic` | Describe why the legacy `input._schedule_target` channel is invalid, or return `null`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/validation.ts#L413) |
 | `schedule`                       | Validate and normalize a source-defined schedule configuration.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schedule/factory.ts#L15)     |
 
 ### Types
