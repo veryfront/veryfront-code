@@ -8,6 +8,7 @@ import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import { showHeader } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 import { ensureBuiltinContentProcessor } from "../../shared/ensure-content-processor.ts";
+import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 /**
  * Schema factory for build command arguments
@@ -148,10 +149,80 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
   });
 }
 
+/** The synthetic shell route `buildEmbeddedPreset` prepends to every manifest. */
+const EMBEDDED_APP_SHELL_FILE = "embedded/app.js";
+
+/**
+ * Total bytes of the artifacts the embedded manifest declares.
+ *
+ * The production build reports the size of what it emitted, so the embedded
+ * preset reports the same thing rather than leaving the field at zero. The
+ * manifest is the artifact list, so it cannot drift from what was written.
+ * A file the preset failed to emit is skipped: `buildEmbeddedPreset` only warns
+ * when an RSC bundle or a route fails, and a size roll-up must not turn that
+ * warning into a hard error.
+ */
+async function sumEmbeddedOutputSize(
+  outDir: string,
+  manifest: { routes: ReadonlyArray<{ file: string }>; assets: ReadonlyArray<{ file: string }> },
+): Promise<number> {
+  const { join } = await import("veryfront/platform/path");
+  const { createFileSystem } = await import("veryfront/platform");
+  const fs = createFileSystem();
+
+  const files = new Set<string>(["embedded/manifest.json"]);
+  for (const route of manifest.routes) files.add(route.file);
+  for (const asset of manifest.assets) files.add(asset.file);
+
+  let total = 0;
+  for (const file of files) {
+    try {
+      total += (await fs.stat(join(outDir, file))).size;
+    } catch {
+      // Not emitted — already reported by the preset as a warning.
+    }
+  }
+  return total;
+}
+
+/**
+ * Run the embedded build, terminating the NDJSON stream ourselves in JSON mode.
+ *
+ * Once a `step` line has reached stdout, the router's error envelope must not
+ * also be written: it is a different, multi-line shape, so a consumer gets a
+ * partial NDJSON stream followed by something that is not NDJSON at all. The
+ * default path solves this by streaming its own `result` and calling `exit(1)`
+ * rather than rethrowing, and this matches it — including for failures in the
+ * config phase, which happen after the first `step` line is already out.
+ */
 async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
+  if (!isJsonMode()) {
+    await runEmbeddedBuild(projectDir, outputDir);
+    return;
+  }
+  try {
+    await runEmbeddedBuild(projectDir, outputDir);
+  } catch (error) {
+    streamJsonLine({
+      type: "result",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const { exit } = await import("veryfront/platform");
+    exit(1);
+  }
+}
+
+async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
   const { buildEmbeddedPreset } = await import("veryfront/build");
   const { getConfig } = await import("veryfront/config");
   const { resolveBuildOutputDir } = await import("./command.ts");
+  const startTime = Date.now();
+  // Failures are terminated by the caller, which streams the error result and
+  // exits rather than letting the router print a second envelope.
+  const json = isJsonMode();
+
+  if (json) streamJsonLine({ type: "step", name: "config", status: "started" });
 
   // The config was never loaded on this path, so `build.outDir` was ignored
   // and the preset always wrote `dist`. Resolving through the same helper the
@@ -168,18 +239,61 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
     clearsOutputDir: false,
   });
 
-  cliLogger.info("Building embedded preset...");
-  if (isVerbose()) {
-    cliLogger.info(`  ${dim("Project:")} ${projectDir}`);
-    cliLogger.info(`  ${dim("Output:")} ${finalOutput}`);
+  if (json) {
+    streamJsonLine({ type: "step", name: "config", status: "completed" });
+    streamJsonLine({ type: "step", name: "build", status: "started" });
+  } else {
+    cliLogger.info("Building embedded preset...");
+    if (isVerbose()) {
+      cliLogger.info(`  ${dim("Project:")} ${projectDir}`);
+      cliLogger.info(`  ${dim("Output:")} ${finalOutput}`);
+    }
   }
 
-  await buildEmbeddedPreset({
+  const { manifest } = await buildEmbeddedPreset({
     projectDir,
     outDir: finalOutput,
     runtime: "deno",
     config,
   });
+
+  if (json) {
+    const elapsed = Date.now() - startTime;
+    streamJsonLine({
+      type: "step",
+      name: "build",
+      status: "completed",
+      duration_ms: elapsed,
+    });
+    // Same event and payload shape as the default build path in command.ts:
+    // one command must not answer `--json` with two different result lines.
+    streamJsonLine({
+      type: "result",
+      success: true,
+      data: {
+        // `buildEmbeddedPreset` unshifts a synthetic `/` -> `embedded/app.js`
+        // shell route on top of the discovered ones, so counting every
+        // `type: "page"` reports one more page than the project has. Measured
+        // on a two-page fixture: routes are the shell, `/about`, and `/`, so
+        // the naive count says 3.
+        pages: manifest.routes.filter((route) =>
+          route.type === "page" && route.file !== EMBEDDED_APP_SHELL_FILE
+        ).length,
+        // The default path reports 0 for a build with no splitting stage, and
+        // the embedded preset has none — which is why `--split` is rejected for
+        // it above. Reporting 1 here would answer the same field differently
+        // from the command this is supposed to match.
+        chunks: 0,
+        assets: manifest.assets.length,
+        totalSize: await sumEmbeddedOutputSize(finalOutput, manifest),
+        duration_ms: elapsed,
+        outputDir: finalOutput,
+        // `--dry-run` is rejected for this preset, so a build that got here ran.
+        dryRun: false,
+      },
+    });
+    return;
+  }
 
   logSuccess("Built embedded preset");
   cliLogger.info(`  ${finalOutput}\n`);
