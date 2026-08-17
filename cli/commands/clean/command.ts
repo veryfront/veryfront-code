@@ -95,9 +95,17 @@ function getFrameworkCacheDirectories(projectDir: string): string[] {
   const directories = new Set<string>();
 
   for (const root of frameworkRoots) {
-    directories.add(join(root, "veryfront-mdx-esm"));
-    directories.add(join(root, "veryfront-http-bundle"));
-    directories.add(join(root, "veryfront-files"));
+    for (
+      const namespace of [
+        "veryfront-mdx-esm",
+        "veryfront-http-bundle",
+        "veryfront-files",
+        "veryfront-modules",
+        "veryfront-cycle-manifests",
+      ]
+    ) {
+      directories.add(join(root, namespace));
+    }
   }
 
   const diskRoot = getEnv("VF_DISK_CACHE_DIR");

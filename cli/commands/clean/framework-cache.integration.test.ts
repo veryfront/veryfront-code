@@ -22,14 +22,24 @@ describe("CLI clean command framework cache", () => {
       const compiledModule = join(frameworkCacheDir, "veryfront-files", "entry.vfcache");
       const mdxModule = join(frameworkCacheDir, "veryfront-mdx-esm", "page.mjs");
       const httpBundle = join(frameworkCacheDir, "veryfront-http-bundle", "react.mjs");
+      const transformedModule = join(frameworkCacheDir, "veryfront-modules", "page.js");
+      const cycleManifest = join(
+        frameworkCacheDir,
+        "veryfront-cycle-manifests",
+        "cycle.json",
+      );
       const unrelatedCache = join(frameworkCacheDir, "other-tool", "keep.txt");
       await mkdir(join(frameworkCacheDir, "veryfront-files"), { recursive: true });
       await mkdir(join(frameworkCacheDir, "veryfront-mdx-esm"), { recursive: true });
       await mkdir(join(frameworkCacheDir, "veryfront-http-bundle"), { recursive: true });
+      await mkdir(join(frameworkCacheDir, "veryfront-modules"), { recursive: true });
+      await mkdir(join(frameworkCacheDir, "veryfront-cycle-manifests"), { recursive: true });
       await mkdir(join(frameworkCacheDir, "other-tool"), { recursive: true });
       await writeTextFile(compiledModule, "compiled");
       await writeTextFile(mdxModule, "compiled");
       await writeTextFile(httpBundle, "compiled");
+      await writeTextFile(transformedModule, "compiled");
+      await writeTextFile(cycleManifest, "compiled");
       await writeTextFile(unrelatedCache, "keep");
 
       await cleanCommand({ projectDir: context.projectDir, cache: true, force: true });
@@ -37,6 +47,8 @@ describe("CLI clean command framework cache", () => {
       assertEquals(await exists(compiledModule), false);
       assertEquals(await exists(mdxModule), false);
       assertEquals(await exists(httpBundle), false);
+      assertEquals(await exists(transformedModule), false);
+      assertEquals(await exists(cycleManifest), false);
       assertEquals(await exists(unrelatedCache), true);
     });
   });
