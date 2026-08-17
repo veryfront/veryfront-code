@@ -318,7 +318,9 @@ export class SSRModuleLoader {
     // Production keeps the short deadline as multi-tenant back-pressure.
     const acquireTimeoutMs = getTransformAcquireTimeoutMs(dev);
 
-    if (!await tryAcquireTransformSlot(projectId, acquireTimeoutMs, bypassProjectLimit)) {
+    if (
+      !await tryAcquireTransformSlot(projectId, acquireTimeoutMs, bypassProjectLimit, signal)
+    ) {
       throw createTransformCapacityError(
         mode,
         `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
