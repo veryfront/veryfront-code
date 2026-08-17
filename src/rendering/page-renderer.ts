@@ -29,6 +29,8 @@ interface PageRenderOptions {
   projectSlug?: string;
   /** Content source identifier for cache isolation (branch name or release ID) */
   contentSourceId?: string;
+  /** Release that owns the immutable browser artifacts for this render. */
+  releaseId?: string;
   /** Request-scoped dependency-pinning state used by transform caches. */
   dependencyPinningCacheKey?: string;
   /** Immutable package map paired with dependencyPinningCacheKey. */
@@ -176,6 +178,7 @@ export class PageRenderer {
                 url: options?.url,
                 props: options?.props,
                 nonce: options?.nonce,
+                releaseId: options?.releaseId,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
               }),

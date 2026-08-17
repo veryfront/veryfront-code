@@ -37,6 +37,9 @@ function prodOptions(overrides: Partial<HTMLGenerationOptions> = {}): HTMLGenera
     projectDir: "/proj",
     pagePath: "/proj/pages/index.tsx",
     projectSlug: "demo",
+    prodHydrationModulePath: overrides.releaseId
+      ? "/_veryfront/hydration-runtime.deadbeef.js"
+      : undefined,
     ...overrides,
   };
 }

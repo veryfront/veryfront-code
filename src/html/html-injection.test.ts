@@ -126,6 +126,23 @@ describe("html/html-injection", () => {
       assertEquals(html.includes("my-slug"), false);
     });
 
+    it("injects a previously selected production hydration runtime", () => {
+      const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          prodHydrationModulePath: agedRuntimePath,
+        },
+      );
+
+      assertEquals(html.includes(`src="${agedRuntimePath}"`), true);
+      assertEquals(html.includes("/_veryfront/rsc/client.js"), false);
+    });
+
     it("should escape script-closing sequences in prebuilt import maps", () => {
       const hostileImportMap = JSON.stringify({
         imports: {

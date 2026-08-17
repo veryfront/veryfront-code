@@ -1,22 +1,29 @@
+import type { DirEntry } from "#veryfront/platform/adapters/base.ts";
 import { type HTMLGenerationContext, HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 
 type MockReadFile = (path: string) => Promise<string>;
+type MockReadDir = (path: string) => AsyncIterable<DirEntry>;
 
 type CreateGeneratorOptions = {
   mode?: HTMLGeneratorConfig["mode"];
   isLocalProject?: boolean;
   readFile?: MockReadFile;
+  readDir?: MockReadDir;
 };
 
 const defaultReadFile: MockReadFile = async () => "";
+const defaultReadDir: MockReadDir = async function* () {};
 
-export function createMockAdapter(readFile: MockReadFile = defaultReadFile) {
+export function createMockAdapter(
+  readFile: MockReadFile = defaultReadFile,
+  readDir: MockReadDir = defaultReadDir,
+) {
   return {
     fs: {
       readFile,
       exists: async () => false,
       stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
-      readDir: async function* () {},
+      readDir,
       mkdir: async () => {},
       writeFile: async () => {},
     },
@@ -27,10 +34,11 @@ export function createHTMLGenerator({
   mode = "production",
   isLocalProject,
   readFile = defaultReadFile,
+  readDir = defaultReadDir,
 }: CreateGeneratorOptions = {}): HTMLGenerator {
   return new HTMLGenerator({
     projectDir: "/project",
-    adapter: createMockAdapter(readFile) as any,
+    adapter: createMockAdapter(readFile, readDir) as any,
     config: {} as any,
     mode,
     isLocalProject,

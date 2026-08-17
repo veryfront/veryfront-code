@@ -72,6 +72,8 @@ export interface StaticFileOptions {
   isPreviewMode: boolean;
   /** Whether this is a local filesystem project */
   isLocalProject: boolean;
+  /** Configured production build output directory */
+  buildOutDir?: string;
 }
 
 /**
@@ -90,6 +92,11 @@ interface FileSystemLike {
   readFile(path: string): Promise<string>;
   readFileBytes(path: string): Promise<Uint8Array>;
   stat(path: string): Promise<{ isFile: boolean; mtime: Date | null }>;
+}
+
+interface StaticFileSystems {
+  buildOutput: FileSystemLike;
+  project: FileSystemLike;
 }
 
 /**
@@ -127,24 +134,52 @@ export class StaticFileService {
     return injectedDeps?.manifestLoading ?? StaticFileService.manifestLoading;
   }
 
-  private getFileSystem(options: StaticFileOptions): FileSystemLike {
-    if (this.fsRepo) return this.fsRepo;
+  private resolveBuildOutputRoot(options: StaticFileOptions): string {
+    return resolve(options.projectDir, options.buildOutDir || "dist");
+  }
+
+  private getFileSystems(options: StaticFileOptions): StaticFileSystems {
+    if (this.fsRepo) return { buildOutput: this.fsRepo, project: this.fsRepo };
 
     const projectRoot = resolve(options.projectDir);
-    const secureFs = createSecureFs({
+    const projectSecureFs = createSecureFs({
       baseDir: projectRoot,
       adapter: options.adapter,
       context: "static-serving",
     });
 
-    // StaticFileService keeps absolute paths in candidates and results, while
-    // SecureFs exposes a base-directory-scoped namespace. Adapt that boundary
-    // explicitly so the static policy can continue rejecting absolute input.
-    const toProjectPath = (path: string): string => relative(projectRoot, resolve(path));
+    const adaptSecureFs = (
+      secureFs: ReturnType<typeof createSecureFs>,
+      root: string,
+    ): FileSystemLike => {
+      const toScopedPath = (path: string): string => relative(root, resolve(path));
+      return {
+        readFile: (path) => secureFs.readFile(toScopedPath(path)),
+        readFileBytes: (path) => secureFs.readFileBytes(toScopedPath(path)),
+        stat: (path) => secureFs.stat(toScopedPath(path)),
+      };
+    };
+
+    // Keep public files under the project policy. A configured build output can
+    // live beside or outside the project, so give that trusted artifact root an
+    // independent boundary instead of expressing it as ../ paths from the project.
+    const project = adaptSecureFs(projectSecureFs, projectRoot);
+    const buildOutputRoot = this.resolveBuildOutputRoot(options);
+    if (isWithinDirectory(buildOutputRoot, projectRoot)) {
+      // Refuse to widen static serving when a malformed output root contains
+      // the project. The project policy still permits only dist and public.
+      return { buildOutput: project, project };
+    }
+
+    const buildOutputSecureFs = createSecureFs({
+      baseDir: buildOutputRoot,
+      adapter: options.adapter,
+      context: "internal",
+      validationOptions: { checkExists: true },
+    });
     return {
-      readFile: (path) => secureFs.readFile(toProjectPath(path)),
-      readFileBytes: (path) => secureFs.readFileBytes(toProjectPath(path)),
-      stat: (path) => secureFs.stat(toProjectPath(path)),
+      buildOutput: adaptSecureFs(buildOutputSecureFs, buildOutputRoot),
+      project,
     };
   }
 
@@ -152,12 +187,13 @@ export class StaticFileService {
     requestPath: string,
     options: StaticFileOptions,
   ): Promise<StaticFileResult | null> {
-    const fs = this.getFileSystem(options);
+    const fileSystems = this.getFileSystems(options);
     const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
-    const candidates = await this.buildCandidates(normalizedPath, options, fs);
+    const candidates = await this.buildCandidates(normalizedPath, options, fileSystems.buildOutput);
     const unexpectedErrors: unknown[] = [];
 
     for (const candidate of candidates) {
+      const fs = candidate.source === "public" ? fileSystems.project : fileSystems.buildOutput;
       const result = await this.tryResolveCandidate(
         candidate,
         requestPath,
@@ -193,22 +229,28 @@ export class StaticFileService {
       if (manifestPath) addCandidate(manifestPath, "manifest");
     }
 
-    const dirs = options.isLocalProject && !options.isPreviewMode
-      ? ["public"] as const
-      : ["dist", "public"] as const;
+    const buildOutputRoot = this.resolveBuildOutputRoot(options);
+    const publicRoot = resolve(options.projectDir, "public");
+    const dirs: ReadonlyArray<{
+      root: string;
+      source: "dist" | "public";
+    }> = options.isLocalProject && !options.isPreviewMode
+      ? [{ root: publicRoot, source: "public" }]
+      : [
+        { root: buildOutputRoot, source: "dist" },
+        { root: publicRoot, source: "public" },
+      ];
 
-    for (const dir of dirs) {
-      const root = joinPath(options.projectDir, dir);
+    for (const { root, source } of dirs) {
       const absPath = normalizePath(joinPath(root, normalizedPath));
-      if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);
+      if (isWithinDirectory(root, absPath)) addCandidate(absPath, source);
     }
 
     if (this.shouldProbeIndexPage(normalizedPath)) {
       const indexPath = `${normalizedPath.replace(/\/$/, "")}/index.html`;
-      for (const dir of dirs) {
-        const root = joinPath(options.projectDir, dir);
+      for (const { root, source } of dirs) {
         const absPath = normalizePath(joinPath(root, indexPath));
-        if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);
+        if (isWithinDirectory(root, absPath)) addCandidate(absPath, source);
       }
     }
 
@@ -294,8 +336,8 @@ export class StaticFileService {
     options: StaticFileOptions,
     fs: FileSystemLike,
   ): Promise<ManifestIndex | null> {
-    const cacheKey = options.projectDir;
-    const distRoot = joinPath(options.projectDir, "dist");
+    const distRoot = this.resolveBuildOutputRoot(options);
+    const cacheKey = distRoot;
     const manifestPath = joinPath(distRoot, "_veryfront/manifest.json");
 
     let stat: { isFile: boolean; mtime: Date | null };

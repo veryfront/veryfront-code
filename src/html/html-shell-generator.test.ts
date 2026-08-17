@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./styles-builder/__tests__/css-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import {
   clearAllManifests,
   recordSSRModules,
@@ -86,6 +91,24 @@ describe("html-generation/html-shell-generator", () => {
         result.indexOf('<meta charset="UTF-8">') < result.indexOf("<script"),
         "No production head script may precede the encoding declaration",
       );
+    });
+
+    it("fails closed when a release shell has no selected hydration runtime", async () => {
+      const error = await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<h1>Aged release</h1>",
+            createMeta(),
+            createOptions({
+              mode: "production",
+              releaseId: "release-aged",
+              studioEmbed: true,
+            }),
+          ),
+        Error,
+      );
+
+      assertEquals((error as { slug?: unknown }).slug, "render-error");
     });
 
     it("should include content in the body", async () => {

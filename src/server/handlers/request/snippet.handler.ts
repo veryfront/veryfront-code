@@ -22,12 +22,22 @@ const logger = serverLogger.component("snippet-handler");
 
 const PRIORITY_SNIPPET = 450;
 
+export interface SnippetHandlerDeps {
+  renderSnippet: typeof renderSnippet;
+}
+
+const defaultDeps: SnippetHandlerDeps = { renderSnippet };
+
 export class SnippetHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "SnippetHandler",
     priority: PRIORITY_SNIPPET as HandlerPriority,
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
+
+  constructor(private readonly deps: SnippetHandlerDeps = defaultDeps) {
+    super();
+  }
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
@@ -94,13 +104,14 @@ export class SnippetHandler extends BaseHandler {
         const isDev = !!ctx.isLocalProject;
         const dependencyIdentity = getHandlerDependencyPinningIdentity(ctx);
 
-        const result = await renderSnippet(content, {
+        const result = await this.deps.renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
           adapter: stableAdapter,
           isLocalProject: ctx.isLocalProject,
           projectId: dependencyIdentity.projectId,
           contentSourceId: dependencyIdentity.contentSourceId,
+          releaseId: dependencyIdentity.releaseId,
           dependencyPinningSource: createHandlerDependencyPinningSource(ctx),
           filePath: admittedPath,
           moduleServerUrl,

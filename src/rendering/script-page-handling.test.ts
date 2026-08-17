@@ -1,11 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleScriptPage } from "./script-page-handling.ts";
-import { PageRenderer } from "./page-renderer.ts";
 import { flattenRouteParams } from "#veryfront/routing";
+import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import { FakeTime } from "#std/testing/time";
+import { PageRenderer } from "./page-renderer.ts";
+import { handleScriptPage } from "./script-page-handling.ts";
 
 const PIN_KEY_A = "on:z7bg3qnfgtcb";
 const PIN_KEY_B = "on:3w5e11264sgsf";
@@ -117,33 +120,39 @@ function createScriptAdapter(): RuntimeAdapter {
 }
 
 async function renderWithPageRenderer(
-  projectDir: string,
-  pagePath: string,
-  dependencyPinningCacheKey?: string,
-  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  options: {
+    projectDir: string;
+    pagePath: string;
+    dependencyPinningCacheKey?: string;
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    releaseId?: string;
+    adapter?: RuntimeAdapter;
+    config?: VeryfrontConfig;
+  },
 ): Promise<string> {
+  const adapter = options.adapter ?? createScriptAdapter();
+  const config = options.config ?? { client: { cdn: { provider: "unpkg" } } };
   const renderer = new PageRenderer({
-    projectDir,
+    projectDir: options.projectDir,
     mode: "production",
-    config: {
-      client: { cdn: { provider: "unpkg" } },
-    },
-    adapter: createScriptAdapter(),
+    config,
+    adapter,
     componentRegistry: {} as never,
     compileMDX: () => Promise.reject(new Error("not used for script pages")),
   });
   const result = await renderer.preparePageBundles(
     {
       entity: {
-        path: pagePath,
+        path: options.pagePath,
         frontmatter: {},
       },
     } as never,
     "script-page",
     undefined,
     {
-      dependencyPinningCacheKey,
-      dependencyPinningDependencies,
+      dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+      dependencyPinningDependencies: options.dependencyPinningDependencies,
+      releaseId: options.releaseId,
     },
   );
   if (!result.scriptResult) throw new Error("Expected script page result");
@@ -366,18 +375,18 @@ describe("script-page-handling helpers", () => {
           `export default "<main>Snapshot page</main>";`,
         );
 
-        const snapshotB = await renderWithPageRenderer(
+        const snapshotB = await renderWithPageRenderer({
           projectDir,
           pagePath,
-          PIN_KEY_B,
-          { react: "19.0.0", veryfront: "0.2.0" },
-        );
-        const snapshotA = await renderWithPageRenderer(
+          dependencyPinningCacheKey: PIN_KEY_B,
+          dependencyPinningDependencies: { react: "19.0.0", veryfront: "0.2.0" },
+        });
+        const snapshotA = await renderWithPageRenderer({
           projectDir,
           pagePath,
-          PIN_KEY_A,
-          { react: "18.3.1", veryfront: "0.1.10" },
-        );
+          dependencyPinningCacheKey: PIN_KEY_A,
+          dependencyPinningDependencies: { react: "18.3.1", veryfront: "0.1.10" },
+        });
         const importsB = extractInlineJson(snapshotB, "importmap").imports as
           | Record<string, string>
           | undefined;
@@ -416,12 +425,12 @@ describe("script-page-handling helpers", () => {
           `export default \`<!DOCTYPE html><html><head><title>Script</title></head><body><main>Hello</main></body></html>\`;`,
         );
 
-        const html = await renderWithPageRenderer(
+        const html = await renderWithPageRenderer({
           projectDir,
           pagePath,
-          PIN_KEY_A,
-          { react: "18.3.1", veryfront: "0.1.10" },
-        );
+          dependencyPinningCacheKey: PIN_KEY_A,
+          dependencyPinningDependencies: { react: "18.3.1", veryfront: "0.1.10" },
+        });
         const imports = extractInlineJson(html, "importmap").imports as
           | Record<string, string>
           | undefined;
@@ -440,6 +449,29 @@ describe("script-page-handling helpers", () => {
       }
     });
 
+    it("keeps standalone production full documents on the RSC boot script", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-standalone-" });
+
+      try {
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default \`<!DOCTYPE html><html><head><title>Standalone</title></head><body><main>Hello</main></body></html>\`;`,
+        );
+
+        const html = await renderWithPageRenderer({
+          projectDir,
+          pagePath,
+          releaseId: "standalone-dev",
+        });
+
+        assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
+        assertEquals(html.includes(getProdHydrationModulePath()), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("keeps wrapped script-page output byte-identical when pinning is off", async () => {
       using _time = new FakeTime(new Date("2026-07-26T00:00:00.000Z"));
       const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-off-" });
@@ -451,12 +483,12 @@ describe("script-page-handling helpers", () => {
           `export default "<main>Flag-off page</main>";`,
         );
 
-        const unkeyed = await renderWithPageRenderer(projectDir, pagePath);
-        const flagOff = await renderWithPageRenderer(
+        const unkeyed = await renderWithPageRenderer({ projectDir, pagePath });
+        const flagOff = await renderWithPageRenderer({
           projectDir,
           pagePath,
-          "off",
-        );
+          dependencyPinningCacheKey: "off",
+        });
 
         assertEquals(flagOff, unkeyed);
 
@@ -465,15 +497,83 @@ describe("script-page-handling helpers", () => {
           fullPagePath,
           `export default \`<!DOCTYPE html><html><head><title>Off</title></head><body><main>Flag-off full page</main></body></html>\`;`,
         );
-        const unkeyedFull = await renderWithPageRenderer(projectDir, fullPagePath);
-        const flagOffFull = await renderWithPageRenderer(
+        const unkeyedFull = await renderWithPageRenderer({
           projectDir,
-          fullPagePath,
-          "off",
-        );
+          pagePath: fullPagePath,
+        });
+        const flagOffFull = await renderWithPageRenderer({
+          projectDir,
+          pagePath: fullPagePath,
+          dependencyPinningCacheKey: "off",
+        });
 
         assertEquals(flagOffFull, unkeyedFull);
         assertEquals(flagOffFull.includes('type="importmap"'), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("uses the hydration runtime baked into an aged release", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-release-" });
+      const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+
+      try {
+        await Deno.mkdir(`${projectDir}/custom-output/_veryfront`, { recursive: true });
+        await Deno.writeTextFile(
+          `${projectDir}/custom-output${agedRuntimePath}`,
+          "export {};",
+        );
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(pagePath, `export default "<main>Aged release</main>";`);
+
+        const html = await renderWithPageRenderer({
+          projectDir,
+          pagePath,
+          releaseId: "release-aged",
+          adapter: { fs: createFileSystem() } as unknown as RuntimeAdapter,
+          config: {
+            build: { outDir: "custom-output" },
+            client: { cdn: { provider: "unpkg" } },
+          },
+        });
+
+        assertEquals(html.includes(agedRuntimePath), true);
+        assertEquals(html.includes(getProdHydrationModulePath()), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("uses the hydration runtime baked into an aged release for full documents", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-script-page-release-full-" });
+      const agedRuntimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+
+      try {
+        await Deno.mkdir(`${projectDir}/custom-output/_veryfront`, { recursive: true });
+        await Deno.writeTextFile(
+          `${projectDir}/custom-output${agedRuntimePath}`,
+          "export {};",
+        );
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(
+          pagePath,
+          `export default \`<!DOCTYPE html><html><head><title>Aged</title></head><body><main>Aged release</main></body></html>\`;`,
+        );
+
+        const html = await renderWithPageRenderer({
+          projectDir,
+          pagePath,
+          releaseId: "release-aged",
+          adapter: { fs: createFileSystem() } as unknown as RuntimeAdapter,
+          config: {
+            build: { outDir: "custom-output" },
+            client: { cdn: { provider: "unpkg" } },
+          },
+        });
+
+        assertEquals(html.includes(agedRuntimePath), true);
+        assertEquals(html.includes(getProdHydrationModulePath()), false);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

@@ -3,6 +3,8 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import { StaticHandler } from "./static.handler.ts";
+import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -53,6 +55,55 @@ describe("server/handlers/request/static.handler", () => {
       "application/javascript; charset=utf-8",
     );
     assertEquals(await result.response.text(), "export const page = true;");
+  });
+
+  it("forwards the configured build output directory to static resolution", async () => {
+    const handler = new StaticHandler();
+    let resolvedBuildOutDir: string | undefined;
+    (handler as any).staticService = {
+      resolveFile: async (_pathname: string, options: { buildOutDir?: string }) => {
+        resolvedBuildOutDir = options.buildOutDir;
+        return null;
+      },
+      isAssetRequest: () => true,
+    };
+
+    await handler.handle(
+      new Request("http://localhost/_veryfront/hydration-runtime.2b3c4d5e.js"),
+      makeCtx({ config: { build: { outDir: "custom-output" } } }),
+    );
+
+    assertEquals(resolvedBuildOutDir, "custom-output");
+  });
+
+  it("serves a release runtime from an absolute build output directory", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-static-project-" });
+    const buildOutDir = await makeTempDir({ prefix: "vf-static-output-" });
+    const runtimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+
+    try {
+      await mkdir(`${buildOutDir}/_veryfront`, { recursive: true });
+      await writeTextFile(
+        `${buildOutDir}${runtimePath}`,
+        "export const releaseRuntime = true;",
+      );
+      const handler = new StaticHandler();
+      const result = await handler.handle(
+        new Request(`http://localhost${runtimePath}`),
+        makeCtx({
+          projectDir,
+          adapter: await getAdapter(),
+          config: { build: { outDir: buildOutDir } },
+        }),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(await result.response.text(), "export const releaseRuntime = true;");
+    } finally {
+      await remove(projectDir, { recursive: true });
+      await remove(buildOutDir, { recursive: true });
+    }
   });
 
   it("serves generated hydration runtime under /_veryfront", async () => {

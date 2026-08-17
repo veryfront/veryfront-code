@@ -92,6 +92,7 @@ export class StaticHandler extends BaseHandler {
           adapter: ctx.adapter,
           isPreviewMode,
           isLocalProject: isLocal,
+          buildOutDir: ctx.config?.build?.outDir,
         };
 
         const result = await this.staticService.resolveFile(pathname, resolveOptions);

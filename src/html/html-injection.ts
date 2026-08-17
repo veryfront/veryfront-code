@@ -19,6 +19,7 @@ import {
   getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
+import { getProdScriptsForPath } from "./hydration-script-builder/prod-scripts.ts";
 import { PROJECT_STYLESHEET_IDS } from "./project-stylesheet-ids.ts";
 import { buildReleaseAssetModules } from "#veryfront/release-assets/client-module-map.ts";
 import {
@@ -89,6 +90,8 @@ export interface InjectHTMLContentOptions {
   dependencyPinningCacheKey?: string;
   /** Ready release asset manifest used to hydrate full HTML client pages */
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Production hydration runtime selected from the rendered artifact set */
+  prodHydrationModulePath?: string;
   /** Configured route directories used to map physical page paths to route keys */
   directories?: ConfiguredRouteDirectories;
 }
@@ -246,7 +249,9 @@ export function injectHTMLContent(
     html = html.replace(/{{\s*devScripts\s*}}/gi, "");
     html = html.replace(/{{\s*devStyles\s*}}/gi, "");
 
-    const prodScripts = getProdScripts(options.slug, options.nonce);
+    const prodScripts = options.prodHydrationModulePath
+      ? getProdScriptsForPath(options.prodHydrationModulePath, options.nonce)
+      : getProdScripts(options.slug, options.nonce);
     const hasProdScriptsPlaceholder = /{{\s*prodScripts\s*}}/i.test(html);
 
     if (hasProdScriptsPlaceholder) {

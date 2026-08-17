@@ -22,11 +22,16 @@ import type {
 } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { computeHash } from "./utils/index.ts";
 import { buildImportMapJson, type HTMLGenerationOptions, wrapInHTMLShell } from "#veryfront/html";
 import { extractHTMLMetadata, injectHTMLContent, isFullHTMLDocument } from "#veryfront/html";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import {
+  hasImmutableReleaseHydrationRuntime,
+  resolveProdHydrationModulePath,
+} from "#veryfront/html/hydration-script-builder/prod-runtime-selection.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+import { computeHash } from "./utils/index.ts";
 
 const logger = rendererLogger.component("script");
 
@@ -45,6 +50,8 @@ interface ScriptPageOptions {
   url?: URL;
   props?: ComponentProps;
   nonce?: string;
+  /** Release that owns the immutable hydration runtime for wrapped output. */
+  releaseId?: string;
   /** Immutable dependency snapshot that owns all browser work for this document. */
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
@@ -234,6 +241,15 @@ async function generateFullHtml(
   const { mergedFrontmatter, outputMetadata, pageInfo, slug, appComponentPath, options } = context;
   const hasEnabledDependencySnapshot =
     options.dependencyPinningCacheKey?.startsWith("on:") === true;
+  const releaseHydrationModulePath = options.mode === "production" &&
+      hasImmutableReleaseHydrationRuntime(options.releaseId)
+    ? await resolveProdHydrationModulePath({
+      fs: options.adapter.fs,
+      projectDir: options.projectDir,
+      buildOutDir: options.config.build?.outDir,
+      releaseId: options.releaseId,
+    })
+    : undefined;
 
   if (isFullHTMLDocument(htmlBody)) {
     const metadata = extractHTMLMetadata(mergedFrontmatter, undefined);
@@ -255,8 +271,12 @@ async function generateFullHtml(
       nonce: options.nonce,
       importMapJson,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+      prodHydrationModulePath: releaseHydrationModulePath,
     });
   }
+
+  const prodHydrationModulePath = releaseHydrationModulePath ??
+    (options.mode === "production" ? getProdHydrationModulePath() : undefined);
 
   const htmlOptions: HTMLGenerationOptions = {
     mode: options.mode as "development" | "production",
@@ -265,6 +285,8 @@ async function generateFullHtml(
     nestedLayouts: [],
     appPath: appComponentPath,
     nonce: options.nonce,
+    releaseId: options.releaseId,
+    prodHydrationModulePath,
     ...(hasEnabledDependencySnapshot
       ? {
         projectDir: options.projectDir,

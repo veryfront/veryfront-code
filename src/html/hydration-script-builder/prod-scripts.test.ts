@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
@@ -7,6 +7,7 @@ import {
   generateProdHydrationModule,
   getProdHydrationModulePath,
   getProdScripts,
+  getProdScriptsForPath,
   PROD_HYDRATION_MODULE_PATH,
 } from "./prod-scripts.ts";
 
@@ -97,6 +98,23 @@ describe("hydration-script-builder/prod-scripts", () => {
     it("should not include nonce attribute when not provided", () => {
       const result = getProdScripts("page");
       assertEquals(result.includes("nonce="), false);
+    });
+
+    it("should use an explicitly selected release runtime path", () => {
+      const releaseRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const result = getProdScriptsForPath(releaseRuntimePath, "nonce-abc");
+
+      assertEquals(result.includes(`src="${releaseRuntimePath}"`), true);
+      assertEquals(result.includes(getProdHydrationModulePath()), false);
+    });
+
+    it("should reject an invalid selected runtime path", () => {
+      const error = assertThrows(
+        () => getProdScriptsForPath('"><script>alert(1)</script>'),
+        Error,
+      );
+
+      assertEquals((error as { slug?: unknown }).slug, "render-error");
     });
   });
 
