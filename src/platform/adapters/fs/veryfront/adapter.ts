@@ -250,11 +250,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
       )?.length ?? 0,
     });
 
-    if (!files?.length) {
+    if (files === undefined) {
       files = this.readRetainedFileList<T>(cacheKey);
     }
 
-    if (!files?.length) {
+    if (files === undefined) {
       this.scheduleFileListWarmup(missReason, cacheKey);
       if (options.waitForWarmup) {
         files = await this.awaitFileListWarmup<T>(cacheKey) ?? files;
@@ -307,7 +307,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return undefined;
     }
 
-    return retained.files.length ? (retained.files as T[]) : undefined;
+    return retained.files as T[];
   }
 
   /**
@@ -327,7 +327,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     if (!warmupPromise || this.fileListWarmupKey !== cacheKey) return undefined;
 
     const fetched = await warmupPromise;
-    return fetched?.length ? (fetched as T[]) : undefined;
+    return fetched === null ? undefined : (fetched as T[]);
   }
 
   constructor(config: FSAdapterConfig) {
@@ -797,7 +797,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           effectiveCacheKey,
         );
 
-        if (existing?.length) {
+        if (existing !== undefined) {
           logger.debug("Skipping file list warmup because cache is already populated", {
             reason,
             cacheKey: effectiveCacheKey,
@@ -1295,12 +1295,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     // populates it for a release-backed context, so returning early meant the
     // list was empty on every request for the life of the process. Wait for the
     // fetch this read just started, then look again.
-    if (options.waitForWarmup && cacheKey && !files?.length && this.fileListWarmupPromise) {
+    if (options.waitForWarmup && cacheKey && files === undefined && this.fileListWarmupPromise) {
       // Take what the fetch returned rather than re-reading the cache: with
       // caching disabled, or a failed backend write, the cache keeps nothing
       // and correctness would depend on a write that never happened.
       const fetched = await this.fileListWarmupPromise;
-      files = fetched?.length
+      files = fetched !== null
         ? fetched
         : await this.cache.getAsync<{ path: string; content?: string }[]>(cacheKey);
     }

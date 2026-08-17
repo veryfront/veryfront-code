@@ -150,6 +150,19 @@ describe("file list fan-out (issue inbox#32)", () => {
     );
   });
 
+  it("reuses an authoritative empty listing across sequential resolutions", async () => {
+    const { adapter, counts } = createDraftAdapter([], false);
+
+    assertEquals(await adapter.resolveFile("components/missing-one"), null);
+    assertEquals(await adapter.resolveFile("components/missing-two"), null);
+
+    assertEquals(
+      counts.listAllFiles,
+      1,
+      "an empty branch listing must be fetched only once",
+    );
+  });
+
   it("still serves fresh draft content after a file update poke", async () => {
     const files: StubFile[] = [
       { path: "pages/index.tsx", content: "export default 'v1';" },
