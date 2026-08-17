@@ -620,6 +620,52 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "loadJob"), 0);
     });
 
+    it("pre-binds lexical declarations across switch cases", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  return { props: { job: loadJob("server") } };`,
+        `}`,
+        `export default function Page(value) {`,
+        `  switch (value) {`,
+        `    case "read":`,
+        `      return loadJob("shadowed");`,
+        `    case "declare":`,
+        `      const loadJob = () => "local";`,
+        `      return loadJob();`,
+        `  }`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 3);
+    });
+
+    it("pre-binds lexical declarations before switch case tests", async () => {
+      const code = [
+        `import { loadJob } from "../server/load-job.ts";`,
+        `export async function getServerData() {`,
+        `  return { props: { job: loadJob("server") } };`,
+        `}`,
+        `export default function Page(value) {`,
+        `  switch (value) {`,
+        `    case loadJob("shadowed"):`,
+        `      return null;`,
+        `    case "declare":`,
+        `      let loadJob = () => "local";`,
+        `      return loadJob();`,
+        `  }`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/load-job.ts");
+      assertEquals(occurrences(result, "loadJob"), 3);
+    });
+
     it("keeps an unrelated import when a hook parameter default shadows its name", async () => {
       const code = [
         `import { ctx } from "./client-init.ts";`,
