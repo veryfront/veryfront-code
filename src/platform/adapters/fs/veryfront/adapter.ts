@@ -920,7 +920,18 @@ export class VeryfrontFSAdapter implements FSAdapter {
         return;
       }
 
+      const snapshotVersion = this.sourceSnapshotVersion;
       await this.cache.setAsync(cacheKey, files);
+      if (
+        this.contentContext !== context ||
+        this.sourceSnapshotVersion !== snapshotVersion
+      ) {
+        // A newer poke invalidated this replacement while its distributed
+        // cache write was pending. Remove the value that just landed and leave
+        // memory empty so the next read derives the newer snapshot.
+        await this.cache.deleteAsync(cacheKey);
+        return;
+      }
       this.readOps.clearFileListIndex();
       this.markSourceSnapshotChanged(files);
       // Retain after the version bump so the poked listing -- not the one it

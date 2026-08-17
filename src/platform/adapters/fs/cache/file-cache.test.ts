@@ -423,6 +423,78 @@ describe("Distributed cache functions", () => {
       });
     });
 
+    it("deleteAsync() prevents a pending distributed read from restoring stale data", async () => {
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-pending-read-invalidation-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const values = new Map<string, string>();
+      let delayReads = false;
+      let markReadStarted: (() => void) | undefined;
+      const readStarted = new Promise<void>((resolve) => {
+        markReadStarted = resolve;
+      });
+      let releaseRead: (() => void) | undefined;
+      const readReleased = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: async (key: string) => {
+              const captured = values.get(key) ?? null;
+              if (delayReads) {
+                markReadStarted?.();
+                await readReleased;
+              }
+              return captured;
+            },
+            set: (key: string, value: string) => {
+              values.set(key, value);
+              return Promise.resolve();
+            },
+            del: (key: string) => {
+              values.delete(key);
+              return Promise.resolve();
+            },
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+      await distributedCache.setAsync("listing", "stale");
+      delayReads = true;
+
+      await runWithCacheBatching(async () => {
+        const pendingRead = distributedCache.getAsync("listing");
+        await readStarted;
+
+        await distributedCache.deleteAsync("listing");
+        releaseRead?.();
+
+        assertEquals(
+          await pendingRead,
+          undefined,
+          "a read invalidated while pending must not return its captured value",
+        );
+        assertEquals(
+          await distributedCache.getAsync("listing"),
+          undefined,
+          "the pending read must not restore its stale value for later reads",
+        );
+      });
+    });
+
     it("should return boolean", async () => {
       assertEquals(typeof (await initializeFileCacheBackend()), "boolean");
     });

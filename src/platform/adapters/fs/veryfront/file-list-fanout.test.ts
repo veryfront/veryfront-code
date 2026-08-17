@@ -454,4 +454,56 @@ describe("file list fan-out (issue inbox#32)", () => {
       "the superseded cache write must fall back to a fresh exact-file read",
     );
   });
+
+  it("discards a replacement snapshot invalidated during its cache write", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default 'v2';" },
+    ];
+    const { adapter } = createDraftAdapter(files);
+    const context = adapter.getContentContext();
+    if (!context) throw new Error("content context required");
+
+    let markSetStarted: (() => void) | undefined;
+    const setStarted = new Promise<void>((resolve) => {
+      markSetStarted = resolve;
+    });
+    let releaseSet: (() => void) | undefined;
+    const setReleased = new Promise<void>((resolve) => {
+      releaseSet = resolve;
+    });
+    const internals = adapter as unknown as {
+      cache: {
+        setAsync: (key: string, value: unknown) => Promise<void>;
+      };
+      clearMemoryCaches: () => void;
+      replaceSourceSnapshot: (
+        key: string,
+        snapshotFiles: Array<{ path: string; content?: string }>,
+      ) => Promise<void>;
+    };
+    const setAsync = internals.cache.setAsync.bind(internals.cache);
+    internals.cache.setAsync = async (key, value) => {
+      markSetStarted?.();
+      await setReleased;
+      await setAsync(key, value);
+    };
+
+    const replacement = internals.replaceSourceSnapshot(
+      buildFileListCacheKey(context),
+      [{ path: "pages/index.tsx", content: "export default 'v1';" }],
+    );
+    await setStarted;
+
+    // A second poke clears memory immediately, then its selective refresh can
+    // fail. The first poke's delayed write must not become the retained answer.
+    internals.clearMemoryCaches();
+    releaseSet?.();
+    await replacement;
+
+    assertEquals(
+      await adapter.readTextFile("pages/index.tsx"),
+      "export default 'v2';",
+      "a replacement invalidated during its write must not retain the older draft",
+    );
+  });
 });
