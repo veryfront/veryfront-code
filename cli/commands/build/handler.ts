@@ -185,13 +185,41 @@ async function sumEmbeddedOutputSize(
   return total;
 }
 
+/**
+ * Run the embedded build, terminating the NDJSON stream ourselves in JSON mode.
+ *
+ * Once a `step` line has reached stdout, the router's error envelope must not
+ * also be written: it is a different, multi-line shape, so a consumer gets a
+ * partial NDJSON stream followed by something that is not NDJSON at all. The
+ * default path solves this by streaming its own `result` and calling `exit(1)`
+ * rather than rethrowing, and this matches it — including for failures in the
+ * config phase, which happen after the first `step` line is already out.
+ */
 async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
+  if (!isJsonMode()) {
+    await runEmbeddedBuild(projectDir, outputDir);
+    return;
+  }
+  try {
+    await runEmbeddedBuild(projectDir, outputDir);
+  } catch (error) {
+    streamJsonLine({
+      type: "result",
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const { exit } = await import("veryfront/platform");
+    exit(1);
+  }
+}
+
+async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise<void> {
   const { buildEmbeddedPreset } = await import("veryfront/build");
   const { getConfig } = await import("veryfront/config");
   const { resolveBuildOutputDir } = await import("./command.ts");
   const startTime = Date.now();
-  // A failure below reaches the router, which already turns it into the JSON
-  // error envelope; only the success path is this function's to report.
+  // Failures are terminated by the caller, which streams the error result and
+  // exits rather than letting the router print a second envelope.
   const json = isJsonMode();
 
   if (json) streamJsonLine({ type: "step", name: "config", status: "started" });
@@ -222,29 +250,12 @@ async function handleEmbeddedBuild(projectDir: string, outputDir?: string): Prom
     }
   }
 
-  let manifest;
-  try {
-    ({ manifest } = await buildEmbeddedPreset({
-      projectDir,
-      outDir: finalOutput,
-      runtime: "deno",
-      config,
-    }));
-  } catch (error) {
-    // The default path closes the stream with its own error result rather than
-    // letting the router answer. Without this, a failed `--json` build has
-    // already written `step` lines to stdout and then gets the router's
-    // differently-shaped envelope appended — a hybrid stream no consumer can
-    // parse. Rethrown afterwards so the exit code is unchanged.
-    if (json) {
-      streamJsonLine({
-        type: "result",
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    throw error;
-  }
+  const { manifest } = await buildEmbeddedPreset({
+    projectDir,
+    outDir: finalOutput,
+    runtime: "deno",
+    config,
+  });
 
   if (json) {
     const elapsed = Date.now() - startTime;

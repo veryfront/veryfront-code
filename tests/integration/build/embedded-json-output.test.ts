@@ -151,4 +151,38 @@ describe("commands/build embedded preset --json", () => {
       `totalSize must reflect real artifacts: ${JSON.stringify(data)}`,
     );
   });
+  it("keeps the failure path NDJSON too, ending in one error result", async () => {
+    // Raised in review: streaming the error result and then rethrowing left the
+    // router free to append its own multi-line envelope, so stdout carried two
+    // result formats and the second was not NDJSON. The build must terminate
+    // the stream itself, as the default path does.
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-embedded-json-fail-" });
+    await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+    // Unclosed JSX expression: the bundler fails after `config` has already
+    // been reported, which is precisely when a second envelope used to appear.
+    await Deno.writeTextFile(join(projectDir, "app/page.mdx"), "# Broken\n\n<Foo\n");
+    let result: CliResult;
+    try {
+      result = await runCli(projectDir, ["build", "--preset", "embedded", "--json"]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+
+    assertEquals(result.code === 0, false, `expected a nonzero exit:\n${result.stdout}`);
+
+    const lines = result.stdout.split("\n").filter((line) => line.trim() !== "");
+    const prose = lines.filter((line) => parseJsonLine(line) === undefined);
+    assertEquals(
+      prose,
+      [],
+      `a failed --json build must still put nothing but NDJSON on stdout: ${JSON.stringify(prose)}`,
+    );
+
+    const results = lines
+      .map(parseJsonLine)
+      .filter((entry): entry is Record<string, unknown> => entry?.type === "result");
+    assertEquals(results.length, 1, `exactly one result line: ${JSON.stringify(results)}`);
+    assertEquals(results[0].success, false);
+    assertEquals(typeof results[0].error, "string");
+  });
 });
