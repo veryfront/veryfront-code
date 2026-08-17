@@ -54,6 +54,7 @@ import { readGoogleGroundingMetadata } from "./google-grounding-metadata.ts";
 import {
   createGoogleProviderMetadata,
   readGoogleThoughtSignature,
+  reconcileGoogleProviderMetadata,
 } from "./google-thought-signatures.ts";
 import {
   extractGoogleCandidateParts,
@@ -563,6 +564,17 @@ export function createGoogleModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    _reconcileProviderMetadata(
+      input: {
+        providerMetadata: Record<string, unknown>;
+        suppressedToolCalls: readonly { id: string; name: string }[];
+      },
+    ) {
+      return reconcileGoogleProviderMetadata(
+        input.providerMetadata,
+        input.suppressedToolCalls,
+      );
+    },
     doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getGoogleGenerateContentUrl(config.baseURL, modelId);
       const warnings = createWarningCollector();

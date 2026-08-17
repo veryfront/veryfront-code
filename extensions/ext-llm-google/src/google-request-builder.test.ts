@@ -5,7 +5,10 @@ import {
   buildGoogleGenerateContentRequest,
   type RuntimeToolDefinition,
 } from "./google-request-builder.ts";
-import { createGoogleProviderMetadata } from "./google-thought-signatures.ts";
+import {
+  createGoogleProviderMetadata,
+  reconcileGoogleProviderMetadata,
+} from "./google-thought-signatures.ts";
 
 function createWarningCollector() {
   const warnings: Array<{
@@ -494,6 +497,54 @@ describe("ext-llm-google/google-request-builder", () => {
       role: "model",
       parts: rawAssistantParts,
     }]);
+  });
+
+  it("reconciles suppressed calls without stripping surviving signatures", () => {
+    const suppressedPart = {
+      functionCall: { id: "stale-1", name: "missing_tool", args: {} },
+      thoughtSignature: "stale-signature",
+    };
+    const survivingPart = {
+      functionCall: { id: "lookup-1", name: "lookup", args: { query: "Veryfront" } },
+      thoughtSignature: "surviving-signature",
+    };
+    const metadata = createGoogleProviderMetadata([suppressedPart, survivingPart]);
+    if (metadata === undefined) {
+      throw new Error("Expected signed Google provider metadata");
+    }
+
+    assertJsonEquals(
+      reconcileGoogleProviderMetadata(metadata, [{ id: "stale-1", name: "missing_tool" }]),
+      { google: { rawAssistantParts: [survivingPart] } },
+    );
+    assertEquals(
+      reconcileGoogleProviderMetadata(metadata, [{ id: "absent", name: "missing_tool" }]),
+      metadata,
+    );
+    assertEquals(
+      reconcileGoogleProviderMetadata(metadata, [
+        { id: "stale-1", name: "missing_tool" },
+        { id: "lookup-1", name: "lookup" },
+      ]),
+      undefined,
+    );
+
+    const unsignedSurvivor = createGoogleProviderMetadata([
+      suppressedPart,
+      { functionCall: { id: "lookup-1", name: "lookup", args: {} } },
+    ]);
+    if (unsignedSurvivor === undefined) {
+      throw new Error("Expected mixed Google provider metadata");
+    }
+    assertThrows(
+      () =>
+        reconcileGoogleProviderMetadata(unsignedSurvivor, [{
+          id: "stale-1",
+          name: "missing_tool",
+        }]),
+      TypeError,
+      "could not preserve a surviving signed tool call",
+    );
   });
 
   it("accepts raw-position and legacy occurrence ids while preserving exact correlation", () => {

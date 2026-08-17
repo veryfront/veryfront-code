@@ -368,3 +368,74 @@ export function readGoogleRawAssistantParts(
     rawPartsSnapshot as readonly JsonSnapshotValue[],
   );
 }
+
+/**
+ * Remove provider tool parts that the runtime deliberately suppressed while
+ * preserving the exact signed parts for every surviving Google tool call.
+ */
+export function reconcileGoogleProviderMetadata(
+  providerMetadata: Record<string, unknown>,
+  suppressedToolCalls: readonly { id: string; name: string }[],
+): Record<string, unknown> | undefined {
+  if (suppressedToolCalls.length === 0) {
+    return providerMetadata;
+  }
+
+  const rawAssistantParts = readGoogleRawAssistantParts(providerMetadata);
+  if (rawAssistantParts === undefined) {
+    return providerMetadata;
+  }
+
+  const suppressedIds = new Set(suppressedToolCalls.map((toolCall) => toolCall.id));
+  const matchedSuppressedIds = new Set<string>();
+  const retainedParts: Record<string, unknown>[] = [];
+  const registry = createGoogleToolCallCorrelationRegistry();
+  let retainedToolPart = false;
+
+  for (let partIndex = 0; partIndex < rawAssistantParts.length; partIndex += 1) {
+    const part = rawAssistantParts[partIndex];
+    if (part === undefined) {
+      throw new TypeError("Google raw assistant parts must be dense");
+    }
+
+    const dataField = readGooglePartDataField(part);
+    let toolCallId: string | undefined;
+    if (dataField === "functionCall") {
+      const functionCall = readRecord(part.functionCall);
+      const providerId = typeof functionCall?.id === "string" ? functionCall.id : undefined;
+      toolCallId = registry.registerFunctionCall(partIndex, providerId);
+    } else if (dataField === "executableCode") {
+      const executableCode = readGoogleExecutableCode(part.executableCode);
+      toolCallId = registry.registerCodeExecution(executableCode.providerId);
+    } else if (dataField === "codeExecutionResult") {
+      const result = readGoogleCodeExecutionResult(part.codeExecutionResult);
+      toolCallId = registry.resolveCodeExecutionResult(result.providerId);
+    }
+
+    if (toolCallId !== undefined && suppressedIds.has(toolCallId)) {
+      matchedSuppressedIds.add(toolCallId);
+      continue;
+    }
+
+    retainedParts.push(part);
+    retainedToolPart ||= dataField === "functionCall" ||
+      dataField === "executableCode" ||
+      dataField === "codeExecutionResult";
+  }
+
+  registry.assertSettled();
+  if (matchedSuppressedIds.size === 0) {
+    return providerMetadata;
+  }
+  if (retainedParts.length === 0) {
+    return undefined;
+  }
+
+  const reconciled = createGoogleProviderMetadata(retainedParts);
+  if (reconciled === undefined && retainedToolPart) {
+    throw new TypeError(
+      "Google provider metadata could not preserve a surviving signed tool call",
+    );
+  }
+  return reconciled;
+}

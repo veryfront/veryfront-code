@@ -2550,13 +2550,15 @@ export class AgentRuntime {
         preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch ||
           !shouldContinue,
       });
-      // A suppressed tool call means the persisted parts no longer mirror the
-      // raw model turn, so replaying provider metadata would fail the
-      // provider's exact-history validation (e.g. Google's signed tool
-      // replay); the continuation falls back to synthesized parts instead.
-      if (state.suppressedToolCalls.length === 0) {
-        attachProviderMetadata(assistantMessage, state.providerMetadata);
-      }
+      attachProviderMetadata(
+        assistantMessage,
+        reconcileSuppressedProviderMetadata(
+          languageModel,
+          state.providerMetadata,
+          state.suppressedToolCalls,
+          state.toolCalls.size > 0,
+        ),
+      );
 
       for (const tc of state.toolCalls.values()) {
         const materialized = materializeStreamedToolCall(tc);
@@ -3206,4 +3208,46 @@ export class AgentRuntime {
   async clearMemory(): Promise<void> {
     await this.memory.clear();
   }
+}
+
+type ProviderMetadataReconciler = (input: {
+  providerMetadata: Record<string, unknown>;
+  suppressedToolCalls: readonly { id: string; name: string }[];
+}) => Record<string, unknown> | undefined;
+
+function reconcileSuppressedProviderMetadata(
+  modelRuntime: ModelRuntime,
+  providerMetadata: Record<string, unknown> | undefined,
+  suppressedToolCalls: readonly { id: string; name: string }[],
+  hasSurvivingToolCalls: boolean,
+): Record<string, unknown> | undefined {
+  if (providerMetadata === undefined || suppressedToolCalls.length === 0) {
+    return providerMetadata;
+  }
+  if (!hasSurvivingToolCalls) {
+    return undefined;
+  }
+
+  const reconcile = modelRuntime._reconcileProviderMetadata;
+  if (typeof reconcile !== "function") {
+    throw new TypeError(
+      "Model runtime cannot reconcile provider metadata after suppressing a tool call",
+    );
+  }
+
+  const reconciled = (reconcile as ProviderMetadataReconciler).call(modelRuntime, {
+    providerMetadata,
+    suppressedToolCalls,
+  });
+  if (
+    reconciled === undefined ||
+    reconciled === null ||
+    typeof reconciled !== "object" ||
+    Array.isArray(reconciled)
+  ) {
+    throw new TypeError(
+      "Model runtime did not preserve provider metadata for surviving tool calls",
+    );
+  }
+  return reconciled;
 }
