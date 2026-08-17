@@ -72,6 +72,21 @@ time. Your renderer owns parsing, sanitization, and link policy. See
 [Render Markdown in chat](../guides/chat-ui.md#render-markdown-in-chat) to swap
 in a different renderer.
 
+## Choose SSR-safe styles
+
+Use build-time CSS when the initial server-rendered page must be styled. Good
+options include Tailwind CSS, CSS Modules, and other tools that emit CSS during
+the build.
+
+Veryfront does not currently collect styles from runtime CSS-in-JS libraries
+such as Emotion or styled-components during server rendering. A generated class
+name may appear in the server HTML without its CSS rule because styles inserted
+through `document.head` are not added to the response. This may leave the page
+unstyled or cause a flash of unstyled content before client hydration.
+
+Do not rely on runtime CSS-in-JS for SSR styling until Veryfront provides a
+server style-collection and insertion API.
+
 ## Verify it worked
 
 Open [http://localhost:3000](http://localhost:3000), send a message, and confirm:
