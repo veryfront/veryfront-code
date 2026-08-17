@@ -1042,6 +1042,15 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           !localPaths.has(path)
         );
       const toDelete = pruneRemoteMissing ? remoteFilesMissingLocally : [];
+      // Preflight: fail before any remote mutation if a preserved remote file
+      // is missing content, so the digest computations after upload/delete
+      // cannot be the first to discover it.
+      const deletePaths = new Set(toDelete);
+      for (const file of target.remoteFiles) {
+        if (!localPaths.has(file.path) && !deletePaths.has(file.path)) {
+          requireRemoteContent(file);
+        }
+      }
       let pushedSourceDigest: string;
 
       const project = outcome.kind === "planned-create" ? null : outcome.project;
