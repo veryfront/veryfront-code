@@ -166,10 +166,113 @@ describe("isServerOnlyPackage", () => {
     );
     assertEquals(
       getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/v135/knex@3.1.0/node/plugins/index.mjs",
+        configured,
+      ),
+      "knex/node/plugins/index.mjs",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
         "https://esm.sh/knex@3.1.0/es2022/plugins/client.mjs",
         configured,
       ),
       "knex/es2022/plugins/client.mjs",
+    );
+  });
+
+  it("translates esm.sh build artifacts back to installed package entries", () => {
+    const configured = [
+      "knex",
+      "react",
+      "react-dom",
+      "choices.js",
+      "@prisma/client",
+      "@babel/runtime",
+    ];
+
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/v135/knex@3.1.0/es2022/knex.mjs",
+        configured,
+      ),
+      "knex",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/stable/react-dom@18.3.1/es2022/server.mjs",
+        configured,
+      ),
+      "react-dom/server",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/@prisma/client@6.0.0/X-ZHJpdmVyQDUuMC4w/es2022/runtime/library.mjs",
+        configured,
+      ),
+      "@prisma/client/runtime/library",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/react@18.3.1/es2022/react.development.mjs",
+        configured,
+      ),
+      "react",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/react@18.3.1/es2022/react.development.bundle.mjs",
+        configured,
+      ),
+      "react",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/react-dom@18.3.1/server.js",
+        configured,
+      ),
+      "react-dom/server.js",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/choices.js@11.2.3/es2022/choices.mjs",
+        configured,
+      ),
+      "choices.js",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/choices.js@11.2.3/es2022/__choices.mjs",
+        configured,
+      ),
+      "choices.js/choices",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/*knex@3.1.0/es2022/knex.mjs",
+        configured,
+      ),
+      "knex",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/*%40babel/runtime@7.28.4/es2022/helpers/esm/extends.mjs",
+        configured,
+      ),
+      "@babel/runtime/helpers/esm/extends",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/knex@3.1.0/X-x/es2022/query.mjs",
+        configured,
+      ),
+      "knex/X-x/es2022/query.mjs",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/knex@3.1.0/X-/es2022/query.mjs",
+        configured,
+      ),
+      "knex/X-/es2022/query.mjs",
     );
   });
 
@@ -184,6 +287,7 @@ describe("isServerOnlyPackage", () => {
     const hostname = Object.getOwnPropertyDescriptor(URL.prototype, "hostname")!;
     const port = Object.getOwnPropertyDescriptor(URL.prototype, "port")!;
     const arrayConstructor = Object.getOwnPropertyDescriptor(Array.prototype, "constructor")!;
+    const inheritedIndex = Object.getOwnPropertyDescriptor(Array.prototype, "1");
     let bare: string | undefined;
     let esmSh: string | undefined;
     try {
@@ -231,6 +335,12 @@ describe("isServerOnlyPackage", () => {
           throw new Error("poisoned Array constructor");
         },
       });
+      Object.defineProperty(Array.prototype, "1", {
+        configurable: true,
+        get: () => {
+          throw new Error("poisoned inherited array index");
+        },
+      });
       bare = getConfiguredServerExternalPackage("knex", ["knex"]);
       esmSh = getConfiguredServerExternalPackage("https://esm.sh/knex@3.1.0", ["knex"]);
     } finally {
@@ -243,6 +353,8 @@ describe("isServerOnlyPackage", () => {
       Object.defineProperty(urlPrototype, "hostname", hostname);
       Object.defineProperty(urlPrototype, "port", port);
       Object.defineProperty(Array.prototype, "constructor", arrayConstructor);
+      if (inheritedIndex) Object.defineProperty(Array.prototype, "1", inheritedIndex);
+      else delete Array.prototype[1];
     }
 
     assertEquals(bare, "knex");

@@ -200,6 +200,7 @@ describe("rewriteImports with the default strategies", () => {
         "https://esm.sh/knex@3%5Clib",
         "https://esm.sh/v135/knex@3.1.0",
         "https://esm.sh/stable/knex@3.1.0",
+        "https://esm.sh/*knex@3.1.0/es2022/knex.mjs",
         "https://esm.sh/knex@3.1.0/",
       ]
     ) {
@@ -240,6 +241,15 @@ describe("rewriteImports with the default strategies", () => {
       Error,
       "build.serverExternalPackages",
     );
+    await assertRejects(
+      () =>
+        rewriteImports(
+          `import extend from "https://esm.sh/*%40babel/runtime@7.28.4/es2022/helpers/esm/extends.mjs";`,
+          defaultCtx({ serverExternalPackages: ["@babel/runtime"] }),
+        ),
+      Error,
+      "build.serverExternalPackages",
+    );
   });
 
   it("preserves legacy undeclared handling for noncanonical esm.sh spellings", async () => {
@@ -260,6 +270,33 @@ describe("rewriteImports with the default strategies", () => {
     );
 
     assertEquals(result, `import query from "knex/query";`);
+  });
+
+  it("normalizes configured esm.sh build artifacts for SSR externals", async () => {
+    const result = await rewriteImports(
+      `import knex from "db";`,
+      defaultCtx({
+        target: "ssr",
+        serverExternalPackages: ["knex"],
+        importMap: {
+          imports: { db: "https://esm.sh/*knex@3.1.0/es2022/knex.mjs" },
+        },
+      }),
+    );
+
+    assertEquals(result, `import knex from "knex";`);
+  });
+
+  it("normalizes nested external-all esm.sh artifacts for SSR externals", async () => {
+    const result = await rewriteImports(
+      `import extend from "https://esm.sh/*%40babel/runtime@7.28.4/es2022/helpers/esm/extends.mjs";`,
+      defaultCtx({
+        target: "ssr",
+        serverExternalPackages: ["@babel/runtime"],
+      }),
+    );
+
+    assertEquals(result, `import extend from "@babel/runtime/helpers/esm/extends";`);
   });
 
   it("still rewrites a code import through the alias strategy", async () => {

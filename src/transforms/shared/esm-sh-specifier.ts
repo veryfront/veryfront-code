@@ -3,8 +3,6 @@ export interface ParsedEsmShUrl {
   readonly packageName: string;
   readonly version: string | null;
   readonly subpath: string;
-  /** True when the remaining path is an esm.sh build artifact, not an npm subpath. */
-  readonly buildArtifact?: true;
   readonly search: string;
   readonly hash: string;
 }
@@ -12,7 +10,6 @@ export interface ParsedEsmShUrl {
 const ReflectApply = Reflect.apply;
 const SetHas = Set.prototype.has;
 const StringCharCodeAt = String.prototype.charCodeAt;
-const StringEndsWith = String.prototype.endsWith;
 const StringIncludes = String.prototype.includes;
 const StringIndexOf = String.prototype.indexOf;
 const StringLastIndexOf = String.prototype.lastIndexOf;
@@ -36,6 +33,22 @@ const ESM_SH_NON_NPM_PREFIXES: ReadonlySet<string> = new Set([
   "pr",
   "node",
 ]);
+const ESM_SH_BUILD_TARGETS: ReadonlySet<string> = new Set([
+  "es2015",
+  "es2016",
+  "es2017",
+  "es2018",
+  "es2019",
+  "es2020",
+  "es2021",
+  "es2022",
+  "es2023",
+  "es2024",
+  "esnext",
+  "deno",
+  "denonext",
+  "node",
+]);
 const CONFIGURED_EXTERNAL_URL_BASE = "https://veryfront.invalid/";
 
 function stringIncludes(value: string, search: string): boolean {
@@ -44,10 +57,6 @@ function stringIncludes(value: string, search: string): boolean {
 
 function stringCharCodeAt(value: string, index: number): number {
   return ReflectApply(StringCharCodeAt, value, [index]) as number;
-}
-
-function stringEndsWith(value: string, search: string): boolean {
-  return ReflectApply(StringEndsWith, value, [search]) as boolean;
 }
 
 function stringLastIndexOf(value: string, search: string): number {
@@ -74,6 +83,11 @@ function setHas<T>(set: ReadonlySet<T>, value: T): boolean {
   return ReflectApply(SetHas, set, [value]) as boolean;
 }
 
+function stringEndsWith(value: string, suffix: string): boolean {
+  return suffix.length <= value.length &&
+    stringLastIndexOf(value, suffix) === value.length - suffix.length;
+}
+
 function getUrlString(url: URL, getter: (this: URL) => string): string {
   return ReflectApply(getter, url, []) as string;
 }
@@ -87,27 +101,72 @@ function isVersionedBuildPrefix(value: string): boolean {
   return true;
 }
 
-function isBuildTarget(value: string): boolean {
-  if (value === "deno" || value === "denonext" || value === "node" || value === "esnext") {
-    return true;
-  }
-  if (value.length !== 6 || value[0] !== "e" || value[1] !== "s") return false;
-  for (let index = 2; index < value.length; index++) {
+function isValidEsmShBuildArgsPrefix(value: string): boolean {
+  if (!stringStartsWith(value, "X-")) return false;
+  const encodedLength = value.length - "X-".length;
+  if (encodedLength === 0 || encodedLength % 4 === 1) return false;
+  for (let index = "X-".length; index < value.length; index++) {
     const code = stringCharCodeAt(value, index);
-    if (code < 48 || code > 57) return false;
+    const isAlphaNumeric = (code >= 48 && code <= 57) ||
+      (code >= 65 && code <= 90) ||
+      (code >= 97 && code <= 122);
+    if (!isAlphaNumeric && code !== 45 && code !== 95) return false;
   }
   return true;
 }
 
-function isBuildArtifactPath(
+function stripEsmShBuildModeSuffix(value: string): string {
+  let stripped = value;
+  if (stringEndsWith(value, ".nobundle")) {
+    stripped = stringSlice(value, 0, -".nobundle".length);
+  } else if (stringEndsWith(value, ".bundle")) {
+    stripped = stringSlice(value, 0, -".bundle".length);
+  }
+  return stringEndsWith(stripped, ".development")
+    ? stringSlice(stripped, 0, -".development".length)
+    : stripped;
+}
+
+/** Recover an installed package subpath when the remaining URL is a generated esm.sh artifact. */
+function getEsmShBuildArtifactSubpath(
   segments: readonly string[],
-  subpathIndex: number,
+  startIndex: number,
   segmentCount: number,
-): boolean {
-  if (segmentCount !== subpathIndex + 2 || !isBuildTarget(segments[subpathIndex]!)) return false;
-  const filename = segments[segmentCount - 1]!;
-  return stringEndsWith(filename, ".mjs") || stringEndsWith(filename, ".map") ||
-    stringEndsWith(filename, ".css");
+  packageName: string,
+  hasBuildPathEvidence: boolean,
+): string | null {
+  let targetIndex = startIndex;
+  if (targetIndex >= segmentCount) return null;
+  const hasBuildArgsPrefix = isValidEsmShBuildArgsPrefix(segments[targetIndex]!);
+  if (hasBuildArgsPrefix) targetIndex++;
+  if (targetIndex >= segmentCount || !setHas(ESM_SH_BUILD_TARGETS, segments[targetIndex]!)) {
+    return null;
+  }
+
+  const artifactStart = targetIndex + 1;
+  const lastArtifactSegment = segments[segmentCount - 1];
+  if (artifactStart >= segmentCount || !lastArtifactSegment) return null;
+  if (!stringEndsWith(lastArtifactSegment, ".mjs")) return null;
+  if (artifactStart < segmentCount - 1 && !hasBuildPathEvidence && !hasBuildArgsPrefix) return null;
+
+  let artifactSubpath = "";
+  for (let index = artifactStart; index < segmentCount - 1; index++) {
+    artifactSubpath += `${segments[index]}/`;
+  }
+  artifactSubpath += stripEsmShBuildModeSuffix(
+    stringSlice(lastArtifactSegment, 0, -".mjs".length),
+  );
+
+  const packageSeparator = stringLastIndexOf(packageName, "/");
+  const packageBasenameWithExtension = packageSeparator < 0
+    ? packageName
+    : stringSlice(packageName, packageSeparator + 1);
+  const packageBasename = stringEndsWith(packageBasenameWithExtension, ".js")
+    ? stringSlice(packageBasenameWithExtension, 0, -".js".length)
+    : packageBasenameWithExtension;
+  if (artifactSubpath === packageBasename) return "";
+  if (artifactSubpath === `__${packageBasename}`) return `/${packageBasename}`;
+  return `/${artifactSubpath}`;
 }
 
 /** Check if a URL is hosted by the canonical esm.sh origin. */
@@ -184,7 +243,10 @@ function parseClassifiedEsmShUrl(
   ) {
     coordinateIndex = 1;
   }
-  const first = segments[coordinateIndex];
+  if (coordinateIndex >= segmentCount) return null;
+  let first = segments[coordinateIndex]!;
+  const hasExternalAllPrefix = enforcementMode && stringStartsWith(first, "*");
+  if (hasExternalAllPrefix) first = stringSlice(first, 1);
   if (
     !first || isVersionedBuildPrefix(first) || setHas(ESM_SH_NON_NPM_PREFIXES, first) ||
     stringIncludes(first, ":")
@@ -196,25 +258,34 @@ function parseClassifiedEsmShUrl(
   if (isScoped && segmentCount < coordinateIndex + 2) return null;
 
   const packageSegmentIndex = isScoped ? coordinateIndex + 1 : coordinateIndex;
-  const last = segments[packageSegmentIndex]!;
+  const last = packageSegmentIndex === coordinateIndex ? first : segments[packageSegmentIndex]!;
   const versionIndex = stringLastIndexOf(last, "@");
   if (versionIndex > 0 && versionIndex === last.length - 1) return null;
   const version = versionIndex > 0 ? stringSlice(last, versionIndex + 1) : null;
   const unversionedLast = versionIndex > 0 ? stringSlice(last, 0, versionIndex) : last;
   const packageName = isScoped ? `${first}/${unversionedLast}` : unversionedLast;
-  let subpath = "";
-  for (let index = packageSegmentIndex + 1; index < segmentCount; index++) {
-    subpath += `/${segments[index]}`;
+  const firstSubpathIndex = packageSegmentIndex + 1;
+  const artifactSubpath = enforcementMode
+    ? getEsmShBuildArtifactSubpath(
+      segments,
+      firstSubpathIndex,
+      segmentCount,
+      packageName,
+      hasExternalAllPrefix,
+    )
+    : null;
+  let subpath = artifactSubpath ?? "";
+  if (artifactSubpath === null) {
+    for (let index = firstSubpathIndex; index < segmentCount; index++) {
+      subpath += `/${segments[index]}`;
+    }
   }
-  const buildArtifact = enforcementMode &&
-    isBuildArtifactPath(segments, packageSegmentIndex + 1, segmentCount);
 
   return {
     origin: getUrlString(parsed, URLOriginGetter),
     packageName,
     version: version && version.length > 0 ? version : null,
     subpath,
-    ...(buildArtifact ? { buildArtifact: true as const } : {}),
     search: getUrlString(parsed, URLSearchGetter),
     hash: getUrlString(parsed, URLHashGetter),
   };

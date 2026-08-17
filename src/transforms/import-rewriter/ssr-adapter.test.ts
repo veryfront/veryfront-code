@@ -82,7 +82,7 @@ describe("ssr-adapter — server external packages", () => {
   it("preserves prefixed and target-named configured package subpaths", async () => {
     const code = [
       `import query from "https://esm.sh/v135/knex@3.1.0/query";`,
-      `const plugin = import("https://esm.sh/knex@3.1.0/node/plugins/index.mjs");`,
+      `const plugin = import("https://esm.sh/v135/knex@3.1.0/node/plugins/index.mjs");`,
     ].join("\n");
     const expected = [
       `import query from "knex/query";`,
@@ -118,6 +118,23 @@ describe("ssr-adapter — server external packages", () => {
     ].join("\n");
     const expected = [`import "knex";`, `const query = import("knex/query");`].join("\n");
     const options = { serverExternalPackages: ["knex"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
+  it("normalizes configured esm.sh build artifacts", async () => {
+    const code = [
+      `import knex from "https://esm.sh/v135/knex@3.1.0/es2022/knex.mjs";`,
+      `import external from "https://esm.sh/*knex@3.1.0/es2022/knex.mjs";`,
+      `const server = import("https://esm.sh/stable/react-dom@18.3.1/es2022/server.mjs");`,
+    ].join("\n");
+    const expected = [
+      `import knex from "knex";`,
+      `import external from "knex";`,
+      `const server = import("react-dom/server");`,
+    ].join("\n");
+    const options = { serverExternalPackages: ["knex", "react-dom"] };
 
     assertEquals(rewriteSSRImportsCompat(code, options), expected);
     assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
