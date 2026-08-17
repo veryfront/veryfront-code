@@ -88,6 +88,32 @@ async function resolveWithBareExternalPlugin(
   return result.errors[0].text;
 }
 
+async function resolveWithHttpExternalPlugin(
+  path: string,
+  kind: OnResolveArgs["kind"],
+): Promise<string> {
+  let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
+  const plugin = createHttpExternalPlugin({ serverExternalPackages: ["knex"] });
+  const build = createMockBuild(() => {});
+  build.onResolve = (_options, handler) => {
+    resolveHandler = handler;
+  };
+  plugin.setup(build);
+  assertExists(resolveHandler);
+
+  const result = await resolveHandler({
+    path,
+    importer: "/project/app/page.js",
+    namespace: "file",
+    resolveDir: "/project/app",
+    kind,
+    pluginData: undefined,
+  }) as { errors?: Array<{ text: string }> };
+
+  assertExists(result.errors?.[0]);
+  return result.errors[0].text;
+}
+
 function writableDependencySource(
   cacheNamespace: string,
   dependencies: Readonly<Record<string, string>>,
@@ -131,7 +157,7 @@ async function bundleWithPlugin(
     },
     plugins: [
       createBareExternalPlugin({ importMapImports, serverExternalPackages }),
-      createHttpExternalPlugin(),
+      createHttpExternalPlugin({ serverExternalPackages }),
     ],
   });
 
@@ -260,6 +286,10 @@ describe(
         ["knex", 'export const load = () => import("knex");'],
         ["knex", 'const knex = require("knex"); console.log(knex);'],
         [
+          "knex",
+          'const knex = require("https://esm.sh/knex@3.1.0"); console.log(knex);',
+        ],
+        [
           "npm:@prisma/client",
           'import prisma from "npm:@prisma/client"; console.log(prisma);',
         ],
@@ -308,6 +338,17 @@ describe(
 
       assertEquals(message.includes("server-only-in-client"), true);
       assertEquals(message.includes("zod"), true);
+    });
+
+    it("rejects delivered declared HTTP externals for CommonJS resolve kinds", async () => {
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        const message = await resolveWithHttpExternalPlugin(
+          "https://esm.sh/knex@3.1.0",
+          kind,
+        );
+        assertEquals(message.includes("server-only-in-client"), true);
+        assertEquals(message.includes("knex"), true);
+      }
     });
 
     it("does not let an import map bypass a declared server external", async () => {

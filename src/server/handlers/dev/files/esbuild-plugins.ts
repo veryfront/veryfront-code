@@ -698,7 +698,9 @@ export function createHttpExternalPlugin(options: HttpExternalPluginOptions = {}
     name: "veryfront-http-ext",
     setup(build: PluginBuild) {
       build.onResolve({ filter: /^(?:https?:)?\/\//i }, (args: OnResolveArgs) => {
-        if (args.kind !== "import-statement" && args.kind !== "dynamic-import") return undefined;
+        const isEsmImport = args.kind === "import-statement" || args.kind === "dynamic-import";
+        const isCommonJsImport = args.kind === "require-call" || args.kind === "require-resolve";
+        if (!isEsmImport && !isCommonJsImport) return undefined;
         const configuredPackage = getConfiguredServerExternalPackage(
           args.path,
           options.serverExternalPackages,

@@ -1,5 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import { loadDefaultCodeParser } from "#veryfront/extensions/parser/defaults.ts";
+import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -49,5 +52,43 @@ describe("CommonJS browser policy", () => {
 
     assert(error instanceof VeryfrontError);
     assertEquals(error.slug, "bundle-error");
+  });
+
+  it("retries the default parser load after a transient rejection", async () => {
+    const registeredParser = tryResolve<CodeParser>("CodeParser");
+    if (registeredParser !== undefined) unregister("CodeParser");
+    try {
+      const activeParser = await loadDefaultCodeParser();
+      if (activeParser === undefined) throw new Error("CodeParser test setup failed");
+      let loads = 0;
+      commonJsPolicyInternals.setDefaultParserLoaderForTest(() => {
+        loads += 1;
+        return loads === 1
+          ? Promise.reject(new Error("transient parser load failure"))
+          : Promise.resolve(activeParser);
+      });
+      let firstError: unknown;
+      try {
+        await assertNoConfiguredCommonJsBrowserImports("export default 1", {
+          filePath: "/project/retry.ts",
+          projectDir: "/project",
+          serverExternalPackages: ["knex"],
+        });
+      } catch (error) {
+        firstError = error;
+      }
+      assert(firstError instanceof Error);
+      assertEquals(firstError.message, "transient parser load failure");
+
+      await assertNoConfiguredCommonJsBrowserImports("export default 1", {
+        filePath: "/project/retry.ts",
+        projectDir: "/project",
+        serverExternalPackages: ["knex"],
+      });
+      assertEquals(loads, 2);
+    } finally {
+      commonJsPolicyInternals.resetDefaultParserLoaderForTest();
+      if (registeredParser !== undefined) register("CodeParser", registeredParser);
+    }
   });
 });

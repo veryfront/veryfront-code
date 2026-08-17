@@ -363,7 +363,7 @@ describe("import rewrite core runner", () => {
     );
   });
 
-  it("preserves local require calls with a contract-only parser path", async () => {
+  it("falls back when the active parser only provides the base contract", async () => {
     await ensureDefaultParserContracts();
     const parser = tryResolve<CodeParser>("CodeParser");
     if (!parser) throw new Error("CodeParser test setup failed");

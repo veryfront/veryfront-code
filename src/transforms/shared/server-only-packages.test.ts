@@ -130,51 +130,51 @@ describe("isServerOnlyPackage", () => {
     const arrayConstructor = Object.getOwnPropertyDescriptor(Array.prototype, "constructor")!;
     let bare: string | undefined;
     let esmSh: string | undefined;
-    Object.defineProperty(String.prototype, "startsWith", {
-      configurable: true,
-      value: () => {
-        throw new Error("poisoned startsWith");
-      },
-    });
-    Object.defineProperty(String.prototype, "match", {
-      configurable: true,
-      value: () => null,
-    });
-    Object.defineProperty(RegExp.prototype, "exec", {
-      configurable: true,
-      value: () => null,
-    });
-    Object.defineProperty(globalThis, "URL", {
-      configurable: true,
-      value: class PoisonedUrl {
-        pathname = "/lodash";
-      },
-    });
-    Object.defineProperty(globalThis, "decodeURIComponent", {
-      configurable: true,
-      value: () => {
-        throw new Error("poisoned decodeURIComponent");
-      },
-    });
-    Object.defineProperty(urlPrototype, "protocol", {
-      configurable: true,
-      get: () => "custom:",
-    });
-    Object.defineProperty(urlPrototype, "hostname", {
-      configurable: true,
-      get: () => "cdn.example",
-    });
-    Object.defineProperty(urlPrototype, "port", {
-      configurable: true,
-      get: () => "444",
-    });
-    Object.defineProperty(Array.prototype, "constructor", {
-      configurable: true,
-      get: () => {
-        throw new Error("poisoned Array constructor");
-      },
-    });
     try {
+      Object.defineProperty(String.prototype, "startsWith", {
+        configurable: true,
+        value: () => {
+          throw new Error("poisoned startsWith");
+        },
+      });
+      Object.defineProperty(String.prototype, "match", {
+        configurable: true,
+        value: () => null,
+      });
+      Object.defineProperty(RegExp.prototype, "exec", {
+        configurable: true,
+        value: () => null,
+      });
+      Object.defineProperty(globalThis, "URL", {
+        configurable: true,
+        value: class PoisonedUrl {
+          pathname = "/lodash";
+        },
+      });
+      Object.defineProperty(globalThis, "decodeURIComponent", {
+        configurable: true,
+        value: () => {
+          throw new Error("poisoned decodeURIComponent");
+        },
+      });
+      Object.defineProperty(urlPrototype, "protocol", {
+        configurable: true,
+        get: () => "custom:",
+      });
+      Object.defineProperty(urlPrototype, "hostname", {
+        configurable: true,
+        get: () => "cdn.example",
+      });
+      Object.defineProperty(urlPrototype, "port", {
+        configurable: true,
+        get: () => "444",
+      });
+      Object.defineProperty(Array.prototype, "constructor", {
+        configurable: true,
+        get: () => {
+          throw new Error("poisoned Array constructor");
+        },
+      });
       bare = getConfiguredServerExternalPackage("knex", ["knex"]);
       esmSh = getConfiguredServerExternalPackage("https://esm.sh/knex@3.1.0", ["knex"]);
     } finally {
@@ -200,18 +200,17 @@ describe("isServerOnlyPackage", () => {
   });
 
   it("does not parse specifiers when no package boundary is configured", () => {
-    const descriptor = Object.getOwnPropertyDescriptor(String.prototype, "match")!;
-    Object.defineProperty(String.prototype, "match", {
-      configurable: true,
-      value: () => {
+    let coercions = 0;
+    const unparseableSpecifier = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
         throw new Error("specifier parser should not run");
       },
-    });
-    try {
-      assertEquals(getConfiguredServerExternalPackage("./component.ts", undefined), undefined);
-    } finally {
-      Object.defineProperty(String.prototype, "match", descriptor);
-    }
+    } as unknown as string;
+
+    assertEquals(getConfiguredServerExternalPackage(unparseableSpecifier, undefined), undefined);
+    assertEquals(getConfiguredServerExternalPackage(unparseableSpecifier, []), undefined);
+    assertEquals(coercions, 0);
   });
 
   it("redacts URL module identities from browser diagnostics", () => {

@@ -103,7 +103,7 @@ its subpaths reaches a browser transform, Veryfront stops with a
 `server-only-in-client` error that names the import and source module.
 
 When adopting this option, move shared imports behind a server-only boundary
-first - for example, into server data hooks, API routes, or server components.
+first: for example, into server data hooks, API routes, or server components.
 Declaring a package does not make it browser-safe and does not silently stub it.
 Undeclared packages keep their existing browser-compatible resolution behavior;
 Veryfront does not infer additional server-only packages from source code. Use

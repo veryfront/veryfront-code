@@ -15,6 +15,7 @@ interface CommonJsBrowserImportContext {
 }
 
 let defaultCommonJsParser: Promise<CodeParser | undefined> | undefined;
+let loadCommonJsParser = loadDefaultCodeParser;
 
 type CommonJsCapableParser = CodeParser & {
   findStaticCommonJsImports: NonNullable<CodeParser["findStaticCommonJsImports"]>;
@@ -35,13 +36,27 @@ function assertCommonJsCapableParser(
 /** @internal Test-only seams; this module is not a public package entry point. */
 export const commonJsPolicyInternals = Object.freeze({
   assertCommonJsCapableParser,
+  resetDefaultParserLoaderForTest() {
+    defaultCommonJsParser = undefined;
+    loadCommonJsParser = loadDefaultCodeParser;
+  },
+  setDefaultParserLoaderForTest(loader: typeof loadDefaultCodeParser) {
+    defaultCommonJsParser = undefined;
+    loadCommonJsParser = loader;
+  },
 });
 
 async function getCommonJsParser(): Promise<CodeParser | undefined> {
   const active = tryResolve<CodeParser>("CodeParser");
   if (active?.findStaticCommonJsImports) return active;
-  defaultCommonJsParser ??= loadDefaultCodeParser();
-  return await defaultCommonJsParser;
+  defaultCommonJsParser ??= loadCommonJsParser();
+  const pending = defaultCommonJsParser;
+  try {
+    return await pending;
+  } catch (error) {
+    if (defaultCommonJsParser === pending) defaultCommonJsParser = undefined;
+    throw error;
+  }
 }
 
 export function throwConfiguredServerExternalBrowserViolation(

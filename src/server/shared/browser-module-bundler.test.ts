@@ -285,7 +285,7 @@ describe(
       );
     });
 
-    it("rejects declared server externals while preserving undeclared browser packages", async () => {
+    describe("configured server external browser boundaries", () => {
       const projectDir = "/project";
       const declaredPath = `${projectDir}/app/Declared.tsx`;
       const scopedNpmPath = `${projectDir}/app/ScopedNpm.tsx`;
@@ -315,6 +315,8 @@ describe(
         `(require satisfies any)?.("knex")`,
         `require<string>?.("knex")`,
         `require.resolve?.("knex")`,
+        `require("https://esm.sh/knex@3.1.0")`,
+        `require.resolve("https://esm.sh/knex@3.1.0")`,
         `require.call(null, "knex")`,
         `require.resolve.call(null, "knex")`,
         `module.require.call(module, "knex")`,
@@ -433,85 +435,98 @@ describe(
       }
       const config = { build: { serverExternalPackages: ["knex"] } };
 
-      const error = await assertRejects(() =>
-        bundleBrowserModule(declaredPath, { adapter, projectDir, config })
-      );
-      assertStringIncludes(String(error), "knex");
-      assertStringIncludes(String(error), "build.serverExternalPackages");
-      assertStringIncludes(String(error), "server-only-in-client");
+      it("rejects declared ESM and scoped npm packages", async () => {
+        const error = await assertRejects(() =>
+          bundleBrowserModule(declaredPath, { adapter, projectDir, config })
+        );
+        assertStringIncludes(String(error), "knex");
+        assertStringIncludes(String(error), "build.serverExternalPackages");
+        assertStringIncludes(String(error), "server-only-in-client");
 
-      const scopedNpmError = await assertRejects(() =>
-        bundleBrowserModule(scopedNpmPath, {
+        const scopedNpmError = await assertRejects(() =>
+          bundleBrowserModule(scopedNpmPath, {
+            adapter,
+            projectDir,
+            config: { build: { serverExternalPackages: ["@prisma/client"] } },
+          })
+        );
+        assertStringIncludes(String(scopedNpmError), "server-only-in-client");
+        assertStringIncludes(String(scopedNpmError), "npm:@prisma/client/runtime/library");
+      });
+
+      it("rejects declared CommonJS forms and transitive dependencies", async () => {
+        for (
+          const commonJsPath of [
+            optionalCommonJsPath,
+            ambientRequirePath,
+            ambientModulePath,
+            typeImportRequirePath,
+            typeImportEqualsRequirePath,
+            typeImportEqualsModulePath,
+            typeOnlyNamespaceModulePath,
+            typeOnlyNamespaceRequirePath,
+            ...wrappedCommonJsModules.map((moduleFixture) => moduleFixture.path),
+            dependencyEntryPath,
+          ]
+        ) {
+          const commonJsError = await assertRejects(
+            () => bundleBrowserModule(commonJsPath, { adapter, projectDir, config }),
+            `Expected ${commonJsPath} to reject`,
+          );
+          assertStringIncludes(
+            String(commonJsError),
+            "build.serverExternalPackages",
+            commonJsPath,
+          );
+          assertStringIncludes(String(commonJsError), "knex", commonJsPath);
+        }
+      });
+
+      it("preserves undeclared browser packages", async () => {
+        const compatible = await bundleBrowserModule(compatiblePath, {
           adapter,
           projectDir,
-          config: { build: { serverExternalPackages: ["@prisma/client"] } },
-        })
-      );
-      assertStringIncludes(String(scopedNpmError), "server-only-in-client");
-      assertStringIncludes(String(scopedNpmError), "npm:@prisma/client/runtime/library");
-
-      for (
-        const commonJsPath of [
-          optionalCommonJsPath,
-          ambientRequirePath,
-          ambientModulePath,
-          typeImportRequirePath,
-          typeImportEqualsRequirePath,
-          typeImportEqualsModulePath,
-          typeOnlyNamespaceModulePath,
-          typeOnlyNamespaceRequirePath,
-          ...wrappedCommonJsModules.map((moduleFixture) => moduleFixture.path),
-          dependencyEntryPath,
-        ]
-      ) {
-        const commonJsError = await assertRejects(() =>
-          bundleBrowserModule(commonJsPath, { adapter, projectDir, config })
-        );
-        assertStringIncludes(String(commonJsError), "build.serverExternalPackages");
-        assertStringIncludes(String(commonJsError), "knex");
-      }
-
-      const compatible = await bundleBrowserModule(compatiblePath, {
-        adapter,
-        projectDir,
-        config,
+          config,
+        });
+        assertStringIncludes(compatible, "esm.sh/lodash");
       });
-      assertStringIncludes(compatible, "esm.sh/lodash");
 
-      const localRequire = await bundleBrowserModule(localRequirePath, {
-        adapter,
-        projectDir,
-        config,
-      });
-      assertStringIncludes(localRequire, '"knex"');
+      it("preserves runtime-shadowed CommonJS calls", async () => {
+        const localRequire = await bundleBrowserModule(localRequirePath, {
+          adapter,
+          projectDir,
+          config,
+        });
+        assertStringIncludes(localRequire, '"knex"');
 
-      const localSequence = await bundleBrowserModule(localSequencePath, {
-        adapter,
-        projectDir,
-        config,
-      });
-      assertStringIncludes(localSequence, '"knex"');
+        const localSequence = await bundleBrowserModule(localSequencePath, {
+          adapter,
+          projectDir,
+          config,
+        });
+        assertStringIncludes(localSequence, '"knex"');
 
-      const namespaceModule = await bundleBrowserModule(namespaceModulePath, {
-        adapter,
-        projectDir,
-        config,
-      });
-      assertStringIncludes(namespaceModule, "local:");
+        const namespaceModule = await bundleBrowserModule(namespaceModulePath, {
+          adapter,
+          projectDir,
+          config,
+        });
+        assertStringIncludes(namespaceModule, "local:");
 
-      const declaredNamespaceMember = await bundleBrowserModule(declaredNamespaceMemberPath, {
-        adapter,
-        projectDir,
-        config,
-      });
-      assertStringIncludes(declaredNamespaceMember, '"knex"');
+        const declaredNamespaceMember = await bundleBrowserModule(declaredNamespaceMemberPath, {
+          adapter,
+          projectDir,
+          config,
+        });
+        assertStringIncludes(declaredNamespaceMember, '"knex"');
 
-      const nestedNamespaceModule = await bundleBrowserModule(nestedNamespaceModulePath, {
-        adapter,
-        projectDir,
-        config,
+        const nestedNamespaceModule = await bundleBrowserModule(nestedNamespaceModulePath, {
+          adapter,
+          projectDir,
+          config,
+        });
+        assertStringIncludes(nestedNamespaceModule, "nested:");
       });
-      assertStringIncludes(nestedNamespaceModule, "nested:");
     });
 
     it("pins direct same-origin HTTP module imports and preserves foreign URLs", async () => {
