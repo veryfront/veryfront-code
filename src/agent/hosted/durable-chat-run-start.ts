@@ -17,7 +17,17 @@ import type { DetachedRunTracker } from "../service/detached-run-tracker.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 /** Public API contract for hosted durable run setup error status code. */
-export type HostedDurableRunSetupErrorStatusCode = 400 | 402 | 403 | 404 | 413 | 429 | 500 | 503;
+export type HostedDurableRunSetupErrorStatusCode =
+  | 400
+  | 402
+  | 403
+  | 404
+  | 408
+  | 413
+  | 429
+  | 500
+  | 502
+  | 503;
 
 /** Public API contract for hosted durable run accepted. */
 export type HostedDurableRunAccepted = {
@@ -73,7 +83,8 @@ function isDurableRunSetupErrorStatusCode(
   status: number | undefined,
 ): status is HostedDurableRunSetupErrorStatusCode {
   return status === 400 || status === 402 || status === 403 || status === 404 ||
-    status === 413 || status === 429 || status === 500 || status === 503;
+    status === 408 || status === 413 || status === 429 || status === 500 ||
+    status === 502 || status === 503;
 }
 
 /**

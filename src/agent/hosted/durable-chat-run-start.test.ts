@@ -1,6 +1,11 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { AGENT_NOT_FOUND, PERMISSION_DENIED } from "#veryfront/errors";
+import {
+  AGENT_NOT_FOUND,
+  NETWORK_ERROR,
+  PERMISSION_DENIED,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import {
   type AgUiResumeValue,
@@ -304,6 +309,28 @@ describe("agent/hosted-durable-chat-run-start", () => {
 
     assertEquals(response.status, 404);
     assertEquals(await readJson(response), { errorCode: "AGENT_NOT_FOUND" });
+  });
+
+  it("preserves registered remote MCP setup statuses", async () => {
+    for (
+      const [error, status, errorCode] of [
+        [TIMEOUT_ERROR.create({ detail: "timed out" }), 408, "TIMEOUT_ERROR"],
+        [NETWORK_ERROR.create({ detail: "unavailable" }), 502, "NETWORK_ERROR"],
+      ] as const
+    ) {
+      const response = await executeHostedDurableChatRun({
+        req: createParsedRequest(),
+        rawRequest: createRequest(),
+        tracker: createDetachedRunTracker<AgUiResumeValue>(),
+        prepareExecution: async () => {
+          throw error;
+        },
+        startDetachedExecution: async () => {},
+      });
+
+      assertEquals(response.status, status);
+      assertEquals(await readJson(response), { errorCode });
+    }
   });
 
   it("keeps error-level logging for setup failures that resolve to 5xx", async () => {
