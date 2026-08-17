@@ -892,7 +892,23 @@ export class RenderPipeline {
               );
               timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
 
-              if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
+              if (pageBundleResult.scriptResult) {
+                const scriptResponseMetadata = mergeDataResponseMetadata([
+                  {
+                    ...(pageBundleResult.scriptResult.headers
+                      ? { headers: pageBundleResult.scriptResult.headers }
+                      : {}),
+                    ...(pageBundleResult.scriptResult.cookies
+                      ? { cookies: pageBundleResult.scriptResult.cookies }
+                      : {}),
+                  },
+                  {
+                    ...(responseHeaders ? { headers: responseHeaders } : {}),
+                    ...(responseCookies ? { cookies: responseCookies } : {}),
+                  },
+                ]);
+                return { ...pageBundleResult.scriptResult, ...scriptResponseMetadata };
+              }
 
               if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
                 throw RENDER_ERROR.create({

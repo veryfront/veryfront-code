@@ -635,6 +635,38 @@ describe("RenderPipeline behavior", () => {
     assertEquals(cacheWrites, 0);
   });
 
+  it("merges response metadata into script page results", async () => {
+    const pagePath = "/project/pages/response-metadata.ts";
+    const pipeline = createPipeline(pagePath, {
+      pageRenderer: {
+        preparePageBundles: async () => ({
+          collectedMetadata: {},
+          scriptResult: {
+            html: "<!doctype html><html><body>script</body></html>",
+            frontmatter: {},
+            stream: null,
+          },
+        }),
+      } as any,
+    });
+
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => ({
+        props: {},
+        headers: { "x-script-state": "resolved" },
+        cookies: [{ name: "script-seen", value: "1", path: "/" }],
+      }),
+    });
+
+    const result = await pipeline.renderPage("/response-metadata", {
+      request: new Request("http://localhost/response-metadata"),
+      url: new URL("http://localhost/response-metadata"),
+    });
+
+    assertEquals(result.headers, { "x-script-state": "resolved" });
+    assertEquals(result.cookies, [{ name: "script-seen", value: "1", path: "/" }]);
+  });
+
   it("preserves successful layout metadata when page data fails", async () => {
     const pagePath = "/project/pages/response-metadata-data-error.tsx";
     const layoutPath = "/project/layouts/root.tsx";
