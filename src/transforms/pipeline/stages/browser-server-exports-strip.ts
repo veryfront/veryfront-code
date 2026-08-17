@@ -1620,6 +1620,16 @@ function writesObjectDefineProperty(body: Node[]): boolean {
     walk(statement, (node) => {
       if (writes) return false;
 
+      if (
+        node.type === "CallExpression" && isNode(node.callee) && isObjectDefineProperty(node.callee)
+      ) {
+        const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
+        if (nodeName(args[0]) === "Object" && stringLiteralText(args[1]) === "defineProperty") {
+          writes = true;
+          return false;
+        }
+      }
+
       let target: Node | undefined;
       if (node.type === "AssignmentExpression" && isNode(node.left)) target = node.left;
       if (node.type === "UpdateExpression" && isNode(node.argument)) target = node.argument;
@@ -1718,23 +1728,30 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   if (objectIsModuleLocal) return new Set<string>();
 
   const initializers = new Map<string, Node>();
+  const multiplyInitialized = new Set<string>();
   for (const statement of body) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const declarator of Array.isArray(statement.declarations) ? statement.declarations : []) {
       if (!isNode(declarator) || !isNode(declarator.init)) continue;
       const name = nodeName(declarator.id);
-      if (name) initializers.set(name, declarator.init);
+      if (!name) continue;
+      if (initializers.has(name)) multiplyInitialized.add(name);
+      initializers.set(name, declarator.init);
     }
   }
 
   const definePropertyBindings = new Set<string>();
   for (const [name, init] of initializers) {
-    if (!reassigned.has(name) && isObjectDefineProperty(init)) definePropertyBindings.add(name);
+    if (
+      !multiplyInitialized.has(name) && !reassigned.has(name) && isObjectDefineProperty(init)
+    ) {
+      definePropertyBindings.add(name);
+    }
   }
 
   const helpers = new Set<string>();
   for (const [name, init] of initializers) {
-    if (reassigned.has(name)) continue;
+    if (multiplyInitialized.has(name) || reassigned.has(name)) continue;
     if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
     const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
     if (params.length !== 2) continue;
