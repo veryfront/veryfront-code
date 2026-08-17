@@ -1824,6 +1824,8 @@ describe("VeryfrontFSAdapter", () => {
       }).cache;
 
       assertEquals(cache.delete(cacheKey), true);
+      // Simulate the retained listing expiring with the cache entry.
+      (adapter as unknown as { clearRetainedFileList: () => void }).clearRetainedFileList();
       assertEquals(await adapter.getAllSourceFiles(), []);
 
       await waitFor(async () => {
@@ -2029,6 +2031,7 @@ describe("VeryfrontFSAdapter", () => {
       }).cache;
 
       assertEquals(cache.delete(cacheKey), true);
+      (adapter as unknown as { clearRetainedFileList: () => void }).clearRetainedFileList();
       assertEquals(await adapter.getAllSourceFiles(), []);
 
       await waitFor(async () => {
@@ -2096,6 +2099,7 @@ describe("VeryfrontFSAdapter", () => {
       }).cache;
 
       assertEquals(cache.delete(cacheKey), true);
+      (adapter as unknown as { clearRetainedFileList: () => void }).clearRetainedFileList();
 
       await Promise.all([
         adapter.getAllSourceFiles(),

@@ -571,6 +571,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
         }
 
         this.markSourceSnapshotChanged(files, initializationIdentity);
+        // Retain after the generation bump so the first read can reuse the
+        // initialized snapshot even when the configured cache keeps nothing.
+        this.retainFileList(cacheKey, files);
         return true;
       });
 

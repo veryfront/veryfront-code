@@ -88,6 +88,51 @@ function createDraftAdapter(files: StubFile[], cacheEnabled = true): {
 }
 
 describe("file list fan-out (issue inbox#32)", () => {
+  it("reuses the listing fetched during initialization when cache storage retains nothing", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default 'initialized';" },
+    ];
+    const adapter = createAdapter({
+      veryfront: {
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "test-token",
+        projectSlug: "test-project",
+        cache: { enabled: false },
+      },
+    });
+    const counts = stubClient(adapter, files);
+    const internals = adapter as unknown as {
+      client: {
+        initialize: () => Promise<void>;
+        getProjectSlug: () => string;
+        getProjectId: () => string;
+        getCachedProject: () => { provider: string; layout: string };
+      };
+      wsManager: { connect: (_projectId: string) => void };
+    };
+    internals.client.initialize = () => Promise.resolve();
+    internals.client.getProjectSlug = () => "test-project";
+    internals.client.getProjectId = () => "project-123";
+    internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+    internals.wsManager.connect = () => {};
+    adapter.setContentContext({
+      sourceType: "branch",
+      projectSlug: "test-project",
+      branch: "main",
+    });
+
+    await adapter.initialize();
+    assertEquals(counts.listAllFiles, 1, "initialization must fetch the listing once");
+
+    assertEquals(await adapter.readTextFile("pages/index.tsx"), "export default 'initialized';");
+    assertEquals(
+      counts.listAllFiles,
+      1,
+      "the first read after initialization must reuse the fetched listing",
+    );
+    assertEquals(counts.getFileContent, 0, "the initialized listing must answer the read");
+  });
+
   it("serves N draft module reads from one listing fetch instead of per-file probes", async () => {
     const moduleCount = 8;
     const files: StubFile[] = Array.from({ length: moduleCount }, (_, index) => ({
