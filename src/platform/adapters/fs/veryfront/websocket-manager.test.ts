@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
@@ -15,6 +15,16 @@ import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 interface TimerEntry {
   delay: number;
   callback: () => void;
+}
+
+function makeProjectFile(path: string, content: string): ProjectFile {
+  return {
+    path,
+    content,
+    type: "page",
+    size: content.length,
+    updated_at: "2026-08-17T00:00:00.000Z",
+  };
 }
 
 class MockWebSocket {
@@ -95,6 +105,13 @@ function createWebSocketManager(options: {
   pregenerateStyles?: (
     files: Array<{ path: string; content?: string }>,
   ) => Promise<{ hash: string; assetPath: string } | undefined>;
+  clearMemoryCaches?: () => void;
+  getSourceSnapshotVersion?: () => number;
+  replaceSourceSnapshot?: (
+    cacheKey: string,
+    files: Array<{ path: string; content?: string }>,
+    expectedSnapshotVersion?: number,
+  ) => Promise<number | undefined>;
 } = {}): WebSocketManager {
   const cache = {
     deleteByPrefixAsync: async () => 0,
@@ -123,8 +140,9 @@ function createWebSocketManager(options: {
     }),
     getContentSource: () => ({ type: "branch", branch: "main" }),
     getProjectDir: () => undefined,
-    clearMemoryCaches: () => {},
-    replaceSourceSnapshot: async () => {},
+    clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
+    getSourceSnapshotVersion: options.getSourceSnapshotVersion,
+    replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => 0),
     pregenerateStyles: options.pregenerateStyles,
   });
 }
@@ -656,7 +674,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => 0,
     });
 
     manager.connect("project-1");
@@ -718,7 +736,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => 0,
     });
 
     manager.connect("project-1");
@@ -757,7 +775,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => 0,
     });
 
     manager.connect("project-1");
@@ -796,7 +814,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => 0,
     });
 
     manager.connect("project-1");
@@ -835,7 +853,7 @@ describe("WebSocketManager", () => {
       getContentSource: () => ({ type: "branch", branch: "main" }),
       getProjectDir: () => undefined,
       clearMemoryCaches: () => {},
-      replaceSourceSnapshot: async () => {},
+      replaceSourceSnapshot: async () => 0,
     });
 
     manager.connect("project-1");
@@ -901,6 +919,290 @@ describe("WebSocketManager", () => {
     assertEquals(capturedProject?.styleArtifactHash, "hash-1");
     assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
 
+    manager.dispose();
+  });
+
+  it("passes the pre-fetch source generation to selective snapshot replacement", async () => {
+    const fetchStarted = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<ProjectFile[]>();
+    let sourceSnapshotVersion = 1;
+    let replacementVersion: number | undefined;
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => {
+          fetchStarted.resolve();
+          return releaseFetch.promise;
+        },
+      },
+      clearMemoryCaches: () => {
+        sourceSnapshotVersion++;
+      },
+      getSourceSnapshotVersion: () => sourceSnapshotVersion,
+      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+        replacementVersion = expectedSnapshotVersion;
+        return Promise.resolve(
+          expectedSnapshotVersion === sourceSnapshotVersion ? sourceSnapshotVersion : undefined,
+        );
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await fetchStarted.promise;
+    sourceSnapshotVersion++;
+    releaseFetch.resolve([makeProjectFile("app/page.tsx", "v1")]);
+    await flushMicrotasks();
+
+    assertEquals(
+      replacementVersion,
+      2,
+      "replacement must receive the generation captured before the file-list fetch",
+    );
+    manager.dispose();
+  });
+
+  it("does not pregenerate styles for a superseded selective snapshot", async () => {
+    const fetchStarted = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<ProjectFile[]>();
+    let sourceSnapshotVersion = 1;
+    let pregenerateCalls = 0;
+    let publishedStyleHash: string | undefined;
+    let reloadCalls = 0;
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => {
+          fetchStarted.resolve();
+          return releaseFetch.promise;
+        },
+      },
+      clearMemoryCaches: () => {
+        sourceSnapshotVersion++;
+      },
+      getSourceSnapshotVersion: () => sourceSnapshotVersion,
+      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) =>
+        Promise.resolve(
+          expectedSnapshotVersion === sourceSnapshotVersion ? sourceSnapshotVersion : undefined,
+        ),
+      pregenerateStyles: () => {
+        pregenerateCalls++;
+        return Promise.resolve({
+          hash: "stale-hash",
+          assetPath: "/_vf/css/stale-hash.css",
+        });
+      },
+      invalidationCallbacks: {
+        triggerReload: (_changedPaths, project) => {
+          reloadCalls++;
+          publishedStyleHash = project?.styleArtifactHash;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    const poke = () =>
+      socket.onmessage?.call(
+        socket as unknown as WebSocket,
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "poke",
+            data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+          }),
+        }),
+      );
+
+    poke();
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await fetchStarted.promise;
+    poke();
+    releaseFetch.resolve([makeProjectFile("app/page.tsx", "v1")]);
+    await flushMicrotasks();
+
+    assertEquals(pregenerateCalls, 0);
+    assertEquals(publishedStyleHash, undefined);
+    assertEquals(reloadCalls, 0, "a rejected selective snapshot must not publish a reload");
+    manager.dispose();
+  });
+
+  it("does not publish styles superseded during selective pregeneration", async () => {
+    const pregenerationStarted = Promise.withResolvers<void>();
+    const releasePregeneration = Promise.withResolvers<{
+      hash: string;
+      assetPath: string;
+    }>();
+    let sourceSnapshotVersion = 1;
+    let publishedStyleHash: string | undefined;
+    let reloadCalls = 0;
+    let evictCalls = 0;
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => Promise.resolve([makeProjectFile("app/page.tsx", "v1")]),
+      },
+      clearMemoryCaches: () => {
+        sourceSnapshotVersion++;
+      },
+      getSourceSnapshotVersion: () => sourceSnapshotVersion,
+      replaceSourceSnapshot: () => {
+        sourceSnapshotVersion++;
+        return Promise.resolve(sourceSnapshotVersion);
+      },
+      pregenerateStyles: () => {
+        pregenerationStarted.resolve();
+        return releasePregeneration.promise;
+      },
+      invalidationCallbacks: {
+        triggerReload: (_changedPaths, project) => {
+          reloadCalls++;
+          publishedStyleHash = project?.styleArtifactHash;
+        },
+        evictCurrentAdapter: () => {
+          evictCalls++;
+          manager.dispose();
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    const poke = () =>
+      socket.onmessage?.call(
+        socket as unknown as WebSocket,
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "poke",
+            data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+          }),
+        }),
+      );
+
+    poke();
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await pregenerationStarted.promise;
+    poke();
+    releasePregeneration.resolve({
+      hash: "stale-hash",
+      assetPath: "/_vf/css/stale-hash.css",
+    });
+    await flushMicrotasks();
+
+    assertEquals(publishedStyleHash, undefined);
+    assertEquals(reloadCalls, 0, "a superseded selective invalidation must not publish a reload");
+    assertEquals(evictCalls, 0, "a superseded invalidation must not cancel the newer poke");
+
+    assertEquals(
+      runOnlyScheduledTimer(),
+      100,
+      "the newer selective invalidation must remain queued",
+    );
+    await flushMicrotasks();
+    assertEquals(reloadCalls, 1, "the newer selective invalidation must publish its reload");
+    assertEquals(evictCalls, 1, "the adapter may be evicted after the newer invalidation succeeds");
+  });
+
+  it("discards full styles superseded during pregeneration", async () => {
+    const fetchStarted = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<ProjectFile[]>();
+    const pregenerationStarted = Promise.withResolvers<void>();
+    const releasePregeneration = Promise.withResolvers<{
+      hash: string;
+      assetPath: string;
+    }>();
+    let sourceSnapshotVersion = 1;
+    let replacementVersion: number | undefined;
+    let pregenerateCalls = 0;
+    let publishedStyleHash: string | undefined;
+    let reloadCalls = 0;
+    let evictCalls = 0;
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => {
+          fetchStarted.resolve();
+          return releaseFetch.promise;
+        },
+      },
+      clearMemoryCaches: () => {
+        sourceSnapshotVersion++;
+      },
+      getSourceSnapshotVersion: () => sourceSnapshotVersion,
+      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+        replacementVersion = expectedSnapshotVersion;
+        if (expectedSnapshotVersion !== sourceSnapshotVersion) {
+          return Promise.resolve(undefined);
+        }
+        sourceSnapshotVersion++;
+        return Promise.resolve(sourceSnapshotVersion);
+      },
+      pregenerateStyles: () => {
+        pregenerateCalls++;
+        pregenerationStarted.resolve();
+        return releasePregeneration.promise;
+      },
+      invalidationCallbacks: {
+        triggerReload: (_changedPaths, project) => {
+          reloadCalls++;
+          publishedStyleHash = project?.styleArtifactHash;
+        },
+        evictCurrentAdapter: () => {
+          evictCalls++;
+        },
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await fetchStarted.promise;
+    releaseFetch.resolve([makeProjectFile("app/page.tsx", "v1")]);
+    await pregenerationStarted.promise;
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { branchName: "main" },
+        }),
+      }),
+    );
+    releasePregeneration.resolve({
+      hash: "stale-hash",
+      assetPath: "/_vf/css/stale-hash.css",
+    });
+    await flushMicrotasks();
+
+    assertEquals(
+      replacementVersion,
+      3,
+      "replacement must receive the generation captured after the full invalidation clear",
+    );
+    assertEquals(pregenerateCalls, 1);
+    assertEquals(publishedStyleHash, undefined);
+    assertEquals(reloadCalls, 0, "a superseded full invalidation must not publish a reload");
+    assertEquals(evictCalls, 0, "a superseded full invalidation must preserve the newer poke");
     manager.dispose();
   });
 

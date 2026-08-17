@@ -393,7 +393,7 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     const files = await this.contextProvider?.getFileList?.();
-    return Array.isArray(files) && files.length > 0;
+    return Array.isArray(files);
   }
 
   private resolveFromIndex(
@@ -536,6 +536,15 @@ export class StatOperations extends VeryfrontOperationsBase {
     );
     if (indexedResolution) {
       return indexedResolution;
+    }
+
+    if (hasCachedFileList && fileIdx.size === 0) {
+      logger.debug("resolveFile not found in authoritative empty file list", {
+        normalizedPath,
+        indexMs,
+      });
+      this.cache.set(cacheKey, NOT_FOUND_SENTINEL);
+      return null;
     }
 
     if (attemptedApiResolve) {

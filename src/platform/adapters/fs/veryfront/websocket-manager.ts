@@ -60,10 +60,12 @@ interface WebSocketDeps {
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
+  getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot: (
     cacheKey: string,
     files: ProjectFile[],
-  ) => Promise<void>;
+    expectedSnapshotVersion?: number,
+  ) => Promise<number | undefined>;
   pregenerateStyles?: (
     files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
@@ -627,9 +629,11 @@ export class WebSocketManager {
     this.pendingChangedPaths.clear();
 
     const contentContext = this.deps.getContentContext();
+    const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
+    let reloadSuperseded = false;
     let succeeded = false;
 
     try {
@@ -726,14 +730,30 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files);
-          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
-
-          logger.debug("Fresh files cached (memory + Redis)", {
+          const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
-            fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
-          });
+            files,
+            sourceSnapshotVersion,
+          );
+          if (appliedSnapshotVersion === undefined) {
+            reloadSuperseded = true;
+          } else {
+            preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+            const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+            if (
+              currentSnapshotVersion !== undefined &&
+              currentSnapshotVersion !== appliedSnapshotVersion
+            ) {
+              preparedStyleArtifact = undefined;
+              reloadSuperseded = true;
+            }
+
+            logger.debug("Fresh files cached (memory + Redis)", {
+              cacheKey,
+              fileCount: files.length,
+              styleAssetPath: preparedStyleArtifact?.assetPath,
+            });
+          }
         } catch (error) {
           logger.warn("Failed to fetch files during selective invalidation", {
             error,
@@ -743,29 +763,37 @@ export class WebSocketManager {
 
       this.pokeMetrics.invalidationsTriggered++;
 
-      logger.info(
-        "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
-        {
+      if (reloadSuperseded) {
+        logger.debug("Skipping reload for superseded selective invalidation", {
           changedPathsCount: changedPaths.length,
           projectSlug: this.deps.projectSlug,
-          projectId: this.deps.client.getProjectId(),
-          hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
-        },
-      );
+        });
+      } else {
+        logger.info(
+          "[WebSocketManager] TRIGGERING HMR RELOAD via invalidationCallbacks.triggerReload",
+          {
+            changedPathsCount: changedPaths.length,
+            projectSlug: this.deps.projectSlug,
+            projectId: this.deps.client.getProjectId(),
+            hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
+          },
+        );
 
-      const projectContext = buildReloadProjectContext(
-        contentContext,
-        this.deps.projectSlug,
-        this.deps.client.getProjectId(),
-        preparedStyleArtifact,
-      );
+        const projectContext = buildReloadProjectContext(
+          contentContext,
+          this.deps.projectSlug,
+          this.deps.client.getProjectId(),
+          preparedStyleArtifact,
+        );
 
-      this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+        this.deps.invalidationCallbacks.triggerReload?.(changedPaths, projectContext);
+      }
 
-      logger.info("Selective invalidation complete - HMR triggered", {
+      logger.info("Selective invalidation complete", {
         changedPathsCount: changedPaths.length,
         durationMs: Date.now() - startTime,
         totalInvalidations: this.pokeMetrics.invalidationsTriggered,
+        reloadTriggered: !reloadSuperseded,
       });
 
       this.sendPokeAck("selective", changedPaths);
@@ -776,7 +804,9 @@ export class WebSocketManager {
           previewInvalidationPrefixes,
           previewInvalidationVersion,
         );
-        this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        if (!reloadSuperseded) {
+          this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        }
       }
     }
   }
@@ -787,6 +817,7 @@ export class WebSocketManager {
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
+    let reloadSuperseded = false;
     let succeeded = false;
 
     try {
@@ -823,6 +854,7 @@ export class WebSocketManager {
       // These caches are also cleared immediately on POKE receipt (before debounce).
       // These calls are redundant safety nets for the full invalidation flow.
       this.deps.clearMemoryCaches();
+      const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
       this.deps.invalidationCallbacks.clearDomainCache?.();
 
       const projectId = this.deps.client.getProjectId();
@@ -892,14 +924,30 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files);
-          preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
-
-          logger.debug("FRESH FILES FETCHED", {
+          const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
-            fileCount: files.length,
-            styleAssetPath: preparedStyleArtifact?.assetPath,
-          });
+            files,
+            sourceSnapshotVersion,
+          );
+          if (appliedSnapshotVersion === undefined) {
+            reloadSuperseded = true;
+          } else {
+            preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+            const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+            if (
+              currentSnapshotVersion !== undefined &&
+              currentSnapshotVersion !== appliedSnapshotVersion
+            ) {
+              preparedStyleArtifact = undefined;
+              reloadSuperseded = true;
+            }
+
+            logger.debug("FRESH FILES FETCHED", {
+              cacheKey,
+              fileCount: files.length,
+              styleAssetPath: preparedStyleArtifact?.assetPath,
+            });
+          }
         } catch (error) {
           logger.warn("Failed to fetch files during invalidation", { error });
         }
@@ -907,20 +955,26 @@ export class WebSocketManager {
 
       this.pokeMetrics.invalidationsTriggered++;
 
-      logger.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
-        projectSlug: this.deps.projectSlug,
-        projectId: this.deps.client.getProjectId(),
-        hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
-      });
+      if (reloadSuperseded) {
+        logger.debug("Skipping reload for superseded full invalidation", {
+          projectSlug: this.deps.projectSlug,
+        });
+      } else {
+        logger.info("TRIGGERING FULL BROWSER RELOAD via ReloadNotifier", {
+          projectSlug: this.deps.projectSlug,
+          projectId: this.deps.client.getProjectId(),
+          hasTriggerReloadCallback: !!this.deps.invalidationCallbacks.triggerReload,
+        });
 
-      const projectContext = buildReloadProjectContext(
-        contentContext,
-        this.deps.projectSlug,
-        this.deps.client.getProjectId(),
-        preparedStyleArtifact,
-      );
+        const projectContext = buildReloadProjectContext(
+          contentContext,
+          this.deps.projectSlug,
+          this.deps.client.getProjectId(),
+          preparedStyleArtifact,
+        );
 
-      this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+        this.deps.invalidationCallbacks.triggerReload?.(undefined, projectContext);
+      }
 
       logger.debug("CACHE INVALIDATION COMPLETE", {
         fileCacheCleared: totalFileCount,
@@ -939,7 +993,9 @@ export class WebSocketManager {
           previewInvalidationPrefixes,
           previewInvalidationVersion,
         );
-        this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        if (!reloadSuperseded) {
+          this.deps.invalidationCallbacks.evictCurrentAdapter?.();
+        }
       }
     }
   }

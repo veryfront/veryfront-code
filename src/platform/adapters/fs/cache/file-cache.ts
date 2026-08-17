@@ -297,6 +297,11 @@ export class FileCache {
       "platform.fs.cache.deleteAsync",
       async () => {
         const deletedFromFallback = this.delete(key);
+        // setAsync() publishes distributed writes into the request-scoped
+        // cache before awaiting the backend. Invalidate that view as part of
+        // the same delete, or this request can keep reading a value that the
+        // backend no longer contains.
+        setInRequestCache(key, null);
         const backend = this.getBackend();
         if (backend) {
           await backend.del(key);
