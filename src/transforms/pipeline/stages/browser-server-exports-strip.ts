@@ -1646,13 +1646,24 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
  * `registry.defineProperty` write cannot replace the intrinsic and must not
  * stop compiler metadata from being removed with a hook-only binding.
  */
+/**
+ * Names that reach the global object. A browser module written before
+ * `globalThis` was universal uses `window` or `self`, and a module compiled for
+ * Node uses `global`, so all four reach the same `Object` slot.
+ */
+const GLOBAL_OBJECT_NAMES = ["globalThis", "window", "self", "global"];
+
+function isUnshadowedGlobalObject(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
+  return GLOBAL_OBJECT_NAMES.some((name) => isUnshadowedGlobalIdentifier(node, name, globals));
+}
+
 function isGlobalObjectSlot(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
   if (node?.type !== "MemberExpression" && node?.type !== "OptionalMemberExpression") {
     return false;
   }
 
   const object = isNode(node.object) ? node.object : undefined;
-  if (!isUnshadowedGlobalIdentifier(object, "globalThis", globals)) return false;
+  if (!isUnshadowedGlobalObject(object, globals)) return false;
   const property = isNode(node.property) ? node.property : undefined;
   if (node.computed !== true) return nodeName(property) === "Object";
   const key = stringLiteralText(property);
@@ -1785,7 +1796,7 @@ function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): b
         const key = stringLiteralText(args[1]);
         const targetIsObject = isUnshadowedGlobalIdentifier(args[0], "Object", globals) ||
           isGlobalObjectSlot(args[0], globals);
-        const targetIsGlobal = isUnshadowedGlobalIdentifier(args[0], "globalThis", globals);
+        const targetIsGlobal = isUnshadowedGlobalObject(args[0], globals);
         if (
           (targetIsObject && key === "defineProperty") ||
           (targetIsGlobal && key === "Object")
@@ -1833,6 +1844,11 @@ const TS_EXPRESSION_TYPES = new Set([
 function isNamePosition(parent: Node, key: string): boolean {
   if (key === "object") return true;
   if (key === "property" || key === "key") return parent.computed !== true;
+  // `typeof window` yields a string, never a reference the module can reach the
+  // intrinsic through, and it is how every module guards for the browser.
+  if (key === "argument") {
+    return parent.type === "UnaryExpression" && parent.operator === "typeof";
+  }
   return key === "id" || key === "local" || key === "imported" || key === "exported" ||
     key === "label" || key === "params";
 }
@@ -1853,9 +1869,15 @@ function isNamePosition(parent: Node, key: string): boolean {
  */
 function readsIntrinsicAsValue(
   body: Node[],
-  name: "Object" | "globalThis",
+  name: "Object" | "global",
   globals: ReadonlySet<Node>,
 ): boolean {
+  const isIntrinsic = (entry: Node): boolean =>
+    name === "Object"
+      ? isUnshadowedGlobalIdentifier(entry, "Object", globals) ||
+        isGlobalObjectSlot(entry, globals)
+      : isUnshadowedGlobalObject(entry, globals);
+
   const reads = (node: Node): boolean => {
     if (node.type.startsWith("TS") && !TS_EXPRESSION_TYPES.has(node.type)) return false;
 
@@ -1864,13 +1886,7 @@ function readsIntrinsicAsValue(
 
       for (const entry of Array.isArray(value) ? value : [value]) {
         if (!isNode(entry)) continue;
-        if (name === "Object" && isGlobalObjectSlot(entry, globals)) {
-          if (!isNamePosition(node, key)) return true;
-          continue;
-        }
-        if (
-          entry.type === "Identifier" && entry.name === name && globals.has(entry)
-        ) {
+        if (isIntrinsic(entry)) {
           if (!isNamePosition(node, key)) return true;
           continue;
         }
@@ -1962,7 +1978,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     assignsUnshadowedGlobal(body, "Object", globals) ||
     writesObjectDefineProperty(body, globals) ||
     readsIntrinsicAsValue(body, "Object", globals) ||
-    readsIntrinsicAsValue(body, "globalThis", globals);
+    readsIntrinsicAsValue(body, "global", globals);
   if (objectIsModuleLocal) return new Set<string>();
 
   // A `var` may be declared more than once, and only the initialiser that ran
