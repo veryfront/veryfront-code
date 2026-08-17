@@ -1682,19 +1682,14 @@ function isNameRegistrationBlock(node: Node, helpers: ReadonlySet<string>): bool
 }
 
 /**
- * A class whose *definition* runs nothing: no decorator, an inert superclass
- * expression if any, no computed member key and no static initialiser. Method
- * bodies and instance field initialisers run at construction time, not at
- * module load.
- *
- * `extends Base` evaluates `Base` and reads its `prototype`, so it is inert on
- * the same terms as any other read of a plain binding — which is what lets a
- * dead subclass of a client class go instead of pinning whatever its methods
- * mention. `extends makeBase()` is a call and stays.
+ * A class whose *definition* runs nothing: no decorator, no superclass, no
+ * computed member key and no static initialiser. Method bodies and instance
+ * field initialisers run at construction time, not at module load. Even
+ * `extends Base` reads `Base.prototype`, which can invoke a Proxy trap, so a
+ * heritage clause is never treated as inert here.
  */
 function isInertClass(node: Node, helpers: ReadonlySet<string>): boolean {
-  if (hasDecorators(node)) return false;
-  if (isNode(node.superClass) && !isInertExpression(node.superClass, helpers)) return false;
+  if (hasDecorators(node) || isNode(node.superClass)) return false;
 
   const members = isNode(node.body) && Array.isArray(node.body.body) ? node.body.body : [];
   return members.every((member) => {

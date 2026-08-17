@@ -2401,10 +2401,10 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "SECRET_KEY");
     });
 
-    // Naming a superclass evaluates the heritage expression; when that is a
-    // plain binding the class definition still runs nothing, so a dead class
-    // extending a client class is as elidable as a dead plain one.
-    it("drops a dead class that extends a client class", async () => {
+    // Naming a superclass reads its `prototype`, which can invoke a Proxy trap
+    // even when the heritage expression is a plain binding. The pass cannot
+    // delete that evaluation or retain the secret in the deferred method.
+    it("fails closed for a dead class that extends a local client class", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `class Base { b() { return "client-mark"; } }`,
@@ -2414,12 +2414,26 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return new Base().b(); }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/leak.tsx"));
 
-      assertNotIncludes(result, "SECRET_KEY");
-      assertEquals(occurrences(result, "Dead"), 0);
-      assertStringIncludes(result, "client-mark");
-      assertStringIncludes(result, "class Base");
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "pages/leak.tsx");
+    });
+
+    it("fails closed instead of deleting a dead subclass's heritage evaluation", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import Base from "./client-base.ts";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `class Dead extends Base { m() { return KEY; } }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/leak.tsx"));
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "pages/leak.tsx");
     });
 
     // A body that never runs is not a read. `memo(…)` is a genuine top-level
