@@ -19,7 +19,7 @@ import {
   readGoogleExecutableCode,
   readGooglePartDataField,
 } from "./google-content-parts.ts";
-import { readGoogleRawAssistantParts } from "./google-thought-signatures.ts";
+import { readGoogleRawAssistantReplay } from "./google-thought-signatures.ts";
 
 export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   requestLabels?: Record<string, string>;
@@ -106,6 +106,7 @@ function invalidGoogleProviderHistory(): TypeError {
 
 function readGoogleRawToolHistory(
   rawAssistantParts: readonly Record<string, unknown>[],
+  rawAssistantPartIndexes: readonly number[],
 ): GoogleRawToolHistory {
   const registry = createGoogleToolCallCorrelationRegistry();
   const ordinaryCalls: CanonicalProviderCall[] = [];
@@ -135,7 +136,10 @@ function readGoogleRawToolHistory(
         throw invalidGoogleProviderHistory();
       }
       const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
-      const id = registry.registerFunctionCall(partIndex, providerId);
+      const id = registry.registerFunctionCall(
+        rawAssistantPartIndexes[partIndex] ?? partIndex,
+        providerId,
+      );
       // Histories persisted before raw-position ids used the anonymous-call
       // occurrence instead. Build both complete projections so validation
       // cannot accept a mixture that no implementation ever emitted.
@@ -257,6 +261,7 @@ function survivingToolEvents(
 function validateGoogleToolReplay(
   message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
   rawAssistantParts: readonly Record<string, unknown>[],
+  rawAssistantPartIndexes: readonly number[],
 ): void {
   const providerToolCalls = (message.providerToolCalls ?? []).map((call) => ({
     id: call.toolCallId,
@@ -329,7 +334,7 @@ function validateGoogleToolReplay(
 
   let rawHistory: GoogleRawToolHistory;
   try {
-    rawHistory = readGoogleRawToolHistory(rawAssistantParts);
+    rawHistory = readGoogleRawToolHistory(rawAssistantParts, rawAssistantPartIndexes);
   } catch {
     throw invalidGoogleProviderHistory();
   }
@@ -430,10 +435,14 @@ function toGoogleContents(
         });
         break;
       case "assistant": {
-        const rawAssistantParts = readGoogleRawAssistantParts(message.providerMetadata);
-        if (rawAssistantParts) {
-          validateGoogleToolReplay(message, rawAssistantParts);
-          contents.push({ role: "model", parts: rawAssistantParts });
+        const rawAssistantReplay = readGoogleRawAssistantReplay(message.providerMetadata);
+        if (rawAssistantReplay) {
+          validateGoogleToolReplay(
+            message,
+            rawAssistantReplay.parts,
+            rawAssistantReplay.partIndexes,
+          );
+          contents.push({ role: "model", parts: rawAssistantReplay.parts });
           break;
         }
 

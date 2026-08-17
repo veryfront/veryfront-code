@@ -58,6 +58,19 @@ function buildGoogleAssistantReplay(
   );
 }
 
+function buildGoogleAssistantReplayFromMetadata(
+  providerMetadata: Record<string, unknown>,
+  content: readonly RuntimeAssistantContentPart[],
+) {
+  return buildGoogleGenerateContentRequest(
+    "google",
+    {
+      prompt: [{ role: "assistant", content, providerMetadata }],
+    },
+    createWarningCollector(),
+  );
+}
+
 function nestedGoogleArguments(wrappers: number): Record<string, unknown> {
   let value: Record<string, unknown> = { leaf: true };
   for (let index = 0; index < wrappers; index += 1) {
@@ -515,7 +528,12 @@ describe("ext-llm-google/google-request-builder", () => {
 
     assertJsonEquals(
       reconcileGoogleProviderMetadata(metadata, [{ id: "stale-1", name: "missing_tool" }]),
-      { google: { rawAssistantParts: [survivingPart] } },
+      {
+        google: {
+          rawAssistantParts: [survivingPart],
+          rawAssistantPartIndexes: [1],
+        },
+      },
     );
     assertEquals(
       reconcileGoogleProviderMetadata(metadata, [{ id: "absent", name: "missing_tool" }]),
@@ -545,6 +563,37 @@ describe("ext-llm-google/google-request-builder", () => {
       TypeError,
       "could not preserve a surviving signed tool call",
     );
+  });
+
+  it("keeps anonymous raw-position ids stable after suppressing an earlier call", () => {
+    const suppressedPart = {
+      functionCall: { name: "missing_tool", args: {} },
+      thoughtSignature: "stale-signature",
+    };
+    const survivingPart = {
+      functionCall: { name: "lookup", args: { query: "Veryfront" } },
+      thoughtSignature: "surviving-signature",
+    };
+    const metadata = createGoogleProviderMetadata([suppressedPart, survivingPart]);
+    if (metadata === undefined) {
+      throw new Error("Expected signed Google provider metadata");
+    }
+    const reconciled = reconcileGoogleProviderMetadata(metadata, [{
+      id: "tool-0",
+      name: "missing_tool",
+    }]);
+    if (reconciled === undefined) {
+      throw new Error("Expected surviving Google provider metadata");
+    }
+
+    const body = buildGoogleAssistantReplayFromMetadata(reconciled, [{
+      type: "tool-call",
+      toolCallId: "tool-1",
+      toolName: "lookup",
+      input: { query: "Veryfront" },
+    }]);
+
+    assertJsonEquals(body.contents, [{ role: "model", parts: [survivingPart] }]);
   });
 
   it("accepts raw-position and legacy occurrence ids while preserving exact correlation", () => {

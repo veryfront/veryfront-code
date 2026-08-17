@@ -13,6 +13,7 @@ import {
 
 const GOOGLE_METADATA_KEY = "google";
 const RAW_ASSISTANT_PARTS_KEY = "rawAssistantParts";
+const RAW_ASSISTANT_PART_INDEXES_KEY = "rawAssistantPartIndexes";
 const GROUNDING_METADATA_KEY = "groundingMetadata";
 const MAX_GOOGLE_RAW_ASSISTANT_PARTS = 4_096;
 export const MAX_GOOGLE_PROVIDER_METADATA_BYTES = 8 * 1024 * 1024;
@@ -86,6 +87,39 @@ function readGoogleRawPartsValue(
   ) {
     throw new TypeError(
       "Google raw assistant parts must be an enumerable data property",
+    );
+  }
+  return descriptor.value;
+}
+
+function readGoogleRawPartIndexesValue(
+  googleMetadata: unknown,
+): unknown {
+  if (
+    googleMetadata === null ||
+    typeof googleMetadata !== "object" ||
+    Array.isArray(googleMetadata)
+  ) {
+    throw new TypeError("Google provider metadata must be an object");
+  }
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(
+      googleMetadata,
+      RAW_ASSISTANT_PART_INDEXES_KEY,
+    );
+  } catch {
+    throw new TypeError("Google provider metadata could not be inspected");
+  }
+  if (descriptor === undefined) {
+    return undefined;
+  }
+  if (
+    descriptor.enumerable !== true ||
+    !Object.hasOwn(descriptor, "value")
+  ) {
+    throw new TypeError(
+      "Google raw assistant part indexes must be an enumerable data property",
     );
   }
   return descriptor.value;
@@ -235,6 +269,7 @@ export function readGoogleThoughtSignature(
 export function createGoogleProviderMetadata(
   parts: Array<Record<string, unknown>>,
   groundingMetadata?: Record<string, unknown>,
+  rawAssistantPartIndexes?: readonly number[],
 ): Record<string, unknown> | undefined {
   const needsExactReplay = needsGoogleExactReplay(parts);
   if (!needsExactReplay && groundingMetadata === undefined) {
@@ -251,14 +286,25 @@ export function createGoogleProviderMetadata(
         `Google raw assistant parts exceeded ${MAX_GOOGLE_RAW_ASSISTANT_PARTS} entries`,
       );
     }
+    const ownedPartIndexes = rawAssistantPartIndexes === undefined
+      ? undefined
+      : validateGoogleRawAssistantPartIndexes(
+        snapshotGoogleProviderMetadata(rawAssistantPartIndexes),
+        partsSnapshot.length,
+      );
     ownedParts = validateGoogleRawAssistantParts(
       partsSnapshot as readonly JsonSnapshotValue[],
+      ownedPartIndexes,
     );
+    rawAssistantPartIndexes = ownedPartIndexes;
   }
 
   const metadata = snapshotGoogleProviderMetadata({
     [GOOGLE_METADATA_KEY]: {
       ...(needsExactReplay ? { [RAW_ASSISTANT_PARTS_KEY]: ownedParts } : {}),
+      ...(needsExactReplay && rawAssistantPartIndexes !== undefined
+        ? { [RAW_ASSISTANT_PART_INDEXES_KEY]: rawAssistantPartIndexes }
+        : {}),
       ...(groundingMetadata !== undefined ? { [GROUNDING_METADATA_KEY]: groundingMetadata } : {}),
     },
   });
@@ -271,6 +317,7 @@ export function createGoogleProviderMetadata(
 
 function validateGoogleRawAssistantParts(
   rawParts: readonly JsonSnapshotValue[],
+  rawPartIndexes?: readonly number[],
 ): readonly Record<string, unknown>[] {
   if (rawParts.length === 0) {
     throw new TypeError("Google raw assistant parts must be a non-empty array");
@@ -301,7 +348,10 @@ function validateGoogleRawAssistantParts(
       const functionCall = readRecord(part.functionCall);
       const functionCallId = typeof functionCall?.id === "string" ? functionCall.id : undefined;
       try {
-        toolCallRegistry.registerFunctionCall(partIndex, functionCallId);
+        toolCallRegistry.registerFunctionCall(
+          rawPartIndexes?.[partIndex] ?? partIndex,
+          functionCallId,
+        );
       } catch {
         throw new TypeError("Google raw assistant tool call id was duplicated");
       }
@@ -343,9 +393,37 @@ function validateGoogleRawAssistantParts(
   return rawParts as readonly Record<string, unknown>[];
 }
 
-export function readGoogleRawAssistantParts(
+function validateGoogleRawAssistantPartIndexes(
+  value: JsonSnapshotValue,
+  partCount: number,
+): readonly number[] {
+  if (!Array.isArray(value) || value.length !== partCount) {
+    throw new TypeError("Google raw assistant part indexes must match the raw parts");
+  }
+  let previous = -1;
+  for (const index of value) {
+    if (
+      typeof index !== "number" ||
+      !Number.isSafeInteger(index) ||
+      index <= previous ||
+      index < 0 ||
+      index >= MAX_GOOGLE_RAW_ASSISTANT_PARTS
+    ) {
+      throw new TypeError("Google raw assistant part indexes must be increasing safe integers");
+    }
+    previous = index;
+  }
+  return value as readonly number[];
+}
+
+export type GoogleRawAssistantReplay = {
+  parts: readonly Record<string, unknown>[];
+  partIndexes: readonly number[];
+};
+
+export function readGoogleRawAssistantReplay(
   providerMetadata: Record<string, unknown> | undefined,
-): readonly Record<string, unknown>[] | undefined {
+): GoogleRawAssistantReplay | undefined {
   if (providerMetadata === undefined) {
     return undefined;
   }
@@ -354,19 +432,36 @@ export function readGoogleRawAssistantParts(
     return undefined;
   }
   const rawParts = readGoogleRawPartsValue(rawGoogleMetadata);
+  const rawPartIndexes = readGoogleRawPartIndexesValue(rawGoogleMetadata);
   if (rawParts === undefined) {
+    if (rawPartIndexes !== undefined) {
+      throw new TypeError("Google raw assistant part indexes require raw parts");
+    }
     return undefined;
   }
-  // Grounding and future Google metadata fields are not replayed. Snapshot
-  // only the exact wire value that will be validated and transmitted so those
-  // independent fields cannot consume replay budgets or invoke accessors.
   const rawPartsSnapshot = snapshotGoogleProviderMetadata(rawParts);
   if (!Array.isArray(rawPartsSnapshot)) {
     throw new TypeError("Google raw assistant parts must be a non-empty array");
   }
-  return validateGoogleRawAssistantParts(
-    rawPartsSnapshot as readonly JsonSnapshotValue[],
-  );
+  const partIndexes = rawPartIndexes === undefined
+    ? rawPartsSnapshot.map((_part, index) => index)
+    : validateGoogleRawAssistantPartIndexes(
+      snapshotGoogleProviderMetadata(rawPartIndexes),
+      rawPartsSnapshot.length,
+    );
+  return {
+    parts: validateGoogleRawAssistantParts(
+      rawPartsSnapshot as readonly JsonSnapshotValue[],
+      partIndexes,
+    ),
+    partIndexes,
+  };
+}
+
+export function readGoogleRawAssistantParts(
+  providerMetadata: Record<string, unknown> | undefined,
+): readonly Record<string, unknown>[] | undefined {
+  return readGoogleRawAssistantReplay(providerMetadata)?.parts;
 }
 
 /**
@@ -381,14 +476,16 @@ export function reconcileGoogleProviderMetadata(
     return providerMetadata;
   }
 
-  const rawAssistantParts = readGoogleRawAssistantParts(providerMetadata);
-  if (rawAssistantParts === undefined) {
+  const replay = readGoogleRawAssistantReplay(providerMetadata);
+  if (replay === undefined) {
     return providerMetadata;
   }
+  const { partIndexes, parts: rawAssistantParts } = replay;
 
   const suppressedIds = new Set(suppressedToolCalls.map((toolCall) => toolCall.id));
   const matchedSuppressedIds = new Set<string>();
   const retainedParts: Record<string, unknown>[] = [];
+  const retainedPartIndexes: number[] = [];
   const registry = createGoogleToolCallCorrelationRegistry();
   let retainedToolPart = false;
 
@@ -403,7 +500,7 @@ export function reconcileGoogleProviderMetadata(
     if (dataField === "functionCall") {
       const functionCall = readRecord(part.functionCall);
       const providerId = typeof functionCall?.id === "string" ? functionCall.id : undefined;
-      toolCallId = registry.registerFunctionCall(partIndex, providerId);
+      toolCallId = registry.registerFunctionCall(partIndexes[partIndex] ?? partIndex, providerId);
     } else if (dataField === "executableCode") {
       const executableCode = readGoogleExecutableCode(part.executableCode);
       toolCallId = registry.registerCodeExecution(executableCode.providerId);
@@ -418,6 +515,7 @@ export function reconcileGoogleProviderMetadata(
     }
 
     retainedParts.push(part);
+    retainedPartIndexes.push(partIndexes[partIndex] ?? partIndex);
     retainedToolPart ||= dataField === "functionCall" ||
       dataField === "executableCode" ||
       dataField === "codeExecutionResult";
@@ -431,7 +529,11 @@ export function reconcileGoogleProviderMetadata(
     return undefined;
   }
 
-  const reconciled = createGoogleProviderMetadata(retainedParts);
+  const reconciled = createGoogleProviderMetadata(
+    retainedParts,
+    undefined,
+    retainedPartIndexes,
+  );
   if (reconciled === undefined && retainedToolPart) {
     throw new TypeError(
       "Google provider metadata could not preserve a surviving signed tool call",
