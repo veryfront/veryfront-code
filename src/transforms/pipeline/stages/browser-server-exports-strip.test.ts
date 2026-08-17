@@ -1264,6 +1264,31 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("does not treat a helper with a local Object name as compiler metadata", async () => {
+      const code = [
+        `var setName = function Object(target, value) {`,
+        `  return Object.defineProperty(target, "name", { value, configurable: true });`,
+        `};`,
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `setName.defineProperty = recordAndReturn;`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "setName.defineProperty = recordAndReturn");
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [

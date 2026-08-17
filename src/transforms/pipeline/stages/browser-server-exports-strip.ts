@@ -1742,11 +1742,22 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     const valueParam = nodeName(params[1]);
     if (!targetParam || !valueParam) continue;
 
+    const helperLocalNames = new Set(params.flatMap(patternBoundNames));
+    if (init.type === "FunctionExpression") {
+      const functionName = nodeName(init.id);
+      if (functionName) helperLocalNames.add(functionName);
+    }
+
     const call = returnedCall(init);
     if (!call) continue;
     const callee = isNode(call.callee) ? call.callee : undefined;
+    const calleeName = nodeName(callee);
+    const calleeIsShadowed = isObjectDefineProperty(callee)
+      ? helperLocalNames.has("Object")
+      : callee?.type === "Identifier" && calleeName !== null && helperLocalNames.has(calleeName);
+    if (calleeIsShadowed) continue;
     const callsDefineProperty = isObjectDefineProperty(callee) ||
-      (callee?.type === "Identifier" && definePropertyBindings.has(nodeName(callee) ?? ""));
+      (callee?.type === "Identifier" && definePropertyBindings.has(calleeName ?? ""));
     if (!callsDefineProperty) continue;
 
     const args = Array.isArray(call.arguments) ? call.arguments.filter(isNode) : [];
