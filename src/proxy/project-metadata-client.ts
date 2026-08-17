@@ -93,15 +93,23 @@ export class ProxyLookupAuthError extends Error {
   }
 }
 
+export interface ProxyLookupFailureUpstreamContext {
+  /** HTTP status returned by the metadata API for the failed lookup. */
+  upstreamStatus?: number;
+}
+
 export class ProxyLookupFailure extends Error {
+  readonly upstreamStatus?: number;
+
   constructor(
     readonly lookupType: ProxyLookupType,
     readonly publicStatus: 502 | 503 | 504,
     message: string,
-    options?: ErrorOptions,
+    options?: ErrorOptions & ProxyLookupFailureUpstreamContext,
   ) {
     super(message, options);
     this.name = "ProxyLookupFailure";
+    this.upstreamStatus = options?.upstreamStatus;
   }
 }
 
@@ -518,6 +526,7 @@ export function createProjectMetadataClient(
             lookupType,
             publicStatus,
             `Proxy ${lookupType} metadata request was rejected`,
+            { upstreamStatus: response.status },
           );
         }
 
@@ -529,6 +538,7 @@ export function createProjectMetadataClient(
             lookupType,
             502,
             `Proxy ${lookupType} metadata returned an invalid content type`,
+            { upstreamStatus: response.status },
           );
         }
 
@@ -547,7 +557,10 @@ export function createProjectMetadataClient(
             lookupType,
             502,
             `Proxy ${lookupType} metadata returned an invalid response`,
-            { cause: error },
+            {
+              cause: error,
+              upstreamStatus: response.status,
+            },
           );
         }
       } catch (error) {

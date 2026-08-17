@@ -909,6 +909,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             scope,
             lookupType: error.lookupType,
             status: error.publicStatus,
+            upstreamStatus: error.upstreamStatus,
           });
           return {
             error: {
@@ -975,6 +976,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
               scope,
               lookupType: retryError.lookupType,
               status: retryError.publicStatus,
+              upstreamStatus: retryError.upstreamStatus,
             });
             return {
               error: {

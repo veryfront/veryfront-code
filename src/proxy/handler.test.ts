@@ -442,6 +442,7 @@ describe("Proxy Handler", () => {
     });
 
     it("fails closed when routing metadata has an operational failure", async () => {
+      const { entries, logger } = createRecordingLogger();
       let fullProjectLookups = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -467,7 +468,7 @@ describe("Proxy Handler", () => {
       });
 
       try {
-        const handler = createHandler(port);
+        const handler = createHandler(port, "", logger);
         const ctx = await handler.processRequest(
           new Request("http://example.com/page", {
             headers: { host: "example.com" },
@@ -477,6 +478,14 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error?.status, 502);
         assertEquals(ctx.error?.message, "Proxy routing metadata request was rejected");
         assertEquals(fullProjectLookups, 0);
+
+        const failedClosed = entries.find((entry) =>
+          entry.message === "Proxy metadata lookup failed closed"
+        );
+        assertEquals(failedClosed?.level, "error");
+        assertEquals(failedClosed?.extra?.upstreamStatus, 503);
+        assertEquals(failedClosed?.extra?.upstreamBodySnippet, undefined);
+        assertEquals(JSON.stringify(failedClosed).includes("Unavailable"), false);
         await handler.close();
       } finally {
         await server.shutdown();
