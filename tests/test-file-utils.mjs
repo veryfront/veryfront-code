@@ -76,7 +76,30 @@ function globToRegex(glob) {
       re += "[^/]";
       continue;
     }
-    if ("+^$.()|{}[]\\".includes(char)) {
+    if (char === "[") {
+      // `hasGlob` counts `[` as a glob character, so escaping the brackets here
+      // made every bracket pattern match nothing — and an empty selection is a
+      // silently passing test run, not an error. `rg -g 'src/[ab].test.ts'`
+      // returns a.test.ts and b.test.ts, so the class is translated instead.
+      const closing = glob.indexOf("]", char === "[" && glob[i + 1] === "]" ? i + 2 : i + 1);
+      if (closing !== -1) {
+        let body = glob.slice(i + 1, closing);
+        // `!` is the glob spelling of a negated class; `^` is the regex one.
+        const negated = body.startsWith("!") || body.startsWith("^");
+        if (negated) body = body.slice(1);
+        // A literal `]` first, a literal `-` last, and `\` all need escaping so
+        // the class cannot break out into the surrounding expression.
+        const escaped = body.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+        // Never let a class match a separator: a glob segment cannot span one.
+        re += negated ? `[^/${escaped}]` : `[${escaped}]`;
+        i = closing;
+        continue;
+      }
+      // Unterminated `[` is a literal bracket, which is what rg does too.
+      re += "\\[";
+      continue;
+    }
+    if ("+^$.()|{}]\\".includes(char)) {
       re += `\\${char}`;
       continue;
     }
@@ -106,9 +129,7 @@ function walk(dir, onFile) {
     // change what the four consumers select; it makes the guarantee explicit
     // rather than incidental, and covers `run-affected-tests.mjs`, which can
     // pass the repo root as a directory pattern when a root-level file changes.
-    if (entry.isDirectory() && (entry.name.startsWith(".") || entry.name === "node_modules")) {
-      continue;
-    }
+    if (entry.isDirectory() && isPrunedDirectoryName(entry.name)) continue;
     const fullPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       walk(fullPath, onFile);
@@ -146,6 +167,10 @@ function isMissingPathError(error) {
  * Only segments below `cwd` count: a checkout that itself lives under a hidden
  * directory is not thereby invisible to its own test runner.
  */
+function isPrunedDirectoryName(name) {
+  return name.startsWith(".") || name === "node_modules";
+}
+
 function hasHiddenSegment(target, cwd) {
   const relativePath = relative(cwd, target);
   // `startsWith("..")` alone would misread a directory *named* `..fixtures` as
@@ -154,7 +179,10 @@ function hasHiddenSegment(target, cwd) {
   const escapesCwd = relativePath === ".." ||
     relativePath.startsWith(`..${sep}`) || relativePath.startsWith("../");
   if (relativePath === "" || escapesCwd) return false;
-  return toPosixPath(relativePath).split("/").some((segment) => segment.startsWith("."));
+  // Covers the base itself, not just its children: `walk` starts *inside* the
+  // base, so a base that is a hidden directory or `node_modules` would be
+  // traversed in full while every equivalent child was pruned.
+  return toPosixPath(relativePath).split("/").some(isPrunedDirectoryName);
 }
 
 /**

@@ -387,6 +387,57 @@ describe("listTestFiles on dot-prefixed entries", () => {
   });
 });
 
+describe("listTestFiles supports bracket character classes", () => {
+  // `hasGlob` counts `[` as a glob character, but `globToRegex` escaped the
+  // brackets — so every bracket pattern matched nothing. That is worse than a
+  // wrong match: an empty selection is a test run that passes without running
+  // anything. Verified against rg 15, which returns a.test.ts and b.test.ts
+  // for `src/[ab].test.ts` and b/c for the negated form.
+  const CLASS_TREE = ["src/a.test.ts", "src/b.test.ts", "src/c.test.ts"];
+
+  it("matches a positive class the way ripgrep does", () => {
+    withFixture(CLASS_TREE, (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[ab].test.ts"], root), root),
+        ["src/a.test.ts", "src/b.test.ts"],
+      );
+    });
+  });
+
+  it("matches a negated class in both spellings", () => {
+    withFixture(CLASS_TREE, (root) => {
+      const expected = ["src/b.test.ts", "src/c.test.ts"];
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[!a].test.ts"], root), root),
+        expected,
+      );
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[^a].test.ts"], root), root),
+        expected,
+      );
+    });
+  });
+
+  it("never lets a class match a path separator", () => {
+    withFixture(["src/nested/a.test.ts", "src/a.test.ts"], (root) => {
+      // `[a-z/]` must not let the class span a segment boundary.
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[a-z].test.ts"], root), root),
+        ["src/a.test.ts"],
+      );
+    });
+  });
+
+  it("treats an unterminated bracket as a literal", () => {
+    withFixture(["src/[a.test.ts"], (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[a.test.ts"], root), root),
+        ["src/[a.test.ts"],
+      );
+    });
+  });
+});
+
 describe("listTestFiles agrees with the platform glob", () => {
   // `node:fs` globSync is a cross-check, not the implementation: it agrees on
   // the pattern shapes the consumers actually pass, so pinning against it
