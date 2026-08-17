@@ -1008,6 +1008,50 @@ describe("openai-provider", () => {
     assertEquals(chatResult.content, [{ type: "text", text: "Chat response" }]);
   });
 
+  it("rejects hosted search when Chat Completions is explicitly configured", async () => {
+    let fetchCalled = false;
+    const provider = new OpenAIProvider();
+    const runtime = provider.createModel("gpt-5.4", {
+      credential: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      openAITransport: "chat-completions",
+      fetch: () => {
+        fetchCalled = true;
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      },
+    });
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Research Veryfront." }] }],
+          tools: [{
+            type: "provider",
+            name: "web_search",
+            id: "openai.web_search",
+            args: {},
+          }],
+        }),
+      TypeError,
+      "OpenAI hosted tools require the Responses API",
+    );
+    await assertRejects(
+      () =>
+        runtime.doStream({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Research Veryfront." }] }],
+          tools: [{
+            type: "provider",
+            name: "web_search",
+            id: "openai.web_search",
+            args: {},
+          }],
+        }),
+      TypeError,
+      "OpenAI hosted tools require the Responses API",
+    );
+    assertEquals(fetchCalled, false);
+  });
+
   it("keeps OpenAI-compatible provider identity separate from display labels", async () => {
     const encoder = new TextEncoder();
     let requestedUrl = "";

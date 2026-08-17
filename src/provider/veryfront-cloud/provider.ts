@@ -11,7 +11,10 @@ import {
   createVeryfrontCloudOpenAIModel,
   createVeryfrontCloudOpenAIResponsesModel,
 } from "./openai.ts";
-import { resolveVeryfrontCloudModelThinking } from "./model-catalog.ts";
+import {
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudOpenAITransport,
+} from "./model-catalog.ts";
 
 function wrapVeryfrontCloudModel(
   model: ModelRuntime,
@@ -51,6 +54,8 @@ function wrapVeryfrontCloudModel(
 }
 
 function shouldUseOpenAIResponsesRuntime(upstreamModelId: string): boolean {
+  const transport = resolveVeryfrontCloudOpenAITransport(`openai/${upstreamModelId}`);
+  if (transport !== undefined) return transport === "responses";
   return resolveVeryfrontCloudModelThinking(`openai/${upstreamModelId}`)?.enabled === true;
 }
 
@@ -97,6 +102,9 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
 
     case "openai": {
       const openai = registry.get("openai");
+      const openAITransport = resolveVeryfrontCloudOpenAITransport(
+        `openai/${upstreamModelId}`,
+      );
       if (shouldUseOpenAIResponsesRuntime(upstreamModelId)) {
         if (openai?.createResponses) {
           return wrapVeryfrontCloudModel(
@@ -127,6 +135,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
             baseURL,
             name: "veryfront-cloud",
             providerName: "veryfront-cloud",
+            openAITransport,
             fetch,
           }),
           provider,
@@ -136,6 +145,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
         createVeryfrontCloudOpenAIModel(upstreamModelId, {
           apiToken,
           baseURL,
+          openAITransport,
           fetch,
         }),
         provider,

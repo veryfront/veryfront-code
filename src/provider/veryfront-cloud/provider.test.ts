@@ -197,6 +197,54 @@ describe("provider/veryfront-cloud", () => {
     });
   });
 
+  it("routes Azure-backed GPT models through Chat Completions", async () => {
+    setCloudBootstrap();
+    const encoder = new TextEncoder();
+    const capturedRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      capturedRequests.push({
+        url: request.url,
+        body: JSON.parse(await request.text()) as Record<string, unknown>,
+      });
+
+      return new Response(
+        readableStreamFrom([
+          encoder.encode(
+            'data: {"prompt_filter_results":[{"prompt_index":0,"content_filter_results":{}}],"choices":[]}\n\n',
+          ),
+          encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+          encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+          encoder.encode("data: [DONE]\n\n"),
+        ]),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+
+    for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
+      const assistant = agent({
+        model: `veryfront-cloud/openai/${modelId}`,
+        system: "You are concise.",
+      });
+
+      const result = await assistant.generate({ input: "Hi" });
+      assertEquals(result.text, "Hello");
+    }
+
+    assertEquals(
+      capturedRequests.map(({ url }) => url),
+      [
+        "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+        "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
+      ],
+    );
+    assertEquals(
+      capturedRequests.map(({ body }) => body.reasoning_effort),
+      ["medium", "medium"],
+    );
+  });
+
   it("routes reasoning-capable OpenAI models through Responses with default reasoning", async () => {
     setCloudBootstrap();
     const encoder = new TextEncoder();
