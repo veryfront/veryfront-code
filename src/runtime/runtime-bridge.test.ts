@@ -1119,6 +1119,9 @@ describe("runtime-bridge", () => {
 
   it("buffers the stream path for models that prefer streamed generate", async () => {
     let called = false;
+    const providerMetadata = {
+      google: { rawAssistantParts: [{ thoughtSignature: "test-thought-signature" }] },
+    };
 
     const model = {
       ...createStreamModel(
@@ -1141,6 +1144,7 @@ describe("runtime-bridge", () => {
                   inputTokens: { total: 2 },
                   outputTokens: { total: 5 },
                 },
+                providerMetadata,
               },
             ]),
           };
@@ -1163,6 +1167,7 @@ describe("runtime-bridge", () => {
       outputTokens: 5,
       totalTokens: 7,
     });
+    assertEquals(result.providerMetadata, providerMetadata);
   });
 
   it("buffers streamed tool calls for models that prefer streamed generate", async () => {

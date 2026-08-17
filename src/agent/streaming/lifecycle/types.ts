@@ -123,6 +123,7 @@ export type StreamProtocolEvent =
       | "content-filter"
       | "other"
       | null;
+    providerMetadata?: Record<string, unknown>;
   }
   | { type: "custom"; name: string; data: unknown };
 
@@ -208,6 +209,7 @@ export interface StreamSnapshot {
     | "content-filter"
     | "other"
     | null;
+  providerMetadata?: Record<string, unknown>;
   usage: StreamUsage;
   hasStreamOutput: boolean;
   hasSemanticProgress: boolean;
