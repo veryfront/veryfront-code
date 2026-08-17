@@ -80,8 +80,8 @@ the build.
 
 Veryfront does not currently collect styles from runtime CSS-in-JS libraries
 such as Emotion or styled-components during server rendering. A generated class
-name can appear in the server HTML without its CSS rule because styles inserted
-through `document.head` are not added to the response. This can leave the page
+name may appear in the server HTML without its CSS rule because styles inserted
+through `document.head` are not added to the response. This may leave the page
 unstyled or cause a flash of unstyled content before client hydration.
 
 Do not rely on runtime CSS-in-JS for SSR styling until Veryfront provides a
