@@ -6,51 +6,51 @@ describe("AG-UI encoder public names", () => {
   it("keeps browser-prefixed functions as compatibility aliases", () => {
     assertStrictEquals(
       agent.buildAgUiFinalizeResponse,
-      agent.buildAgUiFinalizeResponse,
+      agent.buildAgUiBrowserFinalizeResponse,
     );
     assertStrictEquals(
       agent.createAgUiEncoderState,
-      agent.createAgUiEncoderState,
+      agent.createAgUiBrowserEncoderState,
     );
     assertStrictEquals(
       agent.finalizeAgUiEvents,
-      agent.finalizeAgUiEvents,
+      agent.finalizeAgUiBrowserEvents,
     );
     assertStrictEquals(
       agent.mapRuntimeStreamEventToAgUiEvents,
-      agent.mapRuntimeStreamEventToAgUiEvents,
+      agent.mapRuntimeStreamEventToAgUiBrowserEvents,
     );
     assertStrictEquals(
       agent.createAgUiChunkEncoder,
-      agent.createAgUiChunkEncoder,
+      agent.createAgUiBrowserChunkEncoder,
     );
     assertStrictEquals(
       agent.createAgUiChatUiChunkEncoder,
-      agent.createAgUiChatUiChunkEncoder,
+      agent.createAgUiChatUiChunkBrowserEncoder,
     );
     assertStrictEquals(
       agent.createAgUiChatUiTrackedResponse,
-      agent.createAgUiChatUiTrackedResponse,
+      agent.createAgUiChatUiTrackedBrowserResponse,
     );
     assertStrictEquals(
       agent.createAgUiFinalizeTracker,
-      agent.createAgUiFinalizeTracker,
+      agent.createAgUiBrowserFinalizeTracker,
     );
     assertStrictEquals(
       agent.createAgUiResponseStream,
-      agent.createAgUiResponseStream,
+      agent.createAgUiBrowserResponseStream,
     );
     assertStrictEquals(
       agent.createAgUiRuntimeResponse,
-      agent.createAgUiRuntimeResponse,
+      agent.createAgUiRuntimeBrowserResponse,
     );
     assertStrictEquals(
       agent.createAgUiTrackedResponse,
-      agent.createAgUiTrackedResponse,
+      agent.createAgUiTrackedBrowserResponse,
     );
     assertStrictEquals(
       agent.normalizeAgUiRuntimeRequest,
-      agent.normalizeAgUiRuntimeRequest,
+      agent.normalizeAgUiBrowserRuntimeRequest,
     );
   });
 });
