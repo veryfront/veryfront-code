@@ -88,13 +88,13 @@ async function resolveWithBareExternalPlugin(
   return result.errors[0].text;
 }
 
-async function resolveWithHttpExternalPlugin(
+async function runHttpExternalResolver(
   path: string,
   importer: string,
   projectDir: string,
   serverExternalPackages: readonly string[],
   kind: OnResolveArgs["kind"],
-): Promise<string> {
+): Promise<{ errors?: Array<{ text: string }> } | undefined> {
   let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
   const plugin = createHttpExternalPlugin({ projectDir, serverExternalPackages });
   const build = createMockBuild(() => {});
@@ -104,7 +104,7 @@ async function resolveWithHttpExternalPlugin(
   plugin.setup(build);
   assertExists(resolveHandler);
 
-  const result = await resolveHandler({
+  return await resolveHandler({
     path,
     importer,
     namespace: "file",
@@ -112,6 +112,22 @@ async function resolveWithHttpExternalPlugin(
     kind,
     pluginData: undefined,
   }) as { errors?: Array<{ text: string }> } | undefined;
+}
+
+async function resolveWithHttpExternalPlugin(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"],
+): Promise<string> {
+  const result = await runHttpExternalResolver(
+    path,
+    importer,
+    projectDir,
+    serverExternalPackages,
+    kind,
+  );
 
   assertExists(result?.errors?.[0]);
   return result.errors[0].text;
@@ -354,6 +370,21 @@ describe(
         );
         assertEquals(message.includes("server-only-in-client"), true);
         assertEquals(message.includes("knex"), true);
+      }
+    });
+
+    it("preserves undeclared CommonJS URL resolver behavior", async () => {
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        assertEquals(
+          await runHttpExternalResolver(
+            "https://esm.sh/lodash@4.17.21",
+            "/redacted-project-root/app/page.js",
+            "/redacted-project-root",
+            ["knex"],
+            kind,
+          ),
+          undefined,
+        );
       }
     });
 

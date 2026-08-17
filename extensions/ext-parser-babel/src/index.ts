@@ -496,7 +496,10 @@ class BabelCodeParser extends BabelParseOnlyParser implements CodeParser {
     options: ParseOptions,
   ): Promise<readonly string[]> {
     assertCommonJsAnalysisPrimitives();
-    const ast = await this.parse(options);
+    const ast = await this.parse({
+      ...options,
+      allowReturnOutsideFunction: true,
+    });
     assertCommonJsAnalysisPrimitives();
     const imports: string[] = [];
     const visit = (path: ScopeAwareBabelPath) => {
