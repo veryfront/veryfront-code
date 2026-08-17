@@ -36,6 +36,13 @@ function readAssistantProviderMetadata(options: unknown): unknown {
   return prompt.find((message) => message.role === "assistant")?.providerMetadata;
 }
 
+function readAllAssistantProviderMetadata(options: unknown): unknown[] {
+  const prompt = (options as { prompt?: Array<Record<string, unknown>> }).prompt ?? [];
+  return prompt.filter((message) => message.role === "assistant").map((message) =>
+    message.providerMetadata
+  );
+}
+
 function streamFrom(parts: unknown[]): ReadableStream<unknown> {
   return new ReadableStream({
     start(controller) {
@@ -114,6 +121,83 @@ describe("agent provider metadata continuation", () => {
     assertEquals(continuedProviderMetadata, providerMetadata);
     assertEquals(JSON.stringify(result.messages).includes("test-thought-signature"), false);
     assertEquals(JSON.stringify(modelCallEvents).includes("test-thought-signature"), false);
+  });
+
+  it("replays every signed function call throughout a sequential tool turn", async () => {
+    const secondProviderMetadata = {
+      google: {
+        rawAssistantParts: [{
+          functionCall: {
+            id: "lookup-2",
+            name: "lookup",
+            args: { query: "Gemini" },
+          },
+          thoughtSignature: "test-thought-signature-2",
+        }],
+      },
+    };
+    let callCount = 0;
+    let secondRequestMetadata: unknown[] = [];
+    let thirdRequestMetadata: unknown[] = [];
+    const model: ModelRuntime = {
+      provider: "google",
+      modelId: "gemini-3.5-flash",
+      async doGenerate(options: unknown) {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "lookup-1",
+              toolName: "lookup",
+              input: '{"query":"Veryfront"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            providerMetadata,
+          };
+        }
+        if (callCount === 2) {
+          secondRequestMetadata = readAllAssistantProviderMetadata(options);
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "lookup-2",
+              toolName: "lookup",
+              input: '{"query":"Gemini"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            providerMetadata: secondProviderMetadata,
+          };
+        }
+
+        thirdRequestMetadata = readAllAssistantProviderMetadata(options);
+        return {
+          content: [{ type: "text", text: "Done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        throw new Error("not used");
+      },
+    };
+    const assistant = agent({
+      model: "google/gemini-3.5-flash",
+      system: "Use the lookup tool twice.",
+      tools: { lookup: createLookupTool() },
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const result = await assistant.generate({ input: "Look up Veryfront and Gemini" });
+
+    assertEquals(result.text, "Done");
+    assertEquals(callCount, 3);
+    assertEquals(secondRequestMetadata, [providerMetadata]);
+    assertEquals(thirdRequestMetadata, [providerMetadata, secondProviderMetadata]);
+    assertEquals(JSON.stringify(result.messages).includes("test-thought-signature"), false);
   });
 
   for (const lifecycleMode of ["legacy", "active"] as const) {
