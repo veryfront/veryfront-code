@@ -521,6 +521,9 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
   const visitPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
     if (pattern.type === "TSParameterProperty") {
+      for (const decorator of Array.isArray(pattern.decorators) ? pattern.decorators : []) {
+        if (isNode(decorator)) visit(decorator, scopes);
+      }
       if (isNode(pattern.parameter)) visitPatternRuntime(pattern.parameter, scopes);
       return;
     }
