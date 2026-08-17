@@ -1744,6 +1744,49 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(code, "page.tsx");
       assertStringIncludes(result, "Badge from");
     });
+
+    it("does not count a JSX attribute name as a reference", async () => {
+      const code = [
+        `import { secret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return secret(); }`,
+        `export default function Page() { return <div secret="public" />; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, 'secret="public"');
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertEquals(occurrences(result, "secret"), 1);
+    });
+
+    it("reads the object but not the property of a JSX member expression", async () => {
+      const code = [
+        `import Client from "../components/Client.tsx";`,
+        `import { Icon } from "../server/icons.ts";`,
+        `export async function getServerData() { return Icon; }`,
+        `export default function Page() { return <Client.Icon />; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, 'Client from "../components/Client.tsx"');
+      assertStringIncludes(result, "<Client.Icon />");
+      assertNotIncludes(result, "../server/icons.ts");
+    });
+
+    it("does not count import.meta names as binding references", async () => {
+      const code = [
+        `import { meta } from "../server/meta.ts";`,
+        `export async function getServerData() { return meta; }`,
+        `export default function Page() { return import.meta.url; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "import.meta.url");
+      assertNotIncludes(result, "../server/meta.ts");
+      assertEquals(occurrences(result, "meta"), 1);
+    });
   });
 
   // Regression: the scan used to count identifiers by matching text, so a name
