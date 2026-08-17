@@ -560,10 +560,13 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
       // rather than reloading, which is what it did before the scheme check
       // moved into resolveDocumentNavigationUrl.
       if (pageData && pageData.redirect && typeof pageData.redirect.destination === "string") {
-        const redirectUrl = resolveDocumentNavigationUrl(
-          pageData.redirect.destination,
+        const redirectBaseUrl = resolveDocumentNavigationUrl(
+          targetPath,
           window.location.origin,
         );
+        const redirectUrl = redirectBaseUrl
+          ? resolveDocumentNavigationUrl(pageData.redirect.destination, redirectBaseUrl)
+          : null;
         if (redirectUrl) {
           log("SPA navigation redirect -> " + redirectUrl);
           window.location.href = redirectUrl;

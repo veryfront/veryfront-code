@@ -84,10 +84,10 @@ export function isAbortError(error: unknown): boolean {
  */
 export function resolveDocumentNavigationUrl(
   target: string,
-  origin: string,
+  baseUrl: string,
 ): string | null {
   try {
-    const url = new URL(target, origin);
+    const url = new URL(target, baseUrl);
     if (url.protocol === "http:" || url.protocol === "https:") return url.href;
   } catch (_) {
     /* unparseable target — do not navigate */
