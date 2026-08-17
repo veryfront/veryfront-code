@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiRuntimeBrowserResponse } from "./runtime-browser-response.ts";
+import { createAgUiRuntimeResponse } from "./runtime-response.ts";
 
-describe("agent/ag-ui-runtime-browser-response", () => {
-  it("normalizes browser runtime defaults and wraps the stream in SSE headers", async () => {
-    const response = createAgUiRuntimeBrowserResponse({
+describe("agent/ag-ui-runtime-response", () => {
+  it("normalizes runtime defaults and wraps the stream in SSE headers", async () => {
+    const response = createAgUiRuntimeResponse({
       agUiInput: {
         threadId: crypto.randomUUID(),
         runId: "run_1",
@@ -45,10 +45,10 @@ describe("agent/ag-ui-runtime-browser-response", () => {
     assertStringIncludes(text, '"chunk":"chunk-1"');
   });
 
-  it("passes chunk observers and final response builders through to the browser stream", async () => {
+  it("passes chunk observers and final response builders through to the response stream", async () => {
     const seen: string[] = [];
 
-    const response = createAgUiRuntimeBrowserResponse({
+    const response = createAgUiRuntimeResponse({
       agUiInput: {
         threadId: crypto.randomUUID(),
         runId: "run_1",

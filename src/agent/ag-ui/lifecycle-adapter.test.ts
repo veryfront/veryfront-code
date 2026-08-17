@@ -6,7 +6,7 @@ import fixture from "../conversation/fixtures/legacy-content-after-end.json" wit
   type: "json",
 };
 import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
-import { createLifecycleAgUiBrowserAdapter } from "./lifecycle-browser-adapter.ts";
+import { createLifecycleAgUiAdapter } from "./lifecycle-adapter.ts";
 
 function frames(
   entries: readonly {
@@ -22,9 +22,9 @@ function frames(
   } as StreamLifecycleFrame));
 }
 
-describe("lifecycle AG-UI browser adapter", () => {
+describe("lifecycle AG-UI adapter", () => {
   it("assigns stable text identities when protocol events omit IDs", () => {
-    const adapter = createLifecycleAgUiBrowserAdapter({
+    const adapter = createLifecycleAgUiAdapter({
       messageId: "message-1",
     });
     const events = frames([
@@ -42,10 +42,10 @@ describe("lifecycle AG-UI browser adapter", () => {
     );
   });
 
-  // Same defect as browser-encoder: providers restart part ids at `reasoning-0`
+  // Same defect as encoder: providers restart part ids at `reasoning-0`
   // every step, so composing the run-global id from the part id alone collides.
   it("gives each reasoning span a distinct messageId when a provider reuses part ids", () => {
-    const adapter = createLifecycleAgUiBrowserAdapter({
+    const adapter = createLifecycleAgUiAdapter({
       messageId: "message-multistep",
     });
     const events = frames([
@@ -84,7 +84,7 @@ describe("lifecycle AG-UI browser adapter", () => {
   });
 
   it("projects a balanced canonical sequence with matched identities", () => {
-    const adapter = createLifecycleAgUiBrowserAdapter({
+    const adapter = createLifecycleAgUiAdapter({
       messageId: "message-1",
     });
     const events = frames([
@@ -166,7 +166,7 @@ describe("lifecycle AG-UI browser adapter", () => {
   });
 
   it("emits only the final provider result after ready and preliminary output", () => {
-    const adapter = createLifecycleAgUiBrowserAdapter({ messageId: "message-provider" });
+    const adapter = createLifecycleAgUiAdapter({ messageId: "message-provider" });
     const events = frames([
       {
         event: {
@@ -229,7 +229,7 @@ describe("lifecycle AG-UI browser adapter", () => {
   });
 
   it("keeps a tool-handoff attempt open and finishes only on run completion", () => {
-    const adapter = createLifecycleAgUiBrowserAdapter({
+    const adapter = createLifecycleAgUiAdapter({
       messageId: "message-1",
     });
     for (
@@ -275,45 +275,45 @@ describe("lifecycle AG-UI browser adapter", () => {
     assertEquals(read.status, "ok");
     if (read.status !== "ok") return;
 
-    const adapter = createLifecycleAgUiBrowserAdapter({
+    const adapter = createLifecycleAgUiAdapter({
       messageId: "legacy-message",
     });
-    const browserEvents = [
+    const agUiEvents = [
       ...read.frames.flatMap((frame) => adapter.encode(frame)),
       ...adapter.finalize({ terminalStatus: "completed" }),
     ];
     assertEquals(
-      browserEvents.filter((entry) => entry.event === "TextMessageContent")
+      agUiEvents.filter((entry) => entry.event === "TextMessageContent")
         .map((entry) => entry.payload.delta).join(""),
       "firstsecond",
     );
     assertEquals(
       new Set(
-        browserEvents.filter((entry) => entry.event.startsWith("TextMessage"))
+        agUiEvents.filter((entry) => entry.event.startsWith("TextMessage"))
           .map((entry) => entry.payload.messageId),
       ),
       new Set(["legacy-message"]),
     );
     assertEquals(
       new Set(
-        browserEvents.filter((entry) => entry.event === "TextMessageStart")
+        agUiEvents.filter((entry) => entry.event === "TextMessageStart")
           .map((entry) => entry.payload.contentId),
       ).size,
       2,
     );
     assertEquals(
-      browserEvents.filter((entry) => entry.event === "TextMessageStart")
+      agUiEvents.filter((entry) => entry.event === "TextMessageStart")
         .length,
-      browserEvents.filter((entry) => entry.event === "TextMessageEnd").length,
+      agUiEvents.filter((entry) => entry.event === "TextMessageEnd").length,
     );
     assertEquals(
-      browserEvents.filter((entry) => entry.event === "RunFinished").length,
+      agUiEvents.filter((entry) => entry.event === "RunFinished").length,
       1,
     );
   });
 
   it("reports empty completion and cancellation with typed run errors", () => {
-    const empty = createLifecycleAgUiBrowserAdapter({ messageId: "m" });
+    const empty = createLifecycleAgUiAdapter({ messageId: "m" });
     assertEquals(empty.finalize({ terminalStatus: "completed" }), [{
       event: "RunError",
       payload: {
@@ -323,7 +323,7 @@ describe("lifecycle AG-UI browser adapter", () => {
     }]);
     assertEquals(empty.finalize({ terminalStatus: "completed" }), []);
 
-    const cancelled = createLifecycleAgUiBrowserAdapter({ messageId: "m" });
+    const cancelled = createLifecycleAgUiAdapter({ messageId: "m" });
     assertEquals(cancelled.finalize({ terminalStatus: "cancelled" }), [{
       event: "RunError",
       payload: { code: "STREAM_CANCELLED", message: "Stream was cancelled" },
@@ -331,7 +331,7 @@ describe("lifecycle AG-UI browser adapter", () => {
   });
 
   it("drops a reasoning end that closes no open span", () => {
-    const adapter = createLifecycleAgUiBrowserAdapter({
+    const adapter = createLifecycleAgUiAdapter({
       messageId: "message-unmatched-end",
     });
     const events = frames([
@@ -355,7 +355,7 @@ describe("lifecycle AG-UI browser adapter", () => {
   });
 
   it("opens a reasoning span visibly when a delta arrives with none open", () => {
-    const adapter = createLifecycleAgUiBrowserAdapter({
+    const adapter = createLifecycleAgUiAdapter({
       messageId: "message-orphan-delta",
     });
     const events = frames([

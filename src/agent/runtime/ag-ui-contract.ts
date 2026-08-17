@@ -221,8 +221,8 @@ export type AgUiRuntimeMessage = InferSchema<ReturnType<typeof getAgUiRuntimeMes
 /** Request payload for AG-UI runtime. */
 export type AgUiRuntimeRequest = InferSchema<ReturnType<typeof getAgUiRuntimeRequestSchema>>;
 
-/** Request payload for normalize AG-UI browser runtime. */
-export function normalizeAgUiBrowserRuntimeRequest(
+/** Request payload for normalize AG-UI runtime. */
+export function normalizeAgUiRuntimeRequest(
   input: AgUiRuntimeRequest,
   defaults?: {
     threadId?: string;

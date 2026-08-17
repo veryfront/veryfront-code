@@ -1,30 +1,30 @@
 import {
-  type AgUiBrowserEncodedEvent,
-  type AgUiBrowserRunFinishedMetadata,
-  buildAgUiBrowserFinalizeResponse,
-} from "./browser-encoder.ts";
+  type AgUiEncodedEvent,
+  type AgUiRunFinishedMetadata,
+  buildAgUiFinalizeResponse,
+} from "./encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
-/** Public API contract for AG-UI browser finalize tracker. */
-export interface AgUiBrowserFinalizeTracker<TChunk> {
+/** Public API contract for AG-UI finalize tracker. */
+export interface AgUiFinalizeTracker<TChunk> {
   observeChunk: (chunk: TChunk) => void;
-  observeEncodedEvents: (events: readonly AgUiBrowserEncodedEvent[]) => void;
+  observeEncodedEvents: (events: readonly AgUiEncodedEvent[]) => void;
   getFinalResponse: () => AgentResponse | null;
 }
 
-/** Options accepted by create AG-UI browser finalize tracker. */
-export interface CreateAgUiBrowserFinalizeTrackerOptions<TChunk> {
+/** Options accepted by create AG-UI finalize tracker. */
+export interface CreateAgUiFinalizeTrackerOptions<TChunk> {
   getMetadataFromChunk: (
     chunk: TChunk,
-  ) => Partial<AgUiBrowserRunFinishedMetadata> | null | undefined;
+  ) => Partial<AgUiRunFinishedMetadata> | null | undefined;
 }
 
-/** Create AG-UI browser finalize tracker. */
-export function createAgUiBrowserFinalizeTracker<TChunk>(
-  options: CreateAgUiBrowserFinalizeTrackerOptions<TChunk>,
-): AgUiBrowserFinalizeTracker<TChunk> {
+/** Create AG-UI finalize tracker. */
+export function createAgUiFinalizeTracker<TChunk>(
+  options: CreateAgUiFinalizeTrackerOptions<TChunk>,
+): AgUiFinalizeTracker<TChunk> {
   let sawRunError = false;
-  const metadata: AgUiBrowserRunFinishedMetadata = {};
+  const metadata: AgUiRunFinishedMetadata = {};
 
   return {
     observeChunk: (chunk) => {
@@ -119,7 +119,7 @@ export function createAgUiBrowserFinalizeTracker<TChunk>(
         return null;
       }
 
-      return buildAgUiBrowserFinalizeResponse(metadata);
+      return buildAgUiFinalizeResponse(metadata);
     },
   };
 }

@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { StreamLifecycleFrame } from "#veryfront/agent/streaming/lifecycle/index.ts";
-import { createLifecycleAgUiBrowserAdapter } from "#veryfront/agent/ag-ui/lifecycle-browser-adapter.ts";
+import { createLifecycleAgUiAdapter } from "#veryfront/agent/ag-ui/lifecycle-adapter.ts";
 import fixture from "./fixtures/legacy-content-after-end.json" with {
   type: "json",
 };
@@ -50,7 +50,7 @@ function projectDurableEventsToAgUi(events: readonly ConversationRunEvent[]) {
   });
   assertEquals(read.status, "ok");
   if (read.status !== "ok") return [];
-  const agui = createLifecycleAgUiBrowserAdapter({ messageId: "message-1" });
+  const agui = createLifecycleAgUiAdapter({ messageId: "message-1" });
   return read.frames.flatMap((frame) => agui.encode(frame));
 }
 
@@ -119,7 +119,7 @@ describe("conversation run lifecycle read adapter", () => {
     assertEquals(result.status, "ok");
     if (result.status !== "ok") return;
     assertEquals(result.repairs, ["legacy_missing_tool_result"]);
-    const agui = createLifecycleAgUiBrowserAdapter({ messageId: "message-1" });
+    const agui = createLifecycleAgUiAdapter({ messageId: "message-1" });
     assertEquals(
       result.frames.flatMap((frame) => agui.encode(frame)).filter((event) =>
         event.event === "ToolCallResult"
@@ -642,7 +642,7 @@ describe("conversation run lifecycle read adapter", () => {
       ),
       [],
     );
-    const agui = createLifecycleAgUiBrowserAdapter({ messageId: "message-1" });
+    const agui = createLifecycleAgUiAdapter({ messageId: "message-1" });
     const aguiEvents = result.frames.flatMap((frame) => agui.encode(frame));
     assertEquals(
       aguiEvents.filter((event) => event.event === "Custom"),

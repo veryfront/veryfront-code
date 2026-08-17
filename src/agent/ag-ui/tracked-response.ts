@@ -1,34 +1,34 @@
-import type { AgUiBrowserEncodedEvent } from "./browser-encoder.ts";
-import type { AgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts";
+import type { AgUiEncodedEvent } from "./encoder.ts";
+import type { AgUiFinalizeTracker } from "./finalize-tracker.ts";
 import type { AgUiChunkEncoderBridge } from "./chunk-encoder-bridge.ts";
 import {
-  createAgUiRuntimeBrowserResponse,
-  type CreateAgUiRuntimeBrowserResponseInput,
-} from "./runtime-browser-response.ts";
+  createAgUiRuntimeResponse,
+  type CreateAgUiRuntimeResponseInput,
+} from "./runtime-response.ts";
 import type { AgentResponse } from "../types.ts";
 
-/** Input payload for create AG-UI tracked browser response. */
-export interface CreateAgUiTrackedBrowserResponseInput<TChunk> extends
+/** Input payload for create AG-UI tracked response. */
+export interface CreateAgUiTrackedResponseInput<TChunk> extends
   Omit<
-    CreateAgUiRuntimeBrowserResponseInput<TChunk, null>,
+    CreateAgUiRuntimeResponseInput<TChunk, null>,
     "encoder" | "initialState" | "onChunk" | "getFinalResponse"
   > {
   chunkEncoder:
     & Pick<AgUiChunkEncoderBridge<TChunk>, "encode" | "finalize">
     & Partial<Pick<AgUiChunkEncoderBridge<TChunk>, "timingState">>;
   finalizeTracker: Pick<
-    AgUiBrowserFinalizeTracker<TChunk>,
+    AgUiFinalizeTracker<TChunk>,
     "observeChunk" | "observeEncodedEvents" | "getFinalResponse"
   >;
 }
 
-/** Response payload for create AG-UI tracked browser. */
-export function createAgUiTrackedBrowserResponse<TChunk>(
-  input: CreateAgUiTrackedBrowserResponseInput<TChunk>,
+/** Response payload for create AG-UI tracked response. */
+export function createAgUiTrackedResponse<TChunk>(
+  input: CreateAgUiTrackedResponseInput<TChunk>,
 ): Response {
   const timingState = input.chunkEncoder.timingState;
 
-  return createAgUiRuntimeBrowserResponse({
+  return createAgUiRuntimeResponse({
     ...input,
     encoder: {
       ...(timingState === undefined ? {} : { timingState }),
@@ -37,7 +37,7 @@ export function createAgUiTrackedBrowserResponse<TChunk>(
         input.finalizeTracker.observeEncodedEvents(events);
         return events;
       },
-      finalize: (response: AgentResponse | null): AgUiBrowserEncodedEvent[] =>
+      finalize: (response: AgentResponse | null): AgUiEncodedEvent[] =>
         input.chunkEncoder.finalize(response),
     },
     initialState: null,

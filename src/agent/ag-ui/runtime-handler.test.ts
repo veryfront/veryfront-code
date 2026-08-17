@@ -661,7 +661,7 @@ describe("agent/ag-ui-runtime-handler", () => {
     }
   });
 
-  it("does not prepare browser resume waits for source project tools", async () => {
+  it("does not prepare client resume waits for source project tools", async () => {
     class TrackingSessionManager extends RunResumeSessionManager<{
       result: unknown;
       isError: boolean;

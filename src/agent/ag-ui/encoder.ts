@@ -3,8 +3,8 @@ import type { AgentResponse } from "../types.ts";
 /** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
 
-/** Public API contract for AG-UI browser run finished metadata. */
-export interface AgUiBrowserRunFinishedMetadata {
+/** Public API contract for AG-UI run finished metadata. */
+export interface AgUiRunFinishedMetadata {
   provider?: string;
   model?: string;
   inputTokens?: number;
@@ -31,8 +31,8 @@ export interface AgUiBrowserRunFinishedMetadata {
   usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
-/** State for AG-UI browser encoder. */
-export interface AgUiBrowserEncoderState {
+/** State for AG-UI encoder. */
+export interface AgUiEncoderState {
   messageId: string | null;
   textOpen: boolean;
   activeTextContentId: string | null;
@@ -60,10 +60,10 @@ export interface AgUiBrowserEncoderState {
   openToolCallIds?: Set<string>;
   sawVisibleOutput: boolean;
   sawTerminalError: boolean;
-  metadata: AgUiBrowserRunFinishedMetadata;
+  metadata: AgUiRunFinishedMetadata;
   /**
    * Clock for `elapsedMs`, and the run-relative anchor it measures from. Absent
-   * only when a caller opts out; see `createAgUiBrowserEncoderState`.
+   * only when a caller opts out; see `createAgUiEncoderState`.
    */
   nowMs?: () => number;
   startedMs?: number;
@@ -77,8 +77,8 @@ export interface AgUiBrowserEncoderState {
   epochMs?: () => number;
 }
 
-/** Options for create AG-UI browser encoder state. */
-export interface AgUiBrowserEncoderStateOptions {
+/** Options for create AG-UI encoder state. */
+export interface AgUiEncoderStateOptions {
   /**
    * Clock used to stamp `elapsedMs`. Defaults to `performance.now`. Pass null
    * to omit the stamp, which keeps exact-payload assertions deterministic.
@@ -92,16 +92,16 @@ export interface AgUiBrowserEncoderStateOptions {
   startedMs?: number;
 }
 
-/** Event emitted for AG-UI browser encoded. */
-export interface AgUiBrowserEncodedEvent {
+/** Event emitted for AG-UI encoded. */
+export interface AgUiEncodedEvent {
   event: string;
   payload: Record<string, unknown>;
 }
 
-/** State for create AG-UI browser encoder. */
-export function createAgUiBrowserEncoderState(
-  options: AgUiBrowserEncoderStateOptions = {},
-): AgUiBrowserEncoderState {
+/** State for create AG-UI encoder. */
+export function createAgUiEncoderState(
+  options: AgUiEncoderStateOptions = {},
+): AgUiEncoderState {
   // Clocked by default. This state is built at three separate composition
   // roots, so an opt-in clock only has to be forgotten once to lose elapsedMs
   // for every run -- which is exactly what happened twice before.
@@ -134,7 +134,7 @@ function serializeToolInput(input: unknown): string {
   }
 }
 
-function getMessageId(state: AgUiBrowserEncoderState, event: AgUiRuntimeStreamEvent): string {
+function getMessageId(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): string {
   if (typeof event.messageId === "string") {
     state.messageId = event.messageId;
     return event.messageId;
@@ -157,7 +157,7 @@ function getMessageId(state: AgUiBrowserEncoderState, event: AgUiRuntimeStreamEv
 // Ordinals also match the scheme veryfront-api uses when it rebuilds these
 // events for snapshots and terminal replay, so one span keeps one id whichever
 // path renders it.
-function openReasoningMessageId(state: AgUiBrowserEncoderState): string {
+function openReasoningMessageId(state: AgUiEncoderState): string {
   const index = state.reasoningSpanIndex ?? 0;
   state.reasoningSpanIndex = index + 1;
   state.reasoningMessageId = state.messageId
@@ -167,7 +167,7 @@ function openReasoningMessageId(state: AgUiBrowserEncoderState): string {
 }
 
 function getReasoningMessageId(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   intent: "open" | "continue",
 ): string {
   // Deltas and ends belong to the span that is already open, whatever part id
@@ -180,7 +180,7 @@ function getReasoningMessageId(
 }
 
 function getTextMessageIdentity(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): { messageId: string; contentId: string } {
   const previousMessageId = state.messageId;
@@ -206,7 +206,7 @@ function getTextMessageIdentity(
 }
 
 function getCandidateTextMessageIdentity(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): { messageId: string | null; contentId: string | null } {
   const explicitMessageId = typeof event.messageId === "string" && event.messageId.length > 0
@@ -228,26 +228,26 @@ function getCandidateTextMessageIdentity(
 }
 
 function isActiveTextIdentity(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
 ): boolean {
   const identity = getCandidateTextMessageIdentity(state, event);
   return identity.messageId === state.messageId && identity.contentId === state.activeTextContentId;
 }
 
-function nextStepName(state: AgUiBrowserEncoderState): string {
+function nextStepName(state: AgUiEncoderState): string {
   state.stepCount += 1;
   state.activeStepName = `step-${state.stepCount}`;
   return state.activeStepName;
 }
 
-function finishStepName(state: AgUiBrowserEncoderState): string {
+function finishStepName(state: AgUiEncoderState): string {
   const stepName = state.activeStepName ?? `step-${Math.max(state.stepCount, 1)}`;
   state.activeStepName = null;
   return stepName;
 }
 
-function applyDataMetadata(state: AgUiBrowserEncoderState, event: AgUiRuntimeStreamEvent): void {
+function applyDataMetadata(state: AgUiEncoderState, event: AgUiRuntimeStreamEvent): void {
   const data = event.data && typeof event.data === "object" && !Array.isArray(event.data)
     ? event.data as Record<string, unknown>
     : event;
@@ -262,7 +262,7 @@ function applyDataMetadata(state: AgUiBrowserEncoderState, event: AgUiRuntimeStr
 }
 
 function applyResponseMetadata(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   response: AgentResponse | null,
 ): void {
   if (!response) return;
@@ -271,7 +271,7 @@ function applyResponseMetadata(
     state.metadata.inputTokens = response.usage.promptTokens;
     state.metadata.outputTokens = response.usage.completionTokens;
     state.metadata.totalTokens = response.usage.totalTokens;
-    const usage = response.usage as typeof response.usage & AgUiBrowserRunFinishedMetadata;
+    const usage = response.usage as typeof response.usage & AgUiRunFinishedMetadata;
     if (typeof response.usage.cachedInputTokens === "number") {
       state.metadata.cachedInputTokens = response.usage.cachedInputTokens;
     } else if (typeof response.usage.cacheReadInputTokens === "number") {
@@ -425,9 +425,9 @@ function applyResponseMetadata(
   }
 }
 
-/** Response payload for build AG-UI browser finalize. */
-export function buildAgUiBrowserFinalizeResponse(
-  metadata: AgUiBrowserRunFinishedMetadata,
+/** Response payload for build AG-UI finalize. */
+export function buildAgUiFinalizeResponse(
+  metadata: AgUiRunFinishedMetadata,
 ): AgentResponse | null {
   const responseMetadata: Record<string, unknown> = {};
   if (typeof metadata.finishReason === "string" && metadata.finishReason.length > 0) {
@@ -563,9 +563,9 @@ export function buildAgUiBrowserFinalizeResponse(
  * tool failure does not produce a second end.
  */
 function closeOpenToolInput(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   toolCallId: unknown,
-): AgUiBrowserEncodedEvent[] {
+): AgUiEncodedEvent[] {
   if (typeof toolCallId !== "string" || toolCallId.length === 0) return [];
   if (state.openToolCallIds?.delete(toolCallId) !== true) return [];
   state.streamedToolInputIds.delete(toolCallId);
@@ -573,11 +573,11 @@ function closeOpenToolInput(
 }
 
 function completeToolInput(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
-): AgUiBrowserEncodedEvent[] {
+): AgUiEncodedEvent[] {
   const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
-  const events: AgUiBrowserEncodedEvent[] = [];
+  const events: AgUiEncodedEvent[] = [];
 
   if (toolCallId.length > 0 && !state.streamedToolInputIds.has(toolCallId)) {
     events.push({
@@ -606,7 +606,7 @@ function createToolResultEvent(
   toolCallId: unknown,
   result: Record<string, unknown> | unknown,
   isError = false,
-): AgUiBrowserEncodedEvent {
+): AgUiEncodedEvent {
   return {
     event: "ToolCallResult",
     payload: {
@@ -620,7 +620,7 @@ function createToolResultEvent(
 function createCustomDataEvent(
   name: string,
   value: unknown,
-): AgUiBrowserEncodedEvent {
+): AgUiEncodedEvent {
   return {
     event: "Custom",
     payload: { name, value },
@@ -628,9 +628,9 @@ function createCustomDataEvent(
 }
 
 function createStepEvent(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   type: "StepStarted" | "StepFinished",
-): AgUiBrowserEncodedEvent {
+): AgUiEncodedEvent {
   return {
     event: type,
     payload: {
@@ -640,10 +640,10 @@ function createStepEvent(
 }
 
 function createReasoningEvent(
-  state: AgUiBrowserEncoderState,
+  state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
   type: "ReasoningMessageStart" | "ReasoningMessageContent" | "ReasoningMessageEnd",
-): AgUiBrowserEncodedEvent {
+): AgUiEncodedEvent {
   const messageId = getReasoningMessageId(
     state,
     type === "ReasoningMessageStart" ? "open" : "continue",
@@ -666,7 +666,7 @@ function createTextEvent(
   type: "TextMessageStart" | "TextMessageContent" | "TextMessageEnd",
   delta = "",
   contentId: string,
-): AgUiBrowserEncodedEvent {
+): AgUiEncodedEvent {
   return {
     event: type,
     payload: type === "TextMessageStart"
@@ -677,7 +677,7 @@ function createTextEvent(
   };
 }
 
-function closeOpenTextEvent(state: AgUiBrowserEncoderState): AgUiBrowserEncodedEvent[] {
+function closeOpenTextEvent(state: AgUiEncoderState): AgUiEncodedEvent[] {
   if (!state.textOpen) {
     return [];
   }
@@ -693,7 +693,7 @@ function closeOpenTextEvent(state: AgUiBrowserEncoderState): AgUiBrowserEncodedE
   return [event];
 }
 
-function closeOpenReasoningEvent(state: AgUiBrowserEncoderState): AgUiBrowserEncodedEvent[] {
+function closeOpenReasoningEvent(state: AgUiEncoderState): AgUiEncodedEvent[] {
   if (state.reasoningMessageId === null) {
     return [];
   }
@@ -706,21 +706,21 @@ function closeOpenReasoningEvent(state: AgUiBrowserEncoderState): AgUiBrowserEnc
   }];
 }
 
-/** Map runtime stream event to AG-UI browser events. */
-export function mapRuntimeStreamEventToAgUiBrowserEvents(
-  state: AgUiBrowserEncoderState,
+/** Map runtime stream event to AG-UI events. */
+export function mapRuntimeStreamEventToAgUiEvents(
+  state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
-): AgUiBrowserEncodedEvent[] {
-  return stampAgUiBrowserEventTiming(
+): AgUiEncodedEvent[] {
+  return stampAgUiEventTiming(
     state,
-    mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(state, event),
+    mapRuntimeStreamEventToAgUiEventsUnstamped(state, event),
   );
 }
 
-export function stampAgUiBrowserEventTiming(
-  state: AgUiBrowserEncoderState,
-  events: AgUiBrowserEncodedEvent[],
-): AgUiBrowserEncodedEvent[] {
+export function stampAgUiEventTiming(
+  state: AgUiEncoderState,
+  events: AgUiEncodedEvent[],
+): AgUiEncodedEvent[] {
   if (events.length === 0) {
     return events;
   }
@@ -775,10 +775,10 @@ function assertValidEmittedAt(value: unknown): asserts value is number {
   }
 }
 
-function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
-  state: AgUiBrowserEncoderState,
+function mapRuntimeStreamEventToAgUiEventsUnstamped(
+  state: AgUiEncoderState,
   event: AgUiRuntimeStreamEvent,
-): AgUiBrowserEncodedEvent[] {
+): AgUiEncodedEvent[] {
   if (event.type.startsWith("data-")) {
     const name = event.type.slice("data-".length);
     if (name.length === 0) {
@@ -1017,18 +1017,18 @@ function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
   }
 }
 
-/** Finalize AG-UI browser events helper. */
-export function finalizeAgUiBrowserEvents(
-  state: AgUiBrowserEncoderState,
+/** Finalize AG-UI events helper. */
+export function finalizeAgUiEvents(
+  state: AgUiEncoderState,
   response: AgentResponse | null,
-): AgUiBrowserEncodedEvent[] {
-  return stampAgUiBrowserEventTiming(state, finalizeAgUiBrowserEventsUnstamped(state, response));
+): AgUiEncodedEvent[] {
+  return stampAgUiEventTiming(state, finalizeAgUiEventsUnstamped(state, response));
 }
 
-function finalizeAgUiBrowserEventsUnstamped(
-  state: AgUiBrowserEncoderState,
+function finalizeAgUiEventsUnstamped(
+  state: AgUiEncoderState,
   response: AgentResponse | null,
-): AgUiBrowserEncodedEvent[] {
+): AgUiEncodedEvent[] {
   applyResponseMetadata(state, response);
 
   if (state.sawTerminalError) {
@@ -1046,7 +1046,7 @@ function finalizeAgUiBrowserEventsUnstamped(
     }];
   }
 
-  const events: AgUiBrowserEncodedEvent[] = [];
+  const events: AgUiEncodedEvent[] = [];
   events.push(...closeOpenTextEvent(state));
   events.push(...closeOpenReasoningEvent(state));
 

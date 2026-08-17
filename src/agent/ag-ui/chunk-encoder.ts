@@ -1,43 +1,43 @@
-import { type AgUiBrowserEncoderStateOptions } from "./browser-encoder.ts";
+import { type AgUiEncoderStateOptions } from "./encoder.ts";
 import type {
-  AgUiBrowserEncodedEvent,
-  AgUiBrowserEncoderState,
-  AgUiBrowserRunFinishedMetadata,
+  AgUiEncodedEvent,
+  AgUiEncoderState,
+  AgUiRunFinishedMetadata,
   AgUiRuntimeStreamEvent,
-} from "./browser-encoder.ts";
+} from "./encoder.ts";
 import {
   type AgUiRuntimeEventEncoder,
   createAgUiRuntimeEventEncoder,
 } from "./runtime-event-encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
-/** Public API contract for AG-UI browser chunk encoder. */
-export interface AgUiBrowserChunkEncoder<TChunk> {
-  state: AgUiBrowserEncoderState;
-  /** Optional timing anchor consumed by the browser response composition root. */
-  timingState?: AgUiBrowserEncoderState;
-  encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
-  finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
+/** Public API contract for AG-UI chunk encoder. */
+export interface AgUiChunkEncoder<TChunk> {
+  state: AgUiEncoderState;
+  /** Optional timing anchor consumed by the response composition root. */
+  timingState?: AgUiEncoderState;
+  encode: (chunk: TChunk) => AgUiEncodedEvent[];
+  finalize: (response: AgentResponse | null) => AgUiEncodedEvent[];
 }
 
-/** Options accepted by create AG-UI browser chunk encoder. */
-export interface CreateAgUiBrowserChunkEncoderOptions<TChunk> {
+/** Options accepted by create AG-UI chunk encoder. */
+export interface CreateAgUiChunkEncoderOptions<TChunk> {
   /**
    * Timing clocks forwarded verbatim to the encoder state. A single object so
-   * that adding a clock is one edit in `AgUiBrowserEncoderStateOptions`, not a
+   * that adding a clock is one edit in `AgUiEncoderStateOptions`, not a
    * sweep through every wrapper that happens to sit in between.
    */
-  timing?: AgUiBrowserEncoderStateOptions;
+  timing?: AgUiEncoderStateOptions;
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
   getMetadataFromChunk?: (
     chunk: TChunk,
-  ) => Partial<AgUiBrowserRunFinishedMetadata> | null | undefined;
-  initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
+  ) => Partial<AgUiRunFinishedMetadata> | null | undefined;
+  initialMetadata?: Partial<AgUiRunFinishedMetadata>;
 }
 
 function mergeMetadata(
-  target: AgUiBrowserEncoderState["metadata"],
-  metadata: Partial<AgUiBrowserRunFinishedMetadata> | null | undefined,
+  target: AgUiEncoderState["metadata"],
+  metadata: Partial<AgUiRunFinishedMetadata> | null | undefined,
 ): void {
   if (!metadata) {
     return;
@@ -99,10 +99,10 @@ function mergeMetadata(
   if (typeof metadata.finishReason === "string") target.finishReason = metadata.finishReason;
 }
 
-/** Create AG-UI browser chunk encoder. */
-export function createAgUiBrowserChunkEncoder<TChunk>(
-  options: CreateAgUiBrowserChunkEncoderOptions<TChunk>,
-): AgUiBrowserChunkEncoder<TChunk> {
+/** Create AG-UI chunk encoder. */
+export function createAgUiChunkEncoder<TChunk>(
+  options: CreateAgUiChunkEncoderOptions<TChunk>,
+): AgUiChunkEncoder<TChunk> {
   const runtimeEventEncoder: AgUiRuntimeEventEncoder = createAgUiRuntimeEventEncoder({
     initialMetadata: options.initialMetadata,
     ...(options.timing === undefined ? {} : { timing: options.timing }),

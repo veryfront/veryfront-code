@@ -64,7 +64,7 @@ import {
   createAgentRunEventTimingAnchor,
   createTimedAgentRunEventSink,
 } from "#veryfront/runtime/model-call-context.ts";
-import { stampAgUiBrowserEventTiming } from "#veryfront/agent/ag-ui/browser-encoder.ts";
+import { stampAgUiEventTiming } from "#veryfront/agent/ag-ui/encoder.ts";
 import { runWithMandatoryRunEventSink } from "#veryfront/runtime/run-event-sink-context.ts";
 import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-manager.ts";
 import { composeInternalAgentRunSystemPrompt } from "./run-system-prompt.ts";
@@ -950,7 +950,7 @@ export async function createRuntimeAgentStreamResponse(
           };
 
           const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
-            const [timed] = stampAgUiBrowserEventTiming(state, [{ event, payload }]);
+            const [timed] = stampAgUiEventTiming(state, [{ event, payload }]);
             const encodedEvent = formatAgUiEvent(event, timed?.payload ?? payload);
             if (!clientAttached) {
               return;

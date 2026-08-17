@@ -1,44 +1,44 @@
 import { tryGetVeryfrontCloudProviderFromModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
-import type { AgUiBrowserChunkEncoder } from "./browser-chunk-encoder.ts";
-import { createAgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts";
+import type { AgUiChunkEncoder } from "./chunk-encoder.ts";
+import { createAgUiFinalizeTracker } from "./finalize-tracker.ts";
 import {
-  type AgUiBrowserEncoderStateOptions,
-  type AgUiBrowserRunFinishedMetadata,
+  type AgUiEncoderStateOptions,
+  type AgUiRunFinishedMetadata,
   type AgUiRuntimeStreamEvent,
-} from "./browser-encoder.ts";
-import { createAgUiBrowserChunkEncoder } from "./browser-chunk-encoder.ts";
+} from "./encoder.ts";
+import { createAgUiChunkEncoder } from "./chunk-encoder.ts";
 import {
-  createAgUiTrackedBrowserResponse,
-  type CreateAgUiTrackedBrowserResponseInput,
-} from "./tracked-browser-response.ts";
+  createAgUiTrackedResponse,
+  type CreateAgUiTrackedResponseInput,
+} from "./tracked-response.ts";
 
-/** Public API contract for AG-UI chat UI chunk browser encoder. */
-export type AgUiChatUiChunkBrowserEncoder = Pick<
-  AgUiBrowserChunkEncoder<ChatUiMessageChunk<ChatMessageMetadata>>,
+/** Public API contract for AG-UI chat UI chunk encoder. */
+export type AgUiChatUiChunkEncoder = Pick<
+  AgUiChunkEncoder<ChatUiMessageChunk<ChatMessageMetadata>>,
   "encode" | "finalize" | "timingState"
 >;
 
-/** Options accepted by create AG-UI chat UI chunk browser encoder. */
-export interface CreateAgUiChatUiChunkBrowserEncoderOptions {
+/** Options accepted by create AG-UI chat UI chunk encoder. */
+export interface CreateAgUiChatUiChunkEncoderOptions {
   /**
    * Timing clocks forwarded verbatim to the encoder state. A single object so
-   * that adding a clock is one edit in `AgUiBrowserEncoderStateOptions`, not a
+   * that adding a clock is one edit in `AgUiEncoderStateOptions`, not a
    * sweep through every wrapper that happens to sit in between.
    */
-  timing?: AgUiBrowserEncoderStateOptions;
+  timing?: AgUiEncoderStateOptions;
   modelId?: string;
   resolveProvider?: (modelId: string) => string | undefined;
 }
 
-/** Input payload for create AG-UI chat UI tracked browser response. */
-export interface CreateAgUiChatUiTrackedBrowserResponseInput extends
+/** Input payload for create AG-UI chat UI tracked response. */
+export interface CreateAgUiChatUiTrackedResponseInput extends
   Omit<
-    CreateAgUiTrackedBrowserResponseInput<ChatUiMessageChunk<ChatMessageMetadata>>,
+    CreateAgUiTrackedResponseInput<ChatUiMessageChunk<ChatMessageMetadata>>,
     "chunkEncoder" | "finalizeTracker"
   > {
   modelId: string;
-  resolveProvider?: CreateAgUiChatUiChunkBrowserEncoderOptions["resolveProvider"];
+  resolveProvider?: CreateAgUiChatUiChunkEncoderOptions["resolveProvider"];
 }
 
 /** Return AG-UI chat UI message metadata from chunk. */
@@ -60,7 +60,7 @@ export function getAgUiChatUiMessageMetadataFromChunk(
 export function getAgUiChatUiMessageUsageMetadata(
   messageMetadata: ChatMessageMetadata | undefined,
 ): Pick<
-  AgUiBrowserRunFinishedMetadata,
+  AgUiRunFinishedMetadata,
   | "inputTokens"
   | "outputTokens"
   | "totalTokens"
@@ -92,7 +92,7 @@ export function getAgUiChatUiMessageUsageMetadata(
 function getAgUiChatUiMessageBillingMetadata(
   messageMetadata: ChatMessageMetadata | undefined,
 ): Pick<
-  AgUiBrowserRunFinishedMetadata,
+  AgUiRunFinishedMetadata,
   | "billableInputTokens"
   | "billableOutputTokens"
   | "costUsd"
@@ -135,8 +135,8 @@ function hasAgUiChatUiMessageBillingMetadata(
 /** Return AG-UI chat UI message chunk metadata. */
 export function getAgUiChatUiMessageChunkMetadata(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
-  options: Pick<CreateAgUiChatUiChunkBrowserEncoderOptions, "resolveProvider"> = {},
-): Partial<AgUiBrowserRunFinishedMetadata> | null {
+  options: Pick<CreateAgUiChatUiChunkEncoderOptions, "resolveProvider"> = {},
+): Partial<AgUiRunFinishedMetadata> | null {
   const messageMetadata = getAgUiChatUiMessageMetadataFromChunk(chunk);
   const modelId = messageMetadata?.modelId;
   const provider = modelId
@@ -256,15 +256,15 @@ export function normalizeChatUiMessageChunkToAgUiRuntimeEvent(
   }
 }
 
-/** Create AG-UI chat UI chunk browser encoder. */
-export function createAgUiChatUiChunkBrowserEncoder(
-  options: CreateAgUiChatUiChunkBrowserEncoderOptions = {},
-): AgUiChatUiChunkBrowserEncoder {
+/** Create AG-UI chat UI chunk encoder. */
+export function createAgUiChatUiChunkEncoder(
+  options: CreateAgUiChatUiChunkEncoderOptions = {},
+): AgUiChatUiChunkEncoder {
   const provider = options.modelId
     ? (options.resolveProvider ?? tryGetVeryfrontCloudProviderFromModelId)(options.modelId)
     : undefined;
 
-  return createAgUiBrowserChunkEncoder({
+  return createAgUiChunkEncoder({
     initialMetadata: {
       ...(provider ? { provider } : {}),
       ...(options.modelId ? { model: options.modelId } : {}),
@@ -275,11 +275,11 @@ export function createAgUiChatUiChunkBrowserEncoder(
   });
 }
 
-/** Response payload for create AG-UI chat UI tracked browser. */
-export function createAgUiChatUiTrackedBrowserResponse(
-  input: CreateAgUiChatUiTrackedBrowserResponseInput,
+/** Response payload for create AG-UI chat UI tracked response. */
+export function createAgUiChatUiTrackedResponse(
+  input: CreateAgUiChatUiTrackedResponseInput,
 ): Response {
-  const finalizeTracker = createAgUiBrowserFinalizeTracker<
+  const finalizeTracker = createAgUiFinalizeTracker<
     ChatUiMessageChunk<ChatMessageMetadata>
   >({
     getMetadataFromChunk: (chunk) =>
@@ -288,9 +288,9 @@ export function createAgUiChatUiTrackedBrowserResponse(
       }),
   });
 
-  return createAgUiTrackedBrowserResponse({
+  return createAgUiTrackedResponse({
     ...input,
-    chunkEncoder: createAgUiChatUiChunkBrowserEncoder({
+    chunkEncoder: createAgUiChatUiChunkEncoder({
       modelId: input.modelId,
       resolveProvider: input.resolveProvider,
     }),

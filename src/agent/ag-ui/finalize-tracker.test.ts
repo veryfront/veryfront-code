@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiBrowserFinalizeTracker } from "./browser-finalize-tracker.ts";
+import { createAgUiFinalizeTracker } from "./finalize-tracker.ts";
 
-describe("agent/ag-ui-browser-finalize-tracker", () => {
+describe("agent/ag-ui-finalize-tracker", () => {
   it("builds a final response from observed chunk metadata", () => {
-    const tracker = createAgUiBrowserFinalizeTracker<{
+    const tracker = createAgUiFinalizeTracker<{
       usage?: {
         inputTokens?: number;
         outputTokens?: number;
@@ -117,7 +117,7 @@ describe("agent/ag-ui-browser-finalize-tracker", () => {
   });
 
   it("suppresses the final response after a RunError event", () => {
-    const tracker = createAgUiBrowserFinalizeTracker<{
+    const tracker = createAgUiFinalizeTracker<{
       finishReason?: string;
     }>({
       getMetadataFromChunk: (chunk) => ({

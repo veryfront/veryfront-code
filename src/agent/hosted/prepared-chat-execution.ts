@@ -1,5 +1,5 @@
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
-import { createAgUiChatUiTrackedBrowserResponse } from "../ag-ui/chat-ui-chunk-browser-encoder.ts";
+import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
 import {
   type BootstrappedHostedChatExecutionRuntime,
   createBootstrappedHostedChatExecutionRuntime,
@@ -140,7 +140,7 @@ export async function streamPreparedHostedChatExecutionToAgUiResponse<
         ...(agUiRunId ? { responseMessageId: `${agUiRunId}:assistant` } : {}),
       });
 
-      return createAgUiChatUiTrackedBrowserResponse({
+      return createAgUiChatUiTrackedResponse({
         agUiInput: input.execution.agUiInput,
         defaults: {
           ...(input.execution.conversationId ? { threadId: input.execution.conversationId } : {}),

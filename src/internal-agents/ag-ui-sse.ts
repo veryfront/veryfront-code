@@ -1,16 +1,16 @@
 import type {
-  AgUiBrowserEncodedEvent,
-  AgUiBrowserEncoderState,
-  AgUiBrowserRunFinishedMetadata,
+  AgUiEncodedEvent,
+  AgUiEncoderState,
+  AgUiRunFinishedMetadata,
   AgUiRuntimeStreamEvent,
-} from "../agent/ag-ui/browser-encoder.ts";
+} from "../agent/ag-ui/encoder.ts";
 import { parseDataStreamSseEvents } from "#veryfront/agent/streaming/data-stream.ts";
 import {
-  type AgUiBrowserEncoderStateOptions,
-  createAgUiBrowserEncoderState,
-  finalizeAgUiBrowserEvents,
-  mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "../agent/ag-ui/browser-encoder.ts";
+  type AgUiEncoderStateOptions,
+  createAgUiEncoderState,
+  finalizeAgUiEvents,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "../agent/ag-ui/encoder.ts";
 import { resolveSchemaValidator } from "#veryfront/schemas/define.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
@@ -18,19 +18,19 @@ const encoder = new TextEncoder();
 const AG_UI_EVENT_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/;
 
 type RuntimeDataEvent = AgUiRuntimeStreamEvent;
-export type RunFinishedMetadata = AgUiBrowserRunFinishedMetadata;
-export type StreamTransformState = AgUiBrowserEncoderState;
-export type MappedAgUiEvent = AgUiBrowserEncodedEvent;
+export type RunFinishedMetadata = AgUiRunFinishedMetadata;
+export type StreamTransformState = AgUiEncoderState;
+export type MappedAgUiEvent = AgUiEncodedEvent;
 
 export function createStreamTransformState(
-  options: AgUiBrowserEncoderStateOptions = {},
+  options: AgUiEncoderStateOptions = {},
 ): StreamTransformState {
-  return createAgUiBrowserEncoderState(options);
+  return createAgUiEncoderState(options);
 }
 
 function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, unknown>>> {
   const v = resolveSchemaValidator();
-  // Every encoded event carries timing from the browser-encoder: a run-relative
+  // Every encoded event carries timing from the encoder: a run-relative
   // `elapsedMs` and an absolute `emittedAt` in epoch milliseconds. These payload
   // schemas are an allow-list and `parse` returns only what they declare, so a
   // field missing from one is silently dropped before it reaches the wire --
@@ -196,12 +196,12 @@ export function mapRuntimeEventToAgUi(
   state: StreamTransformState,
   event: RuntimeDataEvent,
 ): MappedAgUiEvent[] {
-  return mapRuntimeStreamEventToAgUiBrowserEvents(state, event);
+  return mapRuntimeStreamEventToAgUiEvents(state, event);
 }
 
 export function finalizeRunEvents(
   state: StreamTransformState,
-  response: Parameters<typeof finalizeAgUiBrowserEvents>[1],
+  response: Parameters<typeof finalizeAgUiEvents>[1],
 ): MappedAgUiEvent[] {
-  return finalizeAgUiBrowserEvents(state, response);
+  return finalizeAgUiEvents(state, response);
 }

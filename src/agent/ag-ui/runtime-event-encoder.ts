@@ -1,38 +1,38 @@
 import {
-  type AgUiBrowserEncodedEvent,
-  type AgUiBrowserEncoderState,
-  type AgUiBrowserEncoderStateOptions,
-  type AgUiBrowserRunFinishedMetadata,
+  type AgUiEncodedEvent,
+  type AgUiEncoderState,
+  type AgUiEncoderStateOptions,
+  type AgUiRunFinishedMetadata,
   type AgUiRuntimeStreamEvent,
-  createAgUiBrowserEncoderState,
-  finalizeAgUiBrowserEvents,
-  mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "./browser-encoder.ts";
+  createAgUiEncoderState,
+  finalizeAgUiEvents,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "./encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
 /** Public API contract for AG-UI runtime event encoder. */
 export interface AgUiRuntimeEventEncoder {
-  state: AgUiBrowserEncoderState;
-  encode: (event: AgUiRuntimeStreamEvent) => AgUiBrowserEncodedEvent[];
-  finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
+  state: AgUiEncoderState;
+  encode: (event: AgUiRuntimeStreamEvent) => AgUiEncodedEvent[];
+  finalize: (response: AgentResponse | null) => AgUiEncodedEvent[];
 }
 
 /** Options accepted by create AG-UI runtime event encoder. */
 export interface CreateAgUiRuntimeEventEncoderOptions {
-  initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
+  initialMetadata?: Partial<AgUiRunFinishedMetadata>;
   /**
    * Timing clocks forwarded verbatim to the encoder state. A single object so
-   * that adding a clock is one edit in `AgUiBrowserEncoderStateOptions`, not a
+   * that adding a clock is one edit in `AgUiEncoderStateOptions`, not a
    * sweep through every wrapper that happens to sit in between.
    */
-  timing?: AgUiBrowserEncoderStateOptions;
+  timing?: AgUiEncoderStateOptions;
 }
 
 /** Create AG-UI runtime event encoder. */
 export function createAgUiRuntimeEventEncoder(
   options: CreateAgUiRuntimeEventEncoderOptions = {},
 ): AgUiRuntimeEventEncoder {
-  const state = createAgUiBrowserEncoderState(options.timing ?? {});
+  const state = createAgUiEncoderState(options.timing ?? {});
   const toolInputs = new Map<string, unknown>();
 
   Object.assign(state.metadata, options.initialMetadata ?? {});
@@ -47,7 +47,7 @@ export function createAgUiRuntimeEventEncoder(
         toolInputs.set(event.toolCallId, event.input);
       }
 
-      const encodedEvents = mapRuntimeStreamEventToAgUiBrowserEvents(state, event).map((next) => {
+      const encodedEvents = mapRuntimeStreamEventToAgUiEvents(state, event).map((next) => {
         if (
           next.event !== "ToolCallResult" ||
           typeof next.payload.toolCallId !== "string" ||
@@ -76,6 +76,6 @@ export function createAgUiRuntimeEventEncoder(
 
       return encodedEvents;
     },
-    finalize: (response) => finalizeAgUiBrowserEvents(state, response),
+    finalize: (response) => finalizeAgUiEvents(state, response),
   };
 }

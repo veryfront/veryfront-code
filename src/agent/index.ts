@@ -557,7 +557,7 @@ export {
   getAgUiRuntimeInjectedToolSchema,
   getAgUiRuntimeMessageSchema,
   getAgUiRuntimeRequestSchema,
-  normalizeAgUiBrowserRuntimeRequest,
+  normalizeAgUiRuntimeRequest,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "./runtime/ag-ui-contract.ts";
@@ -748,31 +748,61 @@ export {
 } from "./runtime/agent-invocation-contract.ts";
 export { normalizeAgUiRuntimeMessages } from "./ag-ui/runtime-support.ts";
 export {
+  type AgUiBrowserChunkEncoder,
   type AgUiBrowserEncodedEvent,
   type AgUiBrowserEncoderState,
+  type AgUiBrowserFinalizeTracker,
+  type AgUiBrowserResponseEncoder,
+  type AgUiBrowserResponseExecution,
+  type AgUiBrowserResponseRequestState,
   type AgUiBrowserRunFinishedMetadata,
-  type AgUiRuntimeStreamEvent,
+  type AgUiChatUiChunkBrowserEncoder,
   buildAgUiBrowserFinalizeResponse,
-  createAgUiBrowserEncoderState,
-  finalizeAgUiBrowserEvents,
-  mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "./ag-ui/browser-encoder.ts";
-export {
-  type AgUiBrowserChunkEncoder,
   createAgUiBrowserChunkEncoder,
   type CreateAgUiBrowserChunkEncoderOptions,
-} from "./ag-ui/browser-chunk-encoder.ts";
-export {
-  type AgUiChatUiChunkBrowserEncoder,
+  createAgUiBrowserEncoderState,
+  createAgUiBrowserFinalizeTracker,
+  type CreateAgUiBrowserFinalizeTrackerOptions,
+  createAgUiBrowserResponseStream,
+  type CreateAgUiBrowserResponseStreamInput,
   createAgUiChatUiChunkBrowserEncoder,
   type CreateAgUiChatUiChunkBrowserEncoderOptions,
   createAgUiChatUiTrackedBrowserResponse,
   type CreateAgUiChatUiTrackedBrowserResponseInput,
+  createAgUiRuntimeBrowserResponse,
+  type CreateAgUiRuntimeBrowserResponseInput,
+  createAgUiTrackedBrowserResponse,
+  type CreateAgUiTrackedBrowserResponseInput,
+  finalizeAgUiBrowserEvents,
+  mapRuntimeStreamEventToAgUiBrowserEvents,
+  normalizeAgUiBrowserRuntimeRequest,
+} from "./ag-ui/browser-aliases.ts";
+export {
+  type AgUiEncodedEvent,
+  type AgUiEncoderState,
+  type AgUiRunFinishedMetadata,
+  type AgUiRuntimeStreamEvent,
+  buildAgUiFinalizeResponse,
+  createAgUiEncoderState,
+  finalizeAgUiEvents,
+  mapRuntimeStreamEventToAgUiEvents,
+} from "./ag-ui/encoder.ts";
+export {
+  type AgUiChunkEncoder,
+  createAgUiChunkEncoder,
+  type CreateAgUiChunkEncoderOptions,
+} from "./ag-ui/chunk-encoder.ts";
+export {
+  type AgUiChatUiChunkEncoder,
+  createAgUiChatUiChunkEncoder,
+  type CreateAgUiChatUiChunkEncoderOptions,
+  createAgUiChatUiTrackedResponse,
+  type CreateAgUiChatUiTrackedResponseInput,
   getAgUiChatUiMessageChunkMetadata,
   getAgUiChatUiMessageMetadataFromChunk,
   getAgUiChatUiMessageUsageMetadata,
   normalizeChatUiMessageChunkToAgUiRuntimeEvent,
-} from "./ag-ui/chat-ui-chunk-browser-encoder.ts";
+} from "./ag-ui/chat-ui-chunk-encoder.ts";
 export {
   type AgUiRuntimeEventEncoder,
   createAgUiRuntimeEventEncoder,
@@ -785,26 +815,26 @@ export {
   type CreateAgUiRuntimeChatStreamEncoderOptions,
 } from "./ag-ui/runtime-chat-stream-encoder.ts";
 export {
-  type AgUiBrowserFinalizeTracker,
-  createAgUiBrowserFinalizeTracker,
-  type CreateAgUiBrowserFinalizeTrackerOptions,
-} from "./ag-ui/browser-finalize-tracker.ts";
+  type AgUiFinalizeTracker,
+  createAgUiFinalizeTracker,
+  type CreateAgUiFinalizeTrackerOptions,
+} from "./ag-ui/finalize-tracker.ts";
 export {
   type AgUiChunkEncoderBridge,
   createAgUiChunkEncoderBridge,
   type CreateAgUiChunkEncoderBridgeOptions,
 } from "./ag-ui/chunk-encoder-bridge.ts";
 export {
-  type AgUiBrowserResponseEncoder,
-  type AgUiBrowserResponseExecution,
-  type AgUiBrowserResponseRequestState,
-  createAgUiBrowserResponseStream,
-  type CreateAgUiBrowserResponseStreamInput,
-} from "./ag-ui/browser-response-stream.ts";
+  type AgUiResponseEncoder,
+  type AgUiResponseExecution,
+  type AgUiResponseRequestState,
+  createAgUiResponseStream,
+  type CreateAgUiResponseStreamInput,
+} from "./ag-ui/response-stream.ts";
 export {
-  createAgUiRuntimeBrowserResponse,
-  type CreateAgUiRuntimeBrowserResponseInput,
-} from "./ag-ui/runtime-browser-response.ts";
+  createAgUiRuntimeResponse,
+  type CreateAgUiRuntimeResponseInput,
+} from "./ag-ui/runtime-response.ts";
 export {
   type ChatUiMessageStreamFinish,
   type ChatUiMessageStreamFinishPart,
@@ -818,9 +848,9 @@ export {
 } from "./streaming/tool-execution-data-event-bridge.ts";
 export { flattenSystemInstructions, withRuntimeToolInventory } from "./runtime/tool-inventory.ts";
 export {
-  createAgUiTrackedBrowserResponse,
-  type CreateAgUiTrackedBrowserResponseInput,
-} from "./ag-ui/tracked-browser-response.ts";
+  createAgUiTrackedResponse,
+  type CreateAgUiTrackedResponseInput,
+} from "./ag-ui/tracked-response.ts";
 export {
   type AgentRuntimeForkStepRunner,
   applyPartToStreamedStepState,

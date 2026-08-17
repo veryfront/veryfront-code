@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiBrowserChunkEncoder } from "./browser-chunk-encoder.ts";
+import { createAgUiChunkEncoder } from "./chunk-encoder.ts";
 
-describe("agent/ag-ui-browser-chunk-encoder", () => {
-  it("exposes its state as the browser response timing anchor", () => {
-    const encoder = createAgUiBrowserChunkEncoder({
+describe("agent/ag-ui-chunk-encoder", () => {
+  it("exposes its state as the response timing anchor", () => {
+    const encoder = createAgUiChunkEncoder({
       getRuntimeEvents: () => [],
       timing: { nowMs: null, epochMs: null },
     });
@@ -13,8 +13,8 @@ describe("agent/ag-ui-browser-chunk-encoder", () => {
     assertEquals(encoder.timingState, encoder.state);
   });
 
-  it("merges chunk metadata into the browser finalize response", () => {
-    const encoder = createAgUiBrowserChunkEncoder<{
+  it("merges chunk metadata into the finalize response", () => {
+    const encoder = createAgUiChunkEncoder<{
       id: string;
       usage?: { inputTokens?: number; outputTokens?: number };
       finishReason?: string;
@@ -65,7 +65,7 @@ describe("agent/ag-ui-browser-chunk-encoder", () => {
   });
 
   it("preserves runtime-event tool input enrichment through chunk mapping", () => {
-    const encoder = createAgUiBrowserChunkEncoder<{
+    const encoder = createAgUiChunkEncoder<{
       kind: "input" | "output";
       toolCallId: string;
       input?: unknown;

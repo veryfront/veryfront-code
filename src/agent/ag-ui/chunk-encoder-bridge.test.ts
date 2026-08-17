@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createAgUiChunkEncoderBridge } from "./chunk-encoder-bridge.ts";
 
 describe("agent/ag-ui-chunk-encoder-bridge", () => {
-  it("maps host chunks through runtime events into browser AG-UI events", () => {
+  it("maps host chunks through runtime events into AG-UI events", () => {
     const bridge = createAgUiChunkEncoderBridge<{
       id: string;
       text: string;
