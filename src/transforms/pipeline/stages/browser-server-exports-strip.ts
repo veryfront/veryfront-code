@@ -469,6 +469,8 @@ interface BindingSite {
   node: Node;
   /** Exported sites are part of the module's contract and are never removed. */
   exported: boolean;
+  /** Whether a `var` site was hoisted out of nested control flow. */
+  nested: boolean;
   /** Takes the site out of the tree, or `null` when the form has no safe cut. */
   remove: (() => void) | null;
 }
@@ -530,6 +532,7 @@ function moduleScopeBindingSites(
     declaration: Node,
     exported: boolean,
     detach: (() => void) | null,
+    nested = false,
   ): void => {
     for (const declarator of declaratorsOf(declaration)) {
       const names = declaratorBoundNames(declarator);
@@ -540,6 +543,7 @@ function moduleScopeBindingSites(
         references: declaratorReferences(declaration, declarator),
         node: declarator,
         exported,
+        nested,
         remove: detach === null ? null : () => {
           declaration.declarations = declaratorsOf(declaration).filter((candidate) =>
             candidate !== declarator
@@ -570,6 +574,7 @@ function moduleScopeBindingSites(
           references: freeReferencedIdentifiers(declaration),
           node: statement,
           exported,
+          nested: false,
           remove: exported ? null : () => removeStatement(statement),
         });
       }
@@ -585,6 +590,7 @@ function moduleScopeBindingSites(
           references: freeReferencedIdentifiers(declaration),
           node: statement,
           exported,
+          nested: false,
           remove: exported ? null : () => removeStatement(statement),
         });
       }
@@ -592,7 +598,12 @@ function moduleScopeBindingSites(
       addDeclarators(declaration, exported, exported ? null : () => removeStatement(statement));
     }
 
-    collectHoistedVarSites(declaration, stubs, addDeclarators);
+    collectHoistedVarSites(
+      declaration,
+      stubs,
+      (nestedDeclaration, nestedExported, detach) =>
+        addDeclarators(nestedDeclaration, nestedExported, detach, true),
+    );
   }
 
   return sites;
@@ -1673,17 +1684,17 @@ function evaluationIsInert(node: Node, helpers: ReadonlySet<string>): boolean {
  * - The declaration is already in the hooks' dependency closure by name. This
  *   is what the pass exists to drop: `const API_KEY = getEnv(…)` goes, impure
  *   initialiser and all.
- * - Everything it evaluates is in that closure too, so it is server-only code
- *   by construction however it is written. `switch (…) { case 1: var dead =
- *   createHash("md5") }` does run at module load, but the only binding it can
- *   pin is one this pass already owns — and if client code reads that binding
- *   as well, the client read roots it anyway.
+ * - A `var` hoisted out of nested control flow evaluates only that closure.
+ *   `switch (…) { case 1: var dead = createHash("md5") }` can otherwise pin a
+ *   server-only import even though nothing reads `dead`. This exception does
+ *   not apply to a direct top-level initializer, whose side effect is part of
+ *   the module even when it happens to call the same import as the hook.
  * - Its declaration does not run at all, so it is not surviving code.
  *
- * Anything else evaluates something outside the closure when the module loads,
- * and roots what it reads like any other side-effectful top-level statement.
- * That is what keeps `const clientInit = bootClientAnalytics()` — and the
- * helper it calls — in the browser artifact.
+ * Anything else roots what it reads like any other side-effectful top-level
+ * statement. That is what keeps `const clientInit = bootClientAnalytics()` —
+ * and the helper it calls — in the browser artifact, including when the hook
+ * calls the same helper or import for a different purpose.
  */
 function isElidableFromRoots(
   site: BindingSite,
@@ -1691,7 +1702,7 @@ function isElidableFromRoots(
   helpers: ReadonlySet<string>,
 ): boolean {
   if (site.names.some((name) => hookClosure.has(name))) return true;
-  if ([...site.references].every((name) => hookClosure.has(name))) return true;
+  if (site.nested && [...site.references].every((name) => hookClosure.has(name))) return true;
   return evaluationIsInert(site.node, helpers);
 }
 
@@ -1740,16 +1751,17 @@ function serverTaintedSites(
  * whatever it references. The edges are genuine reads. Anything the roots
  * cannot reach is dead.
  *
- * Elision and removal are scoped differently on purpose. Every declaration that
- * does not run, or that runs only inside the hooks' dependency closure, is
- * elided from the roots, because a dead declaration must not be able to pin a
- * secret: a private helper nothing calls used to be treated as unconditionally
- * live and kept `const KEY = getEnv(…)` and its `node:crypto` import in the
- * browser artifact. Removal stays scoped to the closure, so an unrelated
- * `const clientInit = bootClientAnalytics()` — unreachable, but never part of
- * the hook graph — keeps its side effect. Inside the closure the pass is
- * exhaustive: `const API_KEY = getEnv(...)` read only by `getServerData` goes,
- * which is what lets `dropUnusedImportBindings` drop the import next.
+ * Elision and removal are scoped differently on purpose. Declarations that do
+ * not run, plus nested hoisted `var` sites that evaluate only the hooks'
+ * dependency closure, are elided from the roots because a dead declaration
+ * must not be able to pin a secret: a private helper nothing calls used to be
+ * treated as unconditionally live and kept `const KEY = getEnv(…)` and its
+ * `node:crypto` import in the browser artifact. Removal stays scoped to the
+ * closure, so an unrelated direct `const clientInit = bootClientAnalytics()`
+ * keeps its side effect even if the hook calls the same binding. Inside the
+ * closure the pass is exhaustive: `const API_KEY = getEnv(...)` read only by
+ * `getServerData` goes, which is what lets `dropUnusedImportBindings` drop the
+ * import next.
  *
  * Every binding name a removal takes out is added to `removedNames`, so the
  * caller can verify — fail closed — that none of them survives in the final
@@ -2028,7 +2040,17 @@ export async function stripServerOnlyExports(
   const sites = moduleScopeBindingSites(body, stubs, (statement) => {
     removableStatements.add(statement);
   });
-  const hookClosure = reachableNames(hookSeed, sites);
+  const moduleBindings = new Set(sites.flatMap((site) => site.names));
+  for (const statement of body) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const binding of importedBindings(statement)) moduleBindings.add(binding);
+  }
+  // Free globals are not part of the hook's removable closure. If both the
+  // hook and an unrelated client initializer call `console`, for example,
+  // their shared global name must not make the client side effect server-tainted.
+  const hookClosure = new Set(
+    [...reachableNames(hookSeed, sites)].filter((name) => moduleBindings.has(name)),
+  );
   const blocked = dropUnreachableModuleScopeBindings(
     body,
     sites,
