@@ -15,6 +15,12 @@ const ReflectApply = Reflect.apply;
 const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const SOURCE_MAP_SUFFIX =
   /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
+export const COMPILE_SOURCE_MAP_DIRECTIVE_METADATA = "compileSourceMapDirective";
+
+function trailingSourceMapDirective(code: string): string | undefined {
+  const match = SOURCE_MAP_SUFFIX.exec(code);
+  return match?.[0].slice((match[1] ?? "").length).trimEnd();
+}
 
 function appendBeforeSourceMap(code: string, addition: string): string {
   const match = SOURCE_MAP_SUFFIX.exec(code);
@@ -91,6 +97,12 @@ export const compilePlugin: TransformPlugin = {
       // TypeScript, so the output is plain JavaScript the module lexer can
       // anchor to. CSS output is not a module and is left alone.
       let code = loader === "css" ? result.code : await upgradeImportAssertions(result.code);
+      const sourceMapDirective = trailingSourceMapDirective(code);
+      if (sourceMapDirective) {
+        ctx.metadata.set(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, sourceMapDirective);
+      } else {
+        ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
+      }
 
       const isMdx = ctx.filePath.endsWith(".mdx");
       if (

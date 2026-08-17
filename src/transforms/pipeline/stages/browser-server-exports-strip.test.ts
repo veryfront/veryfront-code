@@ -8,7 +8,8 @@ import {
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
 import { compilePlugin } from "./compile.ts";
-import type { TransformContext } from "../types.ts";
+import { runPipeline } from "../index.ts";
+import { type TransformContext, TransformStage } from "../types.ts";
 
 function assertNotIncludes(haystack: string, needle: string): void {
   assertEquals(haystack.includes(needle), false, `expected not to find ${needle} in:\n${haystack}`);
@@ -1028,7 +1029,7 @@ describe("browser-server-exports-strip", () => {
 
   describe("plugin", () => {
     function ctx(code: string, target: "browser" | "ssr"): TransformContext {
-      return { code, target, filePath: "pages/test.tsx" } as TransformContext;
+      return { code, target, filePath: "pages/test.tsx", metadata: new Map() } as TransformContext;
     }
 
     it("drops the server-only import chain from the client artifact", async () => {
@@ -1106,6 +1107,51 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
       assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
       assertStringIncludes(result, "export { MDXLayout };");
+    });
+
+    it("removes the compile map after an intermediate plugin appends code", async () => {
+      const source = [
+        `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
+        `export async function getServerData() { return { props: { key: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-intermediate-plugin", dev: true, ssr: false },
+        {
+          plugins: [{
+            name: "append-after-compile",
+            stage: TransformStage.COMPILE + 0.5,
+            transform: (ctx) => `${ctx.code}\nexport const APPENDED = true;`,
+          }],
+        },
+      );
+
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result.code, "export const APPENDED = true;");
+    });
+
+    it("keeps the compile map when no server hook is rewritten", async () => {
+      const result = await runPipeline(
+        `export default function Page() { return null; }`,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-no-server-hook", dev: true, ssr: false },
+        {
+          plugins: [{
+            name: "append-after-compile",
+            stage: TransformStage.COMPILE + 0.5,
+            transform: (ctx) => `${ctx.code}\nexport const APPENDED = true;`,
+          }],
+        },
+      );
+
+      assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result.code, "export const APPENDED = true;");
     });
 
     it("removes an external source map reference after stripping", async () => {
