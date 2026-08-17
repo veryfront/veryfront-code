@@ -453,7 +453,7 @@ export class DiskCacheBackend implements CacheBackend {
   }
 
   private async pruneExpiredEntries(): Promise<void> {
-    const { opendir, unlink } = await fsPromises;
+    const { link, opendir, rename, unlink } = await fsPromises;
     const directory = await opendir(this.dir);
     let scanned = 0;
     let eligible = 0;
@@ -468,13 +468,36 @@ export class DiskCacheBackend implements CacheBackend {
       processed++;
 
       const filePath = join(this.dir, entry.name);
+      let claimPath: string | undefined;
       try {
         const envelope = await this.readFramedFile(filePath, undefined, undefined, false);
         if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
-          await unlink(filePath);
+          claimPath = `${filePath}.prune.${crypto.randomUUID()}`;
+          await rename(filePath, claimPath);
+
+          // The pathname may have been replaced after the first read. Re-read
+          // the atomically claimed inode so pruning never deletes a fresh
+          // cross-process write that won that race.
+          const claimed = await this.readFramedFile(claimPath, undefined, undefined, false);
+          if (claimed.expiresAt !== undefined && Date.now() >= claimed.expiresAt) {
+            await unlink(claimPath);
+            claimPath = undefined;
+          }
         }
       } catch {
         // Cache files are disposable and may be replaced by another process.
+      } finally {
+        if (claimPath !== undefined) {
+          let discardClaim = false;
+          try {
+            await link(claimPath, filePath);
+            discardClaim = true;
+          } catch (error) {
+            // A newer writer already owns the pathname, so its entry wins.
+            if ((error as NodeJS.ErrnoException).code === "EEXIST") discardClaim = true;
+          }
+          if (discardClaim) await unlink(claimPath).catch(() => {});
+        }
       }
     }
 
@@ -595,6 +618,8 @@ export class DiskCacheBackend implements CacheBackend {
       const { writeFile, rename, unlink } = await fsPromises;
       try {
         await writeFile(tmpPath, content, { flag: "wx", mode: 0o600 });
+        // This atomic replacement is also the commit point used by expiry
+        // pruning. The pruner claims and revalidates whichever entry wins it.
         await rename(tmpPath, filePath);
       } catch (error) {
         await unlink(tmpPath).catch((cleanupError) => {

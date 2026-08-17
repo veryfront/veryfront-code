@@ -167,8 +167,8 @@ export function createDistributedCacheAccessor(
     let state = states.get(scopeKey);
     if (!state) {
       if (states.size >= MAX_DISTRIBUTED_CACHE_SCOPES) {
-        const settledScope = [...states].find(([, candidate]) => !candidate.inflight)?.[0];
-        if (settledScope !== undefined) states.delete(settledScope);
+        const leastRecentlyUsedScope = states.keys().next().value as string | undefined;
+        if (leastRecentlyUsedScope !== undefined) states.delete(leastRecentlyUsedScope);
       }
       state = { backend: undefined, lastFailureTime: 0, inflight: null };
       states.set(scopeKey, state);

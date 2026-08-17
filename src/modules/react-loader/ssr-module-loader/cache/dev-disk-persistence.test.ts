@@ -7,6 +7,7 @@ import {
   mkdir,
   readTextFile,
   remove,
+  setEnv,
   writeFile,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
@@ -16,6 +17,7 @@ import { CacheBackends } from "#veryfront/cache/backend.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
+  DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
   LOCAL_DEV_SSR_MODULE_TTL_SEC,
 } from "../constants.ts";
 
@@ -44,22 +46,26 @@ describe("SSR module distributed cache on a local dev server", () => {
     useLocalDevEnvironment();
     const cacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-" });
 
-    await runWithCacheDir(cacheDir, async () => {
-      const bundlePath = join(cacheDir, "veryfront-http-bundle", "react.mjs");
-      const code = `import "file://${bundlePath}";\nexport default 1;\n`;
+    try {
+      await runWithCacheDir(cacheDir, async () => {
+        const bundlePath = join(cacheDir, "veryfront-http-bundle", "react.mjs");
+        const code = `import "file://${bundlePath}";\nexport default 1;\n`;
 
-      const firstRun = await import("./redis.ts?dev-disk-first-run");
-      assertEquals(await firstRun.initializeSSRDistributedCache(), true);
-      assertEquals(firstRun.isSSRDistributedCacheEnabled(), true);
-      assertEquals(await firstRun.getFromRedis("dev-disk-key"), null);
-      await firstRun.setInRedis("dev-disk-key", code);
+        const firstRun = await import("./redis.ts?dev-disk-first-run");
+        assertEquals(await firstRun.initializeSSRDistributedCache(), true);
+        assertEquals(firstRun.isSSRDistributedCacheEnabled(), true);
+        assertEquals(await firstRun.getFromRedis("dev-disk-key"), null);
+        await firstRun.setInRedis("dev-disk-key", code);
 
-      // A fresh module instance holds no memoized backend and no cached entry,
-      // so anything it returns came back from disk.
-      const afterRestart = await import("./redis.ts?dev-disk-after-restart");
-      assertEquals(await afterRestart.initializeSSRDistributedCache(), true);
-      assertEquals(await afterRestart.getFromRedis("dev-disk-key"), code);
-    });
+        // A fresh module instance holds no memoized backend and no cached entry,
+        // so anything it returns came back from disk.
+        const afterRestart = await import("./redis.ts?dev-disk-after-restart");
+        assertEquals(await afterRestart.initializeSSRDistributedCache(), true);
+        assertEquals(await afterRestart.getFromRedis("dev-disk-key"), code);
+      });
+    } finally {
+      await remove(cacheDir, { recursive: true });
+    }
   });
 
   it("isolates automatic disk caches by project cache directory", async () => {
@@ -163,14 +169,18 @@ describe("SSR module distributed cache on a local dev server", () => {
     const blockedRoot = join(tempDir, "blocked");
     await writeFile(blockedRoot, new Uint8Array([0]));
 
-    await runWithCacheDir(join(blockedRoot, "cache"), async () => {
-      const cache = await import("./redis.ts?dev-disk-unwritable");
-      await cache.initializeSSRDistributedCache();
+    try {
+      await runWithCacheDir(join(blockedRoot, "cache"), async () => {
+        const cache = await import("./redis.ts?dev-disk-unwritable");
+        await cache.initializeSSRDistributedCache();
 
-      // A failed write must never surface to the render path.
-      await cache.setInRedis("dev-disk-key", "export default 1;");
-      assertEquals(await cache.getFromRedis("dev-disk-key"), null);
-    });
+        // A failed write must never surface to the render path.
+        await cache.setInRedis("dev-disk-key", "export default 1;");
+        assertEquals(await cache.getFromRedis("dev-disk-key"), null);
+      });
+    } finally {
+      await remove(tempDir, { recursive: true });
+    }
   });
 
   it("keeps entries long enough to outlive a restart", async () => {
@@ -200,9 +210,99 @@ describe("SSR module distributed cache on a local dev server", () => {
     }
   });
 
+  it("uses the local-dev TTL for explicit disk configurations", async () => {
+    useLocalDevEnvironment();
+    setEnv("VF_CACHE_BACKEND", "disk");
+    const writes: Array<number | undefined> = [];
+    const original = CacheBackends.ssrModule;
+    CacheBackends.ssrModule = () =>
+      Promise.resolve({
+        type: "disk" as const,
+        get: () => Promise.resolve(null),
+        set: (_key: string, _value: string, ttlSeconds?: number) => {
+          writes.push(ttlSeconds);
+          return Promise.resolve();
+        },
+        del: () => Promise.resolve(),
+      });
+
+    try {
+      const cache = await import("./redis.ts?configured-dev-disk-ttl");
+      await cache.setInRedis("configured-dev-disk-key", "export default 1;");
+      assertEquals(writes, [LOCAL_DEV_SSR_MODULE_TTL_SEC]);
+
+      writes.length = 0;
+      useLocalDevEnvironment();
+      setEnv("VF_DISK_CACHE_DIR", "configured-cache-dir");
+      const configuredDirectoryCache = await import("./redis.ts?configured-dev-disk-dir-ttl");
+      await configuredDirectoryCache.setInRedis(
+        "configured-dev-disk-dir-key",
+        "export default 1;",
+      );
+      assertEquals(writes, [LOCAL_DEV_SSR_MODULE_TTL_SEC]);
+    } finally {
+      CacheBackends.ssrModule = original;
+    }
+  });
+
+  it("keeps the production TTL for an explicitly selected production disk backend", async () => {
+    useLocalDevEnvironment();
+    setEnv("NODE_ENV", "production");
+    setEnv("VF_CACHE_BACKEND", "disk");
+    const writes: Array<number | undefined> = [];
+    const original = CacheBackends.ssrModule;
+    CacheBackends.ssrModule = () =>
+      Promise.resolve({
+        type: "disk" as const,
+        get: () => Promise.resolve(null),
+        set: (_key: string, _value: string, ttlSeconds?: number) => {
+          writes.push(ttlSeconds);
+          return Promise.resolve();
+        },
+        del: () => Promise.resolve(),
+      });
+
+    try {
+      const cache = await import("./redis.ts?configured-production-disk-ttl");
+      await cache.setInRedis("configured-production-disk-key", "export default 1;");
+      assertEquals(writes, [DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC]);
+    } finally {
+      CacheBackends.ssrModule = original;
+    }
+  });
+
+  it("keeps the preview TTL when Redis wins over a configured disk directory", async () => {
+    useLocalDevEnvironment();
+    setEnv("VF_DISK_CACHE_DIR", "configured-cache-dir");
+    setEnv("REDIS_URL", "redis://localhost:6379");
+    const writes: Array<number | undefined> = [];
+    const original = CacheBackends.ssrModule;
+    CacheBackends.ssrModule = () =>
+      Promise.resolve({
+        type: "redis" as const,
+        get: () => Promise.resolve(null),
+        set: (_key: string, _value: string, ttlSeconds?: number) => {
+          writes.push(ttlSeconds);
+          return Promise.resolve();
+        },
+        del: () => Promise.resolve(),
+      });
+
+    try {
+      const cache = await import("./redis.ts?configured-disk-dir-redis-ttl");
+      await cache.setInRedis(
+        "configured-disk-dir-redis-key",
+        "export default 1;",
+        { isProduction: false },
+      );
+      assertEquals(writes, [DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC]);
+    } finally {
+      CacheBackends.ssrModule = original;
+    }
+  });
+
   it("stays disabled for a production runtime without a distributed cache", async () => {
     useLocalDevEnvironment();
-    const { setEnv } = await import("#veryfront/testing/deno-compat.ts");
     setEnv("NODE_ENV", "production");
 
     const cache = await import("./redis.ts?dev-disk-production");
