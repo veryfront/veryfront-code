@@ -861,6 +861,36 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
+    it("keeps unrelated top-level side effects that share a global with the hook", async () => {
+      const code = [
+        `const clientInit = console.log("client");`,
+        `export async function getServerData() { console.log("server"); return { props: {} }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "clientInit");
+      assertStringIncludes(result, 'console.log("client")');
+      assertNotIncludes(result, 'console.log("server")');
+    });
+
+    it("keeps unrelated top-level side effects that share an import with the hook", async () => {
+      const code = [
+        `import { report } from "./analytics.ts";`,
+        `const clientInit = report("client");`,
+        `export async function getServerData() { report("server"); return { props: {} }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "clientInit");
+      assertStringIncludes(result, 'report("client")');
+      assertNotIncludes(result, 'report("server")');
+      assertStringIncludes(result, 'from "./analytics.ts"');
+    });
+
     it("keeps unrelated co-declared client initializers while dropping hook-only bindings", async () => {
       const code = [
         `const secret = serverOnly(), boot = bootClient();`,
