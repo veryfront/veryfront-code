@@ -1,4 +1,5 @@
 import { getAccessToken } from "./token-store.ts";
+import { htmlToPlainText } from "./plain-text.ts";
 
 const GRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -229,22 +230,5 @@ export function getChatDisplayName(chat: TeamsChat): string {
 
 export function getPlainTextContent(message: ChatMessage): string {
   if (message.body.contentType === "text") return message.body.content;
-
-  // Strip tags to a fixed point so overlapping fragments like
-  // "<scr<script>ipt>" cannot survive a single pass; decode &amp; last so
-  // sequences like "&amp;lt;" unescape exactly once.
-  let text = message.body.content;
-  let previous: string;
-  do {
-    previous = text;
-    text = text.replace(/<[^>]*>/g, "");
-  } while (text !== previous);
-
-  return text
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .trim();
+  return htmlToPlainText(message.body.content);
 }
