@@ -1074,6 +1074,71 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, "const secret =");
     });
 
+    it("keeps an import read by a TypeScript parameter property default", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default class Page {`,
+        `  constructor(private value = loadSecret("client")) {}`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, 'loadSecret("client")');
+      assertNotIncludes(result, 'loadSecret("server")');
+    });
+
+    it("binds the name introduced by a TypeScript parameter property", async () => {
+      const code = [
+        `import { value } from "../server/secrets.ts";`,
+        `export async function getServerData() { return value; }`,
+        `export default class Page {`,
+        `  constructor(private value = "client") { console.log(value); }`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, 'value = "client"');
+      assertStringIncludes(result, "console.log(value)");
+    });
+
+    it("does not hoist a static-block var into the enclosing function scope", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default function Page() {`,
+        `  class ClientValue { static { var loadSecret = "local"; } }`,
+        `  return loadSecret("client") + ClientValue;`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, 'loadSecret("client")');
+      assertNotIncludes(result, 'loadSecret("server")');
+    });
+
+    it("keeps static-block var declarations scoped to that block", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default class Page {`,
+        `  static { console.log(loadSecret); var loadSecret = "local"; }`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, 'var loadSecret = "local"');
+      assertNotIncludes(result, 'loadSecret("server")');
+    });
+
     // A pattern default is runtime code: a helper it references is part of the
     // dropped declarator's closure and is pruned with it once nothing else
     // reads it.

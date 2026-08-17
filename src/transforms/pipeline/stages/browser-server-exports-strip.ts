@@ -176,6 +176,11 @@ function patternBindingIdentifiers(pattern: Node): Node[] {
   const ids: Node[] = [];
 
   const collect = (node: Node): void => {
+    if (node.type === "TSParameterProperty") {
+      if (isNode(node.parameter)) collect(node.parameter);
+      return;
+    }
+
     if (node.type === "Identifier") {
       ids.push(node);
       return;
@@ -441,7 +446,7 @@ function moduleScopeBindingNames(body: Node[]): Set<string> {
 
 /** Whether a name is bound in the current lexical stack. */
 interface LexicalScope {
-  kind: "function" | "block";
+  kind: "var" | "block";
   names: Set<string>;
 }
 
@@ -458,10 +463,10 @@ function isLexicallyBound(name: string, scopes: LexicalScope[]): boolean {
  */
 function freeReferencedIdentifiers(root: Node): Set<string> {
   const free = new Set<string>();
-  const rootScope: LexicalScope = { kind: "function", names: new Set() };
+  const rootScope: LexicalScope = { kind: "var", names: new Set() };
 
-  const currentFunctionScope = (scopes: LexicalScope[]): LexicalScope =>
-    scopes.find((scope) => scope.kind === "function") ?? scopes[0] ?? rootScope;
+  const currentVarScope = (scopes: LexicalScope[]): LexicalScope =>
+    scopes.find((scope) => scope.kind === "var") ?? scopes[0] ?? rootScope;
 
   const bindPatternNames = (scope: LexicalScope, value: unknown): void => {
     if (!isNode(value)) return;
@@ -492,7 +497,8 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       if (
         child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
         child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||
-        child.type === "ClassMethod"
+        child.type === "ClassMethod" || child.type === "ClassDeclaration" ||
+        child.type === "ClassExpression" || child.type === "StaticBlock"
       ) {
         continue;
       }
@@ -514,6 +520,11 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
   };
 
   const visitPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
+    if (pattern.type === "TSParameterProperty") {
+      if (isNode(pattern.parameter)) visitPatternRuntime(pattern.parameter, scopes);
+      return;
+    }
+
     if (pattern.type === "Identifier") return;
 
     if (pattern.type === "AssignmentPattern") {
@@ -555,7 +566,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
   };
 
   const bindVariableDeclaration = (node: Node, scopes: LexicalScope[]): void => {
-    const targetScope = node.kind === "var" ? currentFunctionScope(scopes) : scopes[0] ?? rootScope;
+    const targetScope = node.kind === "var" ? currentVarScope(scopes) : scopes[0] ?? rootScope;
     for (
       const declarator of Array.isArray(node.declarations) ? node.declarations : []
     ) {
@@ -575,7 +586,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
   };
 
   const visitFunction = (node: Node, scopes: LexicalScope[]): void => {
-    const functionScope: LexicalScope = { kind: "function", names: new Set() };
+    const functionScope: LexicalScope = { kind: "var", names: new Set() };
     if (node.type === "FunctionDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
     bindPatternNames(functionScope, node.id);
 
@@ -663,6 +674,16 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     if (node.type === "Program" || node.type === "BlockStatement") {
       const scope: LexicalScope = { kind: "block", names: new Set() };
       bindDirectDeclarations(scope, node);
+      for (const statement of Array.isArray(node.body) ? node.body : []) {
+        if (isNode(statement)) visit(statement, [scope, ...scopes]);
+      }
+      return;
+    }
+
+    if (node.type === "StaticBlock") {
+      const scope: LexicalScope = { kind: "var", names: new Set() };
+      bindDirectDeclarations(scope, node);
+      bindNestedVarDeclarations(scope, node);
       for (const statement of Array.isArray(node.body) ? node.body : []) {
         if (isNode(statement)) visit(statement, [scope, ...scopes]);
       }
