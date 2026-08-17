@@ -919,6 +919,40 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "getEnv");
     });
 
+    it("drops a destructured server value when client code only shadows its binding", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { apiKey } = getEnv("SERVER_SECRET_CFG");`,
+        `export async function getServerData() { return { props: { apiKey } }; }`,
+        `export default function Page() { const apiKey = "public"; return apiKey; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'apiKey = "public"');
+      assertNotIncludes(result, "SERVER_SECRET_CFG");
+      assertNotIncludes(result, "getEnv");
+      assertNotIncludes(result, '"veryfront"');
+    });
+
+    it("drops a hook-only chain when client code shadows an intermediate helper", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { raw } = getEnv("SERVER_SECRET_CFG");`,
+        `function formatSecret() { return raw.trim(); }`,
+        `export async function getServerData() { return { props: { value: formatSecret() } }; }`,
+        `export default function Page() { const formatSecret = () => "public"; return formatSecret(); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'formatSecret = () => "public"');
+      assertNotIncludes(result, "SERVER_SECRET_CFG");
+      assertNotIncludes(result, "raw.trim");
+      assertNotIncludes(result, "getEnv");
+      assertNotIncludes(result, '"veryfront"');
+    });
+
     // A pattern default is runtime code: a helper it references is part of the
     // dropped declarator's closure and is pruned with it once nothing else
     // reads it.
