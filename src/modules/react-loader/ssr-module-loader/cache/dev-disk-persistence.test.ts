@@ -79,9 +79,10 @@ describe("SSR module distributed cache on a local dev server", () => {
       await writeTextFile(dependencyPath, `export const message = "before";`);
 
       await runWithCacheDir(cacheDir, async () => {
-        const { denoAdapter } = await import(
-          "#veryfront/platform/adapters/runtime/deno/index.ts"
-        );
+        // The loader reads project files through the adapter, so it must be the
+        // one for the runtime this test is running on, not always Deno's.
+        const { runtime } = await import("#veryfront/platform");
+        const adapter = await runtime.get();
         const { SSRModuleLoader } = await import("../loader.ts?dev-disk-parent-restart");
         const memory = await import("./memory.ts");
         const persistent = await import("./redis.ts");
@@ -92,7 +93,7 @@ describe("SSR module distributed cache on a local dev server", () => {
             projectDir,
             projectId: "dev-disk-parent-restart",
             contentSourceId: "preview-main",
-            adapter: denoAdapter,
+            adapter,
             dev: true,
           });
 
