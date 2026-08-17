@@ -28,6 +28,10 @@ const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setHas = Set.prototype.has;
 const textEncoderEncode = TextEncoder.prototype.encode;
+const typedArrayByteLengthGetter = reflectGetOwnPropertyDescriptor(
+  reflectGetPrototypeOf(Uint8Array.prototype)!,
+  "byteLength",
+)!.get!;
 
 export type BoundedJsonValue =
   | string
@@ -99,16 +103,22 @@ function invalidJsonSnapshot(
 
 function utf8LengthWithin(value: string, limit: number): number | undefined {
   if (value.length > limit) return undefined;
-  const byteLength = (reflectApply(textEncoderEncode, JSON_UTF8_ENCODER, [value]) as Uint8Array)
-    .byteLength;
+  const byteLength = encodedByteLength(value);
   return byteLength <= limit ? byteLength : undefined;
 }
 
 function serializedByteLength(value: string | number | boolean | null): number | undefined {
   const serialized = jsonStringify(value);
-  return serialized === undefined
-    ? undefined
-    : (reflectApply(textEncoderEncode, JSON_UTF8_ENCODER, [serialized]) as Uint8Array).byteLength;
+  return serialized === undefined ? undefined : encodedByteLength(serialized);
+}
+
+function encodedByteLength(value: string): number {
+  const encoded = reflectApply(
+    textEncoderEncode,
+    JSON_UTF8_ENCODER,
+    [value],
+  ) as Uint8Array;
+  return reflectApply(typedArrayByteLengthGetter, encoded, []) as number;
 }
 
 /**

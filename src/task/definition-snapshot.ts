@@ -122,8 +122,9 @@ function optionalRecord(
 
 function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
   if (typeof value !== "object" || value === null) return value;
-  for (const nested of arrayIsArray(value) ? value : objectValues(value)) {
-    freezeJsonSnapshot(nested);
+  const nestedValues = arrayIsArray(value) ? value : objectValues(value);
+  for (let index = 0; index < nestedValues.length; index++) {
+    freezeJsonSnapshot(nestedValues[index]!);
   }
   objectFreeze(value);
   return value;

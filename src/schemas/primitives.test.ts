@@ -130,6 +130,11 @@ describe("primitive schemas", () => {
       const originalSetAdd = Set.prototype.add;
       const originalSetDelete = Set.prototype.delete;
       const originalSetHas = Set.prototype.has;
+      const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+      const originalByteLengthDescriptor = Object.getOwnPropertyDescriptor(
+        typedArrayPrototype,
+        "byteLength",
+      );
       let poisonCalls = 0;
       const poison = (): never => {
         poisonCalls += 1;
@@ -138,6 +143,10 @@ describe("primitive schemas", () => {
       let result: ReturnType<typeof snapshotBoundedJsonValue> | undefined;
 
       try {
+        originalDefineProperty(typedArrayPrototype, "byteLength", {
+          ...originalByteLengthDescriptor,
+          get: poison,
+        });
         Array.isArray = poison as unknown as typeof Array.isArray;
         Number.isFinite = poison as typeof Number.isFinite;
         Number.isSafeInteger = poison as typeof Number.isSafeInteger;
@@ -169,6 +178,13 @@ describe("primitive schemas", () => {
         Set.prototype.add = originalSetAdd;
         Set.prototype.delete = originalSetDelete;
         Set.prototype.has = originalSetHas;
+        if (originalByteLengthDescriptor) {
+          originalDefineProperty(
+            typedArrayPrototype,
+            "byteLength",
+            originalByteLengthDescriptor,
+          );
+        }
       }
 
       assertEquals(poisonCalls, 0);

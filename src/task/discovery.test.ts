@@ -412,6 +412,44 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(Object.isFrozen(inputSchema?.properties), true);
     });
 
+    it("deeply freezes JSON schemas without ambient array iteration", () => {
+      const originalIterator = Array.prototype[Symbol.iterator];
+      const sourceInputSchema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      let inputSchema: TaskDefinition["inputSchema"];
+
+      try {
+        Array.prototype[Symbol.iterator] = function (this: unknown[]) {
+          if (
+            this.length === 2 && this[0] === "object" &&
+            typeof this[1] === "object"
+          ) {
+            return Reflect.apply(originalIterator, [], []);
+          }
+          return Reflect.apply(originalIterator, this, []);
+        };
+        inputSchema = taskHandler.register(
+          "stable-json-schema-iteration",
+          { run() {}, inputSchema: sourceInputSchema },
+          "tasks/stable-json-schema-iteration.ts",
+          "tasks",
+        ).inputSchema;
+      } finally {
+        Array.prototype[Symbol.iterator] = originalIterator;
+      }
+
+      assertEquals(Object.isFrozen(inputSchema), true);
+      assertEquals(Object.isFrozen(inputSchema?.properties), true);
+      assertEquals(
+        Object.isFrozen(
+          (inputSchema?.properties as { name: { type: string } }).name,
+        ),
+        true,
+      );
+    });
+
     it("rejects non-task values", () => {
       assertEquals(isTaskDefinition(null), false);
       assertEquals(isTaskDefinition(undefined), false);
