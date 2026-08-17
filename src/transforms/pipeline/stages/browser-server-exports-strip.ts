@@ -1712,20 +1712,26 @@ function isNamePosition(parent: Node, key: string): boolean {
     key === "label" || key === "params";
 }
 
+/** Globals the helper's semantics rest on, either of which can replace it. */
+const INTRINSIC_NAMES = new Set(["Object", "globalThis"]);
+
 /**
- * Whether the module reads the `Object` intrinsic as a value instead of only
- * reaching through it with a member access.
+ * Whether the module reads `Object` or `globalThis` as a value instead of only
+ * reaching through one with a member access.
  *
  * `writesObjectDefineProperty` only sees assignment-shaped writes, so a module
- * that hands the intrinsic to a callee replaces the helper's callee without
- * ever naming `Object.defineProperty` as a target:
+ * that hands either global to a callee replaces the helper's callee without
+ * ever naming a target it can recognise:
  * `Object.defineProperty(Object, "defineProperty", { value: recordAndReturn })`
- * redefines it through a call, and `const alias = Object; alias.defineProperty
- * = recordAndReturn` redefines it through a second binding. Anything holding
- * the intrinsic can rewrite `defineProperty` on it, so every value read fails
- * closed and the module's apparent registrations stay ordinary user code.
+ * redefines the method through a call, `const alias = Object;
+ * alias.defineProperty = recordAndReturn` redefines it through a second
+ * binding, and `Object.defineProperty(globalThis, "Object", { value:
+ * replacement })` and `const scope = globalThis; scope.Object = replacement`
+ * replace the whole constructor the same two ways. Anything holding either
+ * global can rewrite what the helper calls, so every value read fails closed
+ * and the module's apparent registrations stay ordinary user code.
  */
-function readsObjectAsValue(body: Node[]): boolean {
+function readsGlobalAsValue(body: Node[]): boolean {
   const reads = (node: Node): boolean => {
     if (node.type.startsWith("TS") && !TS_EXPRESSION_TYPES.has(node.type)) return false;
 
@@ -1734,7 +1740,7 @@ function readsObjectAsValue(body: Node[]): boolean {
 
       for (const entry of Array.isArray(value) ? value : [value]) {
         if (!isNode(entry)) continue;
-        if (entry.type === "Identifier" && entry.name === "Object") {
+        if (entry.type === "Identifier" && INTRINSIC_NAMES.has(entry.name as string)) {
           if (!isNamePosition(node, key)) return true;
           continue;
         }
@@ -1822,7 +1828,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   const hoisted = hoistedVarNames(body);
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
     hoisted.has("Object") || importsRuntimeObject || reassigned.has("Object") ||
-    writesObjectDefineProperty(body) || readsObjectAsValue(body);
+    writesObjectDefineProperty(body) || readsGlobalAsValue(body);
   if (objectIsModuleLocal) return new Set<string>();
 
   // A `var` may be declared more than once, and only the initialiser that ran
