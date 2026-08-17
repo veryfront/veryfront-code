@@ -2369,6 +2369,106 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("logs a warning when a signed control-plane branch binding is rejected", async () => {
+      // Regression for the VERYFRONT-STUDIO-60 diagnosis gap: the proxy turned
+      // ControlPlaneBranchBindingError into a 400 whose body only the calling
+      // control plane sees, leaving no server-side trace of the rejection.
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      let handler: ReturnType<typeof createHandler> | undefined;
+      try {
+        // An environment runtime target paired with a branch agent source is
+        // un-signable: validation rejects it before any branch binding exists.
+        const body = JSON.stringify({
+          run: {
+            agentServiceId: "veryfront-platform-agent",
+            agentId: "assistant-1",
+            conversationId: "10000000-1000-4000-8000-100000000001",
+            runId: "run_1",
+            messageId: "10000000-1000-4000-8000-100000000002",
+            inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+            requestedByUserId: "10000000-1000-4000-8000-100000000004",
+            project: {
+              projectId: "10000000-1000-4000-8000-100000000005",
+              projectSlug: "protected-project",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: null,
+            },
+          },
+          agentSource: { type: "branch", branch: "main" },
+        });
+        const { jws, publicKeyPem } = await mintControlPlaneJws({ body });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const { logger, entries } = createRecordingLogger();
+        handler = createHandler(port, "", logger);
+
+        const ctx = await handler.processRequest(
+          new Request(
+            "http://protected.example.com/api/control-plane/runs/run_1/stream",
+            {
+              method: "POST",
+              headers: {
+                host: "protected.example.com",
+                "x-token": "project-agent-token",
+                "x-veryfront-control-plane-jws": jws,
+              },
+              body,
+            },
+          ),
+        );
+
+        assertEquals(ctx.error?.status, 400);
+        assertEquals(ctx.error?.message, "Invalid control-plane environment source");
+
+        const rejectionWarnings = entries.filter((entry) =>
+          entry.level === "warn" &&
+          entry.message === "Control-plane branch binding rejected"
+        );
+        assertEquals(rejectionWarnings.length, 1);
+        assertEquals(rejectionWarnings[0]?.extra, {
+          status: 400,
+          message: "Invalid control-plane environment source",
+          projectSlug: "protected-project",
+          projectId: "proj-123",
+          host: "protected.example.com",
+          pathname: "/api/control-plane/runs/run_1/stream",
+        });
+
+        await handler.close();
+        handler = undefined;
+      } finally {
+        await handler?.close();
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
     it("allows access to protected custom domain with auth token for project member", async () => {
       const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       const { server, port } = createMockServer((req: Request) => {
