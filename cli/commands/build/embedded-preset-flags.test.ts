@@ -64,9 +64,12 @@ describe("commands/build/handler embedded preset flags", () => {
   it("writes to build.outDir and reports embedded metrics in JSON mode", async () => {
     const projectDir = await makeProject("vf-embedded-outdir-");
     try {
+      await Deno.remove(join(projectDir, "app"), { recursive: true });
+      await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "pages/index.mdx"), "# Home\n");
       await Deno.writeTextFile(
         join(projectDir, "veryfront.config.js"),
-        'export default { build: { outDir: "custom-out" } };\n',
+        'export default { router: "pages", build: { outDir: "custom-out" } };\n',
       );
 
       let output: string;

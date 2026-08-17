@@ -273,14 +273,12 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
       type: "result",
       success: true,
       data: {
-        // Every route path is now published exactly once, so a plain count is
-        // correct. This previously excluded the shell route by file, because
-        // the preset published `/` twice — once as the shell and once as a
-        // duplicate dotfile artifact for the root page. With that duplicate
-        // gone the exclusion UNDERCOUNTS: a one-page project reported 0. The
-        // shell serves `/` whether or not the project has a root page, so it
-        // is a page either way.
-        pages: manifest.routes.filter((route) => route.type === "page").length,
+        // The shell serves `/` and is itself a page. Pages Router discovery also
+        // emits its root source as `embedded/pages/index.js`, so exclude that
+        // second artifact rather than reporting one source as two pages.
+        pages: manifest.routes.filter((route) =>
+          route.type === "page" && route.file !== "embedded/pages/index.js"
+        ).length,
         // The default path reports 0 for a build with no splitting stage, and
         // the embedded preset has none — which is why `--split` is rejected for
         // it above. Reporting 1 here would answer the same field differently
