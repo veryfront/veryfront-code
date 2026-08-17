@@ -1453,6 +1453,24 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "API_KEY");
     });
 
+    // A `var` can be written down twice for the same module binding. Dropping
+    // only the dead declaration would leave the name bound by the other one, so
+    // the pass refuses to take out half a binding and stops the build instead.
+    it("fails the build when only one declaration of a repeated var is dead", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `var API_KEY = getEnv("SECRET_KEY");`,
+        `if (globalThis.cond) { var [API_KEY, shown] = getEnv("PAIR"); }`,
+        `export async function getServerData() { return { props: { k: API_KEY } }; }`,
+        `export default function Page() { return shown; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "API_KEY");
+      assertStringIncludes((error as Error).message, "declared more than once");
+    });
+
     // Regression (closed leak): a statement label lives in its own namespace,
     // but the scan read `break API_KEY` as a reference to the module's
     // `API_KEY` and kept the secret alive forever. The label itself is client
