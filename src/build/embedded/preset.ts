@@ -26,6 +26,13 @@ export interface BuildEmbeddedOptions {
   config?: VeryfrontConfig;
 }
 
+interface EmbeddedDiscoveredRoute {
+  router: "app" | "pages";
+  routePath: string;
+  filePath: string;
+  sourcePath: string;
+}
+
 /**
  * Build the embedded preset bundle.
  * Outputs:
@@ -87,6 +94,8 @@ export async function buildEmbeddedPreset(
         ...(await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)),
         ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
       ];
+
+    assertNoIntraRouterRouteConflicts(discovered);
 
     // Every route path is published exactly once, first claim wins.
     //
@@ -235,6 +244,25 @@ export function isPageFile(name: string): boolean {
   return (name.endsWith(".mdx") || name.endsWith(".md")) && !name.startsWith("_");
 }
 
+function assertNoIntraRouterRouteConflicts(
+  routes: ReadonlyArray<EmbeddedDiscoveredRoute>,
+): void {
+  const seen = new Set<string>();
+  for (const route of routes) {
+    const key = `${route.router}\0${route.routePath}`;
+    if (seen.has(key)) {
+      const routerName = route.router === "app" ? "App Router" : "Pages Router";
+      throw toError(
+        createError({
+          type: "build",
+          message: `Multiple ${routerName} files resolve to "${route.routePath}"`,
+        }),
+      );
+    }
+    seen.add(key);
+  }
+}
+
 async function findOrCreateEntryPath(
   fs: ReturnType<typeof createFileSystem>,
   projectDir: string,
@@ -338,8 +366,8 @@ async function discoverAppRoutes(
   projectDir: string,
   embeddedDir: string,
   appDirectory: string,
-): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
-  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
+): Promise<EmbeddedDiscoveredRoute[]> {
+  const results: EmbeddedDiscoveredRoute[] = [];
   const base = join(projectDir, appDirectory);
 
   async function walk(dir: string, rel = ""): Promise<void> {
@@ -362,7 +390,7 @@ async function discoverAppRoutes(
       // for it. Kept as the plain form rather than special-cased: a special case
       // here would be dead code that reads as if it were load-bearing.
       const filePath = join(embeddedDir, `app${norm}.js`);
-      results.push({ routePath: norm, filePath, sourcePath: abs });
+      results.push({ router: "app", routePath: norm, filePath, sourcePath: abs });
     }
   }
 
@@ -380,8 +408,8 @@ async function discoverPagesRoutes(
   projectDir: string,
   embeddedDir: string,
   pagesDirectory: string,
-): Promise<Array<{ routePath: string; filePath: string; sourcePath: string }>> {
-  const results: Array<{ routePath: string; filePath: string; sourcePath: string }> = [];
+): Promise<EmbeddedDiscoveredRoute[]> {
+  const results: EmbeddedDiscoveredRoute[] = [];
   const base = join(projectDir, pagesDirectory);
 
   async function walk(dir: string, rel = ""): Promise<void> {
@@ -399,7 +427,7 @@ async function discoverPagesRoutes(
 
       const routePath = normalizePageRoutePath(relNext);
       const filePath = join(embeddedDir, `pages${routePath}.js`.replace(/\/+/g, "/"));
-      results.push({ routePath, filePath, sourcePath: abs });
+      results.push({ router: "pages", routePath, filePath, sourcePath: abs });
     }
   }
 

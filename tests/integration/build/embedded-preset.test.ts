@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { mkdir, readTextFile, writeTextFile } from "#veryfront/testing/deno-compat";
@@ -246,6 +246,30 @@ describe(
         const docs = manifest.routes.filter((route) => route.path === "/docs");
         assertEquals(docs.length, 1);
         assertEquals(docs[0].file, "embedded/app/docs.js");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects duplicate paths within the selected router", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-embedded-route-conflict-" });
+      try {
+        await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+        await Deno.writeTextFile(join(projectDir, "pages/index.mdx"), "# Home\n");
+        await Deno.writeTextFile(join(projectDir, "pages/about.mdx"), "# MDX about\n");
+        await Deno.writeTextFile(join(projectDir, "pages/about.md"), "# MD about\n");
+
+        await assertRejects(
+          () =>
+            buildEmbeddedPreset({
+              projectDir,
+              outDir: join(projectDir, "dist"),
+              runtime: "deno",
+              config: { router: "pages" },
+            }),
+          Error,
+          'Multiple Pages Router files resolve to "/about"',
+        );
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }
