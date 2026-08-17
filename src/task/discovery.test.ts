@@ -322,6 +322,52 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       ) {
         assertEquals(isTaskDefinition({ run() {}, integrationRequirements }), false);
       }
+
+      assertThrows(
+        () =>
+          taskHandler.register(
+            "invalid",
+            { run() {}, integrationRequirements: [{ integration: "Slack" }] },
+            "tasks/invalid.ts",
+            "tasks",
+          ),
+        Error,
+        "Task integrationRequirements[0].integration",
+      );
+    });
+
+    it("registers detached immutable schema metadata", () => {
+      const inputSchema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      const outputSchema = {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+      };
+
+      const registered = taskHandler.register(
+        "schema-task",
+        { run() {}, inputSchema, outputSchema },
+        "tasks/schema-task.ts",
+        "tasks",
+      );
+
+      inputSchema.properties.name.type = "number";
+      outputSchema.properties.ok.type = "string";
+
+      assertEquals(registered.inputSchema, {
+        type: "object",
+        properties: { name: { type: "string" } },
+      });
+      assertEquals(registered.outputSchema, {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+      });
+      assertEquals(Object.isFrozen(registered.inputSchema), true);
+      assertEquals(Object.isFrozen(registered.inputSchema?.properties), true);
+      assertEquals(Object.isFrozen(registered.outputSchema), true);
+      assertEquals(Object.isFrozen(registered.outputSchema?.properties), true);
     });
 
     it("registers detached immutable integration requirement metadata", () => {

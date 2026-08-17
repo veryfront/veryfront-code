@@ -460,11 +460,12 @@ function normalizeIntegrationResourceParent(
   requirementIndex: number,
   resourceIndex: number,
   mode: ValidationMode,
+  definitionLabel: string,
 ): ScheduleIntegrationResourceIdentity | undefined {
   if (value === undefined) return undefined;
 
   const label =
-    `Schedule integrationRequirements[${requirementIndex}].resources[${resourceIndex}].parent`;
+    `${definitionLabel} integrationRequirements[${requirementIndex}].resources[${resourceIndex}].parent`;
   const parent = snapshotDataRecord(value, label, ["kind", "id"]);
   return {
     kind: requireRequirementKind(parent.kind, `${label}.kind`, mode),
@@ -482,8 +483,10 @@ function normalizeIntegrationResource(
   requirementIndex: number,
   resourceIndex: number,
   mode: ValidationMode,
+  definitionLabel: string,
 ): ScheduleIntegrationResource {
-  const label = `Schedule integrationRequirements[${requirementIndex}].resources[${resourceIndex}]`;
+  const label =
+    `${definitionLabel} integrationRequirements[${requirementIndex}].resources[${resourceIndex}]`;
   const resource = snapshotDataRecord(value, label, ["kind", "id", "parent"]);
 
   const parent = normalizeIntegrationResourceParent(
@@ -491,6 +494,7 @@ function normalizeIntegrationResource(
     requirementIndex,
     resourceIndex,
     mode,
+    definitionLabel,
   );
   return {
     kind: requireRequirementKind(resource.kind, `${label}.kind`, mode),
@@ -507,17 +511,18 @@ function normalizeIntegrationResource(
 function normalizeIntegrationRequirements(
   value: unknown,
   mode: ValidationMode,
+  definitionLabel = "Schedule",
 ): ScheduleIntegrationRequirement[] | undefined {
   if (value === undefined) return undefined;
   const requirements = snapshotDataArray(
     value,
-    "Schedule integrationRequirements",
+    `${definitionLabel} integrationRequirements`,
     MAX_INTEGRATION_REQUIREMENTS,
   );
 
   const integrations = new Set<string>();
   return requirements.map((value, index) => {
-    const label = `Schedule integrationRequirements[${index}]`;
+    const label = `${definitionLabel} integrationRequirements[${index}]`;
     const requirement = snapshotDataRecord(value, label, [
       "integration",
       "requiredScopes",
@@ -530,7 +535,9 @@ function normalizeIntegrationRequirements(
       mode,
     );
     if (integrations.has(integration)) {
-      invalid(`Schedule integrationRequirements contains duplicate integration ${integration}.`);
+      invalid(
+        `${definitionLabel} integrationRequirements contains duplicate integration ${integration}.`,
+      );
     }
     integrations.add(integration);
 
@@ -571,7 +578,13 @@ function normalizeIntegrationRequirements(
     }
 
     const normalizedResources = resources.map((resource, resourceIndex) =>
-      normalizeIntegrationResource(resource, index, resourceIndex, mode)
+      normalizeIntegrationResource(
+        resource,
+        index,
+        resourceIndex,
+        mode,
+        definitionLabel,
+      )
     );
     const resourceIdentities = new Set<string>();
     for (const resource of normalizedResources) {
@@ -604,9 +617,10 @@ function normalizeIntegrationRequirements(
  */
 export function captureScheduleIntegrationRequirementsConfig(
   value: unknown,
+  definitionLabel = "Schedule",
 ): ScheduleIntegrationRequirement[] | undefined {
   try {
-    const requirements = normalizeIntegrationRequirements(value, "config");
+    const requirements = normalizeIntegrationRequirements(value, "config", definitionLabel);
     if (requirements === undefined) return undefined;
 
     for (const requirement of requirements) {
@@ -623,7 +637,7 @@ export function captureScheduleIntegrationRequirementsConfig(
     if (error instanceof VeryfrontError && error.slug === SCHEDULE_CONFIG_INVALID.slug) {
       throw error;
     }
-    invalid("Schedule integrationRequirements is invalid.", error);
+    invalid(`${definitionLabel} integrationRequirements is invalid.`, error);
   }
 }
 

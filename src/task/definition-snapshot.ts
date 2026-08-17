@@ -1,5 +1,6 @@
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { captureScheduleIntegrationRequirementsConfig } from "#veryfront/schedule/validation.ts";
+import { type BoundedJsonValue, snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { TaskDefinition } from "./types.ts";
 
 const TASK_DEFINITION_KEYS = [
@@ -98,7 +99,23 @@ function optionalRecord(
   ) {
     fail(`${label} must be a non-Proxy object.`);
   }
-  return value as Record<string, unknown>;
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (
+    !snapshot.success || snapshot.value === null ||
+    typeof snapshot.value !== "object" || Array.isArray(snapshot.value)
+  ) {
+    fail(`${label} must be a bounded JSON object.`);
+  }
+  return freezeJsonSnapshot(snapshot.value) as Record<string, unknown>;
+}
+
+function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
+  if (typeof value !== "object" || value === null) return value;
+  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+    freezeJsonSnapshot(nested);
+  }
+  Object.freeze(value);
+  return value;
 }
 
 /** Validate and capture the task metadata that crosses discovery boundaries. */
@@ -128,6 +145,7 @@ export function captureTaskDefinition(value: unknown): TaskDefinition {
   }
   const integrationRequirements = captureScheduleIntegrationRequirementsConfig(
     fields.get("integrationRequirements"),
+    "Task",
   );
 
   return Object.freeze({

@@ -304,7 +304,7 @@ function captureIntegrationRequirements(
   workflowId: string,
 ): ScheduleIntegrationRequirementConfig[] | undefined {
   try {
-    return captureScheduleIntegrationRequirementsConfig(value);
+    return captureScheduleIntegrationRequirementsConfig(value, "Workflow");
   } catch (error) {
     const detail = error instanceof Error ? error.message : "invalid integration metadata";
     fail(`Workflow "${workflowId}" integrationRequirements is invalid: ${detail}`);

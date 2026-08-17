@@ -212,6 +212,17 @@ describe("WorkflowRegistry", () => {
     });
 
     it("rejects malformed integration requirement metadata", () => {
+      assertThrows(
+        () =>
+          workflowRegistry.register({
+            id: "invalid-integration-label",
+            integrationRequirements: [{ integration: "Slack" }],
+            steps: validSteps(),
+          }),
+        Error,
+        "Workflow integrationRequirements[0].integration",
+      );
+
       for (
         const [integrationRequirements, message] of [
           [[{ integration: 42 }], "integration"],
