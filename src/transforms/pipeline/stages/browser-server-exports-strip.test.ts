@@ -1491,6 +1491,29 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("still strips compiler metadata after an unrelated defineProperty write", async () => {
+      const code = [
+        `const registry = {};`,
+        `registry.defineProperty = (target) => target;`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "registry.defineProperty");
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
     // A `function` declaration and a `var` cannot share a name in a module:
     // the redeclaration is a SyntaxError, so a hoisted user function can never
     // be the live binding when a later `var` initialiser classifies it. The

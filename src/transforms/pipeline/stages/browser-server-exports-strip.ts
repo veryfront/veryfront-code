@@ -1598,19 +1598,27 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
  * which a write target does not have to be: `globalThis.Object.defineProperty
  * = record` reaches the same slot through the global object, and
  * `Object[key] = record` reaches it through a key this stage cannot evaluate.
- * Neither base can be proven to be something else, so any write to a member
- * named `defineProperty`, and any computed write on `Object`, fails closed.
+ * Only those known intrinsic bases fail closed. An unrelated
+ * `registry.defineProperty` write cannot replace the intrinsic and must not
+ * stop compiler metadata from being removed with a hook-only binding.
  */
 function writesDefinePropertyMember(target: Node): boolean {
   if (target.type !== "MemberExpression" && target.type !== "OptionalMemberExpression") {
     return false;
   }
 
+  const object = isNode(target.object) ? target.object : undefined;
+  const objectIsIntrinsic = nodeName(object) === "Object" ||
+    (object?.type === "MemberExpression" || object?.type === "OptionalMemberExpression") &&
+      nodeName(object.object) === "globalThis" &&
+      literalText(isNode(object.property) ? object.property : undefined) === "Object";
+  if (!objectIsIntrinsic) return false;
+
   const property = isNode(target.property) ? target.property : undefined;
   if (target.computed !== true) return nodeName(property) === "defineProperty";
 
   const key = stringLiteralText(property);
-  return key === null ? nodeName(target.object) === "Object" : key === "defineProperty";
+  return key === null || key === "defineProperty";
 }
 
 function writesObjectDefineProperty(body: Node[]): boolean {
