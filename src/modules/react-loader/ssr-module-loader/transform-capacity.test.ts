@@ -61,7 +61,7 @@ describe("modules/react-loader/ssr-module-loader/transform-capacity", () => {
   it("should fail fast with the real queue depth when production capacity is exhausted", async () => {
     clearSSRModuleCache();
     const loader = createLoader("capacity-production", false);
-    let held = await exhaustTransformPermits();
+    const held = await exhaustTransformPermits();
     const time = new FakeTime();
 
     try {
@@ -85,7 +85,6 @@ describe("modules/react-loader/ssr-module-loader/transform-capacity", () => {
     } finally {
       time.restore();
       releaseTransformPermits(held);
-      held = 0;
       clearSSRModuleCache();
     }
   });
