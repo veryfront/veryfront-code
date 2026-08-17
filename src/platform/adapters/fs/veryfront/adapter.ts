@@ -212,6 +212,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     noContextMessage: string,
     lookupLabel: string,
     missReason: string,
+    options: { waitForWarmup?: boolean } = {},
   ): Promise<{ cacheKey: string; files: T[] | undefined } | undefined> {
     const cacheKey = this.getCurrentFileListCacheKey();
     if (!cacheKey) {
@@ -219,7 +220,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return undefined;
     }
 
-    const files = await this.cache.getAsync<T[]>(cacheKey);
+    let files = await this.cache.getAsync<T[]>(cacheKey);
     logger.debug(`${lookupLabel} lookup`, {
       cacheKey,
       hasResult: !!files,
@@ -231,9 +232,32 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     if (!files?.length) {
       this.scheduleFileListWarmup(missReason, cacheKey);
+      if (options.waitForWarmup) {
+        files = await this.awaitFileListWarmup<T>(cacheKey) ?? files;
+      }
     }
 
     return { cacheKey, files };
+  }
+
+  /**
+   * Wait for the in-flight file-list warmup for `cacheKey` and return the
+   * fetched listing. SSR module resolution reads this list for every module of
+   * a page; when the cached listing has expired, answering "no list" makes each
+   * module fall back to its own per-file/per-extension API probing (dozens of
+   * sequential fetches per render). Paying for one awaited listing fetch keeps
+   * that fan-out at a single API call while staying exactly as fresh: the
+   * listing is fetched from the API at request time. Warmup failures resolve to
+   * undefined so callers keep the legacy per-file fallback.
+   */
+  private async awaitFileListWarmup<T extends { path: string }>(
+    cacheKey: string,
+  ): Promise<T[] | undefined> {
+    const warmupPromise = this.fileListWarmupPromise;
+    if (!warmupPromise || this.fileListWarmupKey !== cacheKey) return undefined;
+
+    const fetched = await warmupPromise;
+    return fetched?.length ? (fetched as T[]) : undefined;
   }
 
   constructor(config: FSAdapterConfig) {
@@ -287,7 +311,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
           type?: string;
           size?: number;
           updated_at?: string;
-        }>("getFileList: no contentContext", "getFileList", "getFileList miss");
+        }>("getFileList: no contentContext", "getFileList", "getFileList miss", {
+          waitForWarmup: true,
+        });
         return cached?.files;
       },
       hasCachedFileList: async () => {
@@ -295,6 +321,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           "hasCachedFileList: no contentContext",
           "hasCachedFileList",
           "hasCachedFileList miss",
+          { waitForWarmup: true },
         );
         return Array.isArray(cached?.files) && cached.files.length > 0;
       },
@@ -327,6 +354,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           "getFileListCache: no contentContext",
           "getFileListCache",
           "getFileListCache miss",
+          { waitForWarmup: true },
         );
         return cached?.files;
       },
