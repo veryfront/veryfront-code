@@ -1366,6 +1366,25 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, 'loadSecret("server")');
     });
 
+    // Only a `TSParameterProperty` used to have its decorators traversed, but
+    // Babel hangs them off an ordinary parameter too. The reads were invisible,
+    // so the import went and the surviving decorator was left unresolved.
+    it("keeps an import read by a decorator on an ordinary parameter", async () => {
+      const code = [
+        `import { inject, loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default class Page {`,
+        `  constructor(@inject(loadSecret) value) { this.value = value; }`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import { inject, loadSecret } from "../server/secrets.ts"');
+      assertStringIncludes(result, "@inject(loadSecret)");
+      assertNotIncludes(result, 'loadSecret("server")');
+    });
+
     it("keeps an import read by a parameter-property decorator shadowed by the parameter", async () => {
       const code = [
         `import { secret } from "../server/secrets.ts";`,
