@@ -346,60 +346,6 @@ function emptyServerOnlyHooks(
   return emptied;
 }
 
-/**
- * Identifiers the module reads, ignoring import statements and the positions
- * where an identifier is a fixed name rather than a reference (`a.hashOf`,
- * `{ hashOf: 1 }`). Over-counting only ever keeps an import.
- *
- * `excluded` holds identifier nodes that are binding *positions* rather than
- * references (the `id` a declaration introduces), so a declaration is not
- * counted as a use of itself when deciding whether it is dead.
- */
-function referencedIdentifiers(
-  body: Node[],
-  excluded?: WeakSet<Node>,
-  ignoredSubtree?: Node,
-): Set<string> {
-  const referenced = new Set<string>();
-  // Filled in as each parent is visited, which always happens before its
-  // children.
-  const fixedNames = new WeakSet<Node>();
-
-  const markFixedName = (node: Node): void => {
-    const property = node.type === "MemberExpression" || node.type === "OptionalMemberExpression"
-      ? node.property
-      : node.type === "ObjectProperty" || node.type === "ObjectMethod" ||
-          node.type === "ClassMethod" || node.type === "ClassProperty"
-      ? node.key
-      : undefined;
-
-    if (node.computed === true) return;
-    if (isNode(property)) fixedNames.add(property);
-  };
-
-  for (const statement of body) {
-    if (statement.type === "ImportDeclaration") continue;
-
-    walk(statement, (node) => {
-      if (node === ignoredSubtree) return false;
-      if (node.type === "ImportDeclaration") return false;
-
-      markFixedName(node);
-
-      if (node.type === "Identifier" || node.type === "JSXIdentifier") {
-        if (fixedNames.has(node)) return true;
-        if (excluded?.has(node)) return true;
-        const name = nodeName(node);
-        if (name) referenced.add(name);
-      }
-
-      return true;
-    });
-  }
-
-  return referenced;
-}
-
 /** A top-level declaration and the binding names / binding-id nodes it owns. */
 interface ModuleScopeDecl {
   statement: Node;
@@ -1212,7 +1158,10 @@ function dropUnusedImportBindings(
   hookClosure: Set<string>,
   removedNames: Set<string>,
 ): Node[] {
-  const referenced = referencedIdentifiers(body);
+  // Imports are not lexical declarations inside this synthetic program, so a
+  // real read of an imported binding is free. A nested client binding with the
+  // same spelling is bound in its own scope and does not keep the import alive.
+  const referenced = freeReferencedIdentifiers({ type: "Program", body });
 
   return body.filter((statement) => {
     if (statement.type !== "ImportDeclaration") return true;
