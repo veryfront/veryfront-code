@@ -1179,7 +1179,7 @@ function freeReferencedIdentifiers(
 
     if (
       node.type === "ObjectProperty" || node.type === "ClassProperty" ||
-      node.type === "ClassPrivateProperty"
+      node.type === "ClassPrivateProperty" || node.type === "ClassAccessorProperty"
     ) {
       visitObjectMember(node, scopes);
       return;
