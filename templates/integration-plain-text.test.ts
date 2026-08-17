@@ -11,6 +11,13 @@ describe("integration template plain-text extraction", () => {
     );
   });
 
+  it("keeps adjacent Teams blocks separated and decodes apostrophes", () => {
+    assertEquals(
+      teamsHtmlToPlainText("<p>First.</p><p>Second&#39;s.</p>"),
+      "First. Second's.",
+    );
+  });
+
   it("does not turn nested Confluence entities into literal markup", () => {
     assertEquals(
       confluenceHtmlToPlainText("<p>Safe &amp;lt;script&amp;gt; text</p>"),
