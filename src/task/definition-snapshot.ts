@@ -18,6 +18,7 @@ const TASK_DEFINITION_KEYS = Object.keys(
 
 const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const OBJECT_PROTOTYPE = Object.prototype;
+const arrayIsArray = Array.isArray;
 const hasOwn = Object.hasOwn;
 const objectFreeze = Object.freeze;
 const objectValues = Object.values;
@@ -33,7 +34,7 @@ function fail(detail: string): never {
 
 function inspectTaskObject(value: unknown): TaskObject {
   if (
-    typeof value !== "object" || value === null || Array.isArray(value) ||
+    typeof value !== "object" || value === null || arrayIsArray(value) ||
     isProxyWithoutHooks(value)
   ) {
     fail("Task definition must be a non-Proxy object.");
@@ -98,7 +99,7 @@ function optionalRecord(
 ): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
   if (
-    typeof value !== "object" || value === null || Array.isArray(value) ||
+    typeof value !== "object" || value === null || arrayIsArray(value) ||
     isProxyWithoutHooks(value)
   ) {
     fail(`${label} must be a non-Proxy object.`);
@@ -106,7 +107,7 @@ function optionalRecord(
   const snapshot = snapshotBoundedJsonValue(value);
   if (
     snapshot.success && snapshot.value !== null &&
-    typeof snapshot.value === "object" && !Array.isArray(snapshot.value)
+    typeof snapshot.value === "object" && !arrayIsArray(snapshot.value)
   ) {
     return freezeJsonSnapshot(snapshot.value) as Record<string, unknown>;
   }
@@ -121,7 +122,7 @@ function optionalRecord(
 
 function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
   if (typeof value !== "object" || value === null) return value;
-  for (const nested of Array.isArray(value) ? value : objectValues(value)) {
+  for (const nested of arrayIsArray(value) ? value : objectValues(value)) {
     freezeJsonSnapshot(nested);
   }
   objectFreeze(value);

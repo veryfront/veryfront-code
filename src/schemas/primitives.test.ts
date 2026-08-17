@@ -116,6 +116,68 @@ describe("primitive schemas", () => {
       });
     });
 
+    it("uses captured snapshot primordials after module initialization", () => {
+      const originalArrayIsArray = Array.isArray;
+      const originalNumberIsFinite = Number.isFinite;
+      const originalNumberIsSafeInteger = Number.isSafeInteger;
+      const originalStringify = JSON.stringify;
+      const originalApply = Reflect.apply;
+      const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+      const originalGetPrototypeOf = Reflect.getPrototypeOf;
+      const originalOwnKeys = Reflect.ownKeys;
+      const originalDefineProperty = Object.defineProperty;
+      const originalEncode = TextEncoder.prototype.encode;
+      const originalSetAdd = Set.prototype.add;
+      const originalSetDelete = Set.prototype.delete;
+      const originalSetHas = Set.prototype.has;
+      let poisonCalls = 0;
+      const poison = (): never => {
+        poisonCalls += 1;
+        throw new Error("ambient snapshot primordial must not run");
+      };
+      let result: ReturnType<typeof snapshotBoundedJsonValue> | undefined;
+
+      try {
+        Array.isArray = poison as unknown as typeof Array.isArray;
+        Number.isFinite = poison as typeof Number.isFinite;
+        Number.isSafeInteger = poison as typeof Number.isSafeInteger;
+        JSON.stringify = poison as typeof JSON.stringify;
+        Reflect.apply = poison as typeof Reflect.apply;
+        Reflect.getOwnPropertyDescriptor = poison as typeof Reflect.getOwnPropertyDescriptor;
+        Reflect.getPrototypeOf = poison as typeof Reflect.getPrototypeOf;
+        Reflect.ownKeys = poison as typeof Reflect.ownKeys;
+        Object.defineProperty = poison as typeof Object.defineProperty;
+        TextEncoder.prototype.encode = poison as typeof TextEncoder.prototype.encode;
+        Set.prototype.add = poison as typeof Set.prototype.add;
+        Set.prototype.delete = poison as typeof Set.prototype.delete;
+        Set.prototype.has = poison as typeof Set.prototype.has;
+
+        result = snapshotBoundedJsonValue({
+          nested: [1, { ready: true }],
+        });
+      } finally {
+        Array.isArray = originalArrayIsArray;
+        Number.isFinite = originalNumberIsFinite;
+        Number.isSafeInteger = originalNumberIsSafeInteger;
+        JSON.stringify = originalStringify;
+        Reflect.apply = originalApply;
+        Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
+        Reflect.getPrototypeOf = originalGetPrototypeOf;
+        Reflect.ownKeys = originalOwnKeys;
+        Object.defineProperty = originalDefineProperty;
+        TextEncoder.prototype.encode = originalEncode;
+        Set.prototype.add = originalSetAdd;
+        Set.prototype.delete = originalSetDelete;
+        Set.prototype.has = originalSetHas;
+      }
+
+      assertEquals(poisonCalls, 0);
+      assertEquals(result, {
+        success: true,
+        value: { nested: [1, { ready: true }] },
+      });
+    });
+
     it("rejects values deeper than the validation limit without throwing", () => {
       let value: unknown = null;
       for (let depth = 0; depth < 256; depth++) value = [value];

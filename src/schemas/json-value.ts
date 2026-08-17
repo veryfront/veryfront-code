@@ -13,11 +13,21 @@ const JSON_VALUE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 const JSON_VALUE_MAX_STRING_BYTES = 1024 * 1024;
 const JSON_VALUE_MAX_KEY_BYTES = 16 * 1024;
 const JSON_UTF8_ENCODER = new TextEncoder();
+const NativeSet = Set;
 const OBJECT_PROTOTYPE = Object.prototype;
+const arrayIsArray = Array.isArray;
+const jsonStringify = JSON.stringify;
+const numberIsFinite = Number.isFinite;
+const numberIsSafeInteger = Number.isSafeInteger;
 const objectDefineProperty = Object.defineProperty;
+const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
 const reflectOwnKeys = Reflect.ownKeys;
+const setAdd = Set.prototype.add;
+const setDelete = Set.prototype.delete;
+const setHas = Set.prototype.has;
+const textEncoderEncode = TextEncoder.prototype.encode;
 
 export type BoundedJsonValue =
   | string
@@ -73,23 +83,32 @@ function invalidSnapshotPath(path: SnapshotPathNode | undefined): InvalidSnapsho
 function invalidJsonSnapshot(
   path: SnapshotPathNode | undefined,
 ): BoundedJsonSnapshot {
-  const segments: BoundedJsonPathSegment[] = [];
+  let segmentCount = 0;
   for (let current = path; current !== undefined; current = current.parent) {
-    segments.push(current.segment);
+    segmentCount += 1;
   }
-  segments.reverse();
+  const segments: BoundedJsonPathSegment[] = [];
+  segments.length = segmentCount;
+  let index = segmentCount - 1;
+  for (let current = path; current !== undefined; current = current.parent) {
+    segments[index] = current.segment;
+    index -= 1;
+  }
   return { success: false, path: segments };
 }
 
 function utf8LengthWithin(value: string, limit: number): number | undefined {
   if (value.length > limit) return undefined;
-  const byteLength = JSON_UTF8_ENCODER.encode(value).byteLength;
+  const byteLength = (reflectApply(textEncoderEncode, JSON_UTF8_ENCODER, [value]) as Uint8Array)
+    .byteLength;
   return byteLength <= limit ? byteLength : undefined;
 }
 
 function serializedByteLength(value: string | number | boolean | null): number | undefined {
-  const serialized = JSON.stringify(value);
-  return serialized === undefined ? undefined : JSON_UTF8_ENCODER.encode(serialized).byteLength;
+  const serialized = jsonStringify(value);
+  return serialized === undefined
+    ? undefined
+    : (reflectApply(textEncoderEncode, JSON_UTF8_ENCODER, [serialized]) as Uint8Array).byteLength;
 }
 
 /**
@@ -107,7 +126,7 @@ function serializedByteLength(value: string | number | boolean | null): number |
 export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
   let activePath: SnapshotPathNode | undefined;
   try {
-    const activeAncestors = new Set<object>();
+    const activeAncestors = new NativeSet<object>();
     const stack: SnapshotFrame[] = [{
       kind: "visit",
       value,
@@ -130,7 +149,7 @@ export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
         rootAssigned = true;
         return;
       }
-      if (Array.isArray(frame.parent)) {
+      if (arrayIsArray(frame.parent)) {
         frame.parent[frame.key as number] = canonical;
         return;
       }
@@ -138,10 +157,11 @@ export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
     };
 
     while (stack.length > 0) {
-      const frame = stack.pop();
+      const frame = stack.length === 0 ? undefined : stack[stack.length - 1];
       if (!frame) break;
+      stack.length -= 1;
       if (frame.kind === "exit") {
-        activeAncestors.delete(frame.value);
+        reflectApply(setDelete, activeAncestors, [frame.value]);
         continue;
       }
       activePath = frame.path;
@@ -171,7 +191,7 @@ export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
         continue;
       }
       if (typeof current === "number") {
-        if (!Number.isFinite(current)) return invalidJsonSnapshot(frame.path);
+        if (!numberIsFinite(current)) return invalidJsonSnapshot(frame.path);
         const bytes = serializedByteLength(current);
         if (bytes === undefined || !addSerializedBytes(bytes)) {
           return invalidJsonSnapshot(frame.path);
@@ -179,11 +199,14 @@ export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
         assign(frame, current);
         continue;
       }
-      if (typeof current !== "object" || activeAncestors.has(current)) {
+      if (
+        typeof current !== "object" ||
+        reflectApply(setHas, activeAncestors, [current]) as boolean
+      ) {
         return invalidJsonSnapshot(frame.path);
       }
 
-      if (Array.isArray(current)) {
+      if (arrayIsArray(current)) {
         const invalidPath = snapshotArray(
           current,
           frame,
@@ -232,39 +255,40 @@ function snapshotArray(
     : undefined;
   if (
     typeof length !== "number" ||
-    !Number.isSafeInteger(length) ||
+    !numberIsSafeInteger(length) ||
     length < 0 ||
     length > JSON_VALUE_MAX_NODES ||
-    ownKeys.some((key) => typeof key === "symbol") ||
+    hasSymbolKey(ownKeys) ||
     ownKeys.length !== length + 1 ||
-    !ownKeys.includes("length") ||
-    !addSerializedBytes(2 + Math.max(0, length - 1))
+    !hasStringKey(ownKeys, "length") ||
+    !addSerializedBytes(2 + (length > 0 ? length - 1 : 0))
   ) {
     return invalidSnapshotPath(frame.path);
   }
 
   const values: unknown[] = [];
   for (let index = 0; index < length; index++) {
-    const descriptor = reflectGetOwnPropertyDescriptor(value, String(index));
+    const descriptor = reflectGetOwnPropertyDescriptor(value, `${index}`);
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       return invalidSnapshotPath(appendSnapshotPath(frame.path, index));
     }
-    values.push(descriptor.value);
+    values[values.length] = descriptor.value;
   }
 
-  const canonical: BoundedJsonValue[] = new Array(length);
+  const canonical: BoundedJsonValue[] = [];
+  canonical.length = length;
   assign(frame, canonical);
-  activeAncestors.add(value);
-  stack.push({ kind: "exit", value });
+  reflectApply(setAdd, activeAncestors, [value]);
+  stack[stack.length] = { kind: "exit", value };
   for (let index = values.length - 1; index >= 0; index--) {
-    stack.push({
+    stack[stack.length] = {
       kind: "visit",
       value: values[index],
       depth: frame.depth + 1,
       parent: canonical,
       key: index,
       path: appendSnapshotPath(frame.path, index),
-    });
+    };
   }
   return null;
 }
@@ -285,14 +309,15 @@ function snapshotObject(
   const ownKeys = reflectOwnKeys(value);
   if (
     ownKeys.length > JSON_VALUE_MAX_NODES ||
-    ownKeys.some((key) => typeof key === "symbol") ||
-    !addSerializedBytes(2 + Math.max(0, ownKeys.length - 1))
+    hasSymbolKey(ownKeys) ||
+    !addSerializedBytes(2 + (ownKeys.length > 0 ? ownKeys.length - 1 : 0))
   ) {
     return invalidSnapshotPath(frame.path);
   }
 
   const values: unknown[] = [];
-  for (const key of ownKeys as string[]) {
+  for (let index = 0; index < ownKeys.length; index++) {
+    const key = ownKeys[index] as string;
     const childPath = appendSnapshotPath(frame.path, key);
     if (utf8LengthWithin(key, JSON_VALUE_MAX_KEY_BYTES) === undefined) {
       return invalidSnapshotPath(childPath);
@@ -306,24 +331,38 @@ function snapshotObject(
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       return invalidSnapshotPath(childPath);
     }
-    values.push(descriptor.value);
+    values[values.length] = descriptor.value;
   }
 
   const canonical: { [key: string]: BoundedJsonValue } = {};
   assign(frame, canonical);
-  activeAncestors.add(value);
-  stack.push({ kind: "exit", value });
+  reflectApply(setAdd, activeAncestors, [value]);
+  stack[stack.length] = { kind: "exit", value };
   for (let index = values.length - 1; index >= 0; index--) {
-    stack.push({
+    stack[stack.length] = {
       kind: "visit",
       value: values[index],
       depth: frame.depth + 1,
       parent: canonical,
       key: ownKeys[index] as string,
       path: appendSnapshotPath(frame.path, ownKeys[index] as string),
-    });
+    };
   }
   return null;
+}
+
+function hasSymbolKey(keys: readonly PropertyKey[]): boolean {
+  for (let index = 0; index < keys.length; index++) {
+    if (typeof keys[index] === "symbol") return true;
+  }
+  return false;
+}
+
+function hasStringKey(keys: readonly PropertyKey[], expected: string): boolean {
+  for (let index = 0; index < keys.length; index++) {
+    if (keys[index] === expected) return true;
+  }
+  return false;
 }
 
 function defineOwnDataProperty(

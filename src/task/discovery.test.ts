@@ -376,6 +376,42 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(Object.isFrozen(requirements?.[0]?.resources?.[0]?.parent), true);
     });
 
+    it("keeps JSON schemas detached after serialization primordial poisoning", () => {
+      const originalStringify = JSON.stringify;
+      let poisonCalls = 0;
+      const poison = (): never => {
+        poisonCalls += 1;
+        throw new Error("ambient JSON.stringify must not run");
+      };
+      const sourceInputSchema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
+      let inputSchema: TaskDefinition["inputSchema"];
+
+      try {
+        JSON.stringify = poison;
+        inputSchema = taskHandler.register(
+          "stable-json-schema",
+          { run() {}, inputSchema: sourceInputSchema },
+          "tasks/stable-json-schema.ts",
+          "tasks",
+        ).inputSchema;
+      } finally {
+        JSON.stringify = originalStringify;
+      }
+
+      sourceInputSchema.properties.name.type = "number";
+      assertEquals(poisonCalls, 0);
+      assertEquals(inputSchema, {
+        type: "object",
+        properties: { name: { type: "string" } },
+      });
+      assertEquals(inputSchema === sourceInputSchema, false);
+      assertEquals(Object.isFrozen(inputSchema), true);
+      assertEquals(Object.isFrozen(inputSchema?.properties), true);
+    });
+
     it("rejects non-task values", () => {
       assertEquals(isTaskDefinition(null), false);
       assertEquals(isTaskDefinition(undefined), false);
