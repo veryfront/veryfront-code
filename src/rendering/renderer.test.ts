@@ -30,6 +30,13 @@ import {
   clearReactVersionCache,
   type DependencyPinningSource,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  attachDataResponseMetadata,
+  getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+  wrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import { redirect } from "#veryfront/data/helpers.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -270,6 +277,362 @@ describe("Renderer helpers", () => {
     it("should parse default max concurrent as 30", () => {
       assertEquals(parseInt("30", 10), 30);
     });
+  });
+});
+
+describe("Renderer response metadata", () => {
+  it("preserves headers and cookies without caching a cookie response", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () =>
+          Promise.resolve({
+            html: "<html>metadata</html>",
+            frontmatter: {},
+            stream: null,
+            headers: { "x-page-state": "fresh" },
+            cookies: [{ name: "session", value: "abc", path: "/" }],
+          }),
+      },
+    });
+
+    const result = await renderer.renderPage("/metadata", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    });
+
+    assertEquals(result.headers, { "x-page-state": "fresh" });
+    assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("preserves response headers through render cache hits", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: () => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            html: "<html>cached metadata</html>",
+            frontmatter: {},
+            stream: null,
+            headers: { "x-page-state": "cacheable" },
+          });
+        },
+      },
+    });
+    const options = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+
+    const first = await renderer.renderPage("/cached-metadata", makeRenderContext(), options);
+    const second = await renderer.renderPage("/cached-metadata", makeRenderContext(), options);
+
+    assertEquals(first.headers, { "x-page-state": "cacheable" });
+    assertEquals(second.headers, { "x-page-state": "cacheable" });
+    assertEquals(renderCalls, 1);
+  });
+
+  it("rerenders singleflight followers when the leader returns cookies", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          return {
+            html: `<html>${user}</html>`,
+            frontmatter: {},
+            stream: null,
+            cookies: [{ name: "session", value: user, path: "/" }],
+          };
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+
+    const leader = renderer.renderPage("/concurrent-cookie", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/concurrent-cookie", {
+        headers: { "x-test-user": "leader" },
+      }),
+    });
+    await firstStarted.promise;
+    const follower = renderer.renderPage("/concurrent-cookie", makeRenderContext(), {
+      ...baseOptions,
+      request: new Request("https://example.test/concurrent-cookie", {
+        headers: { "x-test-user": "follower" },
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderResult, followerResult] = await Promise.all([leader, follower]);
+    assertEquals(leaderResult.cookies?.[0]?.value, "leader");
+    assertEquals(followerResult.cookies?.[0]?.value, "follower");
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when the leader throws with cookies", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw attachDataResponseMetadata(new Error(user), {
+            cookies: [{ name: "session", value: user, path: "/" }],
+          });
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<Error> => {
+      try {
+        await promise;
+      } catch (error) {
+        if (error instanceof Error) return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(
+      renderer.renderPage("/concurrent-cookie-error", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-cookie-error", {
+          headers: { "x-test-user": "leader" },
+        }),
+      }),
+    );
+    await firstStarted.promise;
+    const follower = captureFailure(
+      renderer.renderPage("/concurrent-cookie-error", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-cookie-error", {
+          headers: { "x-test-user": "follower" },
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderError, followerError] = await Promise.all([leader, follower]);
+    assertEquals(getAttachedDataResponseMetadata(leaderError).cookies?.[0]?.value, "leader");
+    assertEquals(getAttachedDataResponseMetadata(followerError).cookies?.[0]?.value, "follower");
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when the leader throws a cookie-bearing control", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw redirect("/login", false, {
+            cookies: [{ name: "session", value: user, path: "/" }],
+          });
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<unknown> => {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(
+      renderer.renderPage("/concurrent-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-control", {
+          headers: { "x-test-user": "leader" },
+        }),
+      }),
+    );
+    await firstStarted.promise;
+    const follower = captureFailure(
+      renderer.renderPage("/concurrent-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-control", {
+          headers: { "x-test-user": "follower" },
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderControl, followerControl] = await Promise.all([leader, follower]);
+    assertEquals(
+      (leaderControl as { cookies?: Array<{ value?: string }> }).cookies?.[0]?.value,
+      "leader",
+    );
+    assertEquals(
+      (followerControl as { cookies?: Array<{ value?: string }> }).cookies?.[0]?.value,
+      "follower",
+    );
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when a metadata wrapper carries a cookie control", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw wrapDataResponseMetadataError(
+            redirect("/login", false, {
+              cookies: [{ name: "session", value: user, path: "/" }],
+            }),
+            { headers: { "x-loader": "ready" } },
+          );
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<Error> => {
+      try {
+        await promise;
+      } catch (error) {
+        if (error instanceof Error) return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(
+      renderer.renderPage("/concurrent-wrapped-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-wrapped-control", {
+          headers: { "x-test-user": "leader" },
+        }),
+      }),
+    );
+    await firstStarted.promise;
+    const follower = captureFailure(
+      renderer.renderPage("/concurrent-wrapped-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-wrapped-control", {
+          headers: { "x-test-user": "follower" },
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderError, followerError] = await Promise.all([leader, follower]);
+    const leaderControl = unwrapDataResponseMetadataError(leaderError) as {
+      cookies?: Array<{ value?: string }>;
+    };
+    const followerControl = unwrapDataResponseMetadataError(followerError) as {
+      cookies?: Array<{ value?: string }>;
+    };
+    assertEquals(leaderControl.cookies?.[0]?.value, "leader");
+    assertEquals(followerControl.cookies?.[0]?.value, "follower");
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
   });
 });
 

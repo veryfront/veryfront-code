@@ -104,6 +104,30 @@ describe("CacheCoordinator", () => {
     assertEquals(stored?.staleUntil, (stored?.expiresAt ?? 0) + 501);
   });
 
+  it("persists custom response headers in lifecycle cache payloads", async () => {
+    let stored: CachePayload | undefined;
+    const store: CacheStore = {
+      get: () => Promise.resolve(stored),
+      set: (_key, value) => {
+        stored = value;
+        return Promise.resolve();
+      },
+      delete: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "headers" });
+    const result = makeResult("header result");
+    result.headers = { "x-page-state": "cached" };
+
+    await coordinator.persistResult(result, "entry");
+
+    assertEquals(stored?.result.headers, { "x-page-state": "cached" });
+    assertEquals((await coordinator.checkCache("entry")).cachedResult?.headers, {
+      "x-page-state": "cached",
+    });
+  });
+
   it("evicts malformed store values and treats them as misses", async () => {
     let deletedKey: string | undefined;
     const store: CacheStore = {

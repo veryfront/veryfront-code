@@ -30,6 +30,12 @@ import {
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { isHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
+import type { DataResponseMetadata, ResponseCookie } from "#veryfront/data/types.ts";
+import {
+  getAttachedDataResponseMetadata,
+  mergeDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -82,6 +88,10 @@ export interface SSRRenderResult {
   slug: string;
   /** Dependency snapshot identity rendered into this document. */
   dependencyPinningCacheKey?: string;
+  /** Validated application headers appended after framework-owned headers. */
+  headers?: Record<string, string>;
+  /** Distinct cookies emitted as separate Set-Cookie response fields. */
+  cookies?: ResponseCookie[];
 }
 
 export interface SSRRenderOptions {
@@ -124,6 +134,8 @@ function buildRedirectResult(
     cacheStrategy: "no-cache",
     failure: redirect,
     slug,
+    ...(redirect.headers ? { headers: redirect.headers } : {}),
+    ...(redirect.cookies ? { cookies: redirect.cookies } : {}),
   };
 }
 
@@ -131,15 +143,20 @@ function buildRedirectResult(
  * Build the 404 result shared by the thrown-control-result and file-not-found
  * paths. `slug` is escaped by `ErrorPages.notFound`.
  */
-function buildNotFoundResult(slug: string): SSRRenderResult {
+function buildNotFoundResult(
+  notFound: Extract<SSRFailureOutcome, { kind: "not-found" }>,
+  slug: string,
+): SSRRenderResult {
   return {
     status: HTTP_NOT_FOUND,
     html: ErrorPages.notFound(slug || "/"),
     htmlProvenance: "framework",
     isStreaming: false,
     cacheStrategy: "no-cache",
-    failure: { kind: "not-found" },
+    failure: notFound,
     slug,
+    ...(notFound.headers ? { headers: notFound.headers } : {}),
+    ...(notFound.cookies ? { cookies: notFound.cookies } : {}),
   };
 }
 
@@ -303,8 +320,15 @@ export class SSRService implements SSRServiceLike {
       }
 
       const isStreaming = !!result.stream && !result.html;
-      const cacheStrategy = useNoCache ? "no-cache" : "short";
-      const etag = isStreaming ? undefined : computeSSRETag(result.ssrHash, result.html);
+      const responseMetadata: DataResponseMetadata = {
+        ...(result.headers ? { headers: result.headers } : {}),
+        ...(result.cookies ? { cookies: result.cookies } : {}),
+      };
+      const setsCookies = (responseMetadata.cookies?.length ?? 0) > 0;
+      const cacheStrategy = useNoCache || setsCookies ? "no-cache" : "short";
+      const etag = isStreaming || setsCookies
+        ? undefined
+        : computeSSRETag(result.ssrHash, result.html);
 
       if (isStreaming) {
         const allReady = getAllReady(result.stream);
@@ -313,7 +337,14 @@ export class SSRService implements SSRServiceLike {
             await allReady;
           } catch (error) {
             if (findSSRControlOutcome(error)) {
-              return this.handleRenderError(error, ctx, slug, request, nonce);
+              return this.handleRenderError(
+                error,
+                ctx,
+                slug,
+                request,
+                nonce,
+                responseMetadata,
+              );
             }
           }
         }
@@ -328,6 +359,7 @@ export class SSRService implements SSRServiceLike {
         cacheStrategy,
         slug,
         dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+        ...responseMetadata,
       };
     } catch (error) {
       if (hasRenderSession(renderSessionId)) {
@@ -343,8 +375,20 @@ export class SSRService implements SSRServiceLike {
     slug: string,
     request: Request,
     nonce?: string,
+    inheritedResponseMetadata: DataResponseMetadata = {},
   ): SSRRenderResult {
-    const outcome = resolveSSRFailure(error, { isLocalProject: Boolean(ctx.isLocalProject) });
+    const attachedResponseMetadata = error instanceof Error
+      ? getAttachedDataResponseMetadata(error)
+      : {};
+    const responseMetadata = mergeDataResponseMetadata([
+      inheritedResponseMetadata,
+      attachedResponseMetadata,
+    ]);
+    const classifiedError = error instanceof Error ? unwrapDataResponseMetadataError(error) : error;
+    const outcome = resolveSSRFailure(classifiedError, {
+      isLocalProject: Boolean(ctx.isLocalProject),
+    });
+    const requestLocalMetadata = classifiedError === error ? {} : attachedResponseMetadata;
 
     switch (outcome.kind) {
       case "app-router-error-boundary":
@@ -359,6 +403,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "redirect":
         logger.debug("SSR redirect", {
@@ -367,10 +412,24 @@ export class SSRService implements SSRServiceLike {
           permanent: outcome.permanent,
           projectSlug: ctx.projectSlug,
         });
-        return buildRedirectResult(outcome, slug);
+        return buildRedirectResult({
+          ...outcome,
+          ...mergeDataResponseMetadata([
+            inheritedResponseMetadata,
+            requestLocalMetadata,
+            outcome,
+          ]),
+        }, slug);
       case "not-found":
         logger.debug("SSR notFound", { slug });
-        return buildNotFoundResult(slug);
+        return buildNotFoundResult({
+          ...outcome,
+          ...mergeDataResponseMetadata([
+            inheritedResponseMetadata,
+            requestLocalMetadata,
+            outcome,
+          ]),
+        }, slug);
       case "undeployed":
         logger.debug("Project not deployed", {
           projectSlug: ctx.projectSlug,
@@ -384,6 +443,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "overloaded":
         return {
@@ -394,6 +454,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
       case "runtime":
         captureApplicationError(outcome.error, {
@@ -434,6 +495,7 @@ export class SSRService implements SSRServiceLike {
             cacheStrategy: "no-cache",
             failure: outcome,
             slug,
+            ...responseMetadata,
           };
         }
       case "server-error":
@@ -457,6 +519,7 @@ export class SSRService implements SSRServiceLike {
           cacheStrategy: "no-cache",
           failure: outcome,
           slug,
+          ...responseMetadata,
         };
     }
   }

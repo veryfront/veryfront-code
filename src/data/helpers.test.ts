@@ -31,6 +31,22 @@ describe("helpers.ts", () => {
       assertEquals(result.redirect?.permanent, false);
     });
 
+    it("carries response metadata when a redirect is returned or thrown", () => {
+      const result = redirect("/account", false, {
+        headers: { "x-auth-result": "signed-in" },
+        cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
+      });
+
+      assertEquals(result.headers, { "x-auth-result": "signed-in" });
+      assertEquals(result.cookies, [{
+        name: "session",
+        value: "abc",
+        path: "/",
+        httpOnly: true,
+      }]);
+      assertEquals(isDataControlResult(result), true);
+    });
+
     it("should handle absolute URLs", () => {
       const result = redirect("https://example.com/external");
 
@@ -76,6 +92,13 @@ describe("helpers.ts", () => {
       const result2 = notFound();
 
       assertEquals(result1.notFound, result2.notFound);
+    });
+
+    it("carries response metadata on a not-found result", () => {
+      const result = notFound({ headers: { "x-missing-reason": "gone" } });
+
+      assertEquals(result.notFound, true);
+      assertEquals(result.headers, { "x-missing-reason": "gone" });
     });
   });
 

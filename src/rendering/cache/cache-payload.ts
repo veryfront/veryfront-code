@@ -1,6 +1,7 @@
 import type { RenderResult } from "../orchestrator/types.ts";
 import type { CachePayload } from "./types.ts";
 import { isHtmlNonceCachePlaceholder } from "#veryfront/html/nonce-injection.ts";
+import { normalizeDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
 
 const MAX_CACHE_VALUE_DEPTH = 64;
 const MAX_CACHE_VALUE_NODES = 100_000;
@@ -158,6 +159,58 @@ function optionalTimestamp(
     fail(`${key} must be a non-negative valid millisecond timestamp`);
   }
   return value;
+}
+
+function cloneResponseHeaders(
+  value: unknown,
+  state: CloneState,
+): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainRecord(value)) fail("result.headers must be an object");
+
+  const detached: Record<string, string> = {};
+  for (const key of Object.keys(value)) {
+    const entry = ownDataValue(value, key);
+    if (typeof entry !== "string") fail("result.headers must contain only strings");
+    Object.defineProperty(detached, key, {
+      value: entry,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  let normalized: Record<string, string> | undefined;
+  try {
+    normalized = normalizeDataResponseMetadata({ headers: detached }).headers;
+  } catch {
+    fail("result.headers is invalid");
+  }
+  if (!normalized) return undefined;
+
+  countNode(state, 0);
+  const cloned: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(normalized)) {
+    const clonedName = cloneBoundedString(
+      name,
+      state,
+      "result.headers name",
+      MAX_METADATA_STRING_UTF8_BYTES,
+    );
+    const clonedValue = cloneBoundedString(
+      headerValue,
+      state,
+      "result.headers value",
+      MAX_METADATA_STRING_UTF8_BYTES,
+    );
+    Object.defineProperty(cloned, clonedName, {
+      value: clonedValue,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return cloned;
 }
 
 function cloneNodeMapEntries(
@@ -891,6 +944,7 @@ function buildCachePayload(value: unknown): CachePayload {
       "htmlNoncePlaceholder",
       MAX_METADATA_STRING_UTF8_BYTES,
     );
+  const headers = cloneResponseHeaders(ownDataValue(result, "headers"), state);
   const frontmatter = cloneJsonValue(rawFrontmatter, state);
   if (!isPlainRecord(frontmatter)) fail("result.frontmatter must be an object");
 
@@ -925,6 +979,7 @@ function buildCachePayload(value: unknown): CachePayload {
       stream: null,
       ...(pageModule === undefined ? {} : { pageModule }),
       ...(clonedSsrHash === undefined ? {} : { ssrHash: clonedSsrHash }),
+      ...(headers === undefined ? {} : { headers }),
     },
     ...(htmlNoncePlaceholder === undefined ? {} : { htmlNoncePlaceholder }),
     storedAt,
@@ -983,6 +1038,7 @@ export function serializeCachePayload(value: CachePayload): string {
         ? {}
         : { pageModule: snapshot.result.pageModule }),
       ...(snapshot.result.ssrHash === undefined ? {} : { ssrHash: snapshot.result.ssrHash }),
+      ...(snapshot.result.headers === undefined ? {} : { headers: snapshot.result.headers }),
     },
     ...(snapshot.htmlNoncePlaceholder === undefined
       ? {}

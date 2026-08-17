@@ -50,7 +50,18 @@ import type { LayoutOrchestrator } from "./layout.ts";
 import type { SSROrchestrator } from "./ssr-orchestrator.ts";
 import type { PageDataResponse, RenderOptions, RenderResult } from "./types.ts";
 import { DataFetcher, type FetchDataOptions } from "#veryfront/data/index.ts";
-import type { DataContext, PageWithData } from "#veryfront/data/types.ts";
+import type {
+  DataContext,
+  DataResponseMetadata,
+  PageWithData,
+  ResponseCookie,
+} from "#veryfront/data/types.ts";
+import {
+  attachDataResponseMetadata,
+  mergeDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+  wrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
 import { clearSSRModuleCacheForProject } from "#veryfront/modules/react-loader/index.ts";
 import { setupSSRGlobals } from "../ssr-globals.ts";
 import { LAYOUT_EXTENSIONS } from "../layouts/types.ts";
@@ -161,6 +172,8 @@ interface DataResolutionResult {
   params: Record<string, string | string[]>;
   pageProps: Record<string, unknown>;
   layoutProps: Map<string, Record<string, unknown>>;
+  headers?: Record<string, string>;
+  cookies?: ResponseCookie[];
 }
 
 interface MdxMetadataResult {
@@ -584,9 +597,14 @@ export class RenderPipeline {
         ),
     );
 
-    this.applyFetchedDataResults(slug, dataResults, pageProps, layoutProps);
+    const responseMetadata = this.applyFetchedDataResults(
+      slug,
+      dataResults,
+      pageProps,
+      layoutProps,
+    );
 
-    return { params, pageProps, layoutProps };
+    return { params, pageProps, layoutProps, ...responseMetadata };
   }
 
   /**
@@ -635,23 +653,45 @@ export class RenderPipeline {
     dataResults: FetchedDataResult[],
     pageProps: Record<string, unknown>,
     layoutProps: Map<string, Record<string, unknown>>,
-  ): void {
+  ): DataResponseMetadata {
+    // Layouts are collected outermost to innermost. Apply them in that order,
+    // then the page, so the closest owner wins a duplicate custom header.
+    // Cookies remain distinct and preserve the same outer-to-inner-to-page order.
+    const responseMetadata = mergeDataResponseMetadata(
+      [
+        ...dataResults.filter(({ type }) => type === "layout"),
+        ...dataResults.filter(({ type }) => type === "page"),
+      ]
+        .flatMap(({ result }) => result ? [result] : []),
+    );
+
     for (const { type, id, result, error } of dataResults) {
-      if (error) throw error;
+      if (error) {
+        if (responseMetadata.headers || responseMetadata.cookies) {
+          throw wrapDataResponseMetadataError(error, responseMetadata);
+        }
+        throw error;
+      }
       if (!result) continue;
 
       if (result.notFound) {
-        throw FILE_NOT_FOUND.create({
-          detail: "Page/Layout returned notFound",
-          context: { slug, component: id },
-        });
+        throw attachDataResponseMetadata(
+          FILE_NOT_FOUND.create({
+            detail: "Page/Layout returned notFound",
+            context: { slug, component: id },
+          }),
+          responseMetadata,
+        );
       }
 
       if (result.redirect) {
-        throw RENDER_ERROR.create({
-          detail: `Redirect to ${result.redirect.destination}`,
-          context: { slug, redirect: result.redirect },
-        });
+        throw attachDataResponseMetadata(
+          RENDER_ERROR.create({
+            detail: `Redirect to ${result.redirect.destination}`,
+            context: { slug, redirect: result.redirect },
+          }),
+          responseMetadata,
+        );
       }
 
       if (!result.props) continue;
@@ -662,6 +702,8 @@ export class RenderPipeline {
         layoutProps.set(id, result.props as Record<string, unknown>);
       }
     }
+
+    return responseMetadata;
   }
 
   async renderPage(slug: string, options?: RenderOptions): Promise<RenderResult> {
@@ -731,6 +773,8 @@ export class RenderPipeline {
               pageInfo.entity.path,
               this.config.projectDir,
             );
+            let responseHeaders: Record<string, string> | undefined;
+            let responseCookies: ResponseCookie[] | undefined;
 
             try {
               const skipLayouts = isDotPath({
@@ -780,6 +824,8 @@ export class RenderPipeline {
                   ? internalPreResolvedData.pageProps
                   : undefined;
                 layoutDataMap = internalPreResolvedData.layoutProps;
+                responseHeaders = internalPreResolvedData.headers;
+                responseCookies = internalPreResolvedData.cookies;
               } else if (options?.url && (options.request || options.staticDataOnly)) {
                 await profilePhase(
                   "render.data_fetching",
@@ -799,6 +845,8 @@ export class RenderPipeline {
                             ? dataResolution.pageProps
                             : undefined;
                           layoutDataMap = dataResolution.layoutProps;
+                          responseHeaders = dataResolution.headers;
+                          responseCookies = dataResolution.cookies;
                         } catch (error) {
                           if (error instanceof VeryfrontError) throw error;
 
@@ -844,7 +892,23 @@ export class RenderPipeline {
               );
               timing.bundlePrep = Math.round(performance.now() - bundlePrepStart);
 
-              if (pageBundleResult.scriptResult) return pageBundleResult.scriptResult;
+              if (pageBundleResult.scriptResult) {
+                const scriptResponseMetadata = mergeDataResponseMetadata([
+                  {
+                    ...(pageBundleResult.scriptResult.headers
+                      ? { headers: pageBundleResult.scriptResult.headers }
+                      : {}),
+                    ...(pageBundleResult.scriptResult.cookies
+                      ? { cookies: pageBundleResult.scriptResult.cookies }
+                      : {}),
+                  },
+                  {
+                    ...(responseHeaders ? { headers: responseHeaders } : {}),
+                    ...(responseCookies ? { cookies: responseCookies } : {}),
+                  },
+                ]);
+                return { ...pageBundleResult.scriptResult, ...scriptResponseMetadata };
+              }
 
               if (!pageBundleResult.pageElement || !pageBundleResult.pageBundle) {
                 throw RENDER_ERROR.create({
@@ -971,6 +1035,8 @@ export class RenderPipeline {
                 cacheCoordinator: this.config.cacheCoordinator,
                 logger: renderPipelineLog,
                 nonce: renderOptions.nonce,
+                headers: responseHeaders,
+                cookies: responseCookies,
               });
 
               timing.total = Math.round(performance.now() - pipelineStartTime);
@@ -979,7 +1045,20 @@ export class RenderPipeline {
               return result;
             } catch (error) {
               if (error instanceof Error) {
-                (error as Error & { sourceFile?: string }).sourceFile = sourceFile;
+                const classifiedError = unwrapDataResponseMetadataError(error);
+                const sourceError = classifiedError instanceof Error ? classifiedError : error;
+                (sourceError as Error & { sourceFile?: string }).sourceFile = sourceFile;
+              }
+              if (responseHeaders || responseCookies) {
+                throw wrapDataResponseMetadataError(
+                  error,
+                  mergeDataResponseMetadata([
+                    {
+                      ...(responseHeaders ? { headers: responseHeaders } : {}),
+                      ...(responseCookies ? { cookies: responseCookies } : {}),
+                    },
+                  ]),
+                );
               }
               throw error;
             }

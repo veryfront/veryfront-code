@@ -21,7 +21,7 @@ import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
 import type { WorkerEgressBroker } from "./worker-egress-guard.ts";
 import { computeHash } from "#veryfront/utils";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors";
-import { validateDataResult } from "#veryfront/data/helpers.ts";
+import { validateDataResult } from "#veryfront/data/data-result-validation.ts";
 import { fromFileUrl, join, toFileUrl } from "#veryfront/compat/path";
 
 const testSuite = isDeno ? describe : describe.skip;
@@ -1555,14 +1555,40 @@ testSuite("ProjectWorker - real worker request isolation", () => {
     assertInvalidIsolatedDataResult(response);
   });
 
-  it("rejects malformed fetch-data result outcome combinations", async () => {
-    const response = await executeIsolatedDataModule(
-      `export function getServerData() {
-        return { props: {}, redirect: { destination: "/other" } };
-      }`,
-      "malformed-data-result",
-    );
-    assertInvalidIsolatedDataResult(response);
+  it("preserves control precedence for fetch-data outcome combinations", async () => {
+    for (
+      const [source, expected, slug] of [
+        [
+          `export function getServerData() {
+            return {
+              props: { ignored: true },
+              redirect: { destination: "/other" },
+              notFound: true,
+              revalidate: Number.POSITIVE_INFINITY,
+            };
+          }`,
+          { redirect: { destination: "/other" } },
+          "redirect-precedence-data-result",
+        ],
+        [
+          `export function getServerData() {
+            return {
+              props: { ignored: true },
+              notFound: true,
+              revalidate: "ignored",
+            };
+          }`,
+          { notFound: true },
+          "not-found-precedence-data-result",
+        ],
+      ] as const
+    ) {
+      const response = await executeIsolatedDataModule(source, slug);
+
+      assertEquals(response.type, "data-result");
+      if (response.type !== "data-result") throw new Error("expected data result response");
+      assertEquals(response.result, expected);
+    }
   });
 
   it("drops unknown fields from isolated data results before snapshotting", async () => {
@@ -1650,6 +1676,63 @@ testSuite("ProjectWorker - real worker request isolation", () => {
       notFound: false,
       revalidate: 30,
     });
+  });
+
+  it("rejects negative revalidation metadata", async () => {
+    const response = await executeIsolatedDataModule(
+      `export function getServerData() {
+        return { props: { ok: true }, revalidate: -100 };
+      }`,
+      "negative-revalidation-data-result",
+    );
+
+    assertInvalidIsolatedDataResult(response);
+  });
+
+  it("preserves response metadata across the isolated data boundary", async () => {
+    const response = await executeIsolatedDataModule(
+      `export function getServerData() {
+        return {
+          props: { ok: true },
+          headers: { "x-page-state": "fresh" },
+          cookies: [{
+            name: "session",
+            value: "abc",
+            path: "/",
+            httpOnly: true,
+            sameSite: "lax",
+          }],
+        };
+      }`,
+      "response-metadata-data-result",
+    );
+
+    assertEquals(response.type, "data-result");
+    if (response.type !== "data-result") throw new Error("expected data result response");
+    assertEquals(response.result, {
+      props: { ok: true },
+      headers: { "x-page-state": "fresh" },
+      cookies: [{
+        name: "session",
+        value: "abc",
+        path: "/",
+        httpOnly: true,
+        sameSite: "lax",
+      }],
+    });
+  });
+
+  it("rejects unknown isolated response cookie fields", async () => {
+    const response = await executeIsolatedDataModule(
+      `export function getServerData() {
+        return {
+          props: {},
+          cookies: [{ name: "session", value: "abc", ignored: true }],
+        };
+      }`,
+      "unknown-response-cookie-field",
+    );
+    assertInvalidIsolatedDataResult(response);
   });
 
   it("rejects direct Deno file reads outside scoped worker read permissions", async () => {

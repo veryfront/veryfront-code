@@ -1,8 +1,15 @@
 import { RENDER_ERROR } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
+import * as React from "react";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSRHandler } from "./ssr.handler.ts";
+import { __setComponentSourceLoaderForTests } from "./error-page-fallback.ts";
+import {
+  __injectProjectReactForTests,
+  __injectReactDOMServerForTests,
+  resetReactCache,
+} from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
@@ -241,7 +248,13 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html>not found</html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            failure: { kind: "not-found" } as const,
+            failure: {
+              kind: "not-found",
+              headers: { "x-missing-reason": "gone" },
+              cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+            } as const,
+            headers: { "x-missing-reason": "gone" },
+            cookies: [{ name: "visited-missing", value: "1", path: "/" }],
             slug: "missing-page",
           }),
       });
@@ -254,6 +267,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       // The handler's handleNotFound tries fallback pages, but they won't exist in mock;
       // it eventually builds a 404 response.
       assertEquals(result.response!.status, 404);
+      assertEquals(result.response!.headers.get("x-missing-reason"), "gone");
+      assertEquals(result.response!.headers.getSetCookie(), ["visited-missing=1; Path=/"]);
     });
 
     it("returns redirect responses for redirect error type", async () => {
@@ -276,6 +291,36 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response!.status, 302);
       assertEquals(result.response!.headers.get("location"), "/login");
       assertEquals(result.response!.body, null);
+    });
+
+    it("applies response metadata to redirects", async () => {
+      const mockService = createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 302,
+            isStreaming: false,
+            cacheStrategy: "no-cache" as const,
+            failure: {
+              kind: "redirect",
+              location: "/account",
+              permanent: false,
+            } as const,
+            headers: { "x-auth-result": "signed-in" },
+            cookies: [{ name: "session", value: "abc", path: "/", httpOnly: true }],
+            slug: "sign-in",
+          } as any),
+      });
+      const result = await new SSRHandler(mockService).handle(
+        new Request("http://localhost/sign-in"),
+        makeCtx(),
+      );
+
+      assertEquals(result.response!.status, 302);
+      assertEquals(result.response!.headers.get("location"), "/account");
+      assertEquals(result.response!.headers.get("x-auth-result"), "signed-in");
+      assertEquals(result.response!.headers.getSetCookie(), [
+        "session=abc; Path=/; HttpOnly",
+      ]);
     });
 
     it("returns 500 for server-error type", async () => {
@@ -629,6 +674,73 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
 
       assertEquals(result.continue, false);
       assertEquals(result.response!.status, 500);
+    });
+
+    it("preserves response metadata on a custom server-error page", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.stat = (path: string) => {
+        if (path.endsWith("/pages")) {
+          return Promise.resolve({
+            isFile: false,
+            isDirectory: true,
+            isSymlink: false,
+            size: 0,
+            mtime: null,
+          });
+        }
+        if (path.endsWith("/pages/500.tsx")) {
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            size: 1,
+            mtime: null,
+          });
+        }
+        return Promise.reject(new Error("not found"));
+      };
+      adapter.fs.readFile = () => Promise.resolve("export default function ErrorPage() {}");
+      __setComponentSourceLoaderForTests(() => Promise.resolve(() => null));
+      __injectProjectReactForTests(React);
+      __injectReactDOMServerForTests({
+        renderToString: () => "",
+        renderToStaticMarkup: () => "",
+      });
+      try {
+        const mockService = createMockSSRService({
+          renderPage: () =>
+            Promise.resolve({
+              status: 500,
+              html: "<html>dev overlay</html>",
+              isStreaming: false,
+              cacheStrategy: "no-cache" as const,
+              failure: {
+                kind: "server-error" as const,
+                exposure: "generic" as const,
+                error: new Error("Oops"),
+              },
+              headers: { "x-error-state": "reported" },
+              cookies: [{ name: "error-seen", value: "1", path: "/" }],
+              slug: "page",
+            }),
+        });
+        const handler = new SSRHandler(mockService);
+        const result = await handler.handle(
+          new Request("http://localhost/page"),
+          makeCtx({
+            adapter,
+            isLocalProject: true,
+            projectId: "metadata-error-page",
+          }),
+        );
+
+        assertEquals(result.response!.status, 500);
+        assertEquals(result.response!.headers.get("x-error-state"), "reported");
+        assertStringIncludes(result.response!.headers.get("set-cookie") ?? "", "error-seen=1");
+      } finally {
+        __setComponentSourceLoaderForTests(null);
+        resetReactCache();
+      }
     });
 
     it("returns runtime error type with dev overlay content", async () => {

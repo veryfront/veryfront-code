@@ -1,4 +1,5 @@
 import type { PageBundle, RenderResult } from "#veryfront/types";
+import type { ResponseCookie } from "#veryfront/data/types.ts";
 
 interface RenderResultAssemblyCache {
   persistResult(
@@ -31,6 +32,8 @@ export interface AssembleRenderResultOptions {
   cacheCoordinator?: RenderResultAssemblyCache;
   logger?: RenderResultAssemblyLogger;
   nonce?: string;
+  headers?: Record<string, string>;
+  cookies?: ResponseCookie[];
 }
 
 export function assembleRenderResult(options: AssembleRenderResultOptions): RenderResult {
@@ -49,10 +52,12 @@ export function assembleRenderResult(options: AssembleRenderResultOptions): Rend
     nodeMap: options.pageBundle.nodeMap,
     stream: options.ssrResult.finalStream,
     ssrHash: options.ssrResult.ssrHash,
+    ...(options.headers ? { headers: options.headers } : {}),
+    ...(options.cookies ? { cookies: options.cookies } : {}),
     ...(pageModule ? { pageModule } : {}),
   };
 
-  if (options.shouldCache && !options.skipCachePersist) {
+  if (options.shouldCache && !options.skipCachePersist && !options.cookies?.length) {
     void options.cacheCoordinator?.persistResult(
       result,
       options.slug,

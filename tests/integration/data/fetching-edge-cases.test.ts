@@ -366,7 +366,7 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
       assertEquals(result.revalidate, 0);
     });
 
-    it("should handle revalidate with negative number", async () => {
+    it("rejects a negative revalidate value", async () => {
       const fetcher = new DataFetcher();
       const page: PageWithData = {
         default: () => null,
@@ -376,13 +376,16 @@ describe("DataFetcher - Edge Cases and Error Handling", () => {
         }),
       };
 
-      const result = await fetcher.fetchData(
-        page,
-        makeContext("http://localhost/test"),
-        "production",
+      await assertRejects(
+        () =>
+          fetcher.fetchData(
+            page,
+            makeContext("http://localhost/test"),
+            "production",
+          ),
+        TypeError,
+        "getStaticData must return a valid data result object",
       );
-
-      assertEquals(result.revalidate, -100);
     });
 
     it("should handle very large revalidate values", async () => {

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { notFound, redirect } from "./helpers.ts";
 import type {
   CacheEntry,
   DataContext,
@@ -81,6 +82,24 @@ describe("types.ts", () => {
 
       assertEquals(result.revalidate, false);
     });
+
+    it("should support document response headers and cookies", () => {
+      const result: DataResult = {
+        props: {},
+        headers: { "x-page-state": "fresh" },
+        cookies: [{
+          name: "session",
+          value: "abc",
+          path: "/",
+          httpOnly: true,
+          secure: true,
+          sameSite: "lax",
+        }],
+      };
+
+      assertEquals(result.headers?.["x-page-state"], "fresh");
+      assertEquals(result.cookies?.[0]?.name, "session");
+    });
   });
 
   describe("PageWithData", () => {
@@ -100,6 +119,32 @@ describe("types.ts", () => {
       const pageModule: PageWithData = {
         default: () => null,
         getStaticData: () => ({ props: { data: "static" }, revalidate: 60 }),
+      };
+
+      assertExists(pageModule.getStaticData);
+    });
+
+    it("supports metadata-free control helpers from getStaticData", () => {
+      const missingPage: PageWithData = {
+        default: () => null,
+        getStaticData: () => notFound(),
+      };
+      const redirectingPage: PageWithData = {
+        default: () => null,
+        getStaticData: () => redirect("/next"),
+      };
+
+      assertExists(missingPage.getStaticData);
+      assertExists(redirectingPage.getStaticData);
+    });
+
+    it("keeps legacy DataResult annotations assignable to getStaticData", () => {
+      const getStaticData = (): DataResult<{ data: string }> => ({
+        props: { data: "static" },
+      });
+      const pageModule: PageWithData = {
+        default: () => null,
+        getStaticData,
       };
 
       assertExists(pageModule.getStaticData);

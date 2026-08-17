@@ -1419,6 +1419,84 @@ function invalidIsolatedDataResult(): never {
   throw new NativeTypeError("Invalid isolated data result");
 }
 
+const MAX_WORKER_RESPONSE_METADATA_ENTRIES = 64;
+
+function snapshotDataResponseHeaders(value: unknown): Record<string, string> {
+  return snapshotStringRecord(
+    value,
+    "data result headers",
+    false,
+    MAX_WORKER_HEADER_UTF8_BYTES,
+    MAX_WORKER_RESPONSE_METADATA_ENTRIES * 2,
+  );
+}
+
+function snapshotDataResponseCookies(
+  value: unknown,
+): NonNullable<SerializedDataResult["cookies"]> {
+  const input = requireDenseArray(
+    value,
+    "data result cookies",
+    MAX_WORKER_RESPONSE_METADATA_ENTRIES,
+  );
+  const output = new NativeArray<NonNullable<SerializedDataResult["cookies"]>[number]>(
+    input.length,
+  );
+  const optional = [
+    "domain",
+    "path",
+    "expires",
+    "maxAge",
+    "httpOnly",
+    "secure",
+    "sameSite",
+  ] as const;
+
+  for (let index = 0; index < input.length; index++) {
+    const record = requireRecordShape(
+      arrayElement(input, index, "data result cookies"),
+      ["name", "value"],
+      optional,
+      "data result cookie",
+    );
+    const cookie: NonNullable<SerializedDataResult["cookies"]>[number] = {
+      name: requireString(readDataProperty(record, "name"), "data result cookie name"),
+      value: requireString(readDataProperty(record, "value"), "data result cookie value"),
+    };
+
+    const domain = snapshotOptionalString(record, "domain", MAX_WORKER_VALUE_CHARS);
+    const path = snapshotOptionalString(record, "path", MAX_WORKER_VALUE_CHARS);
+    const expires = snapshotOptionalString(record, "expires", MAX_WORKER_VALUE_CHARS);
+    const sameSite = snapshotOptionalString(record, "sameSite", 6);
+    if (domain !== undefined) cookie.domain = domain;
+    if (path !== undefined) cookie.path = path;
+    if (expires !== undefined) cookie.expires = expires;
+    if (sameSite !== undefined) {
+      if (sameSite !== "lax" && sameSite !== "strict" && sameSite !== "none") {
+        return invalidIsolatedDataResult();
+      }
+      cookie.sameSite = sameSite;
+    }
+    const maxAge = readOptionalDataProperty(record, "maxAge");
+    if (maxAge.present && maxAge.value !== undefined) {
+      if (typeof maxAge.value !== "number" || !numberIsSafeInteger(maxAge.value)) {
+        return invalidIsolatedDataResult();
+      }
+      cookie.maxAge = maxAge.value;
+    }
+    for (const key of ["httpOnly", "secure"] as const) {
+      const field = readOptionalDataProperty(record, key);
+      if (field.present && field.value !== undefined) {
+        if (typeof field.value !== "boolean") return invalidIsolatedDataResult();
+        cookie[key] = field.value;
+      }
+    }
+    defineDataProperty(output, NativeString(index), cookie);
+  }
+
+  return output;
+}
+
 function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
   try {
     const { record: result } = requirePlainDataRecord(
@@ -1429,10 +1507,14 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
     const rawRedirect = readOptionalDataProperty(result, "redirect");
     const rawNotFound = readOptionalDataProperty(result, "notFound");
     const rawRevalidate = readOptionalDataProperty(result, "revalidate");
+    const rawHeaders = readOptionalDataProperty(result, "headers");
+    const rawCookies = readOptionalDataProperty(result, "cookies");
     const hasProps = rawProps.present && rawProps.value !== undefined;
     const hasRedirect = rawRedirect.present && rawRedirect.value !== undefined;
     const hasNotFound = rawNotFound.present && rawNotFound.value !== undefined;
     const hasRevalidate = rawRevalidate.present && rawRevalidate.value !== undefined;
+    const hasHeaders = rawHeaders.present && rawHeaders.value !== undefined;
+    const hasCookies = rawCookies.present && rawCookies.value !== undefined;
 
     let normalizedRedirect:
       | { destination: string; permanent?: boolean }
@@ -1468,36 +1550,46 @@ function snapshotDataResultForBoundary(value: unknown): SerializedDataResult {
       return invalidIsolatedDataResult();
     }
     const normalizedNotFound = hasNotFound ? rawNotFound.value as boolean : undefined;
-    const activeOutcomes = (hasProps ? 1 : 0) +
-      (hasRedirect ? 1 : 0) +
-      (normalizedNotFound === true ? 1 : 0);
-    if (activeOutcomes > 1) {
-      return invalidIsolatedDataResult();
-    }
-
-    let normalizedRevalidate: number | false | undefined;
-    if (hasRevalidate) {
-      if (
-        rawRevalidate.value !== false &&
-        (typeof rawRevalidate.value !== "number" ||
-          !numberIsFinite(rawRevalidate.value) ||
-          rawRevalidate.value < 0)
-      ) {
-        return invalidIsolatedDataResult();
-      }
-      normalizedRevalidate = rawRevalidate.value as number | false;
-    }
 
     const normalized: Record<string, unknown> = {};
-    if (hasProps) defineDataProperty(normalized, "props", rawProps.value);
     if (normalizedRedirect) {
       defineDataProperty(normalized, "redirect", normalizedRedirect);
+    } else if (normalizedNotFound === true) {
+      defineDataProperty(normalized, "notFound", true);
+    } else {
+      let normalizedRevalidate: number | false | undefined;
+      if (hasRevalidate) {
+        if (
+          rawRevalidate.value !== false &&
+          (typeof rawRevalidate.value !== "number" ||
+            !numberIsFinite(rawRevalidate.value) ||
+            rawRevalidate.value < 0)
+        ) {
+          return invalidIsolatedDataResult();
+        }
+        normalizedRevalidate = rawRevalidate.value as number | false;
+      }
+      if (hasProps) defineDataProperty(normalized, "props", rawProps.value);
+      if (normalizedNotFound !== undefined) {
+        defineDataProperty(normalized, "notFound", normalizedNotFound);
+      }
+      if (normalizedRevalidate !== undefined) {
+        defineDataProperty(normalized, "revalidate", normalizedRevalidate);
+      }
     }
-    if (normalizedNotFound !== undefined) {
-      defineDataProperty(normalized, "notFound", normalizedNotFound);
+    if (hasHeaders) {
+      defineDataProperty(
+        normalized,
+        "headers",
+        snapshotDataResponseHeaders(rawHeaders.value),
+      );
     }
-    if (normalizedRevalidate !== undefined) {
-      defineDataProperty(normalized, "revalidate", normalizedRevalidate);
+    if (hasCookies) {
+      defineDataProperty(
+        normalized,
+        "cookies",
+        snapshotDataResponseCookies(rawCookies.value),
+      );
     }
     const budget: DataSnapshotBudget = { nodes: 0, utf8Bytes: 0 };
     return snapshotStructuredDataRecord(normalized, budget) as SerializedDataResult;

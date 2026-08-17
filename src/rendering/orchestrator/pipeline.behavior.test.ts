@@ -3,7 +3,7 @@ import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.t
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
-import type { RenderOptions } from "./types.ts";
+import type { RenderOptions, RenderResult } from "./types.ts";
 import { isTenantBuildFailure, markBuildFailure } from "./module-loader/build-failure.ts";
 import { COMPILATION_ERROR, createError, SSG_GENERATION_ERROR, toError } from "#veryfront/errors";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
@@ -27,6 +27,12 @@ import {
   globalModuleCache,
 } from "#veryfront/modules/react-loader/ssr-module-loader/cache/index.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
+import {
+  getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import { notFound } from "#veryfront/data/helpers.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -555,6 +561,305 @@ describe("RenderPipeline behavior", () => {
     });
   });
 
+  it("merges layout and page response metadata and does not cache cookies", async () => {
+    const pagePath = "/project/pages/response-metadata.tsx";
+    const rootLayoutPath = "/project/layouts/root.tsx";
+    const nestedLayoutPath = "/project/layouts/docs.tsx";
+    let cacheWrites = 0;
+    const pipeline = createPipeline(pagePath, {
+      cacheCoordinator: {
+        checkCache: async () => null,
+        persistResult: async () => {
+          cacheWrites++;
+        },
+      } as any,
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [
+            { kind: "tsx", componentPath: rootLayoutPath },
+            { kind: "tsx", componentPath: nestedLayoutPath },
+          ],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 2,
+          tsxSuccess: 2,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+    });
+
+    (pipeline as any).loadModule = async (path: string) => ({
+      getServerData: () => {
+        if (path === rootLayoutPath) {
+          return {
+            props: {},
+            headers: { "x-owner": "root", "x-root": "yes" },
+            cookies: [{ name: "root", value: "1", path: "/" }],
+          };
+        }
+        if (path === nestedLayoutPath) {
+          return {
+            props: {},
+            headers: { "x-owner": "nested", "x-nested": "yes" },
+            cookies: [{ name: "nested", value: "2", path: "/" }],
+          };
+        }
+        return {
+          props: {},
+          headers: { "x-owner": "page", "x-page": "yes" },
+          cookies: [{ name: "page", value: "3", path: "/" }],
+        };
+      },
+    });
+
+    const result = await pipeline.renderPage("/response-metadata", {
+      request: new Request("http://localhost/response-metadata"),
+      url: new URL("http://localhost/response-metadata"),
+    }) as RenderResult;
+
+    assertEquals(result.headers, {
+      "x-owner": "page",
+      "x-root": "yes",
+      "x-nested": "yes",
+      "x-page": "yes",
+    });
+    assertEquals(result.cookies?.map((cookie) => cookie.name), ["root", "nested", "page"]);
+    assertEquals(cacheWrites, 0);
+  });
+
+  it("merges response metadata into script page results", async () => {
+    const pagePath = "/project/pages/response-metadata.ts";
+    const pipeline = createPipeline(pagePath, {
+      pageRenderer: {
+        preparePageBundles: async () => ({
+          collectedMetadata: {},
+          scriptResult: {
+            html: "<!doctype html><html><body>script</body></html>",
+            frontmatter: {},
+            stream: null,
+          },
+        }),
+      } as any,
+    });
+
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => ({
+        props: {},
+        headers: { "x-script-state": "resolved" },
+        cookies: [{ name: "script-seen", value: "1", path: "/" }],
+      }),
+    });
+
+    const result = await pipeline.renderPage("/response-metadata", {
+      request: new Request("http://localhost/response-metadata"),
+      url: new URL("http://localhost/response-metadata"),
+    });
+
+    assertEquals(result.headers, { "x-script-state": "resolved" });
+    assertEquals(result.cookies, [{ name: "script-seen", value: "1", path: "/" }]);
+  });
+
+  it("preserves successful layout metadata when page data fails", async () => {
+    const pagePath = "/project/pages/response-metadata-data-error.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const pageError = new Error("Page data failed");
+    const pipeline = createPipeline(pagePath, {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+    });
+    (pipeline as any).loadModule = async (path: string) => ({
+      getServerData: () => {
+        if (path === layoutPath) {
+          return {
+            props: {},
+            headers: { "x-layout-state": "resolved" },
+            cookies: [{ name: "layout-seen", value: "1", path: "/" }],
+          };
+        }
+        throw pageError;
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      await pipeline.renderPage("/response-metadata-data-error", {
+        request: new Request("http://localhost/response-metadata-data-error"),
+        url: new URL("http://localhost/response-metadata-data-error"),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(thrown instanceof Error);
+    assertEquals(unwrapDataResponseMetadataError(thrown), pageError);
+    assertEquals(getAttachedDataResponseMetadata(thrown), {
+      headers: { "x-layout-state": "resolved" },
+      cookies: [{ name: "layout-seen", value: "1", path: "/" }],
+    });
+  });
+
+  it("preserves an earlier page control when later layout data fails", async () => {
+    const pagePath = "/project/pages/page-control-before-layout-error.tsx";
+    const layoutPath = "/project/layouts/root.tsx";
+    const pipeline = createPipeline(pagePath, {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: layoutPath }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 1,
+          tsxFailures: [],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: true,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      } as any,
+    });
+    (pipeline as any).loadModule = async (path: string) => ({
+      getServerData: () => {
+        if (path === pagePath) {
+          return {
+            notFound: true,
+            headers: { "x-missing-reason": "page-control" },
+          };
+        }
+        throw new Error("Layout data failed after page control");
+      },
+    });
+
+    const error = await assertRejects(
+      () =>
+        pipeline.resolvePageData("/page-control-before-layout-error", {
+          request: new Request("http://localhost/page-control-before-layout-error"),
+          url: new URL("http://localhost/page-control-before-layout-error"),
+        }),
+      Error,
+      "Page/Layout returned notFound",
+    );
+
+    assertEquals(resolveSSRControlOutcome(error), {
+      kind: "not-found",
+      headers: { "x-missing-reason": "page-control" },
+    });
+  });
+
+  it("attaches resolved response metadata when SSR later fails", async () => {
+    const pagePath = "/project/pages/response-metadata-error.tsx";
+    const sharedRenderError = new Error("SSR failed after data resolution");
+    let dataCalls = 0;
+    const pipeline = createPipeline(pagePath, {
+      ssrOrchestrator: {
+        performSSRRendering: async () => {
+          throw sharedRenderError;
+        },
+        resolveErrorComponentPath: async () => null,
+      } as any,
+    });
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => {
+        dataCalls++;
+        return dataCalls === 1
+          ? {
+            props: {},
+            headers: { "x-page-state": "resolved" },
+            cookies: [{ name: "session", value: "request-specific", path: "/" }],
+          }
+          : { props: {} };
+      },
+    });
+
+    const thrown: unknown[] = [];
+    for (let requestIndex = 0; requestIndex < 2; requestIndex++) {
+      try {
+        await pipeline.renderPage("/response-metadata-error", {
+          request: new Request("http://localhost/response-metadata-error"),
+          url: new URL("http://localhost/response-metadata-error"),
+        });
+      } catch (error) {
+        thrown.push(error);
+      }
+    }
+
+    assert(thrown[0] instanceof Error);
+    assertEquals(getAttachedDataResponseMetadata(thrown[0]), {
+      headers: { "x-page-state": "resolved" },
+      cookies: [{ name: "session", value: "request-specific", path: "/" }],
+    });
+    assert(thrown[1] instanceof Error);
+    assertEquals(
+      getAttachedDataResponseMetadata(thrown[1]),
+      {},
+      "a reused project Error cannot retain another request's response metadata",
+    );
+  });
+
+  it("carries resolved metadata through a non-Error SSR control", async () => {
+    const pagePath = "/project/pages/response-metadata-control.tsx";
+    const control = notFound({ headers: { "x-control": "missing" } });
+    const pipeline = createPipeline(pagePath, {
+      ssrOrchestrator: {
+        performSSRRendering: async () => {
+          throw control;
+        },
+        resolveErrorComponentPath: async () => null,
+      } as any,
+    });
+    (pipeline as any).loadModule = async () => ({
+      getServerData: () => ({
+        props: {},
+        headers: { "x-page-state": "resolved" },
+        cookies: [{ name: "page-seen", value: "1", path: "/" }],
+      }),
+    });
+
+    let thrown: unknown;
+    try {
+      await pipeline.renderPage("/response-metadata-control", {
+        request: new Request("http://localhost/response-metadata-control"),
+        url: new URL("http://localhost/response-metadata-control"),
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    assert(thrown instanceof Error);
+    assertEquals(unwrapDataResponseMetadataError(thrown), control);
+    assertEquals(getAttachedDataResponseMetadata(thrown), {
+      headers: { "x-page-state": "resolved" },
+      cookies: [{ name: "page-seen", value: "1", path: "/" }],
+    });
+  });
+
   it("staticDataOnly skips request-only data hooks during static rendering", async () => {
     const pagePath = "/project/pages/static-only.tsx";
     let serverCalls = 0;
@@ -769,10 +1074,13 @@ describe("RenderPipeline behavior", () => {
 
     (pipeline as any).loadModule = async () => ({ getServerData: () => ({}) });
     (pipeline as any).dataFetcher = {
-      fetchData: async () => ({ notFound: true }),
+      fetchData: async () => ({
+        notFound: true,
+        headers: { "x-missing-reason": "gone" },
+      }),
     };
 
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         pipeline.resolvePageData(slug, {
           projectId,
@@ -782,6 +1090,12 @@ describe("RenderPipeline behavior", () => {
       Error,
       "Page/Layout returned notFound",
     );
+    assertEquals((error as { context?: { headers?: unknown } }).context?.headers, undefined);
+    assertEquals(JSON.stringify(error).includes("gone"), false);
+    assertEquals(resolveSSRControlOutcome(error), {
+      kind: "not-found",
+      headers: { "x-missing-reason": "gone" },
+    });
   });
 
   it("runs data hooks and extracts params for configured page roots", async () => {
@@ -855,10 +1169,14 @@ describe("RenderPipeline behavior", () => {
 
     (pipeline as any).loadModule = async () => ({ getServerData: () => ({}) });
     (pipeline as any).dataFetcher = {
-      fetchData: async () => ({ redirect: { destination: "/login", permanent: false } }),
+      fetchData: async () => ({
+        redirect: { destination: "/login", permanent: false },
+        headers: { "x-auth-result": "required" },
+        cookies: [{ name: "return-to", value: "/private", path: "/" }],
+      }),
     };
 
-    await assertRejects(
+    const error = await assertRejects(
       () =>
         pipeline.resolvePageData(slug, {
           projectId,
@@ -868,6 +1186,16 @@ describe("RenderPipeline behavior", () => {
       Error,
       "Redirect to /login",
     );
+    assertEquals((error as { context?: { headers?: unknown } }).context?.headers, undefined);
+    assertEquals((error as { context?: { cookies?: unknown } }).context?.cookies, undefined);
+    assertEquals(JSON.stringify(error).includes("/private"), false);
+    assertEquals(resolveSSRControlOutcome(error), {
+      kind: "redirect",
+      location: "/login",
+      permanent: false,
+      headers: { "x-auth-result": "required" },
+      cookies: [{ name: "return-to", value: "/private", path: "/" }],
+    });
   });
 
   it("resolvePageData fails when a page module cannot be loaded", async () => {

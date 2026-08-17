@@ -10,6 +10,10 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { SERVICE_OVERLOADED, VeryfrontError } from "#veryfront/errors/index.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
 import {
+  attachDataResponseMetadata,
+  wrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
@@ -364,6 +368,33 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "short");
       });
 
+      it("forces no-cache and suppresses etags when a render sets cookies", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "<html>rendered</html>",
+              stream: undefined,
+              ssrHash: "hash123",
+              frontmatter: {},
+              headers: { "x-page-state": "fresh" },
+              cookies: [{ name: "session", value: "abc", path: "/" }],
+            } as any),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx(),
+          makeRenderOptions({ useNoCache: false }),
+        );
+
+        assertEquals(result.headers, { "x-page-state": "fresh" });
+        assertEquals(result.cookies, [{ name: "session", value: "abc", path: "/" }]);
+        assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.etag, undefined);
+      });
+
       it("requests buffered delivery when the response is cacheable", async () => {
         let delivery: unknown;
         const adapter = createMockRendererAdapter({
@@ -462,12 +493,18 @@ describe("server/services/rendering/ssr.service", () => {
       it("handles file-not-found error as not-found result", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
-            throw new VeryfrontError("Not found", {
-              slug: "file-not-found",
-              category: "ROUTE",
-              status: 404,
-              title: "File not found",
-            });
+            throw attachDataResponseMetadata(
+              new VeryfrontError("Not found", {
+                slug: "file-not-found",
+                category: "ROUTE",
+                status: 404,
+                title: "File not found",
+              }),
+              {
+                headers: { "x-missing-reason": "gone" },
+                cookies: [{ name: "visited-missing", value: "1", path: "/" }],
+              },
+            );
           },
         });
         const service = new SSRService({
@@ -479,6 +516,8 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-missing-reason": "gone" });
+        assertEquals(result.cookies, [{ name: "visited-missing", value: "1", path: "/" }]);
       });
 
       it("handles api-client-error 404 for undeployed project", async () => {
@@ -507,18 +546,24 @@ describe("server/services/rendering/ssr.service", () => {
       it("maps render redirects to redirect results", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {
-            throw new VeryfrontError("Redirect to /login", {
-              slug: "render-error",
-              category: "RUNTIME",
-              status: 500,
-              title: "Component render failed",
-              context: {
-                redirect: {
-                  destination: "/login",
-                  permanent: false,
+            throw wrapDataResponseMetadataError(
+              new VeryfrontError("Redirect to /login", {
+                slug: "render-error",
+                category: "RUNTIME",
+                status: 500,
+                title: "Component render failed",
+                context: {
+                  redirect: {
+                    destination: "/login",
+                    permanent: false,
+                  },
                 },
+              }),
+              {
+                headers: { "x-auth-result": "required" },
+                cookies: [{ name: "return-to", value: "/private", path: "/" }],
               },
-            });
+            );
           },
         });
         const service = new SSRService({
@@ -530,6 +575,12 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "redirect");
         assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-auth-result": "required" });
+        assertEquals(result.cookies, [{
+          name: "return-to",
+          value: "/private",
+          path: "/",
+        }]);
       });
 
       it("maps a thrown notFound() control result to a 404", async () => {
@@ -565,6 +616,51 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
+      it("applies buffered control metadata after loader metadata", async () => {
+        for (
+          const [control, expectedStatus, expectedKind] of [
+            [
+              notFound({
+                headers: { "x-state": "control" },
+                cookies: [{ name: "control-seen", value: "1", path: "/" }],
+              }),
+              404,
+              "not-found",
+            ],
+            [
+              redirect("/login", false, {
+                headers: { "x-state": "control" },
+                cookies: [{ name: "control-seen", value: "1", path: "/" }],
+              }),
+              302,
+              "redirect",
+            ],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw wrapDataResponseMetadataError(control, {
+                headers: { "x-state": "loader" },
+                cookies: [{ name: "loader-seen", value: "1", path: "/" }],
+              });
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(makeCtx(), makeRenderOptions());
+
+          assertEquals(result.status, expectedStatus);
+          assertEquals(result.failure?.kind, expectedKind);
+          assertEquals(result.headers, { "x-state": "control" });
+          assertEquals(result.cookies, [
+            { name: "loader-seen", value: "1", path: "/" },
+            { name: "control-seen", value: "1", path: "/" },
+          ]);
+        }
+      });
+
       it("maps a notFound() reported after the streaming shell to a 404 before responding", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () =>
@@ -573,6 +669,8 @@ describe("server/services/rendering/ssr.service", () => {
               stream: createReactReadyStream(notFound()),
               ssrHash: undefined,
               frontmatter: {},
+              headers: { "x-data-state": "missing" },
+              cookies: [{ name: "missing-seen", value: "1", path: "/" }],
             }),
         });
         const service = new SSRService({
@@ -588,6 +686,8 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-data-state": "missing" });
+        assertEquals(result.cookies, [{ name: "missing-seen", value: "1", path: "/" }]);
       });
 
       it("maps a redirect() reported after the streaming shell to a redirect before responding", async () => {
@@ -595,9 +695,16 @@ describe("server/services/rendering/ssr.service", () => {
           renderPage: () =>
             Promise.resolve({
               html: "",
-              stream: createReactReadyStream(redirect("/login")),
+              stream: createReactReadyStream(
+                redirect("/login", false, {
+                  headers: { "x-data-state": "redirect-control" },
+                  cookies: [{ name: "control-seen", value: "1", path: "/" }],
+                }),
+              ),
               ssrHash: undefined,
               frontmatter: {},
+              headers: { "x-data-state": "redirected" },
+              cookies: [{ name: "redirect-seen", value: "1", path: "/" }],
             }),
         });
         const service = new SSRService({
@@ -614,6 +721,11 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
+        assertEquals(result.headers, { "x-data-state": "redirect-control" });
+        assertEquals(result.cookies, [
+          { name: "redirect-seen", value: "1", path: "/" },
+          { name: "control-seen", value: "1", path: "/" },
+        ]);
       });
 
       it("maps a permanent thrown redirect() to a 301", async () => {
@@ -713,6 +825,39 @@ describe("server/services/rendering/ssr.service", () => {
         }
       });
 
+      it("preserves attached response metadata on non-control render failures", async () => {
+        for (
+          const [ctx, expectedKind] of [
+            [makeCtx(), "runtime"],
+            [
+              makeCtx({
+                isLocalProject: false,
+                allowHostProjectCodeExecution: true,
+              }),
+              "server-error",
+            ],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw attachDataResponseMetadata(new Error("Render failed after data"), {
+                headers: { "x-error-state": "reported" },
+                cookies: [{ name: "error-seen", value: "1", path: "/" }],
+              });
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(ctx, makeRenderOptions());
+
+          assertEquals(result.failure?.kind, expectedKind);
+          assertEquals(result.headers, { "x-error-state": "reported" });
+          assertEquals(result.cookies, [{ name: "error-seen", value: "1", path: "/" }]);
+        }
+      });
+
       it("captures app-router error-boundary failures before returning boundary HTML", async () => {
         const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
         setApplicationErrorReporter({
@@ -722,9 +867,16 @@ describe("server/services/rendering/ssr.service", () => {
           },
           flush: () => Promise.resolve(true),
         });
-        const renderError = Object.assign(new Error("App router render failed"), {
+        const boundaryError = Object.assign(new Error("App router render failed"), {
           errorBoundaryHtml: "<!doctype html><html><body>Error boundary</body></html>",
         });
+        const renderError = wrapDataResponseMetadataError(
+          boundaryError,
+          {
+            headers: { "x-error-state": "reported" },
+            cookies: [{ name: "error-seen", value: "1", path: "/" }],
+          },
+        );
         const adapter = createMockRendererAdapter({
           renderPage: () => {
             throw renderError;
@@ -738,7 +890,9 @@ describe("server/services/rendering/ssr.service", () => {
           const result = await service.renderPage(makeCtx(), makeRenderOptions());
           assertEquals(result.status, 500);
           assertEquals(result.failure?.kind, "app-router-error-boundary");
-          assertEquals(result.html, renderError.errorBoundaryHtml);
+          assertEquals(result.html, boundaryError.errorBoundaryHtml);
+          assertEquals(result.headers, { "x-error-state": "reported" });
+          assertEquals(result.cookies, [{ name: "error-seen", value: "1", path: "/" }]);
           assertEquals(captured.length, 1);
           assertEquals((captured[0]?.error as Error).message, "App router render failed");
           assertEquals(captured[0]?.context, {

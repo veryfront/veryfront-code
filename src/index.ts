@@ -56,8 +56,12 @@ export type { APIContext, APIHandler, APIResponse, APIRoute } from "#veryfront/r
 export { notFound, redirect } from "#veryfront/data";
 export type {
   DataContext,
+  DataResponseMetadata,
+  DataResult,
   InferGetServerDataProps,
   PageWithData,
+  ResponseCookie,
+  StaticDataResult,
   StaticPathsResult,
 } from "#veryfront/data";
 

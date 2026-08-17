@@ -85,6 +85,18 @@ export interface SerializedDataResult {
   redirect?: { destination: string; permanent?: boolean };
   notFound?: boolean;
   revalidate?: number | false;
+  headers?: Record<string, string>;
+  cookies?: Array<{
+    name: string;
+    value: string;
+    domain?: string;
+    path?: string;
+    expires?: string;
+    maxAge?: number;
+    httpOnly?: boolean;
+    secure?: boolean;
+    sameSite?: "lax" | "strict" | "none";
+  }>;
 }
 
 // ---------------------------------------------------------------------------

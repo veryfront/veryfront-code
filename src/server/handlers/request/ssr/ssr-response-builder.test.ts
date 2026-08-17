@@ -109,6 +109,28 @@ describe("server/handlers/request/ssr/ssr-response-builder", () => {
       assertEquals(body, "<p>Hello</p>");
     });
 
+    it("appends page headers and distinct Set-Cookie values after framework headers", async () => {
+      const req = new Request("http://localhost/");
+      const ctx = makeCtx();
+      const result = makeResult({
+        cacheStrategy: "no-cache",
+        headers: { "x-page-state": "fresh" },
+        cookies: [
+          { name: "session", value: "abc", path: "/", httpOnly: true },
+          { name: "theme", value: "dark", sameSite: "lax" },
+        ],
+      });
+      const response = await buildSSRResponse(req, ctx, result, new ResponseBuilder());
+      const setCookies = response.headers.getSetCookie();
+
+      assertEquals(response.headers.get("x-page-state"), "fresh");
+      assertEquals(setCookies, [
+        "session=abc; Path=/; HttpOnly",
+        "theme=dark; SameSite=Lax",
+      ]);
+      assertEquals(response.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
+    });
+
     it("returns correct status code from result", async () => {
       const req = new Request("http://localhost/not-found");
       const ctx = makeCtx();

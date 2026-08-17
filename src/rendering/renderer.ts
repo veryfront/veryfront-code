@@ -97,6 +97,11 @@ import {
   resolveDependencyWritebackTarget,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { bindHtmlNonceFromCache, sealHtmlNonceForCache } from "#veryfront/html/nonce-injection.ts";
+import {
+  getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
+import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -153,6 +158,8 @@ interface CachedRenderData {
   headings?: RenderResult["headings"];
   ssrHash?: string;
   pageModule?: RenderResult["pageModule"];
+  headers?: RenderResult["headers"];
+  cookies?: RenderResult["cookies"];
 }
 
 function createCacheRenderNonce(): string {
@@ -823,6 +830,33 @@ export class Renderer {
         )
         : await runRender();
     } catch (error) {
+      const attachedCookies = error instanceof Error
+        ? getAttachedDataResponseMetadata(error).cookies
+        : undefined;
+      const unwrappedError = error instanceof Error
+        ? unwrapDataResponseMetadataError(error)
+        : error;
+      const controlCookies = resolveSSRControlOutcome(unwrappedError)?.cookies ??
+        resolveSSRControlOutcome(error)?.cookies;
+      if (
+        isFollower &&
+        ((attachedCookies?.length ?? 0) > 0 || (controlCookies?.length ?? 0) > 0)
+      ) {
+        logger.debug("Rerendering follower after cookie-bearing render failure", {
+          slug,
+          projectId: ctx.projectId,
+        });
+        return await this.doRenderPage(
+          slug,
+          ctx,
+          options,
+          startTime,
+          null,
+          callerSignal,
+          admission,
+          false,
+        );
+      }
       if (
         retryBackgroundOverload &&
         admission === "foreground" &&
@@ -847,6 +881,23 @@ export class Renderer {
       throw error;
     }
 
+    if (isFollower && cachedData.cookies?.length) {
+      logger.debug("Rerendering follower after cookie-bearing render", {
+        slug,
+        projectId: ctx.projectId,
+      });
+      return await this.doRenderPage(
+        slug,
+        ctx,
+        options,
+        startTime,
+        null,
+        callerSignal,
+        admission,
+        false,
+      );
+    }
+
     if (isFollower) {
       logger.debug("Render deduplicated (follower)", {
         slug,
@@ -866,6 +917,8 @@ export class Renderer {
       headings: cachedData.headings,
       ssrHash: cachedData.ssrHash,
       pageModule: cachedData.pageModule,
+      ...(cachedData.headers ? { headers: cachedData.headers } : {}),
+      ...(cachedData.cookies ? { cookies: cachedData.cookies } : {}),
       stream: null,
     };
   }
@@ -966,7 +1019,7 @@ export class Renderer {
         },
       );
 
-      if (cacheKey !== null) {
+      if (cacheKey !== null && !result.cookies?.length) {
         await this.cache.persistResult(
           result,
           slug,
@@ -996,6 +1049,8 @@ export class Renderer {
         headings: result.headings,
         ssrHash: result.ssrHash,
         pageModule: result.pageModule,
+        ...(result.headers ? { headers: result.headers } : {}),
+        ...(result.cookies ? { cookies: result.cookies } : {}),
       };
     } finally {
       if (globalAcquired) renderSemaphore.release();
