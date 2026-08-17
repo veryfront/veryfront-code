@@ -12,6 +12,8 @@ import {
   captureWorkflowStaticValue,
 } from "./executor/workflow-definition-snapshot.ts";
 
+const objectFreeze = Object.freeze;
+
 export interface NodeInfo {
   id: string;
   type: string;
@@ -156,7 +158,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
       const nodeInfo: NodeInfo = {
         id: node.id,
         type,
-        dependsOn: node.dependsOn === undefined ? undefined : Object.freeze([...node.dependsOn]),
+        dependsOn: node.dependsOn === undefined ? undefined : objectFreeze([...node.dependsOn]),
       };
 
       const config = node.config as {
@@ -202,9 +204,9 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         children.push(...extractNodeInfo(config.else as WorkflowNode[]));
       }
 
-      if (children.length) nodeInfo.children = Object.freeze(children);
+      if (children.length) nodeInfo.children = objectFreeze(children);
 
-      nodeInfoList.push(Object.freeze(nodeInfo));
+      nodeInfoList.push(objectFreeze(nodeInfo));
     }
 
     return ids;
@@ -228,7 +230,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     }
   }
 
-  return Object.freeze({
+  return objectFreeze({
     id: definition.id,
     description: definition.description,
     version: definition.version,
@@ -238,10 +240,10 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     introspectionSkipped,
     introspectionError,
     nodeCount: workflowNodes.length,
-    nodeTypes: Object.freeze(Array.from(nodeTypes)),
-    nodes: Object.freeze(nodeInfoList),
-    agentRefs: Object.freeze(Array.from(agentRefs)),
-    toolRefs: Object.freeze(Array.from(toolRefs)),
+    nodeTypes: objectFreeze(Array.from(nodeTypes)),
+    nodes: objectFreeze(nodeInfoList),
+    agentRefs: objectFreeze(Array.from(agentRefs)),
+    toolRefs: objectFreeze(Array.from(toolRefs)),
     hasInputSchema: !!definition.inputSchema,
     hasOutputSchema: !!definition.outputSchema,
     inputSchemaJson,

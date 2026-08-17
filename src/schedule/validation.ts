@@ -26,20 +26,19 @@ const OBJECT_PROTOTYPE = Object.prototype;
 const jsonStringify = JSON.stringify;
 const numberIsSafeInteger = Number.isSafeInteger;
 const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
+const objectHasOwn = Object.hasOwn;
 const objectKeys = Object.keys;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
 const reflectOwnKeys = Reflect.ownKeys;
-const SetConstructor = Set;
-const setAdd = Set.prototype.add;
-const setHas = Set.prototype.has;
-const CONCURRENCY_POLICIES = new SetConstructor<ScheduleConcurrencyPolicy>([
-  "Allow",
-  "Forbid",
-  "Replace",
-]);
+const regExpExec = RegExp.prototype.exec;
+const StringConstructor = String;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringSlice = String.prototype.slice;
+const stringTrim = String.prototype.trim;
 const INTEGRATION_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 const REQUIREMENT_KIND_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const MAX_INTEGRATION_REQUIREMENTS = 20;
@@ -56,7 +55,6 @@ const MAX_TIMEZONE_LENGTH = 255;
 const MAX_AGENT_PROMPT_LENGTH = 20_000;
 const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
 const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
-const LEGACY_TARGET_KEYS = new SetConstructor(["conversationMode", "conversationId"]);
 
 const CONFIG_KEYS = [
   "id",
@@ -79,6 +77,19 @@ const DEFINITION_KEYS = CONFIG_KEYS.filter((key) => key !== "cron");
 
 type ValidationMode = "config" | "definition";
 
+function defineArrayElement<T>(target: T[], index: number, value: T): void {
+  objectDefineProperty(target, index, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function matches(pattern: RegExp, value: string): boolean {
+  return reflectApply(regExpExec, pattern, [value]) !== null;
+}
+
 function invalid(detail: string, cause?: unknown): never {
   throw SCHEDULE_CONFIG_INVALID.create({
     detail,
@@ -88,17 +99,17 @@ function invalid(detail: string, cause?: unknown): never {
 
 function truncateDiagnosticKey(key: string): string {
   if (key.length <= MAX_DIAGNOSTIC_KEY_LENGTH) return key;
-  let prefix = key.slice(0, MAX_DIAGNOSTIC_KEY_LENGTH);
-  const finalCodeUnit = prefix.charCodeAt(prefix.length - 1);
+  let prefix = reflectApply(stringSlice, key, [0, MAX_DIAGNOSTIC_KEY_LENGTH]) as string;
+  const finalCodeUnit = reflectApply(stringCharCodeAt, prefix, [prefix.length - 1]) as number;
   if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
-    prefix = prefix.slice(0, -1);
+    prefix = reflectApply(stringSlice, prefix, [0, -1]) as string;
   }
   return `${prefix}…`;
 }
 
 function formatDiagnosticProperty(label: string, key: string): string {
   const boundedKey = truncateDiagnosticKey(key);
-  return SIMPLE_DIAGNOSTIC_KEY_PATTERN.test(boundedKey)
+  return matches(SIMPLE_DIAGNOSTIC_KEY_PATTERN, boundedKey)
     ? `${label}.${boundedKey}`
     : `${label}[${jsonStringify(boundedKey)}]`;
 }
@@ -120,9 +131,9 @@ function snapshotDataRecord(
     invalid(`${label} must be a plain object.`);
   }
 
-  const allowed = new SetConstructor<string>();
+  const allowed = objectCreate(null) as Record<string, true>;
   for (let index = 0; index < allowedKeys.length; index++) {
-    reflectApply(setAdd, allowed, [allowedKeys[index]!]);
+    allowed[allowedKeys[index]!] = true;
   }
   const ownKeys = reflectOwnKeys(value);
   for (let index = 0; index < ownKeys.length; index++) {
@@ -130,20 +141,21 @@ function snapshotDataRecord(
     if (typeof key === "symbol") {
       invalid(`${label} must not define symbol properties.`);
     }
-    if (!reflectApply(setHas, allowed, [key])) {
+    if (!objectHasOwn(allowed, key)) {
       invalid(`${formatDiagnosticProperty(label, key)} is not supported.`);
     }
   }
 
-  const listedKeys = new SetConstructor<PropertyKey>();
+  const listedKeys = objectCreate(null) as Record<string, true>;
   for (let index = 0; index < ownKeys.length; index++) {
-    reflectApply(setAdd, listedKeys, [ownKeys[index]!]);
+    const key = ownKeys[index]!;
+    if (typeof key === "string") listedKeys[key] = true;
   }
   const snapshot: Record<string, unknown> = objectCreate(null);
   for (let index = 0; index < allowedKeys.length; index++) {
     const key = allowedKeys[index]!;
     const descriptor = reflectGetOwnPropertyDescriptor(value, key);
-    const listed = reflectApply(setHas, listedKeys, [key]) as boolean;
+    const listed = objectHasOwn(listedKeys, key);
     const descriptorExists = descriptor !== undefined;
     if (listed !== descriptorExists) {
       invalid(`${label} is invalid.`);
@@ -188,7 +200,7 @@ function optionalNonNegativeInteger(value: unknown, label: string): number | und
 
 function assertNoControlCharacters(value: string, label: string): void {
   for (let index = 0; index < value.length; index++) {
-    const codeUnit = value.charCodeAt(index);
+    const codeUnit = reflectApply(stringCharCodeAt, value, [index]) as number;
     if (codeUnit <= 0x1f || codeUnit === 0x7f) {
       invalid(`${label} must not contain control characters.`);
     }
@@ -208,7 +220,7 @@ function requireContractString(
     invalid(`${label} must be at most ${maxLength} characters.`);
   }
   const original = value;
-  const normalized = original.trim();
+  const normalized = reflectApply(stringTrim, original, []) as string;
   if (normalized.length === 0) invalid(`${label} is required.`);
   assertNoControlCharacters(normalized, label);
   if (mode === "definition" && normalized !== original) {
@@ -239,7 +251,7 @@ function requireIntegrationName(
     MAX_INTEGRATION_NAME_LENGTH,
     mode,
   );
-  if (!INTEGRATION_NAME_PATTERN.test(normalized)) {
+  if (!matches(INTEGRATION_NAME_PATTERN, normalized)) {
     invalid(`${label} must use a lowercase integration identifier.`);
   }
   return normalized;
@@ -251,7 +263,7 @@ function requireRequirementKind(
   mode: ValidationMode,
 ): string {
   const normalized = requireContractString(value, label, MAX_RESOURCE_KIND_LENGTH, mode);
-  if (!REQUIREMENT_KIND_PATTERN.test(normalized)) {
+  if (!matches(REQUIREMENT_KIND_PATTERN, normalized)) {
     invalid(`${label} must use a lowercase resource kind.`);
   }
   return normalized;
@@ -284,22 +296,21 @@ function snapshotDataArray(
     invalid(`${label} must contain at most ${maxLength} entries.`);
   }
 
-  const allowedKeys = new SetConstructor<PropertyKey>();
-  reflectApply(setAdd, allowedKeys, ["length"]);
+  const allowedKeys = objectCreate(null) as Record<string, true>;
+  allowedKeys.length = true;
   for (let index = 0; index < length; index++) {
-    reflectApply(setAdd, allowedKeys, [String(index)]);
+    allowedKeys[StringConstructor(index)] = true;
   }
   const ownKeys = reflectOwnKeys(value);
   for (let index = 0; index < ownKeys.length; index++) {
-    if (!reflectApply(setHas, allowedKeys, [ownKeys[index]!])) {
+    if (!objectHasOwn(allowedKeys, ownKeys[index]!)) {
       invalid(`${label} must not define custom properties.`);
     }
   }
 
   const snapshot: unknown[] = [];
-  snapshot.length = length;
   for (let index = 0; index < length; index++) {
-    const descriptor = reflectGetOwnPropertyDescriptor(value, String(index));
+    const descriptor = reflectGetOwnPropertyDescriptor(value, StringConstructor(index));
     if (
       descriptor === undefined ||
       !descriptor.enumerable ||
@@ -307,7 +318,7 @@ function snapshotDataArray(
     ) {
       invalid(`${label}[${index}] must be an enumerable data property.`);
     }
-    snapshot[index] = descriptor.value;
+    defineArrayElement(snapshot, index, descriptor.value);
   }
   return snapshot;
 }
@@ -321,7 +332,9 @@ function normalizeCron(
   if (original.length > MAX_SCHEDULE_EXPRESSION_LENGTH) {
     invalid(`${label} must be at most ${MAX_SCHEDULE_EXPRESSION_LENGTH} characters.`);
   }
-  if (original.trim().length === 0) invalid(`${label} is required.`);
+  if ((reflectApply(stringTrim, original, []) as string).length === 0) {
+    invalid(`${label} is required.`);
+  }
   assertNoControlCharacters(original, label);
 
   const normalized = normalizeCronExpression(original);
@@ -386,7 +399,10 @@ function normalizeAgentMessage(
   if (message.prompt === undefined) return undefined;
 
   const prompt = message.prompt;
-  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+  if (
+    typeof prompt !== "string" ||
+    (reflectApply(stringTrim, prompt, []) as string).length === 0
+  ) {
     invalid("Schedule agentMessage.prompt must be a non-empty string.");
   }
   if (prompt.length > MAX_AGENT_PROMPT_LENGTH) {
@@ -443,8 +459,10 @@ export function legacyScheduleTargetDiagnostic(
   ) {
     return `${label} must be an object.`;
   }
-  for (const key of objectKeys(legacyTarget)) {
-    if (!reflectApply(setHas, LEGACY_TARGET_KEYS, [key])) {
+  const legacyKeys = objectKeys(legacyTarget);
+  for (let index = 0; index < legacyKeys.length; index++) {
+    const key = legacyKeys[index]!;
+    if (key !== "conversationMode" && key !== "conversationId") {
       return `${formatDiagnosticProperty(label, key)} is not supported.`;
     }
   }
@@ -548,9 +566,8 @@ function normalizeIntegrationRequirements(
     MAX_INTEGRATION_REQUIREMENTS,
   );
 
-  const integrations = new SetConstructor<string>();
+  const integrations = objectCreate(null) as Record<string, true>;
   const normalizedRequirements: ScheduleIntegrationRequirement[] = [];
-  normalizedRequirements.length = requirements.length;
   for (let index = 0; index < requirements.length; index++) {
     const value = requirements[index];
     const label = `${definitionLabel} integrationRequirements[${index}]`;
@@ -565,12 +582,12 @@ function normalizeIntegrationRequirements(
       `${label}.integration`,
       mode,
     );
-    if (reflectApply(setHas, integrations, [integration])) {
+    if (objectHasOwn(integrations, integration)) {
       invalid(
         `${definitionLabel} integrationRequirements contains duplicate integration ${integration}.`,
       );
     }
-    reflectApply(setAdd, integrations, [integration]);
+    integrations[integration] = true;
 
     const requiredScopesValue = requirement.requiredScopes;
     if (mode === "definition" && requiredScopesValue === undefined) {
@@ -593,55 +610,49 @@ function normalizeIntegrationRequirements(
     );
 
     const normalizedScopes: string[] = [];
-    normalizedScopes.length = requiredScopes.length;
+    const scopes = objectCreate(null) as Record<string, true>;
     for (let scopeIndex = 0; scopeIndex < requiredScopes.length; scopeIndex++) {
-      normalizedScopes[scopeIndex] = requireContractString(
+      const scope = requireContractString(
         requiredScopes[scopeIndex],
         `${label}.requiredScopes[${scopeIndex}]`,
         MAX_SCOPE_LENGTH,
         mode,
       );
-    }
-    const scopes = new SetConstructor<string>();
-    for (let scopeIndex = 0; scopeIndex < normalizedScopes.length; scopeIndex++) {
-      const scope = normalizedScopes[scopeIndex]!;
-      if (reflectApply(setHas, scopes, [scope])) {
+      if (objectHasOwn(scopes, scope)) {
         invalid(`${label}.requiredScopes contains duplicate scope ${scope}.`);
       }
-      reflectApply(setAdd, scopes, [scope]);
+      scopes[scope] = true;
+      defineArrayElement(normalizedScopes, scopeIndex, scope);
     }
 
     const normalizedResources: ScheduleIntegrationResource[] = [];
-    normalizedResources.length = resources.length;
     for (let resourceIndex = 0; resourceIndex < resources.length; resourceIndex++) {
-      normalizedResources[resourceIndex] = normalizeIntegrationResource(
+      const resource = normalizeIntegrationResource(
         resources[resourceIndex],
         index,
         resourceIndex,
         mode,
         definitionLabel,
       );
-    }
-    const resourceIdentities = new SetConstructor<string>();
-    for (let resourceIndex = 0; resourceIndex < normalizedResources.length; resourceIndex++) {
-      const resource = normalizedResources[resourceIndex]!;
-      const identity = jsonStringify([
-        resource.kind,
-        resource.id,
-        resource.parent?.kind ?? null,
-        resource.parent?.id ?? null,
-      ]);
-      if (reflectApply(setHas, resourceIdentities, [identity])) {
-        invalid(`${label}.resources contains a duplicate resource identity.`);
+      for (let previousIndex = 0; previousIndex < resourceIndex; previousIndex++) {
+        const previous = normalizedResources[previousIndex]!;
+        if (
+          previous.kind === resource.kind &&
+          previous.id === resource.id &&
+          previous.parent?.kind === resource.parent?.kind &&
+          previous.parent?.id === resource.parent?.id
+        ) {
+          invalid(`${label}.resources contains a duplicate resource identity.`);
+        }
       }
-      reflectApply(setAdd, resourceIdentities, [identity]);
+      defineArrayElement(normalizedResources, resourceIndex, resource);
     }
 
-    normalizedRequirements[index] = {
+    defineArrayElement(normalizedRequirements, index, {
       integration,
       requiredScopes: normalizedScopes,
       resources: normalizedResources,
-    };
+    });
   }
   return normalizedRequirements;
 }
@@ -661,8 +672,8 @@ export function captureScheduleIntegrationRequirementsConfig(
     const requirements = normalizeIntegrationRequirements(value, "config", definitionLabel);
     if (requirements === undefined) return undefined;
 
-    for (let requirementIndex = 0; requirementIndex < requirements.length; requirementIndex++) {
-      const requirement = requirements[requirementIndex]!;
+    for (let index = 0; index < requirements.length; index++) {
+      const requirement = requirements[index]!;
       objectFreeze(requirement.requiredScopes);
       for (let resourceIndex = 0; resourceIndex < requirement.resources.length; resourceIndex++) {
         const resource = requirement.resources[resourceIndex]!;
@@ -784,9 +795,8 @@ function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): Schedule
   const concurrencyPolicy = config.concurrencyPolicy;
   if (
     concurrencyPolicy !== undefined &&
-    !reflectApply(setHas, CONCURRENCY_POLICIES, [
-      concurrencyPolicy as ScheduleConcurrencyPolicy,
-    ])
+    concurrencyPolicy !== "Allow" && concurrencyPolicy !== "Forbid" &&
+    concurrencyPolicy !== "Replace"
   ) {
     invalid("Schedule concurrencyPolicy must be Allow, Forbid, or Replace.");
   }

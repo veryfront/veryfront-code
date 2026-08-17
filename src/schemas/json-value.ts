@@ -95,7 +95,7 @@ function invalidJsonSnapshot(
   segments.length = segmentCount;
   let index = segmentCount - 1;
   for (let current = path; current !== undefined; current = current.parent) {
-    segments[index] = current.segment;
+    defineOwnDataProperty(segments, index, current.segment);
     index -= 1;
   }
   return { success: false, path: segments };
@@ -160,7 +160,7 @@ export function snapshotBoundedJsonValue(value: unknown): BoundedJsonSnapshot {
         return;
       }
       if (arrayIsArray(frame.parent)) {
-        frame.parent[frame.key as number] = canonical;
+        defineOwnDataProperty(frame.parent, frame.key as number, canonical);
         return;
       }
       defineOwnDataProperty(frame.parent, frame.key as string, canonical);
@@ -282,23 +282,23 @@ function snapshotArray(
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       return invalidSnapshotPath(appendSnapshotPath(frame.path, index));
     }
-    values[values.length] = descriptor.value;
+    defineOwnDataProperty(values, values.length, descriptor.value);
   }
 
   const canonical: BoundedJsonValue[] = [];
   canonical.length = length;
   assign(frame, canonical);
   reflectApply(setAdd, activeAncestors, [value]);
-  stack[stack.length] = { kind: "exit", value };
+  defineOwnDataProperty(stack, stack.length, { kind: "exit", value });
   for (let index = values.length - 1; index >= 0; index--) {
-    stack[stack.length] = {
+    defineOwnDataProperty(stack, stack.length, {
       kind: "visit",
       value: values[index],
       depth: frame.depth + 1,
       parent: canonical,
       key: index,
       path: appendSnapshotPath(frame.path, index),
-    };
+    });
   }
   return null;
 }
@@ -341,22 +341,22 @@ function snapshotObject(
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       return invalidSnapshotPath(childPath);
     }
-    values[values.length] = descriptor.value;
+    defineOwnDataProperty(values, values.length, descriptor.value);
   }
 
   const canonical: { [key: string]: BoundedJsonValue } = {};
   assign(frame, canonical);
   reflectApply(setAdd, activeAncestors, [value]);
-  stack[stack.length] = { kind: "exit", value };
+  defineOwnDataProperty(stack, stack.length, { kind: "exit", value });
   for (let index = values.length - 1; index >= 0; index--) {
-    stack[stack.length] = {
+    defineOwnDataProperty(stack, stack.length, {
       kind: "visit",
       value: values[index],
       depth: frame.depth + 1,
       parent: canonical,
       key: ownKeys[index] as string,
       path: appendSnapshotPath(frame.path, ownKeys[index] as string),
-    };
+    });
   }
   return null;
 }
@@ -376,9 +376,9 @@ function hasStringKey(keys: readonly PropertyKey[], expected: string): boolean {
 }
 
 function defineOwnDataProperty(
-  target: { [key: string]: BoundedJsonValue },
-  key: string,
-  value: BoundedJsonValue,
+  target: unknown[] | { [key: string]: BoundedJsonValue },
+  key: PropertyKey,
+  value: unknown,
 ): void {
   objectDefineProperty(target, key, {
     value,

@@ -24,6 +24,21 @@ import {
 } from "../types.ts";
 import { INTERNAL_DELAY_EVENT_NAME, INTERNAL_WAIT_KIND_FIELD } from "../timed-wait-state.ts";
 
+const arrayIsArray = Array.isArray;
+const MapConstructor = Map;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const reflectApply = Reflect.apply;
+const reflectOwnKeys = Reflect.ownKeys;
+const setHas = Set.prototype.has;
+const StringConstructor = String;
+
 const DEFINITION_KEYS = new Set([
   "id",
   "description",
@@ -134,7 +149,10 @@ interface StaticInspectionState {
   readonly budget: StaticBudget;
 }
 
-type ExactRecord = ReadonlyMap<string, unknown>;
+interface ExactRecord {
+  get(key: string): unknown;
+  has(key: string): boolean;
+}
 
 function createCaptureState(): CaptureState {
   return {
@@ -173,7 +191,7 @@ function addBudget(
 function assertPlainStructuralRecord(value: object, label: string): void {
   let prototype: object | null;
   try {
-    prototype = Object.getPrototypeOf(value) as object | null;
+    prototype = objectGetPrototypeOf(value) as object | null;
   } catch (cause) {
     fail(`${label} could not be inspected`, cause);
   }
@@ -181,7 +199,7 @@ function assertPlainStructuralRecord(value: object, label: string): void {
   if (isProxyWithoutHooks(prototype)) fail(`${label} must not inherit from a Proxy`);
   let parent: object | null;
   try {
-    parent = Object.getPrototypeOf(prototype) as object | null;
+    parent = objectGetPrototypeOf(prototype) as object | null;
   } catch (cause) {
     fail(`${label} prototype could not be inspected`, cause);
   }
@@ -200,12 +218,12 @@ function inspectExactRecord(
   ) {
     fail(`${label} must be a non-Proxy plain record`);
   }
-  if (Array.isArray(value)) fail(`${label} must be a plain record`);
+  if (arrayIsArray(value)) fail(`${label} must be a plain record`);
   assertPlainStructuralRecord(value, label);
 
   let keys: PropertyKey[];
   try {
-    keys = Reflect.ownKeys(value);
+    keys = reflectOwnKeys(value);
   } catch (cause) {
     fail(`${label} could not be inspected`, cause);
   }
@@ -213,70 +231,92 @@ function inspectExactRecord(
     fail(`${label} contains too many fields`);
   }
 
-  const fields = new Map<string, unknown>();
-  for (const key of keys) {
-    if (typeof key !== "string" || !allowedKeys.has(key)) {
+  const fields = new MapConstructor<string, unknown>();
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    if (
+      typeof key !== "string" ||
+      !(reflectApply(setHas, allowedKeys, [key]) as boolean)
+    ) {
       fail(
         `${label} contains unsupported field ${typeof key === "string" ? `"${key}"` : "symbol"}`,
       );
     }
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, key);
+      descriptor = objectGetOwnPropertyDescriptor(value, key);
     } catch (cause) {
       fail(`${label} field "${key}" could not be inspected`, cause);
     }
     if (!descriptor || !("value" in descriptor)) {
       fail(`${label} field "${key}" must be an own data property`);
     }
-    fields.set(key, descriptor.value);
+    reflectApply(mapSet, fields, [key, descriptor.value]);
   }
-  for (const key of requiredKeys) {
-    if (!fields.has(key)) fail(`${label} must contain own data property "${key}"`);
+  for (let index = 0; index < requiredKeys.length; index++) {
+    const key = requiredKeys[index]!;
+    if (!(reflectApply(mapHas, fields, [key]) as boolean)) {
+      fail(`${label} must contain own data property "${key}"`);
+    }
   }
-  return fields;
+  return {
+    get(key: string): unknown {
+      return reflectApply(mapGet, fields, [key]);
+    },
+    has(key: string): boolean {
+      return reflectApply(mapHas, fields, [key]) as boolean;
+    },
+  };
 }
 
 function inspectDenseArrayValues(value: unknown, label: string): unknown[] {
   if (typeof value !== "object" || value === null || isProxyWithoutHooks(value)) {
     fail(`${label} must be a non-Proxy array`);
   }
-  if (!Array.isArray(value)) fail(`${label} must be an array`);
+  if (!arrayIsArray(value)) fail(`${label} must be an array`);
 
   let keys: PropertyKey[];
   let lengthDescriptor: PropertyDescriptor | undefined;
   try {
-    keys = Reflect.ownKeys(value);
-    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    keys = reflectOwnKeys(value);
+    lengthDescriptor = objectGetOwnPropertyDescriptor(value, "length");
   } catch (cause) {
     fail(`${label} could not be inspected`, cause);
   }
   const length = lengthDescriptor && "value" in lengthDescriptor
     ? lengthDescriptor.value
     : undefined;
-  if (!Number.isSafeInteger(length) || length < 0) fail(`${label} has an invalid length`);
+  if (!numberIsSafeInteger(length) || length < 0) fail(`${label} has an invalid length`);
   if (length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES) {
     fail(`${label} cannot contain more than ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} entries`);
   }
-  if (
-    keys.length !== length + 1 || keys.some((key) => key !== "length" && typeof key !== "string")
-  ) {
+  let unsupportedKey = false;
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    if (key !== "length" && typeof key !== "string") unsupportedKey = true;
+  }
+  if (keys.length !== length + 1 || unsupportedKey) {
     fail(`${label} must be dense and contain no custom properties`);
   }
 
   const values: unknown[] = [];
   for (let index = 0; index < length; index++) {
-    const key = String(index);
+    const key = StringConstructor(index);
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Object.getOwnPropertyDescriptor(value, key);
+      descriptor = objectGetOwnPropertyDescriptor(value, key);
     } catch (cause) {
       fail(`${label} entry ${index} could not be inspected`, cause);
     }
     if (!descriptor || !("value" in descriptor)) {
       fail(`${label} must be dense; entry ${index} is missing or is an accessor`);
     }
-    values.push(descriptor.value);
+    objectDefineProperty(values, index, {
+      value: descriptor.value,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
   }
   return values;
 }
@@ -568,7 +608,7 @@ function freezeStaticSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
   seen.add(value);
   if (Array.isArray(value)) {
     for (const entry of value) freezeStaticSnapshot(entry, seen);
-    return Object.freeze(value);
+    return objectFreeze(value);
   }
   const mapSize = tryGetter(mapSizeGetter, value);
   if (mapSize.matched) {
@@ -585,7 +625,7 @@ function freezeStaticSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
       freezeStaticSnapshot(next.value[0], seen);
       freezeStaticSnapshot(next.value[1], seen);
     }
-    return Object.freeze(value);
+    return objectFreeze(value);
   }
   const setSize = tryGetter(setSizeGetter, value);
   if (setSize.matched) {
@@ -595,14 +635,14 @@ function freezeStaticSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
       if (next.done) break;
       freezeStaticSnapshot(next.value, seen);
     }
-    return Object.freeze(value);
+    return objectFreeze(value);
   }
   if (tryGetter(typedArrayLengthGetter, value).matched) return value;
   for (const key of Reflect.ownKeys(value)) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor && "value" in descriptor) freezeStaticSnapshot(descriptor.value, seen);
   }
-  return Object.freeze(value);
+  return objectFreeze(value);
 }
 
 function captureStaticValueWithBudget<T>(
@@ -665,7 +705,7 @@ export function captureWorkflowStringList(
     seen.add(entry);
     captured.push(entry);
   }
-  return Object.freeze(captured) as string[];
+  return objectFreeze(captured) as string[];
 }
 
 function captureRetryConfig(value: unknown, label: string): RetryConfig | undefined {
@@ -687,7 +727,7 @@ function captureRetryConfig(value: unknown, label: string): RetryConfig | undefi
   if (backoff !== undefined && typeof backoff !== "string") {
     fail(`${label} retry backoff must be a string`);
   }
-  const retry = Object.freeze({
+  const retry = objectFreeze({
     ...(fields.has("maxAttempts") ? { maxAttempts } : {}),
     ...(fields.has("initialDelay") ? { initialDelay } : {}),
     ...(fields.has("maxDelay") ? { maxDelay } : {}),
@@ -776,7 +816,7 @@ function captureNodeConfig(
       }
       const input = fields.get("input");
       if (typeof input === "function") assertFunction(input, `${label} input builder`);
-      return Object.freeze({
+      return objectFreeze({
         type: "step" as const,
         ...common,
         agent,
@@ -791,7 +831,7 @@ function captureNodeConfig(
       if (strategy !== undefined && !["all", "race", "allSettled"].includes(strategy as string)) {
         fail(`${label} parallel strategy is invalid`);
       }
-      return Object.freeze({
+      return objectFreeze({
         type: "parallel" as const,
         ...common,
         strategy,
@@ -801,7 +841,7 @@ function captureNodeConfig(
     case "branch": {
       const condition = fields.get("condition");
       assertFunction(condition, `${label} branch condition`);
-      return Object.freeze({
+      return objectFreeze({
         type: "branch" as const,
         ...common,
         condition,
@@ -848,7 +888,7 @@ function captureNodeConfig(
       }
       const payload = fields.get("payload");
       if (typeof payload === "function") assertFunction(payload, `${label} payload builder`);
-      return Object.freeze({
+      return objectFreeze({
         type: "wait" as const,
         ...common,
         waitType,
@@ -885,7 +925,7 @@ function captureNodeConfig(
       const output = fields.get("output");
       assertOptionalFunction(output, `${label} output`);
       if (typeof input === "function") assertFunction(input, `${label} input builder`);
-      return Object.freeze({
+      return objectFreeze({
         type: "subWorkflow" as const,
         ...common,
         workflow: typeof workflow === "string"
@@ -923,7 +963,7 @@ function captureNodeConfig(
       ) {
         fail(`${label} map concurrency must be a positive safe integer`);
       }
-      return Object.freeze({
+      return objectFreeze({
         type: "map" as const,
         ...common,
         items: typeof items === "function" ? items : staticValue(items, "items"),
@@ -956,7 +996,7 @@ function captureNodeConfig(
       }
       const delay = fields.get("delay");
       if (delay !== undefined) assertDurationValue(delay, `${label} delay`, false);
-      return Object.freeze({
+      return objectFreeze({
         type: "loop" as const,
         ...common,
         while: condition,
@@ -993,7 +1033,7 @@ function captureNode(
   if (state.activeNodes.has(object)) fail(`${label} contains a recursive node reference`);
   state.activeNodes.add(object);
   try {
-    return Object.freeze({
+    return objectFreeze({
       id,
       config: captureNodeConfig(fields.get("config"), label, state, depth),
       ...(fields.has("dependsOn")
@@ -1055,7 +1095,7 @@ function captureNodeList(
     captured.push(captureNode(values[index], `${label} node at index ${index}`, state, depth));
   }
   validateDependencyGraph(captured, label);
-  return Object.freeze(captured) as WorkflowNode[];
+  return objectFreeze(captured) as WorkflowNode[];
 }
 
 function captureDefinition<TInput, TOutput>(
@@ -1092,7 +1132,7 @@ function captureDefinition<TInput, TOutput>(
   assertOptionalFunction(onError, `Workflow "${id}" onError`);
   assertOptionalFunction(onComplete, `Workflow "${id}" onComplete`);
   const stepsValue = fields.get("steps");
-  if (typeof stepsValue !== "function" && !Array.isArray(stepsValue)) {
+  if (typeof stepsValue !== "function" && !arrayIsArray(stepsValue)) {
     fail(`Workflow "${id}" steps must be an array or builder function`);
   }
   if (typeof stepsValue === "function") {
@@ -1113,7 +1153,7 @@ function captureDefinition<TInput, TOutput>(
       allowEmptySteps,
       "step",
     );
-    return Object.freeze({
+    return objectFreeze({
       id,
       ...(fields.has("description") ? { description } : {}),
       ...(fields.has("version") ? { version } : {}),
@@ -1173,7 +1213,7 @@ export function captureWorkflowDefinitions(
     seenIds.add(workflow.id);
     captured.push(workflow);
   }
-  return Object.freeze(captured) as WorkflowDefinition[];
+  return objectFreeze(captured) as WorkflowDefinition[];
 }
 
 /** Capture nodes returned by a workflow or composite builder. */
@@ -1199,5 +1239,5 @@ export function captureWorkflowNodes(
 export function captureWorkflowMapItems(value: unknown, label: string): unknown[] {
   const entries = inspectDenseArrayValues(value, label);
   const captured = captureWorkflowStaticValue(entries, label);
-  return Object.freeze(captured) as unknown[];
+  return objectFreeze(captured) as unknown[];
 }

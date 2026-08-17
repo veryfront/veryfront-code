@@ -126,6 +126,7 @@ describe("primitive schemas", () => {
       const originalGetPrototypeOf = Reflect.getPrototypeOf;
       const originalOwnKeys = Reflect.ownKeys;
       const originalDefineProperty = Object.defineProperty;
+      const originalDeleteProperty = Reflect.deleteProperty;
       const originalEncode = TextEncoder.prototype.encode;
       const originalSetAdd = Set.prototype.add;
       const originalSetDelete = Set.prototype.delete;
@@ -135,6 +136,10 @@ describe("primitive schemas", () => {
         typedArrayPrototype,
         "byteLength",
       );
+      const originalArrayZeroDescriptor = Object.getOwnPropertyDescriptor(
+        Array.prototype,
+        "0",
+      );
       let poisonCalls = 0;
       const poison = (): never => {
         poisonCalls += 1;
@@ -143,6 +148,21 @@ describe("primitive schemas", () => {
       let result: ReturnType<typeof snapshotBoundedJsonValue> | undefined;
 
       try {
+        originalDefineProperty(Array.prototype, "0", {
+          configurable: true,
+          set(this: unknown[], next: unknown) {
+            if (next === "schema-sentinel") {
+              poisonCalls += 1;
+              return;
+            }
+            originalDefineProperty(this, "0", {
+              value: next,
+              enumerable: true,
+              configurable: true,
+              writable: true,
+            });
+          },
+        });
         originalDefineProperty(typedArrayPrototype, "byteLength", {
           ...originalByteLengthDescriptor,
           get: poison,
@@ -162,7 +182,7 @@ describe("primitive schemas", () => {
         Set.prototype.has = poison as typeof Set.prototype.has;
 
         result = snapshotBoundedJsonValue({
-          nested: [1, { ready: true }],
+          nested: ["schema-sentinel", { ready: true }],
         });
       } finally {
         Array.isArray = originalArrayIsArray;
@@ -178,6 +198,11 @@ describe("primitive schemas", () => {
         Set.prototype.add = originalSetAdd;
         Set.prototype.delete = originalSetDelete;
         Set.prototype.has = originalSetHas;
+        if (originalArrayZeroDescriptor) {
+          originalDefineProperty(Array.prototype, "0", originalArrayZeroDescriptor);
+        } else {
+          originalDeleteProperty(Array.prototype, "0");
+        }
         if (originalByteLengthDescriptor) {
           originalDefineProperty(
             typedArrayPrototype,
@@ -190,7 +215,7 @@ describe("primitive schemas", () => {
       assertEquals(poisonCalls, 0);
       assertEquals(result, {
         success: true,
-        value: { nested: [1, { ready: true }] },
+        value: { nested: ["schema-sentinel", { ready: true }] },
       });
     });
 

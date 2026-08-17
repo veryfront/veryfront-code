@@ -20,20 +20,25 @@ const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const arrayIsArray = Array.isArray;
 const OBJECT_PROTOTYPE = Object.prototype;
 const hasOwn = Object.hasOwn;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
 const objectFreeze = Object.freeze;
 const objectValues = Object.values;
-const MapConstructor = Map;
-const mapGet = Map.prototype.get;
-const mapHas = Map.prototype.has;
-const mapSet = Map.prototype.set;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
-const SetConstructor = Set;
-const setAdd = Set.prototype.add;
-const setHas = Set.prototype.has;
 
 type TaskObject = Record<PropertyKey, unknown>;
+type TaskFields = Partial<Record<keyof TaskDefinition, unknown>>;
+
+function defineArrayElement<T>(target: T[], index: number, value: T): void {
+  objectDefineProperty(target, index, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
 
 function fail(detail: string): never {
   throw new TypeError(detail);
@@ -53,17 +58,24 @@ function findTaskPropertyDescriptor(
   value: TaskObject,
   key: PropertyKey,
 ): PropertyDescriptor | undefined {
-  const visited = new SetConstructor<TaskObject>();
+  const visited: TaskObject[] = [];
   let owner: TaskObject | null = value;
 
   for (let depth = 0; owner !== null && owner !== OBJECT_PROTOTYPE; depth++) {
+    let repeated = false;
+    for (let index = 0; index < depth; index++) {
+      if (visited[index] === owner) {
+        repeated = true;
+        break;
+      }
+    }
     if (
-      depth >= MAX_TASK_PROTOTYPE_DEPTH || reflectApply(setHas, visited, [owner]) ||
+      depth >= MAX_TASK_PROTOTYPE_DEPTH || repeated ||
       isProxyWithoutHooks(owner)
     ) {
       fail("Task definition has an invalid prototype chain.");
     }
-    reflectApply(setAdd, visited, [owner]);
+    defineArrayElement(visited, depth, owner);
 
     const descriptor = reflectGetOwnPropertyDescriptor(owner, key);
     if (descriptor !== undefined) return descriptor;
@@ -73,10 +85,10 @@ function findTaskPropertyDescriptor(
   return undefined;
 }
 
-function inspectTaskDefinition(value: unknown): Map<string, unknown> {
+function inspectTaskDefinition(value: unknown): TaskFields {
   const task = inspectTaskObject(value);
 
-  const fields = new MapConstructor<string, unknown>();
+  const fields = objectCreate(null) as TaskFields;
   for (let index = 0; index < TASK_DEFINITION_KEYS.length; index++) {
     const key = TASK_DEFINITION_KEYS[index]!;
     const descriptor = findTaskPropertyDescriptor(task, key);
@@ -89,7 +101,7 @@ function inspectTaskDefinition(value: unknown): Map<string, unknown> {
           : `Task definition ${key} must be a data property.`,
       );
     }
-    reflectApply(mapSet, fields, [key, descriptor.value]);
+    fields[key] = descriptor.value;
   }
   return fields;
 }
@@ -142,42 +154,39 @@ function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
 export function captureTaskDefinition(value: unknown): TaskDefinition {
   const task = inspectTaskObject(value);
   const fields = inspectTaskDefinition(task);
-  const run = reflectApply(mapGet, fields, ["run"]);
+  const run = fields.run;
   if (typeof run !== "function") fail("Task definition run must be a function.");
   const runWithReceiver: TaskDefinition["run"] = (ctx) => reflectApply(run, task, [ctx]);
 
-  const name = optionalString(
-    reflectApply(mapGet, fields, ["name"]),
-    "Task definition name",
-  );
+  const name = optionalString(fields.name, "Task definition name");
   const description = optionalString(
-    reflectApply(mapGet, fields, ["description"]),
+    fields.description,
     "Task definition description",
   );
   const inputSchema = optionalRecord(
-    reflectApply(mapGet, fields, ["inputSchema"]),
+    fields.inputSchema,
     "Task definition inputSchema",
   );
   const outputSchema = optionalRecord(
-    reflectApply(mapGet, fields, ["outputSchema"]),
+    fields.outputSchema,
     "Task definition outputSchema",
   );
-  const schedulable = reflectApply(mapGet, fields, ["schedulable"]);
+  const schedulable = fields.schedulable;
   if (schedulable !== undefined && typeof schedulable !== "boolean") {
     fail("Task definition schedulable must be a boolean.");
   }
   const integrationRequirements = captureScheduleIntegrationRequirementsConfig(
-    reflectApply(mapGet, fields, ["integrationRequirements"]),
+    fields.integrationRequirements,
     "Task",
   );
 
   return objectFreeze({
-    ...(reflectApply(mapHas, fields, ["name"]) ? { name } : {}),
-    ...(reflectApply(mapHas, fields, ["description"]) ? { description } : {}),
-    ...(reflectApply(mapHas, fields, ["inputSchema"]) ? { inputSchema } : {}),
-    ...(reflectApply(mapHas, fields, ["outputSchema"]) ? { outputSchema } : {}),
+    ...(hasOwn(fields, "name") ? { name } : {}),
+    ...(hasOwn(fields, "description") ? { description } : {}),
+    ...(hasOwn(fields, "inputSchema") ? { inputSchema } : {}),
+    ...(hasOwn(fields, "outputSchema") ? { outputSchema } : {}),
     ...(integrationRequirements === undefined ? {} : { integrationRequirements }),
-    ...(reflectApply(mapHas, fields, ["schedulable"]) ? { schedulable } : {}),
+    ...(hasOwn(fields, "schedulable") ? { schedulable } : {}),
     run: runWithReceiver,
   }) as TaskDefinition;
 }

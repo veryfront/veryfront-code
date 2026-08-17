@@ -86,6 +86,47 @@ describe("WorkflowRegistry", () => {
       assertEquals(metadata.hasInputSchema, false);
       assertEquals(metadata.hasOutputSchema, false);
     });
+
+    it("keeps integration metadata immutable without ambient freeze", () => {
+      const originalObjectFreeze = Object.freeze;
+      let poisonCalls = 0;
+
+      try {
+        Object.freeze = ((value: object) => {
+          poisonCalls += 1;
+          return value;
+        }) as typeof Object.freeze;
+        workflowRegistry.register({
+          id: "freeze-poison-workflow",
+          steps: () => [],
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: ["chat:write"],
+            resources: [],
+          }],
+        });
+      } finally {
+        Object.freeze = originalObjectFreeze;
+      }
+
+      const stored = workflowRegistry.getDefinition("freeze-poison-workflow");
+      const metadata = workflowRegistry.get("freeze-poison-workflow");
+      assertEquals(poisonCalls, 0);
+      assertEquals(Object.isFrozen(stored), true);
+      assertEquals(Object.isFrozen(metadata), true);
+      assertThrows(
+        () => {
+          (stored as { integrationRequirements?: unknown[] }).integrationRequirements = [];
+        },
+        TypeError,
+      );
+      assertThrows(
+        () => {
+          (metadata as { integrationRequirements?: unknown[] }).integrationRequirements = [];
+        },
+        TypeError,
+      );
+    });
   });
 
   describe("canonical admission", () => {
