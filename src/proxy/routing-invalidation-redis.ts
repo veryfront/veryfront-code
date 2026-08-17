@@ -20,6 +20,7 @@ const DEFAULT_MAX_ENVELOPE_FUTURE_MS = 5_000;
 const INTEGRITY_SECRET_ENV_VAR = "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET";
 const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
+const reflectApply = Reflect.apply;
 
 type RedisListener = (message: string, channel: string) => void;
 type SignatureDomain = "event" | "ack";
@@ -77,6 +78,18 @@ function positiveInteger(value: unknown, fallback: number): number {
 
 function encodedByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+function observeRedisReady(
+  client: RoutingInvalidationRedisClient,
+  listener: () => void,
+): void {
+  if (!client.on) return;
+  try {
+    reflectApply(client.on, client, ["ready", listener]);
+  } catch {
+    // Injected clients only guarantee support for error listeners.
+  }
 }
 
 function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope | null {
@@ -287,6 +300,12 @@ async function closeClient(
   }
 }
 
+function isExpectedSocketRecycle(error: unknown): error is Error {
+  return error instanceof Error &&
+    error.constructor.name === "SocketClosedUnexpectedlyError" &&
+    error.message === "Socket closed unexpectedly";
+}
+
 export async function startProxyRoutingInvalidationBus(
   options: StartProxyRoutingInvalidationBusOptions,
 ): Promise<ProxyRoutingInvalidationBus | null> {
@@ -391,14 +410,42 @@ export async function startProxyRoutingInvalidationBus(
     return processing;
   };
 
-  const logRedisError = (error: unknown) => {
-    options.logger?.error(
-      "Proxy routing invalidation Redis error",
-      error instanceof Error ? error : new Error(String(error)),
-    );
+  const observeRedisClient = (
+    client: RoutingInvalidationRedisClient,
+    clientRole: "publisher" | "subscriber",
+  ): void => {
+    let hasBeenReady = false;
+    let recoveryPending = false;
+
+    observeRedisReady(client, () => {
+      if (hasBeenReady && recoveryPending) {
+        options.logger?.info(
+          clientRole === "subscriber"
+            ? "Proxy routing invalidation Redis subscriber reconnected and resubscribed"
+            : "Proxy routing invalidation Redis publisher reconnected",
+          { clientRole },
+        );
+      }
+      hasBeenReady = true;
+      recoveryPending = false;
+    });
+    client.on?.("error", (error) => {
+      recoveryPending ||= hasBeenReady;
+      if (hasBeenReady && isExpectedSocketRecycle(error)) {
+        options.logger?.warn(
+          "Proxy routing invalidation Redis socket closed; reconnecting",
+          { clientRole },
+        );
+        return;
+      }
+      options.logger?.error(
+        "Proxy routing invalidation Redis error",
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    });
   };
-  publishClient.on?.("error", logRedisError);
-  subscribeClient.on?.("error", logRedisError);
+  observeRedisClient(publishClient, "publisher");
+  observeRedisClient(subscribeClient, "subscriber");
 
   try {
     await Promise.all([publishClient.connect(), subscribeClient.connect()]);

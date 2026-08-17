@@ -41,6 +41,10 @@ async function settleWithin<T>(promise: Promise<T>, label: string): Promise<T> {
 
 function createFakeRedisServer() {
   const subscriptions = new Map<RoutingInvalidationRedisClient, Map<string, RedisListener>>();
+  const clientEventListeners = new Map<
+    RoutingInvalidationRedisClient,
+    Map<string, Set<(value?: unknown) => void>>
+  >();
   const clients: RoutingInvalidationRedisClient[] = [];
   let onPublish:
     | ((channel: string, message: string) => void | Promise<void>)
@@ -71,9 +75,20 @@ function createFakeRedisServer() {
       },
       close: () => {
         subscriptions.delete(client);
+        clientEventListeners.delete(client);
         return Promise.resolve();
       },
-      destroy: () => subscriptions.delete(client),
+      destroy: () => {
+        subscriptions.delete(client);
+        clientEventListeners.delete(client);
+      },
+      on: ((event: string, listener: (value?: unknown) => void) => {
+        const listeners = clientEventListeners.get(client) ?? new Map();
+        const eventListeners = listeners.get(event) ?? new Set();
+        eventListeners.add(listener);
+        listeners.set(event, eventListeners);
+        clientEventListeners.set(client, listeners);
+      }) as NonNullable<RoutingInvalidationRedisClient["on"]>,
     };
     clients.push(client);
     return client;
@@ -82,6 +97,13 @@ function createFakeRedisServer() {
   return {
     clients,
     createClient,
+    emitClientEvent(clientIndex: number, event: string, value?: unknown) {
+      const client = clients[clientIndex];
+      if (!client) throw new Error(`Missing Redis client ${clientIndex}`);
+      for (const listener of clientEventListeners.get(client)?.get(event) ?? []) {
+        listener(value);
+      }
+    },
     publishRaw,
     setOnPublish(listener: typeof onPublish) {
       onPublish = listener;
@@ -143,6 +165,69 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 }
 
 describe("proxy routing invalidation Redis bus", () => {
+  it("warns for a managed socket recycle and reports successful resubscription", async () => {
+    const redis = createFakeRedisServer();
+    const info: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const errors: Array<{ message: string; error?: Error }> = [];
+    const bus = await startProxyRoutingInvalidationBus({
+      redisUrl: "redis://example.test:6379",
+      replicaId: "replica-a",
+      createClient: redis.createClient,
+      integritySecret: createIntegritySecret(),
+      logger: {
+        info: (message, extra) => info.push({ message, extra }),
+        warn: (message, extra) => warnings.push({ message, extra }),
+        error: (message, error) => errors.push({ message, error }),
+      },
+      onInvalidate: () => {},
+    });
+
+    class SocketClosedUnexpectedlyError extends Error {
+      constructor() {
+        super("Socket closed unexpectedly");
+      }
+    }
+
+    redis.emitClientEvent(1, "ready");
+    redis.emitClientEvent(1, "error", new SocketClosedUnexpectedlyError());
+    redis.emitClientEvent(1, "ready");
+    redis.emitClientEvent(0, "ready");
+    redis.emitClientEvent(0, "error", new SocketClosedUnexpectedlyError());
+    redis.emitClientEvent(0, "ready");
+    redis.emitClientEvent(0, "error", new Error("Redis authentication failed"));
+
+    assertEquals(warnings, [
+      {
+        message: "Proxy routing invalidation Redis socket closed; reconnecting",
+        extra: { clientRole: "subscriber" },
+      },
+      {
+        message: "Proxy routing invalidation Redis socket closed; reconnecting",
+        extra: { clientRole: "publisher" },
+      },
+    ]);
+    assertEquals(
+      info.filter((entry) => entry.message.includes("reconnected")),
+      [
+        {
+          message: "Proxy routing invalidation Redis subscriber reconnected and resubscribed",
+          extra: { clientRole: "subscriber" },
+        },
+        {
+          message: "Proxy routing invalidation Redis publisher reconnected",
+          extra: { clientRole: "publisher" },
+        },
+      ],
+    );
+    assertEquals(errors.map(({ message, error }) => ({ message, error: error?.message })), [{
+      message: "Proxy routing invalidation Redis error",
+      error: "Redis authentication failed",
+    }]);
+
+    await bus?.close();
+  });
+
   it("fans out to every replica and waits for a distinct acknowledgement from each", async () => {
     const redis = createFakeRedisServer();
     const integritySecret = createIntegritySecret();

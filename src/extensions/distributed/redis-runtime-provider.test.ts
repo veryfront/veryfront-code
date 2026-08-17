@@ -4,6 +4,7 @@ import { register, unregister } from "../contracts.ts";
 import { ensureRedisRuntimeProvider } from "./defaults.ts";
 import {
   captureRedisRuntimeProvider,
+  type NodeRedisClient,
   type RedisClient,
   type RedisRuntimeProvider,
   RedisRuntimeProviderName,
@@ -48,6 +49,18 @@ function createProvider(): RedisRuntimeProvider {
 }
 
 describe("RedisRuntimeProvider", () => {
+  it("keeps error-only Redis event listeners source compatible", () => {
+    const on: NodeRedisClient["on"] = (
+      event: "error",
+      listener: (error: unknown) => void,
+    ): unknown => {
+      void listener;
+      return event;
+    };
+
+    assertEquals(on("error", () => {}), "error");
+  });
+
   it("captures provider methods without losing their receiver", async () => {
     let receivedThis: unknown;
     const provider = {
