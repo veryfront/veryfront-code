@@ -1237,6 +1237,18 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         defaultBranchName = branchBinding?.defaultBranchName;
       } catch (error) {
         if (error instanceof ControlPlaneBranchBindingError) {
+          // Without this log the rejection is invisible server-side: the 400
+          // body reaches only the calling control plane, and diagnosing
+          // VERYFRONT-STUDIO-60 required reconstructing the contract from
+          // source because Loki had no trace of 16 rejections.
+          logger?.warn("Control-plane branch binding rejected", {
+            status: error.status,
+            message: error.message,
+            projectSlug,
+            projectId,
+            host,
+            pathname: url.pathname,
+          });
           return createProxyErrorContext(base, {
             status: error.status,
             message: error.message,
