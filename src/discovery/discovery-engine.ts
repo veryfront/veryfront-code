@@ -177,7 +177,11 @@ async function discoverItems<T, Candidate>(
       continue;
     }
 
-    const useExportNameFallback = candidates.length > 1 || isIndexModule(file);
+    const isRegistrationCandidate = handler.isRegistrationCandidate;
+    const registrationCandidateCount = isRegistrationCandidate
+      ? candidates.filter((candidate) => isRegistrationCandidate(candidate.item)).length
+      : candidates.length;
+    const useExportNameFallback = registrationCandidateCount > 1 || isIndexModule(file);
     for (const candidate of candidates) {
       try {
         const id = getCandidateId(

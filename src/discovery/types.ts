@@ -80,6 +80,8 @@ export interface DiscoveryResult {
 export interface DiscoveryHandler<T, Candidate = T> {
   typeName: string;
   validate: (item: unknown) => item is Candidate;
+  /** Return whether a broad candidate can be registered when choosing fallback IDs. */
+  isRegistrationCandidate?: (item: Candidate) => boolean;
   getId: (item: Candidate, file: string, dir: string) => string;
   register: (id: string, item: Candidate, file: string, dir: string, exportName?: string) => T;
   getResultMap: (result: DiscoveryResult) => Map<string, T>;

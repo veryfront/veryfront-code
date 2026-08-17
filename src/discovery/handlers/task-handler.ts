@@ -2,7 +2,7 @@
  * Task Discovery Handler
  */
 
-import type { TaskDefinition } from "#veryfront/task/types.ts";
+import { isTaskDefinition, type TaskDefinition } from "#veryfront/task/types.ts";
 import {
   captureTaskDefinition,
   isTaskDefinitionCandidate,
@@ -14,6 +14,7 @@ export const taskHandler: DiscoveryHandler<TaskDefinition, object> = {
   // Registration performs the full metadata validation. Discovery only needs
   // to identify likely task exports so invalid definitions become diagnostics.
   validate: isTaskDefinitionCandidate,
+  isRegistrationCandidate: isTaskDefinition,
   getId: (_task, file, dir) => {
     const normalizedFile = file.startsWith("file://") ? file.slice("file://".length) : file;
     const prefix = dir.endsWith("/") ? dir : `${dir}/`;

@@ -20,6 +20,7 @@ import { isTaskDefinition } from "./types.ts";
 import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
 import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 
 const discoverTasks: typeof discoverTasksRaw = (options) =>
   discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
@@ -637,6 +638,34 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       );
     } finally {
       await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("keeps the file-derived task id when a malformed unified sibling is rejected", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-task-invalid-id-sibling-" });
+
+    try {
+      await mkdir(`${tempDir}/tasks`, { recursive: true });
+      await writeTextFile(
+        `${tempDir}/tasks/sync.ts`,
+        [
+          "export const aBroken = {",
+          "  run() {},",
+          '  integrationRequirements: [{ integration: "Slack" }],',
+          "};",
+          'export const zValid = { run() { return "valid"; } };',
+        ].join("\n"),
+      );
+
+      const result = await discoverAll({
+        baseDir: tempDir,
+        allowHostProjectCodeExecution: true,
+      });
+
+      assertEquals([...result.tasks.keys()], ["sync"]);
+      assertEquals(result.errors.length, 1);
+    } finally {
+      await remove(tempDir, { recursive: true });
     }
   });
 
