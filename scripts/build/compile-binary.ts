@@ -68,6 +68,27 @@ export const DEFAULT_INCLUDES = [
   "dist/framework-src",
 ];
 
+/**
+ * V8 flags baked into the full binary at compile time.
+ *
+ * Compiled binaries ignore the DENO_V8_FLAGS environment variable at runtime,
+ * so the production chart's `--max-old-space-size=4096` never reached the
+ * release binary: every heap OOM over 30 days died at V8's ~2 GiB default
+ * while the manifest verifiably set 4096 (veryfront-issue-inbox#269).
+ * `deno compile --v8-flags` serializes the flags into the binary's trailer
+ * (`"v8_flags":[...]`), which is the only channel through which a compiled
+ * artifact gets them. The baked value is final -- a runtime DENO_V8_FLAGS
+ * cannot override it -- so 4096 here IS the production heap ceiling, and the
+ * chart's env var is documentation only. Production pods are sized (5 Gi
+ * limit) around this 4 GiB ceiling; change both together.
+ *
+ * The proxy profile deliberately does not carry these: proxy pods run under a
+ * 1536 MiB memory limit (smoke-proxy-memory.sh pins it), and a 4 GiB
+ * old-space ceiling would let the heap grow past the cgroup limit and turn GC
+ * back-pressure into OOMKills.
+ */
+export const FULL_PROFILE_V8_FLAGS = ["--max-old-space-size=4096"];
+
 export const PROXY_INCLUDES = [
   // Deliberately omits UNTRACEABLE_WORKER_INCLUDES. The standalone proxy
   // forwards project requests to the production server and never evaluates
@@ -104,6 +125,12 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     "--unstable-net",
     "--unstable-worker-options",
   ];
+
+  if (profile === "full") {
+    // See FULL_PROFILE_V8_FLAGS: runtime DENO_V8_FLAGS is ignored by compiled
+    // binaries, so compile time is the only place the heap limit can be set.
+    args.push(`--v8-flags=${FULL_PROFILE_V8_FLAGS.join(",")}`);
+  }
 
   if (profile === "proxy") {
     // Why a dedicated proxy binary exists at all.
@@ -173,14 +200,49 @@ export function findMissingEmbeddedWorkers(
   binaryContent: string,
   workerIncludes: readonly string[],
 ): string[] {
-  return workerIncludes.filter((include) => {
-    const fileName = include.slice(include.lastIndexOf("/") + 1);
-    return !binaryContent.includes(`"n":"${fileName}"`);
-  });
+  return workerIncludes.filter((include) =>
+    !binaryContent.includes(workerVfsMarker(include))
+  );
+}
+
+function workerVfsMarker(include: string): string {
+  const fileName = include.slice(include.lastIndexOf("/") + 1);
+  return `"n":"${fileName}"`;
 }
 
 /**
- * Streams the binary looking for each worker's VFS entry.
+ * Names the V8 flags a compiled binary was NOT built with.
+ *
+ * Baked flags are serialized into the binary's trailer as a compact JSON
+ * array whose tail is the compile invocation's flags, appended after Deno's
+ * own defaults (observed on the pinned line:
+ * `"v8_flags":["UNUSED_BUT_NECESSARY_ARG0","--stack-size=1024",
+ * "--inspector-live-edit","--max-old-space-size=4096"]`). The marker is the
+ * joined baked flags plus the array's closing `]` rather than one bare
+ * quoted flag, so a future embedded source file or asset that merely
+ * contains the quoted literal cannot make this check pass vacuously; the
+ * mechanism test's wiring leg verifies the tail anchor against a real
+ * compiled artifact, so a Deno release that reordered the trailer would fail
+ * loudly there and here, never silently pass. Absence of the marker means
+ * the compile invocation dropped the flags and the artifact runs at V8's
+ * defaults (veryfront-issue-inbox#269: ~2 GiB instead of the configured
+ * 4 GiB). Checked on the artifact rather than by running it because release
+ * builds cross-compile targets the CI host cannot execute.
+ */
+export function findMissingBakedV8Flags(
+  binaryContent: string,
+  v8Flags: readonly string[],
+): string[] {
+  if (v8Flags.length === 0) return [];
+  return binaryContent.includes(v8FlagsMarker(v8Flags)) ? [] : [...v8Flags];
+}
+
+function v8FlagsMarker(v8Flags: readonly string[]): string {
+  return `${v8Flags.map((flag) => `"${flag}"`).join(",")}]`;
+}
+
+/**
+ * Streams the binary looking for each named marker.
  *
  * Reads in chunks rather than decoding the file at once: these binaries embed
  * hundreds of megabytes, and a single decode throws "buffer exceeds maximum
@@ -189,15 +251,16 @@ export function findMissingEmbeddedWorkers(
  * and carries the tail of each chunk forward so a marker split across a
  * boundary is still found.
  */
-async function findMissingEmbeddedWorkersInFile(
+async function findMissingMarkersInFile(
   path: string,
-  workerIncludes: readonly string[],
+  markers: ReadonlyMap<string, string>,
 ): Promise<string[]> {
   const CHUNK_BYTES = 8 * 1024 * 1024;
-  const markerLength = (include: string) => include.length - include.lastIndexOf("/") + 6;
-  const carryLength = Math.max(...workerIncludes.map(markerLength));
+  const carryLength = Math.max(
+    ...[...markers.values()].map((marker) => marker.length),
+  );
 
-  const remaining = new Set(workerIncludes);
+  const remaining = new Map(markers);
   const decoder = new TextDecoder("latin1");
   const buffer = new Uint8Array(CHUNK_BYTES);
   const file = await Deno.open(path, { read: true });
@@ -209,9 +272,9 @@ async function findMissingEmbeddedWorkersInFile(
       if (bytesRead === null) break;
 
       const text = carry + decoder.decode(buffer.subarray(0, bytesRead));
-      for (const include of [...remaining]) {
-        if (findMissingEmbeddedWorkers(text, [include]).length === 0) {
-          remaining.delete(include);
+      for (const [name, marker] of [...remaining]) {
+        if (text.includes(marker)) {
+          remaining.delete(name);
         }
       }
       carry = text.slice(-carryLength);
@@ -220,33 +283,57 @@ async function findMissingEmbeddedWorkersInFile(
     file.close();
   }
 
-  return [...remaining];
+  return [...remaining.keys()];
 }
 
-async function assertWorkersEmbedded(
+async function assertArtifactContracts(
   outputPath: string,
   profile: CompileBinaryProfile,
 ): Promise<void> {
-  // Expectations come from the declared constant, NOT from the resolved include
-  // list. Deriving them from the include list makes this tautological: dropping
-  // a worker from the list would also drop it from what is checked, so the one
-  // regression this exists to catch would pass. The proxy profile is the sole
-  // exemption, for the build reason documented on PROXY_INCLUDES.
-  const expected = profile === "proxy" ? [] : UNTRACEABLE_WORKER_INCLUDES;
-  if (expected.length === 0) {
+  // Expectations come from the declared constants, NOT from the resolved
+  // compile args. Deriving them from the args makes this tautological:
+  // dropping a worker or flag from the args would also drop it from what is
+  // checked, so the one regression this exists to catch would pass. The proxy
+  // profile is the sole exemption, for the build reason documented on
+  // PROXY_INCLUDES and FULL_PROFILE_V8_FLAGS.
+  const expectedWorkers = profile === "proxy" ? [] : UNTRACEABLE_WORKER_INCLUDES;
+  const expectedV8Flags = profile === "proxy" ? [] : FULL_PROFILE_V8_FLAGS;
+  // All expected flags share the one anchored trailer marker: the compile
+  // invocation bakes exactly this set, so either the whole serialized array
+  // is present or none of the flags reached the artifact.
+  const markers = new Map([
+    ...expectedWorkers.map((include) => [include, workerVfsMarker(include)] as const),
+    ...expectedV8Flags.map((flag) => [flag, v8FlagsMarker(expectedV8Flags)] as const),
+  ]);
+  if (markers.size === 0) {
     return;
   }
 
-  const missing = await findMissingEmbeddedWorkersInFile(
+  const missing = await findMissingMarkersInFile(
     normalizeOutputPath(outputPath),
-    expected,
+    markers,
   );
-  if (missing.length > 0) {
-    throw new Error(
-      `Compiled binary is missing ${missing.length} worker entrypoint(s): ${
-        missing.join(", ")
+  const missingWorkers = missing.filter((name) => expectedWorkers.includes(name));
+  const missingV8Flags = missing.filter((name) => expectedV8Flags.includes(name));
+
+  const failures: string[] = [];
+  if (missingWorkers.length > 0) {
+    failures.push(
+      `Compiled binary is missing ${missingWorkers.length} worker entrypoint(s): ${
+        missingWorkers.join(", ")
       }.\nThe binary would start, serve traffic, and crash the first time one is spawned.`,
     );
+  }
+  if (missingV8Flags.length > 0) {
+    failures.push(
+      `Compiled binary was not built with V8 flag(s): ${missingV8Flags.join(", ")}.\n` +
+        "Compiled binaries ignore DENO_V8_FLAGS at runtime, so without the baked flag " +
+        "production runs at V8's ~2 GiB default heap limit and dies there " +
+        "(veryfront-issue-inbox#269).",
+    );
+  }
+  if (failures.length > 0) {
+    throw new Error(failures.join("\n"));
   }
 }
 
@@ -262,7 +349,7 @@ export async function compileBinary(options: CompileBinaryOptions): Promise<void
     throw new Error(`deno compile failed with exit code ${result.code}`);
   }
 
-  await assertWorkersEmbedded(options.output, options.profile ?? "full");
+  await assertArtifactContracts(options.output, options.profile ?? "full");
 }
 
 function normalizeOutputPath(path: string): string {
