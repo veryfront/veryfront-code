@@ -57,6 +57,42 @@ describe("rendering/orchestrator/file-resolver", () => {
     assertEquals(resolveCalls[0], "/project/components/Welcome.tsx");
   });
 
+  it("reports components-prefix stripping in both filesystem resolution paths", async () => {
+    for (const mode of ["resolveFile", "stat"] as const) {
+      let fallbackCount = 0;
+      const resolveRootFile = (path: string) =>
+        path === "/project/Welcome.tsx" ? "/project/Welcome.tsx" : null;
+      const adapter = {
+        fs: {
+          ...(mode === "resolveFile"
+            ? {
+              resolveFile: async (path: string) => resolveRootFile(path),
+            }
+            : {}),
+          stat: async (path: string) => {
+            if (resolveRootFile(path)) {
+              return {
+                isFile: true,
+                isDirectory: false,
+                isSymlink: false,
+                size: 1,
+                mtime: new Date(),
+              };
+            }
+            throw new Error("File not found");
+          },
+        },
+      } as unknown as RuntimeAdapter;
+
+      const result = await findSourceFile("components/Welcome", "/project", adapter, {
+        onLegacyComponentsFallback: () => fallbackCount++,
+      });
+
+      assertEquals(result, "/project/Welcome.tsx");
+      assertEquals(fallbackCount, 1);
+    }
+  });
+
   it("does not resolve source imports through an implicit pages/ fallback", async () => {
     const resolveCalls: Array<{ basePath: string; allowPagesPrefix?: boolean }> = [];
 
