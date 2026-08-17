@@ -549,4 +549,60 @@ describe("file list fan-out (issue inbox#32)", () => {
       "a refresh invalidated during its write must not retain the older draft",
     );
   });
+
+  it("discards a replacement invalidated while waiting for the mutation queue", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default 'v2';" },
+    ];
+    const { adapter } = createDraftAdapter(files);
+    const context = adapter.getContentContext();
+    if (!context) throw new Error("content context required");
+    const cacheKey = buildFileListCacheKey(context);
+    let markSetStarted: (() => void) | undefined;
+    const setStarted = new Promise<void>((resolve) => {
+      markSetStarted = resolve;
+    });
+    let releaseSet: (() => void) | undefined;
+    const setReleased = new Promise<void>((resolve) => {
+      releaseSet = resolve;
+    });
+    const internals = adapter as unknown as {
+      cache: {
+        setAsync: (key: string, value: unknown) => Promise<void>;
+      };
+      clearMemoryCaches: () => void;
+      replaceSourceSnapshot: (
+        key: string,
+        snapshotFiles: Array<{ path: string; content?: string }>,
+      ) => Promise<void>;
+    };
+    const setAsync = internals.cache.setAsync.bind(internals.cache);
+    let setCalls = 0;
+    internals.cache.setAsync = async (key, value) => {
+      setCalls++;
+      if (setCalls === 1) {
+        markSetStarted?.();
+        await setReleased;
+      }
+      await setAsync(key, value);
+    };
+
+    const blockingReplacement = internals.replaceSourceSnapshot(cacheKey, [
+      { path: "pages/index.tsx", content: "export default 'v0';" },
+    ]);
+    await setStarted;
+    const queuedReplacement = internals.replaceSourceSnapshot(cacheKey, [
+      { path: "pages/index.tsx", content: "export default 'v1';" },
+    ]);
+
+    internals.clearMemoryCaches();
+    releaseSet?.();
+    await Promise.all([blockingReplacement, queuedReplacement]);
+
+    assertEquals(
+      await adapter.readTextFile("pages/index.tsx"),
+      "export default 'v2';",
+      "a queued replacement must keep the generation from when it was requested",
+    );
+  });
 });

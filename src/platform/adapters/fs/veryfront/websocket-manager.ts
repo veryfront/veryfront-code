@@ -60,9 +60,11 @@ interface WebSocketDeps {
   getContentSource: () => ContentSource;
   getProjectDir: () => string | undefined;
   clearMemoryCaches: () => void;
+  getSourceSnapshotVersion?: () => number;
   replaceSourceSnapshot: (
     cacheKey: string,
     files: ProjectFile[],
+    expectedSnapshotVersion?: number,
   ) => Promise<void>;
   pregenerateStyles?: (
     files: ProjectFile[],
@@ -627,6 +629,7 @@ export class WebSocketManager {
     this.pendingChangedPaths.clear();
 
     const contentContext = this.deps.getContentContext();
+    const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
     const previewInvalidationPrefixes = this.getPreviewInvalidationPrefixes(contentContext);
     const previewInvalidationVersion = this.previewInvalidationVersion;
     let preparedStyleArtifact: PreviewStyleArtifactInfo | undefined;
@@ -726,7 +729,7 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files);
+          await this.deps.replaceSourceSnapshot(cacheKey, files, sourceSnapshotVersion);
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("Fresh files cached (memory + Redis)", {
@@ -823,6 +826,7 @@ export class WebSocketManager {
       // These caches are also cleared immediately on POKE receipt (before debounce).
       // These calls are redundant safety nets for the full invalidation flow.
       this.deps.clearMemoryCaches();
+      const sourceSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
       this.deps.invalidationCallbacks.clearDomainCache?.();
 
       const projectId = this.deps.client.getProjectId();
@@ -892,7 +896,7 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          await this.deps.replaceSourceSnapshot(cacheKey, files);
+          await this.deps.replaceSourceSnapshot(cacheKey, files, sourceSnapshotVersion);
           preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
 
           logger.debug("FRESH FILES FETCHED", {

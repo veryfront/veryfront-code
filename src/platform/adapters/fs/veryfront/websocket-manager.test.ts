@@ -95,6 +95,13 @@ function createWebSocketManager(options: {
   pregenerateStyles?: (
     files: Array<{ path: string; content?: string }>,
   ) => Promise<{ hash: string; assetPath: string } | undefined>;
+  clearMemoryCaches?: () => void;
+  getSourceSnapshotVersion?: () => number;
+  replaceSourceSnapshot?: (
+    cacheKey: string,
+    files: Array<{ path: string; content?: string }>,
+    expectedSnapshotVersion?: number,
+  ) => Promise<void>;
 } = {}): WebSocketManager {
   const cache = {
     deleteByPrefixAsync: async () => 0,
@@ -123,8 +130,9 @@ function createWebSocketManager(options: {
     }),
     getContentSource: () => ({ type: "branch", branch: "main" }),
     getProjectDir: () => undefined,
-    clearMemoryCaches: () => {},
-    replaceSourceSnapshot: async () => {},
+    clearMemoryCaches: options.clearMemoryCaches ?? (() => {}),
+    getSourceSnapshotVersion: options.getSourceSnapshotVersion,
+    replaceSourceSnapshot: options.replaceSourceSnapshot ?? (async () => {}),
     pregenerateStyles: options.pregenerateStyles,
   });
 }
@@ -901,6 +909,108 @@ describe("WebSocketManager", () => {
     assertEquals(capturedProject?.styleArtifactHash, "hash-1");
     assertEquals(capturedProject?.styleAssetPath, "/_vf/css/hash-1.css");
 
+    manager.dispose();
+  });
+
+  it("passes the pre-fetch source generation to selective snapshot replacement", async () => {
+    const fetchStarted = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<
+      Array<{ path: string; content?: string }>
+    >();
+    let sourceSnapshotVersion = 1;
+    let replacementVersion: number | undefined;
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => {
+          fetchStarted.resolve();
+          return releaseFetch.promise;
+        },
+      },
+      clearMemoryCaches: () => {
+        sourceSnapshotVersion++;
+      },
+      getSourceSnapshotVersion: () => sourceSnapshotVersion,
+      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+        replacementVersion = expectedSnapshotVersion;
+        return Promise.resolve();
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { changedPaths: ["app/page.tsx"], branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await fetchStarted.promise;
+    sourceSnapshotVersion++;
+    releaseFetch.resolve([{ path: "app/page.tsx", content: "v1" }]);
+    await flushMicrotasks();
+
+    assertEquals(
+      replacementVersion,
+      2,
+      "replacement must receive the generation captured before the file-list fetch",
+    );
+    manager.dispose();
+  });
+
+  it("passes the post-clear source generation to full snapshot replacement", async () => {
+    const fetchStarted = Promise.withResolvers<void>();
+    const releaseFetch = Promise.withResolvers<
+      Array<{ path: string; content?: string }>
+    >();
+    let sourceSnapshotVersion = 1;
+    let replacementVersion: number | undefined;
+    const manager = createWebSocketManager({
+      client: {
+        listAllFiles: () => {
+          fetchStarted.resolve();
+          return releaseFetch.promise;
+        },
+      },
+      clearMemoryCaches: () => {
+        sourceSnapshotVersion++;
+      },
+      getSourceSnapshotVersion: () => sourceSnapshotVersion,
+      replaceSourceSnapshot: (_cacheKey, _files, expectedSnapshotVersion) => {
+        replacementVersion = expectedSnapshotVersion;
+        return Promise.resolve();
+      },
+    });
+
+    manager.connect("project-1");
+    const socket = MockWebSocket.instances[0];
+    assertExists(socket);
+    socket.onmessage?.call(
+      socket as unknown as WebSocket,
+      new MessageEvent("message", {
+        data: JSON.stringify({
+          type: "poke",
+          data: { branchName: "main" },
+        }),
+      }),
+    );
+
+    assertEquals(runOnlyScheduledTimer(), 100);
+    await fetchStarted.promise;
+    sourceSnapshotVersion++;
+    releaseFetch.resolve([{ path: "app/page.tsx", content: "v1" }]);
+    await flushMicrotasks();
+
+    assertEquals(
+      replacementVersion,
+      3,
+      "replacement must receive the generation captured after the full invalidation clear",
+    );
     manager.dispose();
   });
 

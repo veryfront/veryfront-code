@@ -449,7 +449,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       getContentSource: () => this.contentSource,
       getProjectDir: () => this.normalizer.getProjectDir(),
       clearMemoryCaches: () => this.clearMemoryCaches(),
-      replaceSourceSnapshot: (cacheKey, files) => this.replaceSourceSnapshot(cacheKey, files),
+      getSourceSnapshotVersion: () => this.sourceSnapshotVersion,
+      replaceSourceSnapshot: (cacheKey, files, expectedSnapshotVersion) =>
+        this.replaceSourceSnapshot(cacheKey, files, expectedSnapshotVersion),
       pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
     });
 
@@ -909,22 +911,27 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private replaceSourceSnapshot(
     cacheKey: string,
     files: SourceSnapshotFile[],
+    expectedSnapshotVersion = this.sourceSnapshotVersion,
   ): Promise<void> {
+    const expectedContext = this.contentContext;
     return this.runSourceSnapshotMutation(async () => {
-      const context = this.contentContext;
-      if (!context || buildFileListCacheKey(context) !== cacheKey) {
-        logger.debug("Discarding source snapshot for superseded content context", {
+      if (
+        !expectedContext ||
+        this.contentContext !== expectedContext ||
+        this.sourceSnapshotVersion !== expectedSnapshotVersion ||
+        buildFileListCacheKey(expectedContext) !== cacheKey
+      ) {
+        logger.debug("Discarding superseded source snapshot", {
           cacheKey,
           projectSlug: this.projectSlug,
         });
         return;
       }
 
-      const snapshotVersion = this.sourceSnapshotVersion;
       await this.cache.setAsync(cacheKey, files);
       if (
-        this.contentContext !== context ||
-        this.sourceSnapshotVersion !== snapshotVersion
+        this.contentContext !== expectedContext ||
+        this.sourceSnapshotVersion !== expectedSnapshotVersion
       ) {
         // A newer poke invalidated this replacement while its distributed
         // cache write was pending. Remove the value that just landed and leave
