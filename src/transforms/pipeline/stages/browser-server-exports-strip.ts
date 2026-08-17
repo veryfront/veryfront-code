@@ -32,6 +32,25 @@
  * emptied, a `}` inside a regular expression literal ends a body early, and a
  * minified statement parses differently from the one a developer wrote.
  *
+ * Liveness is computed as *reachability over the module's binding graph*, not
+ * as "is this name mentioned somewhere else". The nodes are every module-scope
+ * binding — including a `var` that hoists out of a block, `if`, `try`,
+ * `switch`, loop or label, which binds module scope exactly as a top-level
+ * declaration does. The roots are what the module still reads once every
+ * removal candidate is elided: its surviving exports, the client component, and
+ * any side-effectful top-level statement, which keeps whatever it references.
+ * The edges are genuine reads, which is narrower than "identifier occurrences":
+ * a statement label, the *exported* half of an export specifier
+ * (`export { other as KEY }`), a non-computed property or JSX attribute name,
+ * and a declarator's reads of its own pattern's siblings all spell a name
+ * without reading the binding behind it.
+ *
+ * Deciding this per declaration instead — asking each one whether its name is
+ * mentioned elsewhere — cannot see a cycle. Two hook-only helpers that call
+ * each other are each the other's last consumer, so neither is ever removable
+ * and the secret they close over ships with them. Reachability drops the whole
+ * unreachable component however long it is.
+ *
  * Two rules keep it conservative:
  *
  * - Only an exported declaration is emptied. A private helper called
@@ -56,27 +75,36 @@
  * put the loader, its imports and any credential it closes over into the
  * browser bundle, and a silent leak is worse than a stopped build. The same
  * rule covers a hook this pass can *see* but cannot *stub*: a class, an
- * imported binding re-exported under a hook name, a hook binding the module
+ * imported binding re-exported under a hook name, a hook exported under an
+ * ES2022 string name (`export { loadIt as "getServerData" }`) or as a namespace
+ * re-export (`export * as getServerData from …`), a hook binding the module
  * *reassigns* (`export let getServerData = stub; getServerData = realLoader`),
  * and one it *redeclares* through a hoisted `var` below the top level
  * (`export var getServerData = stub; if (cond) { var getServerData =
  * realLoader }`) — stubbing the declarator would leave the later write to put
  * the real loader back at module-evaluation time, so the build stops rather
- * than shipping the declaration. As a final fail-closed check, the pass
+ * than shipping the declaration. It covers one more case on the other side of
+ * the analysis: a binding the graph proves dead but that sits in a position
+ * with no declaration to cut out, such as the `for (var KEY of …)` head, whose
+ * binding is what the loop assigns to. As a final fail-closed check, the pass
  * re-parses the output it is about to emit and verifies that no binding it
  * decided to drop is still imported or referenced in that artifact — a
  * violated invariant anywhere between the removal decision and the emitted
  * text fails the build instead of leaking.
  *
- * What this pass does: it empties hook bodies, drops the module-scope
- * declarations the hooks were the last reader of — including destructured
- * ones, so neither `const API_KEY = getEnv(...)` nor `const { apiKey } =
- * getEnv(...)` used only by `getServerData` reaches the browser — and removes
- * the hook-only imports that leaves unused. What it does NOT do: reason about
- * a value that is *also* read by browser code, or one reached only through an
- * existing bare side-effect import — those are kept. It is not a general
- * guarantee that every secret stays on the server, but a value used solely by
- * a server-only hook no longer leaks.
+ * What this pass does: it empties hook bodies, drops every module-scope binding
+ * in the hooks' dependency closure that nothing surviving can reach — including
+ * destructured ones and ones a nested `var` hoists up, so neither
+ * `const API_KEY = getEnv(...)` nor `const { apiKey } = getEnv(...)` nor
+ * `if (cond) { var API_KEY = getEnv(...) }` used only by `getServerData`
+ * reaches the browser — and removes the hook-only imports that leaves unused.
+ * What it does NOT do: reason about a value that is *also* read by browser
+ * code, one a surviving side-effectful top-level statement still references
+ * (`Object.defineProperty(box, "run", …)` reads what it is given), or one
+ * reached only through an existing bare side-effect import — those are kept.
+ * Nor does it model `eval`. It is not a general guarantee that every secret
+ * stays on the server, but a value used solely by a server-only hook no longer
+ * leaks.
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -109,7 +137,8 @@ function appendSourceMapDirective(code: string, directive: string): string {
 
 /** Source the stub nodes are lifted from, so no node shape is hand-built. */
 const STUB_SOURCE = `function __vfStub() { throw new Error("server-only"); }
-const __vfStubInit = function () { throw new Error("server-only"); };`;
+const __vfStubInit = function () { throw new Error("server-only"); };
+function __vfStubEmpty() {}`;
 
 type Node = Record<string, unknown> & { type: string };
 
@@ -149,6 +178,18 @@ function nodeName(value: unknown): string | null {
   return typeof name === "string" ? name : null;
 }
 
+/**
+ * The name an export clause publishes. Usually an identifier, but ES2022 also
+ * allows a string literal (`export { loadIt as "getServerData" }`), which the
+ * runtime looks the hook up under just the same.
+ */
+function exportedName(value: unknown): string | null {
+  const identifier = nodeName(value);
+  if (identifier !== null) return identifier;
+  if (!isNode(value)) return null;
+  return typeof value.value === "string" ? value.value : null;
+}
+
 function bodyOf(ast: ASTNode): Node[] {
   const program = (ast as { program?: unknown }).program;
   const source: Node = isNode(program) ? program : ast;
@@ -156,19 +197,34 @@ function bodyOf(ast: ASTNode): Node[] {
   return Array.isArray(body) ? body.filter(isNode) : [];
 }
 
-/** The stub body and stub initialiser, parsed rather than constructed. */
-async function parseStubs(parser: CodeParser): Promise<{ body: Node; init: Node } | null> {
+/** The stub nodes this pass splices in, parsed rather than constructed. */
+interface Stubs {
+  /** Hook function body: `{ throw new Error("server-only") }`. */
+  body: Node;
+  /** Hook initialiser: `function () { throw new Error("server-only") }`. */
+  init: Node;
+  /** Empty block, for a statement slot a dropped `var` declaration leaves bare. */
+  empty: Node;
+}
+
+async function parseStubs(parser: CodeParser): Promise<Stubs | null> {
   const ast = await parser.parse({ code: STUB_SOURCE, filePath: "vf-stub.ts" });
-  const [fn, variable] = bodyOf(ast);
+  const [fn, variable, emptyFn] = bodyOf(ast);
 
   const body = fn?.body;
+  const empty = emptyFn?.body;
   const declarations = variable?.declarations;
   const init = Array.isArray(declarations) && isNode(declarations[0])
     ? (declarations[0] as Node).init
     : undefined;
 
-  if (!isNode(body) || !isNode(init)) return null;
-  return { body, init };
+  if (!isNode(body) || !isNode(init) || !isNode(empty)) return null;
+  return { body, init, empty };
+}
+
+/** The declarators of a variable declaration, as nodes. */
+function declaratorsOf(declaration: Node): Node[] {
+  return Array.isArray(declaration.declarations) ? declaration.declarations.filter(isNode) : [];
 }
 
 /** Every identifier node a destructuring pattern binds (binding positions only). */
@@ -250,19 +306,39 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
     name != null && SERVER_ONLY_EXPORTS.includes(name);
 
   for (const statement of body) {
-    if (statement.type !== "ExportNamedDeclaration") continue;
     if (statement.exportKind === "type") continue;
+
+    // `export * as getServerData from "./loader"` names a hook without binding
+    // anything locally, so there is no declaration to stub and the loader
+    // module stays in the browser graph.
+    if (statement.type === "ExportAllDeclaration") {
+      const exported = exportedName(statement.exported);
+      if (isHook(exported)) unhandled.push(`export * as ${exported} from …`);
+      continue;
+    }
+
+    if (statement.type !== "ExportNamedDeclaration") continue;
 
     for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
       if (!isNode(specifier)) continue;
       if (specifier.exportKind === "type") continue;
-      if (!isHook(nodeName(specifier.exported))) continue;
+      const exported = exportedName(specifier.exported);
+      if (!isHook(exported)) continue;
 
       // `export { x as getServerData } from "./loader"` never binds `x` here,
       // so there is no body to empty and the module it points at is still
       // pulled into the graph.
       if (isNode(statement.source)) {
-        unhandled.push(`export { … as ${nodeName(specifier.exported)} } from …`);
+        unhandled.push(`export { … as ${exported} } from …`);
+        continue;
+      }
+
+      // ES2022 arbitrary module namespace name: `export { loadIt as
+      // "getServerData" }`. The runtime still looks the hook up under that
+      // string, but the export clause is a form this pass does not rewrite, so
+      // it stops the build rather than passing the module through untouched.
+      if (nodeName(specifier.exported) === null) {
+        unhandled.push(`export { … as "${exported}" }`);
         continue;
       }
 
@@ -313,7 +389,7 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
 function emptyServerOnlyHooks(
   body: Node[],
   targets: Set<string>,
-  stubs: { body: Node; init: Node },
+  stubs: Stubs,
 ): Set<string> {
   const emptied = new Set<string>();
   if (targets.size === 0) return emptied;
@@ -353,64 +429,205 @@ function emptyServerOnlyHooks(
   return emptied;
 }
 
-/** A top-level declaration and the binding names / binding-id nodes it owns. */
-interface ModuleScopeDecl {
-  statement: Node;
-  declarator?: Node;
+/**
+ * One place a module-scope binding is written down: a node of the binding
+ * graph, together with the way to take it back out of the tree.
+ *
+ * A destructuring declarator (`const { apiKey } = getEnv(...)`) is a single
+ * site carrying every name its pattern binds: it is removed only when *all* of
+ * them are dead, so a pattern the client still partly reads survives whole.
+ * This is what stops a destructured server value from shipping — esbuild's
+ * tree-shaker never removes a destructuring of a call, even a
+ * `@__PURE__`-annotated one, because the pattern itself may trigger getters or
+ * throw.
+ */
+interface BindingSite {
+  /** Every name this site binds. */
   names: string[];
+  /** What the site's own code reads — its outgoing edges in the graph. */
+  references: Set<string>;
+  /** The node to elide when asking what the rest of the module still reads. */
+  node: Node;
+  /** Exported sites are part of the module's contract and are never removed. */
+  exported: boolean;
+  /** Takes the site out of the tree, or `null` when the form has no safe cut. */
+  remove: (() => void) | null;
+}
+
+/** The names a declarator binds, or `null` when the pattern is unanalysable. */
+function declaratorBoundNames(declarator: Node): string[] | null {
+  const id = declarator.id;
+  if (!isNode(id)) return null;
+
+  const bindingIds = id.type === "Identifier" ? [id] : patternBindingIdentifiers(id);
+  const names: string[] = [];
+  for (const bindingId of bindingIds) {
+    const name = nodeName(bindingId);
+    if (name) names.push(name);
+  }
+  // A pattern with an unnameable binding cannot be reasoned about; a pattern
+  // binding nothing (`const {} = …`) has no dead name to chase. Either way the
+  // declarator simply stays.
+  if (names.length === 0 || names.length !== bindingIds.length) return null;
+  return names;
 }
 
 /**
- * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
- * whose bindings we could safely drop if nothing references them. Exported
- * declarations are part of the module's contract and are never candidates.
- *
- * A destructuring declarator (`const { apiKey } = getEnv(...)`) is a candidate
- * as a single unit carrying every name its pattern binds: it is removed only
- * when *all* of them fall out of use, so a pattern the client still partly
- * reads survives whole. This is what stops a destructured server value from
- * shipping — esbuild's tree-shaker never removes a destructuring of a call,
- * even a `@__PURE__`-annotated one, because the pattern itself may trigger
- * getters or throw. Default-value and computed-key references inside the
- * pattern remain part of the declaration's dependency closure, but are not
- * external browser consumers of sibling bindings from that same pattern.
+ * What a single declarator reads. Asking `freeReferencedIdentifiers` about a
+ * one-declarator declaration rather than the declarator node keeps the pattern
+ * in binding position: a default that reads a *sibling* of the same pattern
+ * (`const { token, auth = token } = …`) is bound, not free, so it never counts
+ * as an outside consumer of the declaration it lives in.
  */
-function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
-  const decls: ModuleScopeDecl[] = [];
+function declaratorReferences(declaration: Node, declarator: Node): Set<string> {
+  return freeReferencedIdentifiers({
+    type: "VariableDeclaration",
+    kind: declaration.kind,
+    declarations: [declarator],
+  });
+}
+
+/**
+ * Every module-scope binding, as graph nodes.
+ *
+ * Top-level declarations are the obvious ones, but a `var` hoists out of any
+ * block, `if`, `try`, `switch`, loop or label it is written in, so those bind
+ * module scope too and belong in the graph — the pass used to miss them
+ * entirely, which made a secret declared as `if (cond) { var KEY = getEnv(…) }`
+ * permanently unremovable. Function bodies and class static blocks are separate
+ * `var` scopes and are not entered.
+ *
+ * `removeStatement` collects top-level statements the caller should filter out;
+ * deeper sites carry a closure that edits the tree in place.
+ */
+function moduleScopeBindingSites(
+  body: Node[],
+  stubs: Stubs,
+  removeStatement: (statement: Node) => void,
+): BindingSite[] {
+  const sites: BindingSite[] = [];
+
+  const addDeclarators = (
+    declaration: Node,
+    exported: boolean,
+    detach: (() => void) | null,
+  ): void => {
+    for (const declarator of declaratorsOf(declaration)) {
+      const names = declaratorBoundNames(declarator);
+      if (!names) continue;
+
+      sites.push({
+        names,
+        references: declaratorReferences(declaration, declarator),
+        node: declarator,
+        exported,
+        remove: detach === null ? null : () => {
+          declaration.declarations = declaratorsOf(declaration).filter((candidate) =>
+            candidate !== declarator
+          );
+          if (declaratorsOf(declaration).length === 0) detach();
+        },
+      });
+    }
+  };
 
   for (const statement of body) {
-    if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
-      const id = statement.id;
-      const name = nodeName(id);
-      if (name && isNode(id)) decls.push({ statement, names: [name] });
-      continue;
-    }
+    if (statement.type === "ImportDeclaration") continue;
 
-    if (statement.type === "VariableDeclaration") {
-      for (
-        const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
-      ) {
-        if (!isNode(declarator)) continue;
-        const id = declarator.id;
-        if (!isNode(id)) continue;
+    const exported = statement.type === "ExportNamedDeclaration" ||
+      statement.type === "ExportDefaultDeclaration";
+    const declaration = exported ? statement.declaration : statement;
+    if (!isNode(declaration)) continue;
 
-        const bindingIds = id.type === "Identifier" ? [id] : patternBindingIdentifiers(id);
-        const names: string[] = [];
-        for (const bindingId of bindingIds) {
-          const name = nodeName(bindingId);
-          if (name) names.push(name);
-        }
-        // A pattern with an unnameable binding cannot be reasoned about; a
-        // pattern binding nothing (`const {} = …`) has no dead name to chase.
-        // Either way the declarator simply stays.
-        if (names.length === 0 || names.length !== bindingIds.length) continue;
-
-        decls.push({ statement, declarator, names });
+    if (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") {
+      const name = nodeName(declaration.id);
+      if (name) {
+        sites.push({
+          names: [name],
+          references: freeReferencedIdentifiers(declaration),
+          node: statement,
+          exported,
+          remove: exported ? null : () => removeStatement(statement),
+        });
       }
+    } else if (declaration.type === "VariableDeclaration") {
+      addDeclarators(declaration, exported, exported ? null : () => removeStatement(statement));
     }
+
+    collectHoistedVarSites(declaration, stubs, addDeclarators);
   }
 
-  return decls;
+  return sites;
+}
+
+/** Constructs that open a fresh `var` scope, so a `var` inside stops here. */
+function startsVarScope(node: Node): boolean {
+  return node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression" || node.type === "ObjectMethod" ||
+    node.type === "ClassMethod" || node.type === "ClassDeclaration" ||
+    node.type === "ClassExpression" || node.type === "StaticBlock" ||
+    node.type.startsWith("TS");
+}
+
+/**
+ * `var` declarations *below* a top-level statement, which hoist into module
+ * scope all the same. Each is registered with the edit that removes it: an
+ * element of a statement list is filtered out, a statement slot
+ * (`label: var KEY = …`, `if (c) var KEY = …`) becomes an empty block, and a
+ * `for` initialiser is cleared.
+ *
+ * A `for…in`/`for…of` head has no such edit — the binding is what the loop
+ * assigns to — so those sites are registered as unremovable and the caller
+ * fails the build rather than shipping the value they hold.
+ */
+function collectHoistedVarSites(
+  root: Node,
+  stubs: Stubs,
+  add: (declaration: Node, exported: boolean, detach: (() => void) | null) => void,
+): void {
+  if (startsVarScope(root)) return;
+
+  const slotDetach = (owner: Node, key: string): (() => void) | null => {
+    if (key === "body" || key === "consequent" || key === "alternate") {
+      return () => {
+        owner[key] = structuredClone(stubs.empty);
+      };
+    }
+    if (key === "init" && owner.type === "ForStatement") {
+      return () => {
+        owner[key] = null;
+      };
+    }
+    return null;
+  };
+
+  const descend = (node: Node): void => {
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "loc" || key === "leadingComments" || key === "trailingComments") continue;
+
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (!isNode(entry) || startsVarScope(entry)) continue;
+          visitChild(entry, () => {
+            node[key] = (node[key] as unknown[]).filter((candidate) => candidate !== entry);
+          });
+        }
+        continue;
+      }
+
+      if (!isNode(value) || startsVarScope(value)) continue;
+      visitChild(value, slotDetach(node, key));
+    }
+  };
+
+  const visitChild = (child: Node, detach: (() => void) | null): void => {
+    if (child.type === "VariableDeclaration" && child.kind === "var") {
+      add(child, false, detach);
+    }
+    descend(child);
+  };
+
+  descend(root);
 }
 
 /** Every binding declared directly by the module, including exported declarations. */
@@ -454,14 +671,32 @@ function isLexicallyBound(name: string, scopes: LexicalScope[]): boolean {
   return scopes.some((scope) => scope.names.has(name));
 }
 
+const NOTHING_ELIDED: ReadonlySet<Node> = new Set<Node>();
+
 /**
- * Free identifiers read by a hook body or by a declaration in the stripped
- * hook's dependency closure. Unlike `referencedIdentifiers`, this is
- * scope-aware: a nested declaration that shadows `loadJob` must not hide a
- * real outer hook read of the imported `loadJob`, and a nested local inside a
- * pruned helper must not add an unrelated import to the hook closure.
+ * Free identifiers genuinely *read* by a subtree — the edges of the
+ * module-scope binding graph.
+ *
+ * Scope-aware: a nested declaration that shadows `loadJob` must not hide a real
+ * outer hook read of the imported `loadJob`, and a nested local inside a pruned
+ * helper must not add an unrelated import to the hook closure.
+ *
+ * Position-aware too, because several identifier positions are not reads and
+ * counting them keeps server state alive forever: a statement label
+ * (`KEY: for (…) { break KEY }`), the *exported* half of an export specifier
+ * (`export { other as KEY }`), a non-computed property or JSX attribute name,
+ * and the `import.meta` meta-property all spell a name without reading the
+ * binding it happens to match.
+ *
+ * `elided` names declaration nodes to treat as already deleted: their bindings
+ * are not introduced and their own reads are not collected, so the result is
+ * exactly what the *rest* of the module still reads. That is how a candidate
+ * for removal stops masking the reads of the code around it.
  */
-function freeReferencedIdentifiers(root: Node): Set<string> {
+function freeReferencedIdentifiers(
+  root: Node,
+  elided: ReadonlySet<Node> = NOTHING_ELIDED,
+): Set<string> {
   const free = new Set<string>();
   const rootScope: LexicalScope = { kind: "var", names: new Set() };
 
@@ -475,16 +710,14 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
   const bindDirectStatements = (scope: LexicalScope, statements: unknown[]): void => {
     for (const statement of statements) {
-      if (!isNode(statement)) continue;
+      if (!isNode(statement) || elided.has(statement)) continue;
       if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
         bindPatternNames(scope, statement.id);
         continue;
       }
       if (statement.type !== "VariableDeclaration") continue;
-      for (
-        const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
-      ) {
-        if (isNode(declarator)) bindPatternNames(scope, declarator.id);
+      for (const declarator of declaratorsOf(statement)) {
+        if (!elided.has(declarator)) bindPatternNames(scope, declarator.id);
       }
     }
   };
@@ -506,10 +739,8 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       }
 
       if (child.type === "VariableDeclaration" && child.kind === "var") {
-        for (
-          const declarator of Array.isArray(child.declarations) ? child.declarations : []
-        ) {
-          if (isNode(declarator)) bindPatternNames(scope, declarator.id);
+        for (const declarator of declaratorsOf(child)) {
+          if (!elided.has(declarator)) bindPatternNames(scope, declarator.id);
         }
       }
 
@@ -523,9 +754,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
   const visitPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
     if (pattern.type === "TSParameterProperty") {
-      for (const decorator of Array.isArray(pattern.decorators) ? pattern.decorators : []) {
-        if (isNode(decorator)) visit(decorator, scopes);
-      }
+      visitDecorators(pattern, scopes);
       if (isNode(pattern.parameter)) visitPatternRuntime(pattern.parameter, scopes);
       return;
     }
@@ -572,19 +801,15 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
   const bindVariableDeclaration = (node: Node, scopes: LexicalScope[]): void => {
     const targetScope = node.kind === "var" ? currentVarScope(scopes) : scopes[0] ?? rootScope;
-    for (
-      const declarator of Array.isArray(node.declarations) ? node.declarations : []
-    ) {
-      if (isNode(declarator)) bindPatternNames(targetScope, declarator.id);
+    for (const declarator of declaratorsOf(node)) {
+      if (!elided.has(declarator)) bindPatternNames(targetScope, declarator.id);
     }
   };
 
   const visitVariableDeclaration = (node: Node, scopes: LexicalScope[]): void => {
     bindVariableDeclaration(node, scopes);
-    for (
-      const declarator of Array.isArray(node.declarations) ? node.declarations : []
-    ) {
-      if (!isNode(declarator)) continue;
+    for (const declarator of declaratorsOf(node)) {
+      if (elided.has(declarator)) continue;
       if (isNode(declarator.id)) visitPatternRuntime(declarator.id, scopes);
       if (isNode(declarator.init)) visit(declarator.init, scopes);
     }
@@ -617,7 +842,17 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
   };
 
+  // A decorator is ordinary code in an easily missed position: `@withKey(KEY)`
+  // reads `KEY` just as a call in an initialiser would. Classes, their members
+  // and TypeScript parameter properties can all carry one.
+  const visitDecorators = (node: Node, scopes: LexicalScope[]): void => {
+    for (const decorator of Array.isArray(node.decorators) ? node.decorators : []) {
+      if (isNode(decorator)) visit(decorator, scopes);
+    }
+  };
+
   const visitObjectMember = (node: Node, scopes: LexicalScope[]): void => {
+    visitDecorators(node, scopes);
     if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
     if (isNode(node.value)) visit(node.value, scopes);
   };
@@ -673,12 +908,45 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
   };
 
   const visit = (node: Node, scopes: LexicalScope[]): void => {
-    if (node.type === "ImportDeclaration") return;
+    if (node.type === "ImportDeclaration" || elided.has(node)) return;
     if (visitTsExpression(node, scopes)) return;
 
     if (node.type === "Identifier" || node.type === "JSXIdentifier") {
       const name = nodeName(node);
       if (name && !isLexicallyBound(name, scopes)) free.add(name);
+      return;
+    }
+
+    // A statement label lives in its own namespace: `break KEY` does not read
+    // the module's `KEY`.
+    if (node.type === "LabeledStatement") {
+      if (isNode(node.body)) visit(node.body, scopes);
+      return;
+    }
+    if (node.type === "BreakStatement" || node.type === "ContinueStatement") return;
+
+    // `export { other as KEY }` reads `other` and publishes the *name* `KEY`.
+    // A re-export (`export … from "./x"`) reads nothing declared here at all.
+    if (node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") {
+      if (isNode(node.source)) return;
+      visitChildren(node, scopes);
+      return;
+    }
+    if (node.type === "ExportSpecifier") {
+      if (isNode(node.local)) visit(node.local, scopes);
+      return;
+    }
+    if (node.type === "ExportDefaultSpecifier" || node.type === "ExportNamespaceSpecifier") return;
+
+    // `import.meta` spells `import` and `meta`, and reads neither.
+    if (node.type === "MetaProperty") return;
+
+    if (node.type === "JSXAttribute") {
+      if (isNode(node.value)) visit(node.value, scopes);
+      return;
+    }
+    if (node.type === "JSXMemberExpression") {
+      if (isNode(node.object)) visit(node.object, scopes);
       return;
     }
 
@@ -720,6 +988,9 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       bindPatternNames(classScope, node.id);
       const classScopes = [classScope, ...scopes];
       const body = node.body;
+      // A class decorator is evaluated outside the class, so it does not see
+      // the class binding.
+      visitDecorators(node, scopes);
       if (isNode(node.superClass)) visit(node.superClass, classScopes);
       if (isNode(body)) visitChildren(body, classScopes);
       return;
@@ -760,6 +1031,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
 
     if (node.type === "ObjectMethod" || node.type === "ClassMethod") {
+      visitDecorators(node, scopes);
       if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
       visitFunction(node, scopes);
       return;
@@ -912,13 +1184,6 @@ function assignedNames(body: Node[]): Set<string> {
  */
 function hoistedVarNames(body: Node[]): Set<string> {
   const hoisted = new Set<string>();
-
-  const startsVarScope = (node: Node): boolean =>
-    node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
-    node.type === "ArrowFunctionExpression" || node.type === "ObjectMethod" ||
-    node.type === "ClassMethod" || node.type === "ClassDeclaration" ||
-    node.type === "ClassExpression" || node.type === "StaticBlock" ||
-    node.type.startsWith("TS");
 
   const collect = (node: Node): void => {
     for (const child of children(node)) {
@@ -1089,144 +1354,125 @@ function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
 }
 
 /**
- * References to a module declaration after removing only that declaration and
- * its compiler-generated name registration from the analysis tree. A real
- * module read becomes free; a same-named binding inside client code remains
- * lexically bound and does not keep server state alive.
+ * Every name reachable from `roots` by following the binding graph's edges.
+ *
+ * A name is live when surviving code reads it, or when a live binding's own
+ * code reads it. Everything else is dead — cycles included, which is exactly
+ * what asking each declaration in turn "is this name mentioned anywhere else?"
+ * can never see: two hook-only helpers that call each other keep each other
+ * alive forever, and whatever they close over ships with them.
  */
-function referencesOutsideModuleScopeDeclaration(
-  body: Node[],
-  declaration: ModuleScopeDecl,
-  nameRegistrations: CompilerNameRegistration[],
-): Set<string> {
-  const ignoredStatements = new Set(
-    nameRegistrations.filter((registration) => declaration.names.includes(registration.targetName))
-      .map((registration) => registration.statement),
-  );
-  const remainingBody: Node[] = [];
-
-  for (const statement of body) {
-    if (ignoredStatements.has(statement)) continue;
-    if (statement !== declaration.statement) {
-      remainingBody.push(statement);
-      continue;
-    }
-    if (!declaration.declarator) continue;
-
-    const declarators = Array.isArray(statement.declarations)
-      ? statement.declarations.filter(isNode)
-      : [];
-    const remainingDeclarators = declarators.filter((candidate) =>
-      candidate !== declaration.declarator
-    );
-    if (remainingDeclarators.length > 0) {
-      remainingBody.push({ ...statement, declarations: remainingDeclarators });
+function reachableNames(roots: Iterable<string>, sites: BindingSite[]): Set<string> {
+  const byName = new Map<string, BindingSite[]>();
+  for (const site of sites) {
+    for (const name of site.names) {
+      const bound = byName.get(name);
+      if (bound) bound.push(site);
+      else byName.set(name, [site]);
     }
   }
 
-  return freeReferencedIdentifiers({ type: "Program", body: remainingBody });
+  const reachable = new Set(roots);
+  const pending = [...reachable];
+  while (pending.length > 0) {
+    const name = pending.pop() as string;
+    for (const site of byName.get(name) ?? []) {
+      for (const reference of site.references) {
+        if (reachable.has(reference)) continue;
+        reachable.add(reference);
+        pending.push(reference);
+      }
+    }
+  }
+
+  return reachable;
 }
 
 /**
- * Drop the top-level declarations the emptied server-only hooks closed over.
+ * Drop the module-scope bindings the emptied server-only hooks closed over.
  *
- * Scope is the *dependency closure of the stripped hooks*, not "everything
- * unreferenced". A declaration is removed only when (a) it is reached from the
- * hook's own reference graph — seeded from `hookClosure` and grown through the
- * initialisers of declarations already removed — and (b) nothing surviving in
- * the module still references it. So `const API_KEY = getEnv(...)` read only by
- * `getServerData` goes (letting `dropUnusedImportBindings` drop the import
- * next), while an unrelated `const _ = bootClientAnalytics()` — never part of
- * the hook graph — is left intact along with its side effect. Iterates to a
- * fixpoint: removing one binding can leave a helper it was the last user of
- * newly dead *within the closure*.
+ * Liveness is reachability from the code that survives, not "is this name
+ * mentioned elsewhere". The roots are what the rest of the module still reads
+ * once every candidate is elided — surviving exports, the client component and
+ * any side-effectful top-level statement, which keeps whatever it references.
+ * The edges are genuine reads. Anything the roots cannot reach is dead.
+ *
+ * Candidacy stays scoped to the stripped hooks' dependency closure, so an
+ * unrelated `const _ = bootClientAnalytics()` — unreachable, but never part of
+ * the hook graph — keeps its side effect. Inside that closure the pass is
+ * exhaustive: `const API_KEY = getEnv(...)` read only by `getServerData` goes,
+ * which is what lets `dropUnusedImportBindings` drop the import next.
  *
  * Every binding name a removal takes out is added to `removedNames`, so the
- * caller can verify — fail-closed — that none of them survives in the final
- * output.
+ * caller can verify — fail closed — that none of them survives in the final
+ * output. A dead binding this pass cannot cut out of the tree is reported back
+ * instead, and the caller stops the build rather than shipping the value.
  */
-function dropUnusedModuleScopeBindings(
+function dropUnreachableModuleScopeBindings(
   body: Node[],
-  hookClosure: Set<string>,
+  sites: BindingSite[],
+  hookClosure: ReadonlySet<string>,
+  removeStatement: (statement: Node) => void,
   removedNames: Set<string>,
-): Node[] {
-  let current = body;
+): string[] {
+  const candidates = sites.filter((site) =>
+    !site.exported && site.names.some((name) => hookClosure.has(name))
+  );
+  if (candidates.length === 0) return [];
 
-  for (;;) {
-    const decls = moduleScopeDeclarations(current);
-    if (decls.length === 0) return current;
-
-    // Esbuild's generated name-registration call is metadata for a declaration,
-    // not an independent browser consumer of it. Ignore that target reference
-    // when deciding liveness, and remove the call together with a declaration
-    // that proves hook-only.
-    const nameRegistrations = compilerNameRegistrations(current);
-
-    const removableStatements = new Set<Node>();
-    const removableDeclarators = new Map<Node, Set<Node>>();
-    const removedDecls: ModuleScopeDecl[] = [];
-    for (const decl of decls) {
-      const inClosure = decl.names.some((name) => hookClosure.has(name));
-      if (!inClosure) continue;
-      const externalReferences = referencesOutsideModuleScopeDeclaration(
-        current,
-        decl,
-        nameRegistrations,
-      );
-      const unused = decl.names.every((name) => !externalReferences.has(name));
-      if (!unused) continue;
-
-      removedDecls.push(decl);
-      for (const registration of nameRegistrations) {
-        if (decl.names.includes(registration.targetName)) {
-          removableStatements.add(registration.statement);
-        }
-      }
-      if (!decl.declarator) {
-        removableStatements.add(decl.statement);
-        continue;
-      }
-
-      const statementDeclarators = Array.isArray(decl.statement.declarations)
-        ? decl.statement.declarations.filter(isNode)
-        : [];
-      let statementRemoval = removableDeclarators.get(decl.statement);
-      if (!statementRemoval) {
-        statementRemoval = new Set();
-        removableDeclarators.set(decl.statement, statementRemoval);
-      }
-      statementRemoval.add(decl.declarator);
-
-      if (
-        statementDeclarators.length > 0 &&
-        statementDeclarators.every((declarator) => statementRemoval?.has(declarator))
-      ) {
-        removableStatements.add(decl.statement);
-        removableDeclarators.delete(decl.statement);
-      }
-    }
-    if (removedDecls.length === 0) return current;
-
-    // Grow the closure through the removed declarations' initialisers, so a
-    // chain that only fed the hook (`const RAW = getEnv(); const TOKEN = RAW…`)
-    // is pruned end to end while unrelated declarations stay outside it.
-    for (const decl of removedDecls) {
-      for (const name of decl.names) removedNames.add(name);
-      for (const name of freeReferencedIdentifiers(decl.declarator ?? decl.statement)) {
-        hookClosure.add(name);
-      }
-    }
-
-    for (const [statement, declarators] of removableDeclarators) {
-      const declarations = statement.declarations;
-      if (!Array.isArray(declarations)) continue;
-      statement.declarations = declarations.filter((declarator) => {
-        return !isNode(declarator) || !declarators.has(declarator);
-      });
-    }
-
-    current = current.filter((statement) => !removableStatements.has(statement));
+  // Esbuild's generated name-registration call is metadata for a declaration,
+  // not an independent browser consumer of it: it is elided from the roots and
+  // removed together with the declaration it names.
+  const registrations = compilerNameRegistrations(body);
+  const candidateNames = new Set(candidates.flatMap((site) => site.names));
+  const elided = new Set<Node>(candidates.map((site) => site.node));
+  for (const registration of registrations) {
+    if (candidateNames.has(registration.targetName)) elided.add(registration.statement);
   }
+
+  const roots = freeReferencedIdentifiers({ type: "Program", body }, elided);
+  for (const site of sites) {
+    if (site.exported) { for (const name of site.names) roots.add(name); }
+  }
+
+  const reachable = reachableNames(roots, candidates);
+  const dead = candidates.filter((site) => site.names.every((name) => !reachable.has(name)));
+  if (dead.length === 0) return [];
+
+  // A name written down in more than one place is only safe to drop when every
+  // one of its declarations is dead, and only when each of them can be cut out
+  // at all — a `for (var KEY of …)` head declares the binding the loop assigns
+  // to and has no removable declaration.
+  const deadSites = new Set(dead);
+  const survivingNames = new Set(
+    sites.filter((site) => !deadSites.has(site)).flatMap((site) => site.names),
+  );
+
+  const blocked: string[] = [];
+  for (const site of dead) {
+    const shared = site.names.find((name) => survivingNames.has(name));
+    if (shared) {
+      blocked.push(`\`${shared}\` is declared more than once and only one declaration is dead`);
+      continue;
+    }
+    if (site.remove === null) {
+      blocked.push(
+        `\`${site.names[0]}\` is a dead server-only binding declared in a position ` +
+          `this pass cannot remove`,
+      );
+    }
+  }
+  if (blocked.length > 0) return blocked;
+
+  for (const site of dead) {
+    for (const name of site.names) removedNames.add(name);
+    site.remove?.();
+  }
+  for (const registration of registrations) {
+    if (removedNames.has(registration.targetName)) removeStatement(registration.statement);
+  }
+
+  return [];
 }
 
 /** Local binding names an import statement introduces. */
@@ -1340,7 +1586,7 @@ export async function stripServerOnlyExports(
 
   let body: Node[];
   let ast: ASTNode;
-  let stubs: { body: Node; init: Node };
+  let stubs: Stubs;
 
   try {
     const parsedStubs = await parseStubs(parser);
@@ -1398,7 +1644,7 @@ export async function stripServerOnlyExports(
   // Capture what the hooks reference *before* emptying them, so pruning is
   // scoped to the hooks' dependency closure and never touches unrelated
   // top-level declarations (which may run browser side effects).
-  const hookClosure = hookReferencedIdentifiers(body, locals);
+  const hookSeed = hookReferencedIdentifiers(body, locals);
 
   // Fail closed on a hook this pass identified but could not stub — a class
   // declaration, an imported binding re-exported under a hook name, or any
@@ -1417,8 +1663,27 @@ export async function stripServerOnlyExports(
   // Drop the module-scope state the emptied hooks were the last user of, then
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
+  //
+  // The hooks' dependency closure is itself a reachability question — a helper
+  // the hook reaches only through another helper belongs to it just as much —
+  // so it is grown over the same binding graph the pruning walks.
   const removedNames = new Set<string>();
-  const pruned = dropUnusedModuleScopeBindings(body, hookClosure, removedNames);
+  const removableStatements = new Set<Node>();
+  const sites = moduleScopeBindingSites(body, stubs, (statement) => {
+    removableStatements.add(statement);
+  });
+  const hookClosure = reachableNames(hookSeed, sites);
+  const blocked = dropUnreachableModuleScopeBindings(
+    body,
+    sites,
+    hookClosure,
+    (statement) => removableStatements.add(statement),
+    removedNames,
+  );
+  const [firstBlocked] = blocked;
+  if (firstBlocked) throw new ServerExportStripError(filePath, firstBlocked);
+
+  const pruned = body.filter((statement) => !removableStatements.has(statement));
   const finalBody = dropUnusedImportBindings(pruned, hookClosure, removedNames);
 
   setBody(ast, finalBody);
@@ -1450,6 +1715,9 @@ export async function stripServerOnlyExports(
 
     const residual = freeReferencedIdentifiers({ type: "Program", body: emittedBody });
     for (const binding of moduleScopeBindingNames(emittedBody)) residual.add(binding);
+    // A `var` below the top level binds module scope too, so a declaration that
+    // survived inside a block must count as a leak just like a top-level one.
+    for (const binding of hoistedVarNames(emittedBody)) residual.add(binding);
     for (const statement of emittedBody) {
       if (statement.type !== "ImportDeclaration") continue;
       for (const binding of importedBindings(statement)) residual.add(binding);
