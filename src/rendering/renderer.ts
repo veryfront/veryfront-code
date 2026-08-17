@@ -98,6 +98,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { bindHtmlNonceFromCache, sealHtmlNonceForCache } from "#veryfront/html/nonce-injection.ts";
 import { getAttachedDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
 
@@ -826,9 +827,13 @@ export class Renderer {
         )
         : await runRender();
     } catch (error) {
+      const attachedCookies = error instanceof Error
+        ? getAttachedDataResponseMetadata(error).cookies
+        : undefined;
+      const controlCookies = resolveSSRControlOutcome(error)?.cookies;
       if (
-        isFollower && error instanceof Error &&
-        getAttachedDataResponseMetadata(error).cookies?.length
+        isFollower &&
+        ((attachedCookies?.length ?? 0) > 0 || (controlCookies?.length ?? 0) > 0)
       ) {
         logger.debug("Rerendering follower after cookie-bearing render failure", {
           slug,
