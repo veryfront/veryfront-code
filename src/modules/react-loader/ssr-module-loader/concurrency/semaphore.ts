@@ -5,9 +5,10 @@ const DEFAULT_ACQUIRE_TIMEOUT_MS = 100;
 export interface SemaphoreAcquireReport {
   acquired: boolean;
   /**
-   * Queue depth at the moment the attempt settled, counting the waiter itself.
+   * For a timed-out waiter, queue depth at the moment it settled, including
+   * that waiter. Other reports count waiters that remain queued.
    * A timed-out waiter leaves the queue before its caller resumes, so reading
-   * {@link Semaphore.waiting} afterwards understates the real depth.
+   * {@link Semaphore.waiting} afterwards understates the depth it observed.
    */
   waiting: number;
 }
