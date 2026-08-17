@@ -1,5 +1,5 @@
 import { getAccessToken, getCloudId } from "./token-store.ts";
-import { htmlToPlainText } from "./plain-text.ts";
+import { htmlToPlainText } from "./confluence-plain-text.ts";
 
 const CONFLUENCE_API_BASE = "https://api.atlassian.com/ex/confluence";
 

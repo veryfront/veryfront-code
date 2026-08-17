@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { htmlToPlainText as confluenceHtmlToPlainText } from "./integrations/confluence/files/lib/plain-text.ts";
-import { htmlToPlainText as teamsHtmlToPlainText } from "./integrations/teams/files/lib/plain-text.ts";
+import { htmlToPlainText as confluenceHtmlToPlainText } from "./integrations/confluence/files/lib/confluence-plain-text.ts";
+import { htmlToPlainText as teamsHtmlToPlainText } from "./integrations/teams/files/lib/teams-plain-text.ts";
 
 describe("integration template plain-text extraction", () => {
   it("does not turn nested Teams entities into literal markup", () => {

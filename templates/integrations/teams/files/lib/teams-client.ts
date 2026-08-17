@@ -1,5 +1,5 @@
 import { getAccessToken } from "./token-store.ts";
-import { htmlToPlainText } from "./plain-text.ts";
+import { htmlToPlainText } from "./teams-plain-text.ts";
 
 const GRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
 
