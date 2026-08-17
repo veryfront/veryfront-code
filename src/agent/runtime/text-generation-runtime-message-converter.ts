@@ -19,7 +19,19 @@ import type {
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
-import { readAttachedProviderMetadata } from "./provider-metadata.ts";
+import {
+  consumeAttachedProviderMetadata,
+  readAttachedProviderMetadata,
+} from "./provider-metadata.ts";
+
+interface ProviderMetadataAttachment {
+  sourceMessage: Message;
+  runtimeMessage: TextGenerationRuntimeAssistantMessage;
+}
+
+type ProviderMetadataAttachmentObserver = (
+  attachment: ProviderMetadataAttachment,
+) => void;
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -251,14 +263,12 @@ export interface TextGenerationRuntimeConversionOptions {
   requireInternetReachableAttachments?: boolean;
 }
 
-/**
- * Convert a veryfront Message to the current text-generation runtime message format.
- */
-export function convertToTextGenerationRuntimeMessage(
+function convertToTextGenerationRuntimeMessageWithMetadataObserver(
   msg: Message,
   options:
     & { providerExecutedToolCallIds?: Set<string> }
-    & TextGenerationRuntimeConversionOptions = {},
+    & TextGenerationRuntimeConversionOptions,
+  onProviderMetadataAttached?: ProviderMetadataAttachmentObserver,
 ): TextGenerationRuntimeMessage {
   const providerExecutedToolCallIds = options.providerExecutedToolCallIds ?? new Set<string>();
   const requireInternetReachableAttachments = options.requireInternetReachableAttachments ?? true;
@@ -325,6 +335,9 @@ export function convertToTextGenerationRuntimeMessage(
         content,
         ...(providerMetadata === undefined ? {} : { providerMetadata }),
       };
+      if (providerMetadata !== undefined) {
+        onProviderMetadataAttached?.({ sourceMessage: msg, runtimeMessage: assistantMessage });
+      }
       return assistantMessage;
     }
 
@@ -357,6 +370,21 @@ export function convertToTextGenerationRuntimeMessage(
   }
 }
 
+/**
+ * Convert a veryfront Message to the current text-generation runtime message format.
+ */
+export function convertToTextGenerationRuntimeMessage(
+  msg: Message,
+  options:
+    & { providerExecutedToolCallIds?: Set<string> }
+    & TextGenerationRuntimeConversionOptions = {},
+): TextGenerationRuntimeMessage {
+  return convertToTextGenerationRuntimeMessageWithMetadataObserver(
+    msg,
+    options,
+  );
+}
+
 function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
 
@@ -373,6 +401,7 @@ function hasProviderSendableAssistantContent(message: Message): boolean {
 function convertAssistantMessageToTextGenerationRuntimeMessages(
   message: Message,
   providerExecutedToolCallIds: Set<string>,
+  onProviderMetadataAttached?: ProviderMetadataAttachmentObserver,
 ): TextGenerationRuntimeMessage[] {
   const assistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
   const deferredAssistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
@@ -477,17 +506,19 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   // conversion split that response would pair it with an incomplete projection.
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
+    onProviderMetadataAttached?.({
+      sourceMessage: message,
+      runtimeMessage: assistantMessages[0]!,
+    });
   }
 
   return messages;
 }
 
-/**
- * Convert an array of veryfront Messages to the current text-generation runtime message format.
- */
-export function convertToTextGenerationRuntimeMessages(
+function convertToTextGenerationRuntimeMessagesWithMetadataObserver(
   messages: Message[],
-  options: TextGenerationRuntimeConversionOptions = {},
+  options: TextGenerationRuntimeConversionOptions,
+  onProviderMetadataAttached?: ProviderMetadataAttachmentObserver,
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
   const providerExecutedToolCallIds = new Set<string>();
@@ -509,11 +540,15 @@ export function convertToTextGenerationRuntimeMessages(
     }
 
     const convertedMessages = message.role === "assistant"
-      ? convertAssistantMessageToTextGenerationRuntimeMessages(message, providerExecutedToolCallIds)
-      : [convertToTextGenerationRuntimeMessage(message, {
+      ? convertAssistantMessageToTextGenerationRuntimeMessages(
+        message,
+        providerExecutedToolCallIds,
+        onProviderMetadataAttached,
+      )
+      : [convertToTextGenerationRuntimeMessageWithMetadataObserver(message, {
         providerExecutedToolCallIds,
         ...options,
-      })];
+      }, onProviderMetadataAttached)];
 
     for (const convertedMessage of convertedMessages) {
       if (convertedMessage.role === "tool" && convertedMessage.content.length === 0) {
@@ -535,6 +570,19 @@ export function convertToTextGenerationRuntimeMessages(
 }
 
 /**
+ * Convert an array of veryfront Messages to the current text-generation runtime message format.
+ */
+export function convertToTextGenerationRuntimeMessages(
+  messages: Message[],
+  options: TextGenerationRuntimeConversionOptions = {},
+): TextGenerationRuntimeMessage[] {
+  return convertToTextGenerationRuntimeMessagesWithMetadataObserver(
+    messages,
+    options,
+  );
+}
+
+/**
  * Convert messages for a provider request.
  *
  * Some providers reject assistant-prefill transcripts and require the prompt to
@@ -546,10 +594,22 @@ export function convertToTextGenerationRuntimeRequestMessages(
   messages: Message[],
   options: TextGenerationRuntimeConversionOptions = {},
 ): TextGenerationRuntimeMessage[] {
-  const requestMessages = convertToTextGenerationRuntimeMessages(messages, options);
+  const providerMetadataAttachments: ProviderMetadataAttachment[] = [];
+  const requestMessages = convertToTextGenerationRuntimeMessagesWithMetadataObserver(
+    messages,
+    options,
+    (attachment) => providerMetadataAttachments.push(attachment),
+  );
 
   while (requestMessages.at(-1)?.role === "assistant") {
     requestMessages.pop();
+  }
+
+  const retainedRequestMessages = new Set(requestMessages);
+  for (const attachment of providerMetadataAttachments) {
+    if (retainedRequestMessages.has(attachment.runtimeMessage)) {
+      consumeAttachedProviderMetadata(attachment.sourceMessage);
+    }
   }
 
   return requestMessages;

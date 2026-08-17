@@ -6,6 +6,7 @@ import {
   convertToTextGenerationRuntimeMessages,
   convertToTextGenerationRuntimeRequestMessages,
 } from "./text-generation-runtime-message-converter.ts";
+import { attachProviderMetadata } from "./provider-metadata.ts";
 import type {
   TextGenerationRuntimeAssistantMessage,
   TextGenerationRuntimeMessage,
@@ -855,6 +856,89 @@ describe("text-generation-runtime-message-converter", () => {
   });
 
   describe("convertToTextGenerationRuntimeRequestMessages", () => {
+    it("consumes replay metadata while leaving history conversion read-only", () => {
+      const providerMetadata = { google: { thoughtSignature: "signature" } };
+      const assistantMessage = attachProviderMetadata({
+        id: "assistant_tool",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: "tool_1",
+          toolName: "lookup",
+          input: {},
+        }],
+      }, providerMetadata);
+      const messages: Message[] = [
+        assistantMessage,
+        {
+          id: "tool_1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tool_1",
+            toolName: "lookup",
+            result: { value: "done" },
+          }],
+        },
+      ];
+
+      const firstHistory = convertToTextGenerationRuntimeMessages(messages);
+      const secondHistory = convertToTextGenerationRuntimeMessages(messages);
+      const firstRequest = convertToTextGenerationRuntimeRequestMessages(messages);
+      const secondRequest = convertToTextGenerationRuntimeRequestMessages(messages);
+
+      assertEquals(
+        (firstHistory[0] as TextGenerationRuntimeAssistantMessage).providerMetadata,
+        providerMetadata,
+      );
+      assertEquals(
+        (secondHistory[0] as TextGenerationRuntimeAssistantMessage).providerMetadata,
+        providerMetadata,
+      );
+      assertEquals(
+        (firstRequest[0] as TextGenerationRuntimeAssistantMessage).providerMetadata,
+        providerMetadata,
+      );
+      assertEquals(
+        (secondRequest[0] as TextGenerationRuntimeAssistantMessage).providerMetadata,
+        undefined,
+      );
+    });
+
+    it("does not consume metadata from a trailing assistant message that is trimmed", () => {
+      const providerMetadata = { google: { thoughtSignature: "signature" } };
+      const assistantMessage = attachProviderMetadata({
+        id: "assistant_tool",
+        role: "assistant",
+        parts: [{
+          type: "tool-call",
+          toolCallId: "tool_1",
+          toolName: "lookup",
+          input: {},
+        }],
+      }, providerMetadata);
+      const messages: Message[] = [assistantMessage];
+
+      assertEquals(convertToTextGenerationRuntimeRequestMessages(messages), []);
+
+      messages.push({
+        id: "tool_1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "tool_1",
+          toolName: "lookup",
+          result: { value: "done" },
+        }],
+      });
+      const completedRequest = convertToTextGenerationRuntimeRequestMessages(messages);
+
+      assertEquals(
+        (completedRequest[0] as TextGenerationRuntimeAssistantMessage).providerMetadata,
+        providerMetadata,
+      );
+    });
+
     it("drops trailing assistant-only continuation text before provider requests", () => {
       const messages: Message[] = [
         {

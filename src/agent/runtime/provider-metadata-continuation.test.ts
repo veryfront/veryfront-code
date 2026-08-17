@@ -36,6 +36,13 @@ function readAssistantProviderMetadata(options: unknown): unknown {
   return prompt.find((message) => message.role === "assistant")?.providerMetadata;
 }
 
+function readAssistantProviderMetadataList(options: unknown): unknown[] {
+  const prompt = (options as { prompt?: Array<Record<string, unknown>> }).prompt ?? [];
+  return prompt
+    .filter((message) => message.role === "assistant" && Object.hasOwn(message, "providerMetadata"))
+    .map((message) => message.providerMetadata);
+}
+
 function streamFrom(parts: unknown[]): ReadableStream<unknown> {
   return new ReadableStream({
     start(controller) {
@@ -116,6 +123,83 @@ describe("agent provider metadata continuation", () => {
     assertEquals(JSON.stringify(modelCallEvents).includes("test-thought-signature"), false);
   });
 
+  it("consumes each provider metadata attachment after one model request", async () => {
+    const nextProviderMetadata = {
+      google: {
+        rawAssistantParts: [{
+          functionCall: {
+            id: "lookup-2",
+            name: "lookup",
+            args: { query: "Gemini" },
+          },
+          thoughtSignature: "next-thought-signature",
+        }],
+      },
+    };
+    let callCount = 0;
+    const replayedMetadata: unknown[][] = [];
+    const model: ModelRuntime = {
+      provider: "google",
+      modelId: "gemini-3.5-flash",
+      async doGenerate(options: unknown) {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "lookup-1",
+              toolName: "lookup",
+              input: '{"query":"Veryfront"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            providerMetadata,
+          };
+        }
+
+        replayedMetadata.push(readAssistantProviderMetadataList(options));
+        if (callCount === 2) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "lookup-2",
+              toolName: "lookup",
+              input: '{"query":"Gemini"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            providerMetadata: nextProviderMetadata,
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "Done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        throw new Error("not used");
+      },
+    };
+    const assistant = agent({
+      model: "google/gemini-3.5-flash",
+      system: "Use the lookup tool.",
+      tools: { lookup: createLookupTool() },
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const result = await assistant.generate({ input: "Look up Veryfront and Gemini" });
+
+    assertEquals(result.text, "Done");
+    assertEquals(callCount, 3);
+    assertEquals(replayedMetadata, [
+      [providerMetadata],
+      [nextProviderMetadata],
+    ]);
+  });
+
   for (const lifecycleMode of ["legacy", "active"] as const) {
     it(`replays streamed provider metadata through the ${lifecycleMode} lifecycle`, () =>
       withStreamLifecycleMode(lifecycleMode, async () => {
@@ -176,6 +260,101 @@ describe("agent provider metadata continuation", () => {
         assertEquals(callCount, 2);
         assertEquals(continuedProviderMetadata, providerMetadata);
         assertEquals(body.includes("test-thought-signature"), false);
+      }));
+
+    it(`consumes streamed metadata between ${lifecycleMode} lifecycle requests`, () =>
+      withStreamLifecycleMode(lifecycleMode, async () => {
+        const nextProviderMetadata = {
+          google: {
+            rawAssistantParts: [{
+              functionCall: {
+                id: "lookup-2",
+                name: "lookup",
+                args: { query: "Gemini" },
+              },
+              thoughtSignature: "next-thought-signature",
+            }],
+          },
+        };
+        let callCount = 0;
+        const replayedMetadata: unknown[][] = [];
+        const model: ModelRuntime = {
+          provider: "google",
+          modelId: "gemini-3.5-flash",
+          async doGenerate() {
+            throw new Error("not used");
+          },
+          async doStream(options: unknown) {
+            callCount++;
+            if (callCount === 1) {
+              return {
+                stream: streamFrom([
+                  {
+                    type: "tool-call",
+                    toolCallId: "lookup-1",
+                    toolName: "lookup",
+                    input: '{"query":"Veryfront"}',
+                  },
+                  {
+                    type: "finish",
+                    finishReason: "tool-calls",
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                    providerMetadata,
+                  },
+                ]),
+              };
+            }
+
+            replayedMetadata.push(readAssistantProviderMetadataList(options));
+            if (callCount === 2) {
+              return {
+                stream: streamFrom([
+                  {
+                    type: "tool-call",
+                    toolCallId: "lookup-2",
+                    toolName: "lookup",
+                    input: '{"query":"Gemini"}',
+                  },
+                  {
+                    type: "finish",
+                    finishReason: "tool-calls",
+                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                    providerMetadata: nextProviderMetadata,
+                  },
+                ]),
+              };
+            }
+
+            return {
+              stream: streamFrom([
+                { type: "text-delta", delta: "Done" },
+                {
+                  type: "finish",
+                  finishReason: "stop",
+                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                },
+              ]),
+            };
+          },
+        };
+        const assistant = agent({
+          model: "google/gemini-3.5-flash",
+          system: "Use the lookup tool.",
+          tools: { lookup: createLookupTool() },
+          maxSteps: 3,
+          resolveModelTransport: () => ({ model }),
+        });
+
+        const body = await (await assistant.stream({ input: "Look up Veryfront and Gemini" }))
+          .toDataStreamResponse()
+          .text();
+
+        assertStringIncludes(body, "Done");
+        assertEquals(callCount, 3);
+        assertEquals(replayedMetadata, [
+          [providerMetadata],
+          [nextProviderMetadata],
+        ]);
       }));
   }
 

@@ -19,3 +19,12 @@ export function readAttachedProviderMetadata(
 ): Record<string, unknown> | undefined {
   return providerMetadataByMessage.get(message);
 }
+
+/** Read and remove provider replay metadata after it enters one provider request. */
+export function consumeAttachedProviderMetadata(
+  message: Message,
+): Record<string, unknown> | undefined {
+  const providerMetadata = providerMetadataByMessage.get(message);
+  providerMetadataByMessage.delete(message);
+  return providerMetadata;
+}
