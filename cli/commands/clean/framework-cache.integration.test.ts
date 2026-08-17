@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { join } from "#veryfront/compat/path";
-import { describe, it } from "#veryfront/testing/bdd";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { getProjectCacheDir } from "veryfront/utils/cache-dir";
 import { cleanCommand } from "./index.ts";
@@ -44,17 +44,26 @@ describe("CLI clean command framework cache", () => {
   it("removes the framework cache from an explicitly configured root", async () => {
     await withTestContext("cli-clean-configured-framework-cache", async (context) => {
       const configuredCacheDir = join(context.projectDir, "configured-cache");
+      const defaultCacheDir = getProjectCacheDir(context.projectDir);
       context.setEnv({
         VF_CACHE_ALLOW_CLOSE: "1",
         VERYFRONT_CACHE_DIR: configuredCacheDir,
       });
-      const compiledModule = join(configuredCacheDir, "veryfront-files", "entry.vfcache");
+      const compiledModule = join(configuredCacheDir, "veryfront-files", "configured.vfcache");
+      const defaultCompiledModule = join(defaultCacheDir, "veryfront-files", "default.vfcache");
+      const unrelatedDefaultCache = join(defaultCacheDir, "other-tool", "keep.txt");
       await mkdir(join(configuredCacheDir, "veryfront-files"), { recursive: true });
+      await mkdir(join(defaultCacheDir, "veryfront-files"), { recursive: true });
+      await mkdir(join(defaultCacheDir, "other-tool"), { recursive: true });
       await writeTextFile(compiledModule, "compiled");
+      await writeTextFile(defaultCompiledModule, "compiled");
+      await writeTextFile(unrelatedDefaultCache, "keep");
 
       await cleanCommand({ projectDir: context.projectDir, cache: true, force: true });
 
       assertEquals(await exists(compiledModule), false);
+      assertEquals(await exists(defaultCompiledModule), false);
+      assertEquals(await exists(unrelatedDefaultCache), true);
     });
   });
 });

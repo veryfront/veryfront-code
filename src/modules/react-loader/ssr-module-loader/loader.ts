@@ -57,7 +57,10 @@ import { rewriteCrossProjectImport, rewriteLocalImports } from "./import-rewrite
 import { transformCrossProjectImportFlow } from "./cross-project-import-loader.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
-import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
+import {
+  cachedCodeUsesResolvedDependencies,
+  SSRDependencyValidator,
+} from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
 import { resolveVfModuleImports } from "./vf-module-resolver.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
@@ -715,27 +718,38 @@ export class SSRModuleLoader {
           },
         );
         if (isValidRedisCode) {
-          const transformedHash = await this.cache.hashContentAsync(redisCode);
-          const tempPath = await this.cache.getTempPath(filePath, transformedHash);
-          const written = await writeCacheFile(
-            this.cache.getFs(),
-            tempPath,
-            redisCode,
-            "SSR-MODULE-LOADER",
+          const resolvedDependencies = await this.depValidator.ensureDependenciesExist(
+            code,
+            filePath,
+            depth,
+            observerSignal,
           );
-          if (written) {
-            verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
+          if (!await cachedCodeUsesResolvedDependencies(redisCode, resolvedDependencies)) {
+            logger.debug("Distributed cache has stale dependency outputs, re-transforming", {
+              file: logPath(filePath),
+            });
+          } else {
+            const transformedHash = await this.cache.hashContentAsync(redisCode);
+            const tempPath = await this.cache.getTempPath(filePath, transformedHash);
+            const written = await writeCacheFile(
+              this.cache.getFs(),
+              tempPath,
+              redisCode,
+              "SSR-MODULE-LOADER",
+            );
+            if (written) {
+              verifiedHttpBundlePaths.set(`${tempPath}:${transformedHash}`, true);
 
-            const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
-            globalModuleCache.set(contentCacheKey, entry);
-            globalModuleCache.set(filePathCacheKey, entry);
+              const entry: ModuleCacheEntry = { tempPath, contentHash: transformedHash };
+              globalModuleCache.set(contentCacheKey, entry);
+              globalModuleCache.set(filePathCacheKey, entry);
 
-            logger.debug("Redis cache hit", { file: logPath(filePath) });
+              logger.debug("Redis cache hit", { file: logPath(filePath) });
 
-            await this.depValidator.ensureDependenciesExist(code, filePath, depth, observerSignal);
-            return entry;
+              return entry;
+            }
+            // writeCacheFile returned false — fall through to fresh transform
           }
-          // writeCacheFile returned false — fall through to fresh transform
         }
       }
     }

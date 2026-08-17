@@ -34,6 +34,7 @@ import {
 import { isPersistentLocalCacheEnabled } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
+import { runWithDevServerCacheDir } from "./cache-context.ts";
 
 const rscLog = logger.component("rsc");
 const fsAdapterLog = logger.component("fs-adapter");
@@ -113,24 +114,26 @@ export class DevServer {
   }
 
   async start(): Promise<void> {
-    try {
-      await this.startAndBind();
-    } catch (error) {
-      // File watchers and the ReloadNotifier subscriptions are registered
-      // before the port is bound, but callers only ever receive the instance
-      // *after* start() resolves — startDevServer() awaits start() and returns
-      // the server, so a rejection drops the half-built instance with no handle
-      // and nobody left to call stop(). Release here or those registrations
-      // outlive the process. stop() is null-safe at every step, so it tears
-      // down however far start() got, and stays the single teardown path.
-      //
-      // A cleanup failure must never mask the real reason start() failed —
-      // "port already in use" is what the developer needs to see.
-      await this.stop().catch((cleanupError: unknown) => {
-        devServerLog.debug("Cleanup after failed start errored (non-critical)", cleanupError);
-      });
-      throw error;
-    }
+    await runWithDevServerCacheDir(this.options.projectDir, async () => {
+      try {
+        await this.startAndBind();
+      } catch (error) {
+        // File watchers and the ReloadNotifier subscriptions are registered
+        // before the port is bound, but callers only ever receive the instance
+        // *after* start() resolves — startDevServer() awaits start() and returns
+        // the server, so a rejection drops the half-built instance with no handle
+        // and nobody left to call stop(). Release here or those registrations
+        // outlive the process. stop() is null-safe at every step, so it tears
+        // down however far start() got, and stays the single teardown path.
+        //
+        // A cleanup failure must never mask the real reason start() failed —
+        // "port already in use" is what the developer needs to see.
+        await this.stop().catch((cleanupError: unknown) => {
+          devServerLog.debug("Cleanup after failed start errored (non-critical)", cleanupError);
+        });
+        throw error;
+      }
+    });
   }
 
   private async startAndBind(): Promise<void> {
@@ -286,7 +289,10 @@ export class DevServer {
       : baseHandler;
     const handler = async (req: Request, nativeContext?: unknown) => {
       recordHandlerRequestPeer(req, nativeContext);
-      return await interceptedHandler(req);
+      return await runWithDevServerCacheDir(
+        this.options.projectDir,
+        () => interceptedHandler(req),
+      );
     };
 
     this._handler = handler;

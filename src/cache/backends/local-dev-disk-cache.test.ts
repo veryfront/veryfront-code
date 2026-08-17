@@ -15,6 +15,7 @@ import {
   CacheBackends,
   isLocalDevDiskCacheEnabled,
   isPersistentLocalCacheEnabled,
+  localDevCodeCacheBackend,
 } from "./factory.ts";
 
 const ENV_KEYS = [
@@ -111,6 +112,26 @@ describe("SSR module cache backend selection", () => {
     const backend = await CacheBackends.ssrModule();
 
     assertEquals(backend.type, "memory");
+  });
+
+  it("honors an explicit memory backend even when Redis is configured", async () => {
+    useLocalDevEnvironment();
+    setEnv("VF_CACHE_BACKEND", "memory");
+    setEnv("REDIS_URL", "redis://localhost:6379");
+
+    assertEquals(localDevCodeCacheBackend(), "memory");
+    assertEquals((await CacheBackends.ssrModule()).type, "memory");
+  });
+
+  it("honors explicit disk and Redis backend preferences", () => {
+    useLocalDevEnvironment();
+    setEnv("REDIS_URL", "redis://localhost:6379");
+
+    setEnv("VF_CACHE_BACKEND", "disk");
+    assertEquals(localDevCodeCacheBackend(), "disk");
+
+    setEnv("VF_CACHE_BACKEND", "redis");
+    assertEquals(localDevCodeCacheBackend(), "redis");
   });
 });
 

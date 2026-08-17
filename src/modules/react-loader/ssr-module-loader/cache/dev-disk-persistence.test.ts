@@ -1,10 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { deleteEnv, makeTempDir, writeFile } from "#veryfront/testing/deno-compat.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  deleteEnv,
+  makeTempDir,
+  mkdir,
+  readTextFile,
+  remove,
+  writeFile,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { CacheBackends } from "#veryfront/cache/backend.ts";
+import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
   LOCAL_DEV_SSR_MODULE_TTL_SEC,
@@ -27,6 +36,10 @@ function useLocalDevEnvironment(): void {
 }
 
 describe("SSR module distributed cache on a local dev server", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
   it("keeps transformed code across a restart with no configuration", async () => {
     useLocalDevEnvironment();
     const cacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-" });
@@ -47,6 +60,73 @@ describe("SSR module distributed cache on a local dev server", () => {
       assertEquals(await afterRestart.initializeSSRDistributedCache(), true);
       assertEquals(await afterRestart.getFromRedis("dev-disk-key"), code);
     });
+  });
+
+  it("rebuilds a cached parent when an imported file changes while stopped", async () => {
+    useLocalDevEnvironment();
+    const cacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-" });
+    const projectDir = await makeTempDir({ prefix: "vf-dev-ssr-project-" });
+    const parentPath = join(projectDir, "page.ts");
+    const dependencyPath = join(projectDir, "message.ts");
+    const parentSource = [
+      `import { message } from "./message.ts";`,
+      `export default function readMessage() { return message; }`,
+    ].join("\n");
+
+    try {
+      await mkdir(projectDir, { recursive: true });
+      await writeTextFile(parentPath, parentSource);
+      await writeTextFile(dependencyPath, `export const message = "before";`);
+
+      await runWithCacheDir(cacheDir, async () => {
+        const { denoAdapter } = await import(
+          "#veryfront/platform/adapters/runtime/deno/index.ts"
+        );
+        const { SSRModuleLoader } = await import("../loader.ts?dev-disk-parent-restart");
+        const memory = await import("./memory.ts");
+        const persistent = await import("./redis.ts");
+        assertEquals(await persistent.initializeSSRDistributedCache(), true);
+
+        const createLoader = () =>
+          new SSRModuleLoader({
+            projectDir,
+            projectId: "dev-disk-parent-restart",
+            contentSourceId: "preview-main",
+            adapter: denoAdapter,
+            dev: true,
+          });
+
+        const firstLoader = createLoader();
+        const first = await firstLoader.loadRawModule(parentPath, parentSource);
+        assertEquals((first.default as () => string)(), "before");
+
+        const parentFileKey = (firstLoader as unknown as {
+          cache: { getCacheKey(filePath: string): string };
+        }).cache.getCacheKey(parentPath);
+        const parentEntry = memory.globalModuleCache.get(parentFileKey);
+        const parentContentKey = parentEntry
+          ? [...memory.globalModuleCache.entries()].find(([key, entry]) =>
+            key !== parentFileKey && entry === parentEntry
+          )?.[0]
+          : undefined;
+        if (!parentEntry || !parentContentKey) {
+          throw new Error("Expected the first parent transform in the module cache");
+        }
+        await persistent.setInRedis(
+          parentContentKey,
+          await readTextFile(parentEntry.tempPath),
+        );
+
+        memory.clearSSRModuleCache();
+        await writeTextFile(dependencyPath, `export const message = "after";`);
+
+        const afterRestart = await createLoader().loadRawModule(parentPath, parentSource);
+        assertEquals((afterRestart.default as () => string)(), "after");
+      });
+    } finally {
+      await remove(projectDir, { recursive: true });
+      await remove(cacheDir, { recursive: true });
+    }
   });
 
   it("falls back to a miss when the cache directory cannot be created", async () => {

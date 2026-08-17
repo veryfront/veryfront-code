@@ -81,6 +81,13 @@ export function isPersistentLocalCacheEnabled(): boolean {
  * resolution order applies unchanged.
  */
 export function localDevCodeCacheBackend(): CacheBackendConfig["preferredBackend"] {
+  const configured = getEnv("VF_CACHE_BACKEND");
+  if (
+    configured === "api" || configured === "redis" || configured === "disk" ||
+    configured === "memory"
+  ) {
+    return configured;
+  }
   return isLocalDevDiskCacheEnabled() ? "disk" : undefined;
 }
 

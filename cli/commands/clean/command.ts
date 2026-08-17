@@ -87,14 +87,22 @@ async function cleanDirectory(path: string): Promise<void> {
 }
 
 function getFrameworkCacheDirectories(projectDir: string): string[] {
-  const frameworkRoot = getEnv("VERYFRONT_CACHE_DIR") ?? getEnv("VF_CACHE_DIR") ??
-    getProjectCacheDir(projectDir);
-  const diskRoot = getEnv("VF_DISK_CACHE_DIR") ?? frameworkRoot;
-  return [
-    join(frameworkRoot, "veryfront-mdx-esm"),
-    join(frameworkRoot, "veryfront-http-bundle"),
-    join(diskRoot, "veryfront-files"),
-  ];
+  const frameworkRoots = new Set([
+    getProjectCacheDir(projectDir),
+    getEnv("VERYFRONT_CACHE_DIR"),
+    getEnv("VF_CACHE_DIR"),
+  ].filter((root): root is string => !!root));
+  const directories = new Set<string>();
+
+  for (const root of frameworkRoots) {
+    directories.add(join(root, "veryfront-mdx-esm"));
+    directories.add(join(root, "veryfront-http-bundle"));
+    directories.add(join(root, "veryfront-files"));
+  }
+
+  const diskRoot = getEnv("VF_DISK_CACHE_DIR");
+  if (diskRoot) directories.add(join(diskRoot, "veryfront-files"));
+  return [...directories];
 }
 
 async function cleanCacheStore(projectDir: string): Promise<void> {
