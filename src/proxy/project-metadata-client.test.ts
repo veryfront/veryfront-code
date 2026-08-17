@@ -74,6 +74,60 @@ describe("proxy project metadata client", () => {
       ProxyLookupFailure,
     );
     assertEquals((failure as ProxyLookupFailure).publicStatus, 502);
+    assertEquals((failure as ProxyLookupFailure).upstreamStatus, 500);
+  });
+
+  it("records upstream diagnostics without changing the public failure message", async () => {
+    const rejected = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch(() =>
+        new Response(`{"error":"database unavailable"}${"x".repeat(512)}`, { status: 500 })
+      ),
+    });
+    const failure = await assertRejects(
+      () => rejected.lookupAccess("storefront", "token", false),
+      ProxyLookupFailure,
+      "Proxy access metadata request was rejected",
+    ) as ProxyLookupFailure;
+    assertEquals(failure.publicStatus, 502);
+    assertEquals(failure.upstreamStatus, 500);
+    assertEquals(
+      failure.upstreamBodySnippet,
+      `{"error":"database unavailable"}${"x".repeat(512)}`.slice(0, 256),
+    );
+    assertEquals(failure.message.includes("500"), false);
+
+    const wrongContentType = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch(() =>
+        new Response("<html>maintenance</html>", {
+          headers: { "Content-Type": "text/html" },
+        })
+      ),
+    });
+    const contentTypeFailure = await assertRejects(
+      () => wrongContentType.lookupRouting("storefront", "token"),
+      ProxyLookupFailure,
+      "content type",
+    ) as ProxyLookupFailure;
+    assertEquals(contentTypeFailure.upstreamStatus, 200);
+    assertEquals(contentTypeFailure.upstreamBodySnippet, "<html>maintenance</html>");
+
+    const invalidJson = createProjectMetadataClient({
+      apiBaseUrl: "https://api.example.com",
+      fetchImpl: makeFetch(() =>
+        new Response("not json", {
+          headers: { "Content-Type": "application/json" },
+        })
+      ),
+    });
+    const invalidFailure = await assertRejects(
+      () => invalidJson.lookupRouting("storefront", "token"),
+      ProxyLookupFailure,
+      "invalid response",
+    ) as ProxyLookupFailure;
+    assertEquals(invalidFailure.upstreamStatus, 200);
+    assertEquals(invalidFailure.upstreamBodySnippet, "not json");
   });
 
   it("requires bounded JSON with the expected response schema", async () => {
