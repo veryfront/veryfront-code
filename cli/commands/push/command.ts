@@ -1023,16 +1023,9 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let remoteFilesAreBaseline = !isMainBranch && !target.branchExists;
 
       if (!dryRun && !isMainBranch && !target.branchId) {
-        const inheritedRemoteFilesMissingLocally = findRemoteFilesMissingLocally(
-          target.remoteFiles,
-          localPaths,
-          ignoreChecker,
-        );
-        requirePreservedRemoteContent(
-          target.remoteFiles,
-          localPaths,
-          new Set(pruneRemoteMissing ? inheritedRemoteFilesMissingLocally : []),
-        );
+        // Branch creation is a remote mutation. Validate every inherited file
+        // that later planning or receipt generation can require before the POST.
+        for (const file of target.remoteFiles) requireRemoteContent(file);
 
         spinner.update(`Creating branch "${branchName}"...`);
         try {

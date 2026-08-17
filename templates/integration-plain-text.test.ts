@@ -18,6 +18,13 @@ describe("integration template plain-text extraction", () => {
     );
   });
 
+  it("does not add whitespace between Teams inline markup and punctuation", () => {
+    assertEquals(
+      teamsHtmlToPlainText("<p>Hello <strong>world</strong>.</p>"),
+      "Hello world.",
+    );
+  });
+
   it("does not turn nested Confluence entities into literal markup", () => {
     assertEquals(
       confluenceHtmlToPlainText("<p>Safe &amp;lt;script&amp;gt; text</p>"),

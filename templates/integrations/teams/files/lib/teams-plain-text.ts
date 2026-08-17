@@ -5,7 +5,12 @@ export function htmlToPlainText(html: string): string {
   let previous: string;
   do {
     previous = text;
-    text = text.replace(/<[^>]*>/g, " ");
+    text = text
+      .replace(
+        /<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>/gi,
+        " ",
+      )
+      .replace(/<[^>]*>/g, "");
   } while (text !== previous);
 
   return text
