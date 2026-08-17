@@ -195,4 +195,38 @@ describe("veryfront dev cache guard", () => {
       });
     },
   );
+
+  for (const configuration of ["backend", "directory"] as const) {
+    it(
+      `keeps dependencies for an explicitly configured disk ${configuration}`,
+      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      async () => {
+        await withTestContext(`dev-cache-guard-explicit-${configuration}`, async (context) => {
+          context.setEnv(
+            configuration === "backend"
+              ? { VF_CACHE_BACKEND: "disk" }
+              : { VF_DISK_CACHE_DIR: join(context.projectDir, "disk-cache") },
+          );
+          const cache = await seedRunningServerCache(context.projectDir);
+          const { port, release } = await holdPort();
+          await release();
+
+          const cleared = await runWithCacheDir(
+            cache.cacheDir,
+            () => clearLocalCachesIfPortFree(port),
+          );
+
+          assertEquals(cleared, false, "an explicit disk cache must preserve its dependencies");
+          assert(
+            await exists(cache.mdxEsmEntry),
+            "the explicit disk cache's MDX-ESM dependency must survive a restart",
+          );
+          assert(
+            await exists(cache.httpBundleEntry),
+            "the explicit disk cache's HTTP bundle dependency must survive a restart",
+          );
+        });
+      },
+    );
+  }
 });

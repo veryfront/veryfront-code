@@ -10,7 +10,7 @@ import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
-import { isLocalDevDiskCacheEnabled } from "veryfront/cache";
+import { isPersistentLocalCacheEnabled } from "veryfront/cache";
 import { validateProviderConfig } from "veryfront/discovery";
 import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
@@ -155,7 +155,7 @@ export async function clearLocalCachesIfPortFree(
   requestedPort: number,
   clear: () => Promise<void> = clearAllLocalCaches,
   probe: (port: number) => Promise<boolean> = isPortAvailable,
-  persists: () => boolean = isLocalDevDiskCacheEnabled,
+  persists: () => boolean = isPersistentLocalCacheEnabled,
 ): Promise<boolean> {
   if (!await probe(requestedPort)) return false;
   if (persists()) return false;
