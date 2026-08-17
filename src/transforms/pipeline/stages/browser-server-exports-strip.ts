@@ -1586,8 +1586,9 @@ function stringLiteralText(node: Node | undefined): string | null {
 
 function isObjectDefineProperty(node: Node | undefined): boolean {
   if (!node || node.type !== "MemberExpression") return false;
-  return nodeName(node.object) === "Object" &&
-    literalText(isNode(node.property) ? node.property : undefined) === "defineProperty";
+  const property = isNode(node.property) ? node.property : undefined;
+  const propertyName = node.computed === true ? stringLiteralText(property) : nodeName(property);
+  return nodeName(node.object) === "Object" && propertyName === "defineProperty";
 }
 
 function returnedCall(node: Node): Node | null {
