@@ -1865,6 +1865,7 @@ function evaluationIsInert(node: Node, helpers: ReadonlySet<string>): boolean {
  */
 function deferredExecutionNodes(root: Node): Set<Node> {
   const deferred = new Set<Node>();
+  const invokedFunctions = new Set<Node>();
 
   const unwrap = (node: Node): Node => {
     let current = node;
@@ -1879,10 +1880,25 @@ function deferredExecutionNodes(root: Node): Set<Node> {
   };
 
   const invokedChild = (node: Node): Node | null => {
-    if (
-      node.type === "CallExpression" || node.type === "OptionalCallExpression" ||
-      node.type === "NewExpression"
-    ) {
+    if (node.type === "CallExpression" && isNode(node.callee)) {
+      const callee = unwrap(node.callee);
+      // A direct function literal invoked through its standard `.call` or
+      // `.apply` entry point runs here just as a plain IIFE does. Keep this
+      // narrow: an arbitrary receiver's method says nothing about whether a
+      // callback argument or another function body executes.
+      if (
+        callee.type === "MemberExpression" && callee.computed !== true &&
+        isNode(callee.object) && isNode(callee.property) &&
+        (nodeName(callee.property) === "call" || nodeName(callee.property) === "apply")
+      ) {
+        const target = unwrap(callee.object);
+        if (target.type === "FunctionExpression" || target.type === "ArrowFunctionExpression") {
+          return target;
+        }
+      }
+      return callee;
+    }
+    if (node.type === "OptionalCallExpression" || node.type === "NewExpression") {
       return isNode(node.callee) ? unwrap(node.callee) : null;
     }
     if (node.type === "TaggedTemplateExpression") {
@@ -1900,11 +1916,16 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       node.type === "ClassPrivateProperty" || node.type === "ClassAccessorProperty") &&
       node.static !== true;
 
-    if ((isFunction && (node !== invoked || node.generator === true)) || isInstanceField) {
+    if (
+      (isFunction &&
+        (node.generator === true || (node !== invoked && !invokedFunctions.has(node)))) ||
+      isInstanceField
+    ) {
       deferred.add(node);
     }
 
     const nextInvoked = invokedChild(node);
+    if (nextInvoked) invokedFunctions.add(nextInvoked);
     for (const child of children(node)) walk(child, nextInvoked);
   };
 
