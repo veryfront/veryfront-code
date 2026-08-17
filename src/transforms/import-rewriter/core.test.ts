@@ -1,5 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
+import type { CodeParser, NodePath } from "#veryfront/extensions/parser/index.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -328,6 +331,122 @@ describe("package resolution core", () => {
 });
 
 describe("import rewrite core runner", () => {
+  it("rejects configured literal CommonJS imports in browser transforms", async () => {
+    await assertRejects(
+      () =>
+        rewriteWithImportRewriteCore({
+          code: `const knex = require("knex");`,
+          strategies: [],
+          context: createRewriteContext({ serverExternalPackages: ["knex"] }),
+        }),
+      Error,
+      "build.serverExternalPackages",
+    );
+  });
+
+  it("does not mistake CommonJS-like text or local calls for package imports", async () => {
+    const code = [
+      `const message = 'require("knex")';`,
+      `// require("knex")`,
+      `function load(require: (name: string) => unknown) { return require("knex"); }`,
+      `const packageName = "knex";`,
+      `const dynamicValue = require(packageName);`,
+    ].join("\n");
+
+    assertEquals(
+      await rewriteWithImportRewriteCore({
+        code,
+        strategies: [],
+        context: createRewriteContext({ serverExternalPackages: ["knex"] }),
+      }),
+      code,
+    );
+  });
+
+  it("preserves local require calls with a contract-only parser path", async () => {
+    await ensureDefaultParserContracts();
+    const parser = tryResolve<CodeParser>("CodeParser");
+    if (!parser) throw new Error("CodeParser test setup failed");
+
+    const compatibilityParser: CodeParser = {
+      parse: (options) => parser.parse(options),
+      traverse: (ast, visitor) => {
+        const original = visitor.CallExpression;
+        parser.traverse(ast, {
+          ...visitor,
+          CallExpression(path) {
+            const contractPath: NodePath = {
+              node: path.node,
+              parent: path.parent,
+              replaceWith: (node) => path.replaceWith(node),
+              remove: () => path.remove(),
+            };
+            if (typeof original === "function") original(contractPath);
+            else {
+              original?.enter?.(contractPath);
+              original?.exit?.(contractPath);
+            }
+          },
+        });
+      },
+      generate: (ast, options) => parser.generate(ast, options),
+      hasFunctionDirective: parser.hasFunctionDirective
+        ? (options) => parser.hasFunctionDirective!(options)
+        : undefined,
+      injectJsxNodePositions: (source, options) => parser.injectJsxNodePositions(source, options),
+    };
+
+    unregister("CodeParser");
+    register("CodeParser", compatibilityParser);
+    try {
+      const code = `function load(require: (name: string) => unknown) { return require("knex"); }`;
+      assertEquals(
+        await rewriteWithImportRewriteCore({
+          code,
+          strategies: [],
+          context: createRewriteContext({ serverExternalPackages: ["knex"] }),
+        }),
+        code,
+      );
+      assertEquals(tryResolve<CodeParser>("CodeParser"), compatibilityParser);
+    } finally {
+      unregister("CodeParser");
+      register("CodeParser", parser);
+    }
+  });
+
+  it("enforces configured server externals before caller-provided strategies", async () => {
+    const strategies: ImportRewriteStrategy[] = [{
+      name: "bypass-attempt",
+      priority: 0,
+      matches: () => true,
+      rewrite: () => ({ specifier: "https://cdn.example/knex.js" }),
+    }];
+    const code = `import knex from "knex";`;
+
+    await assertRejects(
+      () =>
+        rewriteWithImportRewriteCore({
+          code,
+          strategies,
+          context: createRewriteContext({ serverExternalPackages: ["knex"] }),
+        }),
+      Error,
+      "build.serverExternalPackages",
+    );
+    assertEquals(
+      await rewriteWithImportRewriteCore({
+        code,
+        strategies,
+        context: createRewriteContext({
+          target: "ssr",
+          serverExternalPackages: ["knex"],
+        }),
+      }),
+      code,
+    );
+  });
+
   it("runs strategies in caller-provided order even when priority would sort differently", async () => {
     const strategies: ImportRewriteStrategy[] = [
       {

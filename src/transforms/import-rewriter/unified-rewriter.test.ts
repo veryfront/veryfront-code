@@ -124,6 +124,108 @@ describe("rewriteImports with the default strategies", () => {
     assertStringIncludes(error.message, "public/logo.svg");
   });
 
+  it("rejects configured packages before special browser strategies", async () => {
+    for (const specifier of ["react", "react-dom/client", "veryfront", "veryfrontend"]) {
+      await assertRejects(
+        () =>
+          rewriteImports(
+            `import value from "${specifier}";`,
+            defaultCtx({ serverExternalPackages: [specifier.split("/")[0]!] }),
+          ),
+        Error,
+        "build.serverExternalPackages",
+      );
+    }
+  });
+
+  it("keeps configured SSR packages external ahead of import maps", async () => {
+    const code = `import knex from "knex";`;
+    const result = await rewriteImports(
+      code,
+      defaultCtx({
+        target: "ssr",
+        serverExternalPackages: ["knex"],
+        importMap: { imports: { knex: "https://cdn.example/knex.js" } },
+      }),
+    );
+
+    assertEquals(result, code);
+  });
+
+  it("rejects configured canonical esm.sh packages in browser rewrites", async () => {
+    for (
+      const specifier of [
+        "https://esm.sh/knex@3.1.0",
+        "https://esm.sh/kn%65x@3.1.0",
+        "https://esm.sh:443/knex@3.1.0",
+        "https://esm.sh./knex@3.1.0",
+        "https://user:password@esm.sh/knex@3.1.0",
+        "https://esm.sh/knex@3%2Flib",
+        "https://esm.sh/knex@3%5Clib",
+        "https://esm.sh/v135/knex@3.1.0",
+        "https://esm.sh/stable/knex@3.1.0",
+        "https://esm.sh/knex@3.1.0/",
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          rewriteImports(
+            `import knex from "${specifier}";`,
+            defaultCtx({ serverExternalPackages: ["knex"] }),
+          ),
+        Error,
+        "build.serverExternalPackages",
+      );
+    }
+    await assertRejects(
+      () =>
+        rewriteImports(
+          `import babel from "https://esm.sh/%40babel/core@7.29.0";`,
+          defaultCtx({ serverExternalPackages: ["@babel/core"] }),
+        ),
+      Error,
+      "build.serverExternalPackages",
+    );
+    await assertRejects(
+      () =>
+        rewriteImports(
+          `import babel from "https://esm.sh/%40babel%2Fcore@7.29.0";`,
+          defaultCtx({ serverExternalPackages: ["@babel/core"] }),
+        ),
+      Error,
+      "build.serverExternalPackages",
+    );
+    await assertRejects(
+      () =>
+        rewriteImports(
+          `import babel from "https://esm.sh/v1/%40babel/core@7.29.0/";`,
+          defaultCtx({ serverExternalPackages: ["@babel/core"] }),
+        ),
+      Error,
+      "build.serverExternalPackages",
+    );
+  });
+
+  it("preserves legacy undeclared handling for noncanonical esm.sh spellings", async () => {
+    for (const specifier of ["HTTPS://esm.sh/lodash@4.17.21", "//esm.sh/lodash@4.17.21"]) {
+      const code = `import lodash from "${specifier}";`;
+      assertEquals(await rewriteImports(code, defaultCtx()), code);
+    }
+  });
+
+  it("normalizes configured esm.sh import-map targets for SSR externals", async () => {
+    const result = await rewriteImports(
+      `import query from "db";`,
+      defaultCtx({
+        target: "ssr",
+        serverExternalPackages: ["knex"],
+        importMap: { imports: { db: "https://esm.sh/knex@3.1.0/query?target=es2022" } },
+      }),
+    );
+
+    assertEquals(result, `import query from "knex/query";`);
+  });
+
   it("still rewrites a code import through the alias strategy", async () => {
     const result = await rewriteImports(
       `import Button from "@/components/Button";\n`,

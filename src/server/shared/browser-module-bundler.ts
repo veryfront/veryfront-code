@@ -20,6 +20,7 @@ import type {
   DependencyPinningSourceInput,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { resolveRequestedDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { assertNoConfiguredCommonJsBrowserImports } from "#veryfront/transforms/import-rewriter/commonjs-policy.ts";
 import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import { createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
@@ -856,6 +857,11 @@ export function bundleBrowserModuleWithMetadata(
         ) {
           throw new BrowserModuleEntryRejectedError();
         }
+        await assertNoConfiguredCommonJsBrowserImports(src, {
+          filePath: absPath,
+          projectDir: options.projectDir,
+          serverExternalPackages: options.config?.build?.serverExternalPackages,
+        });
         const boundaryViolation = await inspectBrowserModuleBoundary(src, absPath);
         if (boundaryViolation) {
           throw new BrowserModuleBoundaryError(
@@ -895,6 +901,7 @@ export function bundleBrowserModuleWithMetadata(
               createRelativeFsPlugin(options.projectDir, tracked.adapter, {
                 enforceBrowserBoundaries: true,
                 readBrowserModule: tracked.readSource,
+                serverExternalPackages: options.config?.build?.serverExternalPackages,
               }),
               createBareExternalPlugin({
                 importMapImports: importMap.imports,
@@ -908,6 +915,8 @@ export function bundleBrowserModuleWithMetadata(
               createHttpExternalPlugin({
                 moduleServerOrigin: options.moduleServerOrigin,
                 dependencyPinningCacheKey,
+                projectDir: options.projectDir,
+                serverExternalPackages: options.config?.build?.serverExternalPackages,
               }),
             ],
             signal,

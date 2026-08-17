@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NODE_BUILTINS } from "#veryfront/transforms/import-rewriter/node-builtins.ts";
@@ -188,7 +189,7 @@ describe("rewriteMdxRootDependencyImports", () => {
     ].join("\n");
 
     for (const dependencyPinningCacheKey of ["on:snapshot-a", "off"]) {
-      await assertRejects(
+      const error = await assertRejects(
         () =>
           rewriteMdxRootDependencyImports(
             code,
@@ -202,6 +203,80 @@ describe("rewriteMdxRootDependencyImports", () => {
         Error,
         "build.serverExternalPackages",
       );
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).message.includes(baseOptions.projectDir), false);
+      assertEquals(
+        (error as VeryfrontError).message.includes("__veryfront_mdx_root__.mjs"),
+        true,
+      );
+      assertEquals(
+        (error as VeryfrontError).instance,
+        "__veryfront_mdx_root__.mjs",
+      );
+    }
+  });
+
+  it("rejects configured CommonJS packages with pinning on or off", async () => {
+    for (
+      const code of [
+        `const database = require("knex");`,
+        `const database = require?.("knex");`,
+        `const database = require.resolve("knex");`,
+      ]
+    ) {
+      for (const dependencyPinningCacheKey of ["on:snapshot-a", "off"]) {
+        await assertRejects(
+          () =>
+            rewriteMdxRootDependencyImports(
+              code,
+              { imports: {} },
+              {
+                ...baseOptions,
+                dependencyPinningCacheKey,
+                serverExternalPackages: ["knex"],
+              },
+            ),
+          Error,
+          "build.serverExternalPackages",
+        );
+      }
+    }
+  });
+
+  it("rejects import-map aliases that resolve to configured server externals", async () => {
+    const cases = [
+      [`import database from "db";`, { db: "knex" }, ["knex"]],
+      [`const database = import("db");`, { db: "knex" }, ["knex"]],
+      [
+        `import database from "db";`,
+        { db: "npm:@prisma/client/runtime/library" },
+        ["@prisma/client"],
+      ],
+      [`import query from "db/query";`, { "db/": "knex/" }, ["knex"]],
+      [
+        `import database from "db";`,
+        { db: "https://esm.sh/knex@3.1.0" },
+        ["knex"],
+      ],
+    ] as const;
+
+    for (const [code, imports, serverExternalPackages] of cases) {
+      for (const dependencyPinningCacheKey of ["on:snapshot-a", "off"]) {
+        await assertRejects(
+          () =>
+            rewriteMdxRootDependencyImports(
+              code,
+              { imports },
+              {
+                ...baseOptions,
+                dependencyPinningCacheKey,
+                serverExternalPackages,
+              },
+            ),
+          Error,
+          "build.serverExternalPackages",
+        );
+      }
     }
   });
 

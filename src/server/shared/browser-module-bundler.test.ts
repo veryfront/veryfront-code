@@ -239,11 +239,119 @@ describe(
       assertEquals(owned.importMapHash === unowned.importMapHash, false);
     });
 
+    it("rejects import-map aliases targeting configured esm.sh packages", async () => {
+      const projectDir = "/project";
+      const entryPath = `${projectDir}/app/Database.tsx`;
+      const directPath = `${projectDir}/app/DirectDatabase.tsx`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        entryPath,
+        '"use client"; import database from "db"; export default database;',
+      );
+      adapter.fs.files.set(
+        directPath,
+        '"use client"; import database from "https://esm.sh/knex@3.1.0"; export default database;',
+      );
+
+      for (
+        const target of [
+          "https://esm.sh/v135/knex@3.1.0/",
+          " https://esm.sh/knex@3.1.0",
+          String.raw`https:\\esm.sh\knex@3.1.0`,
+          "h\tttps://esm.sh/knex@3.1.0",
+        ]
+      ) {
+        await assertRejects(
+          () =>
+            bundleBrowserModuleWithMetadata(entryPath, {
+              adapter,
+              projectDir,
+              importMapJson: JSON.stringify({ imports: { db: target } }),
+              config: { build: { serverExternalPackages: ["knex"] } },
+            }),
+          Error,
+          "build.serverExternalPackages",
+        );
+      }
+      await assertRejects(
+        () =>
+          bundleBrowserModuleWithMetadata(directPath, {
+            adapter,
+            projectDir,
+            config: { build: { serverExternalPackages: ["knex"] } },
+          }),
+        Error,
+        "build.serverExternalPackages",
+      );
+    });
+
     it("rejects declared server externals while preserving undeclared browser packages", async () => {
       const projectDir = "/project";
       const declaredPath = `${projectDir}/app/Declared.tsx`;
       const scopedNpmPath = `${projectDir}/app/ScopedNpm.tsx`;
+      const optionalCommonJsPath = `${projectDir}/app/OptionalCommonJs.tsx`;
+      const ambientRequirePath = `${projectDir}/app/AmbientRequire.tsx`;
+      const ambientModulePath = `${projectDir}/app/AmbientModule.tsx`;
+      const typeImportRequirePath = `${projectDir}/app/TypeImportRequire.tsx`;
+      const typeImportEqualsRequirePath = `${projectDir}/app/TypeImportEqualsRequire.tsx`;
+      const typeImportEqualsModulePath = `${projectDir}/app/TypeImportEqualsModule.tsx`;
+      const dependencyEntryPath = `${projectDir}/app/DependencyEntry.tsx`;
+      const dependencyPath = `${projectDir}/app/database.ts`;
+      const localRequirePath = `${projectDir}/app/LocalRequire.tsx`;
+      const localSequencePath = `${projectDir}/app/LocalSequence.tsx`;
+      const namespaceModulePath = `${projectDir}/app/NamespaceModule.tsx`;
+      const declaredNamespaceMemberPath = `${projectDir}/app/DeclaredNamespaceMember.tsx`;
+      const nestedNamespaceModulePath = `${projectDir}/app/NestedNamespaceModule.tsx`;
+      const typeOnlyNamespaceModulePath = `${projectDir}/app/TypeOnlyNamespaceModule.tsx`;
+      const typeOnlyNamespaceRequirePath = `${projectDir}/app/TypeOnlyNamespaceRequire.tsx`;
       const compatiblePath = `${projectDir}/app/Compatible.tsx`;
+      const wrappedCommonJsModules = [
+        String.raw`requ\u0069re?.("knex")`,
+        String.raw`module?.requ\u0069re?.("knex")`,
+        String.raw`module["requ\u0069re"]?.("knex")`,
+        `(require as any)?.("knex")`,
+        `require!?.("knex")`,
+        `(<any> require)?.("knex")`,
+        `(require satisfies any)?.("knex")`,
+        `require<string>?.("knex")`,
+        `require.resolve?.("knex")`,
+        `require.call(null, "knex")`,
+        `require.resolve.call(null, "knex")`,
+        `module.require.call(module, "knex")`,
+        `require.apply(null, ["knex"])`,
+        `require.resolve.apply(null, ["knex"])`,
+        `module.require.apply(module, ["knex"])`,
+        `require.bind(null, "knex")()`,
+        `require.resolve.bind(null, "knex")()`,
+        `module.require.bind(module, "knex")()`,
+        `require.bind(null)("knex")`,
+        `require.resolve.bind(null)("knex")`,
+        `module.require.bind(module)("knex")`,
+        `require.main.require("knex")`,
+        `module.parent.require("knex")`,
+        `module?.parent?.require?.("knex")`,
+        `(0, require)("knex")`,
+        `(require, require)("knex")`,
+        `new require("knex")`,
+        `new module.require("knex")`,
+        `module["requ" + "ire"]("knex")`,
+        `require["res" + "olve"]("knex")`,
+        'module[`requ${"ire"}`](`kn${"ex"}`)',
+        'require.resolve(`kn${"ex"}`)',
+        `(module as any)?.require?.("knex")`,
+        `module!?.require?.("knex")`,
+        `module!.require?.("knex")`,
+        `module["require" as any]?.("knex")`,
+        `module.require<string>?.("knex")`,
+        `require?.("knex" as const)`,
+        `require?.(<string> "knex")`,
+        `module.require?.("knex" satisfies string)`,
+        `require?.("knex"!)`,
+        "require?.((`knex`) as const)",
+      ].map((source, index) => ({
+        path: `${projectDir}/app/WrappedCommonJs${index}.ts`,
+        source,
+      }));
       const adapter = createMockAdapter();
       adapter.fs.files.set(
         declaredPath,
@@ -257,6 +365,72 @@ describe(
         compatiblePath,
         '"use client"; import lodash from "lodash"; export default lodash;',
       );
+      adapter.fs.files.set(
+        optionalCommonJsPath,
+        '"use client"; const knex = require?.("knex"); export default knex;',
+      );
+      adapter.fs.files.set(
+        ambientRequirePath,
+        '"use client"; declare const require: ((name: string) => unknown) | undefined; const knex = require?.("knex"); export default knex;',
+      );
+      adapter.fs.files.set(
+        ambientModulePath,
+        '"use client"; declare const module: { require?: (name: string) => unknown }; const knex = module?.require?.("knex"); export default knex;',
+      );
+      adapter.fs.files.set(
+        typeImportRequirePath,
+        '"use client"; import type require from "./types.ts"; const knex = require?.("knex"); export default knex;',
+      );
+      adapter.fs.files.set(
+        typeImportEqualsRequirePath,
+        '"use client"; import type require = require("./types.ts"); const knex = require?.("knex"); export default knex;',
+      );
+      adapter.fs.files.set(
+        typeImportEqualsModulePath,
+        '"use client"; import type module = require("./types.ts"); const knex = module?.require?.("knex"); export default knex;',
+      );
+      adapter.fs.files.set(
+        dependencyEntryPath,
+        '"use client"; import database from "./database.ts"; export default database;',
+      );
+      adapter.fs.files.set(
+        dependencyPath,
+        'const knex = module?.require?.("knex"); export default knex;',
+      );
+      adapter.fs.files.set(
+        localRequirePath,
+        '"use client"; function load(require: (name: string) => unknown) { return require("knex"); } export default load;',
+      );
+      adapter.fs.files.set(
+        localSequencePath,
+        '"use client"; const local = (name: string) => name; export default (require, local)("knex");',
+      );
+      adapter.fs.files.set(
+        namespaceModulePath,
+        '"use client"; namespace module { export function require(name: string) { return `local:${name}`; } } export default module.require("knex");',
+      );
+      adapter.fs.files.set(
+        declaredNamespaceMemberPath,
+        '"use client"; namespace module { export declare const value: string; } export default module.require("knex");',
+      );
+      adapter.fs.files.set(
+        nestedNamespaceModulePath,
+        '"use client"; namespace outer { export namespace module { export function require(name: string) { return `nested:${name}`; } } export const value = module.require("knex"); } export default outer.value;',
+      );
+      adapter.fs.files.set(
+        typeOnlyNamespaceModulePath,
+        '"use client"; namespace module { export type Value = string; } export default module.require("knex");',
+      );
+      adapter.fs.files.set(
+        typeOnlyNamespaceRequirePath,
+        '"use client"; namespace require { export type Value = string; } export default require?.("knex");',
+      );
+      for (const moduleFixture of wrappedCommonJsModules) {
+        adapter.fs.files.set(
+          moduleFixture.path,
+          `"use client"; export default ${moduleFixture.source};`,
+        );
+      }
       const config = { build: { serverExternalPackages: ["knex"] } };
 
       const error = await assertRejects(() =>
@@ -276,12 +450,68 @@ describe(
       assertStringIncludes(String(scopedNpmError), "server-only-in-client");
       assertStringIncludes(String(scopedNpmError), "npm:@prisma/client/runtime/library");
 
+      for (
+        const commonJsPath of [
+          optionalCommonJsPath,
+          ambientRequirePath,
+          ambientModulePath,
+          typeImportRequirePath,
+          typeImportEqualsRequirePath,
+          typeImportEqualsModulePath,
+          typeOnlyNamespaceModulePath,
+          typeOnlyNamespaceRequirePath,
+          ...wrappedCommonJsModules.map((moduleFixture) => moduleFixture.path),
+          dependencyEntryPath,
+        ]
+      ) {
+        const commonJsError = await assertRejects(() =>
+          bundleBrowserModule(commonJsPath, { adapter, projectDir, config })
+        );
+        assertStringIncludes(String(commonJsError), "build.serverExternalPackages");
+        assertStringIncludes(String(commonJsError), "knex");
+      }
+
       const compatible = await bundleBrowserModule(compatiblePath, {
         adapter,
         projectDir,
         config,
       });
       assertStringIncludes(compatible, "esm.sh/lodash");
+
+      const localRequire = await bundleBrowserModule(localRequirePath, {
+        adapter,
+        projectDir,
+        config,
+      });
+      assertStringIncludes(localRequire, '"knex"');
+
+      const localSequence = await bundleBrowserModule(localSequencePath, {
+        adapter,
+        projectDir,
+        config,
+      });
+      assertStringIncludes(localSequence, '"knex"');
+
+      const namespaceModule = await bundleBrowserModule(namespaceModulePath, {
+        adapter,
+        projectDir,
+        config,
+      });
+      assertStringIncludes(namespaceModule, "local:");
+
+      const declaredNamespaceMember = await bundleBrowserModule(declaredNamespaceMemberPath, {
+        adapter,
+        projectDir,
+        config,
+      });
+      assertStringIncludes(declaredNamespaceMember, '"knex"');
+
+      const nestedNamespaceModule = await bundleBrowserModule(nestedNamespaceModulePath, {
+        adapter,
+        projectDir,
+        config,
+      });
+      assertStringIncludes(nestedNamespaceModule, "nested:");
     });
 
     it("pins direct same-origin HTTP module imports and preserves foreign URLs", async () => {

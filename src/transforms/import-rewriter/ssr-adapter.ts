@@ -1,3 +1,4 @@
+import { BUNDLE_ERROR } from "#veryfront/errors";
 import { type DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
@@ -5,7 +6,7 @@ import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
-import { isConfiguredServerExternalPackage } from "#veryfront/transforms/shared/server-only-packages.ts";
+import { getConfiguredServerExternalRuntimeSpecifier } from "#veryfront/transforms/shared/server-only-packages.ts";
 import {
   type DependencyResolutionObservation,
   resolveDependencyPinForImport,
@@ -14,8 +15,17 @@ import {
   applyImportEdits,
   parseImportEdits,
 } from "#veryfront/transforms/import-rewriter/import-edit.ts";
+import {
+  findDynamicImportSpans,
+  findStaticImportFromSpans,
+  findStaticSideEffectImportSpans,
+  replaceSourceSpans,
+  type SourceSpanReplacement,
+} from "#veryfront/transforms/mdx/esm-module-loader/utils/source-spans.ts";
 
 type CacheBuster = number | string;
+const JsonStringify = JSON.stringify;
+const MAX_CONFIGURED_EXTERNAL_IMPORTS = 500;
 
 export interface SSRImportRewriteTarget {
   specifier: string;
@@ -264,15 +274,16 @@ function rewriteBareImports(
   return code.replace(/from\s*["']([^"'./][^"']*)["']/g, (_match, specifier: string) => {
     const bareSpecifier = specifier.startsWith("npm:") ? specifier.slice(4) : specifier;
 
+    const runtimeSpecifier = getConfiguredServerExternalRuntimeSpecifier(
+      specifier,
+      serverExternalPackages,
+    );
+    if (runtimeSpecifier !== undefined) {
+      return `from "${runtimeSpecifier}"`;
+    }
+
     const reactUrl = resolveReactForRuntime(bareSpecifier, v);
     if (reactUrl) return `from "${reactUrl}"`;
-
-    const parsed = parseBarePackageSpecifier(bareSpecifier);
-    if (
-      parsed && isConfiguredServerExternalPackage(parsed.packageName, serverExternalPackages)
-    ) {
-      return `from "${specifier}"`;
-    }
 
     if (shouldKeepBareSpecifier(specifier)) return `from "${specifier}"`;
 
@@ -296,6 +307,63 @@ function rewriteBareImports(
 
     return `from "https://esm.sh/${bareSpecifier}?external=react&target=es2022"`;
   });
+}
+
+function rewriteConfiguredExternalImports(
+  code: string,
+  serverExternalPackages?: readonly string[],
+): string {
+  if (serverExternalPackages === undefined || serverExternalPackages.length === 0) return code;
+
+  const matchExternal = (specifier: string) => {
+    const runtimeSpecifier = getConfiguredServerExternalRuntimeSpecifier(
+      specifier,
+      serverExternalPackages,
+    );
+    return runtimeSpecifier === undefined || runtimeSpecifier === specifier
+      ? null
+      : runtimeSpecifier;
+  };
+  const scanLimit = MAX_CONFIGURED_EXTERNAL_IMPORTS + 1;
+  const fromSpans = findStaticImportFromSpans(code, matchExternal, scanLimit);
+  const dynamicSpans = findDynamicImportSpans(code, matchExternal, scanLimit);
+  const sideEffectSpans = findStaticSideEffectImportSpans(code, matchExternal, scanLimit);
+  const totalMatches = fromSpans.length + dynamicSpans.length + sideEffectSpans.length;
+  if (totalMatches > MAX_CONFIGURED_EXTERNAL_IMPORTS) {
+    throw BUNDLE_ERROR.create({
+      message: "Configured server external import limit exceeded",
+      detail:
+        `Module contains more than ${MAX_CONFIGURED_EXTERNAL_IMPORTS} configured external imports`,
+      context: { maxConfiguredExternalImports: MAX_CONFIGURED_EXTERNAL_IMPORTS },
+    });
+  }
+
+  const replacements: SourceSpanReplacement[] = [];
+  for (const span of fromSpans) {
+    replacements.push({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `from ${JsonStringify(span.path)}`,
+    });
+  }
+  for (const span of dynamicSpans) {
+    replacements.push({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: JsonStringify(span.path),
+    });
+  }
+  for (const span of sideEffectSpans) {
+    replacements.push({
+      start: span.start,
+      end: span.end,
+      expected: span.original,
+      replacement: `import ${JsonStringify(span.path)}`,
+    });
+  }
+  return replacements.length === 0 ? code : replaceSourceSpans(code, replacements);
 }
 
 function getDefaultCacheBuster(target: SSRImportRewriteTarget, options: SSRRewriteOptions): string {
@@ -464,8 +532,9 @@ function rewriteRelativeImports(code: string, options: SSRRewriteOptions): strin
 }
 
 export function rewriteSSRImportsCompat(code: string, options: SSRRewriteOptions = {}): string {
-  let result = rewriteBareImports(
-    code,
+  let result = rewriteConfiguredExternalImports(code, options.serverExternalPackages);
+  result = rewriteBareImports(
+    result,
     options.reactVersion,
     options.projectDir,
     options.projectId,
@@ -511,8 +580,9 @@ export async function rewriteSSRImportsCompatAsync(
   code: string,
   options: SSRRewriteOptions = {},
 ): Promise<string> {
-  let result = rewriteBareImports(
-    code,
+  let result = rewriteConfiguredExternalImports(code, options.serverExternalPackages);
+  result = rewriteBareImports(
+    result,
     options.reactVersion,
     options.projectDir,
     options.projectId,

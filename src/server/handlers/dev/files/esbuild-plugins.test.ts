@@ -27,7 +27,12 @@ import {
 } from "./esbuild-plugins.ts";
 import type { LockfileManager } from "#veryfront/utils/import-lockfile.ts";
 import * as esbuild from "veryfront/extensions/bundler";
-import type { OnLoadArgs, PluginBuild, ResolveResult } from "veryfront/extensions/bundler";
+import type {
+  OnLoadArgs,
+  OnResolveArgs,
+  PluginBuild,
+  ResolveResult,
+} from "veryfront/extensions/bundler";
 
 function createMockBuild(
   onLoad: PluginBuild["onLoad"],
@@ -52,6 +57,35 @@ function createMockBuild(
     onDispose: () => {},
     esbuild,
   } as unknown as PluginBuild;
+}
+
+async function resolveWithBareExternalPlugin(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"] = "import-statement",
+): Promise<string> {
+  let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
+  const plugin = createBareExternalPlugin({ projectDir, serverExternalPackages });
+  const build = createMockBuild(() => {});
+  build.onResolve = (_options, handler) => {
+    resolveHandler = handler;
+  };
+  plugin.setup(build);
+  assertExists(resolveHandler);
+
+  const result = await resolveHandler({
+    path,
+    importer,
+    namespace: "file",
+    resolveDir: projectDir,
+    kind,
+    pluginData: undefined,
+  }) as { errors?: Array<{ text: string }> };
+
+  assertExists(result.errors?.[0]);
+  return result.errors[0].text;
 }
 
 function writableDependencySource(
@@ -224,6 +258,7 @@ describe(
       const cases = [
         ["knex", 'import knex from "knex"; console.log(knex);'],
         ["knex", 'export const load = () => import("knex");'],
+        ["knex", 'const knex = require("knex"); console.log(knex);'],
         [
           "npm:@prisma/client",
           'import prisma from "npm:@prisma/client"; console.log(prisma);',
@@ -247,6 +282,32 @@ describe(
         assertEquals(message.includes("build.serverExternalPackages"), true);
         assertEquals(message.includes("server-only-in-client"), true);
       }
+    });
+
+    it("reports a project-relative importer for declared server externals", async () => {
+      const projectDir = "/redacted-project-root";
+      const message = await resolveWithBareExternalPlugin(
+        "knex",
+        `${projectDir}/app/page.js`,
+        projectDir,
+        ["knex"],
+      );
+
+      assertEquals(message.includes("app/page.js"), true);
+      assertEquals(message.includes(projectDir), false);
+    });
+
+    it("rejects declared server externals loaded through CommonJS", async () => {
+      const message = await resolveWithBareExternalPlugin(
+        "zod",
+        "/redacted-project-root/app/page.js",
+        "/redacted-project-root",
+        ["zod"],
+        "require-call",
+      );
+
+      assertEquals(message.includes("server-only-in-client"), true);
+      assertEquals(message.includes("zod"), true);
     });
 
     it("does not let an import map bypass a declared server external", async () => {

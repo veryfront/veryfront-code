@@ -5,6 +5,14 @@
  * Handles: lodash, @tanstack/react-query, etc.
  */
 
+import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
+import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
+import { parseBarePackageSpecifier } from "#veryfront/transforms/shared/package-specifier.ts";
+import {
+  describeServerExternalBrowserViolation,
+  isConfiguredServerExternalPackage,
+  isServerOnlyPackage,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
 import { rendererLogger } from "#veryfront/utils";
 import type {
   ImportRewriteStrategy,
@@ -12,15 +20,7 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import { buildEsmShUrl, TAILWIND_VERSION } from "../url-builder.ts";
-import { parseBarePackageSpecifier } from "../../shared/package-specifier.ts";
-import {
-  formatServerExternalBrowserViolation,
-  isConfiguredServerExternalPackage,
-  isServerOnlyPackage,
-} from "../../shared/server-only-packages.ts";
-import { isCrossProjectImport } from "#veryfront/transforms/shared/cross-project-import.ts";
 import {
   isPinningEnabledForRewrite,
   resolveDependencyPinForImport,
@@ -127,11 +127,16 @@ export class BareStrategy implements ImportRewriteStrategy {
       parsed &&
       isConfiguredServerExternalPackage(parsed.packageName, ctx.serverExternalPackages)
     ) {
+      const violation = describeServerExternalBrowserViolation(
+        info.specifier,
+        ctx.filePath,
+        ctx.projectDir,
+      );
       throw SERVER_ONLY_IN_CLIENT.create({
-        message: formatServerExternalBrowserViolation(info.specifier, ctx.filePath),
+        message: violation.message,
         detail:
           `Declared server external package reached a browser transform: ${parsed.packageName}`,
-        instance: ctx.filePath,
+        instance: violation.sourceIdentity,
         context: { packageName: parsed.packageName },
       });
     }

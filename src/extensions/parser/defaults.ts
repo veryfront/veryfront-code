@@ -16,9 +16,7 @@ function isMissingDefaultParserExtension(error: unknown): boolean {
   ]);
 }
 
-function registerDefaultParserModule(extensionModule: unknown): void {
-  if (tryResolve<CodeParser>("CodeParser") !== undefined) return;
-
+function createDefaultParser(extensionModule: unknown): CodeParser {
   const BabelCodeParser = getConstructibleModuleExport<CodeParser>(
     extensionModule,
     DEFAULT_PARSER_EXTENSION_PACKAGE,
@@ -31,6 +29,13 @@ function registerDefaultParserModule(extensionModule: unknown): void {
     "BabelCodeParser",
     ["parse", "traverse", "generate", "injectJsxNodePositions"],
   );
+  return parser;
+}
+
+function registerDefaultParserModule(extensionModule: unknown): void {
+  if (tryResolve<CodeParser>("CodeParser") !== undefined) return;
+
+  const parser = createDefaultParser(extensionModule);
 
   // The constructor is extension code and may register an explicit parser.
   // Preserve that binding instead of replacing it after construction.
@@ -41,17 +46,13 @@ function registerDefaultParserModule(extensionModule: unknown): void {
 
 /** @internal Test-only seams; this module is not a public package entry point. */
 export const defaultParserContractsInternals = Object.freeze({
+  createDefaultParser,
   isMissingDefaultParserExtension,
   registerDefaultParserModule,
 });
 
-/**
- * Lazily register the first-party CodeParser implementation when it is
- * available from workspace source or an installed @veryfront/ext package.
- */
-export async function ensureDefaultParserContracts(): Promise<void> {
-  if (tryResolve("CodeParser") !== undefined) return;
-
+/** @internal Load a first-party parser instance without replacing an active contract. */
+export async function loadDefaultCodeParser(): Promise<CodeParser | undefined> {
   let extensionModule: unknown;
   try {
     extensionModule = await importFirstPartyExtensionModule<unknown>(
@@ -60,8 +61,20 @@ export async function ensureDefaultParserContracts(): Promise<void> {
     );
   } catch (error) {
     if (!isMissingDefaultParserExtension(error)) throw error;
-    return;
+    return undefined;
   }
+  return createDefaultParser(extensionModule);
+}
 
-  registerDefaultParserModule(extensionModule);
+/**
+ * Lazily register the first-party CodeParser implementation when it is
+ * available from workspace source or an installed @veryfront/ext package.
+ */
+export async function ensureDefaultParserContracts(): Promise<void> {
+  if (tryResolve("CodeParser") !== undefined) return;
+
+  const parser = await loadDefaultCodeParser();
+  if (parser !== undefined && tryResolve<CodeParser>("CodeParser") === undefined) {
+    register("CodeParser", parser);
+  }
 }

@@ -144,6 +144,8 @@ describe("BareStrategy", () => {
 
     it("rejects configured server external packages in browser modules", () => {
       const ctx = makeCtx({
+        filePath: "/redacted-project-root/pages/index.tsx",
+        projectDir: "/redacted-project-root",
         target: "browser",
         serverExternalPackages: ["knex", "@prisma/client"],
       });
@@ -164,7 +166,9 @@ describe("BareStrategy", () => {
           true,
         );
         assertEquals((error as VeryfrontError).message.includes(specifier), true);
-        assertEquals((error as VeryfrontError).message.includes(ctx.filePath), true);
+        assertEquals((error as VeryfrontError).message.includes("pages/index.tsx"), true);
+        assertEquals((error as VeryfrontError).message.includes(ctx.projectDir), false);
+        assertEquals((error as VeryfrontError).instance, "pages/index.tsx");
       }
     });
 
@@ -180,6 +184,19 @@ describe("BareStrategy", () => {
         bareStrategy.rewrite(makeInfo("@prisma/client/runtime/library"), ctx).specifier,
         null,
       );
+    });
+
+    it("redacts a browser importer outside the project root", () => {
+      const ctx = makeCtx({
+        filePath: "/redacted-external-root/generated/page.tsx",
+        projectDir: "/redacted-project-root",
+        serverExternalPackages: ["knex"],
+      });
+      const error = assertThrows(() => bareStrategy.rewrite(makeInfo("knex"), ctx));
+
+      assertEquals((error as VeryfrontError).message.includes(ctx.filePath), false);
+      assertEquals((error as VeryfrontError).message.includes("generated/page.tsx"), false);
+      assertEquals((error as VeryfrontError).instance, undefined);
     });
 
     it("still rewrites an undeclared package when server externals are configured", () => {

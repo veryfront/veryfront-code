@@ -1,4 +1,11 @@
 import {
+  matchConfiguredServerExternalSpecifier,
+} from "#veryfront/transforms/shared/server-only-packages.ts";
+import {
+  assertNoConfiguredCommonJsBrowserImports,
+  throwConfiguredServerExternalBrowserViolation,
+} from "./commonjs-policy.ts";
+import {
   applyComputedDynamicImportPinning,
   applyImportEdits,
   parseImportEdits,
@@ -48,6 +55,10 @@ function pinSameOriginModuleUrl(
 }
 
 export async function rewriteWithImportRewriteCore(input: TransformCoreInput): Promise<string> {
+  if (input.context.target === "browser") {
+    await assertNoConfiguredCommonJsBrowserImports(input.code, input.context);
+  }
+
   const parsed = await parseImportEdits(input.code);
   if (parsed.imports.length === 0 && parsed.computedDynamicImports.length === 0) {
     return input.code;
@@ -103,6 +114,9 @@ function rewriteOne(
   ctx: RewriteContext,
   strategies: ImportRewriteStrategy[],
 ): RewriteResult {
+  const configuredExternal = rewriteConfiguredServerExternal(specifier, ctx);
+  if (configuredExternal !== undefined) return configuredExternal;
+
   const pinnedModuleUrl = pinSameOriginModuleUrl(specifier, ctx);
   if (pinnedModuleUrl !== null) return { specifier: pinnedModuleUrl };
 
@@ -110,8 +124,30 @@ function rewriteOne(
     if (!strategy.matches(specifier, ctx)) continue;
 
     const result = strategy.rewrite(info, ctx);
-    if (result.specifier !== null || result.statement !== undefined) return result;
+    if (result.specifier !== null) {
+      return rewriteConfiguredServerExternal(result.specifier, ctx) ?? result;
+    }
+    if (result.statement !== undefined) return result;
   }
 
+  return { specifier: null };
+}
+
+function rewriteConfiguredServerExternal(
+  specifier: string,
+  ctx: RewriteContext,
+): RewriteResult | undefined {
+  const match = matchConfiguredServerExternalSpecifier(specifier, ctx.serverExternalPackages);
+  if (match === undefined) return undefined;
+
+  if (ctx.target === "browser") {
+    throwConfiguredServerExternalBrowserViolation(specifier, match.packageName, ctx);
+  }
+
+  if (match.runtimeSpecifier !== specifier) return { specifier: match.runtimeSpecifier };
+
+  // A configured server external is terminal even though preserving the
+  // original specifier is represented by a null rewrite. Import maps and
+  // special-package strategies must not claim it afterward.
   return { specifier: null };
 }

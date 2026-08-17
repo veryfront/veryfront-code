@@ -38,6 +38,39 @@ describe("module server external packages", () => {
     assertEquals(text.includes("esm.sh/knex"), false);
   });
 
+  it("rejects configured CommonJS imports from served browser modules", async () => {
+    for (
+      const [name, source] of [
+        ["direct", `const knex = require("knex"); export default knex;\n`],
+        ["optional", `const knex = require?.("knex"); export default knex;\n`],
+        ["module-member", `const knex = module.require("knex"); export default knex;\n`],
+        ["require-resolve", `const knex = require.resolve("knex"); export default knex;\n`],
+      ] as const
+    ) {
+      const projectDir = `/server-external-commonjs-${name}`;
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(`${projectDir}/components/Database.ts`, source);
+
+      const response = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/Database.js"),
+        {
+          projectId: `server-external-commonjs-${name}`,
+          projectDir,
+          adapter,
+          isLocalProject: true,
+          dev: true,
+          config: { build: { serverExternalPackages: ["knex"] } },
+        },
+      );
+
+      assertEquals(response.status, 500, name);
+      const text = await response.text();
+      assertStringIncludes(text, "knex");
+      assertStringIncludes(text, "build.serverExternalPackages");
+      assertEquals(text.includes(projectDir), false);
+    }
+  });
+
   it("preserves configured server externals in served SSR modules", async () => {
     const projectDir = "/server-external-package-ssr";
     const adapter = createMockAdapter();

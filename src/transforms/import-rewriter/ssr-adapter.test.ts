@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
@@ -26,6 +27,81 @@ describe("ssr-adapter — server external packages", () => {
     assertEquals(result.includes(`from "knex"`), true);
     assertEquals(result.includes(`from "@prisma/client/runtime/library"`), true);
     assertEquals(result.includes(`from "https://esm.sh/zod?external=react&target=es2022"`), true);
+  });
+
+  it("keeps configured special packages external for the runtime", () => {
+    const code = [
+      `import React from "react";`,
+      `import client from "react-dom/client";`,
+      `import framework from "veryfront";`,
+      `import similarName from "veryfrontend";`,
+    ].join("\n");
+
+    assertEquals(
+      rewriteSSRImportsCompat(code, {
+        serverExternalPackages: ["react", "react-dom", "veryfront", "veryfrontend"],
+      }),
+      code,
+    );
+  });
+
+  it("normalizes configured canonical esm.sh imports for the runtime", () => {
+    const code = [
+      `import knex from "https://esm.sh/knex@3.1.0";`,
+      `import prisma from "https://esm.sh/@prisma/client@6.0.0/runtime/library?target=es2022";`,
+      `import versioned from "https://esm.sh/v135/knex@3.1.0/";`,
+      `import encoded from "https://esm.sh/%40prisma%2Fclient@6.0.0/runtime/library";`,
+    ].join("\n");
+
+    const result = rewriteSSRImportsCompat(code, {
+      serverExternalPackages: ["knex", "@prisma/client"],
+    });
+
+    assertEquals(result.includes(`from "knex"`), true);
+    assertEquals(result.includes(`from "@prisma/client/runtime/library"`), true);
+    assertEquals(result.includes("esm.sh"), false);
+  });
+
+  it("normalizes configured esm.sh side-effect and dynamic imports", async () => {
+    const code = [
+      `import "https://esm.sh/knex@3.1.0";`,
+      `const query = import("https://esm.sh/knex@3.1.0/query?target=es2022");`,
+    ].join("\n");
+    const expected = [`import "knex";`, `const query = import("knex/query");`].join("\n");
+    const options = { serverExternalPackages: ["knex"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
+  it("does not rewrite import text in comments or literals", () => {
+    const url = "https://esm.sh/knex@3.1.0";
+    const code = [
+      `// import("${url}")`,
+      `const source = 'import("${url}")';`,
+      `const pattern = /import\\("${url.replaceAll("/", "\\/")} "\\)/;`,
+      `const template = \`import("${url}")\`;`,
+      `/* import "${url}" */`,
+    ].join("\n");
+
+    assertEquals(
+      rewriteSSRImportsCompat(code, { serverExternalPackages: ["knex"] }),
+      code,
+    );
+  });
+
+  it("reports the registered bundle error when configured imports exceed the scan limit", () => {
+    const code = Array.from(
+      { length: 501 },
+      (_, index) => `import value${index} from "https://esm.sh/knex@3.1.0/query${index}";`,
+    ).join("\n");
+
+    const error = assertThrows(
+      () => rewriteSSRImportsCompat(code, { serverExternalPackages: ["knex"] }),
+      VeryfrontError,
+    );
+    assert(error instanceof VeryfrontError);
+    assertEquals(error.slug, "bundle-error");
   });
 
   it("partitions default child module URLs by the canonical external package set", () => {

@@ -9,6 +9,13 @@ import {
   primordialArrayJoin as arrayJoin,
   primordialArrayPush as arrayPush,
 } from "#veryfront/platform/compat/primordials/array.ts";
+import {
+  isEsmShUrl,
+  type ParsedEsmShUrl,
+  parseEsmShUrl,
+} from "#veryfront/transforms/shared/esm-sh-specifier.ts";
+
+export { isEsmShUrl, type ParsedEsmShUrl, parseEsmShUrl };
 
 /**
  * Default React version - used when not specified.
@@ -454,85 +461,6 @@ export function buildVeryfrontModuleUrl(path: string): string {
 export function normalizeExtension(path: string, options?: { removeExtension?: boolean }): string {
   if (options?.removeExtension) return path.replace(/\.(tsx?|jsx|mdx)$/, "");
   return path.replace(/\.(tsx?|jsx|mdx)$/, ".js");
-}
-
-/**
- * Check if a URL is an esm.sh URL.
- */
-export function isEsmShUrl(url: string): boolean {
-  return url.startsWith("https://esm.sh/") || url.startsWith("http://esm.sh/");
-}
-
-export interface ParsedEsmShUrl {
-  readonly origin: string;
-  readonly packageName: string;
-  readonly version: string | null;
-  readonly subpath: string;
-  readonly search: string;
-  readonly hash: string;
-}
-
-/**
- * esm.sh path prefixes that are not plain npm package names. Rewriting these
- * would corrupt the specifier, so they are declined rather than pinned.
- */
-const ESM_SH_NON_NPM_PREFIX_RE = /^(?:v\d+|stable|gh|jsr|pr|node)$/;
-
-/**
- * Split an esm.sh URL into its npm coordinates. Returns null for anything that
- * is not a plain `pkg`, `pkg@version`, or `@scope/pkg` path, so callers can
- * leave unfamiliar esm.sh URL shapes exactly as the author wrote them.
- */
-export function parseEsmShUrl(url: string): ParsedEsmShUrl | null {
-  if (!isEsmShUrl(url)) return null;
-
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch (_) {
-    /* expected: a malformed URL is left untouched */
-    return null;
-  }
-
-  // An empty segment means a doubled or trailing slash. Both are meaningful:
-  // a trailing slash is an import-map prefix mapping, not a module URL (see
-  // buildEsmShPrefixUrl). Dropping one would rewrite the author's specifier
-  // into a different request, so decline instead of normalizing.
-  const segments = parsed.pathname.slice(1).split("/");
-  if (segments.some((segment) => segment.length === 0)) return null;
-
-  const first = segments[0];
-  if (!first || ESM_SH_NON_NPM_PREFIX_RE.test(first)) return null;
-  // A colon in the leading segment means a scheme-qualified specifier such as
-  // `node:crypto`, not an npm package name. Feeding one to the pin resolver
-  // would schedule platform resolution and write-back for something npm has
-  // never heard of.
-  if (first.includes(":")) return null;
-
-  const isScoped = first.startsWith("@");
-  if (isScoped && segments.length < 2) return null;
-
-  const nameSegments = isScoped ? segments.slice(0, 2) : segments.slice(0, 1);
-  const subpathSegments = segments.slice(nameSegments.length);
-
-  const last = nameSegments[nameSegments.length - 1]!;
-  const versionIndex = last.lastIndexOf("@");
-  // `pkg@` is malformed, not unversioned. Treating it as unversioned would
-  // silently promote it to a valid pin the author never wrote.
-  if (versionIndex > 0 && versionIndex === last.length - 1) return null;
-  const version = versionIndex > 0 ? last.slice(versionIndex + 1) : null;
-  if (versionIndex > 0) {
-    nameSegments[nameSegments.length - 1] = last.slice(0, versionIndex);
-  }
-
-  return {
-    origin: parsed.origin,
-    packageName: arrayJoin(nameSegments, "/"),
-    version: version && version.length > 0 ? version : null,
-    subpath: subpathSegments.length > 0 ? `/${arrayJoin(subpathSegments, "/")}` : "",
-    search: parsed.search,
-    hash: parsed.hash,
-  };
 }
 
 /** Rebuild an esm.sh URL with an exact version, preserving every other part. */
