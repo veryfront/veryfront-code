@@ -775,7 +775,8 @@ function freeReferencedIdentifiers(
         child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
         child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||
         child.type === "ClassMethod" || child.type === "ClassDeclaration" ||
-        child.type === "ClassExpression" || child.type === "StaticBlock"
+        child.type === "ClassExpression" || child.type === "StaticBlock" ||
+        child.type === "TSModuleDeclaration"
       ) {
         continue;
       }
@@ -794,29 +795,37 @@ function freeReferencedIdentifiers(
     for (const child of children(node)) visit(child, scopes);
   };
 
-  const visitPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
+  const visitPatternRuntime = (
+    pattern: Node,
+    scopes: LexicalScope[],
+    decoratorScopes: LexicalScope[] = scopes,
+  ): void => {
     if (pattern.type === "TSParameterProperty") {
-      visitDecorators(pattern, scopes);
-      if (isNode(pattern.parameter)) visitPatternRuntime(pattern.parameter, scopes);
+      visitDecorators(pattern, decoratorScopes);
+      if (isNode(pattern.parameter)) {
+        visitPatternRuntime(pattern.parameter, scopes, decoratorScopes);
+      }
       return;
     }
 
     if (pattern.type === "Identifier") return;
 
     if (pattern.type === "AssignmentPattern") {
-      if (isNode(pattern.left)) visitPatternRuntime(pattern.left, scopes);
+      if (isNode(pattern.left)) visitPatternRuntime(pattern.left, scopes, decoratorScopes);
       if (isNode(pattern.right)) visit(pattern.right, scopes);
       return;
     }
 
     if (pattern.type === "RestElement") {
-      if (isNode(pattern.argument)) visitPatternRuntime(pattern.argument, scopes);
+      if (isNode(pattern.argument)) {
+        visitPatternRuntime(pattern.argument, scopes, decoratorScopes);
+      }
       return;
     }
 
     if (pattern.type === "ArrayPattern") {
       for (const element of Array.isArray(pattern.elements) ? pattern.elements : []) {
-        if (isNode(element)) visitPatternRuntime(element, scopes);
+        if (isNode(element)) visitPatternRuntime(element, scopes, decoratorScopes);
       }
       return;
     }
@@ -825,7 +834,9 @@ function freeReferencedIdentifiers(
       for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
         if (!isNode(property)) continue;
         if (property.type === "RestElement") {
-          if (isNode(property.argument)) visitPatternRuntime(property.argument, scopes);
+          if (isNode(property.argument)) {
+            visitPatternRuntime(property.argument, scopes, decoratorScopes);
+          }
           continue;
         }
         if (property.type !== "ObjectProperty") {
@@ -833,7 +844,9 @@ function freeReferencedIdentifiers(
           continue;
         }
         if (property.computed === true && isNode(property.key)) visit(property.key, scopes);
-        if (isNode(property.value)) visitPatternRuntime(property.value, scopes);
+        if (isNode(property.value)) {
+          visitPatternRuntime(property.value, scopes, decoratorScopes);
+        }
       }
       return;
     }
@@ -866,7 +879,9 @@ function freeReferencedIdentifiers(
       if (isNode(param)) bindPatternNames(functionScope, param);
     }
     for (const param of Array.isArray(node.params) ? node.params : []) {
-      if (isNode(param)) visitPatternRuntime(param, [functionScope, ...scopes]);
+      if (isNode(param)) {
+        visitPatternRuntime(param, [functionScope, ...scopes], scopes);
+      }
     }
 
     bindDirectDeclarations(functionScope, isNode(node.body) ? node.body : node);
@@ -972,7 +987,7 @@ function freeReferencedIdentifiers(
     if (!isRuntimeTsModuleDeclaration(node)) return;
 
     bindPatternNames(scopes[0] ?? rootScope, node.id);
-    const moduleScope: LexicalScope = { kind: "block", names: new Set() };
+    const moduleScope: LexicalScope = { kind: "var", names: new Set() };
     bindPatternNames(moduleScope, node.id);
     const moduleScopes = [moduleScope, ...scopes];
 
@@ -980,6 +995,7 @@ function freeReferencedIdentifiers(
     if (!isNode(body)) return;
     if (body.type === "TSModuleBlock") {
       bindDirectDeclarations(moduleScope, body);
+      bindNestedVarDeclarations(moduleScope, body);
       for (const statement of Array.isArray(body.body) ? body.body : []) {
         if (isNode(statement)) visit(statement, moduleScopes);
       }
