@@ -1602,6 +1602,18 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
  * `registry.defineProperty` write cannot replace the intrinsic and must not
  * stop compiler metadata from being removed with a hook-only binding.
  */
+function isGlobalObjectSlot(node: Node | undefined): boolean {
+  if (node?.type !== "MemberExpression" && node?.type !== "OptionalMemberExpression") {
+    return false;
+  }
+
+  if (nodeName(node.object) !== "globalThis") return false;
+  const property = isNode(node.property) ? node.property : undefined;
+  if (node.computed !== true) return nodeName(property) === "Object";
+  const key = stringLiteralText(property);
+  return key === null || key === "Object";
+}
+
 function writesDefinePropertyMember(target: Node): boolean {
   if (target.type !== "MemberExpression" && target.type !== "OptionalMemberExpression") {
     return false;
@@ -1609,9 +1621,7 @@ function writesDefinePropertyMember(target: Node): boolean {
 
   const object = isNode(target.object) ? target.object : undefined;
   const objectIsIntrinsic = nodeName(object) === "Object" ||
-    (object?.type === "MemberExpression" || object?.type === "OptionalMemberExpression") &&
-      nodeName(object.object) === "globalThis" &&
-      literalText(isNode(object.property) ? object.property : undefined) === "Object";
+    isGlobalObjectSlot(object);
   if (!objectIsIntrinsic) return false;
 
   const property = isNode(target.property) ? target.property : undefined;
@@ -1623,7 +1633,7 @@ function writesDefinePropertyMember(target: Node): boolean {
 
 function writesObjectDefineProperty(body: Node[]): boolean {
   const targetWritesDefineProperty = (target: Node): boolean => {
-    if (writesDefinePropertyMember(target)) return true;
+    if (isGlobalObjectSlot(target) || writesDefinePropertyMember(target)) return true;
     if (target.type === "AssignmentPattern") {
       return isNode(target.left) && targetWritesDefineProperty(target.left);
     }
