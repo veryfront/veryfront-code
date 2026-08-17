@@ -144,6 +144,7 @@ export interface ChatStreamState {
   accumulatedText: string;
   reasoningParts: StreamingReasoningPart[];
   finishReason: string | null;
+  providerMetadata?: Record<string, unknown>;
   toolCalls: Map<string, StreamingToolCall>;
   toolResults: StreamingToolResult[];
   suppressedToolCalls: { id: string; name: string }[];
@@ -1395,6 +1396,7 @@ export function processStreamInternal(
             closeTextSegment();
             closeReasoningSegment();
             state.finishReason = typedPart.finishReason ?? null;
+            state.providerMetadata = typedPart.providerMetadata;
             if (state.finishReason) {
               setActiveSpanAttributes({
                 "gen_ai.response.finish_reasons": [state.finishReason],

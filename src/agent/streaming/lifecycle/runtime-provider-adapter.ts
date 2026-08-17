@@ -119,6 +119,9 @@ export function decodeRuntimeStreamPart(
           event: {
             type: "step_finish" as const,
             finishReason: normalizeFinishReason(typed.finishReason),
+            ...(typed.providerMetadata === undefined
+              ? {}
+              : { providerMetadata: typed.providerMetadata }),
           },
         },
       ];

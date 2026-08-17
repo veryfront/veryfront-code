@@ -44,6 +44,7 @@ import {
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { setActiveSpanAttributes as setOtelActiveSpanAttributes } from "#veryfront/observability";
 import { convertToTextGenerationRuntimeRequestMessages } from "./text-generation-runtime-message-converter.ts";
+import { attachProviderMetadata } from "./provider-metadata.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import {
   bindRuntimeRemoteToolSourcesToCredentialOwner,
@@ -593,11 +594,11 @@ function buildGeneratedAssistantMessage(
       args: toolCall.input as Record<string, unknown>,
     });
   }
-  return {
+  return attachProviderMetadata({
     ...metadata,
     role: "assistant",
     parts,
-  };
+  }, response.providerMetadata);
 }
 
 function executeFrameworkToolSearch(input: {
@@ -2549,6 +2550,7 @@ export class AgentRuntime {
         preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch ||
           !shouldContinue,
       });
+      attachProviderMetadata(assistantMessage, state.providerMetadata);
 
       for (const tc of state.toolCalls.values()) {
         const materialized = materializeStreamedToolCall(tc);

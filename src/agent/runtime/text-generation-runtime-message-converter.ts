@@ -19,6 +19,7 @@ import type {
 import { assertProviderReachableAttachment } from "./attachment-reachability.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
+import { readAttachedProviderMetadata } from "./provider-metadata.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -318,9 +319,11 @@ export function convertToTextGenerationRuntimeMessage(
         content.push({ type: "text", text: "" });
       }
 
+      const providerMetadata = readAttachedProviderMetadata(msg);
       const assistantMessage: TextGenerationRuntimeAssistantMessage = {
         role: "assistant",
         content,
+        ...(providerMetadata === undefined ? {} : { providerMetadata }),
       };
       return assistantMessage;
     }
@@ -467,6 +470,14 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   flushAssistantMessage(assistantContent);
   flushToolMessage();
   flushAssistantMessage(deferredAssistantContent);
+
+  const providerMetadata = readAttachedProviderMetadata(message);
+  const assistantMessages = messages.filter((entry) => entry.role === "assistant");
+  // Exact replay metadata describes one provider response. Attaching it after
+  // conversion split that response would pair it with an incomplete projection.
+  if (providerMetadata !== undefined && assistantMessages.length === 1) {
+    assistantMessages[0]!.providerMetadata = providerMetadata;
+  }
 
   return messages;
 }
