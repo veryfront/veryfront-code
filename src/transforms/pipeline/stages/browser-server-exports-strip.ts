@@ -1958,6 +1958,87 @@ function normalizeCall(node: Node, globals: ReadonlySet<Node>): NormalizedCall |
   return { callee, args, unknownArgs };
 }
 
+/** Bindings that can hold the intrinsic defineProperty function. */
+function intrinsicDefinePropertyAliases(
+  body: Node[],
+  globals: ReadonlySet<Node>,
+  bindings: LexicalBindingIndex,
+): Set<LexicalBindingIdentity> {
+  const flows: Array<{ target: LexicalBindingIdentity; value: Node }> = [];
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      let targetNode: Node | undefined;
+      let value: Node | undefined;
+      let declaration = false;
+      if (node.type === "VariableDeclarator") {
+        targetNode = isNode(node.id) ? unwrapTransparent(node.id) : undefined;
+        value = isNode(node.init) ? node.init : undefined;
+        declaration = true;
+      } else if (node.type === "AssignmentExpression") {
+        targetNode = isNode(node.left) ? unwrapTransparent(node.left) : undefined;
+        value = isNode(node.right) ? node.right : undefined;
+      }
+      if (targetNode?.type !== "Identifier" || !value) return;
+      const target = declaration
+        ? bindings.declaration(targetNode)
+        : bindings.reference(targetNode);
+      if (target) flows.push({ target, value });
+    });
+  }
+
+  const aliases = new Set<LexicalBindingIdentity>();
+  const carriesIntrinsic = (node: Node): boolean => {
+    const value = unwrapTransparent(node);
+    if (isIntrinsicDefinePropertyCall(value, globals)) return true;
+    if (value.type === "Identifier") {
+      const source = bindings.reference(value);
+      return source !== null && aliases.has(source);
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return !!last && carriesIntrinsic(last);
+    }
+    if (value.type === "ConditionalExpression") {
+      return (isNode(value.consequent) && carriesIntrinsic(value.consequent)) ||
+        (isNode(value.alternate) && carriesIntrinsic(value.alternate));
+    }
+    if (value.type === "LogicalExpression") {
+      const rightCarries = isNode(value.right) && carriesIntrinsic(value.right);
+      if (value.operator === "&&") return rightCarries;
+      return rightCarries || (isNode(value.left) && carriesIntrinsic(value.left));
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return carriesIntrinsic(value.right);
+    }
+    if (
+      (value.type === "CallExpression" || value.type === "OptionalCallExpression") &&
+      isNode(value.callee)
+    ) {
+      const callee = unwrapTransparent(value.callee);
+      if (
+        (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
+        memberKey(callee) === "bind" && isNode(callee.object)
+      ) {
+        return carriesIntrinsic(callee.object);
+      }
+    }
+    return false;
+  };
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const { target, value } of flows) {
+      if (aliases.has(target) || !carriesIntrinsic(value)) continue;
+      aliases.add(target);
+      changed = true;
+    }
+  }
+  return aliases;
+}
+
 function assignsUnshadowedGlobal(
   body: Node[],
   name: string,
@@ -2010,7 +2091,12 @@ function assignsUnshadowedGlobal(
   return assigns;
 }
 
-function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): boolean {
+function writesObjectDefineProperty(
+  body: Node[],
+  globals: ReadonlySet<Node>,
+  bindings: LexicalBindingIndex,
+): boolean {
+  const aliases = intrinsicDefinePropertyAliases(body, globals, bindings);
   const targetWritesDefineProperty = (target: Node): boolean => {
     if (
       isGlobalObjectSlot(target, globals) || writesDefinePropertyMember(target, globals)
@@ -2042,7 +2128,14 @@ function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): b
       if (writes) return false;
 
       const invocation = normalizeCall(node, globals);
-      if (invocation && isIntrinsicDefinePropertyCall(invocation.callee, globals)) {
+      const aliasBinding = invocation?.callee.type === "Identifier"
+        ? bindings.reference(invocation.callee)
+        : null;
+      if (
+        invocation &&
+        (isIntrinsicDefinePropertyCall(invocation.callee, globals) ||
+          (aliasBinding !== null && aliases.has(aliasBinding)))
+      ) {
         if (invocation.unknownArgs) {
           writes = true;
           return false;
@@ -2382,6 +2475,7 @@ function memberKey(node: Node): string | null {
 /** Parameter bindings whose function bodies this module immediately executes. */
 function invokedFunctionParameterBindings(
   body: Node[],
+  globals: ReadonlySet<Node>,
   bindings: LexicalBindingIndex,
 ): Set<LexicalBindingIdentity> {
   const invoked = new Set<LexicalBindingIdentity>();
@@ -2408,13 +2502,19 @@ function invokedFunctionParameterBindings(
     }
   };
 
+  const collectInvocation = (value: Node, runGenerator: boolean): void => {
+    const call = unwrapTransparent(value);
+    const invocation = normalizeCall(call, globals);
+    if (invocation) collect(invocation.callee, runGenerator);
+  };
+
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
       if (
-        node.type === "CallExpression" || node.type === "OptionalCallExpression" ||
-        node.type === "NewExpression"
+        node.type === "CallExpression" || node.type === "OptionalCallExpression"
       ) {
+        collectInvocation(node, false);
         const callee = isNode(node.callee) ? unwrapTransparent(node.callee) : undefined;
         if (
           callee &&
@@ -2427,10 +2527,16 @@ function invokedFunctionParameterBindings(
               iterator.type === "OptionalCallExpression") &&
             isNode(iterator.callee)
           ) {
-            collect(iterator.callee, true);
+            collectInvocation(iterator, true);
           }
         }
-        collect(node.callee, false);
+      }
+      if (node.type === "NewExpression") collect(node.callee, false);
+      if (node.type === "SpreadElement" && isNode(node.argument)) {
+        collectInvocation(node.argument, true);
+      }
+      if (node.type === "ForOfStatement" && isNode(node.right)) {
+        collectInvocation(node.right, true);
       }
     });
   }
@@ -2454,7 +2560,7 @@ function writesGuardedKeyThroughUnprovenBase(
   globals: ReadonlySet<Node>,
   bindings: LexicalBindingIndex,
 ): boolean {
-  const invokedParams = invokedFunctionParameterBindings(body, bindings);
+  const invokedParams = invokedFunctionParameterBindings(body, globals, bindings);
 
   const baseIsProvenLocal = (base: Node): boolean => {
     const target = unwrapTransparent(base);
@@ -2731,7 +2837,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
     hoisted.has("Object") || importsRuntimeObject ||
     assignsUnshadowedGlobal(body, "Object", globals) ||
-    writesObjectDefineProperty(body, globals) ||
+    writesObjectDefineProperty(body, globals, bindings) ||
     writesGuardedKeyThroughUnprovenBase(body, globals, bindings) ||
     mergesGuardedKeyOntoIntrinsic(body, globals) ||
     hasReflectionRoute(body, globals) ||
