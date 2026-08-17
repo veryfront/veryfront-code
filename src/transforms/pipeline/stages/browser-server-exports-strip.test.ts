@@ -1183,23 +1183,41 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result.code, "export const APPENDED = true;");
     });
 
-    it("keeps the compile map when no server hook is rewritten", async () => {
+    it("does not restore a compile map after an intermediate plugin removes the hook", async () => {
+      const source = [
+        `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
+        `export async function getServerData() { return { props: { key: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-intermediate-removal", dev: true, ssr: false },
+        {
+          plugins: [{
+            name: "remove-server-hook",
+            stage: TransformStage.COMPILE + 0.5,
+            transform: () => `export default function Page() { return null; }`,
+          }],
+        },
+      );
+
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result.code, "export default function Page()");
+    });
+
+    it("keeps the compile map when no server hook or intermediate change exists", async () => {
       const result = await runPipeline(
         `export default function Page() { return null; }`,
         "/project/pages/test.tsx",
         "/project",
         { projectId: "source-map-no-server-hook", dev: true, ssr: false },
-        {
-          plugins: [{
-            name: "append-after-compile",
-            stage: TransformStage.COMPILE + 0.5,
-            transform: (ctx) => `${ctx.code}\nexport const APPENDED = true;`,
-          }],
-        },
       );
 
       assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
-      assertStringIncludes(result.code, "export const APPENDED = true;");
     });
 
     it("removes an external source map reference after stripping", async () => {

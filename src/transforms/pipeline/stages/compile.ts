@@ -16,6 +16,7 @@ const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const SOURCE_MAP_SUFFIX =
   /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
 export const COMPILE_SOURCE_MAP_DIRECTIVE_METADATA = "compileSourceMapDirective";
+export const COMPILE_SOURCE_MAP_INPUT_METADATA = "compileSourceMapInput";
 
 function trailingSourceMapDirective(code: string): string | undefined {
   const match = SOURCE_MAP_SUFFIX.exec(code);
@@ -116,13 +117,16 @@ export const compilePlugin: TransformPlugin = {
       const sourceMapDirective = trailingSourceMapDirective(code);
       if (ctx.target === "browser" && sourceMapDirective) {
         // Keep the compiler map out of intermediate browser plugins. The
-        // server-export strip stage restores it only when no hook is rewritten.
-        // This makes the real comment unambiguous even if a plugin copies its
-        // text into a string or appends executable code.
+        // server-export strip stage restores it only when the map-free compile
+        // output is unchanged and no hook is rewritten. This makes the real
+        // comment unambiguous even if a plugin copies its text into a string,
+        // appends code, or removes the hook itself.
         ctx.metadata.set(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, sourceMapDirective);
         code = dropTrailingSourceMapDirective(code);
+        ctx.metadata.set(COMPILE_SOURCE_MAP_INPUT_METADATA, code);
       } else {
         ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
+        ctx.metadata.delete(COMPILE_SOURCE_MAP_INPUT_METADATA);
       }
 
       return code;

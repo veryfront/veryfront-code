@@ -59,7 +59,10 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
-import { COMPILE_SOURCE_MAP_DIRECTIVE_METADATA } from "./compile.ts";
+import {
+  COMPILE_SOURCE_MAP_DIRECTIVE_METADATA,
+  COMPILE_SOURCE_MAP_INPUT_METADATA,
+} from "./compile.ts";
 
 /** Exports that only ever execute on the server. */
 const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
@@ -1116,8 +1119,11 @@ export const browserServerExportsStripPlugin: TransformPlugin = {
   condition: (ctx: TransformContext) => ctx.target === "browser",
   transform: async (ctx: TransformContext) => {
     const directive = ctx.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
+    const compileInput = ctx.metadata.get(COMPILE_SOURCE_MAP_INPUT_METADATA);
+    ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
+    ctx.metadata.delete(COMPILE_SOURCE_MAP_INPUT_METADATA);
     const result = await stripServerOnlyExports(ctx.code, ctx.filePath);
-    return result === ctx.code && typeof directive === "string"
+    return result === ctx.code && compileInput === ctx.code && typeof directive === "string"
       ? appendSourceMapDirective(result, directive)
       : result;
   },
