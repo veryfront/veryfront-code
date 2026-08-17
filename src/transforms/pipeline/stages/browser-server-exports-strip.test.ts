@@ -258,6 +258,36 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "pages/x.tsx");
     });
 
+    // ES2022 lets an export clause publish an arbitrary string as the exported
+    // name, and the runtime looks `mod.getServerData` up under it just the
+    // same. The name matcher only ever read the identifier form, so the module
+    // was reported as exporting no hook and passed through byte for byte —
+    // loader body, imports and closed-over secrets included.
+    it("fails the build when a hook is exported under a string-literal name", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `async function loadIt() { return { props: { k: API_KEY } }; }`,
+        `export { loadIt as "getServerData" };`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
+    // `export * as getServerData from "./loader"` names a hook without binding
+    // anything locally, so there is nothing to stub and the loader module stays
+    // in the browser graph.
+    it("fails the build when a hook is a namespace re-export", async () => {
+      const code = `export * as getServerData from "./loader.ts";`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
     // A class declaration exported under a hook name is a form the stubber
     // does not handle. Fail closed rather than shipping the class body and
     // everything it closes over.
@@ -1272,6 +1302,231 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "raw"), 0);
       assertEquals(occurrences(result, "cleaned"), 0);
       assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // Regression (closed leak): liveness used to be decided one declaration at
+    // a time — "is this name mentioned anywhere else?" — so two hook-only
+    // helpers that call each other each counted as the other's consumer and
+    // neither could ever be removed. The secret they closed over, and the
+    // node-builtin import behind it, shipped to the browser. Liveness is now
+    // reachability from the code that survives, and an unreachable cycle goes
+    // whole however long it is.
+    it("drops a cycle of hook-only helpers and the node builtin they shared", async () => {
+      const code = [
+        `import { createHash } from "node:crypto";`,
+        `function normalize(row) { return row.id ? sign(row) : null; }`,
+        `function sign(row) { return createHash("sha256").update(normalize(row) ?? "").digest("hex"); }`,
+        `export async function getServerData() { return { props: { rows: [normalize({ id: 1 })] } }; }`,
+        `export default function Page({ rows }) { return rows.length; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "normalize"), 0);
+      assertEquals(occurrences(result, "sign"), 0);
+      assertEquals(occurrences(result, "createHash"), 0);
+      assertNotIncludes(result, "node:crypto");
+    });
+
+    it("drops a cycle of hook-only arrow bindings holding a secret", async () => {
+      const code = [
+        `const API_KEY = "sk-live-example";`,
+        `const ping = (n) => n <= 0 ? API_KEY : pong(n - 1);`,
+        `const pong = (n) => ping(n - 1);`,
+        `export async function getServerData() { return { props: { k: ping(3) } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertEquals(occurrences(result, "ping"), 0);
+      assertEquals(occurrences(result, "pong"), 0);
+      assertNotIncludes(result, "sk-live-example");
+    });
+
+    it("drops a three-helper cycle reached only through the hook", async () => {
+      const code = [
+        `const API_KEY = "sk-live-example";`,
+        `function first(n) { return n <= 0 ? API_KEY : second(n); }`,
+        `function second(n) { return third(n - 1); }`,
+        `function third(n) { return first(n - 1); }`,
+        `export async function getServerData() { return { props: { k: first(3) } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "sk-live-example");
+      assertEquals(occurrences(result, "first"), 0);
+      assertEquals(occurrences(result, "second"), 0);
+      assertEquals(occurrences(result, "third"), 0);
+    });
+
+    // Contrast pin: the same cycle survives whole the moment the client reaches
+    // into any part of it.
+    it("keeps a helper cycle the client still reaches", async () => {
+      const code = [
+        `function ping(n) { return n <= 0 ? 0 : pong(n - 1); }`,
+        `function pong(n) { return ping(n - 1); }`,
+        `export async function getServerData() { return { props: { k: ping(3) } }; }`,
+        `export default function Page() { return pong(2); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "function ping");
+      assertStringIncludes(result, "function pong");
+    });
+
+    // Regression (closed leak): a `var` hoists into module scope out of any
+    // block, `if`, `try`, `switch`, loop or label it is written in, but the
+    // declaration collector only ever looked at direct top-level declarations.
+    // A secret declared that way was never a removal candidate at all, so it
+    // shipped whenever the statement around it was impure enough to survive on
+    // its own.
+    const hoistedVarSecrets: Array<[string, string]> = [
+      ["a bare block", `{ var API_KEY = getEnv("SECRET_KEY"); }`],
+      ["an if branch", `if (globalThis.cond) { var API_KEY = getEnv("SECRET_KEY"); }`],
+      ["a labelled declaration", `setup: var API_KEY = getEnv("SECRET_KEY");`],
+      [
+        "a try/catch pair",
+        `try { var API_KEY = getEnv("SECRET_KEY"); } catch (e) { var API_KEY = null; }`,
+      ],
+      [
+        "a switch case",
+        `switch (globalThis.mode) { case 1: var API_KEY = getEnv("SECRET_KEY"); }`,
+      ],
+      ["a for initialiser", `for (var API_KEY = getEnv("SECRET_KEY"); false;) {}`],
+      [
+        "a destructuring pattern",
+        `if (globalThis.cond) { var { token: API_KEY } = getEnv("SECRET_KEY"); }`,
+      ],
+    ];
+
+    for (const [description, declaration] of hoistedVarSecrets) {
+      it(`drops a hook-only module-scope var declared in ${description}`, async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          declaration,
+          `export async function getServerData() { return { props: { k: API_KEY } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "pages/x.tsx");
+
+        assertEquals(occurrences(result, "API_KEY"), 0);
+        assertNotIncludes(result, "SECRET_KEY");
+        assertEquals(occurrences(result, "getEnv"), 0);
+      });
+    }
+
+    // Contrast pin: the same nested declaration stays the moment client code
+    // reads it, and so does the statement it lives in.
+    it("keeps a nested-block module-scope var the client reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `if (globalThis.cond) { var REGION = getEnv("REGION"); }`,
+        `export async function getServerData() { return { props: { r: REGION } }; }`,
+        `export default function Page() { return REGION; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "REGION");
+      assertStringIncludes(result, "getEnv");
+    });
+
+    // A `for…of` head declares the binding the loop assigns to, so there is no
+    // declaration to cut out and the value the loop iterates would stay either
+    // way. The build stops rather than shipping it.
+    it("fails the build when a dead server-only var is declared by a for-of head", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `for (var API_KEY of [getEnv("SECRET_KEY")]) { globalThis.seen = true; }`,
+        `export async function getServerData() { return { props: { k: API_KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "API_KEY");
+    });
+
+    // Regression (closed leak): a statement label lives in its own namespace,
+    // but the scan read `break API_KEY` as a reference to the module's
+    // `API_KEY` and kept the secret alive forever. The label itself is client
+    // code and stays; the declaration it merely shares a spelling with does not.
+    it("does not count a statement label as a reference", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { k: API_KEY } }; }`,
+        `export default function Page() {`,
+        `  API_KEY: for (let i = 0; i < 1; i++) { break API_KEY; }`,
+        `  return null;`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertStringIncludes(result, "break API_KEY");
+    });
+
+    // The *exported* half of an export specifier is a name this module
+    // publishes, not a read of anything it declares.
+    it("does not count an export alias's exported name as a reference", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { k: API_KEY } }; }`,
+        `const other = 1;`,
+        `export { other as API_KEY };`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertStringIncludes(result, "other as API_KEY");
+    });
+
+    // A decorator is ordinary code in a position the scan skipped entirely, so
+    // a value only the hook's decorator read stayed behind with its import.
+    it("tracks a decorator read inside a stripped hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() {`,
+        `  @API_KEY class Local {}`,
+        `  return { props: { n: Local.name } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+    });
+
+    it("keeps a value a decorator on client code reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const REGION = getEnv("REGION");`,
+        `function withRegion(value) { return (target) => target; }`,
+        `@withRegion(REGION) class Widget {}`,
+        `export async function getServerData() { return { props: { r: REGION } }; }`,
+        `export default function Page() { return Widget; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, "REGION");
+      assertStringIncludes(result, "getEnv");
     });
 
     it("keeps an import that the client still references", async () => {
