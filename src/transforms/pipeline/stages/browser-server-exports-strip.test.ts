@@ -1464,6 +1464,35 @@ describe("browser-server-exports-strip", () => {
           "an apply-invoked intrinsic mutation",
           `(function (intrinsic) { intrinsic.defineProperty = recordAndReturn; }).apply(null, [Object]);`,
         ],
+        [
+          "an intrinsic mutation invoked through call",
+          `Object.defineProperty.call(null, Object, "defineProperty", { value: recordAndReturn });`,
+        ],
+        [
+          "an intrinsic mutation invoked through apply",
+          `Object.defineProperty.apply(null, [Object, "defineProperty", { value: recordAndReturn }]);`,
+        ],
+        [
+          "a global merge invoked through call",
+          [
+            `const patch = { Object: { defineProperty: recordAndReturn } };`,
+            `Object.assign.call(null, globalThis, patch);`,
+          ].join("\n"),
+        ],
+        [
+          "a global merge invoked through apply",
+          [
+            `const patch = { Object: { defineProperty: recordAndReturn } };`,
+            `Object.assign.apply(null, [globalThis, patch]);`,
+          ].join("\n"),
+        ],
+        [
+          "an intrinsic alias produced by a value expression",
+          [
+            `const intrinsic = (0, Object);`,
+            `intrinsic.defineProperty = recordAndReturn;`,
+          ].join("\n"),
+        ],
       ]
     ) {
       it(`does not treat ${label} as compiler metadata`, async () => {
@@ -1488,6 +1517,53 @@ describe("browser-server-exports-strip", () => {
 
         assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
         assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    it("still strips metadata past a write through a shadowing alias parameter", async () => {
+      const code = [
+        `const intrinsic = Object;`,
+        `const alias = intrinsic;`,
+        `function configure(alias) { alias.other = 1; }`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    for (const invocation of ["call(null, Object)", "apply(null, [Object])"]) {
+      it(`keeps a generator ${invocation} body deferred during mutation analysis`, async () => {
+        const code = [
+          `function recordAndReturn(target) { return target; }`,
+          `(function* (intrinsic) { intrinsic.defineProperty = recordAndReturn; }).${invocation};`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertEquals(occurrences(result, "KEY"), 0);
+        assertEquals(occurrences(result, "getEnv"), 0);
       });
     }
 

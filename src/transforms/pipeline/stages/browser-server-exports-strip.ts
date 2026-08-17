@@ -909,6 +909,7 @@ function freeReferencedIdentifiers(
   initiallyBound: ReadonlySet<string> = NO_BOUND_NAMES,
   onFreeIdentifier?: (node: Node) => void,
   onIdentifier?: (node: Node, binding: LexicalScope | undefined) => void,
+  onBindingIdentifier?: (node: Node, binding: LexicalScope) => void,
 ): Set<string> {
   const free = new Set<string>();
   const rootScope: LexicalScope = {
@@ -922,7 +923,12 @@ function freeReferencedIdentifiers(
 
   const bindPatternNames = (scope: LexicalScope, value: unknown): void => {
     if (!isNode(value)) return;
-    for (const name of patternBoundNames(value)) scope.names.add(name);
+    for (const identifier of patternBindingIdentifiers(value)) {
+      const name = nodeName(identifier);
+      if (!name) continue;
+      scope.names.add(name);
+      onBindingIdentifier?.(identifier, scope);
+    }
   };
 
   const addFreeName = (
@@ -1445,6 +1451,63 @@ function freeReferencedIdentifiers(
   return free;
 }
 
+/** One concrete lexical binding, distinguished from same-spelled shadows. */
+interface LexicalBindingIdentity {
+  readonly scope: LexicalScope;
+  readonly name: string;
+}
+
+interface LexicalBindingIndex {
+  declaration(node: Node): LexicalBindingIdentity | null;
+  reference(node: Node): LexicalBindingIdentity | null;
+}
+
+/** Resolves declaration and reference identifiers to their concrete binding. */
+function indexLexicalBindings(body: Node[]): LexicalBindingIndex {
+  const declarations = new Map<Node, LexicalBindingIdentity>();
+  const references = new Map<Node, LexicalBindingIdentity>();
+  const identities = new WeakMap<LexicalScope, Map<string, LexicalBindingIdentity>>();
+  const identityFor = (
+    scope: LexicalScope | undefined,
+    node: Node,
+  ): LexicalBindingIdentity | null => {
+    const name = nodeName(node);
+    if (!scope || !name) return null;
+    let byName = identities.get(scope);
+    if (!byName) {
+      byName = new Map();
+      identities.set(scope, byName);
+    }
+    let identity = byName.get(name);
+    if (!identity) {
+      identity = { scope, name };
+      byName.set(name, identity);
+    }
+    return identity;
+  };
+
+  freeReferencedIdentifiers(
+    { type: "Program", body } as Node,
+    NOTHING_ELIDED,
+    NOTHING_ELIDED,
+    NO_BOUND_NAMES,
+    undefined,
+    (node, scope) => {
+      const identity = identityFor(scope, node);
+      if (identity) references.set(node, identity);
+    },
+    (node, scope) => {
+      const identity = identityFor(scope, node);
+      if (identity) declarations.set(node, identity);
+    },
+  );
+
+  return {
+    declaration: (node) => declarations.get(node) ?? null,
+    reference: (node) => references.get(node) ?? null,
+  };
+}
+
 /**
  * Identifiers referenced inside the server-only hooks that are about to be
  * emptied — the seed of the hook's dependency closure. Must be collected before
@@ -1810,6 +1873,63 @@ function isIntrinsicDefinePropertyCall(
     isGlobalObjectSlot(object, globals);
 }
 
+interface NormalizedCall {
+  callee: Node;
+  args: Node[];
+  unknownArgs: boolean;
+}
+
+/**
+ * The function and arguments a direct call invokes, including `.call` and
+ * `.apply` wrappers. Unknown spreads and apply lists stay explicitly unknown
+ * so a mutation check can fail closed instead of guessing argument positions.
+ */
+function normalizeCall(node: Node): NormalizedCall | null {
+  if (node.type !== "CallExpression" && node.type !== "OptionalCallExpression") return null;
+  if (!isNode(node.callee)) return null;
+  const callee = unwrapTransparent(node.callee);
+  const rawArgs = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
+  if (callee.type !== "MemberExpression" && callee.type !== "OptionalMemberExpression") {
+    return {
+      callee,
+      args: rawArgs,
+      unknownArgs: rawArgs.some((argument) => argument.type === "SpreadElement"),
+    };
+  }
+
+  const wrapper = memberKey(callee);
+  if ((wrapper !== "call" && wrapper !== "apply") || !isNode(callee.object)) {
+    return {
+      callee,
+      args: rawArgs,
+      unknownArgs: rawArgs.some((argument) => argument.type === "SpreadElement"),
+    };
+  }
+
+  const invoked = unwrapTransparent(callee.object);
+  if (wrapper === "call") {
+    const args = rawArgs.slice(1);
+    return {
+      callee: invoked,
+      args,
+      unknownArgs: rawArgs.some((argument) => argument.type === "SpreadElement"),
+    };
+  }
+
+  const list = rawArgs[1] ? unwrapTransparent(rawArgs[1]) : undefined;
+  if (list?.type !== "ArrayExpression" || !Array.isArray(list.elements)) {
+    return { callee: invoked, args: [], unknownArgs: true };
+  }
+  const args: Node[] = [];
+  for (const element of list.elements) {
+    if (!isNode(element) || element.type === "SpreadElement") {
+      return { callee: invoked, args: [], unknownArgs: true };
+    }
+    args.push(element);
+  }
+  return { callee: invoked, args, unknownArgs: false };
+}
+
 function assignsUnshadowedGlobal(
   body: Node[],
   name: string,
@@ -1893,11 +2013,13 @@ function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): b
     walk(statement, (node) => {
       if (writes) return false;
 
-      if (
-        (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
-        isNode(node.callee) && isIntrinsicDefinePropertyCall(node.callee, globals)
-      ) {
-        const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
+      const invocation = normalizeCall(node);
+      if (invocation && isIntrinsicDefinePropertyCall(invocation.callee, globals)) {
+        if (invocation.unknownArgs) {
+          writes = true;
+          return false;
+        }
+        const args = invocation.args;
         const key = stringLiteralText(args[1]);
         const targetIsObject = isUnshadowedGlobalIdentifier(args[0], "Object", globals) ||
           isGlobalObjectSlot(args[0], globals);
@@ -1998,43 +2120,56 @@ function memberPathRoot(node: Node): Node | null {
   return current.type === "Identifier" ? current : null;
 }
 
-/** Names the module writes a property through, at any depth of member path. */
-function namesWrittenThrough(body: Node[]): Set<string> {
-  const names = new Set<string>();
+/** Bindings the module writes a property through, at any depth of member path. */
+function bindingsWrittenThrough(
+  body: Node[],
+  bindings: LexicalBindingIndex,
+): Set<LexicalBindingIdentity> {
+  const written = new Set<LexicalBindingIdentity>();
   for (const target of propertyWriteTargets(body)) {
     const member = unwrapTransparent(target);
     if (member.type !== "MemberExpression" && member.type !== "OptionalMemberExpression") continue;
     const root = memberPathRoot(member);
-    const name = root ? nodeName(root) : null;
-    if (name) names.add(name);
+    const binding = root ? bindings.reference(root) : null;
+    if (binding) written.add(binding);
   }
-  return names;
+  return written;
 }
 
 /**
- * Names whose value can flow through local aliases to a property-write base.
+ * Bindings whose value can flow through local aliases to a property-write base.
  * For `const intrinsic = Object; const alias = intrinsic; alias.key = value`,
  * both `alias` and `intrinsic` are writable routes to the same object.
  */
-function namesAliasedToWrittenThrough(
+function bindingsAliasedToWrittenThrough(
   body: Node[],
-  writtenThrough: ReadonlySet<string>,
-): Set<string> {
-  const aliases: Array<{ source: string; target: string }> = [];
+  bindings: LexicalBindingIndex,
+  writtenThrough: ReadonlySet<LexicalBindingIdentity>,
+): Set<LexicalBindingIdentity> {
+  const aliases: Array<{
+    source: LexicalBindingIdentity;
+    target: LexicalBindingIdentity;
+  }> = [];
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
       let left: Node | undefined;
       let right: Node | undefined;
+      let declaration = false;
       if (node.type === "VariableDeclarator") {
         left = isNode(node.id) ? node.id : undefined;
         right = isNode(node.init) ? node.init : undefined;
+        declaration = true;
       } else if (node.type === "AssignmentExpression") {
         left = isNode(node.left) ? node.left : undefined;
         right = isNode(node.right) ? node.right : undefined;
       }
-      const target = left ? nodeName(unwrapTransparent(left)) : null;
-      const source = right ? nodeName(unwrapTransparent(right)) : null;
+      const targetNode = left ? unwrapTransparent(left) : undefined;
+      const sourceNode = right ? unwrapTransparent(right) : undefined;
+      const target = targetNode?.type === "Identifier"
+        ? declaration ? bindings.declaration(targetNode) : bindings.reference(targetNode)
+        : null;
+      const source = sourceNode?.type === "Identifier" ? bindings.reference(sourceNode) : null;
       if (source && target) aliases.push({ source, target });
     });
   }
@@ -2080,6 +2215,7 @@ function intrinsicEscapesToWritableSlot(
   body: Node[],
   name: "Object" | "global",
   globals: ReadonlySet<Node>,
+  bindings: LexicalBindingIndex,
 ): boolean {
   const isIntrinsic = (entry: Node): boolean =>
     name === "Object"
@@ -2087,7 +2223,38 @@ function intrinsicEscapesToWritableSlot(
         isGlobalObjectSlot(entry, globals)
       : isUnshadowedGlobalObject(entry, globals);
 
-  const writtenThrough = namesAliasedToWrittenThrough(body, namesWrittenThrough(body));
+  const expressionCanYieldIntrinsic = (entry: Node): boolean => {
+    const value = unwrapTransparent(entry);
+    if (isIntrinsic(value)) return true;
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return !!last && expressionCanYieldIntrinsic(last);
+    }
+    if (value.type === "ConditionalExpression") {
+      return (isNode(value.consequent) && expressionCanYieldIntrinsic(value.consequent)) ||
+        (isNode(value.alternate) && expressionCanYieldIntrinsic(value.alternate));
+    }
+    if (value.type === "LogicalExpression") {
+      const rightCanYield = isNode(value.right) && expressionCanYieldIntrinsic(value.right);
+      if (value.operator === "&&") return rightCanYield;
+      return rightCanYield ||
+        (isNode(value.left) && expressionCanYieldIntrinsic(value.left));
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return expressionCanYieldIntrinsic(value.right);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return expressionCanYieldIntrinsic(value.argument);
+    }
+    return false;
+  };
+
+  const writtenThrough = bindingsAliasedToWrittenThrough(
+    body,
+    bindings,
+    bindingsWrittenThrough(body, bindings),
+  );
 
   /** Whether storing the read at `parent[key]` puts it in a property slot. */
   const storesInPropertySlot = (parent: Node, key: string, inNamespace: boolean): boolean => {
@@ -2104,15 +2271,18 @@ function intrinsicEscapesToWritableSlot(
     return left.type === "MemberExpression" || left.type === "OptionalMemberExpression";
   };
 
-  /** The name a read is bound to, when the module can track it by name. */
-  const boundName = (parent: Node, key: string): string | null => {
-    if (parent.type === "VariableDeclarator" && key === "init") return nodeName(parent.id);
+  /** The concrete binding a read initializes or assigns. */
+  const boundBinding = (parent: Node, key: string): LexicalBindingIdentity | null => {
+    if (parent.type === "VariableDeclarator" && key === "init" && isNode(parent.id)) {
+      const target = unwrapTransparent(parent.id);
+      return target.type === "Identifier" ? bindings.declaration(target) : null;
+    }
     if (
       (parent.type === "AssignmentExpression" || parent.type === "AssignmentPattern") &&
       key === "right" && isNode(parent.left)
     ) {
       const left = unwrapTransparent(parent.left);
-      return left.type === "Identifier" ? nodeName(left) : null;
+      return left.type === "Identifier" ? bindings.reference(left) : null;
     }
     return null;
   };
@@ -2129,10 +2299,10 @@ function intrinsicEscapesToWritableSlot(
       for (const entry of Array.isArray(value) ? value : [value]) {
         if (!isNode(entry)) continue;
         const read = unwrapTransparent(entry);
-        if (isIntrinsic(read)) {
+        if (expressionCanYieldIntrinsic(read)) {
           if (isNamePosition(node, key)) continue;
           if (storesInPropertySlot(node, key, nested)) return true;
-          const bound = boundName(node, key);
+          const bound = boundBinding(node, key);
           if (bound !== null) {
             if (writtenThrough.has(bound)) return true;
             continue;
@@ -2181,9 +2351,12 @@ function memberKey(node: Node): string | null {
   return node.computed === true ? stringLiteralText(property) : nodeName(property);
 }
 
-/** Parameter names of every function this module immediately invokes. */
-function invokedFunctionParameterNames(body: Node[]): Set<string> {
-  const names = new Set<string>();
+/** Parameter bindings of every non-generator function this module immediately invokes. */
+function invokedFunctionParameterBindings(
+  body: Node[],
+  bindings: LexicalBindingIndex,
+): Set<LexicalBindingIdentity> {
+  const invoked = new Set<LexicalBindingIdentity>();
   const collect = (callee: unknown): void => {
     if (!isNode(callee)) return;
     let target = unwrapTransparent(callee);
@@ -2195,8 +2368,15 @@ function invokedFunctionParameterNames(body: Node[]): Set<string> {
       target = unwrapTransparent(target.object);
     }
     if (target.type !== "FunctionExpression" && target.type !== "ArrowFunctionExpression") return;
+    // Invoking a generator only creates its iterator. Its body remains deferred
+    // until a later `next()`, so its parameters do not receive values here.
+    if (target.generator === true) return;
     for (const param of Array.isArray(target.params) ? target.params : []) {
-      if (isNode(param)) { for (const name of patternBoundNames(param)) names.add(name); }
+      if (!isNode(param)) continue;
+      for (const identifier of patternBindingIdentifiers(param)) {
+        const binding = bindings.declaration(identifier);
+        if (binding) invoked.add(binding);
+      }
     }
   };
 
@@ -2211,7 +2391,7 @@ function invokedFunctionParameterNames(body: Node[]): Set<string> {
       }
     });
   }
-  return names;
+  return invoked;
 }
 
 /**
@@ -2226,8 +2406,12 @@ function invokedFunctionParameterNames(body: Node[]): Set<string> {
  * only when it is manifestly a value this module made, or a name bound in this
  * module that no invoked function receives.
  */
-function writesGuardedKeyThroughUnprovenBase(body: Node[], globals: ReadonlySet<Node>): boolean {
-  const invokedParams = invokedFunctionParameterNames(body);
+function writesGuardedKeyThroughUnprovenBase(
+  body: Node[],
+  globals: ReadonlySet<Node>,
+  bindings: LexicalBindingIndex,
+): boolean {
+  const invokedParams = invokedFunctionParameterBindings(body, bindings);
 
   const baseIsProvenLocal = (base: Node): boolean => {
     const target = unwrapTransparent(base);
@@ -2236,8 +2420,8 @@ function writesGuardedKeyThroughUnprovenBase(body: Node[], globals: ReadonlySet<
     // An unshadowed global identifier may be `Object` itself, or a host object
     // that exposes it; a shadowed one is a binding this module controls.
     if (globals.has(target)) return false;
-    const name = nodeName(target);
-    return name !== null && !invokedParams.has(name);
+    const binding = bindings.reference(target);
+    return binding !== null && !invokedParams.has(binding);
   };
 
   for (const target of propertyWriteTargets(body)) {
@@ -2313,8 +2497,9 @@ function mergesGuardedKeyOntoIntrinsic(body: Node[], globals: ReadonlySet<Node>)
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
       if (merges) return false;
-      if (node.type !== "CallExpression" && node.type !== "OptionalCallExpression") return true;
-      const callee = isNode(node.callee) ? unwrapTransparent(node.callee) : undefined;
+      const invocation = normalizeCall(node);
+      if (!invocation) return true;
+      const callee = invocation.callee;
       if (
         callee?.type !== "MemberExpression" && callee?.type !== "OptionalMemberExpression"
       ) return true;
@@ -2323,7 +2508,16 @@ function mergesGuardedKeyOntoIntrinsic(body: Node[], globals: ReadonlySet<Node>)
         return true;
       }
 
-      const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
+      if (invocation.unknownArgs) {
+        const owner = isNode(callee.object) ? unwrapTransparent(callee.object) : undefined;
+        if (isUnshadowedGlobalIdentifier(owner, "Object", globals)) {
+          merges = true;
+          return false;
+        }
+        return true;
+      }
+
+      const args = invocation.args;
       const target = args[0] ? unwrapTransparent(args[0]) : undefined;
       const targetsIntrinsic = isUnshadowedGlobalIdentifier(target, "Object", globals) ||
         isGlobalObjectSlot(target, globals) || isUnshadowedGlobalObject(target, globals);
@@ -2431,8 +2625,9 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  *    `Function`).
  * 3. No property write reaches `defineProperty`, `defineProperties`, or
  *    `Object` through a base this stage cannot bound to a value the module
- *    itself made. A parameter of a function the module immediately invokes,
- *    through `.call` and `.apply` included, is not such a value.
+ *    itself made. A parameter of a non-generator function the module
+ *    immediately invokes, through `.call` and `.apply` included, is not such a
+ *    value. Calling a generator only creates its still-deferred iterator.
  * 4. No `defineProperty`-shaped call targets the intrinsic or a global object,
  *    and no `assign` or `defineProperties` onto either takes a source whose own
  *    keys this stage cannot read one by one.
@@ -2483,15 +2678,16 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   const reassigned = assignedModuleBindingNames(body);
   const hoisted = hoistedVarNames(body);
   const globals = unshadowedGlobalIdentifierNodes(body);
+  const bindings = indexLexicalBindings(body);
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
     hoisted.has("Object") || importsRuntimeObject ||
     assignsUnshadowedGlobal(body, "Object", globals) ||
     writesObjectDefineProperty(body, globals) ||
-    writesGuardedKeyThroughUnprovenBase(body, globals) ||
+    writesGuardedKeyThroughUnprovenBase(body, globals, bindings) ||
     mergesGuardedKeyOntoIntrinsic(body, globals) ||
     hasReflectionRoute(body, globals) ||
-    intrinsicEscapesToWritableSlot(body, "Object", globals) ||
-    intrinsicEscapesToWritableSlot(body, "global", globals);
+    intrinsicEscapesToWritableSlot(body, "Object", globals, bindings) ||
+    intrinsicEscapesToWritableSlot(body, "global", globals, bindings);
   if (objectIsModuleLocal) return new Set<string>();
 
   // A `var` may be declared more than once, and only the initialiser that ran
