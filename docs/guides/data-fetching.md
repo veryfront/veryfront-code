@@ -255,7 +255,7 @@ present. Do not include a path, query, fragment, credentials, or trailing slash.
 Relative and same-origin destinations remain allowed. Use an empty list to
 permit only same-origin redirects. Omit `security.redirects` to preserve
 unrestricted redirect behavior. The policy applies equally to returned and
-thrown `redirect()` results.
+thrown `redirect()` results during full-page and client-side navigation.
 
 ## Client-side fetching
 

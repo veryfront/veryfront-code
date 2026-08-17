@@ -7,6 +7,7 @@ export interface RedirectPolicy {
   allowedOrigins: readonly string[];
 }
 
+/** Return whether a URL value contains an ASCII control character. */
 function hasUnsafeUrlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const code = value.charCodeAt(index);
@@ -44,6 +45,7 @@ export function parseCanonicalRedirectOrigin(value: string): string | null {
   }
 }
 
+/** Return whether every configured origin is canonical, unique, and bounded. */
 export function isValidRedirectOriginList(origins: readonly string[]): boolean {
   if (origins.length > MAX_REDIRECT_ORIGIN_COUNT) return false;
 
@@ -72,7 +74,7 @@ export function isValidRedirectOriginList(origins: readonly string[]): boolean {
  */
 export function isRedirectDestinationAllowed(
   destination: string,
-  requestUrl: string,
+  requestUrl: string | null,
   policy: RedirectPolicy | null | undefined,
 ): boolean {
   if (policy === undefined) return true;
@@ -83,7 +85,8 @@ export function isRedirectDestinationAllowed(
     destination.length === 0 ||
     destination.length > MAX_REDIRECT_DESTINATION_LENGTH ||
     destination.trim() !== destination ||
-    hasUnsafeUrlCharacter(destination)
+    hasUnsafeUrlCharacter(destination) ||
+    requestUrl === null
   ) {
     return false;
   }

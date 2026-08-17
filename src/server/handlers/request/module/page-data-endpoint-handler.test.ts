@@ -471,6 +471,58 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
     });
   });
 
+  it("applies the redirect origin policy to returned and thrown SPA redirects", async () => {
+    const failures = [
+      RENDER_ERROR.create({
+        detail: "Redirect blocked by policy",
+        context: {
+          redirect: {
+            destination: "https://untrusted.example/login",
+            permanent: false,
+          },
+        },
+      }),
+      redirect("https://untrusted.example/login"),
+    ];
+
+    for (const failure of failures) {
+      setRendererInitializer(
+        createInitializer(() => Promise.reject(failure)),
+      );
+
+      const res = await callPageDataEndpoint(
+        new Request("http://runtime.internal/_veryfront/page-data/redirecting.json"),
+        makeCtx({
+          requestOrigin: "https://app.example.com",
+          securityConfig: { redirects: { allowedOrigins: [] } },
+        }),
+      );
+
+      assertEquals(res.status, 500);
+      assertEquals((await res.json()).redirect, undefined);
+      __clearPageDataEndpointCacheForTests();
+    }
+  });
+
+  it("allows SPA redirects to the browser-visible request origin", async () => {
+    setRendererInitializer(
+      createInitializer(() => Promise.reject(redirect("https://app.example.com/login"))),
+    );
+
+    const res = await callPageDataEndpoint(
+      new Request("http://runtime.internal/_veryfront/page-data/redirecting.json"),
+      makeCtx({
+        requestOrigin: "https://app.example.com",
+        securityConfig: { redirects: { allowedOrigins: [] } },
+      }),
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), {
+      redirect: { destination: "https://app.example.com/login", permanent: false },
+    });
+  });
+
   it("does not encode a non-http(s) redirect destination for the client to follow", async () => {
     // The client follows the destination with window.location.href, which would
     // EXECUTE a javascript:/data: URL. Such destinations must NOT be emitted as a

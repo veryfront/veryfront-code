@@ -132,7 +132,7 @@ export interface MemoryStatus {
 function buildRedirectResult(
   redirect: Extract<SSRFailureOutcome, { kind: "redirect" }>,
   slug: string,
-  requestUrl: string,
+  requestUrl: string | null,
   policy: RedirectPolicy | null | undefined,
 ): SSRRenderResult {
   if (!isRedirectDestinationAllowed(redirect.location, requestUrl, policy)) {
@@ -430,7 +430,7 @@ export class SSRService implements SSRServiceLike {
               ]),
             },
             slug,
-            request.url,
+            ctx.requestOrigin === undefined ? request.url : ctx.requestOrigin,
             ctx.securityConfig?.redirects,
           );
           logger.debug("SSR redirect", {

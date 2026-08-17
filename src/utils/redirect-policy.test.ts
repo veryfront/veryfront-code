@@ -88,5 +88,13 @@ describe("redirect policy", () => {
       ),
       false,
     );
+    assertEquals(
+      isRedirectDestinationAllowed(
+        "/login",
+        null,
+        { allowedOrigins: [] },
+      ),
+      false,
+    );
   });
 });

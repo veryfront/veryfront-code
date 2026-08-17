@@ -62,6 +62,8 @@ export interface HandlerContext {
   adapter: RuntimeAdapter;
   moduleServerUrl?: string;
   securityConfig: SecurityConfig | null;
+  /** Browser-visible HTTP(S) origin resolved at the trusted request boundary. */
+  requestOrigin?: string | null;
   debug?: boolean;
   config?: VeryfrontConfig;
   /** Parsed domain info from request host header */

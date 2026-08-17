@@ -15,6 +15,7 @@ import {
 } from "#veryfront/cache/keys.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
 import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
+import { isRedirectDestinationAllowed } from "#veryfront/utils/redirect-policy.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   type DependencyPinningSnapshot,
@@ -259,7 +260,15 @@ export function handlePageDataEndpoint(
 
         // A destination the client refuses to follow is not a redirect the
         // endpoint can encode, so it falls through to normal error handling.
-        if (control?.kind === "redirect" && isFollowableRedirect(control.location)) {
+        if (
+          control?.kind === "redirect" &&
+          isFollowableRedirect(control.location) &&
+          isRedirectDestinationAllowed(
+            control.location,
+            ctx.requestOrigin === undefined ? req.url : ctx.requestOrigin,
+            ctx.securityConfig?.redirects,
+          )
+        ) {
           return respondPageData(
             ResponseBuilder.json(
               {
@@ -278,7 +287,9 @@ export function handlePageDataEndpoint(
           );
         }
 
-        const errorMessage = getErrorMessage(e);
+        const errorMessage = control?.kind === "redirect"
+          ? "Redirect destination is not allowed"
+          : getErrorMessage(e);
         const isNotFound = control?.kind === "not-found";
         const status = isNotFound ? 404 : 500;
 
