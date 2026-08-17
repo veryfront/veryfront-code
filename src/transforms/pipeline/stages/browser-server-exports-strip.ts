@@ -1091,6 +1091,7 @@ function freeReferencedIdentifiers(
 
     // `import.meta` spells `import` and `meta`, and reads neither.
     if (node.type === "MetaProperty") return;
+    if (node.type === "PrivateName") return;
 
     if (node.type === "JSXAttribute") {
       if (isNode(node.value)) visit(node.value, scopes);
@@ -1176,12 +1177,18 @@ function freeReferencedIdentifiers(
       return;
     }
 
-    if (node.type === "ObjectProperty" || node.type === "ClassProperty") {
+    if (
+      node.type === "ObjectProperty" || node.type === "ClassProperty" ||
+      node.type === "ClassPrivateProperty"
+    ) {
       visitObjectMember(node, scopes);
       return;
     }
 
-    if (node.type === "ObjectMethod" || node.type === "ClassMethod") {
+    if (
+      node.type === "ObjectMethod" || node.type === "ClassMethod" ||
+      node.type === "ClassPrivateMethod"
+    ) {
       visitDecorators(node, scopes);
       if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
       visitFunction(node, scopes);
@@ -1546,6 +1553,41 @@ function hasDecorators(node: Node): boolean {
   return Array.isArray(node.decorators) && node.decorators.length > 0;
 }
 
+function patternHasDecorators(pattern: Node): boolean {
+  if (hasDecorators(pattern)) return true;
+  if (pattern.type === "TSParameterProperty") {
+    return isNode(pattern.parameter) && patternHasDecorators(pattern.parameter);
+  }
+  if (pattern.type === "AssignmentPattern") {
+    return isNode(pattern.left) && patternHasDecorators(pattern.left);
+  }
+  if (pattern.type === "RestElement") {
+    return isNode(pattern.argument) && patternHasDecorators(pattern.argument);
+  }
+  if (pattern.type === "ArrayPattern") {
+    return (Array.isArray(pattern.elements) ? pattern.elements : []).some((element) =>
+      isNode(element) && patternHasDecorators(element)
+    );
+  }
+  if (pattern.type === "ObjectPattern") {
+    return (Array.isArray(pattern.properties) ? pattern.properties : []).some((property) => {
+      if (!isNode(property)) return false;
+      if (property.type === "RestElement") {
+        return isNode(property.argument) && patternHasDecorators(property.argument);
+      }
+      return property.type === "ObjectProperty" && isNode(property.value) &&
+        patternHasDecorators(property.value);
+    });
+  }
+  return false;
+}
+
+function hasParameterDecorators(node: Node): boolean {
+  return (Array.isArray(node.params) ? node.params : []).some((param) =>
+    isNode(param) && patternHasDecorators(param)
+  );
+}
+
 /**
  * `__name(<value>, "name")` — esbuild's `keepNames` helper applied inline, the
  * shape a dev build wraps every initialiser in. It defines a `name` property on
@@ -1583,7 +1625,9 @@ function isInertClass(node: Node, helpers: ReadonlySet<string>): boolean {
   const members = isNode(node.body) && Array.isArray(node.body.body) ? node.body.body : [];
   return members.every((member) => {
     if (!isNode(member)) return false;
-    if (hasDecorators(member) || member.computed === true) return false;
+    if (hasDecorators(member) || hasParameterDecorators(member) || member.computed === true) {
+      return false;
+    }
     if (member.type === "StaticBlock") return isNameRegistrationBlock(member, helpers);
     if (member.static !== true) return true;
     return isInertExpression(isNode(member.value) ? member.value : undefined, helpers);

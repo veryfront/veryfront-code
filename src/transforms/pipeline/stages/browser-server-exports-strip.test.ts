@@ -1455,6 +1455,58 @@ describe("browser-server-exports-strip", () => {
       });
     }
 
+    it("does not treat a private property name as an import read", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default class Page {`,
+        `  #loadSecret = "client";`,
+        `  render() { return this.#loadSecret; }`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, '#loadSecret = "client"');
+      assertStringIncludes(result, "this.#loadSecret");
+    });
+
+    it("scopes private method parameters before pruning imports", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default class Page {`,
+        `  #format(loadSecret: string) { return loadSecret; }`,
+        `  render() { return this.#format("client"); }`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertStringIncludes(result, "#format(loadSecret: string)");
+      assertStringIncludes(result, "return loadSecret");
+    });
+
+    it("keeps an unreferenced class whose parameter decorator runs at definition time", async () => {
+      const code = [
+        `import { inject, secret } from "../server/secrets.ts";`,
+        `class Registration {`,
+        `  constructor(@inject(secret) value: string) {}`,
+        `}`,
+        `export async function getServerData() { return secret("server"); }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import { inject, secret } from "../server/secrets.ts"');
+      assertStringIncludes(result, "class Registration");
+      assertStringIncludes(result, "@inject(secret)");
+      assertNotIncludes(result, 'secret("server")');
+    });
+
     it("drops a runtime TypeScript enum used only by a stripped hook", async () => {
       const code = [
         `import { randomUUID } from "node:crypto";`,
