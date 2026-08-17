@@ -750,6 +750,41 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     );
   });
 
+  it("skips an Azure content-filter preamble that carries no choices or usage", async () => {
+    // Verbatim opening frame from the Azure OpenAI deployment behind
+    // veryfront-cloud (`gpt-5.4`, `gpt-5.5`): an informational content-filter
+    // report arrives before any content, with an empty `choices` array and no
+    // usage. It is not a protocol violation and must not fail the stream.
+    assertEquals(
+      await collectParts(streamFromText([
+        data({
+          choices: [],
+          created: 0,
+          id: "",
+          model: "",
+          object: "",
+          prompt_filter_results: [{
+            prompt_index: 0,
+            content_filter_results: {
+              hate: { filtered: false, severity: "safe" },
+              jailbreak: { detected: false, filtered: false },
+              self_harm: { filtered: false, severity: "safe" },
+              sexual: { filtered: false, severity: "safe" },
+              violence: { filtered: false, severity: "safe" },
+            },
+          }],
+        }),
+        data({ choices: [{ index: 0, delta: { role: "assistant", content: "Hi" } }] }),
+        data({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        { type: "text-delta", delta: "Hi" },
+        { type: "finish", finishReason: "stop" },
+      ],
+    );
+  });
+
   it("rejects structurally empty and unterminated successful streams", async () => {
     await assertRejects(
       () => collectParts(streamFromText(data({}))),
