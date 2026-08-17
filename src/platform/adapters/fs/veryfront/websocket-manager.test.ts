@@ -979,6 +979,7 @@ describe("WebSocketManager", () => {
     let sourceSnapshotVersion = 1;
     let pregenerateCalls = 0;
     let publishedStyleHash: string | undefined;
+    let reloadCalls = 0;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => {
@@ -1003,6 +1004,7 @@ describe("WebSocketManager", () => {
       },
       invalidationCallbacks: {
         triggerReload: (_changedPaths, project) => {
+          reloadCalls++;
           publishedStyleHash = project?.styleArtifactHash;
         },
       },
@@ -1031,6 +1033,7 @@ describe("WebSocketManager", () => {
 
     assertEquals(pregenerateCalls, 0);
     assertEquals(publishedStyleHash, undefined);
+    assertEquals(reloadCalls, 0, "a rejected selective snapshot must not publish a reload");
     manager.dispose();
   });
 
@@ -1042,6 +1045,7 @@ describe("WebSocketManager", () => {
     }>();
     let sourceSnapshotVersion = 1;
     let publishedStyleHash: string | undefined;
+    let reloadCalls = 0;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => Promise.resolve([makeProjectFile("app/page.tsx", "v1")]),
@@ -1060,6 +1064,7 @@ describe("WebSocketManager", () => {
       },
       invalidationCallbacks: {
         triggerReload: (_changedPaths, project) => {
+          reloadCalls++;
           publishedStyleHash = project?.styleArtifactHash;
         },
       },
@@ -1090,6 +1095,7 @@ describe("WebSocketManager", () => {
     await flushMicrotasks();
 
     assertEquals(publishedStyleHash, undefined);
+    assertEquals(reloadCalls, 0, "a superseded selective invalidation must not publish a reload");
     manager.dispose();
   });
 
@@ -1105,6 +1111,7 @@ describe("WebSocketManager", () => {
     let replacementVersion: number | undefined;
     let pregenerateCalls = 0;
     let publishedStyleHash: string | undefined;
+    let reloadCalls = 0;
     const manager = createWebSocketManager({
       client: {
         listAllFiles: () => {
@@ -1131,6 +1138,7 @@ describe("WebSocketManager", () => {
       },
       invalidationCallbacks: {
         triggerReload: (_changedPaths, project) => {
+          reloadCalls++;
           publishedStyleHash = project?.styleArtifactHash;
         },
       },
@@ -1175,6 +1183,7 @@ describe("WebSocketManager", () => {
     );
     assertEquals(pregenerateCalls, 1);
     assertEquals(publishedStyleHash, undefined);
+    assertEquals(reloadCalls, 0, "a superseded full invalidation must not publish a reload");
     manager.dispose();
   });
 
