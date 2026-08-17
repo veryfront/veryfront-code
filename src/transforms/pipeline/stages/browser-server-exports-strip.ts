@@ -1694,6 +1694,58 @@ function isIntrinsicDefinePropertyCall(
     isGlobalObjectSlot(object, globals);
 }
 
+function assignsUnshadowedGlobal(
+  body: Node[],
+  name: string,
+  globals: ReadonlySet<Node>,
+): boolean {
+  const targetAssignsGlobal = (target: Node): boolean => {
+    if (isUnshadowedGlobalIdentifier(target, name, globals)) return true;
+    if (target.type === "AssignmentPattern") {
+      return isNode(target.left) && targetAssignsGlobal(target.left);
+    }
+    if (target.type === "RestElement" || target.type === "SpreadElement") {
+      return isNode(target.argument) && targetAssignsGlobal(target.argument);
+    }
+    if (target.type === "ArrayPattern" || target.type === "ArrayExpression") {
+      return (Array.isArray(target.elements) ? target.elements : []).some((element) =>
+        isNode(element) && targetAssignsGlobal(element)
+      );
+    }
+    if (target.type === "ObjectPattern" || target.type === "ObjectExpression") {
+      return (Array.isArray(target.properties) ? target.properties : []).some((property) => {
+        if (!isNode(property)) return false;
+        if (isNode(property.argument)) return targetAssignsGlobal(property.argument);
+        return isNode(property.value) && targetAssignsGlobal(property.value);
+      });
+    }
+    return isNode(target.expression) && targetAssignsGlobal(target.expression);
+  };
+
+  let assigns = false;
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (assigns) return false;
+
+      let target: Node | undefined;
+      if (node.type === "AssignmentExpression" && isNode(node.left)) target = node.left;
+      if (node.type === "UpdateExpression" && isNode(node.argument)) target = node.argument;
+      if (
+        (node.type === "ForInStatement" || node.type === "ForOfStatement") &&
+        isNode(node.left) && node.left.type !== "VariableDeclaration"
+      ) {
+        target = node.left;
+      }
+
+      if (target && targetAssignsGlobal(target)) assigns = true;
+      return !assigns;
+    });
+    if (assigns) break;
+  }
+  return assigns;
+}
+
 function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): boolean {
   const targetWritesDefineProperty = (target: Node): boolean => {
     if (
@@ -1812,6 +1864,10 @@ function readsIntrinsicAsValue(
 
       for (const entry of Array.isArray(value) ? value : [value]) {
         if (!isNode(entry)) continue;
+        if (name === "Object" && isGlobalObjectSlot(entry, globals)) {
+          if (!isNamePosition(node, key)) return true;
+          continue;
+        }
         if (
           entry.type === "Identifier" && entry.name === name && globals.has(entry)
         ) {
@@ -1902,7 +1958,8 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   const hoisted = hoistedVarNames(body);
   const globals = unshadowedGlobalIdentifierNodes(body);
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
-    hoisted.has("Object") || importsRuntimeObject || reassigned.has("Object") ||
+    hoisted.has("Object") || importsRuntimeObject ||
+    assignsUnshadowedGlobal(body, "Object", globals) ||
     writesObjectDefineProperty(body, globals) ||
     readsIntrinsicAsValue(body, "Object", globals) ||
     readsIntrinsicAsValue(body, "globalThis", globals);

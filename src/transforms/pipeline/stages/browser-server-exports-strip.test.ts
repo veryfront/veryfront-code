@@ -1391,6 +1391,34 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    for (const globalObject of ["globalThis.Object", 'globalThis["Object"]']) {
+      it(`does not treat an aliased ${globalObject} intrinsic as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          `const intrinsic = ${globalObject};`,
+          `intrinsic.defineProperty = recordAndReturn;`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `const intrinsic = ${globalObject}`);
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
     it("does not treat a hoisted name helper redeclaration as compiler metadata", async () => {
       const code = [
         `var setName = (target, value) => Object.defineProperty(`,
@@ -1664,6 +1692,30 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(code);
 
       assertStringIncludes(result, "Object.defineProperty =");
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("still strips compiler metadata after a shadowed Object assignment", async () => {
+      const code = [
+        `function configure(Object) {`,
+        `  Object = { defineProperty: (target) => target };`,
+        `}`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "Object = {");
       assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
       assertEquals(occurrences(result, "KEY"), 0);
       assertEquals(occurrences(result, "getEnv"), 0);
