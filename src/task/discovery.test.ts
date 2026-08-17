@@ -457,6 +457,36 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       );
     });
 
+    it("rejects duplicate integration resources after JSON primordial poisoning", () => {
+      const originalStringify = JSON.stringify;
+      let poisonCalls = 0;
+
+      try {
+        JSON.stringify = (() => `poison-${++poisonCalls}`) as typeof JSON.stringify;
+        assertThrows(() =>
+          taskHandler.register(
+            "duplicate-resources",
+            {
+              run() {},
+              integrationRequirements: [{
+                integration: "slack",
+                resources: [
+                  { kind: "channel", id: "C012345" },
+                  { kind: "channel", id: "C012345" },
+                ],
+              }],
+            },
+            "tasks/duplicate-resources.ts",
+            "tasks",
+          )
+        );
+      } finally {
+        JSON.stringify = originalStringify;
+      }
+
+      assertEquals(poisonCalls, 0);
+    });
+
     it("rejects non-task values", () => {
       assertEquals(isTaskDefinition(null), false);
       assertEquals(isTaskDefinition(undefined), false);

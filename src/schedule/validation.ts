@@ -23,6 +23,8 @@ import type {
 const arrayIsArray = Array.isArray;
 const ARRAY_PROTOTYPE = Array.prototype;
 const OBJECT_PROTOTYPE = Object.prototype;
+const jsonStringify = JSON.stringify;
+const numberIsSafeInteger = Number.isSafeInteger;
 const objectCreate = Object.create;
 const objectFreeze = Object.freeze;
 const objectKeys = Object.keys;
@@ -94,7 +96,7 @@ function formatDiagnosticProperty(label: string, key: string): string {
   const boundedKey = truncateDiagnosticKey(key);
   return SIMPLE_DIAGNOSTIC_KEY_PATTERN.test(boundedKey)
     ? `${label}.${boundedKey}`
-    : `${label}[${JSON.stringify(boundedKey)}]`;
+    : `${label}[${jsonStringify(boundedKey)}]`;
 }
 
 function snapshotDataRecord(
@@ -151,7 +153,7 @@ function requireString(value: unknown, label: string): string {
 }
 
 function requirePositiveInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+  if (typeof value !== "number" || !numberIsSafeInteger(value) || value <= 0) {
     invalid(`${label} must be a positive integer within the safe integer range.`);
   }
   return value;
@@ -162,7 +164,7 @@ function optionalPositiveInteger(value: unknown, label: string): number | undefi
 }
 
 function requireNonNegativeInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+  if (typeof value !== "number" || !numberIsSafeInteger(value) || value < 0) {
     invalid(`${label} must be a non-negative integer within the safe integer range.`);
   }
   return value;
@@ -260,7 +262,7 @@ function snapshotDataArray(
     : undefined;
   if (
     typeof lengthValue !== "number" ||
-    !Number.isSafeInteger(lengthValue) ||
+    !numberIsSafeInteger(lengthValue) ||
     lengthValue < 0
   ) {
     invalid(`${label} has an invalid length.`);
@@ -597,7 +599,7 @@ function normalizeIntegrationRequirements(
     );
     const resourceIdentities = new Set<string>();
     for (const resource of normalizedResources) {
-      const identity = JSON.stringify([
+      const identity = jsonStringify([
         resource.kind,
         resource.id,
         resource.parent?.kind ?? null,

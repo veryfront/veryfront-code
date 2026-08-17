@@ -19,7 +19,6 @@ const TASK_DEFINITION_KEYS = Object.keys(
 const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const arrayIsArray = Array.isArray;
 const OBJECT_PROTOTYPE = Object.prototype;
-const arrayIsArray = Array.isArray;
 const hasOwn = Object.hasOwn;
 const objectFreeze = Object.freeze;
 const objectValues = Object.values;
