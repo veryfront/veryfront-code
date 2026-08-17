@@ -1392,7 +1392,12 @@ describe("browser-server-exports-strip", () => {
     });
 
     for (
-      const globalObject of ["window.Object", "self.Object", 'window["Object"]']
+      const globalObject of [
+        "window.Object",
+        "self.Object",
+        "frames.Object",
+        'window["Object"]',
+      ]
     ) {
       it(`does not treat an aliased ${globalObject} intrinsic as compiler metadata`, async () => {
         const code = [
@@ -1470,6 +1475,29 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "KEY"), 0);
       assertEquals(occurrences(result, "getEnv"), 0);
       assertStringIncludes(result, "typeof window");
+    });
+
+    it("still strips compiler metadata after TypeScript-wrapped typeof guards", async () => {
+      const code = [
+        `const isBrowser = typeof (window as unknown) !== "undefined" && typeof self! !== "undefined";`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return isBrowser ? null : null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertStringIncludes(result, "typeof (window as unknown)");
+      assertStringIncludes(result, "typeof self!");
     });
 
     for (const globalObject of ["globalThis.Object", 'globalThis["Object"]']) {

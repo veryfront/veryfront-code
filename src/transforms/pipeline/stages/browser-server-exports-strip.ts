@@ -1649,9 +1649,10 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
 /**
  * Names that reach the global object. A browser module written before
  * `globalThis` was universal uses `window` or `self`, and a module compiled for
- * Node uses `global`, so all four reach the same `Object` slot.
+ * Node uses `global`, and browsers expose `frames` as a Window alias, so all
+ * five reach the same `Object` slot.
  */
-const GLOBAL_OBJECT_NAMES = ["globalThis", "window", "self", "global"];
+const GLOBAL_OBJECT_NAMES = ["globalThis", "window", "self", "frames", "global"];
 
 function isUnshadowedGlobalObject(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
   return GLOBAL_OBJECT_NAMES.some((name) => isUnshadowedGlobalIdentifier(node, name, globals));
@@ -1878,7 +1879,7 @@ function readsIntrinsicAsValue(
         isGlobalObjectSlot(entry, globals)
       : isUnshadowedGlobalObject(entry, globals);
 
-  const reads = (node: Node): boolean => {
+  const reads = (node: Node, transparentTypeof = false): boolean => {
     if (node.type.startsWith("TS") && !TS_EXPRESSION_TYPES.has(node.type)) return false;
 
     for (const [key, value] of Object.entries(node)) {
@@ -1886,11 +1887,14 @@ function readsIntrinsicAsValue(
 
       for (const entry of Array.isArray(value) ? value : [value]) {
         if (!isNode(entry)) continue;
+        const entryIsTransparentTypeof =
+          (node.type === "UnaryExpression" && node.operator === "typeof" && key === "argument") ||
+          (transparentTypeof && TS_EXPRESSION_TYPES.has(node.type) && key === "expression");
         if (isIntrinsic(entry)) {
-          if (!isNamePosition(node, key)) return true;
+          if (!entryIsTransparentTypeof && !isNamePosition(node, key)) return true;
           continue;
         }
-        if (reads(entry)) return true;
+        if (reads(entry, entryIsTransparentTypeof)) return true;
       }
     }
 
