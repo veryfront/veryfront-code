@@ -1007,6 +1007,7 @@ export class Renderer {
           projectSlug: ctx.projectSlug,
           environment: ctx.environment,
           contentSourceId: ctx.contentSourceId,
+          releaseId: ctx.releaseId,
           skipCacheCheck: true,
           skipCachePersist: true,
         }),

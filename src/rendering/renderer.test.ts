@@ -644,6 +644,45 @@ describe("Renderer release asset cache isolation", () => {
     clearReleaseAssetManifestCache();
   });
 
+  it("forwards the release identity from context to the render pipeline", async () => {
+    const renderer = new Renderer();
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedOptions: RenderOptions | undefined;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedOptions = options;
+          return Promise.resolve({
+            html: "<html>release render</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    try {
+      await renderer.renderPage("/release", makeRenderContext(), {
+        releaseAssetManifest: null,
+      });
+
+      assertEquals(observedOptions?.contentSourceId, "release-rel-1");
+      assertEquals(observedOptions?.releaseId, "rel-1");
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
   it("checks the manifest-versioned cache prefix after awaiting a ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     registerManifestFetcherForRelease(

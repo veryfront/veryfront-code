@@ -8,6 +8,8 @@
  *      linking before hydration could run.
  * Fixed: 2026-07-27
  * Related: https://github.com/veryfront/veryfront-issue-inbox/issues/264
+ * Hotfix: https://github.com/veryfront/veryfront-code/pull/3124
+ * Artifact selection: https://github.com/veryfront/veryfront-issue-inbox/issues/277
  *
  * Root Cause:
  *   The shared hydration runtime and project release assets are versioned
@@ -22,7 +24,7 @@
  *   the SPA navigator only when that optional export exists.
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   captureBrowserDiagnostics,
@@ -30,7 +32,13 @@ import {
   getBrowserDiagnosticMessages,
   launchChromium,
 } from "../../_helpers/playwright.ts";
-import { generateProdHydrationModule } from "../../../src/html/hydration-script-builder/prod-scripts.ts";
+import {
+  generateProdHydrationModule,
+  getProdHydrationModulePath,
+} from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { PageRenderer } from "#veryfront/rendering/page-renderer.ts";
 
 const HTML = `<!doctype html>
 <html>
@@ -120,6 +128,11 @@ const PAGE_MODULE = `
 export default function ExistingReleasePage() {
   return null;
 }
+`;
+
+const AGED_RELEASE_HYDRATION_MODULE = `
+document.documentElement.dataset.hydrationArtifact = "aged-release";
+document.documentElement.dataset.hydrated = "yes";
 `;
 
 function javascript(source: string): Response {
@@ -215,6 +228,84 @@ describe(
         await closeChromium(browser);
         await server.shutdown();
         await server.finished;
+      }
+    });
+
+    it("loads the aged release runtime instead of the current serving runtime", async () => {
+      const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-aged-release-browser-" });
+      let server: ReturnType<typeof Deno.serve> | undefined;
+      let browser: Awaited<ReturnType<typeof launchChromium>> = null;
+
+      try {
+        await Deno.mkdir(`${projectDir}/dist/_veryfront`, { recursive: true });
+        await Deno.writeTextFile(`${projectDir}/dist${agedRuntimePath}`, "export {};");
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(pagePath, `export default "<main>Aged release</main>";`);
+
+        const adapter = { fs: createFileSystem() } as unknown as RuntimeAdapter;
+        const renderer = new PageRenderer({
+          projectDir,
+          mode: "production",
+          config: {},
+          adapter,
+          componentRegistry: {} as never,
+          compileMDX: () => Promise.reject(new Error("not used for script pages")),
+        });
+        const renderResult = await renderer.preparePageBundles(
+          { entity: { path: pagePath, frontmatter: {} } } as never,
+          "aged-release",
+          undefined,
+          { releaseId: "release-aged" },
+        );
+        const html = renderResult.scriptResult?.html;
+        if (!html) throw new Error("Expected the script page renderer to return HTML");
+        assertStringIncludes(html, agedRuntimePath);
+        assertEquals(html.includes(getProdHydrationModulePath()), false);
+
+        let currentRuntimeRequests = 0;
+        server = Deno.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          onListen() {},
+        }, (request) => {
+          const pathname = new URL(request.url).pathname;
+          if (pathname === "/") {
+            return new Response(html, {
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+          if (pathname === agedRuntimePath) return javascript(AGED_RELEASE_HYDRATION_MODULE);
+          if (pathname === getProdHydrationModulePath()) {
+            currentRuntimeRequests += 1;
+            return new Response("Wrong runtime", { status: 500 });
+          }
+          if (pathname.endsWith(".js")) return javascript("export default {};");
+          return new Response(null, { status: 204 });
+        });
+        browser = await launchChromium();
+        if (!browser) return;
+
+        const page = await browser.newPage();
+        const diagnostics = captureBrowserDiagnostics(page);
+        const { port } = server.addr as Deno.NetAddr;
+        const response = await page.goto(`http://127.0.0.1:${port}/`);
+
+        assertEquals(response?.status(), 200);
+        await waitForHydration(page, diagnostics);
+        assertEquals(
+          await page.evaluate(() => document.documentElement.dataset.hydrationArtifact),
+          "aged-release",
+        );
+        assertEquals(currentRuntimeRequests, 0);
+        assertEquals(getBrowserDiagnosticMessages(diagnostics), []);
+      } finally {
+        await closeChromium(browser);
+        if (server) {
+          await server.shutdown();
+          await server.finished;
+        }
+        await Deno.remove(projectDir, { recursive: true });
       }
     });
   },

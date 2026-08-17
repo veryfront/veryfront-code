@@ -28,6 +28,7 @@ import {
 } from "#veryfront/html/managed-head-protocol.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
 import { StreamTimeoutError } from "../utils/stream-utils.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import {
   createHTMLContext,
   createHTMLGenerator,
@@ -289,6 +290,91 @@ describe("HTMLGenerator helpers", () => {
   });
 
   describe("generateFullHTML", () => {
+    it("uses the hydration runtime baked into an aged release", async () => {
+      const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const adapter = createMockAdapter(async (path: string) =>
+        path.endsWith("/app/page.tsx") ? "'use client';" : ""
+      );
+      adapter.fs.readDir = async function* (path: string) {
+        if (path !== "/project/custom-output/_veryfront") return;
+        yield {
+          name: agedRuntimePath.slice("/_veryfront/".length),
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+        };
+      };
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: adapter as any,
+        config: { build: { outDir: "custom-output" } } as any,
+        mode: "production",
+        isLocalProject: false,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        html: "<main>Existing release</main>",
+        options: {
+          environment: "production",
+          releaseId: "release-aged",
+        },
+      }));
+
+      assertStringIncludes(html, `src="${agedRuntimePath}"`);
+      assertStringIncludes(html, `rel="modulepreload" href="${agedRuntimePath}"`);
+      assertEquals(html.includes(getProdHydrationModulePath()), false);
+    });
+
+    it("uses the hydration runtime baked into an aged release for full documents", async () => {
+      const agedRuntimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+      const adapter = createMockAdapter(async (path: string) =>
+        path.endsWith("/app/page.tsx") ? "'use client';" : ""
+      );
+      adapter.fs.readDir = async function* (path: string) {
+        if (path !== "/project/custom-output/_veryfront") return;
+        yield {
+          name: agedRuntimePath.slice("/_veryfront/".length),
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+        };
+      };
+      const generator = new HTMLGenerator({
+        projectDir: "/project",
+        adapter: adapter as any,
+        config: { build: { outDir: "custom-output" } } as any,
+        mode: "production",
+        isLocalProject: false,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        options: {
+          environment: "production",
+          releaseId: "release-aged",
+        },
+      }));
+
+      assertStringIncludes(html, `src="${agedRuntimePath}"`);
+      assertEquals(html.includes(getProdHydrationModulePath()), false);
+    });
+
+    it("keeps the RSC boot script for standalone production full documents", async () => {
+      const generator = createHTMLGenerator({
+        mode: "production",
+        readFile: async (path) => path.endsWith("/app/page.tsx") ? "'use client';" : "",
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext({
+        options: {
+          environment: "production",
+          releaseId: "standalone-dev",
+        },
+      }));
+
+      assertStringIncludes(html, 'src="/_veryfront/rsc/client.js"');
+      assertEquals(html.includes(getProdHydrationModulePath()), false);
+    });
+
     it("fails closed when a full-document component also declares React Head", async () => {
       const generator = createHTMLGenerator();
 
@@ -461,6 +547,14 @@ describe("HTMLGenerator helpers", () => {
       );
       const generator = createHTMLGenerator({
         readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+        readDir: async function* () {
+          yield {
+            name: getProdHydrationModulePath().slice("/_veryfront/".length),
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+          };
+        },
       });
 
       const html = await generator.generateFullHTML(createHTMLContext({

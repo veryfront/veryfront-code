@@ -34,11 +34,36 @@ veryfront build
 veryfront serve
 ```
 
-`veryfront build` writes browser assets to `dist/`. API routes, agents,
-workflows, and tasks remain in the project source and are loaded by
-`veryfront serve`.
+`veryfront build` writes browser assets to `build.outDir`, which defaults to
+`dist/`. API routes, agents, workflows, and tasks remain in the project source
+and are loaded by `veryfront serve`.
 
-Verify the chosen boundary before uploading source.
+Before uploading source, verify that `build.outDir` contains the browser assets
+and that server-executed API routes, agents, workflows, and tasks remain in the
+project source.
+
+## Keep release browser artifacts together
+
+Each production build writes a content-addressed hydration runtime beside the
+release's router and other browser assets. When Veryfront renders an immutable
+release, the HTML references that release-baked runtime. It does not substitute
+the runtime from the currently serving Veryfront process.
+
+This pairing is a compatibility boundary. Keep the hydration runtime for as
+long as its immutable release can be deployed or served. Retire the release and
+its browser artifacts together; never delete only the hydration runtime or
+redirect its hashed URL to newer bytes. A release that is missing its single
+versioned runtime fails rendering instead of falling back to a potentially
+incompatible runtime.
+
+Veryfront's required browser regression job exercises the current server
+against an aged release artifact set. The build contract test also verifies
+that every promoted artifact set contains exactly one discoverable versioned
+hydration runtime, so an incompatible pairing blocks promotion in CI.
+
+This policy follows [incident #264](https://github.com/veryfront/veryfront-issue-inbox/issues/264)
+and the immediate compatibility fix in
+[veryfront-code PR #3124](https://github.com/veryfront/veryfront-code/pull/3124).
 
 ## Push a preview
 

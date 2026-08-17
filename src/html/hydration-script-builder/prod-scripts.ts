@@ -1,6 +1,9 @@
-import { HYDRATION_RUNTIME_BUNDLE } from "./hydration-runtime.generated.ts";
-import { buildNonceAttribute } from "../html-escape.ts";
 import { fnv1aHash } from "#veryfront/utils/hash-utils.ts";
+import { RENDER_ERROR } from "#veryfront/errors";
+import { buildNonceAttribute } from "../html-escape.ts";
+import { HYDRATION_RUNTIME_BUNDLE } from "./hydration-runtime.generated.ts";
+import { isVersionedProdHydrationModulePath } from "./prod-path.ts";
+
 export {
   isVersionedProdHydrationModulePath,
   PROD_HYDRATION_MODULE_PATH,
@@ -33,6 +36,17 @@ export function getProdScripts(
   _props?: Record<string, unknown>,
   nonce?: string,
 ): string {
+  return getProdScriptsForPath(getProdHydrationModulePath(), nonce);
+}
+
+/** Build the production script tag for a previously selected runtime path. */
+export function getProdScriptsForPath(
+  hydrationModulePath: string,
+  nonce?: string,
+): string {
+  if (!isVersionedProdHydrationModulePath(hydrationModulePath)) {
+    throw RENDER_ERROR.create({ detail: "Invalid production hydration runtime path" });
+  }
   const nonceAttr = buildNonceAttribute(nonce);
-  return `\n  <script type="module" src="${getProdHydrationModulePath()}"${nonceAttr}></script>`;
+  return `\n  <script type="module" src="${hydrationModulePath}"${nonceAttr}></script>`;
 }

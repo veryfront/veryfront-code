@@ -163,6 +163,53 @@ describe("SnippetHandler host-execution capability", () => {
     );
     assertNotEquals(readPath, undefined, "the granted path must reach the source read");
   });
+
+  it("passes the canonical enriched release identity to snippet rendering", async () => {
+    let renderedReleaseId: string | undefined;
+    const handler = new SnippetHandler({
+      renderSnippet: (_content: string, options: { releaseId?: string }) => {
+        renderedReleaseId = options.releaseId;
+        return Promise.resolve({ html: "<main>Snippet</main>", frontmatter: {} });
+      },
+    });
+    const fs = {
+      symlinkSemantics: "none" as const,
+      isMultiProjectMode: () => false,
+      isContextualMode: () => false,
+      exists: () => Promise.resolve(true),
+      stat: () =>
+        Promise.resolve({
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          size: 1,
+          mtime: new Date(),
+        }),
+      readFile: () => Promise.resolve("# Snippet"),
+    };
+    const ctx = {
+      projectDir: "/project",
+      projectId: "serving-project",
+      projectSlug: "serving-project",
+      releaseId: "serving-release",
+      enriched: {
+        projectId: "canonical-project",
+        projectSlug: "canonical-project",
+        contentSourceId: "canonical-content",
+        releaseId: "canonical-release",
+      },
+      isLocalProject: true,
+      adapter: { fs },
+    } as unknown as HandlerContext;
+
+    const result = await handler.handle(
+      new Request("http://localhost/@components/button"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(renderedReleaseId, "canonical-release");
+  });
 });
 
 Deno.test("SnippetHandler preserves dedicated local rendering", async () => {

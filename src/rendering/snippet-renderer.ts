@@ -2,6 +2,7 @@ import { computeHash, rendererLogger } from "#veryfront/utils";
 import { RENDER_ERROR } from "#veryfront/errors";
 import type { RenderMetadata } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { HTMLGenerationOptions } from "#veryfront/html";
 import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
@@ -19,6 +20,8 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { appendDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { resolveProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-runtime-selection.ts";
 
 const logger = rendererLogger.component("snippet-renderer");
 
@@ -34,6 +37,8 @@ export interface SnippetRenderOptions {
   isLocalProject?: boolean;
   projectId?: string;
   contentSourceId?: string;
+  /** Release that owns the immutable hydration runtime for this shell. */
+  releaseId?: string;
   /** Canonical request-scoped dependency source supplied by server handlers. */
   dependencyPinningSource?: DependencyPinningSource;
   filePath?: string;
@@ -51,6 +56,52 @@ export interface SnippetRenderOptions {
 export interface SnippetRenderResult {
   html: string;
   frontmatter: Record<string, unknown>;
+}
+
+/** Build the document shell for a compiled snippet. */
+export async function wrapSnippetInHTMLShell(
+  bodyHtml: string,
+  meta: RenderMetadata,
+  options: SnippetRenderOptions,
+  context: {
+    hash: string;
+    moduleServerBase: string;
+    dependencyPinningCacheKey: string;
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  },
+): Promise<string> {
+  const serverPort = getServerPort(options.moduleServerUrl);
+  const snippetConfig = {
+    ...options.config,
+    dev: {
+      ...options.config?.dev,
+      hmr: true,
+      port: serverPort ?? options.config?.dev?.port,
+    },
+  };
+  const prodHydrationModulePath = options.mode === "production"
+    ? await resolveProdHydrationModulePath({
+      fs: options.adapter?.fs ?? createFileSystem(),
+      projectDir: options.projectDir,
+      buildOutDir: options.config?.build?.outDir,
+      releaseId: options.releaseId,
+    })
+    : undefined;
+  const htmlOptions: HTMLGenerationOptions = {
+    mode: options.mode,
+    config: snippetConfig,
+    projectDir: options.projectDir,
+    moduleServerOrigin: new URL(context.moduleServerBase).origin,
+    nonce: options.nonce,
+    studioEmbed: true,
+    pagePath: `_snippets/${context.hash}`,
+    pageId: options.pageId,
+    releaseId: options.releaseId,
+    prodHydrationModulePath,
+    dependencyPinningCacheKey: context.dependencyPinningCacheKey,
+    dependencyPinningDependencies: context.dependencyPinningDependencies,
+  };
+  return await wrapInHTMLShell(bodyHtml, meta, htmlOptions);
 }
 
 export function buildSnippetModuleUrl(
@@ -339,25 +390,9 @@ export function renderSnippet(
           frontmatter: bundle.frontmatter as RenderMetadata["frontmatter"],
         };
 
-        const serverPort = getServerPort(options.moduleServerUrl);
-        const snippetConfig = {
-          ...options.config,
-          dev: {
-            ...options.config?.dev,
-            hmr: true,
-            port: serverPort ?? options.config?.dev?.port,
-          },
-        };
-
-        const html = await wrapInHTMLShell(bodyHtml, meta, {
-          mode: options.mode,
-          config: snippetConfig,
-          projectDir: options.projectDir,
-          moduleServerOrigin: new URL(moduleServerBase).origin,
-          nonce: options.nonce,
-          studioEmbed: true,
-          pagePath: `_snippets/${hash}`,
-          pageId: options.pageId,
+        const html = await wrapSnippetInHTMLShell(bodyHtml, meta, options, {
+          hash,
+          moduleServerBase,
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
         });

@@ -57,6 +57,50 @@ function createFsError(message: string, code: string): Error & { code: string } 
   return error;
 }
 
+function createNativeFsAdapter(
+  files: Map<string, Uint8Array>,
+): StaticFileOptions["adapter"] {
+  const ready = Promise.resolve();
+  return {
+    fs: {
+      symlinkSemantics: "none" as const,
+      readFile: async (path: string) => {
+        const data = files.get(path);
+        if (!data) throw createFsError("not found", "ENOENT");
+        return new TextDecoder().decode(data);
+      },
+      readFileBytes: async (path: string) => {
+        const data = files.get(path);
+        if (!data) throw createFsError("not found", "ENOENT");
+        return data;
+      },
+      writeFile: async () => {},
+      exists: async (path: string) => files.has(path),
+      stat: async (path: string) => {
+        const data = files.get(path);
+        if (!data) throw createFsError("not found", "ENOENT");
+        return {
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          size: data.byteLength,
+          mtime: new Date(0),
+        };
+      },
+      async *readDir() {},
+      mkdir: async () => {},
+      remove: async () => {},
+      makeTempDir: async (prefix: string) => `/tmp/${prefix}`,
+      watch: () => ({
+        ready,
+        done: ready,
+        close() {},
+        async *[Symbol.asyncIterator]() {},
+      }),
+    },
+  } as unknown as StaticFileOptions["adapter"];
+}
+
 afterEach(() => {
   __injectDepsForTests(null);
 });
@@ -317,6 +361,71 @@ describe("server/services/static/static-file.service", () => {
         assertEquals(result.data, fileData);
         assertEquals(typeof result.etag, "string");
       }
+    });
+
+    it("serves production assets from the configured build output directory", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const runtimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+      const fileData = new TextEncoder().encode("export const release = true;");
+      const files = new Map<string, Uint8Array>([
+        [`/project/custom-output${runtimePath}`, fileData],
+      ]);
+      const service = new StaticFileService(createMockFsRepo(files));
+      const options = makeOptions({ buildOutDir: "custom-output" });
+
+      const result = await service.resolveFile(runtimePath, options);
+
+      assertExists(result);
+      assertEquals(result.path, `/project/custom-output${runtimePath}`);
+      assertEquals(result.source, "dist");
+      assertEquals(result.data, fileData);
+      assertEquals(result.cacheStrategy, "immutable");
+    });
+
+    it("serves an absolute build output without widening project access", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const runtimePath = "/_veryfront/hydration-runtime.2b3c4d5e.js";
+      const buildOutDir = "/srv/veryfront-output";
+      const outputPath = `${buildOutDir}${runtimePath}`;
+      const fileData = new TextEncoder().encode("export const release = true;");
+      const files = new Map<string, Uint8Array>([
+        [outputPath, fileData],
+        ["/project/src/private.js", new TextEncoder().encode("private source")],
+      ]);
+      const adapter = createNativeFsAdapter(files);
+      const service = new StaticFileService();
+      const options = makeOptions({ adapter, buildOutDir });
+
+      const result = await service.resolveFile(runtimePath, options);
+
+      assertExists(result);
+      assertEquals(result.path, outputPath);
+      assertEquals(result.source, "dist");
+      assertEquals(result.data, fileData);
+      assertEquals(result.cacheStrategy, "immutable");
+      assertEquals(await service.resolveFile("/src/private.js", options), null);
+    });
+
+    it("does not widen source access when build output contains the project", async () => {
+      const files = new Map<string, Uint8Array>([
+        ["/project/src/private.js", new TextEncoder().encode("private source")],
+      ]);
+      const adapter = createNativeFsAdapter(files);
+      const service = new StaticFileService();
+
+      const malformedRootResult = await service.resolveFile(
+        "/src/private.js",
+        makeOptions({ adapter, buildOutDir: "." }),
+      );
+      assertEquals(malformedRootResult, null);
     });
 
     it("serves built nested index pages through clean route URLs", async () => {

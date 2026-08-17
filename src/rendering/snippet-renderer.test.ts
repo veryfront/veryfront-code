@@ -1,18 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { computeHash } from "#veryfront/utils";
+import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import {
   buildSnippetModuleUrl,
   clearSnippetCache,
   clearSnippetCacheForProject,
   getCompiledSnippet,
   renderSnippet,
+  wrapSnippetInHTMLShell,
 } from "./snippet-renderer.ts";
-import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
-import { computeHash } from "#veryfront/utils";
-import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
-import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
-import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -46,6 +50,42 @@ describe("rendering/snippet-renderer", () => {
         ),
         "https://modules.example/_vf_modules/_snippets/snippet-hash.js?ssr=true&v=123",
       );
+    });
+  });
+
+  describe("wrapSnippetInHTMLShell", () => {
+    it("uses the hydration runtime baked into an aged release", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-snippet-release-" });
+      const agedRuntimePath = "/_veryfront/hydration-runtime.1a2b3c4d.js";
+      const adapter = { fs: createFileSystem() } as unknown as RuntimeAdapter;
+
+      try {
+        await Deno.mkdir(`${projectDir}/custom-output/_veryfront`, { recursive: true });
+        await Deno.writeTextFile(`${projectDir}/custom-output${agedRuntimePath}`, "export {};");
+
+        const html = await wrapSnippetInHTMLShell(
+          "<main>Aged snippet</main>",
+          { title: "Aged snippet", slug: "aged-snippet" },
+          {
+            mode: "production",
+            projectDir,
+            adapter,
+            releaseId: "release-aged",
+            moduleServerUrl: "http://127.0.0.1:3000",
+            config: { build: { outDir: "custom-output" } },
+          },
+          {
+            hash: "snippet-hash",
+            moduleServerBase: "http://127.0.0.1:3000",
+            dependencyPinningCacheKey: "off",
+          },
+        );
+
+        assertEquals(html.includes(agedRuntimePath), true);
+        assertEquals(html.includes(getProdHydrationModulePath()), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 

@@ -41,6 +41,8 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     projectId: v.string().optional(),
     projectSlug: v.string().optional(),
     releaseId: v.string().optional(),
+    // Release-aware callers must select the runtime from the release build.
+    prodHydrationModulePath: v.string().optional(),
     pageId: v.string().optional(),
     sourceHash: v.string().optional(),
     colorScheme: getColorSchemeSchema().optional(),

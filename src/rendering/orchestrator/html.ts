@@ -26,10 +26,15 @@ import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
-import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 import { profilePhase, profileSyncPhase } from "#veryfront/observability";
+import { NOT_SUPPORTED } from "#veryfront/errors";
+import {
+  hasImmutableReleaseHydrationRuntime,
+  resolveProdHydrationModulePath,
+} from "#veryfront/html/hydration-script-builder/prod-runtime-selection.ts";
+import { resolveAppComponentPath } from "../layouts/utils/app-resolver.ts";
+import { StreamTimeoutError, streamToString } from "../utils/stream-utils.ts";
 import {
   extractProjectClassesForRoute,
   type ProjectCSSResult,
@@ -45,7 +50,7 @@ import {
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
+
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
@@ -295,7 +300,7 @@ export class HTMLGenerator {
     const mergedFrontmatter = mergeCollectedFrontmatter(fullContext);
     const htmlOptions = await profilePhase(
       "html.build_options",
-      () => this.buildHTMLOptions(fullContext, mergedFrontmatter),
+      () => this.buildHTMLOptions(fullContext, mergedFrontmatter, true),
     );
     const projectCSSPromise = startProjectCSSPreparation(fullContext, htmlOptions);
     startPreparedCSSWarmup(this.config, fullContext, htmlOptions);
@@ -333,9 +338,12 @@ export class HTMLGenerator {
       });
     }
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
+    const hasReleaseIdentity = hasImmutableReleaseHydrationRuntime(
+      resolveReleaseId(context.options),
+    );
     const htmlOptions = await profilePhase(
       "html.build_options",
-      () => this.buildHTMLOptions(context, mergedFrontmatter),
+      () => this.buildHTMLOptions(context, mergedFrontmatter, hasReleaseIdentity),
     );
     const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
@@ -392,6 +400,7 @@ export class HTMLGenerator {
       projectStylesheetHref,
       dependencyPinningCacheKey: context.options?.dependencyPinningCacheKey,
       releaseAssetManifest,
+      prodHydrationModulePath: htmlOptions.prodHydrationModulePath,
       directories: this.config.config.directories,
     });
 
@@ -440,7 +449,7 @@ export class HTMLGenerator {
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
     const htmlOptions = await profilePhase(
       "html.build_options",
-      () => this.buildHTMLOptions(context, mergedFrontmatter),
+      () => this.buildHTMLOptions(context, mergedFrontmatter, true),
     );
     const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     startPreparedCSSWarmup(this.config, context, htmlOptions);
@@ -702,6 +711,7 @@ export class HTMLGenerator {
   private async buildHTMLOptions(
     context: HTMLGenerationContext,
     mergedFrontmatter: MDXFrontmatter,
+    includeProdHydrationRuntime: boolean,
   ): Promise<HTMLGenerationOptions> {
     const stylesheetPath = this.config.config?.tailwind?.stylesheet || "globals.css";
     const [appComponentPathOrNull, globalCSS] = await Promise.all([
@@ -769,6 +779,21 @@ export class HTMLGenerator {
     const sourceHash = context.options?.studioEmbed && context.pageInfo.entity.content
       ? computeSourceHash(context.pageInfo.entity.content)
       : undefined;
+    const releaseId = resolveReleaseId(context.options);
+    const usesProductionScripts = context.options?.forceProductionScripts === true ||
+      !(this.config.isLocalProject === true || context.options?.environment === "preview");
+    const prodHydrationModulePath = includeProdHydrationRuntime && usesProductionScripts
+      ? await profilePhase(
+        "html.release_hydration_runtime",
+        () =>
+          resolveProdHydrationModulePath({
+            fs: this.config.adapter.fs,
+            projectDir: this.config.projectDir,
+            buildOutDir: this.config.config?.build?.outDir,
+            releaseId,
+          }),
+      )
+      : undefined;
     return profileSyncPhase("html.build_options.finalize", () => ({
       mode: this.config.mode,
       config: this.config.config,
@@ -793,7 +818,8 @@ export class HTMLGenerator {
       studioEmbed: context.options?.studioEmbed,
       projectId: context.options?.projectId,
       projectSlug: context.options?.projectSlug,
-      releaseId: resolveReleaseId(context.options),
+      releaseId,
+      prodHydrationModulePath,
       pageId: context.options?.pageId,
       sourceHash,
       colorScheme: context.options?.colorScheme,

@@ -1,4 +1,5 @@
 import type { ComponentProps, RenderMetadata } from "#veryfront/types";
+import { RENDER_ERROR } from "#veryfront/errors";
 import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -25,8 +26,8 @@ import {
   generateHydrationData,
   getDevScripts,
   getProdHydrationModulePath,
-  getProdScripts,
 } from "./hydration-script-builder/index.ts";
+import { getProdScriptsForPath } from "./hydration-script-builder/prod-scripts.ts";
 import { getPreviewStylesheetLink, getStudioScripts } from "./dev-scripts.ts";
 import { processMetadata } from "./metadata-builder.ts";
 import {
@@ -294,6 +295,12 @@ async function generateHTMLShellPartsImpl(
   );
 
   const nonce = options.nonce ?? "";
+  const prodHydrationModulePath = options.prodHydrationModulePath;
+  if (!useDevScripts && options.releaseId && !prodHydrationModulePath) {
+    throw RENDER_ERROR.create({
+      detail: "Release hydration runtime must be selected before HTML generation",
+    });
+  }
 
   const modeScripts = useDevScripts
     ? getDevScripts(meta.slug || "", options.config, params, props, nonce, {
@@ -303,7 +310,7 @@ async function generateHTMLShellPartsImpl(
       // development render even though it serves the dev scripts for HMR.
       skipDevFlag: isPreviewMode,
     })
-    : getProdScripts(meta.slug || "", params, props, nonce);
+    : getProdScriptsForPath(prodHydrationModulePath ?? getProdHydrationModulePath(), nonce);
 
   const modeStyles = useDevScripts ? getErrorOverlayStyles(nonce) : "";
 
@@ -319,7 +326,9 @@ async function generateHTMLShellPartsImpl(
     : "";
   const prodHydrationModulePreload = useDevScripts
     ? ""
-    : `<link rel="modulepreload" href="${getProdHydrationModulePath()}">`;
+    : `<link rel="modulepreload" href="${
+      prodHydrationModulePath ?? getProdHydrationModulePath()
+    }">`;
 
   const nonceAttr = buildNonceAttribute(nonce);
 
