@@ -350,7 +350,11 @@ function emptyServerOnlyHooks(
  * references (the `id` a declaration introduces), so a declaration is not
  * counted as a use of itself when deciding whether it is dead.
  */
-function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<string> {
+function referencedIdentifiers(
+  body: Node[],
+  excluded?: WeakSet<Node>,
+  ignoredSubtree?: Node,
+): Set<string> {
   const referenced = new Set<string>();
   // Filled in as each parent is visited, which always happens before its
   // children.
@@ -372,6 +376,7 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
     if (statement.type === "ImportDeclaration") continue;
 
     walk(statement, (node) => {
+      if (node === ignoredSubtree) return false;
       if (node.type === "ImportDeclaration") return false;
 
       markFixedName(node);
@@ -410,7 +415,8 @@ interface ModuleScopeDecl {
  * shipping — esbuild's tree-shaker never removes a destructuring of a call,
  * even a `@__PURE__`-annotated one, because the pattern itself may trigger
  * getters or throw. Default-value and computed-key references inside the
- * pattern are runtime reads and count against liveness like any other.
+ * pattern remain part of the declaration's dependency closure, but are not
+ * external browser consumers of sibling bindings from that same pattern.
  */
 function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
   const decls: ModuleScopeDecl[] = [];
@@ -968,7 +974,11 @@ function dropUnusedModuleScopeBindings(
     const removedDecls: ModuleScopeDecl[] = [];
     for (const decl of decls) {
       const inClosure = decl.names.some((name) => hookClosure.has(name));
-      const unused = decl.names.every((name) => !referenced.has(name));
+      const id = decl.declarator?.id;
+      const externalReferences = isNode(id) && id.type !== "Identifier"
+        ? referencedIdentifiers(current, excluded, decl.declarator)
+        : referenced;
+      const unused = decl.names.every((name) => !externalReferences.has(name));
       if (!inClosure || !unused) continue;
 
       removedDecls.push(decl);

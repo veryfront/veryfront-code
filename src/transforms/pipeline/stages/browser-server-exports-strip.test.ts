@@ -887,6 +887,22 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
+    it("ignores reads between bindings in the same dropped pattern", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { token, auth = token } = getEnv("CFG");`,
+        `export async function getServerData() { return { props: { auth } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "token"), 0);
+      assertEquals(occurrences(result, "auth"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertNotIncludes(result, "CFG");
+    });
+
     it("drops a chain that flows through a destructured server value", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
