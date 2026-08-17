@@ -57,20 +57,19 @@ function resolveDiscoveryDir(baseDir: string, dir: string): string {
   return `${baseDir}/${dir}`;
 }
 
-function collectDiscoveryCandidates<T, Candidate>(
+function collectNamedDiscoveryCandidates<T, Candidate>(
   module: unknown,
   handler: DiscoveryHandler<T, Candidate>,
+  onError: (error: unknown) => void,
 ): DiscoveryCandidate<Candidate>[] {
   const candidates: DiscoveryCandidate<Candidate>[] = [];
-  const defaultItem = (module as { default?: unknown }).default;
-  if (handler.validate(defaultItem)) {
-    candidates.push({ exportName: "default", item: defaultItem });
-  }
-
   for (const [exportName, value] of Object.entries(module as Record<string, unknown>)) {
     if (exportName === "default") continue;
-    if (!handler.validate(value)) continue;
-    candidates.push({ exportName, item: value });
+    try {
+      if (handler.validate(value)) candidates.push({ exportName, item: value });
+    } catch (error) {
+      onError(error);
+    }
   }
 
   return candidates;
@@ -109,16 +108,65 @@ async function discoverItems<T, Candidate>(
   }
 
   for (const file of files) {
-    let candidates: DiscoveryCandidate<Candidate>[];
+    let module: unknown;
     try {
-      const module = await importModule(file, context);
-      candidates = collectDiscoveryCandidates(module, handler);
+      module = await importModule(file, context);
     } catch (error) {
       result.errors.push({ file, error: ensureError(error) });
 
       if (verbose) {
         logger.error(`Error loading ${file}:`, error);
       }
+      continue;
+    }
+
+    const recordCandidateError = (error: unknown): void => {
+      result.errors.push({ file, error: ensureError(error) });
+      if (verbose) {
+        logger.error(`Error registering ${handler.typeName} from ${file}:`, error);
+      }
+    };
+
+    let defaultCandidate: DiscoveryCandidate<Candidate> | undefined;
+    try {
+      const defaultItem = (module as { default?: unknown }).default;
+      if (handler.validate(defaultItem)) {
+        defaultCandidate = { exportName: "default", item: defaultItem };
+      }
+    } catch (error) {
+      recordCandidateError(error);
+    }
+
+    if (defaultCandidate !== undefined) {
+      try {
+        const id = getCandidateId(
+          defaultCandidate,
+          file,
+          dir,
+          handler,
+          isIndexModule(file),
+        );
+        if (resultMap.has(id)) {
+          if (verbose) {
+            logger.warn(`Duplicate ${handler.typeName} "${id}" in ${file}; keeping first`);
+          }
+          continue;
+        }
+
+        const registered = handler.register(id, defaultCandidate.item, file, dir, "default");
+        resultMap.set(id, registered);
+        if (verbose) logger.info(`Registered ${handler.typeName}: ${id}`);
+        continue;
+      } catch (error) {
+        recordCandidateError(error);
+      }
+    }
+
+    let candidates: DiscoveryCandidate<Candidate>[];
+    try {
+      candidates = collectNamedDiscoveryCandidates(module, handler, recordCandidateError);
+    } catch (error) {
+      recordCandidateError(error);
       continue;
     }
 
@@ -137,14 +185,13 @@ async function discoverItems<T, Candidate>(
           file,
           dir,
           handler,
-          candidate.exportName === "default" ? isIndexModule(file) : useExportNameFallback,
+          useExportNameFallback,
         );
 
         if (resultMap.has(id)) {
           if (verbose) {
             logger.warn(`Duplicate ${handler.typeName} "${id}" in ${file}; keeping first`);
           }
-          if (candidate.exportName === "default") break;
           continue;
         }
 
@@ -158,18 +205,10 @@ async function discoverItems<T, Candidate>(
         resultMap.set(id, registered);
 
         if (verbose) {
-          const exportSuffix = candidate.exportName === "default"
-            ? ""
-            : ` (export: ${candidate.exportName})`;
-          logger.info(`Registered ${handler.typeName}: ${id}${exportSuffix}`);
+          logger.info(`Registered ${handler.typeName}: ${id} (export: ${candidate.exportName})`);
         }
-        if (candidate.exportName === "default") break;
       } catch (error) {
-        result.errors.push({ file, error: ensureError(error) });
-
-        if (verbose) {
-          logger.error(`Error registering ${handler.typeName} from ${file}:`, error);
-        }
+        recordCandidateError(error);
       }
     }
   }

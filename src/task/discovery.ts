@@ -149,20 +149,27 @@ function extractTaskExport(
   taskExport: { exportName: string; definition: TaskDefinition } | null;
   errors: unknown[];
 } {
-  const candidates: Array<[string, unknown]> = [["default", module.default]];
-  candidates.push(...Object.entries(module).filter(([exportName]) => exportName !== "default"));
   const errors: unknown[] = [];
-
-  for (const [exportName, value] of candidates) {
-    if (!isTaskDefinitionCandidate(value)) continue;
+  const captureCandidate = (
+    exportName: string,
+    value: unknown,
+  ): { exportName: string; definition: TaskDefinition } | null => {
+    if (!isTaskDefinitionCandidate(value)) return null;
     try {
-      return {
-        taskExport: { exportName, definition: captureTaskDefinition(value) },
-        errors,
-      };
+      return { exportName, definition: captureTaskDefinition(value) };
     } catch (error) {
       errors.push(error);
+      return null;
     }
+  };
+
+  const defaultTask = captureCandidate("default", module.default);
+  if (defaultTask !== null) return { taskExport: defaultTask, errors };
+
+  for (const [exportName, value] of Object.entries(module)) {
+    if (exportName === "default") continue;
+    const namedTask = captureCandidate(exportName, value);
+    if (namedTask !== null) return { taskExport: namedTask, errors };
   }
 
   return { taskExport: null, errors };

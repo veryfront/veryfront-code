@@ -19,6 +19,7 @@ import { runTriggerTarget } from "../trigger/local-runner.ts";
 import { isTaskDefinition } from "./types.ts";
 import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
 import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 
 const discoverTasks: typeof discoverTasksRaw = (options) =>
   discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
@@ -213,6 +214,10 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     it("accepts objects with a runnable export", () => {
       assertEquals(isTaskDefinition({ run: () => {} }), true);
       assertEquals(
+        isTaskDefinition(Object.defineProperty({}, "run", { value() {} })),
+        true,
+      );
+      assertEquals(
         isTaskDefinition({
           name: "My Task",
           description: "Does things",
@@ -224,46 +229,100 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
 
     it("keeps class-instance task definitions structurally valid", () => {
       class StatefulTask {
-        readonly #prefix = "stateful";
+        private readonly _prefix = "stateful";
 
         run(): string {
-          return this.#prefix;
+          return this._prefix;
         }
       }
 
       const task = new StatefulTask();
+      Object.defineProperties(StatefulTask.prototype, {
+        name: { value: "Stateful task" },
+        schedulable: { value: true },
+        inputSchema: {
+          value: { type: "object", properties: { id: { type: "string" } } },
+        },
+        integrationRequirements: {
+          value: [{ integration: "slack", requiredScopes: ["channels:read"] }],
+        },
+      });
       assertEquals(isTaskDefinition(task), true);
+      const registered = taskHandler.register("stateful", task, "tasks/stateful.ts", "tasks");
       assertEquals(
-        taskHandler.register("stateful", task, "tasks/stateful.ts", "tasks").run({
+        registered.run({
           env: {},
           config: {},
         }),
         "stateful",
       );
+      assertEquals(registered.name, "Stateful task");
+      assertEquals(registered.schedulable, true);
+      assertEquals(registered.inputSchema, {
+        type: "object",
+        properties: { id: { type: "string" } },
+      });
+      assertEquals(registered.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [],
+      }]);
     });
 
-    it("preserves inherited class task metadata", () => {
-      class InheritedMetadataTask {
-        run(): string {
-          return "inherited";
-        }
-      }
-      Object.defineProperties(InheritedMetadataTask.prototype, {
-        name: { value: "Inherited task" },
-        schedulable: { value: true },
-        inputSchema: { value: { type: "object" } },
+    it("rejects inherited metadata accessors without invoking them", () => {
+      let reads = 0;
+      const prototype = Object.defineProperties({}, {
+        run: { value() {} },
+        integrationRequirements: {
+          get() {
+            reads++;
+            return [{ integration: "slack" }];
+          },
+        },
       });
 
-      const registered = taskHandler.register(
-        "inherited",
-        new InheritedMetadataTask(),
-        "tasks/inherited.ts",
-        "tasks",
-      );
+      assertEquals(isTaskDefinition(Object.create(prototype)), false);
+      assertEquals(reads, 0);
+    });
 
-      assertEquals(registered.name, "Inherited task");
-      assertEquals(registered.schedulable, true);
-      assertEquals(registered.inputSchema, { type: "object" });
+    it("uses captured reflection primitives after module initialization", () => {
+      const originalApply = Reflect.apply;
+      const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+      const originalGetPrototypeOf = Reflect.getPrototypeOf;
+      const originalHasOwn = Object.hasOwn;
+      let poisonCalls = 0;
+      const poison = (): never => {
+        poisonCalls++;
+        throw new Error("ambient reflection primitive must not run");
+      };
+      let output: unknown;
+
+      try {
+        Reflect.apply = poison;
+        Reflect.getOwnPropertyDescriptor = poison;
+        Reflect.getPrototypeOf = poison;
+        Object.hasOwn = poison;
+
+        const registered = taskHandler.register(
+          "stable",
+          {
+            run() {
+              return "stable";
+            },
+          },
+          "tasks/stable.ts",
+          "tasks",
+        );
+        output = registered.run({ env: {}, config: {} });
+      } finally {
+        Reflect.apply = originalApply;
+        Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
+        Reflect.getPrototypeOf = originalGetPrototypeOf;
+        Object.hasOwn = originalHasOwn;
+      }
+
+      assertEquals(output, "stable");
+      assertEquals(poisonCalls, 0);
     });
 
     it("rejects non-task values", () => {
@@ -488,9 +547,9 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       config: { fs: { type: "veryfront-api" } } as never,
     });
 
-    assertEquals(result.tasks.map((task) => task.id), [
-      "default-first",
-      "named-first",
+    assertEquals(result.tasks.map((task) => [task.id, task.exportName]), [
+      ["default-first", "validDefaultSibling"],
+      ["named-first", "zValidNamedSibling"],
     ]);
     assertEquals(result.errors.length, 2);
     assertEquals(
@@ -820,6 +879,41 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     assertEquals(task?.id, "ping");
     assertEquals(task?.name, "Ping task");
     assertEquals(task?.exportName, "pingTask");
+  });
+
+  it("logs malformed task candidates while finding by id in debug mode", async () => {
+    const adapter = createRuntimeAdapter({
+      "/project/tasks/invalid.ts": [
+        "export default {",
+        "  run() {},",
+        '  integrationRequirements: [{ integration: "Slack" }],',
+        "};",
+      ].join("\n"),
+    });
+    const records: LogEntry[] = [];
+    const unsubscribe = __subscribeLogRecordEmitter((entry) => records.push(entry));
+
+    let task;
+    try {
+      task = await findTaskById("invalid", {
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+        debug: true,
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    assertEquals(task, null);
+    assertEquals(
+      records.some((entry) =>
+        entry.component === "task-discovery" &&
+        entry.level === "warn" &&
+        entry.message.includes("must use a lowercase integration identifier")
+      ),
+      true,
+    );
   });
 
   it("finds a task by id even if another task file fails to load", async () => {

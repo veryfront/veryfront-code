@@ -18,6 +18,10 @@ const TASK_DEFINITION_KEYS = Object.keys(
 
 const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const OBJECT_PROTOTYPE = Object.prototype;
+const hasOwn = Object.hasOwn;
+const reflectApply = Reflect.apply;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const reflectGetPrototypeOf = Reflect.getPrototypeOf;
 
 type TaskObject = Record<PropertyKey, unknown>;
 
@@ -51,9 +55,9 @@ function findTaskPropertyDescriptor(
     }
     visited.add(owner);
 
-    const descriptor = Reflect.getOwnPropertyDescriptor(owner, key);
+    const descriptor = reflectGetOwnPropertyDescriptor(owner, key);
     if (descriptor !== undefined) return descriptor;
-    owner = Reflect.getPrototypeOf(owner) as TaskObject | null;
+    owner = reflectGetPrototypeOf(owner) as TaskObject | null;
   }
 
   return undefined;
@@ -66,16 +70,13 @@ function inspectTaskDefinition(value: unknown): Map<string, unknown> {
   for (const key of TASK_DEFINITION_KEYS) {
     const descriptor = findTaskPropertyDescriptor(task, key);
     if (descriptor === undefined) continue;
-    const inherited = !Object.hasOwn(task, key);
+    const inherited = !hasOwn(task, key);
     if (!("value" in descriptor)) {
       fail(
         inherited
           ? `Task definition ${key} must resolve to a data property.`
           : `Task definition ${key} must be a data property.`,
       );
-    }
-    if (!inherited && !descriptor.enumerable) {
-      fail(`Task definition ${key} must be an own enumerable data property.`);
     }
     fields.set(key, descriptor.value);
   }
@@ -125,7 +126,7 @@ export function captureTaskDefinition(value: unknown): TaskDefinition {
   const fields = inspectTaskDefinition(task);
   const run = fields.get("run");
   if (typeof run !== "function") fail("Task definition run must be a function.");
-  const runWithReceiver: TaskDefinition["run"] = (ctx) => Reflect.apply(run, task, [ctx]);
+  const runWithReceiver: TaskDefinition["run"] = (ctx) => reflectApply(run, task, [ctx]);
 
   const name = optionalString(fields.get("name"), "Task definition name");
   const description = optionalString(
