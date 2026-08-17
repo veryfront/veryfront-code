@@ -2507,6 +2507,37 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "handler");
     });
 
+    it("keeps a hook-owned binding read by surviving module code", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function register(value) { globalThis.registered = value; }`,
+        `register(KEY);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "SECRET_KEY");
+      assertStringIncludes(result, "register(KEY)");
+    });
+
+    it("keeps a hook-owned binding reached through a separate default export", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `function Page() { return KEY; }`,
+        `export { Page as default };`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "SECRET_KEY");
+      assertStringIncludes(result, "Page as default");
+    });
+
     // An immediately invoked function is not deferred: its body runs where it
     // is written, so the secret it reads is genuinely read at module load.
     it("keeps a secret an immediately invoked initialiser reads", async () => {
