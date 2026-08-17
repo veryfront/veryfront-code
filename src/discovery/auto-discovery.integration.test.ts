@@ -330,6 +330,35 @@ describe(
       }
     });
 
+    it("does not inspect named exports after registering a valid default", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-default-precedence-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/tools`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/tools/preferred.ts`,
+          [
+            "const hostileNamed = {};",
+            "Object.defineProperty(hostileNamed, 'execute', {",
+            '  get() { throw new Error("named export inspected"); },',
+            "});",
+            "export { hostileNamed };",
+            'export default { execute: async () => "default" };',
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        assertEquals(Array.from(result.tools.keys()), ["preferred"]);
+        assertEquals(result.errors, []);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("preserves named eval export metadata", async () => {
       const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-named-eval-" });
 

@@ -1,15 +1,18 @@
-import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
+import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import {
   captureWorkflowDefinition,
   captureWorkflowNodes,
   captureWorkflowStaticValue,
 } from "./executor/workflow-definition-snapshot.ts";
+
+const objectFreeze = Object.freeze;
 
 export interface NodeInfo {
   id: string;
@@ -31,6 +34,8 @@ export interface WorkflowMetadata {
   description?: string;
   version?: string;
   timeout?: string | number;
+  /** Explicit integration scopes and resources required by scheduled runs. */
+  integrationRequirements?: readonly ScheduleIntegrationRequirementConfig[];
   /** True when steps are defined dynamically via a function */
   dynamicSteps?: boolean;
   /** True when dynamic step introspection is disabled */
@@ -153,7 +158,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
       const nodeInfo: NodeInfo = {
         id: node.id,
         type,
-        dependsOn: node.dependsOn === undefined ? undefined : Object.freeze([...node.dependsOn]),
+        dependsOn: node.dependsOn === undefined ? undefined : objectFreeze([...node.dependsOn]),
       };
 
       const config = node.config as {
@@ -199,9 +204,9 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         children.push(...extractNodeInfo(config.else as WorkflowNode[]));
       }
 
-      if (children.length) nodeInfo.children = Object.freeze(children);
+      if (children.length) nodeInfo.children = objectFreeze(children);
 
-      nodeInfoList.push(Object.freeze(nodeInfo));
+      nodeInfoList.push(objectFreeze(nodeInfo));
     }
 
     return ids;
@@ -225,19 +230,20 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     }
   }
 
-  return Object.freeze({
+  return objectFreeze({
     id: definition.id,
     description: definition.description,
     version: definition.version,
     timeout: definition.timeout,
+    integrationRequirements: definition.integrationRequirements,
     dynamicSteps,
     introspectionSkipped,
     introspectionError,
     nodeCount: workflowNodes.length,
-    nodeTypes: Object.freeze(Array.from(nodeTypes)),
-    nodes: Object.freeze(nodeInfoList),
-    agentRefs: Object.freeze(Array.from(agentRefs)),
-    toolRefs: Object.freeze(Array.from(toolRefs)),
+    nodeTypes: objectFreeze(Array.from(nodeTypes)),
+    nodes: objectFreeze(nodeInfoList),
+    agentRefs: objectFreeze(Array.from(agentRefs)),
+    toolRefs: objectFreeze(Array.from(toolRefs)),
     hasInputSchema: !!definition.inputSchema,
     hasOutputSchema: !!definition.outputSchema,
     inputSchemaJson,

@@ -27,7 +27,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { collectFiles } from "#veryfront/utils/file-discovery.ts";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";
 import type { TaskDefinition } from "./types.ts";
-import { isTaskDefinition } from "./types.ts";
+import { captureTaskDefinition, isTaskDefinitionCandidate } from "./definition-snapshot.ts";
 
 const logger = baseLogger.component("task-discovery");
 const TASK_FILE_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"] as const;
@@ -145,19 +145,39 @@ async function collectTaskFiles(baseDir: string, adapter: RuntimeAdapter): Promi
 
 function extractTaskExport(
   module: Record<string, unknown>,
-): { exportName: string; definition: TaskDefinition } | null {
-  const defaultExport = module.default;
-  if (isTaskDefinition(defaultExport)) {
-    return { exportName: "default", definition: defaultExport };
-  }
+): {
+  taskExport: { exportName: string; definition: TaskDefinition } | null;
+  errors: unknown[];
+} {
+  const errors: unknown[] = [];
+  const captureCandidate = (
+    exportName: string,
+    value: unknown,
+  ): { exportName: string; definition: TaskDefinition } | null => {
+    if (!isTaskDefinitionCandidate(value)) return null;
+    try {
+      return { exportName, definition: captureTaskDefinition(value) };
+    } catch (error) {
+      errors.push(error);
+      return null;
+    }
+  };
+
+  const defaultTask = captureCandidate("default", module.default);
+  if (defaultTask !== null) return { taskExport: defaultTask, errors };
 
   for (const [exportName, value] of Object.entries(module)) {
-    if (exportName !== "default" && isTaskDefinition(value)) {
-      return { exportName, definition: value };
-    }
+    if (exportName === "default") continue;
+    const namedTask = captureCandidate(exportName, value);
+    if (namedTask !== null) return { taskExport: namedTask, errors };
   }
 
-  return null;
+  return { taskExport: null, errors };
+}
+
+interface LoadedTaskFile {
+  task: DiscoveredTask | null;
+  errors: unknown[];
 }
 
 async function loadTaskFromFile(
@@ -166,24 +186,27 @@ async function loadTaskFromFile(
   adapter: RuntimeAdapter,
   projectDir: string,
   allowHostProjectCodeExecution?: boolean,
-): Promise<DiscoveredTask | null> {
+): Promise<LoadedTaskFile> {
   const module = await importDiscoveryModule(filePath, {
     adapter,
     projectDir,
     allowHostProjectCodeExecution,
   }) as Record<string, unknown>;
-  const taskExport = extractTaskExport(module);
-  if (!taskExport) return null;
+  const { taskExport, errors } = extractTaskExport(module);
+  if (!taskExport) return { task: null, errors };
 
   return {
-    id,
-    name: typeof taskExport.definition.name === "string" &&
-        taskExport.definition.name.trim().length > 0
-      ? taskExport.definition.name
-      : id,
-    filePath,
-    exportName: taskExport.exportName,
-    definition: taskExport.definition,
+    task: {
+      id,
+      name: typeof taskExport.definition.name === "string" &&
+          taskExport.definition.name.trim().length > 0
+        ? taskExport.definition.name
+        : id,
+      filePath,
+      exportName: taskExport.exportName,
+      definition: taskExport.definition,
+    },
+    errors,
   };
 }
 
@@ -287,13 +310,17 @@ export async function discoverTasks(
 
     for (const file of files) {
       try {
-        const task = await loadTaskFromFile(
+        const loaded = await loadTaskFromFile(
           file.path,
           deriveTaskId(file.path, baseDir),
           adapter,
           projectDir,
           allowHostProjectCodeExecution,
         );
+        for (const error of loaded.errors) {
+          errors.push({ filePath: file.path, error: toErrorMessage(error) });
+        }
+        const task = loaded.task;
         if (task) {
           tasks.push(task);
           logDiscoveredTask(task, debug);
@@ -352,13 +379,19 @@ export async function findTaskById(
       if (id !== taskId) continue;
 
       try {
-        const task = await loadTaskFromFile(
+        const loaded = await loadTaskFromFile(
           file.path,
           id,
           adapter,
           projectDir,
           allowHostProjectCodeExecution,
         );
+        if (debug) {
+          for (const error of loaded.errors) {
+            logger.warn(`Failed to load task export from ${file.path}: ${toErrorMessage(error)}`);
+          }
+        }
+        const task = loaded.task;
         if (task) {
           matches.push(task);
         }

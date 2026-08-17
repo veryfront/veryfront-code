@@ -31,6 +31,75 @@ describe("workflow definition snapshot", () => {
     assertEquals(Object.isFrozen(captured.retry), true);
   });
 
+  it("captures integration requirements without ambient inspection methods", () => {
+    const originalArrayIsArray = Array.isArray;
+    const originalMapGet = Map.prototype.get;
+    const originalMapHas = Map.prototype.has;
+    const originalMapSet = Map.prototype.set;
+    const originalObjectFreeze = Object.freeze;
+    const originalObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+    const originalObjectGetPrototypeOf = Object.getPrototypeOf;
+    const originalReflectApply = Reflect.apply;
+    const originalReflectOwnKeys = Reflect.ownKeys;
+    const originalSetHas = Set.prototype.has;
+    let poisonCalls = 0;
+    const poison = (): never => {
+      poisonCalls += 1;
+      throw new Error("ambient workflow field Map method must not run");
+    };
+    let captured: WorkflowDefinition | undefined;
+
+    try {
+      Array.isArray = poison as unknown as typeof Array.isArray;
+      Map.prototype.get = poison as typeof Map.prototype.get;
+      Map.prototype.has = poison as typeof Map.prototype.has;
+      Map.prototype.set = poison as typeof Map.prototype.set;
+      Object.freeze = poison as typeof Object.freeze;
+      Object.getOwnPropertyDescriptor = poison as typeof Object.getOwnPropertyDescriptor;
+      Object.getPrototypeOf = poison as typeof Object.getPrototypeOf;
+      Reflect.apply = poison as typeof Reflect.apply;
+      Reflect.ownKeys = poison as typeof Reflect.ownKeys;
+      Set.prototype.has = poison as typeof Set.prototype.has;
+      captured = captureWorkflowDefinition(
+        {
+          id: "map-poison-workflow",
+          steps: [],
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: ["chat:write"],
+            resources: [],
+          }],
+        },
+        { allowEmptySteps: true },
+      );
+    } finally {
+      Array.isArray = originalArrayIsArray;
+      Map.prototype.get = originalMapGet;
+      Map.prototype.has = originalMapHas;
+      Map.prototype.set = originalMapSet;
+      Object.freeze = originalObjectFreeze;
+      Object.getOwnPropertyDescriptor = originalObjectGetOwnPropertyDescriptor;
+      Object.getPrototypeOf = originalObjectGetPrototypeOf;
+      Reflect.apply = originalReflectApply;
+      Reflect.ownKeys = originalReflectOwnKeys;
+      Set.prototype.has = originalSetHas;
+    }
+
+    assertEquals(poisonCalls, 0);
+    assertEquals(captured?.integrationRequirements, [{
+      integration: "slack",
+      requiredScopes: ["chat:write"],
+      resources: [],
+    }]);
+    assertEquals(Object.isFrozen(captured), true);
+    assertThrows(
+      () => {
+        (captured as { integrationRequirements?: unknown[] }).integrationRequirements = [];
+      },
+      TypeError,
+    );
+  });
+
   it("rejects hostile timer and retry values without invoking Proxy hooks", () => {
     let hooks = 0;
     const hostile = new Proxy({}, {

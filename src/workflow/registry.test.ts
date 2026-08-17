@@ -57,6 +57,11 @@ describe("WorkflowRegistry", () => {
         description: "Test description",
         version: "1.0.0",
         timeout: "30m",
+        integrationRequirements: [{
+          integration: "slack",
+          requiredScopes: ["channels:read"],
+          resources: [{ kind: "channel", id: "C012345" }],
+        }],
         steps: [
           node("step1", "step"),
           parallel("step2", [node("parallel-child", "step")]),
@@ -71,10 +76,56 @@ describe("WorkflowRegistry", () => {
       assertEquals(metadata.description, "Test description");
       assertEquals(metadata.version, "1.0.0");
       assertEquals(metadata.timeout, "30m");
+      assertEquals(metadata.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
       assertEquals(metadata.nodeCount, 2);
       assertEquals([...metadata.nodeTypes].sort(), ["parallel", "step"]);
       assertEquals(metadata.hasInputSchema, false);
       assertEquals(metadata.hasOutputSchema, false);
+    });
+
+    it("keeps integration metadata immutable without ambient freeze", () => {
+      const originalObjectFreeze = Object.freeze;
+      let poisonCalls = 0;
+
+      try {
+        Object.freeze = ((value: object) => {
+          poisonCalls += 1;
+          return value;
+        }) as typeof Object.freeze;
+        workflowRegistry.register({
+          id: "freeze-poison-workflow",
+          steps: () => [],
+          integrationRequirements: [{
+            integration: "slack",
+            requiredScopes: ["chat:write"],
+            resources: [],
+          }],
+        });
+      } finally {
+        Object.freeze = originalObjectFreeze;
+      }
+
+      const stored = workflowRegistry.getDefinition("freeze-poison-workflow");
+      const metadata = workflowRegistry.get("freeze-poison-workflow");
+      assertEquals(poisonCalls, 0);
+      assertEquals(Object.isFrozen(stored), true);
+      assertEquals(Object.isFrozen(metadata), true);
+      assertThrows(
+        () => {
+          (stored as { integrationRequirements?: unknown[] }).integrationRequirements = [];
+        },
+        TypeError,
+      );
+      assertThrows(
+        () => {
+          (metadata as { integrationRequirements?: unknown[] }).integrationRequirements = [];
+        },
+        TypeError,
+      );
     });
   });
 
@@ -126,6 +177,11 @@ describe("WorkflowRegistry", () => {
     it("stores detached immutable definition and metadata snapshots", () => {
       const staticInput = { nested: { value: 1 } };
       const dependencies = ["first"];
+      const integrationRequirements = [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }];
       const steps: WorkflowNode[] = [
         node("first", "step"),
         {
@@ -140,6 +196,7 @@ describe("WorkflowRegistry", () => {
       ];
       const definition: WorkflowDefinition = {
         id: "detached-registration",
+        integrationRequirements,
         steps,
       };
 
@@ -147,6 +204,8 @@ describe("WorkflowRegistry", () => {
 
       steps.push(node("late", "step"));
       dependencies[0] = "late";
+      integrationRequirements[0]!.requiredScopes![0] = "mutated";
+      integrationRequirements[0]!.resources![0]!.id = "mutated";
       staticInput.nested.value = 2;
       (steps[1]!.config as unknown as Record<string, unknown>).agent = "mutated-agent";
 
@@ -167,6 +226,16 @@ describe("WorkflowRegistry", () => {
         1,
       );
       assertEquals(metadata.agentRefs, ["original-agent"]);
+      assertEquals(stored.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
+      assertEquals(metadata.integrationRequirements, [{
+        integration: "slack",
+        requiredScopes: ["channels:read"],
+        resources: [{ kind: "channel", id: "C012345" }],
+      }]);
       assertEquals(metadata.nodes.find((entry) => entry.id === "second")?.dependsOn, ["first"]);
       assertEquals(Object.isFrozen(stored), true);
       assertEquals(Object.isFrozen(stored.steps), true);
@@ -181,6 +250,55 @@ describe("WorkflowRegistry", () => {
         TypeError,
       );
       assertEquals(workflowRegistry.get(definition.id)?.agentRefs, ["original-agent"]);
+    });
+
+    it("rejects malformed integration requirement metadata", () => {
+      assertThrows(
+        () =>
+          workflowRegistry.register({
+            id: "invalid-integration-label",
+            integrationRequirements: [{ integration: "Slack" }],
+            steps: validSteps(),
+          }),
+        Error,
+        "Workflow integrationRequirements[0].integration",
+      );
+
+      for (
+        const [integrationRequirements, message] of [
+          [[{ integration: 42 }], "integration"],
+          [[{ integration: "slack", requiredScopes: "channels:read" }], "requiredScopes"],
+          [[{ integration: "slack", resources: [{ kind: "channel", id: 42 }] }], "resources"],
+          [[{ integration: "Slack" }], "lowercase integration identifier"],
+          [[{ integration: "slack" }, { integration: "slack" }], "duplicate integration"],
+          [[{
+            integration: "slack",
+            requiredScopes: ["channels:read", "channels:read"],
+          }], "duplicate scope"],
+          [[{
+            integration: "slack",
+            resources: [{ kind: "Channel", id: "C012345" }],
+          }], "lowercase resource kind"],
+          [[{
+            integration: "slack",
+            resources: [
+              { kind: "channel", id: "C012345" },
+              { kind: "channel", id: "C012345" },
+            ],
+          }], "duplicate resource identity"],
+        ] as const
+      ) {
+        assertThrows(
+          () =>
+            workflowRegistry.register({
+              id: "invalid-integration-requirements",
+              integrationRequirements,
+              steps: validSteps(),
+            } as unknown as WorkflowDefinition),
+          Error,
+          message,
+        );
+      }
     });
 
     it("unwraps workflow instances without evaluating wrapper accessors", () => {
