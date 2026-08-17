@@ -1,5 +1,12 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  AGENT_NOT_FOUND,
+  NETWORK_ERROR,
+  NOT_SUPPORTED,
+  PERMISSION_DENIED,
+  TIMEOUT_ERROR,
+} from "#veryfront/errors";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import {
   type AgUiResumeValue,
@@ -225,6 +232,177 @@ describe("agent/hosted-durable-chat-run-start", () => {
 
     assertEquals(response.status, 413);
     assertEquals(await readJson(response), { errorCode: "CONTEXT_LENGTH_EXCEEDED" });
+  });
+
+  it("maps thrown platform errors to their real code and status with a warn-level log", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const warnLogs: Array<Record<string, unknown> | undefined> = [];
+    const errorLogs: Array<Record<string, unknown> | undefined> = [];
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        throw PERMISSION_DENIED.create({
+          detail: 'Client "unknown" is not allowed to use Studio MCP.',
+        });
+      },
+      startDetachedExecution: async () => {},
+      logger: {
+        warn: (_message, metadata) => {
+          warnLogs.push(metadata);
+        },
+        error: (_message, metadata) => {
+          errorLogs.push(metadata);
+        },
+      },
+    });
+
+    assertEquals(response.status, 403);
+    assertEquals(await readJson(response), { errorCode: "PERMISSION_DENIED" });
+    assertEquals(errorLogs, []);
+    assertEquals(warnLogs.length, 1);
+    assertEquals(warnLogs[0]?.errorCode, "PERMISSION_DENIED");
+    assertEquals(warnLogs[0]?.statusCode, 403);
+  });
+
+  it("invokes object-backed warn loggers with their receiver", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const logger = {
+      entries: [] as Array<Record<string, unknown> | undefined>,
+      warn(_message: string, metadata?: Record<string, unknown>) {
+        this.entries.push(metadata);
+      },
+      error(_message: string, metadata?: Record<string, unknown>) {
+        this.entries.push(metadata);
+      },
+    };
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        throw PERMISSION_DENIED.create({ detail: "denied" });
+      },
+      startDetachedExecution: async () => {},
+      logger,
+    });
+
+    assertEquals(response.status, 403);
+    assertEquals(await readJson(response), { errorCode: "PERMISSION_DENIED" });
+    assertEquals(logger.entries.length, 1);
+  });
+
+  it("preserves not-found status for missing code agents", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        throw AGENT_NOT_FOUND.create({ detail: 'Code agent "missing" was not discovered.' });
+      },
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(response.status, 404);
+    assertEquals(await readJson(response), { errorCode: "AGENT_NOT_FOUND" });
+  });
+
+  it("preserves registered remote MCP setup statuses", async () => {
+    for (
+      const [error, status, errorCode] of [
+        [TIMEOUT_ERROR.create({ detail: "timed out" }), 408, "TIMEOUT_ERROR"],
+        [NETWORK_ERROR.create({ detail: "unavailable" }), 502, "NETWORK_ERROR"],
+      ] as const
+    ) {
+      const response = await executeHostedDurableChatRun({
+        req: createParsedRequest(),
+        rawRequest: createRequest(),
+        tracker: createDetachedRunTracker<AgUiResumeValue>(),
+        prepareExecution: async () => {
+          throw error;
+        },
+        startDetachedExecution: async () => {},
+      });
+
+      assertEquals(response.status, status);
+      assertEquals(await readJson(response), { errorCode });
+    }
+  });
+
+  it("preserves not-supported status for unsupported hosted models", async () => {
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker: createDetachedRunTracker<AgUiResumeValue>(),
+      prepareExecution: async () => {
+        throw NOT_SUPPORTED.create({ detail: "Unsupported hosted model" });
+      },
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(response.status, 501);
+    assertEquals(await readJson(response), { errorCode: "NOT_SUPPORTED" });
+  });
+
+  it("keeps error-level logging for setup failures that resolve to 5xx", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const warnLogs: Array<Record<string, unknown> | undefined> = [];
+    const errorLogs: Array<Record<string, unknown> | undefined> = [];
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        throw new Error("provider exploded");
+      },
+      startDetachedExecution: async () => {},
+      logger: {
+        warn: (_message, metadata) => {
+          warnLogs.push(metadata);
+        },
+        error: (_message, metadata) => {
+          errorLogs.push(metadata);
+        },
+      },
+    });
+
+    assertEquals(response.status, 500);
+    assertEquals(await readJson(response), { errorCode: "EXTERNAL_SERVICE_ERROR" });
+    assertEquals(warnLogs, []);
+    assertEquals(errorLogs.length, 1);
+    assertEquals(errorLogs[0]?.errorCode, "EXTERNAL_SERVICE_ERROR");
+    assertEquals(errorLogs[0]?.statusCode, 500);
+  });
+
+  it("falls back to error-level logging for sub-500 failures when warn is unavailable", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const errorLogs: Array<Record<string, unknown> | undefined> = [];
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        throw PERMISSION_DENIED.create({ detail: "denied" });
+      },
+      startDetachedExecution: async () => {},
+      logger: {
+        error: (_message, metadata) => {
+          errorLogs.push(metadata);
+        },
+      },
+    });
+
+    assertEquals(response.status, 403);
+    assertEquals(await readJson(response), { errorCode: "PERMISSION_DENIED" });
+    assertEquals(errorLogs.length, 1);
+    assertEquals(errorLogs[0]?.errorCode, "PERMISSION_DENIED");
   });
 
   it("resolves missing conversation setup errors to a bad request", () => {

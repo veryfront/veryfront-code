@@ -33,6 +33,7 @@ import {
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
+  warn?: (message: string, metadata?: Record<string, unknown>) => void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
