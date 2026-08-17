@@ -104,7 +104,7 @@ function isBuildArtifactPath(
   subpathIndex: number,
   segmentCount: number,
 ): boolean {
-  if (segmentCount < subpathIndex + 2 || !isBuildTarget(segments[subpathIndex]!)) return false;
+  if (segmentCount !== subpathIndex + 2 || !isBuildTarget(segments[subpathIndex]!)) return false;
   const filename = segments[segmentCount - 1]!;
   return stringEndsWith(filename, ".mjs") || stringEndsWith(filename, ".map") ||
     stringEndsWith(filename, ".css");
@@ -177,14 +177,12 @@ function parseClassifiedEsmShUrl(
   }
 
   let coordinateIndex = 0;
-  let hasBuildPrefix = false;
   const leading = segments[0];
   if (
     enforcementMode && leading !== undefined &&
     (isVersionedBuildPrefix(leading) || leading === "stable")
   ) {
     coordinateIndex = 1;
-    hasBuildPrefix = true;
   }
   const first = segments[coordinateIndex];
   if (
@@ -208,8 +206,8 @@ function parseClassifiedEsmShUrl(
   for (let index = packageSegmentIndex + 1; index < segmentCount; index++) {
     subpath += `/${segments[index]}`;
   }
-  const buildArtifact = enforcementMode && (hasBuildPrefix ||
-    isBuildArtifactPath(segments, packageSegmentIndex + 1, segmentCount));
+  const buildArtifact = enforcementMode &&
+    isBuildArtifactPath(segments, packageSegmentIndex + 1, segmentCount);
 
   return {
     origin: getUrlString(parsed, URLOriginGetter),

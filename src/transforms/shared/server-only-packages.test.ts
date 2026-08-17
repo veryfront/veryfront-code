@@ -143,6 +143,34 @@ describe("isServerOnlyPackage", () => {
       ),
       "@prisma/client",
     );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/v135/knex@3.1.0/query",
+        configured,
+      ),
+      "knex/query",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/stable/@prisma/client@6.0.0/runtime/library",
+        configured,
+      ),
+      "@prisma/client/runtime/library",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/knex@3.1.0/node/plugins/index.mjs",
+        configured,
+      ),
+      "knex/node/plugins/index.mjs",
+    );
+    assertEquals(
+      getConfiguredServerExternalRuntimeSpecifier(
+        "https://esm.sh/knex@3.1.0/es2022/plugins/client.mjs",
+        configured,
+      ),
+      "knex/es2022/plugins/client.mjs",
+    );
   });
 
   it("uses captured primitives while matching configured esm.sh packages", () => {

@@ -79,6 +79,21 @@ describe("ssr-adapter — server external packages", () => {
     assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
   });
 
+  it("preserves prefixed and target-named configured package subpaths", async () => {
+    const code = [
+      `import query from "https://esm.sh/v135/knex@3.1.0/query";`,
+      `const plugin = import("https://esm.sh/knex@3.1.0/node/plugins/index.mjs");`,
+    ].join("\n");
+    const expected = [
+      `import query from "knex/query";`,
+      `const plugin = import("knex/node/plugins/index.mjs");`,
+    ].join("\n");
+    const options = { serverExternalPackages: ["knex"] };
+
+    assertEquals(rewriteSSRImportsCompat(code, options), expected);
+    assertEquals(await rewriteSSRImportsCompatAsync(code, options), expected);
+  });
+
   it("normalizes configured versioned bare imports to installed runtime packages", async () => {
     const code = [
       `import knex from "knex@3.1.0";`,
