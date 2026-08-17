@@ -810,8 +810,15 @@ function freeReferencedIdentifiers(
     scopes: LexicalScope[],
     decoratorScopes: LexicalScope[] = scopes,
   ): void => {
+    // Babel hangs a parameter decorator off the pattern itself — a plain
+    // `Identifier`, an `AssignmentPattern` or a destructuring pattern — and not
+    // only off a `TSParameterProperty`. A decorator is ordinary runtime code
+    // whose reads count, so `constructor(@inject(loadSecret) value: string)`
+    // keeps the import it needs; missing it dropped that import out from under
+    // the surviving client declaration.
+    visitDecorators(pattern, decoratorScopes);
+
     if (pattern.type === "TSParameterProperty") {
-      visitDecorators(pattern, decoratorScopes);
       if (isNode(pattern.parameter)) {
         visitPatternRuntime(pattern.parameter, scopes, decoratorScopes);
       }
