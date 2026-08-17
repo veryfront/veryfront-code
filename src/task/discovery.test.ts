@@ -472,12 +472,40 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       );
 
       inputSchema.parse = () => "mutated";
-      assertEquals(registered.inputSchema?.parse === parse, true);
+      assertEquals(
+        (registered.inputSchema?.parse as (value: unknown) => unknown)("stable"),
+        parse("stable"),
+      );
       assertEquals(
         Object.getOwnPropertyDescriptor(registered.inputSchema, "schemaVersion")?.value,
         7,
       );
       assertEquals(Object.isFrozen(registered.inputSchema), true);
+    });
+
+    it("preserves callback schema receivers", () => {
+      const parserState = new WeakMap<object, string>();
+      const inputSchema = {
+        parse(this: object, value: unknown) {
+          return `${parserState.get(this)}:${String(value)}`;
+        },
+      };
+      parserState.set(inputSchema, "ready");
+
+      const registered = taskHandler.register(
+        "receiver-schema",
+        { run() {}, inputSchema },
+        "tasks/receiver-schema.ts",
+        "tasks",
+      );
+
+      const registeredInputSchema = registered.inputSchema;
+      if (!registeredInputSchema) throw new Error("Expected captured input schema");
+      const parse = registeredInputSchema.parse as (
+        this: Record<string, unknown>,
+        value: unknown,
+      ) => string;
+      assertEquals(parse.call(registeredInputSchema, "value"), "ready:value");
     });
 
     it("registers detached immutable integration requirement metadata", () => {

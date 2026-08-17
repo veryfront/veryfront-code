@@ -23,6 +23,7 @@ const objectCreate = Object.create;
 const objectDefineProperties = Object.defineProperties;
 const objectFreeze = Object.freeze;
 const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const functionBind = Function.prototype.bind;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
@@ -115,10 +116,18 @@ function optionalRecord(
 
   // Task schemas have always accepted the public Record<string, unknown>
   // contract, including parser callbacks and non-enumerable data. Preserve
-  // that compatibility while detaching the retained top-level record. JSON
-  // schemas still take the deeper bounded snapshot path above.
+  // that compatibility while detaching the retained top-level record. A
+  // callback can keep receiver-keyed state, so retained functions must run
+  // against their source schema instead of the detached copy. JSON schemas
+  // still take the deeper bounded snapshot path above.
+  const descriptors = objectGetOwnPropertyDescriptors(value);
+  for (const descriptor of Object.values(descriptors)) {
+    if (!("value" in descriptor) || typeof descriptor.value !== "function") continue;
+    const callback = descriptor.value;
+    descriptor.value = reflectApply(functionBind, callback, [value]);
+  }
   const copy = objectCreate(reflectGetPrototypeOf(value));
-  objectDefineProperties(copy, objectGetOwnPropertyDescriptors(value));
+  objectDefineProperties(copy, descriptors);
   return objectFreeze(copy) as Record<string, unknown>;
 }
 
