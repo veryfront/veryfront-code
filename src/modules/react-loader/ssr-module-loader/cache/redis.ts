@@ -2,7 +2,12 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getSSRModuleRedisTTL } from "../constants.ts";
-import { CacheBackends, createDistributedCodeCacheAccessor } from "#veryfront/cache/backend.ts";
+import {
+  CacheBackends,
+  createDistributedCodeCacheAccessor,
+  isLocalDevDiskCacheEnabled,
+} from "#veryfront/cache/backend.ts";
+import { LOCAL_DEV_SSR_MODULE_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
@@ -79,7 +84,13 @@ export async function setInRedis(
   const gateway = await getDistributedCodeCache();
   if (!gateway) return;
 
-  const ttl = options?.ttlSeconds ?? getSSRModuleRedisTTL(options?.isProduction ?? true);
+  // The preview TTL is tuned for a shared branch cache and expires long before
+  // a developer returns to the project, so an on-disk local dev cache would go
+  // cold anyway. Keep those entries for a working day instead.
+  const ttl = options?.ttlSeconds ??
+    (isLocalDevDiskCacheEnabled()
+      ? LOCAL_DEV_SSR_MODULE_TTL_SEC
+      : getSSRModuleRedisTTL(options?.isProduction ?? true));
 
   try {
     // Use setCode() for automatic tokenization

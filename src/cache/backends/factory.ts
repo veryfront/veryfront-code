@@ -2,6 +2,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isDevelopment } from "#veryfront/platform/environment.ts";
 import type { CacheBackend } from "../types.ts";
 import {
   type CodeCacheGateway,
@@ -42,6 +43,33 @@ export function isApiCacheAvailable(): boolean {
 
 export function isDiskCacheConfigured(): boolean {
   return getEnv("VF_CACHE_BACKEND") === "disk" || !!getEnv("VF_DISK_CACHE_DIR");
+}
+
+/**
+ * Whether a local dev server must keep compiled code on disk.
+ *
+ * A local dev server has no hosted API cache and no Redis, so its code caches
+ * live in memory and every restart recompiles the whole import tree. The disk
+ * backend keeps that work under the project cache directory, so a restart
+ * stays warm with no setup.
+ *
+ * This never changes a hosted or production runtime: the API and Redis
+ * backends are resolved first, an explicit `VF_CACHE_BACKEND` always wins, and
+ * anything other than a development environment keeps its current backend.
+ */
+export function isLocalDevDiskCacheEnabled(): boolean {
+  if (getEnv("VF_CACHE_BACKEND") || isDiskCacheConfigured()) return false;
+  return isDevelopment() && !isApiCacheAvailable() && !isRedisConfigured();
+}
+
+/**
+ * Backend preference for caches that hold compiled code.
+ *
+ * Returns `undefined` outside local dev so the normal API, Redis, disk, memory
+ * resolution order applies unchanged.
+ */
+export function localDevCodeCacheBackend(): CacheBackendConfig["preferredBackend"] {
+  return isLocalDevDiskCacheEnabled() ? "disk" : undefined;
 }
 
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
@@ -161,7 +189,12 @@ export const CacheBackends = {
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
   httpModule: () =>
     createCacheBackend({ keyPrefix: "http-module", circuitBreakerName: "api-cache-http" }),
-  ssrModule: () => createCacheBackend({ keyPrefix: "ssr-module" }),
+  // Holds compiled TSX/JSX modules, so it opts into local dev disk persistence.
+  ssrModule: () =>
+    createCacheBackend({
+      keyPrefix: "ssr-module",
+      preferredBackend: localDevCodeCacheBackend(),
+    }),
   projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
 
   /**
