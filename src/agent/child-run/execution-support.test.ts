@@ -43,8 +43,8 @@ describe("child-run-execution-support", () => {
     it("does nothing when the signal is absent or not aborted", () => {
       const controller = new AbortController();
 
-      assertEquals(throwIfChildRunAborted(undefined), undefined);
-      assertEquals(throwIfChildRunAborted(controller.signal), undefined);
+      throwIfChildRunAborted(undefined);
+      throwIfChildRunAborted(controller.signal);
     });
 
     it("throws an AbortError when the signal is aborted without a custom Error reason", () => {

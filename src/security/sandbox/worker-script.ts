@@ -1370,7 +1370,7 @@ function snapshotStructuredData(
     }
     return output;
   }
-  if (typeof value !== "object" || value === null) {
+  if (typeof value !== "object") {
     return invalidWorkerRequest("render data");
   }
 

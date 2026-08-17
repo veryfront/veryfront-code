@@ -4015,6 +4015,152 @@ describe("push failure ordering", () => {
 });
 
 describe("push deletion ownership", () => {
+  it("rejects missing preserved content before mutating remote files", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        let mutationCalled = false;
+        let staleDeleted = false;
+        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          const url = new URL(request.url);
+
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-123", slug: "my-project" });
+          }
+          if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+            return Response.json({
+              data: [
+                { path: "app.ts", content: "export const value = 1;\n" },
+                ...(staleDeleted ? [] : [{ path: "stale.ts", content: "stale source" }]),
+                { path: "assets/logo.png" },
+              ],
+              page_info: {},
+            });
+          }
+          if (request.method === "PUT") {
+            mutationCalled = true;
+            return Response.json({});
+          }
+          if (request.method === "DELETE") {
+            mutationCalled = true;
+            staleDeleted = true;
+            return Response.json({});
+          }
+          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+        }) as typeof fetch;
+
+        await assertRejects(
+          () => pushCommand({ projectDir, branch: "main", force: true, prune: true, quiet: true }),
+          Error,
+          'invalid content for remote file "assets/logo.png". No files were pushed.',
+        );
+
+        assertEquals(mutationCalled, false);
+        assertEquals(await readPushReceipt(projectDir), null);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("rejects invalid inherited managed content before creating a preview branch", async () => {
+    const originalFetch = globalThis.fetch;
+    const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];
+    const savedEnv = envKeys.map((key) => Deno.env.get(key));
+
+    try {
+      await withGitProject(async ({ projectDir }) => {
+        Deno.env.set("VERYFRONT_API_TOKEN", "<TOKEN>");
+        Deno.env.set("VERYFRONT_API_URL", "https://control.example.test");
+        Deno.env.set("VERYFRONT_PROJECT_SLUG", "my-project");
+        _resetEnvironmentConfig();
+
+        const scenarios = [
+          {
+            invalidPath: "assets/logo.png",
+            remoteFiles: [
+              { path: "app.ts", content: "export const value = 1;\n" },
+              { path: "assets/logo.png" },
+            ],
+            prune: false,
+          },
+          {
+            invalidPath: "app.ts",
+            remoteFiles: [{ path: "app.ts" }],
+            prune: false,
+          },
+          {
+            invalidPath: "stale.ts",
+            remoteFiles: [
+              { path: "app.ts", content: "export const value = 1;\n" },
+              { path: "stale.ts" },
+            ],
+            prune: true,
+          },
+        ];
+        const branchCreateCounts: number[] = [];
+
+        for (const scenario of scenarios) {
+          let branchCreateCalls = 0;
+          globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+
+            if (request.method === "GET" && url.pathname === "/projects/my-project") {
+              return Response.json({ id: "project-123", slug: "my-project" });
+            }
+            if (request.method === "GET" && url.pathname === "/projects/my-project/branches") {
+              return Response.json({ data: [] });
+            }
+            if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+              return Response.json({ data: scenario.remoteFiles, page_info: {} });
+            }
+            if (request.method === "POST" && url.pathname === "/projects/my-project/branches") {
+              branchCreateCalls++;
+              return Response.json({
+                id: "branch-123",
+                name: "feature-x",
+                projectId: "project-123",
+              });
+            }
+            throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+          }) as typeof fetch;
+
+          await assertRejects(
+            () =>
+              pushCommand({
+                projectDir,
+                branch: "feature-x",
+                prune: scenario.prune,
+                quiet: true,
+              }),
+            Error,
+            `invalid content for remote file "${scenario.invalidPath}". No files were pushed.`,
+          );
+          branchCreateCounts.push(branchCreateCalls);
+          assertEquals(await readPushReceipt(projectDir), null);
+        }
+
+        assertEquals(branchCreateCounts, [0, 0, 0]);
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      envKeys.forEach((key, index) => restoreEnv(key, savedEnv[index]));
+      _resetEnvironmentConfig();
+    }
+  });
+
   it("records late unsupported remote changes after a normal no-op push", async () => {
     const originalFetch = globalThis.fetch;
     const envKeys = ["VERYFRONT_API_TOKEN", "VERYFRONT_API_URL", "VERYFRONT_PROJECT_SLUG"];

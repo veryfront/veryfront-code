@@ -1,4 +1,5 @@
 import { getAccessToken } from "./token-store.ts";
+import { htmlToPlainText } from "./teams-plain-text.ts";
 
 const GRAPH_API_BASE = "https://graph.microsoft.com/v1.0";
 
@@ -229,13 +230,5 @@ export function getChatDisplayName(chat: TeamsChat): string {
 
 export function getPlainTextContent(message: ChatMessage): string {
   if (message.body.contentType === "text") return message.body.content;
-
-  return message.body.content
-    .replace(/<[^>]*>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .trim();
+  return htmlToPlainText(message.body.content);
 }

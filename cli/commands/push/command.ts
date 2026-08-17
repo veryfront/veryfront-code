@@ -700,6 +700,32 @@ function requireRemoteContent(file: RemoteFile): string {
   );
 }
 
+function findRemoteFilesMissingLocally(
+  remoteFiles: readonly RemoteFile[],
+  localPaths: ReadonlySet<string>,
+  ignoreChecker: IgnoreChecker,
+): string[] {
+  return remoteFiles
+    .map((file) => file.path)
+    .filter((path) =>
+      ignoreChecker.isSupportedExtension(path) &&
+      !ignoreChecker.isIgnored(path) &&
+      !localPaths.has(path)
+    );
+}
+
+function requirePreservedRemoteContent(
+  remoteFiles: readonly RemoteFile[],
+  localPaths: ReadonlySet<string>,
+  deletePaths: ReadonlySet<string>,
+): void {
+  for (const file of remoteFiles) {
+    if (!localPaths.has(file.path) && !deletePaths.has(file.path)) {
+      requireRemoteContent(file);
+    }
+  }
+}
+
 async function buildManagedRemoteSnapshot(
   files: readonly RemoteFile[],
   ignoreChecker: IgnoreChecker,
@@ -997,6 +1023,10 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let remoteFilesAreBaseline = !isMainBranch && !target.branchExists;
 
       if (!dryRun && !isMainBranch && !target.branchId) {
+        // Branch creation is a remote mutation. Validate every inherited file
+        // that later planning or receipt generation can require before the POST.
+        for (const file of target.remoteFiles) requireRemoteContent(file);
+
         spinner.update(`Creating branch "${branchName}"...`);
         try {
           const preparedBranch = await ensureBranch(
@@ -1034,28 +1064,18 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       }
 
-      const remoteFilesMissingLocally = target.remoteFiles
-        .map((file) => file.path)
-        .filter((path) =>
-          ignoreChecker.isSupportedExtension(path) &&
-          !ignoreChecker.isIgnored(path) &&
-          !localPaths.has(path)
-        );
+      const remoteFilesMissingLocally = findRemoteFilesMissingLocally(
+        target.remoteFiles,
+        localPaths,
+        ignoreChecker,
+      );
       const toDelete = pruneRemoteMissing ? remoteFilesMissingLocally : [];
+      // Preflight: fail before any remote mutation if a preserved remote file
+      // is missing content, so the digest computations after upload/delete
+      // cannot be the first to discover it.
       const deletePaths = new Set(toDelete);
-      const preservedRemoteFiles = target.remoteFiles
-        .filter((file) => !localPaths.has(file.path) && !deletePaths.has(file.path))
-        .map((file) => {
-          if (typeof file.content !== "string") {
-            throw new Error(
-              `Veryfront returned invalid content for preserved remote file "${file.path}".`,
-            );
-          }
-          return { path: file.path, content: file.content };
-        });
-      let pushedSourceDigest = preservedRemoteFiles.length === 0
-        ? sourceSnapshot.sourceDigest
-        : await computeSourceDigest([...ops, ...preservedRemoteFiles]);
+      requirePreservedRemoteContent(target.remoteFiles, localPaths, deletePaths);
+      let pushedSourceDigest: string;
 
       const project = outcome.kind === "planned-create" ? null : outcome.project;
       const baseline = project

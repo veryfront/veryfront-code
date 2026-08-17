@@ -1,4 +1,5 @@
 import { getAccessToken, getCloudId } from "./token-store.ts";
+import { htmlToPlainText } from "./confluence-plain-text.ts";
 
 const CONFLUENCE_API_BASE = "https://api.atlassian.com/ex/confluence";
 
@@ -284,16 +285,7 @@ export async function updatePage(
 }
 
 export function extractPlainText(storageHtml: string): string {
-  return storageHtml
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
+  return htmlToPlainText(storageHtml);
 }
 
 export function formatAsStorage(text: string): string {
