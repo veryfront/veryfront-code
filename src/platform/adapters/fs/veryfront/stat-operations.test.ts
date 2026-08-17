@@ -405,6 +405,22 @@ describe("StatOperations", () => {
       assertEquals(searchCallCount, 4);
     });
 
+    it("should treat an empty provided file list as authoritative", async () => {
+      let searchCallCount = 0;
+      const client = createMockClient({
+        searchFiles: () => {
+          searchCallCount++;
+          return Promise.resolve([]);
+        },
+      });
+      const contextProvider = createBranchContextWithFiles([]);
+      contextProvider.hasCachedFileList = undefined;
+      const statOps = createStatOps(client, new PathNormalizer(), contextProvider);
+
+      assertEquals(await statOps.resolveFile("missing/component"), null);
+      assertEquals(searchCallCount, 0);
+    });
+
     it("should resolve via API search without building the full index", async () => {
       let listAllFilesCallCount = 0;
       let searchCallCount = 0;

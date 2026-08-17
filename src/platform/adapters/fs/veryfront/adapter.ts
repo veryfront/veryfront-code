@@ -394,7 +394,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           "hasCachedFileList miss",
           { waitForWarmup: true },
         );
-        return Array.isArray(cached?.files) && cached.files.length > 0;
+        return Array.isArray(cached?.files);
       },
       isPersistentCacheInvalidated: (prefix: string) => this.isPersistentCacheInvalidated(prefix),
       isReleaseBeingInvalidated: (releaseId: string) =>

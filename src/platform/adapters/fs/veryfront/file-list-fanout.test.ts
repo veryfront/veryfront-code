@@ -206,6 +206,11 @@ describe("file list fan-out (issue inbox#32)", () => {
       1,
       "an empty branch listing must be fetched only once",
     );
+    assertEquals(
+      counts.listFiles,
+      0,
+      "an authoritative empty listing must not fall back to per-extension searches",
+    );
   });
 
   it("still serves fresh draft content after a file update poke", async () => {
