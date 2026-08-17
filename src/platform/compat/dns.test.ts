@@ -216,7 +216,12 @@ describe("platform/compat/dns loopback names", () => {
   it("answers the reserved loopback names for both families", () => {
     assertEquals(resolveLoopbackAddresses("localhost", ["A", "AAAA"]), ["127.0.0.1", "::1"]);
     assertEquals(resolveLoopbackAddresses("LocalHost", ["A"]), ["127.0.0.1"]);
-    assertEquals(resolveLoopbackAddresses("localhost.", ["AAAA"]), ["::1"]);
+    // The fully-qualified form is NOT recognised, on purpose: `isLocalhostName`
+    // in the egress guard does not strip a trailing dot either, and a resolver
+    // that recognises a form the guard does not is a bypass — such an entry
+    // survives the allowlist filter and then resolves to loopback.
+    assertEquals(resolveLoopbackAddresses("localhost.", ["AAAA"]), null);
+    assertEquals(resolveLoopbackAddresses("api.localhost.", ["A"]), null);
   });
 
   it("answers RFC 6761 .localhost subdomains", () => {

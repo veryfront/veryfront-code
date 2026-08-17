@@ -167,12 +167,18 @@ const LOOPBACK_ADDRESSES: Readonly<Record<DnsAddressRecordType, string>> = {
  *
  * RFC 6761 §6.3 reserves these names and requires that they resolve to
  * loopback, so a resolver may answer for them without a nameserver query.
- * Matches `isLocalhostName` in `security/sandbox/worker-egress-guard.ts`; a
- * trailing dot (the fully-qualified form) is accepted here because a caller
- * can legitimately pass one.
+ *
+ * Deliberately byte-identical to `isLocalhostName` in
+ * `security/sandbox/worker-egress-guard.ts`, INCLUDING its lack of trailing-dot
+ * normalisation. The guard uses that predicate twice: to strike localhost names
+ * out of `allowedInternalHosts`, and to block them on the request path. A
+ * resolver that recognises a form the guard does not — `api.localhost.`, say —
+ * lets that entry survive the allowlist filter, skips the internal-address
+ * check because the host is allowlisted, and then hands back loopback. Being
+ * more permissive here than the guard is a bypass, not a convenience.
  */
 function isLoopbackName(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase().replace(/\.$/, "");
+  const normalized = hostname.trim().toLowerCase();
   return normalized === "localhost" || normalized.endsWith(".localhost");
 }
 
