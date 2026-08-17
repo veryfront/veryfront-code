@@ -1,4 +1,3 @@
-import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import type { ScheduleIntegrationRequirementConfig } from "#veryfront/schedule/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
@@ -6,6 +5,7 @@ import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import {
   captureWorkflowDefinition,
   captureWorkflowNodes,

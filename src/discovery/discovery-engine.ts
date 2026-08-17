@@ -35,9 +35,10 @@ import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/p
 
 const logger = agentLogger.component("discovery");
 
-type DiscoveryCandidate<T> = {
+type DiscoveryCandidate<Candidate, Prepared> = {
   exportName: string;
-  item: T;
+  item: Candidate;
+  prepared?: Prepared;
 };
 
 function isIndexModule(file: string): boolean {
@@ -57,16 +58,21 @@ function resolveDiscoveryDir(baseDir: string, dir: string): string {
   return `${baseDir}/${dir}`;
 }
 
-function collectNamedDiscoveryCandidates<T, Candidate>(
+function collectNamedDiscoveryCandidates<T, Candidate, Prepared>(
   module: unknown,
-  handler: DiscoveryHandler<T, Candidate>,
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
   onError: (error: unknown) => void,
-): DiscoveryCandidate<Candidate>[] {
-  const candidates: DiscoveryCandidate<Candidate>[] = [];
+): DiscoveryCandidate<Candidate, Prepared>[] {
+  const candidates: DiscoveryCandidate<Candidate, Prepared>[] = [];
   for (const [exportName, value] of Object.entries(module as Record<string, unknown>)) {
     if (exportName === "default") continue;
     try {
-      if (handler.validate(value)) candidates.push({ exportName, item: value });
+      if (!handler.validate(value)) continue;
+      candidates.push({
+        exportName,
+        item: value,
+        prepared: handler.prepare?.(value),
+      });
     } catch (error) {
       onError(error);
     }
@@ -75,11 +81,11 @@ function collectNamedDiscoveryCandidates<T, Candidate>(
   return candidates;
 }
 
-function getCandidateId<T, Candidate>(
-  candidate: DiscoveryCandidate<Candidate>,
+function getCandidateId<T, Candidate, Prepared>(
+  candidate: DiscoveryCandidate<Candidate, Prepared>,
   file: string,
   dir: string,
-  handler: DiscoveryHandler<T, Candidate>,
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
   useExportNameFallback: boolean,
 ): string {
   const derivedId = handler.getId(candidate.item, file, dir);
@@ -93,11 +99,11 @@ function getCandidateId<T, Candidate>(
 /**
  * Discover items of a specific type in a directory
  */
-async function discoverItems<T, Candidate>(
+async function discoverItems<T, Candidate, Prepared>(
   dir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T, Candidate>,
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
   verbose?: boolean,
 ): Promise<void> {
   const files = (await findTypeScriptFiles(dir, context)).sort(compareDiscoveryFiles);
@@ -127,11 +133,15 @@ async function discoverItems<T, Candidate>(
       }
     };
 
-    let defaultCandidate: DiscoveryCandidate<Candidate> | undefined;
+    let defaultCandidate: DiscoveryCandidate<Candidate, Prepared> | undefined;
     try {
       const defaultItem = (module as { default?: unknown }).default;
       if (handler.validate(defaultItem)) {
-        defaultCandidate = { exportName: "default", item: defaultItem };
+        defaultCandidate = {
+          exportName: "default",
+          item: defaultItem,
+          prepared: handler.prepare?.(defaultItem),
+        };
       }
     } catch (error) {
       recordCandidateError(error);
@@ -153,7 +163,14 @@ async function discoverItems<T, Candidate>(
           continue;
         }
 
-        const registered = handler.register(id, defaultCandidate.item, file, dir, "default");
+        const registered = handler.register(
+          id,
+          defaultCandidate.item,
+          file,
+          dir,
+          "default",
+          defaultCandidate.prepared,
+        );
         resultMap.set(id, registered);
         if (verbose) logger.info(`Registered ${handler.typeName}: ${id}`);
         continue;
@@ -162,7 +179,7 @@ async function discoverItems<T, Candidate>(
       }
     }
 
-    let candidates: DiscoveryCandidate<Candidate>[];
+    let candidates: DiscoveryCandidate<Candidate, Prepared>[];
     try {
       candidates = collectNamedDiscoveryCandidates(module, handler, recordCandidateError);
     } catch (error) {
@@ -177,11 +194,7 @@ async function discoverItems<T, Candidate>(
       continue;
     }
 
-    const isRegistrationCandidate = handler.isRegistrationCandidate;
-    const registrationCandidateCount = isRegistrationCandidate
-      ? candidates.filter((candidate) => isRegistrationCandidate(candidate.item)).length
-      : candidates.length;
-    const useExportNameFallback = registrationCandidateCount > 1 || isIndexModule(file);
+    const useExportNameFallback = candidates.length > 1 || isIndexModule(file);
     for (const candidate of candidates) {
       try {
         const id = getCandidateId(
@@ -205,6 +218,7 @@ async function discoverItems<T, Candidate>(
           file,
           dir,
           candidate.exportName,
+          candidate.prepared,
         );
         resultMap.set(id, registered);
 
@@ -218,13 +232,13 @@ async function discoverItems<T, Candidate>(
   }
 }
 
-async function discoverConfiguredItems<T, Candidate>(
+async function discoverConfiguredItems<T, Candidate, Prepared>(
   dirs: string[] | undefined,
   defaultDirs: string[],
   baseDir: string,
   result: DiscoveryResult,
   context: FileDiscoveryContext,
-  handler: DiscoveryHandler<T, Candidate>,
+  handler: DiscoveryHandler<T, Candidate, Prepared>,
   verbose?: boolean,
 ): Promise<void> {
   for (const dir of dirs ?? defaultDirs) {

@@ -77,12 +77,19 @@ export interface DiscoveryResult {
 /**
  * Handler for discovering specific item types
  */
-export interface DiscoveryHandler<T, Candidate = T> {
+export interface DiscoveryHandler<T, Candidate = T, Prepared = Candidate> {
   typeName: string;
   validate: (item: unknown) => item is Candidate;
-  /** Return whether a broad candidate can be registered when choosing fallback IDs. */
-  isRegistrationCandidate?: (item: Candidate) => boolean;
+  /** Validate and capture a candidate before it participates in ID fallback selection. */
+  prepare?: (item: Candidate) => Prepared;
   getId: (item: Candidate, file: string, dir: string) => string;
-  register: (id: string, item: Candidate, file: string, dir: string, exportName?: string) => T;
+  register: (
+    id: string,
+    item: Candidate,
+    file: string,
+    dir: string,
+    exportName?: string,
+    prepared?: Prepared,
+  ) => T;
   getResultMap: (result: DiscoveryResult) => Map<string, T>;
 }

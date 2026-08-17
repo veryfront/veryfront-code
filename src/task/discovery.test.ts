@@ -1,11 +1,16 @@
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { clearConfigCache } from "#veryfront/config";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
+import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
+import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { runTriggerTarget } from "../trigger/local-runner.ts";
 import {
   deriveTaskId,
   discoverTasks as discoverTasksRaw,
@@ -15,12 +20,7 @@ import {
   discoverProjectTaskRuntime as discoverProjectTaskRuntimeRaw,
   listProjectRuntimeTasks,
 } from "./project-runtime.ts";
-import { runTriggerTarget } from "../trigger/local-runner.ts";
 import { isTaskDefinition } from "./types.ts";
-import { discoverAll, type DiscoveryResult } from "#veryfront/discovery";
-import { taskHandler } from "#veryfront/discovery/handlers/task-handler.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/platform/compat/fs.ts";
 
 const discoverTasks: typeof discoverTasksRaw = (options) =>
   discoverTasksRaw({ ...options, allowHostProjectCodeExecution: true });
@@ -721,7 +721,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     }
   });
 
-  it("keeps the file-derived task id when a malformed unified sibling is rejected", async () => {
+  it("keeps the file-derived ID when malformed named candidates are rejected", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-task-invalid-id-sibling-" });
 
     try {
@@ -729,11 +729,8 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       await writeTextFile(
         `${tempDir}/tasks/sync.ts`,
         [
-          "export const aBroken = {",
-          "  run() {},",
-          '  integrationRequirements: [{ integration: "Slack" }],',
-          "};",
-          'export const zValid = { run() { return "valid"; } };',
+          'export const aBroken = { run: "not a function" };',
+          'export const zValid = { run() { return "valid sibling"; } };',
         ].join("\n"),
       );
 
@@ -743,7 +740,10 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       });
 
       assertEquals([...result.tasks.keys()], ["sync"]);
-      assertEquals(result.errors.length, 1);
+      assertEquals(result.tasks.get("sync")?.run({ env: {}, config: {} }), "valid sibling");
+      assertEquals(result.errors.map((entry) => entry.error.message), [
+        "Task definition run must be a function.",
+      ]);
     } finally {
       await remove(tempDir, { recursive: true });
     }
