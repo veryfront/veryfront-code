@@ -88,6 +88,35 @@ async function resolveWithBareExternalPlugin(
   return result.errors[0].text;
 }
 
+async function resolveWithHttpExternalPlugin(
+  path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
+  kind: OnResolveArgs["kind"],
+): Promise<string> {
+  let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
+  const plugin = createHttpExternalPlugin({ projectDir, serverExternalPackages });
+  const build = createMockBuild(() => {});
+  build.onResolve = (_options, handler) => {
+    resolveHandler = handler;
+  };
+  plugin.setup(build);
+  assertExists(resolveHandler);
+
+  const result = await resolveHandler({
+    path,
+    importer,
+    namespace: "file",
+    resolveDir: projectDir,
+    kind,
+    pluginData: undefined,
+  }) as { errors?: Array<{ text: string }> } | undefined;
+
+  assertExists(result?.errors?.[0]);
+  return result.errors[0].text;
+}
+
 function writableDependencySource(
   cacheNamespace: string,
   dependencies: Readonly<Record<string, string>>,
@@ -308,6 +337,21 @@ describe(
 
       assertEquals(message.includes("server-only-in-client"), true);
       assertEquals(message.includes("zod"), true);
+    });
+
+    it("rejects declared URL server externals loaded through CommonJS", async () => {
+      for (const kind of ["require-call", "require-resolve"] as const) {
+        const message = await resolveWithHttpExternalPlugin(
+          "https://esm.sh/knex@3.1.0",
+          "/redacted-project-root/app/page.js",
+          "/redacted-project-root",
+          ["knex"],
+          kind,
+        );
+
+        assertEquals(message.includes("server-only-in-client"), true);
+        assertEquals(message.includes("knex"), true);
+      }
     });
 
     it("does not let an import map bypass a declared server external", async () => {

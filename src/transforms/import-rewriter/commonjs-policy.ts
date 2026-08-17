@@ -40,7 +40,10 @@ export const commonJsPolicyInternals = Object.freeze({
 async function getCommonJsParser(): Promise<CodeParser | undefined> {
   const active = tryResolve<CodeParser>("CodeParser");
   if (active?.findStaticCommonJsImports) return active;
-  defaultCommonJsParser ??= loadDefaultCodeParser();
+  defaultCommonJsParser ??= loadDefaultCodeParser().catch((error) => {
+    defaultCommonJsParser = undefined;
+    throw error;
+  });
   return await defaultCommonJsParser;
 }
 
