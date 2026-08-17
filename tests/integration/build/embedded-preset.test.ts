@@ -278,6 +278,41 @@ describe(
       }
     });
 
+    it("uses App Router extension precedence when page.mdx and page.md coexist", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-embedded-app-precedence-" });
+      try {
+        await Deno.mkdir(join(projectDir, "app/docs"), { recursive: true });
+        await Deno.writeTextFile(join(projectDir, "app/page.mdx"), "# Home\n");
+        await Deno.writeTextFile(
+          join(projectDir, "app/docs/page.mdx"),
+          "# MDX docs\n\nAPP_MDX_PRIORITY_MARKER\n",
+        );
+        await Deno.writeTextFile(
+          join(projectDir, "app/docs/page.md"),
+          "# Markdown docs\n\nAPP_MD_FALLBACK_MARKER\n",
+        );
+
+        const outDir = join(projectDir, "dist");
+        const { manifest } = await buildEmbeddedPreset({
+          projectDir,
+          outDir,
+          runtime: "deno",
+          config: { router: "app" },
+        });
+
+        assertEquals(manifest.routes.filter((route) => route.path === "/docs"), [{
+          path: "/docs",
+          file: "embedded/app/docs.js",
+          type: "page",
+        }]);
+        const docs = await readTextFile(join(outDir, "embedded/app/docs.js"));
+        assert(docs.includes("APP_MDX_PRIORITY_MARKER"));
+        assertEquals(docs.includes("APP_MD_FALLBACK_MARKER"), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("honours an explicit pages router for the shell and route collisions", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-embedded-pages-router-" });
       try {

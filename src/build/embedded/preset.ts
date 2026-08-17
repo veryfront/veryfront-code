@@ -117,10 +117,9 @@ export async function buildEmbeddedPreset(
 
     for (const r of discovered) {
       const hasRouterConflict = (routeCounts.get(`${r.router}:${r.routePath}`) ?? 0) > 1;
-      if (hasRouterConflict && (r.router === "app" || !claimedPaths.has(r.routePath))) {
-        const routerName = r.router === "app" ? "App Router" : "Pages Router";
+      if (r.router === "pages" && hasRouterConflict && !claimedPaths.has(r.routePath)) {
         throw ROUTE_CONFLICT.create({
-          detail: `Multiple ${routerName} files resolve to "${r.routePath}"`,
+          detail: `Multiple Pages Router files resolve to "${r.routePath}"`,
           context: {
             candidateCount: routeCounts.get(`${r.router}:${r.routePath}`),
             routePath: r.routePath,
@@ -364,7 +363,7 @@ async function discoverAppRoutes(
   embeddedDir: string,
   appDirectory: string,
 ): Promise<EmbeddedDiscoveredRoute[]> {
-  const results: EmbeddedDiscoveredRoute[] = [];
+  const results = new Map<string, EmbeddedDiscoveredRoute>();
   const base = join(projectDir, appDirectory);
 
   async function walk(dir: string, rel = ""): Promise<void> {
@@ -387,7 +386,12 @@ async function discoverAppRoutes(
       // for it. Kept as the plain form rather than special-cased: a special case
       // here would be dead code that reads as if it were load-bearing.
       const filePath = join(embeddedDir, `app${norm}.js`);
-      results.push({ router: "app", routePath: norm, filePath, sourcePath: abs });
+      // The runtime resolves page.mdx before page.md. Collapse the extension
+      // variants here so embedded builds publish the same source.
+      const existing = results.get(norm);
+      if (!existing || ent.name === "page.mdx") {
+        results.set(norm, { router: "app", routePath: norm, filePath, sourcePath: abs });
+      }
     }
   }
 
@@ -397,7 +401,7 @@ async function discoverAppRoutes(
     /* expected: no app directory */
   }
 
-  return results;
+  return [...results.values()];
 }
 
 async function discoverPagesRoutes(
