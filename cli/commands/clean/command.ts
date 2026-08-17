@@ -3,6 +3,7 @@ import { getConfig } from "veryfront/config";
 import { runtime } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
 import { DEFAULT_CACHE_DIR } from "veryfront/utils/constants/server";
+import { getProjectCacheDir } from "veryfront/utils/cache-dir";
 import { CacheCoordinator, type CacheStore } from "veryfront/rendering";
 import {
   FilesystemCacheStore,
@@ -106,6 +107,10 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
     }
 
     await cleanDirectory(join(projectDir, cacheDir));
+    // The framework cache root is separate from the render cache store and
+    // holds the compiled modules a dev server keeps across restarts, so a
+    // cache clean that leaves it in place is not a clean.
+    await cleanDirectory(getProjectCacheDir(projectDir));
   } catch (error) {
     cliLogger.error("Failed to clean cache store:", error);
     throw error;

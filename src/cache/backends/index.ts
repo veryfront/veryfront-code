@@ -46,6 +46,7 @@ export {
   isDiskCacheConfigured,
   isDistributedBackend,
   isLocalDevDiskCacheEnabled,
+  isPersistentLocalCacheEnabled,
   localDevCodeCacheBackend,
 } from "./factory.ts";
 

@@ -270,7 +270,8 @@ pays that cost once instead of on every request.
 
 ### Local development
 
-`veryfront dev` keeps the transform cache on disk under the project `.cache`
+`veryfront dev` keeps the transform cache on disk in the `.cache` directory of
+the project it serves, including when you pass `--project` from another
 directory. A restart reuses what the previous run compiled, so only files you
 changed while the server was down are recompiled. This needs no setup and no
 external service.
@@ -279,12 +280,13 @@ Cache entries are keyed by the Veryfront version, the project, the file path,
 and a hash of the file contents, so an edit or an upgrade produces a new key
 and never reuses stale output.
 
-Run `veryfront clean --cache` to reset the cache. Deleting the `.cache`
+Run `veryfront clean --cache` to reset the cache. Deleting the project `.cache`
 directory has the same effect. Both are safe: the next request recompiles what
 it needs.
 
-Set `VF_CACHE_BACKEND=memory` to turn disk persistence off and keep the cache
-in memory for the life of the process.
+Set `VERYFRONT_CACHE_DIR` to keep the cache somewhere else. Set
+`VF_CACHE_BACKEND=memory` to turn disk persistence off and keep the cache in
+memory for the life of the process.
 
 ### Deployed runtimes
 

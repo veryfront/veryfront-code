@@ -11,7 +11,11 @@ import {
 import { join } from "#veryfront/compat/path/index.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { buildSSRModuleCacheKey } from "#veryfront/cache/keys.ts";
-import { CacheBackends, isLocalDevDiskCacheEnabled } from "./factory.ts";
+import {
+  CacheBackends,
+  isLocalDevDiskCacheEnabled,
+  isPersistentLocalCacheEnabled,
+} from "./factory.ts";
 
 const ENV_KEYS = [
   "NODE_ENV",
@@ -63,6 +67,31 @@ describe("local dev disk cache gating", () => {
     setEnv("VF_CACHE_BACKEND", "memory");
 
     assertEquals(isLocalDevDiskCacheEnabled(), false);
+  });
+});
+
+describe("persistent local cache availability", () => {
+  it("reports a cache to initialize for a local dev server", () => {
+    useLocalDevEnvironment();
+
+    // The dev server gates the cache initializers on this. Without it the SSR
+    // module cache stays disabled and the loader skips reads and writes.
+    assertEquals(isPersistentLocalCacheEnabled(), true);
+  });
+
+  it("reports a cache to initialize when the disk backend is configured explicitly", () => {
+    useLocalDevEnvironment();
+    setEnv("NODE_ENV", "production");
+    setEnv("VF_CACHE_BACKEND", "disk");
+
+    assertEquals(isPersistentLocalCacheEnabled(), true);
+  });
+
+  it("reports nothing to initialize for a memory-only runtime", () => {
+    useLocalDevEnvironment();
+    setEnv("NODE_ENV", "production");
+
+    assertEquals(isPersistentLocalCacheEnabled(), false);
   });
 });
 

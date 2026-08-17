@@ -31,7 +31,7 @@ import {
   recordHandlerRequestPeer,
   runRequestInterceptor,
 } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
-import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
+import { isPersistentLocalCacheEnabled } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
 
@@ -180,15 +180,15 @@ export class DevServer {
 
     await this.logRSCStatus();
 
-    // Initialize disk cache in dev mode when explicitly configured
-    if (isDiskCacheConfigured()) {
+    // Initialize the on-disk cache so compiled modules survive a restart.
+    if (isPersistentLocalCacheEnabled()) {
       void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
         (error: unknown) => {
           // Warn (not debug): the cache was explicitly configured, so a failure likely
           // indicates a misconfiguration (wrong Redis host/password). Developers need
           // to see this — a debug log is too easy to miss.
           logger.warn(
-            "[DevServer] Configured cache initialization failed — falling back to in-memory cache. Check your Redis / distributed-cache configuration.",
+            "[DevServer] Cache initialization failed, falling back to the in-memory cache. Restarts will be cold. Ensure the project cache directory is writable, and check your distributed-cache configuration if you set one.",
             { error },
           );
         },

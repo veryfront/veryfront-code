@@ -24,6 +24,7 @@ export {
   isDiskCacheConfigured,
   isDistributedBackend,
   isLocalDevDiskCacheEnabled,
+  isPersistentLocalCacheEnabled,
   localDevCodeCacheBackend,
   MemoryCacheBackend,
   RedisCacheBackend,

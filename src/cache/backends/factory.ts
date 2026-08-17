@@ -63,6 +63,18 @@ export function isLocalDevDiskCacheEnabled(): boolean {
 }
 
 /**
+ * Whether this runtime has a cache that outlives the process.
+ *
+ * Servers use this to decide whether to run the distributed-cache
+ * initializers at startup. Without initialization the SSR module cache stays
+ * disabled and the loader skips both reads and writes, so a gate that only
+ * checks the explicit disk configuration leaves the local dev cache inert.
+ */
+export function isPersistentLocalCacheEnabled(): boolean {
+  return isDiskCacheConfigured() || isLocalDevDiskCacheEnabled();
+}
+
+/**
  * Backend preference for caches that hold compiled code.
  *
  * Returns `undefined` outside local dev so the normal API, Redis, disk, memory

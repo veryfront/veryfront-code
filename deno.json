@@ -230,6 +230,7 @@
     "veryfront/utils/import-lockfile": "./src/utils/import-lockfile.ts",
     "veryfront/utils/env-loader": "./src/utils/env-loader.ts",
     "veryfront/utils/logger": "./src/utils/logger/index.ts",
+    "veryfront/utils/cache-dir": "./src/utils/cache-dir.ts",
     "veryfront/utils/package-client": "./src/utils/package-client.ts",
     "veryfront/proxy/main": "./src/proxy/main.ts",
     "veryfront/proxy/handler": "./src/proxy/handler.ts",

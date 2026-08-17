@@ -5,7 +5,8 @@
 import { compileAllMDX, watchMDX } from "veryfront/build";
 import { CONFIG_NOT_FOUND, PORT_IN_USE } from "veryfront/errors";
 import { join } from "veryfront/platform/path";
-import { getEnv, runtime } from "veryfront/platform";
+import { getEnv, runtime, setEnv } from "veryfront/platform";
+import { getProjectCacheDir } from "veryfront/utils/cache-dir";
 import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
@@ -133,6 +134,28 @@ export async function startDevServerOnFreePort<T>(
 }
 
 /**
+ * Anchors the framework cache root to the project the dev server serves.
+ *
+ * The root otherwise resolves from the current working directory, so
+ * `veryfront dev --project <path>` run from anywhere else writes compiled
+ * modules outside the project it serves, and `veryfront clean --cache` in that
+ * project does not remove them. An explicitly configured cache directory
+ * always wins.
+ *
+ * Returns whether the anchor was applied. Takes `read` and `write` as
+ * parameters so the decision can be tested without booting a dev server.
+ */
+export function anchorCacheDirToProject(
+  projectDir: string,
+  read: (key: string) => string | undefined = getEnv,
+  write: (key: string, value: string) => void = setEnv,
+): boolean {
+  if (read("VERYFRONT_CACHE_DIR") || read("VF_CACHE_DIR")) return false;
+  write("VERYFRONT_CACHE_DIR", getProjectCacheDir(projectDir));
+  return true;
+}
+
+/**
  * Clears the shared on-disk ESM caches, but only if they are safe to remove.
  *
  * The caches live under the project's `.cache` directory, which every dev
@@ -208,6 +231,8 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         ? port
         : (config?.dev?.port ?? port);
       const enableHMR = config?.dev?.hmr !== false && hmr;
+
+      anchorCacheDirToProject(projectDir);
 
       if (clearLocalCaches) await clearLocalCachesIfPortFree(finalPort);
 

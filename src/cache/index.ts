@@ -34,7 +34,7 @@ export {
 export { initializeDistributedCaches } from "./distributed-cache-init.ts";
 
 // Local dev persistence
-export { isLocalDevDiskCacheEnabled } from "./backends/factory.ts";
+export { isLocalDevDiskCacheEnabled, isPersistentLocalCacheEnabled } from "./backends/factory.ts";
 
 // Cache store registry
 export { registerLRUCache } from "./registry.ts";

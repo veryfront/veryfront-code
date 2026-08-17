@@ -82,6 +82,17 @@ export function getCacheDirFromContext(): string | undefined {
   return cacheStorage.getStore();
 }
 
+/**
+ * The framework cache root for a project directory.
+ *
+ * Outside production every generated bundle, compiled module, and cache entry
+ * lives here, so `veryfront dev` and `veryfront clean --cache` must agree on
+ * one location for a given project.
+ */
+export function getProjectCacheDir(projectDir: string): string {
+  return join(projectDir, ".cache");
+}
+
 function getDefaultCacheBaseDir(): string {
   const home = getHostEnv("HOME");
   const isProduction = getHostEnv("NODE_ENV") === "production" ||
@@ -91,7 +102,7 @@ function getDefaultCacheBaseDir(): string {
     return join(home, ".cache", "veryfront");
   }
 
-  return join(cwd(), ".cache");
+  return getProjectCacheDir(cwd());
 }
 
 export function getCacheBaseDir(): string {

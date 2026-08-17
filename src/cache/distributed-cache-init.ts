@@ -2,11 +2,7 @@ import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
-import {
-  isApiCacheAvailable,
-  isDiskCacheConfigured,
-  isLocalDevDiskCacheEnabled,
-} from "./backend.ts";
+import { isApiCacheAvailable, isPersistentLocalCacheEnabled } from "./backend.ts";
 
 const logger = baseLogger.component("distributed-cache");
 
@@ -42,7 +38,7 @@ function determineBackend(): DistributedCacheStatus["backend"] {
   // A local dev server persists compiled code on disk, so its initializers must
   // run even though nothing distributed is configured. Caches that did not opt
   // into disk persistence still resolve the memory backend and report disabled.
-  if (isDiskCacheConfigured() || isLocalDevDiskCacheEnabled()) return "disk";
+  if (isPersistentLocalCacheEnabled()) return "disk";
   return "memory";
 }
 
