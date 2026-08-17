@@ -2447,8 +2447,14 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   const initializers = new Map<string, Node>();
   const rebound = new Set<string>(hoisted);
   for (const statement of body) {
-    if (statement.type !== "VariableDeclaration") continue;
-    for (const declarator of Array.isArray(statement.declarations) ? statement.declarations : []) {
+    const declaration = statement.type === "ExportNamedDeclaration" &&
+        isNode(statement.declaration)
+      ? statement.declaration
+      : statement;
+    if (declaration.type !== "VariableDeclaration") continue;
+    for (
+      const declarator of Array.isArray(declaration.declarations) ? declaration.declarations : []
+    ) {
       if (!isNode(declarator) || !isNode(declarator.init)) continue;
       const name = nodeName(declarator.id);
       if (!name) continue;

@@ -2223,6 +2223,31 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "setName");
     });
 
+    it("keeps a helper call made before an exported var redeclaration", async () => {
+      const code = [
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `export var setName = recordAndReturn;`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "export var setName = recordAndReturn");
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     it("fails the build when an intrinsic alias redeclares a function declaration", async () => {
       const code = [
         `function defineName(target, key, descriptor) {`,
@@ -3795,6 +3820,34 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes(result, "SECRET_KEY");
     });
+
+    for (
+      const [label, invocation] of [
+        [
+          "satisfies expression",
+          `(function () { globalThis.registered = KEY; return true; } satisfies () => boolean)()`,
+        ],
+        [
+          "type assertion",
+          `(<() => boolean> function () { globalThis.registered = KEY; return true; })()`,
+        ],
+      ] as const
+    ) {
+      it(`keeps a module-evaluation read from an IIFE wrapped in a ${label}`, async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `const ran = ${invocation};`,
+          `export async function getServerData() { return { props: { k: KEY } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "pages/iife.ts");
+
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        assertStringIncludes(result, "globalThis.registered = KEY");
+      });
+    }
 
     for (
       const [method, args] of [
