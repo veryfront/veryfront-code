@@ -473,11 +473,8 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     for (const name of patternBoundNames(value)) scope.names.add(name);
   };
 
-  const bindDirectDeclarations = (scope: LexicalScope, node: Node): void => {
-    const body = node.body;
-    if (!Array.isArray(body)) return;
-
-    for (const statement of body) {
+  const bindDirectStatements = (scope: LexicalScope, statements: unknown[]): void => {
+    for (const statement of statements) {
       if (!isNode(statement)) continue;
       if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
         bindPatternNames(scope, statement.id);
@@ -490,6 +487,11 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
         if (isNode(declarator)) bindPatternNames(scope, declarator.id);
       }
     }
+  };
+
+  const bindDirectDeclarations = (scope: LexicalScope, node: Node): void => {
+    const body = node.body;
+    if (Array.isArray(body)) bindDirectStatements(scope, body);
   };
 
   const bindNestedVarDeclarations = (scope: LexicalScope, node: Node): void => {
@@ -642,8 +644,14 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     const scoped = [switchScope, ...scopes];
 
     for (const caseNode of Array.isArray(node.cases) ? node.cases : []) {
+      if (isNode(caseNode) && Array.isArray(caseNode.consequent)) {
+        bindDirectStatements(switchScope, caseNode.consequent);
+      }
+    }
+
+    for (const caseNode of Array.isArray(node.cases) ? node.cases : []) {
       if (!isNode(caseNode)) continue;
-      if (isNode(caseNode.test)) visit(caseNode.test, scopes);
+      if (isNode(caseNode.test)) visit(caseNode.test, scoped);
       for (const statement of Array.isArray(caseNode.consequent) ? caseNode.consequent : []) {
         if (isNode(statement)) visit(statement, scoped);
       }
