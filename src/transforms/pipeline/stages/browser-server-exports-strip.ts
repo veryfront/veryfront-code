@@ -1887,12 +1887,20 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       // narrow: an arbitrary receiver's method says nothing about whether a
       // callback argument or another function body executes.
       if (
-        callee.type === "MemberExpression" && callee.computed !== true &&
-        isNode(callee.object) && isNode(callee.property) &&
-        (nodeName(callee.property) === "call" || nodeName(callee.property) === "apply")
+        callee.type === "MemberExpression" && isNode(callee.object) &&
+        isNode(callee.property)
       ) {
+        const method = callee.computed === true && callee.property.type === "StringLiteral" &&
+            typeof callee.property.value === "string"
+          ? callee.property.value
+          : callee.computed !== true
+          ? nodeName(callee.property)
+          : null;
         const target = unwrap(callee.object);
-        if (target.type === "FunctionExpression" || target.type === "ArrowFunctionExpression") {
+        if (
+          (method === "call" || method === "apply") &&
+          (target.type === "FunctionExpression" || target.type === "ArrowFunctionExpression")
+        ) {
           return target;
         }
       }
@@ -2014,29 +2022,32 @@ function serverTaintedSites(
 }
 
 /**
- * The local names a surviving `export { … }` clause publishes.
+ * The local names a surviving separate export declaration publishes.
  *
- * A clause entry is a real browser consumer of the binding it names — whatever
- * imports the module reads it — but `freeReferencedIdentifiers` cannot see that:
- * `visit(ExportSpecifier)` resolves `local` against the synthetic root scope,
- * which binds every declaration the module still has, so the read is bound and
- * never free.
+ * A separate export is a real browser consumer of the binding it names —
+ * whatever imports the module reads it — but `freeReferencedIdentifiers`
+ * cannot see that. An `ExportSpecifier` resolves `local` against the synthetic
+ * root scope, while `export default Page` also names an already-bound local.
  *
- * `BindingSite.exported` only compensates for that when the `export` keyword
- * wraps the declaration itself. In the compiled input this stage actually runs
- * on it never does: esbuild hoists every named export into one trailing clause
- * and leaves the declarations as plain `const`/`function` statements, so no site
- * is `exported` and nothing roots them. That is what made a surviving
+ * `BindingSite.exported` only compensates when the `export` keyword wraps the
+ * declaration itself. Esbuild hoists every named export into one trailing
+ * clause and leaves the declarations as plain `const`/`function` statements,
+ * so no site is `exported` and nothing roots them. That is what made a surviving
  * `export const client = makeClient({ get: () => API_KEY })` look dead beside an
  * emptied hook, and fail the build over a secret the browser can plainly reach.
  *
  * A re-export (`export { x } from "./m"`) binds nothing here, so its specifiers
  * name no module binding and are skipped.
  */
-function exportClauseLocalNames(body: Node[]): Set<string> {
+function separateExportLocalNames(body: Node[]): Set<string> {
   const names = new Set<string>();
 
   for (const statement of body) {
+    if (statement.type === "ExportDefaultDeclaration") {
+      const local = nodeName(statement.declaration);
+      if (local) names.add(local);
+      continue;
+    }
     if (statement.type !== "ExportNamedDeclaration") continue;
     if (statement.exportKind === "type") continue;
     if (isNode(statement.source)) continue;
@@ -2127,9 +2138,9 @@ function dropUnreachableModuleScopeBindings(
   for (const site of sites) {
     if (site.exported) { for (const name of site.names) roots.add(name); }
   }
-  // The same contract written the other way round, which is the only way the
-  // compiled input writes it.
-  for (const name of exportClauseLocalNames(body)) roots.add(name);
+  // The same contract written through a separate export declaration, including
+  // the trailing clause emitted by esbuild and raw `export default Page`.
+  for (const name of separateExportLocalNames(body)) roots.add(name);
 
   // Every site carries edges, so an elided declaration the roots do reach still
   // keeps what it reads: `const shared = KEY.trim()` read by the client roots
