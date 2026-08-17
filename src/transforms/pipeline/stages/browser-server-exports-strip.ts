@@ -874,13 +874,15 @@ const NO_BOUND_NAMES: ReadonlySet<string> = new Set<string>();
  *
  * `initiallyBound` supplies the lexical context around a subtree analyzed on
  * its own. Nested hoisted `var` sites use it to preserve their enclosing block,
- * catch and loop scopes.
+ * catch and loop scopes. `onFreeIdentifier` exposes the concrete unbound node
+ * when callers must distinguish a real global from a lexically shadowed name.
  */
 function freeReferencedIdentifiers(
   root: Node,
   elided: ReadonlySet<Node> = NOTHING_ELIDED,
   deferred: ReadonlySet<Node> = NOTHING_ELIDED,
   initiallyBound: ReadonlySet<string> = NO_BOUND_NAMES,
+  onFreeIdentifier?: (node: Node) => void,
 ): Set<string> {
   const free = new Set<string>();
   const rootScope: LexicalScope = { kind: "var", names: new Set(initiallyBound) };
@@ -893,8 +895,15 @@ function freeReferencedIdentifiers(
     for (const name of patternBoundNames(value)) scope.names.add(name);
   };
 
-  const addFreeName = (name: string | null, scopes: LexicalScope[]): void => {
-    if (name && !isLexicallyBound(name, scopes)) free.add(name);
+  const addFreeName = (
+    name: string | null,
+    scopes: LexicalScope[],
+    identifier?: Node,
+  ): void => {
+    if (name && !isLexicallyBound(name, scopes)) {
+      free.add(name);
+      if (identifier?.type === "Identifier") onFreeIdentifier?.(identifier);
+    }
   };
 
   const isIntrinsicJsxTagName = (name: string): boolean => {
@@ -1249,7 +1258,7 @@ function freeReferencedIdentifiers(
     if (visitTsExpression(node, scopes)) return;
 
     if (node.type === "Identifier") {
-      addFreeName(nodeName(node), scopes);
+      addFreeName(nodeName(node), scopes, node);
       return;
     }
 
@@ -1584,6 +1593,41 @@ function stringLiteralText(node: Node | undefined): string | null {
   return node && typeof node.value === "string" ? node.value : null;
 }
 
+/** Identifier nodes that resolve past every module and nested lexical binding. */
+function unshadowedGlobalIdentifierNodes(body: Node[]): Set<Node> {
+  const moduleBindings = moduleScopeBindingNames(body);
+  for (const name of hoistedVarNames(body)) moduleBindings.add(name);
+  for (const statement of body) {
+    if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+    for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
+      if (!isNode(specifier) || specifier.importKind === "type") continue;
+      const name = nodeName(specifier.local);
+      if (name) moduleBindings.add(name);
+    }
+  }
+
+  const globals = new Set<Node>();
+  freeReferencedIdentifiers(
+    { type: "Program", body },
+    NOTHING_ELIDED,
+    NOTHING_ELIDED,
+    NO_BOUND_NAMES,
+    (identifier) => {
+      const name = nodeName(identifier);
+      if (name && !moduleBindings.has(name)) globals.add(identifier);
+    },
+  );
+  return globals;
+}
+
+function isUnshadowedGlobalIdentifier(
+  node: Node | undefined,
+  name: string,
+  globals: ReadonlySet<Node>,
+): boolean {
+  return node?.type === "Identifier" && nodeName(node) === name && globals.has(node);
+}
+
 function isObjectDefineProperty(node: Node | undefined): boolean {
   if (!node || node.type !== "MemberExpression") return false;
   const property = isNode(node.property) ? node.property : undefined;
@@ -1602,26 +1646,27 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
  * `registry.defineProperty` write cannot replace the intrinsic and must not
  * stop compiler metadata from being removed with a hook-only binding.
  */
-function isGlobalObjectSlot(node: Node | undefined): boolean {
+function isGlobalObjectSlot(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
   if (node?.type !== "MemberExpression" && node?.type !== "OptionalMemberExpression") {
     return false;
   }
 
-  if (nodeName(node.object) !== "globalThis") return false;
+  const object = isNode(node.object) ? node.object : undefined;
+  if (!isUnshadowedGlobalIdentifier(object, "globalThis", globals)) return false;
   const property = isNode(node.property) ? node.property : undefined;
   if (node.computed !== true) return nodeName(property) === "Object";
   const key = stringLiteralText(property);
   return key === null || key === "Object";
 }
 
-function writesDefinePropertyMember(target: Node): boolean {
+function writesDefinePropertyMember(target: Node, globals: ReadonlySet<Node>): boolean {
   if (target.type !== "MemberExpression" && target.type !== "OptionalMemberExpression") {
     return false;
   }
 
   const object = isNode(target.object) ? target.object : undefined;
-  const objectIsIntrinsic = nodeName(object) === "Object" ||
-    isGlobalObjectSlot(object);
+  const objectIsIntrinsic = isUnshadowedGlobalIdentifier(object, "Object", globals) ||
+    isGlobalObjectSlot(object, globals);
   if (!objectIsIntrinsic) return false;
 
   const property = isNode(target.property) ? target.property : undefined;
@@ -1631,9 +1676,29 @@ function writesDefinePropertyMember(target: Node): boolean {
   return key === null || key === "defineProperty";
 }
 
-function writesObjectDefineProperty(body: Node[]): boolean {
+function isIntrinsicDefinePropertyCall(
+  node: Node | undefined,
+  globals: ReadonlySet<Node>,
+): boolean {
+  if (node?.type !== "MemberExpression" && node?.type !== "OptionalMemberExpression") {
+    return false;
+  }
+
+  const property = isNode(node.property) ? node.property : undefined;
+  const propertyName = node.computed === true ? stringLiteralText(property) : nodeName(property);
+  if (propertyName !== "defineProperty") return false;
+
+  const object = isNode(node.object) ? node.object : undefined;
+  return isUnshadowedGlobalIdentifier(object, "Object", globals) ||
+    isUnshadowedGlobalIdentifier(object, "Reflect", globals) ||
+    isGlobalObjectSlot(object, globals);
+}
+
+function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): boolean {
   const targetWritesDefineProperty = (target: Node): boolean => {
-    if (isGlobalObjectSlot(target) || writesDefinePropertyMember(target)) return true;
+    if (
+      isGlobalObjectSlot(target, globals) || writesDefinePropertyMember(target, globals)
+    ) return true;
     if (target.type === "AssignmentPattern") {
       return isNode(target.left) && targetWritesDefineProperty(target.left);
     }
@@ -1661,10 +1726,18 @@ function writesObjectDefineProperty(body: Node[]): boolean {
       if (writes) return false;
 
       if (
-        node.type === "CallExpression" && isNode(node.callee) && isObjectDefineProperty(node.callee)
+        node.type === "CallExpression" && isNode(node.callee) &&
+        isIntrinsicDefinePropertyCall(node.callee, globals)
       ) {
         const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
-        if (nodeName(args[0]) === "Object" && stringLiteralText(args[1]) === "defineProperty") {
+        const key = stringLiteralText(args[1]);
+        const targetIsObject = isUnshadowedGlobalIdentifier(args[0], "Object", globals) ||
+          isGlobalObjectSlot(args[0], globals);
+        const targetIsGlobal = isUnshadowedGlobalIdentifier(args[0], "globalThis", globals);
+        if (
+          (targetIsObject && key === "defineProperty") ||
+          (targetIsGlobal && key === "Object")
+        ) {
           writes = true;
           return false;
         }
@@ -1712,26 +1785,25 @@ function isNamePosition(parent: Node, key: string): boolean {
     key === "label" || key === "params";
 }
 
-/** Globals the helper's semantics rest on, either of which can replace it. */
-const INTRINSIC_NAMES = new Set(["Object", "globalThis"]);
-
 /**
- * Whether the module reads `Object` or `globalThis` as a value instead of only
- * reaching through one with a member access.
+ * Whether the module reads an unshadowed intrinsic as a value instead of only
+ * reaching through it with a member access.
  *
  * `writesObjectDefineProperty` only sees assignment-shaped writes, so a module
  * that hands either global to a callee replaces the helper's callee without
  * ever naming a target it can recognise:
  * `Object.defineProperty(Object, "defineProperty", { value: recordAndReturn })`
- * redefines the method through a call, `const alias = Object;
- * alias.defineProperty = recordAndReturn` redefines it through a second
- * binding, and `Object.defineProperty(globalThis, "Object", { value:
- * replacement })` and `const scope = globalThis; scope.Object = replacement`
- * replace the whole constructor the same two ways. Anything holding either
- * global can rewrite what the helper calls, so every value read fails closed
- * and the module's apparent registrations stay ordinary user code.
+ * redefines it through a call, and `const alias = Object; alias.defineProperty
+ * = recordAndReturn` redefines it through a second binding. Anything holding
+ * `Object`, or anyone handed `globalThis`, can rewrite `defineProperty`, so
+ * every genuine global value read fails closed and the module's apparent
+ * registrations stay ordinary user code. Lexically shadowed names do not.
  */
-function readsGlobalAsValue(body: Node[]): boolean {
+function readsIntrinsicAsValue(
+  body: Node[],
+  name: "Object" | "globalThis",
+  globals: ReadonlySet<Node>,
+): boolean {
   const reads = (node: Node): boolean => {
     if (node.type.startsWith("TS") && !TS_EXPRESSION_TYPES.has(node.type)) return false;
 
@@ -1740,7 +1812,9 @@ function readsGlobalAsValue(body: Node[]): boolean {
 
       for (const entry of Array.isArray(value) ? value : [value]) {
         if (!isNode(entry)) continue;
-        if (entry.type === "Identifier" && INTRINSIC_NAMES.has(entry.name as string)) {
+        if (
+          entry.type === "Identifier" && entry.name === name && globals.has(entry)
+        ) {
           if (!isNamePosition(node, key)) return true;
           continue;
         }
@@ -1826,9 +1900,12 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   );
   const reassigned = assignedNames(body);
   const hoisted = hoistedVarNames(body);
+  const globals = unshadowedGlobalIdentifierNodes(body);
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
     hoisted.has("Object") || importsRuntimeObject || reassigned.has("Object") ||
-    writesObjectDefineProperty(body) || readsGlobalAsValue(body);
+    writesObjectDefineProperty(body, globals) ||
+    readsIntrinsicAsValue(body, "Object", globals) ||
+    readsIntrinsicAsValue(body, "globalThis", globals);
   if (objectIsModuleLocal) return new Set<string>();
 
   // A `var` may be declared more than once, and only the initialiser that ran

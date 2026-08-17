@@ -1491,14 +1491,16 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
-    it("does not treat a defined global Object binding as compiler metadata", async () => {
+    it("does not treat a defineProperty replacement of globalThis.Object as compiler metadata", async () => {
       const code = [
         `function recordAndReturn(target) {`,
         `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
         `  return target;`,
         `}`,
-        `const replacement = { defineProperty: recordAndReturn };`,
-        `Object.defineProperty(globalThis, "Object", { value: replacement });`,
+        `Object.defineProperty(globalThis, "Object", {`,
+        `  value: { defineProperty: recordAndReturn },`,
+        `  configurable: true,`,
+        `});`,
         `var setName = (target, value) => Object.defineProperty(`,
         `  target, "name", { value, configurable: true },`,
         `);`,
@@ -1513,6 +1515,34 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(code);
 
       assertStringIncludes(result, `Object.defineProperty(globalThis, "Object"`);
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
+    it("does not treat a Reflect replacement of globalThis.Object as compiler metadata", async () => {
+      const code = [
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `Reflect.defineProperty(globalThis, "Object", {`,
+        `  value: { defineProperty: recordAndReturn },`,
+        `  configurable: true,`,
+        `});`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `Reflect.defineProperty(globalThis, "Object"`);
       assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
@@ -1541,29 +1571,6 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "scope.Object = ");
       assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
-    });
-
-    // The intrinsic guards match on name, exactly as `assignedNames` and
-    // `moduleScopeBindingNames` do. A shadowed `globalThis` therefore fails
-    // closed: the module keeps code it really runs, which is the direction
-    // this stage errs in whenever it cannot prove a module shape safe.
-    it("fails closed when globalThis is shadowed by a parameter", async () => {
-      const code = [
-        `function configure(globalThis) { globalThis.Object = {}; }`,
-        `var setName = (target, value) => Object.defineProperty(`,
-        `  target, "name", { value, configurable: true },`,
-        `);`,
-        `import { getEnv } from "veryfront";`,
-        `const KEY = getEnv("SECRET_KEY");`,
-        `function loadSecret() { return KEY; }`,
-        `setName(loadSecret, "loadSecret");`,
-        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
-        `export default function Page() { return null; }`,
-      ].join("\n");
-
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
     });
 
     it("does not treat a computed intrinsic write as compiler metadata", async () => {
@@ -1609,6 +1616,54 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(code);
 
       assertStringIncludes(result, "registry.defineProperty");
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("still strips compiler metadata after a shadowed globalThis write", async () => {
+      const code = [
+        `function configure(globalThis) {`,
+        `  globalThis.Object = { defineProperty: (target) => target };`,
+        `}`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "globalThis.Object = {");
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("still strips compiler metadata after a shadowed Object write", async () => {
+      const code = [
+        `function configure(Object) {`,
+        `  Object.defineProperty = (target) => target;`,
+        `}`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "Object.defineProperty =");
       assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
       assertEquals(occurrences(result, "KEY"), 0);
       assertEquals(occurrences(result, "getEnv"), 0);
