@@ -20,6 +20,7 @@ const DEFAULT_MAX_ENVELOPE_FUTURE_MS = 5_000;
 const INTEGRITY_SECRET_ENV_VAR = "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET";
 const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
+const reflectApply = Reflect.apply;
 
 type RedisListener = (message: string, channel: string) => void;
 type SignatureDomain = "event" | "ack";
@@ -31,10 +32,7 @@ export interface RoutingInvalidationRedisClient {
   unsubscribe(channel: string): Promise<number | void>;
   close(): Promise<void>;
   destroy(): void;
-  on?: {
-    (event: "error", listener: (error: unknown) => void): unknown;
-    (event: "ready", listener: () => void): unknown;
-  };
+  on?(event: "error", listener: (error: unknown) => void): unknown;
 }
 
 interface RoutingInvalidationLogger {
@@ -80,6 +78,18 @@ function positiveInteger(value: unknown, fallback: number): number {
 
 function encodedByteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
+}
+
+function observeRedisReady(
+  client: RoutingInvalidationRedisClient,
+  listener: () => void,
+): void {
+  if (!client.on) return;
+  try {
+    reflectApply(client.on, client, ["ready", listener]);
+  } catch {
+    // Injected clients only guarantee support for error listeners.
+  }
 }
 
 function parseSignedEnvelope(message: string): SignedRoutingInvalidationEnvelope | null {
@@ -407,7 +417,7 @@ export async function startProxyRoutingInvalidationBus(
     let hasBeenReady = false;
     let recoveryPending = false;
 
-    client.on?.("ready", () => {
+    observeRedisReady(client, () => {
       if (hasBeenReady && recoveryPending) {
         options.logger?.info(
           clientRole === "subscriber"

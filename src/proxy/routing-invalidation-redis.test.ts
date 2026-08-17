@@ -192,18 +192,33 @@ describe("proxy routing invalidation Redis bus", () => {
     redis.emitClientEvent(1, "ready");
     redis.emitClientEvent(1, "error", new SocketClosedUnexpectedlyError());
     redis.emitClientEvent(1, "ready");
+    redis.emitClientEvent(0, "ready");
+    redis.emitClientEvent(0, "error", new SocketClosedUnexpectedlyError());
+    redis.emitClientEvent(0, "ready");
     redis.emitClientEvent(0, "error", new Error("Redis authentication failed"));
 
-    assertEquals(warnings, [{
-      message: "Proxy routing invalidation Redis socket closed; reconnecting",
-      extra: { clientRole: "subscriber" },
-    }]);
+    assertEquals(warnings, [
+      {
+        message: "Proxy routing invalidation Redis socket closed; reconnecting",
+        extra: { clientRole: "subscriber" },
+      },
+      {
+        message: "Proxy routing invalidation Redis socket closed; reconnecting",
+        extra: { clientRole: "publisher" },
+      },
+    ]);
     assertEquals(
       info.filter((entry) => entry.message.includes("reconnected")),
-      [{
-        message: "Proxy routing invalidation Redis subscriber reconnected and resubscribed",
-        extra: { clientRole: "subscriber" },
-      }],
+      [
+        {
+          message: "Proxy routing invalidation Redis subscriber reconnected and resubscribed",
+          extra: { clientRole: "subscriber" },
+        },
+        {
+          message: "Proxy routing invalidation Redis publisher reconnected",
+          extra: { clientRole: "publisher" },
+        },
+      ],
     );
     assertEquals(errors.map(({ message, error }) => ({ message, error: error?.message })), [{
       message: "Proxy routing invalidation Redis error",
