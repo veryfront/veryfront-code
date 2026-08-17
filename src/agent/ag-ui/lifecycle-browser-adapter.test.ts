@@ -165,6 +165,69 @@ describe("lifecycle AG-UI browser adapter", () => {
     }
   });
 
+  it("emits only the final provider result after ready and preliminary output", () => {
+    const adapter = createLifecycleAgUiBrowserAdapter({ messageId: "message-provider" });
+    const events = frames([
+      {
+        event: {
+          type: "tool_input_start",
+          toolCallId: "provider-1",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "tool_input_ready",
+          toolCallId: "provider-1",
+          toolName: "web_fetch",
+          input: { url: "https://docs.example/page" },
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "provider_tool_start",
+          toolCallId: "provider-1",
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+      },
+      {
+        event: {
+          type: "provider_tool_result",
+          toolCallId: "provider-1",
+          toolName: "web_fetch",
+          output: { partial: true },
+          isError: false,
+          providerExecuted: true,
+          preliminary: true,
+        },
+      },
+      {
+        event: {
+          type: "provider_tool_result",
+          toolCallId: "provider-1",
+          toolName: "web_fetch",
+          output: { content: "final" },
+          isError: false,
+          providerExecuted: true,
+        },
+      },
+    ]).flatMap((frame) => adapter.encode(frame));
+
+    assertEquals(events.map((event) => event.event), [
+      "ToolCallStart",
+      "ToolCallArgs",
+      "ToolCallEnd",
+      "ToolCallResult",
+    ]);
+    assertEquals(events.at(-1)?.payload, {
+      toolCallId: "provider-1",
+      result: { content: "final" },
+    });
+  });
+
   it("keeps a tool-handoff attempt open and finishes only on run completion", () => {
     const adapter = createLifecycleAgUiBrowserAdapter({
       messageId: "message-1",

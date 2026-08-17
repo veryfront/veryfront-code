@@ -447,6 +447,35 @@ function readTraceAttributeString(
   return typeof value === "string" ? value : undefined;
 }
 
+function finalizeActiveUnresolvedProviderToolCalls(
+  state: ChatStreamState,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+): void {
+  const terminalToolCallIds = new Set(
+    state.toolResults
+      .filter((result) => result.preliminary !== true)
+      .map((result) => result.toolCallId),
+  );
+
+  for (const toolCall of state.toolCalls.values()) {
+    if (
+      toolCall.providerExecuted !== true || toolCall.inputAvailable !== true ||
+      terminalToolCallIds.has(toolCall.id)
+    ) {
+      continue;
+    }
+    sendSSE(controller, encoder, {
+      type: "tool-output-error",
+      toolCallId: toolCall.id,
+      errorText:
+        `Provider-executed tool "${toolCall.name}" returned no result before the model turn ended.`,
+      providerExecuted: true,
+      ...(toolCall.dynamic ? { dynamic: true } : {}),
+    });
+  }
+}
+
 async function processActiveStream(
   source: RuntimeStreamSource,
   state: ChatStreamState,
@@ -507,6 +536,7 @@ async function processActiveStream(
     state.streamOutcome = streamOutcome;
     if (deliveryError === undefined) {
       applyLifecycleSnapshotToChatStreamState(state, streamOutcome.snapshot);
+      finalizeActiveUnresolvedProviderToolCalls(state, controller, encoder);
     }
   }
   if (streamOutcome.status === "failed") {
@@ -676,10 +706,8 @@ export function processStreamInternal(
         return;
       }
 
-      // A preliminary result is recorded like any other, so it must not count as
-      // proof the provider answered. Reading it as terminal here would skip the
-      // synthesized event and strand the call, which is the failure this whole
-      // finalizer exists to close.
+      // Ignore any preliminary entries carried in from an older stream state.
+      // They are progress, not proof that the provider answered.
       const terminalToolCallIds = new Set(
         state.toolResults
           .filter((result) => result.preliminary !== true)
@@ -1230,6 +1258,14 @@ export function processStreamInternal(
               typedPart.toolName,
               typedPart.providerExecuted,
             );
+            if (
+              typedPart.preliminary !== true && providerExecuted === true &&
+              state.toolResults.some((result) =>
+                result.toolCallId === typedPart.toolCallId && result.preliminary !== true
+              )
+            ) {
+              break;
+            }
             // A preliminary result is not terminal: the provider is still
             // working. Releasing the call here would re-arm the local commit
             // grace and truncate the stream before the final result arrives,
@@ -1262,6 +1298,10 @@ export function processStreamInternal(
               preliminary: typedPart.preliminary,
               isError,
             });
+            // Preliminary provider output is progress, not a terminal tool
+            // result. Keep the call pending without exposing a success-shaped
+            // result to live clients, durable history, or continuation input.
+            if (typedPart.preliminary === true) break;
             if (isError) {
               state.toolResults.push({
                 toolCallId: typedPart.toolCallId,
@@ -1310,6 +1350,14 @@ export function processStreamInternal(
               typedPart.toolName,
               typedPart.providerExecuted,
             );
+            if (
+              providerExecuted === true &&
+              state.toolResults.some((result) =>
+                result.toolCallId === typedPart.toolCallId && result.preliminary !== true
+              )
+            ) {
+              break;
+            }
             pendingProviderExecutedToolCallIds.delete(typedPart.toolCallId);
             ensureToolLifecycle({
               toolCallId: typedPart.toolCallId,

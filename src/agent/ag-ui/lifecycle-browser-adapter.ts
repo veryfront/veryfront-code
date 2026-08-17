@@ -252,12 +252,6 @@ export function createLifecycleAgUiBrowserAdapter(input: {
           event: "ToolCallEnd",
           payload: { toolCallId: event.toolCallId },
         });
-        if (event.providerExecuted === true) {
-          events.push({
-            event: "ToolCallResult",
-            payload: { toolCallId: event.toolCallId, result: null },
-          });
-        }
         return events;
       }
       case "tool_input_rejected":
@@ -280,6 +274,7 @@ export function createLifecycleAgUiBrowserAdapter(input: {
       case "provider_tool_start":
         return [];
       case "provider_tool_result":
+        if (event.preliminary === true) return [];
         state.sawVisibleOutput = true;
         return [{
           event: "ToolCallResult",

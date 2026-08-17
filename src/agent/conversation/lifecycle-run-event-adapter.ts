@@ -283,6 +283,7 @@ export function createLifecycleRunEventAdapter(input: {
       case "provider_tool_start":
         return;
       case "provider_tool_result": {
+        if (event.preliminary === true) return;
         const storedInput = toolInputs.get(event.toolCallId);
         emit({
           type: conversationRunEventTypes.toolCallResult,

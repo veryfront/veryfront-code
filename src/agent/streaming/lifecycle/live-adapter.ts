@@ -147,6 +147,7 @@ export function createStreamLifecycleLiveAdapter(
         case "provider_tool_start":
           return [];
         case "provider_tool_result":
+          if (event.preliminary === true) return [];
           return event.isError
             ? [{
               type: "tool-output-error",

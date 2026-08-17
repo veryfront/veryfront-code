@@ -323,7 +323,7 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
   });
 
-  it("marks provider-executed tools complete when the provider owns execution", () => {
+  it("keeps provider-executed tools open until the provider returns a result", () => {
     const state = createAgUiBrowserEncoderState({ nowMs: null, epochMs: null });
 
     assertEquals(
@@ -336,6 +336,17 @@ describe("agent/ag-ui-browser-encoder", () => {
         event: "ToolCallStart",
         payload: { toolCallId: "tool-provider", toolCallName: "web_search" },
       }],
+    );
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-provider",
+        output: { partial: true },
+        providerExecuted: true,
+        preliminary: true,
+      }),
+      [],
     );
 
     assertEquals(
@@ -358,11 +369,23 @@ describe("agent/ag-ui-browser-encoder", () => {
           event: "ToolCallEnd",
           payload: { toolCallId: "tool-provider" },
         },
-        {
-          event: "ToolCallResult",
-          payload: { toolCallId: "tool-provider", result: null },
-        },
       ],
+    );
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "tool-output-available",
+        toolCallId: "tool-provider",
+        output: { type: "web_search_result", answer: "resident" },
+        providerExecuted: true,
+      }),
+      [{
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: "tool-provider",
+          result: { type: "web_search_result", answer: "resident" },
+        },
+      }],
     );
   });
 

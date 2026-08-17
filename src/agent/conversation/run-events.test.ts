@@ -252,6 +252,64 @@ describe("agent/conversation-run-events", () => {
     ]);
   });
 
+  it("persists one real terminal result for each parallel provider fetch", () => {
+    const encoder = new ConversationRunEventEncoder();
+    const calls = [
+      ["fetch-skill", "https://docs.example/create-skill.md"],
+      ["fetch-agent", "https://docs.example/create-agent.md"],
+      ["fetch-schedule", "https://docs.example/schedule-agent.md"],
+    ] as const;
+    const durable = calls.flatMap(([toolCallId, url]) =>
+      [
+        { type: "tool-input-start", toolCallId, toolName: "web_fetch", providerExecuted: true },
+        {
+          type: "tool-input-available",
+          toolCallId,
+          toolName: "web_fetch",
+          input: { url },
+          providerExecuted: true,
+        },
+      ].flatMap((event) => encoder.encode(event as never))
+    );
+
+    durable.push(...encoder.encode({
+      type: "tool-output-available",
+      toolCallId: calls[0][0],
+      output: { type: "web_fetch_result", url: calls[0][1], partial: true },
+      providerExecuted: true,
+      preliminary: true,
+    }));
+    for (const [toolCallId, url] of [...calls].reverse()) {
+      durable.push(...encoder.encode({
+        type: "tool-output-available",
+        toolCallId,
+        output: { type: "web_fetch_result", url, content: `content:${toolCallId}` },
+        providerExecuted: true,
+      }));
+    }
+
+    const starts = durable.filter((event) =>
+      event.type === conversationRunEventTypes.toolCallStart
+    );
+    const results = durable.filter((event) =>
+      event.type === conversationRunEventTypes.toolCallResult
+    );
+    assertEquals(starts.length, 3);
+    assertEquals(results.length, 3);
+    for (const [toolCallId, url] of calls) {
+      const matching = results.filter((event) => event.toolCallId === toolCallId);
+      assertEquals(matching.length, 1);
+      assertEquals(
+        matching[0]?.content,
+        JSON.stringify({
+          type: "web_fetch_result",
+          url,
+          content: `content:${toolCallId}`,
+        }),
+      );
+    }
+  });
+
   it("encodes and normalizes whole event lists", () => {
     const events = [
       { type: "text-start", id: "msg-1" },
