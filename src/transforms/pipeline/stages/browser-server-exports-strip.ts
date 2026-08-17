@@ -1616,14 +1616,29 @@ function isTrueExpression(node: Node | undefined): boolean {
 function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
   if (!node || node.type !== "ObjectExpression") return false;
 
+  const properties = Array.isArray(node.properties) ? node.properties : [];
+  if (properties.length !== 2) return false;
+
   let hasValue = false;
   let configurable = false;
-  for (const property of Array.isArray(node.properties) ? node.properties : []) {
-    if (!isNode(property) || property.type !== "ObjectProperty") continue;
+  for (const property of properties) {
+    if (
+      !isNode(property) || property.type !== "ObjectProperty" || property.computed === true ||
+      property.method === true
+    ) {
+      return false;
+    }
     const key = literalText(isNode(property.key) ? property.key : undefined);
     const value = isNode(property.value) ? property.value : undefined;
-    if (key === "value" && nodeName(value) === valueParam) hasValue = true;
-    if (key === "configurable" && isTrueExpression(value)) configurable = true;
+    if (key === "value" && !hasValue && nodeName(value) === valueParam) {
+      hasValue = true;
+      continue;
+    }
+    if (key === "configurable" && !configurable && isTrueExpression(value)) {
+      configurable = true;
+      continue;
+    }
+    return false;
   }
 
   return hasValue && configurable;
@@ -1660,13 +1675,16 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     }
   }
 
+  const reassigned = assignedNames(body);
+
   const definePropertyBindings = new Set<string>();
   for (const [name, init] of initializers) {
-    if (isObjectDefineProperty(init)) definePropertyBindings.add(name);
+    if (!reassigned.has(name) && isObjectDefineProperty(init)) definePropertyBindings.add(name);
   }
 
   const helpers = new Set<string>();
   for (const [name, init] of initializers) {
+    if (reassigned.has(name)) continue;
     if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
     const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
     if (params.length !== 2) continue;
