@@ -1,5 +1,5 @@
 import * as BundledReact from "react";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger, throwIfAborted } from "#veryfront/utils";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
@@ -95,7 +95,7 @@ export async function loadReservedWithPath(
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
-  signal?.throwIfAborted();
+  throwIfAborted(signal);
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
   const { loadComponentFromSource } = await import(
@@ -123,7 +123,7 @@ export async function loadReservedWithPath(
           return { component: Cmp as ReservedComponent, filePath: file };
         }
       } catch (_) {
-        signal?.throwIfAborted();
+        throwIfAborted(signal);
         /* expected: component not found in this path, continue to next */
       }
     }

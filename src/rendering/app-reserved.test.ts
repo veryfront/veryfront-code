@@ -48,6 +48,38 @@ describe("rendering/app-reserved", () => {
     assertEquals(reads, 0);
   });
 
+  it("normalizes a host signal that has no abort reason", async () => {
+    const signal = {
+      aborted: true,
+      reason: undefined,
+      throwIfAborted: () => {
+        throw undefined;
+      },
+    } as unknown as AbortSignal;
+
+    await assertRejects(
+      () =>
+        loadReservedWithPath(
+          [],
+          "loading",
+          "/project",
+          "development",
+          {} as RuntimeAdapter,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          signal,
+        ),
+      Error,
+      "operation was aborted",
+    );
+  });
+
   describe("RESERVED_COMPONENTS", () => {
     it("should define loading, error, and notFound components", () => {
       assertEquals(RESERVED_COMPONENTS.loading, "loading.tsx");
