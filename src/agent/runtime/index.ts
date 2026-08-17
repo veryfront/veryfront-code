@@ -2550,7 +2550,15 @@ export class AgentRuntime {
         preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch ||
           !shouldContinue,
       });
-      attachProviderMetadata(assistantMessage, state.providerMetadata);
+      attachProviderMetadata(
+        assistantMessage,
+        reconcileSuppressedProviderMetadata(
+          languageModel,
+          state.providerMetadata,
+          state.suppressedToolCalls,
+          state.toolCalls.size > 0,
+        ),
+      );
 
       for (const tc of state.toolCalls.values()) {
         const materialized = materializeStreamedToolCall(tc);
@@ -3200,4 +3208,48 @@ export class AgentRuntime {
   async clearMemory(): Promise<void> {
     await this.memory.clear();
   }
+}
+
+type ProviderMetadataReconciler = (input: {
+  providerMetadata: Record<string, unknown>;
+  suppressedToolCalls: readonly { id: string; name: string }[];
+}) => Record<string, unknown> | undefined;
+
+function reconcileSuppressedProviderMetadata(
+  modelRuntime: ModelRuntime,
+  providerMetadata: Record<string, unknown> | undefined,
+  suppressedToolCalls: readonly { id: string; name: string }[],
+  hasSurvivingToolCalls: boolean,
+): Record<string, unknown> | undefined {
+  if (providerMetadata === undefined || suppressedToolCalls.length === 0) {
+    return providerMetadata;
+  }
+
+  const reconcile = modelRuntime._reconcileProviderMetadata;
+  if (typeof reconcile !== "function") {
+    return undefined;
+  }
+
+  const reconciled = (reconcile as ProviderMetadataReconciler).call(modelRuntime, {
+    providerMetadata,
+    suppressedToolCalls,
+  });
+  if (reconciled === undefined) {
+    if (!hasSurvivingToolCalls) {
+      return undefined;
+    }
+    throw new TypeError(
+      "Model runtime did not preserve provider metadata for surviving tool calls",
+    );
+  }
+  if (
+    reconciled === null ||
+    typeof reconciled !== "object" ||
+    Array.isArray(reconciled)
+  ) {
+    throw new TypeError(
+      "Model runtime returned invalid provider metadata after suppressing a tool call",
+    );
+  }
+  return reconciled;
 }

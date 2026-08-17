@@ -13,6 +13,7 @@ import type {
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
+import { attachProviderMetadata } from "./provider-metadata.ts";
 
 describe("text-generation-runtime-message-converter", () => {
   describe("convertToTextGenerationRuntimeMessage", () => {
@@ -438,6 +439,33 @@ describe("text-generation-runtime-message-converter", () => {
         { role: "user", content: "list my repos" },
         { role: "user", content: "try again" },
       ]);
+    });
+
+    it("keeps an exact-replay assistant turn that has only canonical reasoning", () => {
+      const providerMetadata = {
+        google: {
+          rawAssistantParts: [{
+            text: "Private reasoning.",
+            thought: true,
+            thoughtSignature: "thought-signature",
+          }],
+        },
+      };
+      const message = attachProviderMetadata({
+        id: "a-reasoning",
+        role: "assistant",
+        parts: [{
+          type: "reasoning",
+          text: "Private reasoning.",
+          signature: "thought-signature",
+        }],
+      }, providerMetadata);
+
+      assertEquals(convertToTextGenerationRuntimeMessages([message]), [{
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        providerMetadata,
+      }]);
     });
 
     it("omits provider-executed tool-only assistant messages from replay", () => {
