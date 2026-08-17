@@ -300,7 +300,7 @@ export async function executeHostedDurableChatRun<TExecution>(
       originalError: error,
     });
     const logSetupFailure = response.statusCode < 500
-      ? (input.logger?.warn ?? input.logger?.error.bind(input.logger))
+      ? (input.logger?.warn?.bind(input.logger) ?? input.logger?.error.bind(input.logger))
       : input.logger?.error.bind(input.logger);
     logSetupFailure?.("Durable chat execute failed during setup", {
       errorCode: code,
