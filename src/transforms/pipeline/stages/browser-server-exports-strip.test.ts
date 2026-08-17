@@ -245,7 +245,7 @@ describe("browser-server-exports-strip", () => {
 
     // An imported binding re-exported under a hook name has no local
     // declaration to stub. Emitting the module unchanged would keep the import
-    // — and the loader module behind it — in the browser graph, so the build
+    // (and the loader module behind it) in the browser graph, so the build
     // stops instead. (This form used to pass through silently.)
     it("fails the build when a hook is an imported binding re-exported locally", async () => {
       const code = [
@@ -261,7 +261,7 @@ describe("browser-server-exports-strip", () => {
     // ES2022 lets an export clause publish an arbitrary string as the exported
     // name, and the runtime looks `mod.getServerData` up under it just the
     // same. The name matcher only ever read the identifier form, so the module
-    // was reported as exporting no hook and passed through byte for byte —
+    // was reported as exporting no hook and passed through byte for byte,
     // loader body, imports and closed-over secrets included.
     it("fails the build when a hook is exported under a string-literal name", async () => {
       const code = [
@@ -911,7 +911,7 @@ describe("browser-server-exports-strip", () => {
 
     // Silent-leak fix. Liveness used to ask what the module reads once the
     // hook's own closure is elided, which made every *other* declaration
-    // unconditionally live — including ones nothing calls. A private helper the
+    // unconditionally live, including ones nothing calls. A private helper the
     // module never reaches then counted as a browser reader of `createHash` and
     // kept the `node:crypto` import, which is the hydration failure this stage
     // exists to prevent. A declaration that runs nothing and that nothing
@@ -1066,7 +1066,7 @@ describe("browser-server-exports-strip", () => {
 
     // A dev build wraps every initialiser in esbuild's `keepNames` helper and
     // compiles a class's registration into a static block. Neither is a call
-    // the module makes, so neither may turn a dead declaration into live code —
+    // the module makes, so neither may turn a dead declaration into live code;
     // but the helper performing them stays for as long as one still runs.
     it("drops dead declarations wrapped in compiler name registrations", async () => {
       const code = [
@@ -1830,6 +1830,234 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
+    // A TypeScript type wrapper around the operand of `typeof` still yields a
+    // string, so the guard must read the same as the untyped form.
+    for (const guard of ["(window as unknown)", "window!", "(<unknown> window)"]) {
+      it(`still strips compiler metadata after a typeof ${guard} guard`, async () => {
+        const code = [
+          `const isBrowser = typeof ${guard} !== "undefined";`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return isBrowser ? null : null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "pages/guard.ts");
+
+        assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertEquals(occurrences(result, "KEY"), 0);
+        assertEquals(occurrences(result, "getEnv"), 0);
+        assertStringIncludes(result, "typeof");
+      });
+    }
+
+    // `frames`, `parent`, `top`, and `document.defaultView` reach the same
+    // window as `window` does in a main browsing context.
+    for (
+      const globalObject of [
+        "frames.Object",
+        "parent.Object",
+        "top.Object",
+        "document.defaultView.Object",
+      ]
+    ) {
+      it(`does not treat an aliased ${globalObject} intrinsic as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          `const intrinsic = ${globalObject};`,
+          `intrinsic.defineProperty = recordAndReturn;`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `const intrinsic = ${globalObject}`);
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    // A TypeScript namespace emits runtime code, so its body can hold the
+    // intrinsic in a slot the module writes through later.
+    for (const keyword of ["namespace", "module"]) {
+      it(`does not treat a ${keyword} that holds the intrinsic as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          `${keyword} Patch { export const intrinsic = globalThis.Object; }`,
+          `Patch.intrinsic.defineProperty = recordAndReturn;`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "pages/ns.ts");
+
+        assertStringIncludes(result, "Patch.intrinsic.defineProperty = recordAndReturn");
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    it("does not treat a namespace-held intrinsic alias as compiler metadata", async () => {
+      const code = [
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `namespace Patch { export const intrinsic = Object; }`,
+        `Patch.intrinsic.defineProperty = recordAndReturn;`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/ns.ts");
+
+      assertStringIncludes(result, "Patch.intrinsic.defineProperty = recordAndReturn");
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
+    // A read that only hands the intrinsic to a callee, spreads it, or binds a
+    // name nothing writes through cannot replace `Object.defineProperty`, and
+    // these shapes are everywhere in ordinary client code. Treating them as
+    // escapes retained the helper, its hook-only initialiser, and the server
+    // import that fed it.
+    for (
+      const [label, read] of [
+        ["a plain global alias", `const scope = window;`],
+        [
+          "a global alias inside a client callback",
+          `function useBrowser() { useEffect(() => { const scope = window; return scope.name; }); }`,
+        ],
+        ["an Object.assign onto the global", `Object.assign(globalThis, {});`],
+        ["a spread of the global", `const snapshot = { ...window };`],
+        ["the global passed to a callee", `report(globalThis);`],
+        ["the intrinsic passed as a callback", `const kinds = [].map(Object);`],
+      ]
+    ) {
+      it(`still strips compiler metadata past ${label}`, async () => {
+        const code = [
+          `import { useEffect } from "react";`,
+          `import { report } from "./report.ts";`,
+          read,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertEquals(occurrences(result, "KEY"), 0);
+        assertEquals(occurrences(result, "getEnv"), 0);
+        assertNotIncludes(result, "SECRET_KEY");
+      });
+    }
+
+    // The prototype chain and the `Function` constructor reach the intrinsic
+    // without ever naming `Object` as a value. The recognised set does not
+    // admit a module that carries either route.
+    for (
+      const [label, route] of [
+        [
+          "an object literal's constructor",
+          `({}).constructor.defineProperty = recordAndReturn;`,
+        ],
+        [
+          "a prototype's constructor",
+          `Object.getPrototypeOf({}).constructor.defineProperty = recordAndReturn;`,
+        ],
+        [
+          "the Function constructor",
+          `"".constructor.constructor(` +
+          `"globalThis.Object.defineProperty = arguments[0]"` +
+          `)(recordAndReturn);`,
+        ],
+      ]
+    ) {
+      it(`does not treat a module reaching the intrinsic through ${label} as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          route,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    it("does not treat an eval of a replacement as compiler metadata", async () => {
+      const code = [
+        `eval("globalThis.Object.defineProperty = (target) => target");`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     // A `function` declaration and a `var` cannot share a name in a module:
     // the redeclaration is a SyntaxError, so a hoisted user function can never
     // be the live binding when a later `var` initialiser classifies it. The
@@ -2000,8 +2228,8 @@ describe("browser-server-exports-strip", () => {
     // the declaration collector handled only simple identifiers. The pattern is
     // now a removal candidate as a whole, so the binding, the initialiser call
     // and the import it was the last user of all go. This is also the case
-    // esbuild's tree-shaker can never close: a destructuring of a call — even a
-    // `@__PURE__`-annotated one — is kept in both transform and bundle mode
+    // esbuild's tree-shaker can never close: a destructuring of a call (even a
+    // `@__PURE__`-annotated one) is kept in both transform and bundle mode
     // because the pattern may trigger getters or throw.
     it("drops a destructured module-scope server value used only by a stripped hook", async () => {
       const code = [
@@ -2066,7 +2294,7 @@ describe("browser-server-exports-strip", () => {
     });
 
     // Contrast pin: a pattern is removed only as a whole. When the client still
-    // reads one of its bindings, the whole declarator — and its import — stay.
+    // reads one of its bindings, the whole declarator (and its import) stay.
     it("keeps a destructured value the client component also reads", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2517,7 +2745,7 @@ describe("browser-server-exports-strip", () => {
     });
 
     // Regression (review probe): a pattern default that reads a *sibling*
-    // binding of the same pattern used to keep the declarator alive forever —
+    // binding of the same pattern used to keep the declarator alive forever:
     // the self-referential read counted as an external consumer, so the
     // secret-bearing initialiser call and its import shipped silently even
     // though only the stripped hook read the bindings.
@@ -2555,7 +2783,7 @@ describe("browser-server-exports-strip", () => {
     });
 
     // Regression (closed leak): liveness used to be decided one declaration at
-    // a time — "is this name mentioned anywhere else?" — so two hook-only
+    // a time ("is this name mentioned anywhere else?"), so two hook-only
     // helpers that call each other each counted as the other's consumer and
     // neither could ever be removed. The secret they closed over, and the
     // node-builtin import behind it, shipped to the browser. Liveness is now
@@ -3247,7 +3475,7 @@ describe("browser-server-exports-strip", () => {
 
     // A body that never runs is not a read. `memo(…)` is a genuine top-level
     // side effect, so the declaration stays, but the arrow it is handed only
-    // reads the secret if something calls it — and nothing reaches `handler`.
+    // reads the secret if something calls it, and nothing reaches `handler`.
     // The pass can neither drop the surviving call nor honestly claim the
     // secret is gone, so it stops the build.
     it("fails the build when a secret is read only from an unreachable declaration's body", async () => {
@@ -3455,8 +3683,8 @@ describe("browser-server-exports-strip", () => {
 
     // Over-pruning guard for the hoisted-`var` exception: eliding the site from
     // the roots stops it pinning a hook-only import, but the call is still the
-    // module's own side effect. When the binding it calls survives — because
-    // browser code calls it too — removing the statement would silently delete
+    // module's own side effect. When the binding it calls survives (because
+    // browser code calls it too) removing the statement would silently delete
     // working client code.
     it("keeps a hoisted var whose initialiser calls an import the client also uses", async () => {
       const code = [
@@ -3707,7 +3935,7 @@ describe("browser-server-exports-strip", () => {
   // Everything above hands this stage source as the author wrote it. In the real
   // browser pipeline esbuild runs first, and it rewrites the module's export
   // shape: every named export is hoisted into one trailing `export { … }` clause
-  // and the declarations are left bare. That difference is not cosmetic — it is
+  // and the declarations are left bare. That difference is not cosmetic; it is
   // the only form in which the export contract reaches this stage, and a rule
   // keyed on `export`-wrapped declarations silently does nothing here. These
   // cases compile first, so a regression that only shows up after esbuild
@@ -3774,7 +4002,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await compileThenStrip(source, "/project/react/primitives/input-box.tsx");
 
-      // Nothing in the module calls `InputBox` — its only consumer is the export
+      // Nothing in the module calls `InputBox`; its only consumer is the export
       // clause esbuild emitted, which is exactly the edge that used to be missed.
       assertStringIncludes(result, "forwardRef(");
       assertStringIncludes(result, `const TOKEN = getEnv("INPUT_BOX_TOKEN")`);

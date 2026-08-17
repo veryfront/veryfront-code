@@ -170,6 +170,13 @@ Compilation failed.
 - **HTTP status:** 500
 - **What to do:** Review compiler output for specific errors
 
+### server-export-strip-failed
+
+Server-only export cannot be removed from the client build.
+
+- **HTTP status:** 500
+- **What to do:** Declare the hook directly in the route module and keep its values module scope
+
 ## Runtime
 
 Raised while executing project code.

@@ -45,6 +45,55 @@ entirely, including their top-level side effects. Put client initialization in a
 separate client-referenced module or a bare side-effect import that is not only
 used by a server data hook.
 
+### Declare server data hooks directly
+
+Veryfront must find a local declaration for each server data export so it can
+empty it before the module reaches the browser. Declare the hook in the route
+module as a function declaration or as an initializer on a `const`, `let`, or
+`var`:
+
+```tsx
+// Supported
+export async function getServerData(ctx: DataContext) {
+  return { props: await load(ctx) };
+}
+
+// Also supported
+export const getStaticData = async () => ({ props: await load() });
+```
+
+These forms have no declaration to empty and fail the build with
+`server-export-strip-failed`:
+
+```tsx
+// Not supported: the hook is a re-exported import
+import { loadIt } from "./loader.ts";
+export { loadIt as getServerData };
+
+// Not supported: the hook is a class
+export class getServerData {}
+```
+
+Move the import inside a directly declared hook to migrate:
+
+```tsx
+export async function getServerData(ctx: DataContext) {
+  const { loadIt } = await import("./loader.ts");
+  return loadIt(ctx);
+}
+```
+
+The same build error reports a value that only a stripped hook reads when that
+value is declared in a position Veryfront cannot remove, such as a loop head:
+
+```tsx
+// Not supported: the binding is declared by the loop, not at module scope
+for (var KEY of getEnv("SECRET_KEY")) {}
+
+// Supported
+const KEY = getEnv("SECRET_KEY");
+```
+
 The `props` you return are passed to the page component. To read the same props
 data from a layout or nested component without prop-drilling, use
 `usePageContext().data` (see

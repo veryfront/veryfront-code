@@ -72,6 +72,14 @@ export const COMPILATION_ERROR = defineError({
   suggestion: "Review compiler output for specific errors",
 });
 
+export const SERVER_EXPORT_STRIP_FAILED = defineError({
+  slug: "server-export-strip-failed",
+  category: "BUILD",
+  status: 500,
+  title: "Server-only export cannot be removed from the client build",
+  suggestion: "Declare the hook directly in the route module and keep its values module scope",
+});
+
 /** Registry fragment for BUILD errors (slug → definition). */
 export const BUILD_REGISTRY = {
   "build-failed": BUILD_FAILED,
@@ -83,4 +91,5 @@ export const BUILD_REGISTRY = {
   "ssg-generation-error": SSG_GENERATION_ERROR,
   "sourcemap-error": SOURCEMAP_ERROR,
   "compilation-error": COMPILATION_ERROR,
+  "server-export-strip-failed": SERVER_EXPORT_STRIP_FAILED,
 } as const;

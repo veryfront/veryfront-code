@@ -16,6 +16,7 @@ describe("errors/catalog/build-errors", () => {
         "ssg-generation-error",
         "sourcemap-error",
         "compilation-error",
+        "server-export-strip-failed",
       ];
 
       for (const slug of expectedSlugs) {
@@ -38,8 +39,8 @@ describe("errors/catalog/build-errors", () => {
       }
     });
 
-    it("should have 9 entries", () => {
-      assertEquals(Object.keys(BUILD_ERROR_CATALOG).length, 9);
+    it("should have 10 entries", () => {
+      assertEquals(Object.keys(BUILD_ERROR_CATALOG).length, 10);
     });
 
     it("build-failed should have tips", () => {

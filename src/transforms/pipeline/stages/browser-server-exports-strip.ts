@@ -16,14 +16,14 @@
  * used only by a server-only hook that this pass just emptied. Nor can its
  * tree-shaker own the rest of the job (verified against esbuild 0.28.1, both
  * modes): a destructured module-scope value (`const { a } = getEnv(…)`) is
- * never shaken — even `@__PURE__`-annotated — because destructuring may
+ * never shaken (even `@__PURE__`-annotated) because destructuring may
  * trigger getters or throw; an impure hook-only initialiser is
  * indistinguishable from client init (`getEnv(…)` vs `bootClientAnalytics()`)
  * without exactly the closure analysis below; keepNames registration calls
  * pin hook-only helpers alive; and no esbuild mode reduces an unrelated
  * unused import to a bare side-effect import while deleting a hook-owned one.
- * The distinction that drives every one of those decisions — membership in
- * the stripped hook's dependency closure — is not expressible in a bundler's
+ * The distinction that drives every one of those decisions, membership in
+ * the stripped hook's dependency closure, is not expressible in a bundler's
  * side-effect model, so this stage computes it itself.
  *
  * The pass runs on the AST from the `CodeParser` contract, for the same reason
@@ -34,13 +34,13 @@
  *
  * Liveness is computed as *reachability over the module's binding graph*, not
  * as "is this name mentioned somewhere else". The nodes are every module-scope
- * binding — including a `var` that hoists out of a block, `if`, `try`,
+ * binding, including a `var` that hoists out of a block, `if`, `try`,
  * `switch`, loop or label, which binds module scope exactly as a top-level
  * declaration does. The roots are what the module still *runs*: its surviving
  * exports, the client component, and any side-effectful top-level statement,
  * which keeps whatever it references. A declaration that merely introduces a
- * name — a function, a `var dead = helper`, a class with no decorator, computed
- * key or static initialiser — runs nothing, so it is elided from the roots and
+ * name (a function, a `var dead = helper`, a class with no decorator, computed
+ * key or static initialiser) runs nothing, so it is elided from the roots and
  * cannot vouch for anything: a private helper the module never calls used to be
  * treated as unconditionally live and kept `const KEY = getEnv(…)` and its
  * `node:crypto` import in the browser artifact.
@@ -49,7 +49,7 @@
  * "what runs at module load" and "what this binding reads" are different
  * questions. A declaration roots only what it *evaluates*: `const handler =
  * memo(() => KEY)` calls `memo` when the module loads, and reads `KEY` only if
- * something calls the arrow — which needs `handler`. So the arrow's body is an
+ * something calls the arrow, which needs `handler`. So the arrow's body is an
  * edge out of `handler`, not a root, and a dead declaration can no longer
  * vouch for a secret buried in a callback it never runs. An immediately
  * invoked function is not deferred; nor is a class static block, a static
@@ -62,8 +62,8 @@
  * and a declarator's reads of its own pattern's siblings all spell a name
  * without reading the binding behind it.
  *
- * Deciding this per declaration instead — asking each one whether its name is
- * mentioned elsewhere — cannot see a cycle. Two hook-only helpers that call
+ * Deciding this per declaration instead (asking each one whether its name is
+ * mentioned elsewhere) cannot see a cycle. Two hook-only helpers that call
  * each other are each the other's last consumer, so neither is ever removable
  * and the secret they close over ships with them. Reachability drops the whole
  * unreachable component however long it is.
@@ -98,7 +98,7 @@
  * *reassigns* (`export let getServerData = stub; getServerData = realLoader`),
  * and one it *redeclares* through a hoisted `var` below the top level
  * (`export var getServerData = stub; if (cond) { var getServerData =
- * realLoader }`) — stubbing the declarator would leave the later write to put
+ * realLoader }`), stubbing the declarator would leave the later write to put
  * the real loader back at module-evaluation time, so the build stops rather
  * than shipping the declaration. It covers two more cases on the other side of
  * the analysis: a binding the graph proves dead but that sits in a position
@@ -119,11 +119,11 @@
  * they cannot.
  *
  * What this pass does: it empties hook bodies, drops every module-scope binding
- * in the hooks' dependency closure that nothing surviving can reach — including
+ * in the hooks' dependency closure that nothing surviving can reach, including
  * destructured ones and ones a nested `var` hoists up, so neither
  * `const API_KEY = getEnv(...)` nor `const { apiKey } = getEnv(...)` nor
  * `if (cond) { var API_KEY = getEnv(...) }` used only by `getServerData`
- * reaches the browser — and removes the hook-only imports that leaves unused.
+ * reaches the browser, and removes the hook-only imports that leaves unused.
  * Unreachable code holding those bindings goes with them, however far it sits
  * from the hook: a private helper nothing calls, a dead class, a dead helper
  * cycle, a `if (…) { var debug = … }` dev aid.
@@ -132,7 +132,7 @@
  * removes bindings, never side effects, so a value that surviving
  * module-evaluation code reads is kept however server-only it looks. That
  * covers a value browser code also reads, one a bare top-level statement
- * references, and — the case that surprises — a declaration nothing reaches
+ * references, and (the case that surprises) a declaration nothing reaches
  * whose own initialiser still runs and reads the value while running:
  * `const boot = initAnalytics(KEY)`, `Object.defineProperty(box, "run", …)`,
  * `const dead = new Wrapper(KEY)`, `` tag`…${KEY}` ``, `const { a } = KEY`,
@@ -212,6 +212,30 @@ function children(node: Node): Node[] {
 function walk(node: Node, visit: (node: Node) => boolean | void): void {
   if (visit(node) === false) return;
   for (const child of children(node)) walk(child, visit);
+}
+
+/**
+ * Grouping and type-only nodes that wrap a runtime expression unchanged.
+ * `typeof (window as unknown)` and `typeof window!` read exactly as `typeof
+ * window` does once the wrapper is off, so every check that asks what an
+ * expression is has to look past them first.
+ */
+const TRANSPARENT_EXPRESSION_TYPES = new Set([
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSInstantiationExpression",
+  "TSTypeAssertion",
+]);
+
+/** The runtime expression a chain of transparent wrappers stands for. */
+function unwrapTransparent(node: Node): Node {
+  let current = node;
+  while (TRANSPARENT_EXPRESSION_TYPES.has(current.type) && isNode(current.expression)) {
+    current = current.expression;
+  }
+  return current;
 }
 
 function nodeName(value: unknown): string | null {
@@ -490,15 +514,15 @@ function emptyServerOnlyHooks(
  * A destructuring declarator (`const { apiKey } = getEnv(...)`) is a single
  * site carrying every name its pattern binds: it is removed only when *all* of
  * them are dead, so a pattern the client still partly reads survives whole.
- * This is what stops a destructured server value from shipping — esbuild's
- * tree-shaker never removes a destructuring of a call, even a
- * `@__PURE__`-annotated one, because the pattern itself may trigger getters or
+ * This is what stops a destructured server value from shipping: esbuild's
+ * tree-shaker never removes a destructuring of a call (even a
+ * `@__PURE__`-annotated one) because the pattern itself may trigger getters or
  * throw.
  */
 interface BindingSite {
   /** Every name this site binds. */
   names: string[];
-  /** What the site's own code reads — its outgoing edges in the graph. */
+  /** What the site's own code reads, its outgoing edges in the graph. */
   references: Set<string>;
   /** The node to elide when asking what the rest of the module still reads. */
   node: Node;
@@ -559,7 +583,7 @@ function declaratorReferences(
  *
  * Top-level declarations are the obvious ones, but a `var` hoists out of any
  * block, `if`, `try`, `switch`, loop or label it is written in, so those bind
- * module scope too and belong in the graph — the pass used to miss them
+ * module scope too and belong in the graph: the pass used to miss them
  * entirely, which made a secret declared as `if (cond) { var KEY = getEnv(…) }`
  * permanently unremovable. Function bodies and class static blocks are separate
  * `var` scopes and are not entered.
@@ -730,8 +754,8 @@ function directLexicalBindingNames(node: Node): Set<string> {
  * (`label: var KEY = …`, `if (c) var KEY = …`) becomes an empty block, and a
  * `for` initialiser is cleared.
  *
- * A `for…in`/`for…of` head has no such edit — the binding is what the loop
- * assigns to — so those sites are registered as unremovable and the caller
+ * A `for…in`/`for…of` head has no such edit: the binding is what the loop
+ * assigns to, so those sites are registered as unremovable and the caller
  * fails the build rather than shipping the value they hold. The callback also
  * receives the lexical bindings surrounding each site, so reference analysis
  * resolves block-local shadows instead of similarly named module bindings.
@@ -848,7 +872,7 @@ const NOTHING_ELIDED: ReadonlySet<Node> = new Set<Node>();
 const NO_BOUND_NAMES: ReadonlySet<string> = new Set<string>();
 
 /**
- * Free identifiers genuinely *read* by a subtree — the edges of the
+ * Free identifiers genuinely *read* by a subtree: the edges of the
  * module-scope binding graph.
  *
  * Scope-aware: a nested declaration that shadows `loadJob` must not hide a real
@@ -868,7 +892,7 @@ const NO_BOUND_NAMES: ReadonlySet<string> = new Set<string>();
  * for removal stops masking the reads of the code around it.
  *
  * `deferred` names functions, methods and instance fields whose bodies do not
- * run where they are written. Their reads are still reads — they are just not
+ * run where they are written. Their reads are still reads; they are just not
  * reads the *module evaluation* performs, which is the difference between the
  * roots of the liveness walk and the edges of it.
  *
@@ -972,8 +996,8 @@ function freeReferencedIdentifiers(
     scopes: LexicalScope[],
     decoratorScopes: LexicalScope[] = scopes,
   ): void => {
-    // Babel hangs a parameter decorator off the pattern itself — a plain
-    // `Identifier`, an `AssignmentPattern` or a destructuring pattern — and not
+    // Babel hangs a parameter decorator off the pattern itself (a plain
+    // `Identifier`, an `AssignmentPattern` or a destructuring pattern) and not
     // only off a `TSParameterProperty`. A decorator is ordinary runtime code
     // whose reads count, so `constructor(@inject(loadSecret) value: string)`
     // keeps the import it needs; missing it dropped that import out from under
@@ -1458,7 +1482,7 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
  *
  * Used to fail closed on a module that reassigns a hook binding: the pass can
  * stub only the declarator, and the assignment would put the real loader back
- * at module-evaluation time. Collection is deliberately scope-blind — a nested
+ * at module-evaluation time. Collection is deliberately scope-blind: a nested
  * local that shadows a hook name and is assigned also stops the build, because
  * on this boundary a stopped build is recoverable and a shipped loader is not.
  */
@@ -1541,8 +1565,8 @@ function assignedNames(body: Node[]): Set<string> {
  * Treating these as binding writes fails the build instead, exactly as a
  * plain reassignment does.
  *
- * Traversal stops at every construct that starts a new `var` scope — function
- * bodies, class bodies, class static blocks and TypeScript-only nodes — so a
+ * Traversal stops at every construct that starts a new `var` scope (function
+ * bodies, class bodies, class static blocks and TypeScript-only nodes) so a
  * nested `function Page() { var getServerData = 1 }` is a local of `Page` and
  * is not reported.
  */
@@ -1636,25 +1660,41 @@ function isObjectDefineProperty(node: Node | undefined): boolean {
 }
 
 /**
- * Whether writing to `target` could replace `Object.defineProperty`.
- *
- * `isObjectDefineProperty` proves the base is the bare `Object` identifier,
- * which a write target does not have to be: `globalThis.Object.defineProperty
- * = record` reaches the same slot through the global object, and
- * `Object[key] = record` reaches it through a key this stage cannot evaluate.
- * Only those known intrinsic bases fail closed. An unrelated
- * `registry.defineProperty` write cannot replace the intrinsic and must not
- * stop compiler metadata from being removed with a hook-only binding.
- */
-/**
  * Names that reach the global object. A browser module written before
  * `globalThis` was universal uses `window` or `self`, and a module compiled for
- * Node uses `global`, and browsers expose `frames` as a Window alias, so all
- * five reach the same `Object` slot.
+ * Node uses `global`. A main browsing context also publishes itself as
+ * `frames`, `parent`, and `top`, so every name here reaches the same `Object`
+ * slot.
  */
-const GLOBAL_OBJECT_NAMES = ["globalThis", "window", "self", "frames", "global"];
+const GLOBAL_OBJECT_NAMES = [
+  "globalThis",
+  "window",
+  "self",
+  "global",
+  "frames",
+  "parent",
+  "top",
+];
+
+/**
+ * `document.defaultView` is the same window object under a member access, so a
+ * module reaches the global through it without naming any of the identifiers
+ * above.
+ */
+function isDocumentDefaultView(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
+  if (node?.type !== "MemberExpression" && node?.type !== "OptionalMemberExpression") return false;
+  const property = isNode(node.property) ? node.property : undefined;
+  const key = node.computed === true ? stringLiteralText(property) : nodeName(property);
+  if (key !== "defaultView") return false;
+  return isUnshadowedGlobalIdentifier(
+    isNode(node.object) ? node.object : undefined,
+    "document",
+    globals,
+  );
+}
 
 function isUnshadowedGlobalObject(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
+  if (isDocumentDefaultView(node, globals)) return true;
   return GLOBAL_OBJECT_NAMES.some((name) => isUnshadowedGlobalIdentifier(node, name, globals));
 }
 
@@ -1671,6 +1711,16 @@ function isGlobalObjectSlot(node: Node | undefined, globals: ReadonlySet<Node>):
   return key === null || key === "Object";
 }
 
+/**
+ * Whether writing to `target` could replace `Object.defineProperty`.
+ *
+ * `isObjectDefineProperty` proves the base is the bare `Object` identifier,
+ * which a write target does not have to be: `globalThis.Object.defineProperty
+ * = record` reaches the same slot through the global object, and
+ * `Object[key] = record` reaches it through a key this stage cannot evaluate.
+ * Only those known intrinsic bases fail closed here. A base this stage cannot
+ * bound at all is rejected by `writesGuardedKeyThroughUnprovenBase` instead.
+ */
 function writesDefinePropertyMember(target: Node, globals: ReadonlySet<Node>): boolean {
   if (target.type !== "MemberExpression" && target.type !== "OptionalMemberExpression") {
     return false;
@@ -1828,13 +1878,21 @@ function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): b
   return writes;
 }
 
-/** TypeScript nodes that still carry a runtime expression underneath. */
-const TS_EXPRESSION_TYPES = new Set([
-  "TSAsExpression",
-  "TSTypeAssertion",
-  "TSNonNullExpression",
-  "TSInstantiationExpression",
-  "TSSatisfiesExpression",
+/**
+ * TypeScript nodes the escape scan must descend into because they still emit
+ * runtime code. A namespace body and an enum body both execute where they sit,
+ * so an intrinsic held inside one is exactly as reachable as one held at the
+ * top level. Skipping every `TS`-prefixed node hid `namespace Patch { export
+ * const intrinsic = Object }` from the scan entirely.
+ */
+const TS_RUNTIME_TYPES = new Set([
+  ...TRANSPARENT_EXPRESSION_TYPES,
+  "TSModuleDeclaration",
+  "TSModuleBlock",
+  "TSEnumDeclaration",
+  "TSEnumMember",
+  "TSExportAssignment",
+  "TSParameterProperty",
 ]);
 
 /**
@@ -1854,21 +1912,75 @@ function isNamePosition(parent: Node, key: string): boolean {
     key === "label" || key === "params";
 }
 
+/** Every property-write target in the module, whatever its base. */
+function propertyWriteTargets(body: Node[]): Node[] {
+  const targets: Node[] = [];
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (node.type === "AssignmentExpression" && isNode(node.left)) targets.push(node.left);
+      if (node.type === "UpdateExpression" && isNode(node.argument)) targets.push(node.argument);
+      if (node.type === "UnaryExpression" && node.operator === "delete" && isNode(node.argument)) {
+        targets.push(node.argument);
+      }
+      if (
+        (node.type === "ForInStatement" || node.type === "ForOfStatement") &&
+        isNode(node.left) && node.left.type !== "VariableDeclaration"
+      ) {
+        targets.push(node.left);
+      }
+    });
+  }
+  return targets;
+}
+
+/** The identifier a member path is rooted at, or null when it is not one. */
+function memberPathRoot(node: Node): Node | null {
+  let current = unwrapTransparent(node);
+  while (current.type === "MemberExpression" || current.type === "OptionalMemberExpression") {
+    if (!isNode(current.object)) return null;
+    current = unwrapTransparent(current.object);
+  }
+  return current.type === "Identifier" ? current : null;
+}
+
+/** Names the module writes a property through, at any depth of member path. */
+function namesWrittenThrough(body: Node[]): Set<string> {
+  const names = new Set<string>();
+  for (const target of propertyWriteTargets(body)) {
+    const member = unwrapTransparent(target);
+    if (member.type !== "MemberExpression" && member.type !== "OptionalMemberExpression") continue;
+    const root = memberPathRoot(member);
+    const name = root ? nodeName(root) : null;
+    if (name) names.add(name);
+  }
+  return names;
+}
+
 /**
- * Whether the module reads an unshadowed intrinsic as a value instead of only
- * reaching through it with a member access.
+ * Whether the intrinsic reaches a slot the module can still write through.
  *
- * `writesObjectDefineProperty` only sees assignment-shaped writes, so a module
- * that hands either global to a callee replaces the helper's callee without
- * ever naming a target it can recognise:
- * `Object.defineProperty(Object, "defineProperty", { value: recordAndReturn })`
- * redefines it through a call, and `const alias = Object; alias.defineProperty
- * = recordAndReturn` redefines it through a second binding. Anything holding
- * `Object`, or anyone handed `globalThis`, can rewrite `defineProperty`, so
- * every genuine global value read fails closed and the module's apparent
- * registrations stay ordinary user code. Lexically shadowed names do not.
+ * The earlier form of this check failed closed on any value read of `Object`
+ * or of a global object anywhere in the module. That is far too coarse:
+ * `const w = window`, `Object.assign(globalThis, {})`, `{ ...window }`,
+ * `report(globalThis)`, and `[].map(Object)` are ordinary client code, none of
+ * them can put a new function in the `defineProperty` slot, and treating them
+ * as escapes retained every compiler name helper together with its hook-only
+ * initialiser and the server import feeding it.
+ *
+ * What matters is not that the module read the intrinsic but that it kept the
+ * read somewhere it can write back into:
+ *
+ * - a property slot (`holder.intrinsic = Object`, `{ intrinsic: Object }`, a
+ *   namespace's exported binding) is reachable again through that property, so
+ *   it fails closed unconditionally;
+ * - a binding (`const alias = Object`) fails closed only when the module also
+ *   writes a property through that name somewhere, which is the shape that can
+ *   actually reach `alias.defineProperty = record`;
+ * - anything else is consumed by the expression that reads it and cannot be
+ *   written back through, so it is not an escape.
  */
-function readsIntrinsicAsValue(
+function intrinsicEscapesToWritableSlot(
   body: Node[],
   name: "Object" | "global",
   globals: ReadonlySet<Node>,
@@ -1879,29 +1991,250 @@ function readsIntrinsicAsValue(
         isGlobalObjectSlot(entry, globals)
       : isUnshadowedGlobalObject(entry, globals);
 
-  const reads = (node: Node, transparentTypeof = false): boolean => {
-    if (node.type.startsWith("TS") && !TS_EXPRESSION_TYPES.has(node.type)) return false;
+  const writtenThrough = namesWrittenThrough(body);
+
+  /** Whether storing the read at `parent[key]` puts it in a property slot. */
+  const storesInPropertySlot = (parent: Node, key: string, inNamespace: boolean): boolean => {
+    if (key === "value") {
+      return parent.type === "ObjectProperty" || parent.type === "ClassProperty" ||
+        parent.type === "ClassPrivateProperty" || parent.type === "ClassAccessorProperty";
+    }
+    if (key !== "right" && key !== "init") return false;
+    // A namespace's bindings become properties of the emitted namespace object,
+    // so `namespace P { export const i = Object }` is reachable as `P.i`.
+    if (inNamespace) return true;
+    if (parent.type !== "AssignmentExpression" || !isNode(parent.left)) return false;
+    const left = unwrapTransparent(parent.left);
+    return left.type === "MemberExpression" || left.type === "OptionalMemberExpression";
+  };
+
+  /** The name a read is bound to, when the module can track it by name. */
+  const boundName = (parent: Node, key: string): string | null => {
+    if (parent.type === "VariableDeclarator" && key === "init") return nodeName(parent.id);
+    if (
+      (parent.type === "AssignmentExpression" || parent.type === "AssignmentPattern") &&
+      key === "right" && isNode(parent.left)
+    ) {
+      const left = unwrapTransparent(parent.left);
+      return left.type === "Identifier" ? nodeName(left) : null;
+    }
+    return null;
+  };
+
+  const escapes = (node: Node, inNamespace: boolean): boolean => {
+    if (node.type.startsWith("TS") && !TS_RUNTIME_TYPES.has(node.type)) return false;
+    if (node.type === "TSModuleDeclaration" && !isRuntimeTsModuleDeclaration(node)) return false;
+    if (node.type === "TSEnumDeclaration" && node.declare === true) return false;
+    const nested = inNamespace || node.type === "TSModuleDeclaration";
 
     for (const [key, value] of Object.entries(node)) {
       if (key === "loc" || key === "leadingComments" || key === "trailingComments") continue;
 
       for (const entry of Array.isArray(value) ? value : [value]) {
         if (!isNode(entry)) continue;
-        const entryIsTransparentTypeof =
-          (node.type === "UnaryExpression" && node.operator === "typeof" && key === "argument") ||
-          (transparentTypeof && TS_EXPRESSION_TYPES.has(node.type) && key === "expression");
-        if (isIntrinsic(entry)) {
-          if (!entryIsTransparentTypeof && !isNamePosition(node, key)) return true;
+        const read = unwrapTransparent(entry);
+        if (isIntrinsic(read)) {
+          if (isNamePosition(node, key)) continue;
+          if (storesInPropertySlot(node, key, nested)) return true;
+          const bound = boundName(node, key);
+          if (bound !== null) {
+            if (writtenThrough.has(bound)) return true;
+            continue;
+          }
           continue;
         }
-        if (reads(entry, entryIsTransparentTypeof)) return true;
+        if (escapes(entry, nested)) return true;
       }
     }
 
     return false;
   };
 
-  return body.some((statement) => statement.type !== "ImportDeclaration" && reads(statement));
+  return body.some((statement) =>
+    statement.type !== "ImportDeclaration" && escapes(statement, false)
+  );
+}
+
+/**
+ * Property keys that can put a different function behind the helper's call.
+ * `defineProperty` and `defineProperties` replace the intrinsic's own methods;
+ * `Object` replaces the constructor the helper reaches them through.
+ */
+const GUARDED_INTRINSIC_KEYS = new Set(["defineProperty", "defineProperties", "Object"]);
+
+/** Expression forms that manifestly produce a value the module just made. */
+const FRESH_VALUE_TYPES = new Set([
+  "ObjectExpression",
+  "ArrayExpression",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+  "ClassExpression",
+  "NewExpression",
+  "TemplateLiteral",
+  "StringLiteral",
+  "NumericLiteral",
+  "BooleanLiteral",
+  "RegExpLiteral",
+  "JSXElement",
+  "JSXFragment",
+]);
+
+/** The static property name a member access reads, or null when it is dynamic. */
+function memberKey(node: Node): string | null {
+  const property = isNode(node.property) ? node.property : undefined;
+  return node.computed === true ? stringLiteralText(property) : nodeName(property);
+}
+
+/** Parameter names of every function this module immediately invokes. */
+function invokedFunctionParameterNames(body: Node[]): Set<string> {
+  const names = new Set<string>();
+  const collect = (callee: unknown): void => {
+    if (!isNode(callee)) return;
+    const target = unwrapTransparent(callee);
+    if (target.type !== "FunctionExpression" && target.type !== "ArrowFunctionExpression") return;
+    for (const param of Array.isArray(target.params) ? target.params : []) {
+      if (isNode(param)) { for (const name of patternBoundNames(param)) names.add(name); }
+    }
+  };
+
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (
+        node.type === "CallExpression" || node.type === "OptionalCallExpression" ||
+        node.type === "NewExpression"
+      ) {
+        collect(node.callee);
+      }
+    });
+  }
+  return names;
+}
+
+/**
+ * Whether the module writes a guarded key through a base this stage cannot
+ * bound.
+ *
+ * `writesDefinePropertyMember` only recognises a base it can name: the bare
+ * `Object` identifier or a global object's `Object` slot. A base reached by
+ * any other route (`({}).constructor`, `Object.getPrototypeOf({}).constructor`,
+ * a namespace's property, a call's result) is not provably a different object,
+ * so a write of `defineProperty` through it fails closed. The base is accepted
+ * only when it is manifestly a value this module made, or a name bound in this
+ * module that no invoked function receives.
+ */
+function writesGuardedKeyThroughUnprovenBase(body: Node[], globals: ReadonlySet<Node>): boolean {
+  const invokedParams = invokedFunctionParameterNames(body);
+
+  const baseIsProvenLocal = (base: Node): boolean => {
+    const target = unwrapTransparent(base);
+    if (FRESH_VALUE_TYPES.has(target.type)) return true;
+    if (target.type !== "Identifier") return false;
+    // An unshadowed global identifier may be `Object` itself, or a host object
+    // that exposes it; a shadowed one is a binding this module controls.
+    if (globals.has(target)) return false;
+    const name = nodeName(target);
+    return name !== null && !invokedParams.has(name);
+  };
+
+  for (const target of propertyWriteTargets(body)) {
+    const member = unwrapTransparent(target);
+    if (member.type !== "MemberExpression" && member.type !== "OptionalMemberExpression") continue;
+    const key = memberKey(member);
+    if (key === null || !GUARDED_INTRINSIC_KEYS.has(key)) continue;
+    const base = isNode(member.object) ? member.object : undefined;
+    if (!base || !baseIsProvenLocal(base)) return true;
+  }
+
+  return false;
+}
+
+/** Member names that hand a module a constructor or a prototype it did not name. */
+const REFLECTION_KEYS = new Set(["constructor", "__proto__"]);
+
+/** Global functions that turn a string into code running in this realm. */
+const CODE_FROM_STRING_NAMES = new Set(["eval", "Function"]);
+
+/**
+ * Whether the module carries a route to the intrinsic that never names it.
+ *
+ * `({}).constructor` is `Object`, `Object.getPrototypeOf({}).constructor` is
+ * `Object`, and `"".constructor.constructor` is `Function`, which compiles a
+ * string into code that can reach anything at all. None of these read `Object`
+ * as a value, so no amount of tracking reads finds them, and enumerating the
+ * expressions that produce a constructor has no end. The recognised set simply
+ * does not admit a module carrying one.
+ */
+function hasReflectionRoute(body: Node[], globals: ReadonlySet<Node>): boolean {
+  let found = false;
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (found) return false;
+      if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
+        const key = memberKey(node);
+        if (key !== null && REFLECTION_KEYS.has(key)) found = true;
+      }
+      if (
+        node.type === "Identifier" && globals.has(node) &&
+        CODE_FROM_STRING_NAMES.has(nodeName(node) ?? "")
+      ) {
+        found = true;
+      }
+      return !found;
+    });
+    if (found) break;
+  }
+  return found;
+}
+
+/**
+ * Whether the module merges a guarded key onto the intrinsic or a global
+ * object. `Object.assign(globalThis, { Object: replacement })` installs a new
+ * constructor without ever writing a member, so the object literal's own keys
+ * decide, not the assignment target.
+ */
+function mergesGuardedKeyOntoIntrinsic(body: Node[], globals: ReadonlySet<Node>): boolean {
+  const literalCarriesGuardedKey = (node: Node): boolean => {
+    if (node.type !== "ObjectExpression") return false;
+    return (Array.isArray(node.properties) ? node.properties : []).some((property) => {
+      if (!isNode(property)) return false;
+      const key = isNode(property.key) ? property.key : undefined;
+      const name = property.computed === true ? stringLiteralText(key) : nodeName(key);
+      return name === null || GUARDED_INTRINSIC_KEYS.has(name);
+    });
+  };
+
+  let merges = false;
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (merges) return false;
+      if (node.type !== "CallExpression" && node.type !== "OptionalCallExpression") return true;
+      const callee = isNode(node.callee) ? unwrapTransparent(node.callee) : undefined;
+      if (
+        callee?.type !== "MemberExpression" && callee?.type !== "OptionalMemberExpression"
+      ) return true;
+      const method = memberKey(callee);
+      if (method !== "assign" && method !== "defineProperty" && method !== "defineProperties") {
+        return true;
+      }
+
+      const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
+      const targetsIntrinsic = args.some((argument) => {
+        const value = unwrapTransparent(argument);
+        return isUnshadowedGlobalIdentifier(value, "Object", globals) ||
+          isGlobalObjectSlot(value, globals) || isUnshadowedGlobalObject(value, globals);
+      });
+      if (targetsIntrinsic && args.some((argument) => literalCarriesGuardedKey(argument))) {
+        merges = true;
+        return false;
+      }
+      return true;
+    });
+    if (merges) break;
+  }
+  return merges;
 }
 
 function returnedCall(node: Node): Node | null {
@@ -1958,6 +2291,65 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
 }
 
 /**
+ * The analysis boundary for compiler name metadata.
+ *
+ * ## What the stage proves
+ *
+ * A call like `__name(loadPage, "loadPage")` is compiler metadata, not code
+ * the module wrote, so it must not keep a hook-only declaration alive. The
+ * stage removes such a call only when it can first prove that the helper it
+ * calls does nothing but set a name: the helper's body must be exactly
+ * `Object.defineProperty(target, "name", { value, configurable: true })` on
+ * the genuine `Object` intrinsic, reached either directly or through a
+ * single unreassigned alias, with no shadowing of `Object` in scope.
+ *
+ * ## Why the recognised set is an allowlist
+ *
+ * Deleting the call is safe only if `Object.defineProperty` still is the
+ * intrinsic when the call runs. Asking instead "has anything in this module
+ * replaced it?" cannot be answered: `({}).constructor`,
+ * `Object.getPrototypeOf({}).constructor`, and `"".constructor.constructor`
+ * all reach `Object` without naming it, and a string compiled by `Function`
+ * reaches anything at all. That list has no end, so the stage does not keep
+ * one. A module is recognised only when every one of these holds:
+ *
+ * 1. `Object` resolves to the global intrinsic: no module binding, import,
+ *    hoisted `var`, or assignment to the global claims the name.
+ * 2. The module carries no reflection route to a constructor or a prototype,
+ *    and no route from a string to code (`.constructor`, `__proto__`, `eval`,
+ *    `Function`).
+ * 3. No property write reaches `defineProperty`, `defineProperties`, or
+ *    `Object` through a base this stage cannot bound to a value the module
+ *    itself made.
+ * 4. No `defineProperty`-shaped call and no merge of an object carrying one of
+ *    those keys targets the intrinsic or a global object.
+ * 5. The intrinsic never reaches a slot the module can write back through: a
+ *    property, a namespace binding, or a name it writes a member of.
+ *
+ * Everything outside that set keeps its helpers, their registrations, and
+ * whatever those pin. A route nobody has thought of yet is outside it by
+ * construction, so the analysis terminates instead of growing a new rejection
+ * for each one found.
+ *
+ * ## What the stage does not attempt
+ *
+ * It does not model tampering performed anywhere but this module: another
+ * module in the graph, a dynamically imported one, or injected script can
+ * replace the intrinsic, and no in-module analysis sees that. It does not
+ * track values across parameter passing beyond the functions this module
+ * immediately invokes. It resolves a computed key only when the key is a
+ * static string, so a fully dynamic member path on a base it can bound is read
+ * as ordinary user code.
+ *
+ * ## Which direction it errs in
+ *
+ * Toward keeping code. Failing to recognise compiler metadata retains a helper
+ * and its chain, which costs bundle size. Wrongly recognising it would delete
+ * a call the module observes. Neither direction can leak a server value: the
+ * removal of server exports and their dependency chains does not depend on
+ * this recognition, and the pass verifies the removed names separately.
+ */
+/**
  * Bindings for esbuild's `keepNames` helper. Release modules are compiled
  * before the browser transform, so their declarations are followed by calls
  * like `__name(loadPage, "loadPage")`. Recognise the helper by its exact
@@ -1981,8 +2373,11 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     hoisted.has("Object") || importsRuntimeObject ||
     assignsUnshadowedGlobal(body, "Object", globals) ||
     writesObjectDefineProperty(body, globals) ||
-    readsIntrinsicAsValue(body, "Object", globals) ||
-    readsIntrinsicAsValue(body, "global", globals);
+    writesGuardedKeyThroughUnprovenBase(body, globals) ||
+    mergesGuardedKeyOntoIntrinsic(body, globals) ||
+    hasReflectionRoute(body, globals) ||
+    intrinsicEscapesToWritableSlot(body, "Object", globals) ||
+    intrinsicEscapesToWritableSlot(body, "global", globals);
   if (objectIsModuleLocal) return new Set<string>();
 
   // A `var` may be declared more than once, and only the initialiser that ran
@@ -2090,7 +2485,7 @@ function compilerNameRegistrations(
  * Every name reachable from `roots` by following the binding graph's edges.
  *
  * A name is live when surviving code reads it, or when a live binding's own
- * code reads it. Everything else is dead — cycles included, which is exactly
+ * code reads it. Everything else is dead, cycles included, which is exactly
  * what asking each declaration in turn "is this name mentioned anywhere else?"
  * can never see: two hook-only helpers that call each other keep each other
  * alive forever, and whatever they close over ships with them.
@@ -2162,7 +2557,7 @@ function hasParameterDecorators(node: Node): boolean {
 }
 
 /**
- * `__name(<value>, "name")` — esbuild's `keepNames` helper applied inline, the
+ * `__name(<value>, "name")`: esbuild's `keepNames` helper applied inline, the
  * shape a dev build wraps every initialiser in. It defines a `name` property on
  * the value it is handed and returns it, so it is compiler metadata rather than
  * a call the module makes, and it is exactly as inert as its first argument.
@@ -2175,7 +2570,7 @@ function isNameRegistrationCall(node: Node, helpers: ReadonlySet<string>): boole
   return args.length === 2 && stringLiteralText(args[1]) !== null;
 }
 
-/** `static { __name(this, "Loader") }` — the class form of that same metadata. */
+/** `static { __name(this, "Loader") }`: the class form of that same metadata. */
 function isNameRegistrationBlock(node: Node, helpers: ReadonlySet<string>): boolean {
   const statements = Array.isArray(node.body) ? node.body.filter(isNode) : [];
   return statements.every((statement) => {
@@ -2293,8 +2688,8 @@ function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>)
  * Whether a declaration *runs* when the module is evaluated.
  *
  * This is the line between the two halves of an unused declaration. One that
- * only introduces a name — a function, a `var dead = helper`, a class with no
- * decorator, superclass or static initialiser — does nothing at module-load
+ * only introduces a name (a function, a `var dead = helper`, a class with no
+ * decorator, superclass or static initialiser) does nothing at module-load
  * time, so an unreachable one is not surviving code and has no business being
  * asked what the module still reads. One whose initialiser runs
  * (`const clientInit = bootClientAnalytics()`) is a top-level side effect
@@ -2321,7 +2716,7 @@ function evaluationIsInert(node: Node, helpers: ReadonlySet<string>): boolean {
  * something calls or constructs them.
  *
  * This is what separates a declaration's *roots* from its *edges*. `const
- * handler = memo(() => KEY)` performs one read at module load — `memo` — and
+ * handler = memo(() => KEY)` performs one read at module load (`memo`) and
  * the arrow body's read of `KEY` happens only if something calls the arrow,
  * which needs `handler`. Counting the whole subtree as module-evaluation reads
  * let any dead declaration with an impure initialiser vouch for every name
@@ -2335,21 +2730,9 @@ function deferredExecutionNodes(root: Node): Set<Node> {
   const deferred = new Set<Node>();
   const invokedFunctions = new Set<Node>();
 
-  const unwrap = (node: Node): Node => {
-    let current = node;
-    while (
-      (current.type === "ParenthesizedExpression" || current.type === "TSAsExpression" ||
-        current.type === "TSNonNullExpression" || current.type === "TSInstantiationExpression") &&
-      isNode(current.expression)
-    ) {
-      current = current.expression;
-    }
-    return current;
-  };
-
   const invokedChild = (node: Node): Node | null => {
     if (node.type === "CallExpression" && isNode(node.callee)) {
-      const callee = unwrap(node.callee);
+      const callee = unwrapTransparent(node.callee);
       // A direct function literal invoked through its standard `.call` or
       // `.apply` entry point runs here just as a plain IIFE does. Keep this
       // narrow: an arbitrary receiver's method says nothing about whether a
@@ -2364,7 +2747,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
           : callee.computed !== true
           ? nodeName(callee.property)
           : null;
-        const target = unwrap(callee.object);
+        const target = unwrapTransparent(callee.object);
         if (
           (method === "call" || method === "apply") &&
           (target.type === "FunctionExpression" || target.type === "ArrowFunctionExpression")
@@ -2375,10 +2758,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       return callee;
     }
     if (node.type === "OptionalCallExpression" || node.type === "NewExpression") {
-      return isNode(node.callee) ? unwrap(node.callee) : null;
+      return isNode(node.callee) ? unwrapTransparent(node.callee) : null;
     }
     if (node.type === "TaggedTemplateExpression") {
-      return isNode(node.tag) ? unwrap(node.tag) : null;
+      return isNode(node.tag) ? unwrapTransparent(node.tag) : null;
     }
     return null;
   };
@@ -2410,7 +2793,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 }
 
 /**
- * Whether a declaration can be left out of the root computation — whether the
+ * Whether a declaration can be left out of the root computation, whether the
  * module reading a name *there* is a reason to keep that name alive.
  *
  * Three shapes say it is not:
@@ -2424,13 +2807,13 @@ function deferredExecutionNodes(root: Node): Set<Node> {
  *   server-only import even though nothing reads `dead`. This exception does
  *   not apply to a direct top-level initialiser, whose side effect is part of
  *   the module even when it happens to call the same import as the hook, and
- *   eliding it from the roots is not on its own a licence to delete it — see
+ *   eliding it from the roots is not on its own a licence to delete it, see
  *   `dropUnreachableModuleScopeBindings`, which still keeps the statement when
  *   any binding it evaluates survives.
  *
  * Anything else roots what it evaluates like any other side-effectful top-level
- * statement. That is what keeps `const clientInit = bootClientAnalytics()` —
- * and the helper it calls — in the browser artifact, including when the hook
+ * statement. That is what keeps `const clientInit = bootClientAnalytics()`,
+ * and the helper it calls, in the browser artifact, including when the hook
  * calls the same helper or import for a different purpose.
  */
 type ElisionReason =
@@ -2492,8 +2875,8 @@ function serverTaintedSites(
 /**
  * The local names a surviving separate export declaration publishes.
  *
- * A separate export is a real browser consumer of the binding it names —
- * whatever imports the module reads it — but `freeReferencedIdentifiers`
+ * A separate export is a real browser consumer of the binding it names,
+ * whatever imports the module reads it, but `freeReferencedIdentifiers`
  * cannot see that. An `ExportSpecifier` resolves `local` against the synthetic
  * root scope, while `export default Page` also names an already-bound local.
  *
@@ -2537,7 +2920,7 @@ function separateExportLocalNames(body: Node[]): Set<string> {
  *
  * Liveness is reachability from the code that survives, not "is this name
  * mentioned elsewhere". The roots are what the module still *evaluates* once
- * every declaration that merely introduces a name is elided — surviving
+ * every declaration that merely introduces a name is elided, surviving
  * exports, the client component and any side-effectful top-level statement,
  * minus the bodies that run only when something calls them. The edges are
  * genuine reads, deferred ones included, so a binding the browser can still
@@ -2551,7 +2934,7 @@ function separateExportLocalNames(body: Node[]): Set<string> {
  * treated as unconditionally live and kept `const KEY = getEnv(…)` and its
  * `node:crypto` import in the browser artifact. Removal stays scoped to the
  * closure, so an unrelated direct `const clientInit = bootClientAnalytics()`
- * keeps its side effect even if the hook calls the same binding — and a
+ * keeps its side effect even if the hook calls the same binding, and a
  * hoisted `var` elided by that second rule is only cut when every binding it
  * evaluates is going away too, because `if (dev) { var d = boot(secret()) }`
  * is still client code when `boot` survives. Inside the closure the pass is exhaustive:
@@ -2559,7 +2942,7 @@ function separateExportLocalNames(body: Node[]): Set<string> {
  * what lets `dropUnusedImportBindings` drop the import next.
  *
  * Every binding name a removal takes out is added to `removedNames`, so the
- * caller can verify — fail closed — that none of them survives in the final
+ * caller can verify (failing closed) that none of them survives in the final
  * output. Two situations are reported back instead, and the caller stops the
  * build rather than shipping the value: a dead binding this pass cannot cut
  * out of the tree, and one that only a deferred body of a surviving
@@ -2620,7 +3003,7 @@ function dropUnreachableModuleScopeBindings(
   const removable = dead.filter((site) => {
     if (!tainted.has(site)) return false;
     if (reasons.get(site) !== "closure-only-evaluation") return true;
-    // This site's initialiser still runs — eliding it from the roots only
+    // This site's initialiser still runs, eliding it from the roots only
     // stopped it vouching for what it calls. Cutting it out is justified only
     // when everything it evaluates is going away. If even one called binding
     // survives for browser code, deleting the whole initializer can delete an
@@ -2633,7 +3016,7 @@ function dropUnreachableModuleScopeBindings(
 
   // A name written down in more than one place is only safe to drop when every
   // one of its declarations goes, and only when each of them can be cut out
-  // at all — a `for (var KEY of …)` head declares the binding the loop assigns
+  // at all, a `for (var KEY of …)` head declares the binding the loop assigns
   // to and has no removable declaration.
   const removableSites = new Set(removable);
   const survivingNames = new Set(
@@ -2660,8 +3043,8 @@ function dropUnreachableModuleScopeBindings(
   }
 
   // A declaration the browser keeps, holding a read of a binding the browser
-  // must not keep. The read is real but deferred — a callback body, a method,
-  // an instance field — so it never rooted the binding, while the declaration
+  // must not keep. The read is real but deferred, a callback body, a method,
+  // an instance field, so it never rooted the binding, while the declaration
   // around it runs at module load and cannot be cut. Neither shipping the
   // secret nor emitting a reference to a binding that is gone is acceptable,
   // and choosing between them is the module author's call, not this pass's.
@@ -2798,6 +3181,9 @@ interface Blocker {
  * closes over into the browser bundle, so the build stops instead.
  */
 class ServerExportStripError extends Error {
+  /** Catalog slug, so the failure resolves to its entry and its docs page. */
+  readonly slug = "server-export-strip-failed";
+
   constructor(
     filePath: string | undefined,
     reason: string,
@@ -2899,7 +3285,7 @@ export async function stripServerOnlyExports(
   // top-level declarations (which may run browser side effects).
   const hookSeed = hookReferencedIdentifiers(body, locals);
 
-  // Fail closed on a hook this pass identified but could not stub — a class
+  // Fail closed on a hook this pass identified but could not stub, a class
   // declaration, an imported binding re-exported under a hook name, or any
   // other form outside `emptyServerOnlyHooks`'s reach. Emitting the module
   // with the declaration intact would ship the loader to the browser.
@@ -2917,8 +3303,8 @@ export async function stripServerOnlyExports(
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
   //
-  // The hooks' dependency closure is itself a reachability question — a helper
-  // the hook reaches only through another helper belongs to it just as much —
+  // The hooks' dependency closure is itself a reachability question, a helper
+  // the hook reaches only through another helper belongs to it just as much,
   // so it is grown over the same binding graph the pruning walks.
   const removedNames = new Set<string>();
   const removableStatements = new Set<Node>();
@@ -2957,7 +3343,7 @@ export async function stripServerOnlyExports(
   // Fail-closed output verification, run against the artifact itself: the
   // emitted code is re-parsed and scanned for every binding this pass decided
   // to drop, as an import or as a reference. Checking the freshly parsed
-  // output — not the tree the nodes were structurally deleted from — means a
+  // output (not the tree the nodes were structurally deleted from) means a
   // regression anywhere between the removal decision and the emitted text,
   // the generator included, stops the build instead of leaking.
   if (removedNames.size > 0) {
