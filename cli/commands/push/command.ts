@@ -1042,20 +1042,7 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
           !localPaths.has(path)
         );
       const toDelete = pruneRemoteMissing ? remoteFilesMissingLocally : [];
-      const deletePaths = new Set(toDelete);
-      const preservedRemoteFiles = target.remoteFiles
-        .filter((file) => !localPaths.has(file.path) && !deletePaths.has(file.path))
-        .map((file) => {
-          if (typeof file.content !== "string") {
-            throw new Error(
-              `Veryfront returned invalid content for preserved remote file "${file.path}".`,
-            );
-          }
-          return { path: file.path, content: file.content };
-        });
-      let pushedSourceDigest = preservedRemoteFiles.length === 0
-        ? sourceSnapshot.sourceDigest
-        : await computeSourceDigest([...ops, ...preservedRemoteFiles]);
+      let pushedSourceDigest: string;
 
       const project = outcome.kind === "planned-create" ? null : outcome.project;
       const baseline = project

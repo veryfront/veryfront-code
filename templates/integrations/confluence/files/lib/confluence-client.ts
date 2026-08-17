@@ -284,14 +284,23 @@ export async function updatePage(
 }
 
 export function extractPlainText(storageHtml: string): string {
-  return storageHtml
-    .replace(/<[^>]*>/g, " ")
+  // Strip tags to a fixed point so overlapping fragments cannot survive a
+  // single pass; decode &amp; last so sequences like "&amp;lt;" unescape
+  // exactly once.
+  let text = storageHtml;
+  let previous: string;
+  do {
+    previous = text;
+    text = text.replace(/<[^>]*>/g, " ");
+  } while (text !== previous);
+
+  return text
     .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 }
