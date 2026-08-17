@@ -107,6 +107,7 @@ export default defineConfig({
   },
   security: {
     remoteHosts: ["https://esm.sh"],
+    redirects: { allowedOrigins: ["https://accounts.example.com"] },
   },
 });
 `,
@@ -122,7 +123,10 @@ export default defineConfig({
         components: ["components", "ui"],
       },
       router: "app",
-      security: { remoteHosts: ["https://esm.sh"] },
+      security: {
+        redirects: { allowedOrigins: ["https://accounts.example.com"] },
+        remoteHosts: ["https://esm.sh"],
+      },
       title: "My App",
     });
     assertEquals(Object.getPrototypeOf(snapshot), null);

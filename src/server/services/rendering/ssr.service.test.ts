@@ -616,6 +616,164 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
+      it("preserves external redirects when redirect validation is not configured", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw redirect("https://accounts.example.com/login");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+
+        assertEquals(result.status, 302);
+        assertEquals(redirectLocationOf(result), "https://accounts.example.com/login");
+      });
+
+      it("allows relative, same-origin, and allowlisted redirect destinations", async () => {
+        for (
+          const destination of [
+            "/login",
+            "http://localhost/account",
+            "https://accounts.example.com/login",
+          ]
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw redirect(destination);
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(
+            makeCtx({
+              securityConfig: {
+                redirects: { allowedOrigins: ["https://accounts.example.com"] },
+              },
+            }),
+            makeRenderOptions(),
+          );
+
+          assertEquals(result.status, 302);
+          assertEquals(redirectLocationOf(result), destination);
+        }
+      });
+
+      it("blocks an off-origin thrown redirect when same-origin validation is configured", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw redirect("https://untrusted.example/login", false, {
+              headers: { "x-redirect-state": "blocked" },
+              cookies: [{ name: "redirect-state", value: "blocked", path: "/" }],
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+          makeRenderOptions(),
+        );
+
+        assertEquals(result.status, 500);
+        assertEquals(result.failure?.kind, "runtime");
+        if (result.failure?.kind !== "runtime") throw new Error("expected runtime failure");
+        assertEquals(
+          (result.failure.error as VeryfrontError).slug,
+          "redirect-destination-not-allowed",
+        );
+        assertEquals(result.headers, undefined);
+        assertEquals(result.cookies, undefined);
+      });
+
+      it("validates same-origin redirects against the browser-visible request origin", async () => {
+        const options = makeRenderOptions({
+          request: new Request("http://runtime.internal/test-page"),
+          url: new URL("http://runtime.internal/test-page"),
+        });
+        const context = makeCtx({
+          requestOrigin: "https://app.example.com",
+          securityConfig: { redirects: { allowedOrigins: [] } },
+        });
+
+        for (
+          const [destination, expectedStatus] of [
+            ["https://app.example.com/login", 302],
+            ["http://runtime.internal/login", 500],
+          ] as const
+        ) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw redirect(destination);
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(context, options);
+
+          assertEquals(result.status, expectedStatus);
+        }
+      });
+
+      it("blocks an off-origin returned redirect when validation is configured", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw new VeryfrontError("Redirect", {
+              slug: "render-error",
+              category: "RUNTIME",
+              status: 500,
+              title: "Component render failed",
+              context: {
+                redirect: {
+                  destination: "https://untrusted.example/login",
+                  permanent: false,
+                },
+              },
+            });
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+          makeRenderOptions(),
+        );
+
+        assertEquals(result.status, 500);
+        assertEquals(result.failure?.kind, "runtime");
+      });
+
+      it("blocks unsafe redirect schemes when validation is configured", async () => {
+        for (const destination of ["javascript:alert(1)", "data:text/html,blocked"]) {
+          const adapter = createMockRendererAdapter({
+            renderPage: () => {
+              throw redirect(destination);
+            },
+          });
+          const service = new SSRService({
+            rendererProvider: createMockRendererProvider(adapter),
+          });
+
+          const result = await service.renderPage(
+            makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+            makeRenderOptions(),
+          );
+
+          assertEquals(result.status, 500);
+          assertEquals(result.failure?.kind, "runtime");
+        }
+      });
+
       it("applies buffered control metadata after loader metadata", async () => {
         for (
           const [control, expectedStatus, expectedKind] of [
@@ -726,6 +884,43 @@ describe("server/services/rendering/ssr.service", () => {
           { name: "redirect-seen", value: "1", path: "/" },
           { name: "control-seen", value: "1", path: "/" },
         ]);
+      });
+
+      it("blocks a disallowed post-shell redirect without forwarding metadata", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "",
+              stream: createReactReadyStream(
+                redirect("https://untrusted.example/login", false, {
+                  headers: { "x-data-state": "blocked-control" },
+                  cookies: [{ name: "control-seen", value: "blocked", path: "/" }],
+                }),
+              ),
+              ssrHash: undefined,
+              frontmatter: {},
+              headers: { "x-data-state": "blocked-loader" },
+              cookies: [{ name: "loader-seen", value: "blocked", path: "/" }],
+            }),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(
+          makeCtx({ securityConfig: { redirects: { allowedOrigins: [] } } }),
+          makeRenderOptions({ useNoCache: true }),
+        );
+
+        assertEquals(result.status, 500);
+        assertEquals(result.failure?.kind, "runtime");
+        if (result.failure?.kind !== "runtime") throw new Error("expected runtime failure");
+        assertEquals(
+          (result.failure.error as VeryfrontError).slug,
+          "redirect-destination-not-allowed",
+        );
+        assertEquals(result.headers, undefined);
+        assertEquals(result.cookies, undefined);
       });
 
       it("maps a permanent thrown redirect() to a 301", async () => {

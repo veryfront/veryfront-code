@@ -902,6 +902,23 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(result.environment.resolvedEnvironment, "preview");
   });
 
+  it("carries the trusted browser-visible request origin into handler context", async () => {
+    const req = new Request("http://runtime.internal/page", {
+      headers: {
+        "x-forwarded-host": "app.example.com:8443",
+        "x-forwarded-proto": "https",
+      },
+    });
+
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url: new URL(req.url),
+      proxyTrust: { proxyTrusted: true },
+    }));
+
+    assertEquals(result.handlerContext?.requestOrigin, "https://app.example.com:8443");
+  });
+
   it("honors trusted local project paths, suppresses local proxy tokens, and skips enriched context", async () => {
     const adapter = createMockAdapter({
       "/trusted/project": { isDirectory: true },

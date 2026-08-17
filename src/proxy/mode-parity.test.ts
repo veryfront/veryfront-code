@@ -445,8 +445,8 @@ describe("Proxy-Renderer Mode Parity", () => {
           },
         });
 
-        const req = new Request("http://test-project.preview.veryfront.com/blog", {
-          headers: { host: "test-project.preview.veryfront.com" },
+        const req = new Request("http://test-project.preview.veryfront.com:8443/blog", {
+          headers: { host: "test-project.preview.veryfront.com:8443" },
         });
 
         const ctx = await handler.processRequest(req);
@@ -456,7 +456,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         assertEquals(headers["x-project-slug"], "test-project");
         assertEquals(headers["x-environment"], "preview");
         assertEquals(typeof headers["x-content-source-id"], "string");
-        assertEquals(headers["x-forwarded-host"], "test-project.preview.veryfront.com");
+        assertEquals(headers["x-forwarded-host"], "test-project.preview.veryfront.com:8443");
 
         assertEquals(ctx.projectSlug, "test-project");
         assertEquals(ctx.environment, "preview");

@@ -860,6 +860,24 @@ describe("hydration-script-builder/runtime/router", () => {
       assertEquals(harness.window.location.href, "https://veryfront.test/moved");
     });
 
+    it("resolves relative redirects against the route being navigated to", async () => {
+      const cases = [
+        ["login", "https://veryfront.test/users/login"],
+        ["?next=1", "https://veryfront.test/users/account?next=1"],
+        ["#details", "https://veryfront.test/users/account#details"],
+      ] as const;
+
+      for (const [destination, expected] of cases) {
+        const harness = createRouterHarness({ pathname: "/settings" });
+        harness.window.__veryfrontHydrationComplete?.();
+        harness.setNextPageData({ redirect: { destination } });
+
+        await harness.runtime.navigateSPA("/users/account");
+
+        assertEquals(harness.window.location.href, expected);
+      }
+    });
+
     it("refuses to follow a javascript: redirect destination", async () => {
       const harness = createRouterHarness();
       harness.window.__veryfrontHydrationComplete?.();

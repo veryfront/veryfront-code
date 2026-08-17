@@ -585,6 +585,44 @@ describe("configSchema", () => {
     }
   });
 
+  it("accepts bounded canonical redirect origin policies", () => {
+    const allowedOrigins = [
+      "https://accounts.example.com",
+      "http://localhost:3000",
+    ];
+
+    assertEquals(
+      validateVeryfrontConfig({ security: { redirects: { allowedOrigins } } }).security
+        ?.redirects,
+      { allowedOrigins },
+    );
+    assertEquals(
+      validateVeryfrontConfig({ security: { redirects: { allowedOrigins: [] } } }).security
+        ?.redirects,
+      { allowedOrigins: [] },
+    );
+  });
+
+  it("rejects malformed redirect origin policies", () => {
+    for (
+      const redirects of [
+        {},
+        { allowedOrigins: ["https://accounts.example.com/path"] },
+        { allowedOrigins: ["https://accounts.example.com?tenant=one"] },
+        { allowedOrigins: ["https://user:password@accounts.example.com"] },
+        { allowedOrigins: ["javascript:"] },
+        { allowedOrigins: ["//accounts.example.com"] },
+        { allowedOrigins: ["https://accounts.example.com", "https://accounts.example.com"] },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ security: { redirects } }),
+        Error,
+        "Invalid veryfront.config at security.redirects",
+      );
+    }
+  });
+
   it("accepts CSP directives in either spelling, including null", () => {
     const csp = {
       styleSrc: ["https://fonts.googleapis.com"],

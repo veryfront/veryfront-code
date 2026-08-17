@@ -25,6 +25,8 @@ export interface HandlerContextOptions {
   adapter: RuntimeAdapter;
   /** Security config */
   securityConfig: SecurityConfig | null;
+  /** Browser-visible HTTP(S) origin resolved at the trusted request boundary. */
+  requestOrigin: string | null;
   /** CSP user header */
   /** Debug mode */
   debug: boolean | undefined;
@@ -112,6 +114,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     adapter: opts.adapter,
     moduleServerUrl: opts.moduleServerUrl,
     securityConfig: opts.securityConfig,
+    requestOrigin: opts.requestOrigin,
     debug: opts.debug,
     config: opts.config,
     parsedDomain: opts.parsedDomain,

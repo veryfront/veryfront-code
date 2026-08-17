@@ -29,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 112 registered errors", () => {
+    it("should have 113 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 112);
+      assertEquals(slugs.length, 113);
     });
   });
 
@@ -323,7 +323,7 @@ describe("error-registry", () => {
     const expectedCategoryCounts: Record<string, number> = {
       CONFIG: 12,
       BUILD: 9,
-      RUNTIME: 10,
+      RUNTIME: 11,
       ROUTE: 6,
       MODULE: 8,
       SERVER: 18,
