@@ -450,6 +450,7 @@ describe("tool-helpers", () => {
     it("passes runtime run and agent context to remote integration tool execution", async () => {
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      let requestUrl: string | undefined;
       let requestBody: Record<string, unknown> | undefined;
 
       try {
@@ -459,6 +460,7 @@ describe("tool-helpers", () => {
         const result = await withMockFetch(
           async (input: string | URL | Request, init?: RequestInit) => {
             const request = input instanceof Request ? input : new Request(input, init);
+            requestUrl = request.url;
             requestBody = await request.json();
             return Response.json({ structuredContent: { ok: true } });
           },
@@ -477,8 +479,11 @@ describe("tool-helpers", () => {
         );
 
         assertEquals(result, { structuredContent: { ok: true } });
+        assertEquals(
+          requestUrl,
+          "https://api.test/integrations/gmail/tools/list_emails/call",
+        );
         assertEquals(requestBody, {
-          name: "gmail__list_emails",
           arguments: { maxResults: 10 },
           run_id: "run-123",
           agent_id: "agent-123",

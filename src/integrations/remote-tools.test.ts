@@ -459,6 +459,28 @@ describe("integrations/remote-tools", () => {
     assertEquals(dispatchCalls, 0);
   });
 
+  it("rejects oversized remote tool names at the input bound before dispatch", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+    let dispatchCalls = 0;
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () => {
+            dispatchCalls++;
+            return Response.json({ structuredContent: {} });
+          },
+          () => executeRemoteIntegrationTool(`github__${"a".repeat(121)}`, {}),
+        ),
+      Error,
+      "Remote integration tool name must not exceed 128 characters",
+    );
+    assertEquals(dispatchCalls, 0);
+  });
+
   it("uses the environment token only in single-project mode", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
@@ -679,12 +701,48 @@ describe("integrations/remote-tools", () => {
     );
 
     assertEquals(requestBody, {
-      name: "github__list_repos",
       arguments: { visibility: "private" },
     });
     assertEquals(result, {
       error: "authentication_required",
       connectUrl: "/api/auth/github",
+    });
+  });
+
+  it("addresses execution by integration and tool path without duplicating identity in the body", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let requestUrl = "";
+    let requestMethod = "";
+    let requestBody: Record<string, unknown> | undefined;
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestUrl = request.url;
+        requestMethod = request.method;
+        requestBody = await request.json();
+        return Response.json({ structuredContent: { ok: true } });
+      },
+      () =>
+        executeRemoteIntegrationTool(
+          "google-analytics__run_report",
+          { property: "properties/123" },
+          { runId: "run-123", agentId: "agent-123" },
+        ),
+    );
+
+    assertEquals(
+      requestUrl,
+      "https://api.test/integrations/google-analytics/tools/run_report/call",
+    );
+    assertEquals(requestMethod, "POST");
+    assertEquals(requestBody, {
+      arguments: { property: "properties/123" },
+      run_id: "run-123",
+      agent_id: "agent-123",
     });
   });
 
@@ -754,7 +812,6 @@ describe("integrations/remote-tools", () => {
     assertEquals(authorizationHeader, "Bearer request-token");
     assertEquals(projectSlugHeader, "canonical-project");
     assertEquals(requestBody, {
-      name: "gmail__list_emails",
       arguments: { maxResults: 10 },
       run_id: "run-123",
       agent_id: "agent-123",
@@ -816,7 +873,6 @@ describe("integrations/remote-tools", () => {
     );
 
     assertEquals(requestBody, {
-      name: "gmail__list_emails",
       arguments: { maxResults: 10 },
       agent_id: "agent-123",
     });
@@ -888,6 +944,7 @@ describe("integrations/remote-tools", () => {
     assertStrictEquals(isRemoteIntegrationTool("__start"), false);
     assertStrictEquals(isRemoteIntegrationTool("end__"), false);
     assertStrictEquals(isRemoteIntegrationTool("middle__middle__name"), false);
+    assertStrictEquals(isRemoteIntegrationTool(`github__${"a".repeat(121)}`), false);
   });
 
   it("omits undefined call tool text entries when joining text content", async () => {
