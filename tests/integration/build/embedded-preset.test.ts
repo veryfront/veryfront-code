@@ -28,6 +28,7 @@ describe(
           projectDir: context.projectDir,
           outDir,
           runtime: "deno",
+          config: { router: "app" },
         });
 
         assertEquals(manifest.version, 1);
@@ -245,6 +246,72 @@ describe(
         const docs = manifest.routes.filter((route) => route.path === "/docs");
         assertEquals(docs.length, 1);
         assertEquals(docs[0].file, "embedded/app/docs.js");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("honours an explicit pages router for the shell and route collisions", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-embedded-pages-router-" });
+      try {
+        await Deno.mkdir(join(projectDir, "app/docs"), { recursive: true });
+        await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+        await Deno.writeTextFile(
+          join(projectDir, "app/page.mdx"),
+          "# App root\n\nAPP_ROUTER_ROOT_MARKER\n",
+        );
+        await Deno.writeTextFile(join(projectDir, "app/docs/page.mdx"), "# App docs\n");
+        await Deno.writeTextFile(
+          join(projectDir, "pages/index.mdx"),
+          "# Pages root\n\nPAGES_ROUTER_ROOT_MARKER\n",
+        );
+        await Deno.writeTextFile(join(projectDir, "pages/docs.mdx"), "# Pages docs\n");
+
+        const outDir = join(projectDir, "dist");
+        const { manifest } = await buildEmbeddedPreset({
+          projectDir,
+          outDir,
+          runtime: "deno",
+          config: { router: "pages" },
+        });
+
+        const docs = manifest.routes.filter((route) => route.path === "/docs");
+        assertEquals(docs, [{
+          path: "/docs",
+          file: "embedded/pages/docs.js",
+          type: "page",
+        }]);
+
+        const shell = await readTextFile(join(outDir, "embedded/app.js"));
+        assert(shell.includes("PAGES_ROUTER_ROOT_MARKER"));
+        assertEquals(shell.includes("APP_ROUTER_ROOT_MARKER"), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("publishes a valid colliding fallback after the preferred route fails", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-embedded-route-fallback-" });
+      try {
+        await Deno.mkdir(join(projectDir, "app/docs"), { recursive: true });
+        await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+        await Deno.writeTextFile(join(projectDir, "app/page.mdx"), "# Root\n");
+        await Deno.writeTextFile(
+          join(projectDir, "app/docs/page.mdx"),
+          "<UnclosedComponent\n",
+        );
+        await Deno.writeTextFile(join(projectDir, "pages/docs.mdx"), "# Pages docs\n");
+
+        const { manifest } = await buildEmbeddedPreset({
+          projectDir,
+          outDir: join(projectDir, "dist"),
+          runtime: "deno",
+        });
+
+        assertEquals(
+          manifest.routes.filter((route) => route.path === "/docs"),
+          [{ path: "/docs", file: "embedded/pages/docs.js", type: "page" }],
+        );
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

@@ -155,17 +155,20 @@ export async function handleBuildCommand(args: ParsedArgs): Promise<void> {
  * The production build reports the size of what it emitted, so the embedded
  * preset reports the same thing rather than leaving the field at zero. The
  * manifest is the artifact list, so it cannot drift from what was written.
- * A file the preset failed to emit is skipped: `buildEmbeddedPreset` only warns
- * when an RSC bundle or a route fails, and a size roll-up must not turn that
- * warning into a hard error.
+ * A missing file is skipped because `buildEmbeddedPreset` only warns when an
+ * RSC bundle or route fails. Other filesystem errors still fail the build so
+ * JSON output cannot report a partial size as a successful result.
+ *
+ * @internal
  */
-async function sumEmbeddedOutputSize(
+export async function sumEmbeddedOutputSize(
   outDir: string,
   manifest: { routes: ReadonlyArray<{ file: string }>; assets: ReadonlyArray<{ file: string }> },
+  fileSystem?: { stat(path: string): Promise<{ size: number }> },
 ): Promise<number> {
   const { join } = await import("veryfront/platform/path");
-  const { createFileSystem } = await import("veryfront/platform");
-  const fs = createFileSystem();
+  const { createFileSystem, isNotFoundError } = await import("veryfront/platform");
+  const fs = fileSystem ?? createFileSystem();
 
   const files = new Set<string>(["embedded/manifest.json"]);
   for (const route of manifest.routes) files.add(route.file);
@@ -175,8 +178,9 @@ async function sumEmbeddedOutputSize(
   for (const file of files) {
     try {
       total += (await fs.stat(join(outDir, file))).size;
-    } catch {
-      // Not emitted — already reported by the preset as a warning.
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      // Not emitted, already reported by the preset as a warning.
     }
   }
   return total;
@@ -255,6 +259,7 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
   });
 
   if (json) {
+    const totalSize = await sumEmbeddedOutputSize(finalOutput, manifest);
     const elapsed = Date.now() - startTime;
     streamJsonLine({
       type: "step",
@@ -282,7 +287,7 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
         // from the command this is supposed to match.
         chunks: 0,
         assets: manifest.assets.length,
-        totalSize: await sumEmbeddedOutputSize(finalOutput, manifest),
+        totalSize,
         duration_ms: elapsed,
         outputDir: finalOutput,
         // `--dry-run` is rejected for this preset, so a build that got here ran.

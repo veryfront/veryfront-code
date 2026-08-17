@@ -60,6 +60,7 @@ export async function buildEmbeddedPreset(
       projectDir,
       appDirectory,
       pagesDirectory,
+      config.router,
     );
     const appOut = join(embeddedDir, "app.js");
     const bundledAppCode = await bundleEmbeddedApp({
@@ -72,10 +73,14 @@ export async function buildEmbeddedPreset(
     await fs.writeTextFile(appOut, bundledAppCode);
 
     const routes: Array<{ path: string; file: string; type: "page" | "api" }> = [];
-    const discovered = [
-      ...(await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)),
-      ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
-    ];
+    const discovered = config.router === "pages"
+      ? await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)
+      : config.router === "app"
+      ? await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)
+      : [
+        ...(await discoverAppRoutes(fs, projectDir, embeddedDir, appDirectory)),
+        ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
+      ];
 
     // Every route path is published exactly once, first claim wins.
     //
@@ -85,15 +90,14 @@ export async function buildEmbeddedPreset(
     // twice, and because a root page's path relative to `app/` is empty it landed
     // on the dotfile `embedded/app/.js`.
     //
-    // The gate spans app AND pages routes, so it also settles a collision that
-    // previously emitted duplicates: a project with both `app/docs/page.mdx` and
-    // `pages/docs.mdx` published `/docs` twice. `discovered` lists app routes
-    // first, so the app route wins — the same precedence the routers use.
+    // The gate spans app AND pages routes in automatic mode, so it also settles
+    // a collision that previously emitted duplicates. Explicit router modes
+    // discover only their configured directory; automatic mode lists app routes
+    // first and keeps pages routes as fallbacks, matching runtime precedence.
     const claimedPaths = new Set<string>(["/"]);
 
     for (const r of discovered) {
       if (claimedPaths.has(r.routePath)) continue;
-      claimedPaths.add(r.routePath);
 
       try {
         const mdxContent = await fs.readTextFile(r.sourcePath);
@@ -112,6 +116,7 @@ export async function buildEmbeddedPreset(
           file: `embedded/${fileRel}`,
           type: "page",
         });
+        claimedPaths.add(r.routePath);
       } catch (e) {
         logger.warn("embedded: failed to compile route MDX", {
           route: r.routePath,
@@ -229,13 +234,21 @@ async function findOrCreateEntryPath(
   projectDir: string,
   appDirectory: string,
   pagesDirectory: string,
+  router: VeryfrontConfig["router"],
 ): Promise<string> {
-  const candidates = [
+  const appCandidates = [
     join(projectDir, appDirectory, "page.mdx"),
     join(projectDir, appDirectory, "page.md"),
+  ];
+  const pagesCandidates = [
     join(projectDir, pagesDirectory, "index.mdx"),
     join(projectDir, pagesDirectory, "index.md"),
   ];
+  const candidates = router === "pages"
+    ? pagesCandidates
+    : router === "app"
+    ? appCandidates
+    : [...appCandidates, ...pagesCandidates];
 
   for (const c of candidates) {
     try {

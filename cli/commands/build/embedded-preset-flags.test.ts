@@ -4,7 +4,20 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { withCwd } from "#veryfront/testing/cwd.ts";
 import { parseCliArgs } from "#cli/shared/args";
-import { assertEmbeddedPresetFlags, handleBuildCommand } from "./handler.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
+import { assertEmbeddedPresetFlags, handleBuildCommand, sumEmbeddedOutputSize } from "./handler.ts";
+
+async function captureStdout(fn: () => Promise<void>): Promise<string> {
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+  try {
+    await fn();
+  } finally {
+    console.log = originalLog;
+  }
+  return lines.join("\n");
+}
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -48,7 +61,7 @@ describe("commands/build/handler embedded preset flags", () => {
     }
   });
 
-  it("writes an embedded bundle to build.outDir from veryfront.config.js", async () => {
+  it("writes to build.outDir and reports embedded metrics in JSON mode", async () => {
     const projectDir = await makeProject("vf-embedded-outdir-");
     try {
       await Deno.writeTextFile(
@@ -56,9 +69,19 @@ describe("commands/build/handler embedded preset flags", () => {
         'export default { build: { outDir: "custom-out" } };\n',
       );
 
-      await withCwd(projectDir, async () => {
-        await handleBuildCommand(parseCliArgs(["build", "--preset", "embedded"]));
-      });
+      let output: string;
+      setJsonMode(true);
+      try {
+        output = await withCwd(
+          projectDir,
+          () =>
+            captureStdout(() =>
+              handleBuildCommand(parseCliArgs(["build", "--preset", "embedded", "--json"]))
+            ),
+        );
+      } finally {
+        setJsonMode(false);
+      }
 
       assertEquals(
         await exists(join(projectDir, "custom-out/embedded/manifest.json")),
@@ -70,8 +93,51 @@ describe("commands/build/handler embedded preset flags", () => {
         false,
         "the embedded preset must not fall back to dist/ when build.outDir is set",
       );
+
+      const events = output.split("\n").map((line) => JSON.parse(line));
+      const result = events.find((event) => event.type === "result");
+      assertEquals(result.success, true);
+      assertEquals(result.data.pages, 1);
+      assertEquals(result.data.totalSize > 0, true);
+      assertEquals(
+        result.data.duration_ms,
+        events.find((event) =>
+          event.type === "step" && event.name === "build" &&
+          event.status === "completed"
+        ).duration_ms,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("skips only missing embedded artifacts when summing output size", async () => {
+    const outDir = await Deno.makeTempDir({ prefix: "vf-embedded-size-" });
+    try {
+      await Deno.mkdir(join(outDir, "embedded"), { recursive: true });
+      await Deno.writeTextFile(join(outDir, "embedded/manifest.json"), "manifest");
+      await Deno.writeTextFile(join(outDir, "embedded/app.js"), "app");
+
+      assertEquals(
+        await sumEmbeddedOutputSize(outDir, {
+          routes: [{ file: "embedded/app.js" }],
+          assets: [{ file: "embedded/missing.js" }],
+        }),
+        new TextEncoder().encode("manifestapp").byteLength,
+      );
+
+      await assertRejects(
+        () =>
+          sumEmbeddedOutputSize(
+            outDir,
+            { routes: [{ file: "embedded/app.js" }], assets: [] },
+            { stat: () => Promise.reject(new Error("adapter stat failed")) },
+          ),
+        Error,
+        "adapter stat failed",
+      );
+    } finally {
+      await Deno.remove(outDir, { recursive: true });
     }
   });
 
