@@ -59,9 +59,29 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
+import {
+  COMPILE_SOURCE_MAP_DIRECTIVE_METADATA,
+  COMPILE_SOURCE_MAP_INPUT_METADATA,
+} from "./compile.ts";
 
 /** Exports that only ever execute on the server. */
 const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
+
+// The compile stage runs before this pass and embeds its input in a development
+// sourcemap. Once a hook is stripped, any prior map is stale and may contain or
+// point at a verbatim copy of the server-only source. Match only an actual
+// trailing directive so source-map-like text inside authored strings survives.
+const SOURCE_MAP_SUFFIX =
+  /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
+
+function dropSourceMapSuffix(code: string): string {
+  return code.replace(SOURCE_MAP_SUFFIX, "$1");
+}
+
+function appendSourceMapDirective(code: string, directive: string): string {
+  const separator = code.length > 0 && !code.endsWith("\n") ? "\n" : "";
+  return `${code}${separator}${directive}\n`;
+}
 
 /** Source the stub nodes are lifted from, so no node shape is hand-built. */
 const STUB_SOURCE = `function __vfStub() { throw new Error("server-only"); }
@@ -1039,7 +1059,10 @@ class ServerExportStripError extends Error {
  * in a form with no local declaration to empty. Failing the build is the only
  * safe outcome — the alternative is shipping the loader to the browser.
  */
-export async function stripServerOnlyExports(code: string, filePath?: string): Promise<string> {
+export async function stripServerOnlyExports(
+  code: string,
+  filePath?: string,
+): Promise<string> {
   // Cheap pre-check: no mention of a hook means no parse.
   if (!SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return code;
 
@@ -1085,7 +1108,7 @@ export async function stripServerOnlyExports(code: string, filePath?: string): P
   setBody(ast, dropUnusedImportBindings(pruned, hookClosure));
 
   const generated = await parser.generate(ast);
-  return generated.code;
+  return dropSourceMapSuffix(generated.code);
 }
 
 export const browserServerExportsStripPlugin: TransformPlugin = {
@@ -1094,5 +1117,14 @@ export const browserServerExportsStripPlugin: TransformPlugin = {
   // dropped bindings are never rewritten or pre-fetched.
   stage: TransformStage.COMPILE + 0.6,
   condition: (ctx: TransformContext) => ctx.target === "browser",
-  transform: (ctx: TransformContext) => stripServerOnlyExports(ctx.code, ctx.filePath),
+  transform: async (ctx: TransformContext) => {
+    const directive = ctx.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
+    const compileInput = ctx.metadata.get(COMPILE_SOURCE_MAP_INPUT_METADATA);
+    ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
+    ctx.metadata.delete(COMPILE_SOURCE_MAP_INPUT_METADATA);
+    const result = await stripServerOnlyExports(ctx.code, ctx.filePath);
+    return result === ctx.code && compileInput === ctx.code && typeof directive === "string"
+      ? appendSourceMapDirective(result, directive)
+      : result;
+  },
 };
