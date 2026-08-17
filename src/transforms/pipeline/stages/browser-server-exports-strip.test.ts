@@ -879,6 +879,190 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "function bootClient()");
     });
 
+    // Silent-leak fix. Liveness used to ask what the module reads once the
+    // hook's own closure is elided, which made every *other* declaration
+    // unconditionally live — including ones nothing calls. A private helper the
+    // module never reaches then counted as a browser reader of `createHash` and
+    // kept the `node:crypto` import, which is the hydration failure this stage
+    // exists to prevent. A declaration that runs nothing and that nothing
+    // reaches is not a reason to keep anything alive.
+    it("drops a dead private helper that was pinning a node builtin import", async () => {
+      const code = [
+        `import { createHash } from "node:crypto";`,
+        `function deadHelper() { return createHash("sha1"); }`,
+        `export async function getServerData() { return { props: { h: createHash("sha256") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "node:crypto");
+      assertEquals(occurrences(result, "createHash"), 0);
+      assertEquals(occurrences(result, "deadHelper"), 0);
+    });
+
+    it("drops a dead helper that was sharing the hook's secret", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const deadHelper = () => KEY;`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "deadHelper"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("drops a dead class that was holding the hook's secret", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `class DeadLoader { run() { return KEY; } }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "DeadLoader"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // Two dead helpers that call each other are each the other's last consumer,
+    // so no per-declaration rule can ever free the secret they share.
+    it("drops a dead helper cycle that was holding the hook's secret", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function first() { return second() + KEY; }`,
+        `function second() { return first(); }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "first"), 0);
+      assertEquals(occurrences(result, "second"), 0);
+    });
+
+    // The same gap in the shape that survives esbuild's production tree-shaker:
+    // a `var` inside an `if`, `switch`, loop or `try` is not provably pure, so
+    // it reaches this stage and used to root whatever it reads.
+    it("drops a hook-only secret read only by a hoisted var in an impure guard", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `if (globalThis.debug) { var dead = KEY; }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "dead"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("drops a helper reached only from a hoisted var in an impure guard", async () => {
+      const code = [
+        `import { createHash } from "node:crypto";`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function deadHelper() { return createHash("sha1") + KEY; }`,
+        `if (globalThis.debug) { var dead = deadHelper; }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "node:crypto");
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "deadHelper"), 0);
+      assertEquals(occurrences(result, "dead"), 0);
+    });
+
+    // A declaration that *does* run at module load is still elided when every
+    // binding it evaluates is already the hooks': the only thing it can pin is
+    // one this pass owns.
+    it("drops a hoisted var whose initialiser only calls a hook-only import", async () => {
+      const code = [
+        `import { createHash } from "node:crypto";`,
+        `switch (globalThis.mode) { case 1: var dead = createHash("md5"); }`,
+        `export async function getServerData() { return { props: { h: createHash("sha256") } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "node:crypto");
+      assertEquals(occurrences(result, "createHash"), 0);
+      assertEquals(occurrences(result, "dead"), 0);
+    });
+
+    // Over-pruning guard for the wider reachability: removal stays scoped to
+    // the hooks' closure, so a helper nothing calls that holds nothing
+    // server-only is left exactly where it is. This stage is not a general
+    // dead-code eliminator.
+    it("keeps a dead helper that holds nothing from the hook's closure", async () => {
+      const code = [
+        `import { fmt } from "./util.ts";`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function unusedClientHelper() { return fmt("x"); }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertStringIncludes(result, "function unusedClientHelper");
+      assertStringIncludes(result, "./util.ts");
+    });
+
+    // A dev build wraps every initialiser in esbuild's `keepNames` helper and
+    // compiles a class's registration into a static block. Neither is a call
+    // the module makes, so neither may turn a dead declaration into live code —
+    // but the helper performing them stays for as long as one still runs.
+    it("drops dead declarations wrapped in compiler name registrations", async () => {
+      const code = [
+        `var defineName = Object.defineProperty;`,
+        `var setName = (target, value) => defineName(target, "name", { value, configurable: true });`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const deadHelper = setName(() => KEY, "deadHelper");`,
+        `class DeadLoader { static { setName(this, "DeadLoader"); } run() { return KEY; } }`,
+        `function loadServer() { return KEY; }`,
+        `setName(loadServer, "getServerData");`,
+        `function Page() { return null; }`,
+        `setName(Page, "Page");`,
+        `export { Page as default, loadServer as getServerData };`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+      assertEquals(occurrences(result, "deadHelper"), 0);
+      assertEquals(occurrences(result, "DeadLoader"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertStringIncludes(result, `setName(Page, "Page")`);
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [
