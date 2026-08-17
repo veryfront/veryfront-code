@@ -2122,6 +2122,47 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "Badge from");
     });
 
+    it("does not count a lowercase JSX tag as a binding reference", async () => {
+      const code = [
+        `import { secret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return secret(); }`,
+        `export default function Page() { return <secret />; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, "<secret />");
+      assertNotIncludes(result, "../server/secrets.ts");
+      assertEquals(occurrences(result, "secret"), 1);
+    });
+
+    it("counts a lowercase JSX member root as a binding reference", async () => {
+      const code = [
+        `import client from "../components/client.tsx";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return <client.Icon />; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, 'client from "../components/client.tsx"');
+      assertStringIncludes(result, "<client.Icon />");
+    });
+
+    it("does not count a JSX namespace name as a binding reference", async () => {
+      const code = [
+        `import { svg } from "../server/icons.ts";`,
+        `export async function getServerData() { return svg; }`,
+        `export default function Page() { return <svg:path />; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, "<svg:path />");
+      assertNotIncludes(result, "../server/icons.ts");
+      assertEquals(occurrences(result, "svg"), 1);
+    });
+
     it("does not count a JSX attribute name as a reference", async () => {
       const code = [
         `import { secret } from "../server/secrets.ts";`,
