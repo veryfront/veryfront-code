@@ -910,7 +910,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             lookupType: error.lookupType,
             status: error.publicStatus,
             upstreamStatus: error.upstreamStatus,
-            upstreamBodySnippet: error.upstreamBodySnippet,
           });
           return {
             error: {
@@ -978,7 +977,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
               lookupType: retryError.lookupType,
               status: retryError.publicStatus,
               upstreamStatus: retryError.upstreamStatus,
-              upstreamBodySnippet: retryError.upstreamBodySnippet,
             });
             return {
               error: {

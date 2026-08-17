@@ -5,15 +5,13 @@ import {
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { isErrorAcrossRealms } from "#veryfront/platform/compat/error-introspection.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
-import { readProxyResponseText, settleProxyResponseBody } from "./response-body.ts";
+import { readProxyResponseJson, settleProxyResponseBody } from "./response-body.ts";
 
 const DEFAULT_LOOKUP_TIMEOUT_MS = 10_000;
 const MAX_LOOKUP_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_INFLIGHT_LOOKUPS = 200;
 const MAX_CONFIGURED_INFLIGHT_LOOKUPS = 10_000;
 const MAX_METADATA_RESPONSE_BYTES = 512 * 1024;
-const MAX_UPSTREAM_BODY_SNIPPET_BYTES = 256;
-const MAX_UPSTREAM_BODY_SNIPPET_READS = 64;
 const MAX_API_BASE_URL_CODE_UNITS = 2_048;
 const MAX_LOOKUP_KEY_CODE_UNITS = 256;
 const MAX_ENVIRONMENTS = 1_000;
@@ -98,13 +96,10 @@ export class ProxyLookupAuthError extends Error {
 export interface ProxyLookupFailureUpstreamContext {
   /** HTTP status returned by the metadata API for the failed lookup. */
   upstreamStatus?: number;
-  /** Bounded UTF-8 snippet of the upstream response body, for diagnostics only. */
-  upstreamBodySnippet?: string;
 }
 
 export class ProxyLookupFailure extends Error {
   readonly upstreamStatus?: number;
-  readonly upstreamBodySnippet?: string;
 
   constructor(
     readonly lookupType: ProxyLookupType,
@@ -115,7 +110,6 @@ export class ProxyLookupFailure extends Error {
     super(message, options);
     this.name = "ProxyLookupFailure";
     this.upstreamStatus = options?.upstreamStatus;
-    this.upstreamBodySnippet = options?.upstreamBodySnippet;
   }
 }
 
@@ -450,60 +444,6 @@ async function awaitAbortable<T>(
   });
 }
 
-const snippetDecoder = new TextDecoder("utf-8", { fatal: false });
-const snippetEncoder = new TextEncoder();
-
-function truncateBodySnippet(text: string): string | undefined {
-  if (text.length === 0) return undefined;
-  return snippetDecoder.decode(
-    snippetEncoder.encode(text).subarray(0, MAX_UPSTREAM_BODY_SNIPPET_BYTES),
-  );
-}
-
-/**
- * Best-effort read of a bounded upstream body prefix for diagnostics.
- *
- * Never throws: abort, stream errors, and adversarial chunking all degrade to
- * `undefined`. The reader is cancelled before returning so callers keep the
- * same body-settlement guarantees as `settleProxyResponseBody`.
- */
-async function readUpstreamBodySnippet(
-  response: Response,
-  signal: AbortSignal,
-): Promise<string | undefined> {
-  const body = response.body;
-  if (!body || signal.aborted) return undefined;
-  const reader = body.getReader();
-  const bytes = new Uint8Array(MAX_UPSTREAM_BODY_SNIPPET_BYTES);
-  let totalBytes = 0;
-  try {
-    for (let reads = 0; reads < MAX_UPSTREAM_BODY_SNIPPET_READS; reads++) {
-      if (signal.aborted || totalBytes >= MAX_UPSTREAM_BODY_SNIPPET_BYTES) break;
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value || value.byteLength === 0) continue;
-      const take = Math.min(value.byteLength, MAX_UPSTREAM_BODY_SNIPPET_BYTES - totalBytes);
-      bytes.set(value.subarray(0, take), totalBytes);
-      totalBytes += take;
-    }
-  } catch {
-    // Diagnostics stay best-effort: the lookup failure itself is authoritative.
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {
-      // Cancellation reached a terminal state; ownership may be released.
-    }
-    try {
-      reader.releaseLock();
-    } catch {
-      // The stream may already have released the reader after cancellation.
-    }
-  }
-  if (totalBytes === 0) return undefined;
-  return snippetDecoder.decode(bytes.subarray(0, totalBytes));
-}
-
 export function createProjectMetadataClient(
   options: ProjectMetadataClientOptions,
 ): ProjectMetadataClient {
@@ -580,38 +520,36 @@ export function createProjectMetadataClient(
           throw new ProxyLookupAuthError(lookupType, response.status);
         }
         if (!response.ok) {
-          const upstreamBodySnippet = await readUpstreamBodySnippet(response, controller.signal);
           await settleProxyResponseBody(response);
           const publicStatus = response.status === 429 ? 503 : 502;
           throw new ProxyLookupFailure(
             lookupType,
             publicStatus,
             `Proxy ${lookupType} metadata request was rejected`,
-            { upstreamStatus: response.status, upstreamBodySnippet },
+            { upstreamStatus: response.status },
           );
         }
 
         const contentType = response.headers.get("content-type")?.split(";")[0]?.trim()
           .toLowerCase();
         if (contentType !== "application/json") {
-          const upstreamBodySnippet = await readUpstreamBodySnippet(response, controller.signal);
           await settleProxyResponseBody(response);
           throw new ProxyLookupFailure(
             lookupType,
             502,
             `Proxy ${lookupType} metadata returned an invalid content type`,
-            { upstreamStatus: response.status, upstreamBodySnippet },
+            { upstreamStatus: response.status },
           );
         }
 
-        let responseText: string | undefined;
         try {
-          responseText = await readProxyResponseText(
-            response,
-            MAX_METADATA_RESPONSE_BYTES,
-            controller.signal,
+          return parse(
+            await readProxyResponseJson(
+              response,
+              MAX_METADATA_RESPONSE_BYTES,
+              controller.signal,
+            ),
           );
-          return parse(JSON.parse(responseText) as unknown);
         } catch (error) {
           if (controller.signal.aborted) throw abortReason(controller.signal);
           if (error instanceof ProxyLookupFailure) throw error;
@@ -622,9 +560,6 @@ export function createProjectMetadataClient(
             {
               cause: error,
               upstreamStatus: response.status,
-              upstreamBodySnippet: responseText === undefined
-                ? undefined
-                : truncateBodySnippet(responseText),
             },
           );
         }

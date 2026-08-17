@@ -484,7 +484,8 @@ describe("Proxy Handler", () => {
         );
         assertEquals(failedClosed?.level, "error");
         assertEquals(failedClosed?.extra?.upstreamStatus, 503);
-        assertEquals(failedClosed?.extra?.upstreamBodySnippet, "Unavailable");
+        assertEquals(failedClosed?.extra?.upstreamBodySnippet, undefined);
+        assertEquals(JSON.stringify(failedClosed).includes("Unavailable"), false);
         await handler.close();
       } finally {
         await server.shutdown();

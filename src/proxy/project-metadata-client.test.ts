@@ -77,7 +77,7 @@ describe("proxy project metadata client", () => {
     assertEquals((failure as ProxyLookupFailure).upstreamStatus, 500);
   });
 
-  it("records upstream diagnostics without changing the public failure message", async () => {
+  it("records only non-sensitive upstream diagnostics", async () => {
     const rejected = createProjectMetadataClient({
       apiBaseUrl: "https://api.example.com",
       fetchImpl: makeFetch(() =>
@@ -91,10 +91,7 @@ describe("proxy project metadata client", () => {
     ) as ProxyLookupFailure;
     assertEquals(failure.publicStatus, 502);
     assertEquals(failure.upstreamStatus, 500);
-    assertEquals(
-      failure.upstreamBodySnippet,
-      `{"error":"database unavailable"}${"x".repeat(512)}`.slice(0, 256),
-    );
+    assertEquals("upstreamBodySnippet" in failure, false);
     assertEquals(failure.message.includes("500"), false);
 
     const wrongContentType = createProjectMetadataClient({
@@ -111,7 +108,7 @@ describe("proxy project metadata client", () => {
       "content type",
     ) as ProxyLookupFailure;
     assertEquals(contentTypeFailure.upstreamStatus, 200);
-    assertEquals(contentTypeFailure.upstreamBodySnippet, "<html>maintenance</html>");
+    assertEquals("upstreamBodySnippet" in contentTypeFailure, false);
 
     const invalidJson = createProjectMetadataClient({
       apiBaseUrl: "https://api.example.com",
@@ -127,7 +124,7 @@ describe("proxy project metadata client", () => {
       "invalid response",
     ) as ProxyLookupFailure;
     assertEquals(invalidFailure.upstreamStatus, 200);
-    assertEquals(invalidFailure.upstreamBodySnippet, "not json");
+    assertEquals("upstreamBodySnippet" in invalidFailure, false);
   });
 
   it("requires bounded JSON with the expected response schema", async () => {
