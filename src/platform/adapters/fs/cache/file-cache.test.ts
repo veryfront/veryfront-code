@@ -7,6 +7,7 @@ import {
   isFileCacheDistributedEnabled,
 } from "./file-cache.ts";
 import { CacheBackends } from "#veryfront/cache/backend.ts";
+import { runWithCacheBatching } from "#veryfront/cache/request-cache-batcher.ts";
 
 describe("FileCache", () => {
   let cache: FileCache;
@@ -373,6 +374,53 @@ describe("Distributed cache functions", () => {
       // vacuously passing because the backend was never wired up.
       distributedCache.set("serializable", { ok: true });
       assertEquals(backendWrites, 1);
+    });
+
+    it("deleteAsync() invalidates the request-scoped value in distributed mode", async () => {
+      const distributedModule = await import(
+        "./file-cache.ts?distributed-request-cache-invalidation-regression"
+      );
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const values = new Map<string, string>();
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: (key: string) => Promise.resolve(values.get(key) ?? null),
+            set: (key: string, value: string) => {
+              values.set(key, value);
+              return Promise.resolve();
+            },
+            del: (key: string) => {
+              values.delete(key);
+              return Promise.resolve();
+            },
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+
+      try {
+        assertEquals(await distributedModule.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      const distributedCache = new distributedModule.FileCache();
+      await runWithCacheBatching(async () => {
+        await distributedCache.setAsync("listing", "stale");
+        assertEquals(await distributedCache.getAsync("listing"), "stale");
+
+        await distributedCache.deleteAsync("listing");
+
+        assertEquals(
+          await distributedCache.getAsync("listing"),
+          undefined,
+          "the current request must not retain the deleted distributed value",
+        );
+      });
     });
 
     it("should return boolean", async () => {
