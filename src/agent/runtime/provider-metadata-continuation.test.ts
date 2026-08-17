@@ -338,4 +338,73 @@ describe("agent provider metadata continuation", () => {
       },
     ]);
   });
+
+  it("withholds replay metadata when a streamed tool call was suppressed", async () => {
+    let callCount = 0;
+    let continuedProviderMetadata: unknown = "unread";
+    const model: ModelRuntime = {
+      provider: "google",
+      modelId: "gemini-3.5-flash",
+      async doGenerate() {
+        throw new Error("not used");
+      },
+      async doStream(options: unknown) {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: streamFrom([
+              {
+                type: "tool-call",
+                toolCallId: "stale-1",
+                toolName: "missing_tool",
+                input: '{"query":"stale"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "lookup-1",
+                toolName: "lookup",
+                input: '{"query":"Veryfront"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                providerMetadata,
+              },
+            ]),
+          };
+        }
+
+        continuedProviderMetadata = readAssistantProviderMetadata(options);
+        return {
+          stream: streamFrom([
+            { type: "text-delta", delta: "Done" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ]),
+        };
+      },
+    };
+    const assistant = agent({
+      model: "google/gemini-3.5-flash",
+      system: "Use the lookup tool.",
+      tools: { lookup: createLookupTool() },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({ input: "Look up Veryfront" }))
+      .toDataStreamResponse()
+      .text();
+
+    assertEquals(callCount, 2);
+    // The suppressed call diverges the persisted parts from the raw model
+    // turn, so the continuation must rebuild the assistant message without
+    // replay metadata instead of failing Google's exact-history validation.
+    assertEquals(continuedProviderMetadata, undefined);
+    assertEquals(body.includes("test-thought-signature"), false);
+  });
 });

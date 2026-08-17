@@ -2550,7 +2550,13 @@ export class AgentRuntime {
         preserveRecoverablePlaceholderToolCalls: shouldRecoverInterruptedLocalToolBatch ||
           !shouldContinue,
       });
-      attachProviderMetadata(assistantMessage, state.providerMetadata);
+      // A suppressed tool call means the persisted parts no longer mirror the
+      // raw model turn, so replaying provider metadata would fail the
+      // provider's exact-history validation (e.g. Google's signed tool
+      // replay); the continuation falls back to synthesized parts instead.
+      if (state.suppressedToolCalls.length === 0) {
+        attachProviderMetadata(assistantMessage, state.providerMetadata);
+      }
 
       for (const tc of state.toolCalls.values()) {
         const materialized = materializeStreamedToolCall(tc);
