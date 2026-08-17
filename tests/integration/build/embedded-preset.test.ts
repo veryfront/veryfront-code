@@ -215,5 +215,39 @@ describe(
         }
       });
     });
+
+    it("publishes a path once when an app route and a pages route collide", async () => {
+      // Raised in review: the `/` claim is part of a gate spanning app AND pages
+      // routes, broader than the root-page defect and untested. It is the correct
+      // behaviour — a manifest with two entries for one path is ambiguous — so it
+      // is pinned rather than narrowed. On origin/main this fixture published
+      // `/docs` twice: embedded/app/docs.js and embedded/pages/docs.js.
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-embedded-collide-" });
+      try {
+        await Deno.mkdir(join(projectDir, "app/docs"), { recursive: true });
+        await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
+        await Deno.writeTextFile(join(projectDir, "app/page.mdx"), "# Root\n");
+        await Deno.writeTextFile(join(projectDir, "app/docs/page.mdx"), "# App docs\n");
+        await Deno.writeTextFile(join(projectDir, "pages/docs.mdx"), "# Pages docs\n");
+
+        const { manifest } = await buildEmbeddedPreset({
+          projectDir,
+          outDir: join(projectDir, "dist"),
+          runtime: "deno",
+        });
+
+        const paths = manifest.routes.map((route) => route.path);
+        assertEquals(
+          paths.length,
+          new Set(paths).size,
+          `every path must be published once: ${JSON.stringify(manifest.routes)}`,
+        );
+        const docs = manifest.routes.filter((route) => route.path === "/docs");
+        assertEquals(docs.length, 1);
+        assertEquals(docs[0].file, "embedded/app/docs.js");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   },
 );

@@ -77,12 +77,18 @@ export async function buildEmbeddedPreset(
       ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
     ];
 
-    // `/` belongs to the bundled shell entry, which is the root page itself when the
-    // project has one. Claiming it up front stops the root page being compiled a
-    // second time into a per-route artifact: that copy published `/` twice, and
-    // because a root page's path relative to `app/` is empty it landed on the
-    // dotfile `embedded/app/.js`. Every route path is published exactly once, and
-    // the first claim wins.
+    // Every route path is published exactly once, first claim wins.
+    //
+    // `/` is seeded because it belongs to the bundled shell entry, which IS the
+    // root page when the project has one. Without the seed the root page was
+    // compiled a second time into a per-route artifact: that copy published `/`
+    // twice, and because a root page's path relative to `app/` is empty it landed
+    // on the dotfile `embedded/app/.js`.
+    //
+    // The gate spans app AND pages routes, so it also settles a collision that
+    // previously emitted duplicates: a project with both `app/docs/page.mdx` and
+    // `pages/docs.mdx` published `/docs` twice. `discovered` lists app routes
+    // first, so the app route wins — the same precedence the routers use.
     const claimedPaths = new Set<string>(["/"]);
 
     for (const r of discovered) {
@@ -332,10 +338,11 @@ async function discoverAppRoutes(
       const routePath = rel.replace(/\/page\.(mdx|md)$/, "").replace(/(^$)/, "/");
       const norm = normalizeAppRoutePath(routePath);
 
-      // A root page's path relative to `app/` is empty, so naming its artifact from
-      // that segment alone yields the dotfile `app/.js` — a name consumers that
-      // prune dotfiles drop silently.
-      const filePath = join(embeddedDir, norm === "/" ? "app/index.js" : `app${norm}.js`);
+      // `/` is claimed by the shell entry before this list is compiled, so the
+      // root page never reaches a per-route artifact and this name is never used
+      // for it. Kept as the plain form rather than special-cased: a special case
+      // here would be dead code that reads as if it were load-bearing.
+      const filePath = join(embeddedDir, `app${norm}.js`);
       results.push({ routePath: norm, filePath, sourcePath: abs });
     }
   }
