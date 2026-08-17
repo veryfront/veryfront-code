@@ -9,6 +9,11 @@ import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import type { SSRFailureOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 import { findSSRControlOutcome, resolveSSRFailure } from "#veryfront/rendering/ssr-outcome.ts";
+import { REDIRECT_DESTINATION_NOT_ALLOWED } from "#veryfront/errors/index.ts";
+import {
+  isRedirectDestinationAllowed,
+  type RedirectPolicy,
+} from "#veryfront/utils/redirect-policy.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   endRenderSession,
@@ -127,7 +132,15 @@ export interface MemoryStatus {
 function buildRedirectResult(
   redirect: Extract<SSRFailureOutcome, { kind: "redirect" }>,
   slug: string,
+  requestUrl: string | null,
+  policy: RedirectPolicy | null | undefined,
 ): SSRRenderResult {
+  if (!isRedirectDestinationAllowed(redirect.location, requestUrl, policy)) {
+    throw REDIRECT_DESTINATION_NOT_ALLOWED.create({
+      detail: "The redirect destination is not allowed by the project redirect policy",
+    });
+  }
+
   return {
     status: redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
     isStreaming: false,
@@ -406,20 +419,35 @@ export class SSRService implements SSRServiceLike {
           ...responseMetadata,
         };
       case "redirect":
-        logger.debug("SSR redirect", {
-          slug,
-          destination: outcome.location,
-          permanent: outcome.permanent,
-          projectSlug: ctx.projectSlug,
-        });
-        return buildRedirectResult({
-          ...outcome,
-          ...mergeDataResponseMetadata([
-            inheritedResponseMetadata,
-            requestLocalMetadata,
-            outcome,
-          ]),
-        }, slug);
+        try {
+          const result = buildRedirectResult(
+            {
+              ...outcome,
+              ...mergeDataResponseMetadata([
+                inheritedResponseMetadata,
+                requestLocalMetadata,
+                outcome,
+              ]),
+            },
+            slug,
+            ctx.requestOrigin === undefined ? request.url : ctx.requestOrigin,
+            ctx.securityConfig?.redirects,
+          );
+          logger.debug("SSR redirect", {
+            slug,
+            permanent: outcome.permanent,
+            projectSlug: ctx.projectSlug,
+          });
+          return result;
+        } catch (error) {
+          return this.handleRenderError(
+            error,
+            ctx,
+            slug,
+            request,
+            nonce,
+          );
+        }
       case "not-found":
         logger.debug("SSR notFound", { slug });
         return buildNotFoundResult({

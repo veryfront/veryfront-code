@@ -15,7 +15,7 @@ import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
 import { isProxyTrusted } from "../utils/proxy-trust.ts";
-import { getEffectiveRequestHost } from "../utils/request-host.ts";
+import { getEffectiveRequestHost, getEffectiveRequestOrigin } from "../utils/request-host.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
@@ -286,11 +286,14 @@ export async function resolveProjectRuntimeContext(
     })
   );
 
+  const trustProxyHeaders = input.proxyTrust.proxyTrusted ??
+    getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1";
   const host = getEffectiveRequestHost(
     input.req,
     input.url,
-    input.proxyTrust.proxyTrusted ?? getHostEnv("VERYFRONT_TRUST_FORWARDED_HEADERS") === "1",
+    trustProxyHeaders,
   );
+  const requestOrigin = getEffectiveRequestOrigin(input.req, input.url, trustProxyHeaders);
   const envRes = resolveEnvironment({
     proxyEnv: projectRes.proxyEnv,
     reqCtxMode: reqCtx.mode,
@@ -404,6 +407,7 @@ export async function resolveProjectRuntimeContext(
     projectDir: adapterRes.projectDir,
     adapter: adapterRes.adapter,
     securityConfig: requestSecurity?.securityConfig ?? input.securityConfig,
+    requestOrigin,
     debug: input.debug,
     config: adapterRes.config,
     parsedDomain: projectRes.parsedDomain,

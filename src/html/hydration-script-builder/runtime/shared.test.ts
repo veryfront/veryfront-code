@@ -116,10 +116,14 @@ describe("hydration-script-builder/runtime/shared", () => {
   describe("resolveDocumentNavigationUrl", () => {
     const origin = "https://veryfront.test";
 
-    it("resolves a relative path against the origin", () => {
+    it("resolves a relative path against the supplied navigation base", () => {
       assertEquals(
         resolveDocumentNavigationUrl("/docs/intro", origin),
         "https://veryfront.test/docs/intro",
+      );
+      assertEquals(
+        resolveDocumentNavigationUrl("login", `${origin}/users/account`),
+        "https://veryfront.test/users/login",
       );
     });
 

@@ -35,6 +35,11 @@ import {
   MAX_REMOTE_HOST_URL_LENGTH,
 } from "#veryfront/utils/remote-host-policy-limits.ts";
 import {
+  isValidRedirectOriginList,
+  MAX_REDIRECT_ORIGIN_COUNT,
+  MAX_REDIRECT_ORIGIN_LENGTH,
+} from "#veryfront/utils/redirect-policy.ts";
+import {
   MAX_FILE_LOG_FILES,
   MAX_GITHUB_FILESYSTEM_ATTEMPTS,
   MAX_VERYFRONT_FILESYSTEM_RETRIES,
@@ -574,6 +579,23 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           remoteHosts: v
             .array(v.string().max(MAX_REMOTE_HOST_URL_LENGTH).url())
             .max(MAX_REMOTE_HOST_COUNT)
+            .optional(),
+          /**
+           * Restrict project redirects to the request origin and exact allowed
+           * HTTP(S) origins. Omit this policy to preserve unrestricted redirect
+           * behavior. An empty allowlist permits same-origin redirects only.
+           */
+          redirects: v
+            .object({
+              allowedOrigins: v
+                .array(v.string().min(1).max(MAX_REDIRECT_ORIGIN_LENGTH))
+                .max(MAX_REDIRECT_ORIGIN_COUNT)
+                .refine(
+                  isValidRedirectOriginList,
+                  "Redirect origins must be unique canonical HTTP(S) origins within the policy limits",
+                ),
+            })
+            .strict()
             .optional(),
           cors: getCorsSchema().optional(),
           /**

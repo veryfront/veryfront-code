@@ -188,6 +188,13 @@ Component render failed.
 - **HTTP status:** 500
 - **What to do:** Check component for runtime errors
 
+### redirect-destination-not-allowed
+
+Redirect destination not allowed.
+
+- **HTTP status:** 500
+- **What to do:** Use a relative or same-origin destination, or add the origin to security.redirects.allowedOrigins
+
 ### component-error
 
 Component execution error.

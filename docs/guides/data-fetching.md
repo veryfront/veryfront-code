@@ -235,6 +235,29 @@ export function getServerData({ params }: DataContext) {
 
 Only the objects `notFound()` and `redirect()` produce are read as control flow. Every other thrown value is an error, including an object that happens to carry a `notFound` property, such as a parsed error body from an upstream API.
 
+To restrict redirects to the current request origin and selected external
+origins, configure an allowlist:
+
+```ts
+import { defineConfig } from "veryfront/config";
+
+export default defineConfig({
+  security: {
+    redirects: {
+      allowedOrigins: ["https://accounts.example.com"],
+    },
+  },
+});
+```
+
+The allowlist uses exact canonical origins, including the scheme and port when
+present. Do not include a path, query, fragment, credentials, or trailing slash.
+Root-relative, path-relative, query-only, fragment-only, and same-origin
+destinations remain allowed. Use an empty list to permit only same-origin
+redirects. Omit `security.redirects` to preserve unrestricted redirect
+behavior. The policy applies equally to returned and thrown `redirect()`
+results during full-page and client-side navigation.
+
 ## Client-side fetching
 
 For data that loads after the page renders, fetch in a client component:

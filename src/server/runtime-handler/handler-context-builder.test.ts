@@ -12,6 +12,7 @@ function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContex
     projectDir: "/tmp/project",
     adapter: {} as any,
     securityConfig: { allowedOrigins: ["*"] } as any,
+    requestOrigin: "https://my-project.example.com",
     debug: true,
     config: { name: "test" } as any,
     parsedDomain: { slug: "my-project", branch: null, environment: "production" } as any,
@@ -45,6 +46,7 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.adapter, opts.adapter);
     assertEquals(ctx.moduleServerUrl, "https://modules.example.com");
     assertEquals(ctx.securityConfig, opts.securityConfig);
+    assertEquals(ctx.requestOrigin, "https://my-project.example.com");
     assertEquals(ctx.debug, true);
     assertEquals(ctx.config, opts.config);
     assertEquals(ctx.parsedDomain, opts.parsedDomain);
