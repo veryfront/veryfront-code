@@ -16,6 +16,15 @@ export const RENDER_ERROR = defineError({
   suggestion: "Check component for runtime errors",
 });
 
+export const REDIRECT_DESTINATION_NOT_ALLOWED = defineError({
+  slug: "redirect-destination-not-allowed",
+  category: "RUNTIME",
+  status: 500,
+  title: "Redirect destination not allowed",
+  suggestion:
+    "Use a relative or same-origin destination, or add the origin to security.redirects.allowedOrigins",
+});
+
 export const COMPONENT_ERROR = defineError({
   slug: "component-error",
   category: "RUNTIME",
@@ -88,6 +97,7 @@ export const TRIGGER_NOT_SUPPORTED = defineError({
 export const RUNTIME_REGISTRY = {
   "hydration-mismatch": HYDRATION_MISMATCH,
   "render-error": RENDER_ERROR,
+  "redirect-destination-not-allowed": REDIRECT_DESTINATION_NOT_ALLOWED,
   "component-error": COMPONENT_ERROR,
   "layout-not-found": LAYOUT_NOT_FOUND,
   "page-not-found": PAGE_NOT_FOUND,

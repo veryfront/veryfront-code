@@ -291,6 +291,9 @@ describe("security/http/config", () => {
         csp: {
           "default-src": ["'none'"],
         },
+        redirects: {
+          allowedOrigins: ["https://accounts.example.com"],
+        },
         auth: {
           basic: {
             username: "alice",
@@ -319,6 +322,8 @@ describe("security/http/config", () => {
     assertEquals(Object.isFrozen(first.securityConfig), true);
     assertEquals(Object.isFrozen(derivedCors), true);
     assertEquals(Object.isFrozen(derivedCors.methods), true);
+    assertEquals(Object.isFrozen(first.securityConfig.redirects), true);
+    assertEquals(Object.isFrozen(first.securityConfig.redirects?.allowedOrigins), true);
     assertEquals(derivedCors.origin === originValidator, false);
     assertEquals(Object.isFrozen(derivedCors.origin), true);
     assertEquals(
