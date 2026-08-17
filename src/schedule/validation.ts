@@ -28,10 +28,14 @@ const numberIsSafeInteger = Number.isSafeInteger;
 const objectCreate = Object.create;
 const objectFreeze = Object.freeze;
 const objectKeys = Object.keys;
+const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
 const reflectOwnKeys = Reflect.ownKeys;
-const CONCURRENCY_POLICIES = new Set<ScheduleConcurrencyPolicy>([
+const SetConstructor = Set;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
+const CONCURRENCY_POLICIES = new SetConstructor<ScheduleConcurrencyPolicy>([
   "Allow",
   "Forbid",
   "Replace",
@@ -52,7 +56,7 @@ const MAX_TIMEZONE_LENGTH = 255;
 const MAX_AGENT_PROMPT_LENGTH = 20_000;
 const MAX_DIAGNOSTIC_KEY_LENGTH = 80;
 const SIMPLE_DIAGNOSTIC_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$-]*$/;
-const LEGACY_TARGET_KEYS = new Set(["conversationMode", "conversationId"]);
+const LEGACY_TARGET_KEYS = new SetConstructor(["conversationMode", "conversationId"]);
 
 const CONFIG_KEYS = [
   "id",
@@ -116,9 +120,9 @@ function snapshotDataRecord(
     invalid(`${label} must be a plain object.`);
   }
 
-  const allowed = new Set<string>();
+  const allowed = new SetConstructor<string>();
   for (let index = 0; index < allowedKeys.length; index++) {
-    allowed.add(allowedKeys[index]!);
+    reflectApply(setAdd, allowed, [allowedKeys[index]!]);
   }
   const ownKeys = reflectOwnKeys(value);
   for (let index = 0; index < ownKeys.length; index++) {
@@ -126,20 +130,20 @@ function snapshotDataRecord(
     if (typeof key === "symbol") {
       invalid(`${label} must not define symbol properties.`);
     }
-    if (!allowed.has(key)) {
+    if (!reflectApply(setHas, allowed, [key])) {
       invalid(`${formatDiagnosticProperty(label, key)} is not supported.`);
     }
   }
 
-  const listedKeys = new Set<PropertyKey>();
+  const listedKeys = new SetConstructor<PropertyKey>();
   for (let index = 0; index < ownKeys.length; index++) {
-    listedKeys.add(ownKeys[index]!);
+    reflectApply(setAdd, listedKeys, [ownKeys[index]!]);
   }
   const snapshot: Record<string, unknown> = objectCreate(null);
   for (let index = 0; index < allowedKeys.length; index++) {
     const key = allowedKeys[index]!;
     const descriptor = reflectGetOwnPropertyDescriptor(value, key);
-    const listed = listedKeys.has(key);
+    const listed = reflectApply(setHas, listedKeys, [key]) as boolean;
     const descriptorExists = descriptor !== undefined;
     if (listed !== descriptorExists) {
       invalid(`${label} is invalid.`);
@@ -280,14 +284,14 @@ function snapshotDataArray(
     invalid(`${label} must contain at most ${maxLength} entries.`);
   }
 
-  const allowedKeys = new Set<PropertyKey>();
-  allowedKeys.add("length");
+  const allowedKeys = new SetConstructor<PropertyKey>();
+  reflectApply(setAdd, allowedKeys, ["length"]);
   for (let index = 0; index < length; index++) {
-    allowedKeys.add(String(index));
+    reflectApply(setAdd, allowedKeys, [String(index)]);
   }
   const ownKeys = reflectOwnKeys(value);
   for (let index = 0; index < ownKeys.length; index++) {
-    if (!allowedKeys.has(ownKeys[index]!)) {
+    if (!reflectApply(setHas, allowedKeys, [ownKeys[index]!])) {
       invalid(`${label} must not define custom properties.`);
     }
   }
@@ -440,7 +444,7 @@ export function legacyScheduleTargetDiagnostic(
     return `${label} must be an object.`;
   }
   for (const key of objectKeys(legacyTarget)) {
-    if (!LEGACY_TARGET_KEYS.has(key)) {
+    if (!reflectApply(setHas, LEGACY_TARGET_KEYS, [key])) {
       return `${formatDiagnosticProperty(label, key)} is not supported.`;
     }
   }
@@ -544,7 +548,7 @@ function normalizeIntegrationRequirements(
     MAX_INTEGRATION_REQUIREMENTS,
   );
 
-  const integrations = new Set<string>();
+  const integrations = new SetConstructor<string>();
   const normalizedRequirements: ScheduleIntegrationRequirement[] = [];
   normalizedRequirements.length = requirements.length;
   for (let index = 0; index < requirements.length; index++) {
@@ -561,12 +565,12 @@ function normalizeIntegrationRequirements(
       `${label}.integration`,
       mode,
     );
-    if (integrations.has(integration)) {
+    if (reflectApply(setHas, integrations, [integration])) {
       invalid(
         `${definitionLabel} integrationRequirements contains duplicate integration ${integration}.`,
       );
     }
-    integrations.add(integration);
+    reflectApply(setAdd, integrations, [integration]);
 
     const requiredScopesValue = requirement.requiredScopes;
     if (mode === "definition" && requiredScopesValue === undefined) {
@@ -598,13 +602,13 @@ function normalizeIntegrationRequirements(
         mode,
       );
     }
-    const scopes = new Set<string>();
+    const scopes = new SetConstructor<string>();
     for (let scopeIndex = 0; scopeIndex < normalizedScopes.length; scopeIndex++) {
       const scope = normalizedScopes[scopeIndex]!;
-      if (scopes.has(scope)) {
+      if (reflectApply(setHas, scopes, [scope])) {
         invalid(`${label}.requiredScopes contains duplicate scope ${scope}.`);
       }
-      scopes.add(scope);
+      reflectApply(setAdd, scopes, [scope]);
     }
 
     const normalizedResources: ScheduleIntegrationResource[] = [];
@@ -618,7 +622,7 @@ function normalizeIntegrationRequirements(
         definitionLabel,
       );
     }
-    const resourceIdentities = new Set<string>();
+    const resourceIdentities = new SetConstructor<string>();
     for (let resourceIndex = 0; resourceIndex < normalizedResources.length; resourceIndex++) {
       const resource = normalizedResources[resourceIndex]!;
       const identity = jsonStringify([
@@ -627,10 +631,10 @@ function normalizeIntegrationRequirements(
         resource.parent?.kind ?? null,
         resource.parent?.id ?? null,
       ]);
-      if (resourceIdentities.has(identity)) {
+      if (reflectApply(setHas, resourceIdentities, [identity])) {
         invalid(`${label}.resources contains a duplicate resource identity.`);
       }
-      resourceIdentities.add(identity);
+      reflectApply(setAdd, resourceIdentities, [identity]);
     }
 
     normalizedRequirements[index] = {
@@ -780,7 +784,9 @@ function normalizeScheduleUnsafe(value: unknown, mode: ValidationMode): Schedule
   const concurrencyPolicy = config.concurrencyPolicy;
   if (
     concurrencyPolicy !== undefined &&
-    !CONCURRENCY_POLICIES.has(concurrencyPolicy as ScheduleConcurrencyPolicy)
+    !reflectApply(setHas, CONCURRENCY_POLICIES, [
+      concurrencyPolicy as ScheduleConcurrencyPolicy,
+    ])
   ) {
     invalid("Schedule concurrencyPolicy must be Allow, Forbid, or Replace.");
   }

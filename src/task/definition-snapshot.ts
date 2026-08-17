@@ -22,9 +22,16 @@ const OBJECT_PROTOTYPE = Object.prototype;
 const hasOwn = Object.hasOwn;
 const objectFreeze = Object.freeze;
 const objectValues = Object.values;
+const MapConstructor = Map;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
+const SetConstructor = Set;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
 
 type TaskObject = Record<PropertyKey, unknown>;
 
@@ -46,17 +53,17 @@ function findTaskPropertyDescriptor(
   value: TaskObject,
   key: PropertyKey,
 ): PropertyDescriptor | undefined {
-  const visited = new Set<TaskObject>();
+  const visited = new SetConstructor<TaskObject>();
   let owner: TaskObject | null = value;
 
   for (let depth = 0; owner !== null && owner !== OBJECT_PROTOTYPE; depth++) {
     if (
-      depth >= MAX_TASK_PROTOTYPE_DEPTH || visited.has(owner) ||
+      depth >= MAX_TASK_PROTOTYPE_DEPTH || reflectApply(setHas, visited, [owner]) ||
       isProxyWithoutHooks(owner)
     ) {
       fail("Task definition has an invalid prototype chain.");
     }
-    visited.add(owner);
+    reflectApply(setAdd, visited, [owner]);
 
     const descriptor = reflectGetOwnPropertyDescriptor(owner, key);
     if (descriptor !== undefined) return descriptor;
@@ -69,7 +76,7 @@ function findTaskPropertyDescriptor(
 function inspectTaskDefinition(value: unknown): Map<string, unknown> {
   const task = inspectTaskObject(value);
 
-  const fields = new Map<string, unknown>();
+  const fields = new MapConstructor<string, unknown>();
   for (let index = 0; index < TASK_DEFINITION_KEYS.length; index++) {
     const key = TASK_DEFINITION_KEYS[index]!;
     const descriptor = findTaskPropertyDescriptor(task, key);
@@ -82,7 +89,7 @@ function inspectTaskDefinition(value: unknown): Map<string, unknown> {
           : `Task definition ${key} must be a data property.`,
       );
     }
-    fields.set(key, descriptor.value);
+    reflectApply(mapSet, fields, [key, descriptor.value]);
   }
   return fields;
 }
@@ -135,39 +142,42 @@ function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
 export function captureTaskDefinition(value: unknown): TaskDefinition {
   const task = inspectTaskObject(value);
   const fields = inspectTaskDefinition(task);
-  const run = fields.get("run");
+  const run = reflectApply(mapGet, fields, ["run"]);
   if (typeof run !== "function") fail("Task definition run must be a function.");
   const runWithReceiver: TaskDefinition["run"] = (ctx) => reflectApply(run, task, [ctx]);
 
-  const name = optionalString(fields.get("name"), "Task definition name");
+  const name = optionalString(
+    reflectApply(mapGet, fields, ["name"]),
+    "Task definition name",
+  );
   const description = optionalString(
-    fields.get("description"),
+    reflectApply(mapGet, fields, ["description"]),
     "Task definition description",
   );
   const inputSchema = optionalRecord(
-    fields.get("inputSchema"),
+    reflectApply(mapGet, fields, ["inputSchema"]),
     "Task definition inputSchema",
   );
   const outputSchema = optionalRecord(
-    fields.get("outputSchema"),
+    reflectApply(mapGet, fields, ["outputSchema"]),
     "Task definition outputSchema",
   );
-  const schedulable = fields.get("schedulable");
+  const schedulable = reflectApply(mapGet, fields, ["schedulable"]);
   if (schedulable !== undefined && typeof schedulable !== "boolean") {
     fail("Task definition schedulable must be a boolean.");
   }
   const integrationRequirements = captureScheduleIntegrationRequirementsConfig(
-    fields.get("integrationRequirements"),
+    reflectApply(mapGet, fields, ["integrationRequirements"]),
     "Task",
   );
 
   return objectFreeze({
-    ...(fields.has("name") ? { name } : {}),
-    ...(fields.has("description") ? { description } : {}),
-    ...(fields.has("inputSchema") ? { inputSchema } : {}),
-    ...(fields.has("outputSchema") ? { outputSchema } : {}),
+    ...(reflectApply(mapHas, fields, ["name"]) ? { name } : {}),
+    ...(reflectApply(mapHas, fields, ["description"]) ? { description } : {}),
+    ...(reflectApply(mapHas, fields, ["inputSchema"]) ? { inputSchema } : {}),
+    ...(reflectApply(mapHas, fields, ["outputSchema"]) ? { outputSchema } : {}),
     ...(integrationRequirements === undefined ? {} : { integrationRequirements }),
-    ...(fields.has("schedulable") ? { schedulable } : {}),
+    ...(reflectApply(mapHas, fields, ["schedulable"]) ? { schedulable } : {}),
     run: runWithReceiver,
   }) as TaskDefinition;
 }

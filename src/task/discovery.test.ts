@@ -298,6 +298,11 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       const originalHasOwn = Object.hasOwn;
       const originalFreeze = Object.freeze;
       const originalValues = Object.values;
+      const originalMapGet = Map.prototype.get;
+      const originalMapHas = Map.prototype.has;
+      const originalMapSet = Map.prototype.set;
+      const originalSetAdd = Set.prototype.add;
+      const originalSetHas = Set.prototype.has;
       let poisonCalls = 0;
       let freezePoisonCalls = 0;
       const poison = (): never => {
@@ -337,6 +342,11 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         Object.hasOwn = poison;
         Object.freeze = freezePoison;
         Object.values = poison;
+        Map.prototype.get = poison as typeof Map.prototype.get;
+        Map.prototype.has = poison as typeof Map.prototype.has;
+        Map.prototype.set = poison as typeof Map.prototype.set;
+        Set.prototype.add = poison as typeof Set.prototype.add;
+        Set.prototype.has = poison as typeof Set.prototype.has;
 
         const registered = taskHandler.register(
           "stable",
@@ -373,6 +383,11 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         Object.hasOwn = originalHasOwn;
         Object.freeze = originalFreeze;
         Object.values = originalValues;
+        Map.prototype.get = originalMapGet;
+        Map.prototype.has = originalMapHas;
+        Map.prototype.set = originalMapSet;
+        Set.prototype.add = originalSetAdd;
+        Set.prototype.has = originalSetHas;
       }
 
       sourceInputSchema.properties.name.type = "number";
