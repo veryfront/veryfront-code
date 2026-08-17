@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
+import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
@@ -15,6 +15,16 @@ import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 interface TimerEntry {
   delay: number;
   callback: () => void;
+}
+
+function makeProjectFile(path: string, content: string): ProjectFile {
+  return {
+    path,
+    content,
+    type: "page",
+    size: content.length,
+    updated_at: "2026-08-17T00:00:00.000Z",
+  };
 }
 
 class MockWebSocket {
@@ -914,9 +924,7 @@ describe("WebSocketManager", () => {
 
   it("passes the pre-fetch source generation to selective snapshot replacement", async () => {
     const fetchStarted = Promise.withResolvers<void>();
-    const releaseFetch = Promise.withResolvers<
-      Array<{ path: string; content?: string }>
-    >();
+    const releaseFetch = Promise.withResolvers<ProjectFile[]>();
     let sourceSnapshotVersion = 1;
     let replacementVersion: number | undefined;
     const manager = createWebSocketManager({
@@ -954,7 +962,7 @@ describe("WebSocketManager", () => {
     assertEquals(runOnlyScheduledTimer(), 100);
     await fetchStarted.promise;
     sourceSnapshotVersion++;
-    releaseFetch.resolve([{ path: "app/page.tsx", content: "v1" }]);
+    releaseFetch.resolve([makeProjectFile("app/page.tsx", "v1")]);
     await flushMicrotasks();
 
     assertEquals(
@@ -967,9 +975,7 @@ describe("WebSocketManager", () => {
 
   it("does not pregenerate styles for a superseded selective snapshot", async () => {
     const fetchStarted = Promise.withResolvers<void>();
-    const releaseFetch = Promise.withResolvers<
-      Array<{ path: string; content?: string }>
-    >();
+    const releaseFetch = Promise.withResolvers<ProjectFile[]>();
     let sourceSnapshotVersion = 1;
     let pregenerateCalls = 0;
     let publishedStyleHash: string | undefined;
@@ -1020,7 +1026,7 @@ describe("WebSocketManager", () => {
     assertEquals(runOnlyScheduledTimer(), 100);
     await fetchStarted.promise;
     poke();
-    releaseFetch.resolve([{ path: "app/page.tsx", content: "v1" }]);
+    releaseFetch.resolve([makeProjectFile("app/page.tsx", "v1")]);
     await flushMicrotasks();
 
     assertEquals(pregenerateCalls, 0);
@@ -1038,7 +1044,7 @@ describe("WebSocketManager", () => {
     let publishedStyleHash: string | undefined;
     const manager = createWebSocketManager({
       client: {
-        listAllFiles: () => Promise.resolve([{ path: "app/page.tsx", content: "v1" }]),
+        listAllFiles: () => Promise.resolve([makeProjectFile("app/page.tsx", "v1")]),
       },
       clearMemoryCaches: () => {
         sourceSnapshotVersion++;
@@ -1089,9 +1095,7 @@ describe("WebSocketManager", () => {
 
   it("discards full styles superseded during pregeneration", async () => {
     const fetchStarted = Promise.withResolvers<void>();
-    const releaseFetch = Promise.withResolvers<
-      Array<{ path: string; content?: string }>
-    >();
+    const releaseFetch = Promise.withResolvers<ProjectFile[]>();
     const pregenerationStarted = Promise.withResolvers<void>();
     const releasePregeneration = Promise.withResolvers<{
       hash: string;
@@ -1147,7 +1151,7 @@ describe("WebSocketManager", () => {
 
     assertEquals(runOnlyScheduledTimer(), 100);
     await fetchStarted.promise;
-    releaseFetch.resolve([{ path: "app/page.tsx", content: "v1" }]);
+    releaseFetch.resolve([makeProjectFile("app/page.tsx", "v1")]);
     await pregenerationStarted.promise;
     socket.onmessage?.call(
       socket as unknown as WebSocket,
