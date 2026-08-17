@@ -20,6 +20,17 @@ function hasValidResponseCookie(value: unknown): boolean {
   }
 }
 
+function hasValidActiveRevalidate(value: {
+  redirect?: unknown;
+  notFound?: unknown;
+  revalidate?: unknown;
+}): boolean {
+  if (value.redirect !== undefined || value.notFound === true) return true;
+  return value.revalidate === undefined || value.revalidate === false ||
+    (typeof value.revalidate === "number" &&
+      Number.isFinite(value.revalidate) && value.revalidate >= 0);
+}
+
 /** Context passed to data fetching functions */
 export const getDataContextSchema = defineSchema((v) =>
   v.object({
@@ -57,10 +68,12 @@ export const getDataResultSchema = defineSchema((v) =>
     props: v.unknown().optional(),
     redirect: getRedirectSchema().optional(),
     notFound: v.boolean().optional(),
-    revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
+    revalidate: v.unknown().optional(),
     headers: v.record(v.string(), v.string()).optional(),
     cookies: v.array(getResponseCookieSchema()).optional(),
-  }).refine(hasValidResponseMetadata, "Data result response metadata is invalid")
+  })
+    .refine(hasValidActiveRevalidate, "Data result revalidate value is invalid")
+    .refine(hasValidResponseMetadata, "Data result response metadata is invalid")
 );
 
 /** Cache-safe result returned from getStaticData. */
@@ -69,12 +82,12 @@ export const getStaticDataResultSchema = defineSchema((v) =>
     props: v.unknown().optional(),
     redirect: getRedirectSchema().optional(),
     notFound: v.boolean().optional(),
-    revalidate: v.union([v.number().nonnegative(), v.literal(false)]).optional(),
+    revalidate: v.unknown().optional(),
     headers: v.custom<never>(() => false, "getStaticData cannot return response headers")
       .optional(),
     cookies: v.custom<never>(() => false, "getStaticData cannot return response cookies")
       .optional(),
-  })
+  }).refine(hasValidActiveRevalidate, "Static data result revalidate value is invalid")
 );
 
 export const getStaticPathEntrySchema = defineSchema((v) =>
@@ -110,16 +123,21 @@ export interface DataResponseMetadata {
   cookies?: ResponseCookie[];
 }
 /** Props, routing control, caching, and response metadata returned from `getServerData()`. */
-export type DataResult<T = unknown> = InferSchema<ReturnType<typeof getDataResultSchema>> & {
-  props?: T;
-};
+export type DataResult<T = unknown> =
+  & Omit<InferSchema<ReturnType<typeof getDataResultSchema>>, "props" | "revalidate">
+  & {
+    props?: T;
+    revalidate?: number | false;
+  };
 /** Cache-safe result returned from `getStaticData()`. */
 export type StaticDataResult<T = unknown> =
-  & InferSchema<
-    ReturnType<typeof getStaticDataResultSchema>
+  & Omit<
+    InferSchema<ReturnType<typeof getStaticDataResultSchema>>,
+    "props" | "revalidate" | "headers" | "cookies"
   >
   & {
     props?: T;
+    revalidate?: number | false;
     headers?: never;
     cookies?: never;
   };

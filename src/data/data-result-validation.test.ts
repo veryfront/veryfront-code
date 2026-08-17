@@ -60,6 +60,14 @@ describe("validateDataResult", () => {
     for (const schema of [DataResultSchema, StaticDataResultSchema]) {
       assertEquals(schema.safeParse({ props: {}, revalidate: -1 }).success, false);
       assertEquals(schema.safeParse({ props: {}, revalidate: 0 }).success, true);
+      assertEquals(
+        schema.safeParse({ redirect: { destination: "/next" }, revalidate: -1 }).success,
+        true,
+      );
+      assertEquals(
+        schema.safeParse({ notFound: true, revalidate: "ignored" }).success,
+        true,
+      );
     }
   });
 
