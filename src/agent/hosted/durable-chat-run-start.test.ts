@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { PERMISSION_DENIED } from "#veryfront/errors";
+import { AGENT_NOT_FOUND, PERMISSION_DENIED } from "#veryfront/errors";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import {
   type AgUiResumeValue,
@@ -259,6 +259,51 @@ describe("agent/hosted-durable-chat-run-start", () => {
     assertEquals(warnLogs.length, 1);
     assertEquals(warnLogs[0]?.errorCode, "PERMISSION_DENIED");
     assertEquals(warnLogs[0]?.statusCode, 403);
+  });
+
+  it("invokes object-backed warn loggers with their receiver", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+    const logger = {
+      entries: [] as Array<Record<string, unknown> | undefined>,
+      warn(_message: string, metadata?: Record<string, unknown>) {
+        this.entries.push(metadata);
+      },
+      error(_message: string, metadata?: Record<string, unknown>) {
+        this.entries.push(metadata);
+      },
+    };
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        throw PERMISSION_DENIED.create({ detail: "denied" });
+      },
+      startDetachedExecution: async () => {},
+      logger,
+    });
+
+    assertEquals(response.status, 403);
+    assertEquals(await readJson(response), { errorCode: "PERMISSION_DENIED" });
+    assertEquals(logger.entries.length, 1);
+  });
+
+  it("preserves not-found status for missing code agents", async () => {
+    const tracker = createDetachedRunTracker<AgUiResumeValue>();
+
+    const response = await executeHostedDurableChatRun({
+      req: createParsedRequest(),
+      rawRequest: createRequest(),
+      tracker,
+      prepareExecution: async () => {
+        throw AGENT_NOT_FOUND.create({ detail: 'Code agent "missing" was not discovered.' });
+      },
+      startDetachedExecution: async () => {},
+    });
+
+    assertEquals(response.status, 404);
+    assertEquals(await readJson(response), { errorCode: "AGENT_NOT_FOUND" });
   });
 
   it("keeps error-level logging for setup failures that resolve to 5xx", async () => {
