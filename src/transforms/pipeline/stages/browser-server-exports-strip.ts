@@ -2044,8 +2044,9 @@ function separateExportLocalNames(body: Node[]): Set<string> {
 
   for (const statement of body) {
     if (statement.type === "ExportDefaultDeclaration") {
-      const local = nodeName(statement.declaration);
-      if (local) names.add(local);
+      if (isNode(statement.declaration)) {
+        for (const name of freeReferencedIdentifiers(statement.declaration)) names.add(name);
+      }
       continue;
     }
     if (statement.type !== "ExportNamedDeclaration") continue;
