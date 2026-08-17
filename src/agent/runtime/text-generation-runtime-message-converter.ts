@@ -359,6 +359,7 @@ export function convertToTextGenerationRuntimeMessage(
 
 function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
+  if (readAttachedProviderMetadata(message) !== undefined) return true;
 
   return message.parts.some((part) => {
     if (part.type === "text" && "text" in part) {
@@ -477,6 +478,12 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   // conversion split that response would pair it with an incomplete projection.
   if (providerMetadata !== undefined && assistantMessages.length === 1) {
     assistantMessages[0]!.providerMetadata = providerMetadata;
+  } else if (providerMetadata !== undefined && messages.length === 0) {
+    messages.push({
+      role: "assistant",
+      content: [{ type: "text", text: "" }],
+      providerMetadata,
+    });
   }
 
   return messages;

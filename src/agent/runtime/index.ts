@@ -3224,29 +3224,31 @@ function reconcileSuppressedProviderMetadata(
   if (providerMetadata === undefined || suppressedToolCalls.length === 0) {
     return providerMetadata;
   }
-  if (!hasSurvivingToolCalls) {
-    return undefined;
-  }
 
   const reconcile = modelRuntime._reconcileProviderMetadata;
   if (typeof reconcile !== "function") {
-    throw new TypeError(
-      "Model runtime cannot reconcile provider metadata after suppressing a tool call",
-    );
+    return undefined;
   }
 
   const reconciled = (reconcile as ProviderMetadataReconciler).call(modelRuntime, {
     providerMetadata,
     suppressedToolCalls,
   });
+  if (reconciled === undefined) {
+    if (!hasSurvivingToolCalls) {
+      return undefined;
+    }
+    throw new TypeError(
+      "Model runtime did not preserve provider metadata for surviving tool calls",
+    );
+  }
   if (
-    reconciled === undefined ||
     reconciled === null ||
     typeof reconciled !== "object" ||
     Array.isArray(reconciled)
   ) {
     throw new TypeError(
-      "Model runtime did not preserve provider metadata for surviving tool calls",
+      "Model runtime returned invalid provider metadata after suppressing a tool call",
     );
   }
   return reconciled;

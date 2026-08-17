@@ -8,6 +8,7 @@ import { agent } from "../index.ts";
 import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-context.ts";
 import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import { createGoogleModelRuntime } from "../../../extensions/ext-llm-google/src/google-provider.ts";
+import { reconcileGoogleProviderMetadata } from "../../../extensions/ext-llm-google/src/google-thought-signatures.ts";
 
 const providerMetadata = {
   google: {
@@ -414,6 +415,72 @@ describe("agent provider metadata continuation", () => {
     assertEquals(body.includes("test-thought-signature"), false);
   });
 
+  it("falls back to synthesized replay for runtimes without a metadata reconciler", async () => {
+    let callCount = 0;
+    let continuedProviderMetadata: unknown = "unread";
+    const model: ModelRuntime = {
+      provider: "custom",
+      modelId: "custom-model",
+      async doGenerate() {
+        throw new Error("not used");
+      },
+      async doStream(options: unknown) {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: streamFrom([
+              {
+                type: "tool-call",
+                toolCallId: "stale-1",
+                toolName: "missing_tool",
+                input: '{"query":"stale"}',
+              },
+              {
+                type: "tool-call",
+                toolCallId: "lookup-1",
+                toolName: "lookup",
+                input: '{"query":"Veryfront"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                providerMetadata,
+              },
+            ]),
+          };
+        }
+
+        continuedProviderMetadata = readAssistantProviderMetadata(options);
+        return {
+          stream: streamFrom([
+            { type: "text-delta", delta: "Done" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ]),
+        };
+      },
+    };
+    const assistant = agent({
+      model: "custom/custom-model",
+      system: "Use the lookup tool.",
+      tools: { lookup: createLookupTool() },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({ input: "Look up Veryfront" }))
+      .toDataStreamResponse()
+      .text();
+
+    assertStringIncludes(body, "Done");
+    assertEquals(callCount, 2);
+    assertEquals(continuedProviderMetadata, undefined);
+  });
+
   it("preserves the signed surviving Gemini call after suppressing an unavailable call", async () => {
     const encoder = new TextEncoder();
     const staleRawPart = {
@@ -492,5 +559,103 @@ describe("agent provider metadata continuation", () => {
     );
     assertEquals(replayedAssistant?.parts, [survivingRawPart]);
     assertEquals(JSON.stringify(continuationContents).includes("stale-1"), false);
+  });
+
+  it("preserves signed Gemini reasoning when every tool call is suppressed", async () => {
+    const signedThoughtPart = {
+      text: "Private reasoning.",
+      thought: true,
+      thoughtSignature: "surviving-thought-signature",
+    };
+    const staleRawPart = {
+      functionCall: {
+        id: "stale-1",
+        name: "missing_tool",
+        args: { query: "stale" },
+      },
+      thoughtSignature: "stale-thought-signature",
+    };
+    const signedProviderMetadata = {
+      google: { rawAssistantParts: [signedThoughtPart, staleRawPart] },
+    };
+    let callCount = 0;
+    let continuedProviderMetadata: unknown = "unread";
+    const model: ModelRuntime = {
+      provider: "google",
+      modelId: "gemini-3.5-flash",
+      _reconcileProviderMetadata({ providerMetadata, suppressedToolCalls }: {
+        providerMetadata: Record<string, unknown>;
+        suppressedToolCalls: readonly { id: string; name: string }[];
+      }) {
+        return reconcileGoogleProviderMetadata(providerMetadata, suppressedToolCalls);
+      },
+      async doGenerate() {
+        throw new Error("not used");
+      },
+      async doStream(options: unknown) {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: streamFrom([
+              { type: "reasoning-start", id: "reasoning-0" },
+              {
+                type: "reasoning-delta",
+                id: "reasoning-0",
+                delta: "Private reasoning.",
+              },
+              {
+                type: "reasoning-end",
+                id: "reasoning-0",
+                signature: "surviving-thought-signature",
+              },
+              {
+                type: "tool-call",
+                toolCallId: "stale-1",
+                toolName: "missing_tool",
+                input: '{"query":"stale"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+                providerMetadata: signedProviderMetadata,
+              },
+            ]),
+          };
+        }
+
+        continuedProviderMetadata = readAssistantProviderMetadata(options);
+        return {
+          stream: streamFrom([
+            { type: "text-delta", delta: "Done" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            },
+          ]),
+        };
+      },
+    };
+    const assistant = agent({
+      model: "google/gemini-3.5-flash",
+      system: "Use the lookup tool.",
+      tools: { lookup: createLookupTool() },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+    });
+
+    const body = await (await assistant.stream({ input: "Look up Veryfront" }))
+      .toDataStreamResponse()
+      .text();
+
+    assertStringIncludes(body, "Done");
+    assertEquals(callCount, 2);
+    assertEquals(continuedProviderMetadata, {
+      google: {
+        rawAssistantParts: [signedThoughtPart],
+        rawAssistantPartIndexes: [0],
+      },
+    });
   });
 });
