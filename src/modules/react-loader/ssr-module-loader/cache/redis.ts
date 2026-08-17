@@ -1,13 +1,12 @@
 /** Redis caching for cross-pod SSR module sharing */
 
 import { rendererLogger } from "#veryfront/utils";
-import { getSSRModuleRedisTTL } from "../constants.ts";
+import { getSSRModuleRedisTTL, LOCAL_DEV_SSR_MODULE_TTL_SEC } from "../constants.ts";
 import {
   CacheBackends,
   createDistributedCodeCacheAccessor,
   isLocalDevDiskCacheEnabled,
 } from "#veryfront/cache/backend.ts";
-import { LOCAL_DEV_SSR_MODULE_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");

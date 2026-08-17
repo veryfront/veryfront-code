@@ -4,7 +4,10 @@ import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
   DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
   getDistributedCacheTTL,
+  HOURS_PER_DAY,
+  MINUTES_PER_HOUR,
   MS_PER_MINUTE,
+  SECONDS_PER_MINUTE,
 } from "#veryfront/utils/constants/cache.ts";
 
 export const SSR_MODULE_CACHE_MAX_ENTRIES = 2000;
@@ -20,6 +23,17 @@ export function getSSRModuleRedisTTL(isProduction: boolean): number {
 }
 
 export { DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC, DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC };
+
+/**
+ * How long a local dev server keeps a compiled SSR module on disk.
+ *
+ * The preview TTL is tuned for a shared branch cache and expires long before a
+ * developer returns to the project, so an on-disk local dev cache would go cold
+ * anyway. A working day covers a restart without letting the project cache
+ * directory grow without bound. Run `veryfront clean --cache` to reset it.
+ */
+export const LOCAL_DEV_SSR_MODULE_TTL_SEC = HOURS_PER_DAY * MINUTES_PER_HOUR *
+  SECONDS_PER_MINUTE;
 
 export const CIRCUIT_BREAKER_THRESHOLD = 25;
 export const CIRCUIT_BREAKER_RESET_MS = 5 * 1000;

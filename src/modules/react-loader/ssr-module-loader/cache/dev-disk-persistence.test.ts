@@ -8,7 +8,7 @@ import { CacheBackends } from "#veryfront/cache/backend.ts";
 import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
   LOCAL_DEV_SSR_MODULE_TTL_SEC,
-} from "#veryfront/utils/constants/cache.ts";
+} from "../constants.ts";
 
 const ENV_KEYS = [
   "NODE_ENV",
@@ -26,10 +26,7 @@ function useLocalDevEnvironment(): void {
   for (const key of ENV_KEYS) deleteEnv(key);
 }
 
-describe("SSR module distributed cache on a local dev server", {
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("SSR module distributed cache on a local dev server", () => {
   it("keeps transformed code across a restart with no configuration", async () => {
     useLocalDevEnvironment();
     const cacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-" });

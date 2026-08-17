@@ -157,8 +157,8 @@ export async function clearLocalCachesIfPortFree(
   probe: (port: number) => Promise<boolean> = isPortAvailable,
   persists: () => boolean = isLocalDevDiskCacheEnabled,
 ): Promise<boolean> {
-  if (persists()) return false;
   if (!await probe(requestedPort)) return false;
+  if (persists()) return false;
   await clear();
   return true;
 }

@@ -199,14 +199,6 @@ export const DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC",
   10 * SECONDS_PER_MINUTE,
 );
-// A local dev server keeps compiled SSR modules on disk so a restart stays
-// warm. The preview TTL above is tuned for a shared branch cache and expires
-// long before you come back to the project, so local dev keeps entries for a
-// working day instead.
-export const LOCAL_DEV_SSR_MODULE_TTL_SEC = getEnvTtlSeconds(
-  "LOCAL_DEV_SSR_MODULE_TTL_SEC",
-  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE, // 24 hours (86400)
-);
 
 export const DISTRIBUTED_TRANSFORM_TTL_PRODUCTION_SEC = getEnvTtlSeconds(
   "DISTRIBUTED_TRANSFORM_TTL_SEC",

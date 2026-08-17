@@ -58,10 +58,7 @@ async function holdPort(): Promise<{ port: number; release: () => Promise<void> 
   };
 }
 
-// `handleDevCommand` starts auth preloading it never awaits, so the request it
-// kicks off can outlive an aborted command. These tests assert on filesystem
-// state, not on that request.
-describe("veryfront dev cache guard", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("veryfront dev cache guard", () => {
   it(
     "keeps the shared ESM cache when another dev server holds the port",
     { timeout: TEST_TIMEOUTS.INTEGRATION },
