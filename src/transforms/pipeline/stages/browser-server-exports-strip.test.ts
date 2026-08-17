@@ -1436,6 +1436,62 @@ describe("browser-server-exports-strip", () => {
     });
 
     for (
+      const [label, mutation] of [
+        [
+          "a transitive intrinsic alias",
+          [
+            `const intrinsic = Object;`,
+            `const alias = intrinsic;`,
+            `alias.defineProperty = recordAndReturn;`,
+          ].join("\n"),
+        ],
+        [
+          "a nonliteral merge source",
+          [
+            `const patch = { Object: { defineProperty: recordAndReturn } };`,
+            `Object.assign(globalThis, patch);`,
+          ].join("\n"),
+        ],
+        [
+          "an optional intrinsic mutation call",
+          `Object.defineProperty?.(Object, "defineProperty", { value: recordAndReturn });`,
+        ],
+        [
+          "a call-invoked intrinsic mutation",
+          `(function (intrinsic) { intrinsic.defineProperty = recordAndReturn; }).call(null, Object);`,
+        ],
+        [
+          "an apply-invoked intrinsic mutation",
+          `(function (intrinsic) { intrinsic.defineProperty = recordAndReturn; }).apply(null, [Object]);`,
+        ],
+      ]
+    ) {
+      it(`does not treat ${label} as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          mutation,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    for (
       const globalObject of [
         "window.Object",
         "self.Object",

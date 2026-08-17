@@ -1894,8 +1894,8 @@ function writesObjectDefineProperty(body: Node[], globals: ReadonlySet<Node>): b
       if (writes) return false;
 
       if (
-        node.type === "CallExpression" && isNode(node.callee) &&
-        isIntrinsicDefinePropertyCall(node.callee, globals)
+        (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
+        isNode(node.callee) && isIntrinsicDefinePropertyCall(node.callee, globals)
       ) {
         const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
         const key = stringLiteralText(args[1]);
@@ -2012,6 +2012,48 @@ function namesWrittenThrough(body: Node[]): Set<string> {
 }
 
 /**
+ * Names whose value can flow through local aliases to a property-write base.
+ * For `const intrinsic = Object; const alias = intrinsic; alias.key = value`,
+ * both `alias` and `intrinsic` are writable routes to the same object.
+ */
+function namesAliasedToWrittenThrough(
+  body: Node[],
+  writtenThrough: ReadonlySet<string>,
+): Set<string> {
+  const aliases: Array<{ source: string; target: string }> = [];
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      let left: Node | undefined;
+      let right: Node | undefined;
+      if (node.type === "VariableDeclarator") {
+        left = isNode(node.id) ? node.id : undefined;
+        right = isNode(node.init) ? node.init : undefined;
+      } else if (node.type === "AssignmentExpression") {
+        left = isNode(node.left) ? node.left : undefined;
+        right = isNode(node.right) ? node.right : undefined;
+      }
+      const target = left ? nodeName(unwrapTransparent(left)) : null;
+      const source = right ? nodeName(unwrapTransparent(right)) : null;
+      if (source && target) aliases.push({ source, target });
+    });
+  }
+
+  const reachesWrite = new Set(writtenThrough);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const { source, target } of aliases) {
+      if (reachesWrite.has(target) && !reachesWrite.has(source)) {
+        reachesWrite.add(source);
+        changed = true;
+      }
+    }
+  }
+  return reachesWrite;
+}
+
+/**
  * Whether the intrinsic reaches a slot the module can still write through.
  *
  * The earlier form of this check failed closed on any value read of `Object`
@@ -2045,7 +2087,7 @@ function intrinsicEscapesToWritableSlot(
         isGlobalObjectSlot(entry, globals)
       : isUnshadowedGlobalObject(entry, globals);
 
-  const writtenThrough = namesWrittenThrough(body);
+  const writtenThrough = namesAliasedToWrittenThrough(body, namesWrittenThrough(body));
 
   /** Whether storing the read at `parent[key]` puts it in a property slot. */
   const storesInPropertySlot = (parent: Node, key: string, inNamespace: boolean): boolean => {
@@ -2144,7 +2186,14 @@ function invokedFunctionParameterNames(body: Node[]): Set<string> {
   const names = new Set<string>();
   const collect = (callee: unknown): void => {
     if (!isNode(callee)) return;
-    const target = unwrapTransparent(callee);
+    let target = unwrapTransparent(callee);
+    if (
+      (target.type === "MemberExpression" || target.type === "OptionalMemberExpression") &&
+      (memberKey(target) === "call" || memberKey(target) === "apply") &&
+      isNode(target.object)
+    ) {
+      target = unwrapTransparent(target.object);
+    }
     if (target.type !== "FunctionExpression" && target.type !== "ArrowFunctionExpression") return;
     for (const param of Array.isArray(target.params) ? target.params : []) {
       if (isNode(param)) { for (const name of patternBoundNames(param)) names.add(name); }
@@ -2275,12 +2324,16 @@ function mergesGuardedKeyOntoIntrinsic(body: Node[], globals: ReadonlySet<Node>)
       }
 
       const args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
-      const targetsIntrinsic = args.some((argument) => {
-        const value = unwrapTransparent(argument);
-        return isUnshadowedGlobalIdentifier(value, "Object", globals) ||
-          isGlobalObjectSlot(value, globals) || isUnshadowedGlobalObject(value, globals);
-      });
-      if (targetsIntrinsic && args.some((argument) => literalCarriesGuardedKey(argument))) {
+      const target = args[0] ? unwrapTransparent(args[0]) : undefined;
+      const targetsIntrinsic = isUnshadowedGlobalIdentifier(target, "Object", globals) ||
+        isGlobalObjectSlot(target, globals) || isUnshadowedGlobalObject(target, globals);
+      const sources = args.slice(1);
+      const unprovenAssignSource = method === "assign" &&
+        sources.some((source) => unwrapTransparent(source).type !== "ObjectExpression");
+      if (
+        targetsIntrinsic &&
+        (unprovenAssignSource || sources.some((source) => literalCarriesGuardedKey(source)))
+      ) {
         merges = true;
         return false;
       }
