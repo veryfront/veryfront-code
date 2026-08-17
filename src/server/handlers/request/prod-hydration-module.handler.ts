@@ -2,6 +2,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
   generateProdHydrationModule,
+  getProdHydrationModulePath,
   isVersionedProdHydrationModulePath,
   PROD_HYDRATION_MODULE_PATH,
   PROD_HYDRATION_MODULE_VERSIONED_PATH_PATTERN,
@@ -39,9 +40,18 @@ export class ProdHydrationModuleHandler extends BaseHandler {
       return this.continue();
     }
 
-    const method = req.method.toUpperCase();
     const pathname = new URL(req.url).pathname;
-    const cacheStrategy = isVersionedProdHydrationModulePath(pathname) ? "immutable" : "no-cache";
+    const isVersioned = isVersionedProdHydrationModulePath(pathname);
+
+    // Serve only the current content address dynamically. Non-current hashes
+    // may name valid release-baked assets, so StaticHandler owns their lookup
+    // and returns the final non-cacheable 404 when no stored asset matches.
+    if (isVersioned && pathname !== getProdHydrationModulePath()) {
+      return this.continue();
+    }
+
+    const method = req.method.toUpperCase();
+    const cacheStrategy = isVersioned ? "immutable" : "no-cache";
     const { js, etag } = getProdHydrationModuleBundle();
     const builder = this.createResponseBuilder(ctx).withCORS(req, ctx.securityConfig?.cors);
 
