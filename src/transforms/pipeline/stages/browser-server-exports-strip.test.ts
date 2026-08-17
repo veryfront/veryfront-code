@@ -243,6 +243,32 @@ describe("browser-server-exports-strip", () => {
       await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
     });
 
+    // An imported binding re-exported under a hook name has no local
+    // declaration to stub. Emitting the module unchanged would keep the import
+    // — and the loader module behind it — in the browser graph, so the build
+    // stops instead. (This form used to pass through silently.)
+    it("fails the build when a hook is an imported binding re-exported locally", async () => {
+      const code = [
+        `import { loadIt } from "./loader.ts";`,
+        `export { loadIt as getServerData };`,
+      ].join("\n");
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "pages/x.tsx");
+    });
+
+    // A class declaration exported under a hook name is a form the stubber
+    // does not handle. Fail closed rather than shipping the class body and
+    // everything it closes over.
+    it("fails the build when a hook is exported as a class declaration", async () => {
+      const code = `export class getServerData { load() { return readSecret(); } }`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
     // The pre-check runs before anything else, so a module with no hook at all
     // is never parsed and can never fail the build.
     it("leaves a module that does not parse alone when it names no hook", async () => {
@@ -755,12 +781,15 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "TOKEN"), 0); // hook-only tail → dropped
     });
 
-    // Known limitation (pinned): a *destructured* server value is NOT pruned —
-    // `moduleScopeDeclarations` handles only simple identifiers, to avoid
-    // mishandling default-value references inside patterns. Conservative (never
-    // over-prunes) but it means a destructured server value still ships. If this
-    // ever needs closing, extend the declaration collector to safe patterns.
-    it("conservatively keeps a destructured server value (documented limitation)", async () => {
+    // Regression (closed leak): a *destructured* module-scope server value used
+    // only by a stripped hook used to survive into the browser output, because
+    // the declaration collector handled only simple identifiers. The pattern is
+    // now a removal candidate as a whole, so the binding, the initialiser call
+    // and the import it was the last user of all go. This is also the case
+    // esbuild's tree-shaker can never close: a destructuring of a call — even a
+    // `@__PURE__`-annotated one — is kept in both transform and bundle mode
+    // because the pattern may trigger getters or throw.
+    it("drops a destructured module-scope server value used only by a stripped hook", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const { a } = getEnv("X");`,
@@ -770,8 +799,108 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // Pinned as-is: the destructured binding and its import survive.
+      assertEquals(occurrences(result, "a"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertNotIncludes(result, `"veryfront"`);
+      assertNotIncludes(result, `"X"`);
+    });
+
+    it("drops a destructured server secret and the import it was the last user of", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { apiKey, region } = getEnv("SECRET_CONFIG");`,
+        `export async function getServerData() { return { props: { ok: Boolean(apiKey), region } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "apiKey"), 0);
+      assertEquals(occurrences(result, "region"), 0);
+      assertNotIncludes(result, "SECRET_CONFIG");
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("drops an array-pattern server value used only by a stripped hook", async () => {
+      const code = [
+        `import { loadKeys } from "../server/keys.ts";`,
+        `const [primaryKey] = loadKeys();`,
+        `export async function getServerData() { return { props: { primaryKey } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "primaryKey"), 0);
+      assertEquals(occurrences(result, "loadKeys"), 0);
+      assertNotIncludes(result, "../server/keys.ts");
+    });
+
+    it("drops a rest-pattern server value used only by a stripped hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { token, ...serverConfig } = getEnv("CFG");`,
+        `export async function getServerData() { return { props: { token, serverConfig } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "token"), 0);
+      assertEquals(occurrences(result, "serverConfig"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // Contrast pin: a pattern is removed only as a whole. When the client still
+    // reads one of its bindings, the whole declarator — and its import — stay.
+    it("keeps a destructured value the client component also reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { apiKey, region } = getEnv("CFG");`,
+        `export async function getServerData() { return { props: { ok: Boolean(apiKey) } }; }`,
+        `export default function Page() { return region; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "region");
+      assertStringIncludes(result, "apiKey");
       assertStringIncludes(result, "getEnv");
+    });
+
+    // A pattern default is runtime code: a helper it references is part of the
+    // dropped declarator's closure and is pruned with it once nothing else
+    // reads it.
+    it("prunes a helper referenced only from a dropped pattern default", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `function fallbackKey() { return getEnv("FALLBACK"); }`,
+        `const { key = fallbackKey() } = getEnv("CFG");`,
+        `export async function getServerData() { return { props: { key } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "key"), 0);
+      assertEquals(occurrences(result, "fallbackKey"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("drops a chain that flows through a destructured server value", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { raw } = getEnv("TOKEN");`,
+        `const cleaned = raw.trim();`,
+        `export async function getServerData() { return { props: { cleaned } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "raw"), 0);
+      assertEquals(occurrences(result, "cleaned"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
     });
 
     it("keeps an import that the client still references", async () => {
