@@ -36,7 +36,27 @@ function jobBlock(workflow: string, jobName: string): string {
   return nextJob === -1 ? rest : rest.slice(0, nextJob);
 }
 
+function workflowStepBlock(workflow: string, stepName: string): string {
+  const marker = `      - name: ${stepName}\n`;
+  const start = workflow.indexOf(marker);
+  assert(start >= 0, `expected ${stepName} step to exist`);
+
+  const nextStep = workflow.indexOf("\n      - ", start + marker.length);
+  return nextStep === -1 ? workflow.slice(start) : workflow.slice(start, nextStep);
+}
+
 describe("repository hardening", () => {
+  it("keeps the client bundle report authoritative and its comment best-effort", async () => {
+    const workflow = await readText(".github/workflows/client-bundle-report.yml");
+    const compute = workflowStepBlock(workflow, "Compute client bundle report");
+    const comment = workflowStepBlock(workflow, "Post sticky PR comment");
+
+    assert(compute.includes("deno task client-bundle:report"));
+    assert(!compute.includes("continue-on-error"));
+    assert(comment.includes("continue-on-error: true"));
+    assert(comment.includes("retries: 3"));
+  });
+
   it("keeps CODEOWNERS in force for public governance files", async () => {
     const codeowners = await readText(".github/CODEOWNERS");
 
