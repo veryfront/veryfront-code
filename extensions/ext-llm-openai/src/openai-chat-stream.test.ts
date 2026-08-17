@@ -617,6 +617,76 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     );
   });
 
+  it("keeps tool-call identity and ordering guards intact when fields are null", async () => {
+    // Null must behave exactly like an omitted field: it may not let a call
+    // change identity, collide at another index, skip the id/name ordering
+    // rule, or emit a tool call that never received an id, name, or arguments.
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: null,
+                  type: null,
+                  function: { name: null, arguments: null },
+                }],
+              },
+            }],
+          }),
+          data({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+          "data: [DONE]\r\n\r\n",
+        ].join(""))),
+      ProviderRequestError,
+      "tool call was incomplete",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{
+                  index: 0,
+                  id: "call_a",
+                  function: { name: "lookup", arguments: "{}" },
+                }],
+              },
+            }],
+          }),
+          data({
+            choices: [{
+              delta: {
+                tool_calls: [{ index: 0, id: "call_b", function: { arguments: "" } }],
+              },
+            }],
+          }),
+        ].join(""))),
+      ProviderRequestError,
+      "tool call id changed while streaming",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: null,
+                function: { name: null, arguments: "{}" },
+              }],
+            },
+          }],
+        }))),
+      ProviderRequestError,
+      "tool call arguments arrived before its id and name",
+    );
+  });
+
   it("still rejects reasoning and role deltas of a genuinely wrong type", async () => {
     await assertRejects(
       () =>
