@@ -1090,6 +1090,22 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, 'loadSecret("server")');
     });
 
+    it("keeps an import read by a TypeScript parameter property decorator", async () => {
+      const code = [
+        `import { loadSecret } from "../server/secrets.ts";`,
+        `export async function getServerData() { return loadSecret("server"); }`,
+        `export default class Page {`,
+        `  constructor(@inject(loadSecret) private value = "client") {}`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, 'import { loadSecret } from "../server/secrets.ts"');
+      assertStringIncludes(result, "@inject(loadSecret)");
+      assertNotIncludes(result, 'loadSecret("server")');
+    });
+
     it("binds the name introduced by a TypeScript parameter property", async () => {
       const code = [
         `import { value } from "../server/secrets.ts";`,
