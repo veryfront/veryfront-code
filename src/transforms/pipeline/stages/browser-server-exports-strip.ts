@@ -63,6 +63,17 @@ import { TransformStage } from "../types.ts";
 /** Exports that only ever execute on the server. */
 const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
 
+// The compile stage runs before this pass and embeds its input in a development
+// sourcemap. Once a hook is stripped, any prior map is stale and may contain or
+// point at a verbatim copy of the server-only source. Match only an actual
+// trailing directive so source-map-like text inside authored strings survives.
+const SOURCE_MAP_SUFFIX =
+  /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
+
+function dropSourceMapSuffix(code: string): string {
+  return code.replace(SOURCE_MAP_SUFFIX, "$1");
+}
+
 /** Source the stub nodes are lifted from, so no node shape is hand-built. */
 const STUB_SOURCE = `function __vfStub() { throw new Error("server-only"); }
 const __vfStubInit = function () { throw new Error("server-only"); };`;
@@ -1085,7 +1096,7 @@ export async function stripServerOnlyExports(code: string, filePath?: string): P
   setBody(ast, dropUnusedImportBindings(pruned, hookClosure));
 
   const generated = await parser.generate(ast);
-  return generated.code;
+  return dropSourceMapSuffix(generated.code);
 }
 
 export const browserServerExportsStripPlugin: TransformPlugin = {

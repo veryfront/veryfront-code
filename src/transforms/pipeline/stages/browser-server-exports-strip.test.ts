@@ -1,11 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../plugins/__tests__/code-parser-setup.ts";
+import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   browserServerExportsStripPlugin,
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
+import { compilePlugin } from "./compile.ts";
 import type { TransformContext } from "../types.ts";
 
 function assertNotIncludes(haystack: string, needle: string): void {
@@ -18,6 +20,10 @@ function occurrences(haystack: string, name: string): number {
 }
 
 describe("browser-server-exports-strip", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
   describe("emptying server-only hooks", () => {
     it("empties an exported async function declaration body", async () => {
       const code = [
@@ -1040,6 +1046,51 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "hashOf"), 0);
       assertNotIncludes(result, "@/lib/uses-crypto");
       assertStringIncludes(result, "TestD as default");
+    });
+
+    it("does not retain a pre-strip inline source map", async () => {
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SERVER_VALUE");`,
+        `const CLIENT_MARKER = "//# sourceMappingURL=data:text/plain;base64,AAAA";`,
+        `export async function getServerData() { return { props: { key: KEY } }; }`,
+        `export default function Page() { return CLIENT_MARKER; }`,
+      ].join("\n");
+      const compiled = await compilePlugin.transform({
+        ...ctx(source, "browser"),
+        dev: true,
+        jsxImportSource: "react",
+      });
+      const match = compiled.match(
+        /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/]+={0,2})/,
+      );
+      assertEquals(match === null, false);
+      const sourceMap = JSON.parse(atob(match?.[1] ?? "")) as {
+        sourcesContent?: string[];
+      };
+      assertEquals(
+        sourceMap.sourcesContent?.some((content) => content.includes("SERVER_VALUE")),
+        true,
+      );
+
+      const result = await browserServerExportsStripPlugin.transform(ctx(compiled, "browser"));
+
+      assertNotIncludes(result, "SERVER_VALUE");
+      assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
+    });
+
+    it("removes an external source map reference after stripping", async () => {
+      const code = [
+        `export function getStaticData() { return readSecret(); }`,
+        `export default function Page() { return null; }`,
+        `//# sourceMappingURL=page.js.map`,
+      ].join("\n");
+
+      const result = await browserServerExportsStripPlugin.transform(ctx(code, "browser"));
+
+      assertNotIncludes(result, "readSecret");
+      assertNotIncludes(result, "sourceMappingURL=page.js.map");
     });
 
     it("does not run for the ssr target", () => {
