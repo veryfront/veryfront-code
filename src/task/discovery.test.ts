@@ -508,6 +508,32 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       assertEquals(parse.call(registeredInputSchema, "value"), "ready:value");
     });
 
+    it("preserves inherited callback schema receivers", () => {
+      const parserState = new WeakMap<object, string>();
+      class StatefulSchema {
+        parse(value: unknown): string {
+          return `${parserState.get(this)}:${String(value)}`;
+        }
+      }
+      const inputSchema = new StatefulSchema();
+      parserState.set(inputSchema, "ready");
+
+      const registered = taskHandler.register(
+        "inherited-receiver-schema",
+        { run() {}, inputSchema },
+        "tasks/inherited-receiver-schema.ts",
+        "tasks",
+      );
+
+      const registeredInputSchema = registered.inputSchema;
+      if (!registeredInputSchema) throw new Error("Expected captured input schema");
+      const parse = registeredInputSchema.parse as (
+        this: Record<string, unknown>,
+        value: unknown,
+      ) => string;
+      assertEquals(parse.call(registeredInputSchema, "value"), "ready:value");
+    });
+
     it("registers detached immutable integration requirement metadata", () => {
       const integrationRequirements = [{
         integration: "slack",

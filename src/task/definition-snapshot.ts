@@ -27,6 +27,7 @@ const functionBind = Function.prototype.bind;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
+const reflectOwnKeys = Reflect.ownKeys;
 
 type TaskObject = Record<PropertyKey, unknown>;
 
@@ -120,14 +121,53 @@ function optionalRecord(
   // callback can keep receiver-keyed state, so retained functions must run
   // against their source schema instead of the detached copy. JSON schemas
   // still take the deeper bounded snapshot path above.
-  const descriptors = objectGetOwnPropertyDescriptors(value);
-  for (const descriptor of Object.values(descriptors)) {
-    if (!("value" in descriptor) || typeof descriptor.value !== "function") continue;
+  const descriptors = objectGetOwnPropertyDescriptors(value) as Record<
+    PropertyKey,
+    PropertyDescriptor
+  >;
+  const visibleKeys = new Set<PropertyKey>(reflectOwnKeys(descriptors));
+  for (const key of visibleKeys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "function") {
+      continue;
+    }
     const callback = descriptor.value;
     descriptor.value = reflectApply(functionBind, callback, [value]);
   }
+
+  const inheritedCallbacks = objectCreate(null) as Record<PropertyKey, PropertyDescriptor>;
+  const visited = new Set<object>();
+  let owner = reflectGetPrototypeOf(value);
+  for (let depth = 0; owner !== null && owner !== OBJECT_PROTOTYPE; depth++) {
+    if (
+      depth >= MAX_TASK_PROTOTYPE_DEPTH || visited.has(owner) ||
+      isProxyWithoutHooks(owner)
+    ) {
+      fail(`${label} has an invalid prototype chain.`);
+    }
+    visited.add(owner);
+
+    const ownerDescriptors = objectGetOwnPropertyDescriptors(owner) as Record<
+      PropertyKey,
+      PropertyDescriptor
+    >;
+    for (const key of reflectOwnKeys(ownerDescriptors)) {
+      if (key === "constructor" || visibleKeys.has(key)) continue;
+      visibleKeys.add(key);
+      const descriptor = ownerDescriptors[key];
+      if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "function") {
+        continue;
+      }
+      const callback = descriptor.value;
+      descriptor.value = reflectApply(functionBind, callback, [value]);
+      inheritedCallbacks[key] = descriptor;
+    }
+    owner = reflectGetPrototypeOf(owner);
+  }
+
   const copy = objectCreate(reflectGetPrototypeOf(value));
   objectDefineProperties(copy, descriptors);
+  objectDefineProperties(copy, inheritedCallbacks);
   return objectFreeze(copy) as Record<string, unknown>;
 }
 
