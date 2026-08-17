@@ -65,7 +65,7 @@ interface WebSocketDeps {
     cacheKey: string,
     files: ProjectFile[],
     expectedSnapshotVersion?: number,
-  ) => Promise<boolean>;
+  ) => Promise<number | undefined>;
   pregenerateStyles?: (
     files: ProjectFile[],
   ) => Promise<PreviewStyleArtifactInfo | undefined>;
@@ -729,13 +729,20 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          const snapshotApplied = await this.deps.replaceSourceSnapshot(
+          const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
             files,
             sourceSnapshotVersion,
           );
-          if (snapshotApplied) {
+          if (appliedSnapshotVersion !== undefined) {
             preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+            const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+            if (
+              currentSnapshotVersion !== undefined &&
+              currentSnapshotVersion !== appliedSnapshotVersion
+            ) {
+              preparedStyleArtifact = undefined;
+            }
 
             logger.debug("Fresh files cached (memory + Redis)", {
               cacheKey,
@@ -902,13 +909,20 @@ export class WebSocketManager {
         try {
           const files = await this.deps.client.listAllFiles();
           const cacheKey = buildFileListCacheKey(contentContext);
-          const snapshotApplied = await this.deps.replaceSourceSnapshot(
+          const appliedSnapshotVersion = await this.deps.replaceSourceSnapshot(
             cacheKey,
             files,
             sourceSnapshotVersion,
           );
-          if (snapshotApplied) {
+          if (appliedSnapshotVersion !== undefined) {
             preparedStyleArtifact = await this.deps.pregenerateStyles?.(files);
+            const currentSnapshotVersion = this.deps.getSourceSnapshotVersion?.();
+            if (
+              currentSnapshotVersion !== undefined &&
+              currentSnapshotVersion !== appliedSnapshotVersion
+            ) {
+              preparedStyleArtifact = undefined;
+            }
 
             logger.debug("FRESH FILES FETCHED", {
               cacheKey,

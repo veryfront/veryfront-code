@@ -938,7 +938,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     cacheKey: string,
     files: SourceSnapshotFile[],
     expectedSnapshotVersion = this.sourceSnapshotVersion,
-  ): Promise<boolean> {
+  ): Promise<number | undefined> {
     const expectedContext = this.contentContext;
     return this.runSourceSnapshotMutation(async () => {
       if (
@@ -951,7 +951,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
           cacheKey,
           projectSlug: this.projectSlug,
         });
-        return false;
+        return undefined;
       }
 
       await this.cache.setAsync(cacheKey, files);
@@ -963,14 +963,14 @@ export class VeryfrontFSAdapter implements FSAdapter {
         // cache write was pending. Remove the value that just landed and leave
         // memory empty so the next read derives the newer snapshot.
         await this.cache.deleteAsync(cacheKey);
-        return false;
+        return undefined;
       }
       this.readOps.clearFileListIndex();
       this.markSourceSnapshotChanged(files);
       // Retain after the version bump so the poked listing -- not the one it
       // replaced -- is what later reads see when the cache keeps nothing.
       this.retainFileList(cacheKey, files);
-      return true;
+      return this.sourceSnapshotVersion;
     });
   }
 
