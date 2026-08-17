@@ -7,7 +7,7 @@ import {
   browserServerExportsStripPlugin,
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
-import { compilePlugin } from "./compile.ts";
+import { COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, compilePlugin } from "./compile.ts";
 import { runPipeline } from "../index.ts";
 import { type TransformContext, TransformStage } from "../types.ts";
 
@@ -1057,12 +1057,15 @@ describe("browser-server-exports-strip", () => {
         `export async function getServerData() { return { props: { key: KEY } }; }`,
         `export default function Page() { return CLIENT_MARKER; }`,
       ].join("\n");
-      const compiled = await compilePlugin.transform({
+      const compileContext = {
         ...ctx(source, "browser"),
         dev: true,
         jsxImportSource: "react",
-      });
-      const match = compiled.match(
+      };
+      const compiled = await compilePlugin.transform(compileContext);
+      const directive = compileContext.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
+      assertEquals(typeof directive, "string");
+      const match = String(directive).match(
         /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/]+={0,2})/,
       );
       assertEquals(match === null, false);
@@ -1074,7 +1077,10 @@ describe("browser-server-exports-strip", () => {
         true,
       );
 
-      const result = await browserServerExportsStripPlugin.transform(ctx(compiled, "browser"));
+      const result = await browserServerExportsStripPlugin.transform({
+        ...compileContext,
+        code: compiled,
+      });
 
       assertNotIncludes(result, "SERVER_VALUE");
       assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
@@ -1089,18 +1095,25 @@ describe("browser-server-exports-strip", () => {
         `const MDXLayout = () => CLIENT_MARKER;`,
         `export async function getServerData() { return { props: { key: KEY } }; }`,
       ].join("\n");
-      const compiled = await compilePlugin.transform({
+      const compileContext = {
         ...ctx(source, "browser"),
         filePath: "pages/test.mdx",
         dev: true,
         jsxImportSource: "react",
-      });
-      assertStringIncludes(compiled, "sourceMappingURL=data:application/json;base64,");
+      };
+      const compiled = await compilePlugin.transform(compileContext);
+      assertEquals(
+        String(compileContext.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA)).includes(
+          "sourceMappingURL=data:application/json;base64,",
+        ),
+        true,
+      );
+      assertNotIncludes(compiled, "sourceMappingURL=data:application/json;base64,");
       assertStringIncludes(compiled, "export { MDXLayout };");
 
       const result = await browserServerExportsStripPlugin.transform({
-        ...ctx(compiled, "browser"),
-        filePath: "pages/test.mdx",
+        ...compileContext,
+        code: compiled,
       });
 
       assertNotIncludes(result, "SERVER_VALUE");
@@ -1132,6 +1145,41 @@ describe("browser-server-exports-strip", () => {
 
       assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
       assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result.code, "export const APPENDED = true;");
+    });
+
+    it("does not confuse a copied map string with the compile map comment", async () => {
+      const source = [
+        `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
+        `export async function getServerData() { return { props: { key: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-duplicate-text", dev: true, ssr: false },
+        {
+          plugins: [{
+            name: "copy-map-before-appending",
+            stage: TransformStage.COMPILE + 0.5,
+            transform: (ctx) => {
+              const directive = ctx.code.match(
+                /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,[A-Za-z0-9+/]+={0,2}/,
+              )?.[0];
+              const copied = directive
+                ? `export const COPIED_COMPILE_MAP = ${JSON.stringify(directive)};\n`
+                : "";
+              return `${copied}${ctx.code}\nexport const APPENDED = true;`;
+            },
+          }],
+        },
+      );
+
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertNotIncludes(result.code, "COPIED_COMPILE_MAP");
       assertStringIncludes(result.code, "export const APPENDED = true;");
     });
 

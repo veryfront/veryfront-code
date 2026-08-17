@@ -22,6 +22,10 @@ function trailingSourceMapDirective(code: string): string | undefined {
   return match?.[0].slice((match[1] ?? "").length).trimEnd();
 }
 
+function dropTrailingSourceMapDirective(code: string): string {
+  return code.replace(SOURCE_MAP_SUFFIX, "$1");
+}
+
 function appendBeforeSourceMap(code: string, addition: string): string {
   const match = SOURCE_MAP_SUFFIX.exec(code);
   if (match?.index === undefined) return code + addition;
@@ -97,13 +101,6 @@ export const compilePlugin: TransformPlugin = {
       // TypeScript, so the output is plain JavaScript the module lexer can
       // anchor to. CSS output is not a module and is left alone.
       let code = loader === "css" ? result.code : await upgradeImportAssertions(result.code);
-      const sourceMapDirective = trailingSourceMapDirective(code);
-      if (sourceMapDirective) {
-        ctx.metadata.set(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, sourceMapDirective);
-      } else {
-        ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-      }
-
       const isMdx = ctx.filePath.endsWith(".mdx");
       if (
         isMdx &&
@@ -114,6 +111,18 @@ export const compilePlugin: TransformPlugin = {
         // a stale compile map after rewriting, and a framework export appended
         // after the directive would otherwise hide that suffix.
         code = appendBeforeSourceMap(code, "\nexport { MDXLayout };\n");
+      }
+
+      const sourceMapDirective = trailingSourceMapDirective(code);
+      if (ctx.target === "browser" && sourceMapDirective) {
+        // Keep the compiler map out of intermediate browser plugins. The
+        // server-export strip stage restores it only when no hook is rewritten.
+        // This makes the real comment unambiguous even if a plugin copies its
+        // text into a string or appends executable code.
+        ctx.metadata.set(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, sourceMapDirective);
+        code = dropTrailingSourceMapDirective(code);
+      } else {
+        ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
       }
 
       return code;

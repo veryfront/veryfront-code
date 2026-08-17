@@ -75,11 +75,9 @@ function dropSourceMapSuffix(code: string): string {
   return code.replace(SOURCE_MAP_SUFFIX, "$1");
 }
 
-function dropRecordedSourceMap(code: string, directive: string | undefined): string {
-  if (!directive) return code;
-  const index = code.indexOf(directive);
-  if (index < 0) return code;
-  return code.slice(0, index) + code.slice(index + directive.length);
+function appendSourceMapDirective(code: string, directive: string): string {
+  const separator = code.length > 0 && !code.endsWith("\n") ? "\n" : "";
+  return `${code}${separator}${directive}\n`;
 }
 
 /** Source the stub nodes are lifted from, so no node shape is hand-built. */
@@ -1061,15 +1059,9 @@ class ServerExportStripError extends Error {
 export async function stripServerOnlyExports(
   code: string,
   filePath?: string,
-  compileSourceMapDirective?: string,
 ): Promise<string> {
   // Cheap pre-check: no mention of a hook means no parse.
   if (!SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return code;
-
-  // A custom stage may append code after esbuild's map before this pass runs.
-  // Remove the exact compile-generated directive from the analysis input, but
-  // return the original code unchanged when no hook is ultimately rewritten.
-  const analysisCode = dropRecordedSourceMap(code, compileSourceMapDirective);
 
   const parser = tryResolve<CodeParser>("CodeParser");
   if (!parser) {
@@ -1085,7 +1077,7 @@ export async function stripServerOnlyExports(
     if (!parsedStubs) throw new Error("the stub source did not parse");
     stubs = parsedStubs;
 
-    ast = await parser.parse({ code: analysisCode, filePath: filePath ?? "module.tsx" });
+    ast = await parser.parse({ code, filePath: filePath ?? "module.tsx" });
     body = bodyOf(ast);
   } catch (error) {
     throw new ServerExportStripError(
@@ -1122,12 +1114,11 @@ export const browserServerExportsStripPlugin: TransformPlugin = {
   // dropped bindings are never rewritten or pre-fetched.
   stage: TransformStage.COMPILE + 0.6,
   condition: (ctx: TransformContext) => ctx.target === "browser",
-  transform: (ctx: TransformContext) => {
+  transform: async (ctx: TransformContext) => {
     const directive = ctx.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-    return stripServerOnlyExports(
-      ctx.code,
-      ctx.filePath,
-      typeof directive === "string" ? directive : undefined,
-    );
+    const result = await stripServerOnlyExports(ctx.code, ctx.filePath);
+    return result === ctx.code && typeof directive === "string"
+      ? appendSourceMapDirective(result, directive)
+      : result;
   },
 };
