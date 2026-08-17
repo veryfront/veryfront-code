@@ -2312,6 +2312,146 @@ describe("browser-server-exports-strip", () => {
     // `defineProperties` installs a descriptor map's keys on its target just as
     // `assign` copies a source's own keys, so a map this stage cannot read key
     // by key leaves the replacement invisible.
+    // A module-scope `var` is bound where the enclosing body prebinds its
+    // direct declarations and again in the var scope, so a write through it
+    // used to resolve to a different binding than its own declaration.
+    for (
+      const [label, lines] of [
+        [
+          "a var intrinsic alias",
+          [`var intrinsic = Object;`, `intrinsic.defineProperty = recordAndReturn;`],
+        ],
+        [
+          "a var alias declared inside a block",
+          [
+            `if (globalThis.patch) { var hoistedAlias = Object; }`,
+            `hoistedAlias.defineProperty = recordAndReturn;`,
+          ],
+        ],
+        [
+          "a var alias written through from a function",
+          [
+            `var deferredAlias = Object;`,
+            `function applyPatch() { deferredAlias.defineProperty = recordAndReturn; }`,
+            `applyPatch();`,
+          ],
+        ],
+      ]
+    ) {
+      it(`does not treat ${label} as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          ...lines,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    // `f.call.call(f, …)` invokes `f` with one more receiver peeled off, so
+    // unwrapping a single wrapper leaves `f.call` as the apparent callee.
+    for (
+      const [label, invocation] of [
+        [
+          "a nested call wrapper",
+          `Object.defineProperty.call.call(` +
+          `Object.defineProperty, null, Object, "defineProperty", { value: recordAndReturn })`,
+        ],
+        [
+          "a nested apply wrapper",
+          `Object.defineProperty.call.apply(` +
+          `Object.defineProperty, [null, Object, "defineProperty", { value: recordAndReturn }])`,
+        ],
+      ]
+    ) {
+      it(`does not treat ${label} on the intrinsic as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          `${invocation};`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    // A spread hides how many sources a merge takes, not what its target is.
+    // A merge onto a fresh local cannot reach the intrinsic however many
+    // unreadable sources follow, so it must not cost the module its metadata.
+    it("still strips compiler metadata past a spread merge onto a fresh target", async () => {
+      const code = [
+        `Object.assign.call(null, {}, ...[]);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("does not treat a spread merge onto the global object as compiler metadata", async () => {
+      const code = [
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `Object.assign(globalThis, ...[{ Object: recordAndReturn }]);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     it("does not treat named descriptors installed on the intrinsic as compiler metadata", async () => {
       const code = [
         `function recordAndReturn(target) {`,

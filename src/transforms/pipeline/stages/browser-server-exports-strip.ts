@@ -1887,47 +1887,43 @@ interface NormalizedCall {
 function normalizeCall(node: Node): NormalizedCall | null {
   if (node.type !== "CallExpression" && node.type !== "OptionalCallExpression") return null;
   if (!isNode(node.callee)) return null;
-  const callee = unwrapTransparent(node.callee);
-  const rawArgs = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
-  if (callee.type !== "MemberExpression" && callee.type !== "OptionalMemberExpression") {
-    return {
-      callee,
-      args: rawArgs,
-      unknownArgs: rawArgs.some((argument) => argument.type === "SpreadElement"),
-    };
-  }
 
-  const wrapper = memberKey(callee);
-  if ((wrapper !== "call" && wrapper !== "apply") || !isNode(callee.object)) {
-    return {
-      callee,
-      args: rawArgs,
-      unknownArgs: rawArgs.some((argument) => argument.type === "SpreadElement"),
-    };
-  }
+  let callee = unwrapTransparent(node.callee);
+  let args = Array.isArray(node.arguments) ? node.arguments.filter(isNode) : [];
+  let unknownArgs = args.some((argument) => argument.type === "SpreadElement");
 
-  const invoked = unwrapTransparent(callee.object);
-  if (wrapper === "call") {
-    const args = rawArgs.slice(1);
-    return {
-      callee: invoked,
-      args,
-      unknownArgs: rawArgs.some((argument) => argument.type === "SpreadElement"),
-    };
-  }
+  // A wrapper can be wrapped again. `f.call.call(f, null, …)` invokes `f` with
+  // one more receiver peeled off, and `f.call.apply(f, [null, …])` does the
+  // same through a list, so unwrapping once leaves the real callee hidden
+  // behind `f.call`. Peel until what is left is not another `call` or `apply`.
+  while (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") {
+    const wrapper = memberKey(callee);
+    if ((wrapper !== "call" && wrapper !== "apply") || !isNode(callee.object)) break;
 
-  const list = rawArgs[1] ? unwrapTransparent(rawArgs[1]) : undefined;
-  if (list?.type !== "ArrayExpression" || !Array.isArray(list.elements)) {
-    return { callee: invoked, args: [], unknownArgs: true };
-  }
-  const args: Node[] = [];
-  for (const element of list.elements) {
-    if (!isNode(element) || element.type === "SpreadElement") {
+    const invoked = unwrapTransparent(callee.object);
+    if (wrapper === "call") {
+      args = args.slice(1);
+      callee = invoked;
+      continue;
+    }
+
+    const list = args[1] ? unwrapTransparent(args[1]) : undefined;
+    if (list?.type !== "ArrayExpression" || !Array.isArray(list.elements)) {
       return { callee: invoked, args: [], unknownArgs: true };
     }
-    args.push(element);
+    const spread: Node[] = [];
+    for (const element of list.elements) {
+      if (!isNode(element) || element.type === "SpreadElement") {
+        return { callee: invoked, args: [], unknownArgs: true };
+      }
+      spread.push(element);
+    }
+    args = spread;
+    unknownArgs = false;
+    callee = invoked;
   }
-  return { callee: invoked, args, unknownArgs: false };
+
+  return { callee, args, unknownArgs };
 }
 
 function assignsUnshadowedGlobal(
@@ -2118,6 +2114,92 @@ function memberPathRoot(node: Node): Node | null {
     current = unwrapTransparent(current.object);
   }
   return current.type === "Identifier" ? current : null;
+}
+
+/**
+ * Whether a name the module binds the intrinsic to is one it writes a property
+ * through, matched by name rather than by lexical binding.
+ *
+ * `intrinsicEscapesToWritableSlot` resolves both halves to a concrete binding,
+ * which is the precise answer and the one that keeps a shadowed name from
+ * counting. It is also the answer that disappears when the two halves resolve
+ * to different scopes: a module-scope `var` is bound once where the enclosing
+ * body prebinds its direct declarations and again in the var scope, so
+ * `var intrinsic = Object; intrinsic.defineProperty = record` had a write that
+ * never met its declaration and the module stayed inside the recognised set.
+ *
+ * This is the coarse backstop for that: a name bound to the intrinsic anywhere,
+ * closed over its own aliases, and written through anywhere. It can only add
+ * rejections, so the cost of its imprecision is a helper kept, never a call
+ * deleted. A name that is never bound to an unshadowed intrinsic read is not in
+ * the set at all, which is what keeps `function configure(Object) { Object
+ * .defineProperty = … }` out of it.
+ */
+function intrinsicAliasWrittenThrough(
+  body: Node[],
+  globals: ReadonlySet<Node>,
+  bindings: LexicalBindingIndex,
+): boolean {
+  const isIntrinsic = (node: Node): boolean =>
+    isUnshadowedGlobalIdentifier(node, "Object", globals) ||
+    isGlobalObjectSlot(node, globals) || isUnshadowedGlobalObject(node, globals);
+
+  // Only names the module itself binds are in play, so a nested local that
+  // happens to share one of them cannot put its own value into the set.
+  const moduleNames = moduleScopeBindingNames(body);
+  for (const name of hoistedVarNames(body)) moduleNames.add(name);
+
+  const writtenThrough = new Set<string>();
+  for (const target of propertyWriteTargets(body)) {
+    const member = unwrapTransparent(target);
+    if (member.type !== "MemberExpression" && member.type !== "OptionalMemberExpression") continue;
+    const root = memberPathRoot(member);
+    const name = root ? nodeName(root) : null;
+    if (!name || !moduleNames.has(name)) continue;
+    // The write has to reach the module's own binding. A parameter or a local
+    // that shadows the name reaches something else entirely, and the lexical
+    // index is what tells the two apart.
+    if (bindings.reference(root as Node)?.scope.module !== true) continue;
+    writtenThrough.add(name);
+  }
+  if (writtenThrough.size === 0) return false;
+
+  const aliasBindings: Array<{ name: string; value: Node }> = [];
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (node.type === "VariableDeclarator" && isNode(node.init) && isNode(node.id)) {
+        const name = nodeName(unwrapTransparent(node.id));
+        if (name && moduleNames.has(name)) aliasBindings.push({ name, value: node.init });
+      }
+      if (
+        (node.type === "AssignmentExpression" || node.type === "AssignmentPattern") &&
+        isNode(node.left) && isNode(node.right)
+      ) {
+        const left = unwrapTransparent(node.left);
+        const name = left.type === "Identifier" ? nodeName(left) : null;
+        if (name && moduleNames.has(name)) aliasBindings.push({ name, value: node.right });
+      }
+    });
+  }
+
+  const derived = new Set<string>();
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const binding of aliasBindings) {
+      if (derived.has(binding.name)) continue;
+      const value = unwrapTransparent(binding.value);
+      const carries = isIntrinsic(value) ||
+        (value.type === "Identifier" && derived.has(nodeName(value) ?? ""));
+      if (!carries) continue;
+      derived.add(binding.name);
+      grew = true;
+    }
+  }
+
+  for (const name of derived) if (writtenThrough.has(name)) return true;
+  return false;
 }
 
 /** Bindings the module writes a property through, at any depth of member path. */
@@ -2510,11 +2592,17 @@ function mergesGuardedKeyOntoIntrinsic(body: Node[], globals: ReadonlySet<Node>)
 
       if (invocation.unknownArgs) {
         const owner = isNode(callee.object) ? unwrapTransparent(callee.object) : undefined;
-        if (isUnshadowedGlobalIdentifier(owner, "Object", globals)) {
-          merges = true;
-          return false;
+        if (!isUnshadowedGlobalIdentifier(owner, "Object", globals)) return true;
+        // A spread hides how many sources follow, but not what the target is
+        // when the target itself is written out. A merge onto a value this
+        // module manifestly just made cannot land on the intrinsic however
+        // many unreadable sources come after it.
+        const first = invocation.args[0] ? unwrapTransparent(invocation.args[0]) : undefined;
+        if (first && first.type !== "SpreadElement" && FRESH_VALUE_TYPES.has(first.type)) {
+          return true;
         }
-        return true;
+        merges = true;
+        return false;
       }
 
       const args = invocation.args;
@@ -2687,7 +2775,8 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     mergesGuardedKeyOntoIntrinsic(body, globals) ||
     hasReflectionRoute(body, globals) ||
     intrinsicEscapesToWritableSlot(body, "Object", globals, bindings) ||
-    intrinsicEscapesToWritableSlot(body, "global", globals, bindings);
+    intrinsicEscapesToWritableSlot(body, "global", globals, bindings) ||
+    intrinsicAliasWrittenThrough(body, globals, bindings);
   if (objectIsModuleLocal) return new Set<string>();
 
   // A `var` may be declared more than once, and only the initialiser that ran
