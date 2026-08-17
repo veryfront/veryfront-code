@@ -5,7 +5,12 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { withCwd } from "#veryfront/testing/cwd.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import { setJsonMode } from "../../shared/json-output.ts";
-import { assertEmbeddedPresetFlags, handleBuildCommand, sumEmbeddedOutputSize } from "./handler.ts";
+import {
+  assertEmbeddedPresetFlags,
+  countEmbeddedPages,
+  handleBuildCommand,
+  sumEmbeddedOutputSize,
+} from "./handler.ts";
 
 async function captureStdout(fn: () => Promise<void>): Promise<string> {
   const lines: string[] = [];
@@ -64,12 +69,11 @@ describe("commands/build/handler embedded preset flags", () => {
   it("writes to build.outDir and reports embedded metrics in JSON mode", async () => {
     const projectDir = await makeProject("vf-embedded-outdir-");
     try {
-      await Deno.remove(join(projectDir, "app"), { recursive: true });
       await Deno.mkdir(join(projectDir, "pages"), { recursive: true });
-      await Deno.writeTextFile(join(projectDir, "pages/index.mdx"), "# Home\n");
+      await Deno.writeTextFile(join(projectDir, "pages/index.mdx"), "# Legacy home\n");
       await Deno.writeTextFile(
         join(projectDir, "veryfront.config.js"),
-        'export default { router: "pages", build: { outDir: "custom-out" } };\n',
+        'export default { build: { outDir: "custom-out" } };\n',
       );
 
       let output: string;
@@ -100,7 +104,7 @@ describe("commands/build/handler embedded preset flags", () => {
       const events = output.split("\n").map((line) => JSON.parse(line));
       const result = events.find((event) => event.type === "result");
       assertEquals(result.success, true);
-      assertEquals(result.data.pages, 1);
+      assertEquals(result.data.pages, 2);
       assertEquals(result.data.totalSize > 0, true);
       assertEquals(
         result.data.duration_ms,
@@ -142,6 +146,18 @@ describe("commands/build/handler embedded preset flags", () => {
     } finally {
       await Deno.remove(outDir, { recursive: true });
     }
+  });
+
+  it("counts a Pages index according to which router supplied the shell", () => {
+    const manifest = {
+      routes: [
+        { type: "page", file: "embedded/app.js" },
+        { type: "page", file: "embedded/pages/index.js" },
+      ],
+    };
+
+    assertEquals(countEmbeddedPages(manifest, true), 1);
+    assertEquals(countEmbeddedPages(manifest, false), 2);
   });
 
   describe("flag validation", () => {

@@ -268,12 +268,14 @@ describe(
         await Deno.writeTextFile(join(projectDir, "pages/docs.mdx"), "# Pages docs\n");
 
         const outDir = join(projectDir, "dist");
-        const { manifest } = await buildEmbeddedPreset({
+        const { manifest, pagesIndexIsShell } = await buildEmbeddedPreset({
           projectDir,
           outDir,
           runtime: "deno",
           config: { router: "pages" },
         });
+
+        assertEquals(pagesIndexIsShell, true);
 
         const docs = manifest.routes.filter((route) => route.path === "/docs");
         assertEquals(docs, [{

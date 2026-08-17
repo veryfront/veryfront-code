@@ -186,6 +186,17 @@ export async function sumEmbeddedOutputSize(
   return total;
 }
 
+/** @internal */
+export function countEmbeddedPages(
+  manifest: { routes: ReadonlyArray<{ type: string; file: string }> },
+  pagesIndexIsShell: boolean,
+): number {
+  return manifest.routes.filter((route) =>
+    route.type === "page" &&
+    (!pagesIndexIsShell || route.file !== "embedded/pages/index.js")
+  ).length;
+}
+
 /**
  * Run the embedded build, terminating the NDJSON stream ourselves in JSON mode.
  *
@@ -251,7 +262,7 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
     }
   }
 
-  const { manifest } = await buildEmbeddedPreset({
+  const { manifest, pagesIndexIsShell } = await buildEmbeddedPreset({
     projectDir,
     outDir: finalOutput,
     runtime: "deno",
@@ -273,12 +284,10 @@ async function runEmbeddedBuild(projectDir: string, outputDir?: string): Promise
       type: "result",
       success: true,
       data: {
-        // The shell serves `/` and is itself a page. Pages Router discovery also
-        // emits its root source as `embedded/pages/index.js`, so exclude that
-        // second artifact rather than reporting one source as two pages.
-        pages: manifest.routes.filter((route) =>
-          route.type === "page" && route.file !== "embedded/pages/index.js"
-        ).length,
+        // The shell serves `/` and is itself a page. Exclude a discovered Pages
+        // index only when that same source supplied the shell. If the App Router
+        // supplied the shell, `/index` is a distinct emitted page and still counts.
+        pages: countEmbeddedPages(manifest, pagesIndexIsShell),
         // The default path reports 0 for a build with no splitting stage, and
         // the embedded preset has none — which is why `--split` is rejected for
         // it above. Reporting 1 here would answer the same field differently

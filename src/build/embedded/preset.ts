@@ -38,8 +38,10 @@ export interface BuildEmbeddedOptions {
  */
 export async function buildEmbeddedPreset(
   options: BuildEmbeddedOptions,
-): Promise<{ manifest: EmbeddedBundleManifest }> {
-  let buildResult: { manifest: EmbeddedBundleManifest } | undefined;
+): Promise<{ manifest: EmbeddedBundleManifest; pagesIndexIsShell: boolean }> {
+  let buildResult:
+    | { manifest: EmbeddedBundleManifest; pagesIndexIsShell: boolean }
+    | undefined;
   let buildFailed = false;
   let buildError: unknown;
 
@@ -62,6 +64,10 @@ export async function buildEmbeddedPreset(
       pagesDirectory,
       config.router,
     );
+    const pagesIndexIsShell = [
+      join(projectDir, pagesDirectory, "index.mdx"),
+      join(projectDir, pagesDirectory, "index.md"),
+    ].includes(entryPath);
     const appOut = join(embeddedDir, "app.js");
     const bundledAppCode = await bundleEmbeddedApp({
       fs,
@@ -172,7 +178,7 @@ export async function buildEmbeddedPreset(
 
     logger.info("Embedded preset built", { outDir: embeddedDir } as unknown);
 
-    buildResult = { manifest };
+    buildResult = { manifest, pagesIndexIsShell };
   } catch (error) {
     buildFailed = true;
     buildError = error;
