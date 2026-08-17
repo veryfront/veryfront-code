@@ -230,6 +230,7 @@ describe(
         await Deno.writeTextFile(join(projectDir, "app/page.mdx"), "# Root\n");
         await Deno.writeTextFile(join(projectDir, "app/docs/page.mdx"), "# App docs\n");
         await Deno.writeTextFile(join(projectDir, "pages/docs.mdx"), "# Pages docs\n");
+        await Deno.writeTextFile(join(projectDir, "pages/docs.md"), "# Other Pages docs\n");
 
         const { manifest } = await buildEmbeddedPreset({
           projectDir,

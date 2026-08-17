@@ -95,7 +95,11 @@ export async function buildEmbeddedPreset(
         ...(await discoverPagesRoutes(fs, projectDir, embeddedDir, pagesDirectory)),
       ];
 
-    assertNoIntraRouterRouteConflicts(discovered);
+    const routeCounts = new Map<string, number>();
+    for (const route of discovered) {
+      const key = `${route.router}:${route.routePath}`;
+      routeCounts.set(key, (routeCounts.get(key) ?? 0) + 1);
+    }
 
     // Every route path is published exactly once, first claim wins.
     //
@@ -112,6 +116,16 @@ export async function buildEmbeddedPreset(
     const claimedPaths = new Set<string>(["/"]);
 
     for (const r of discovered) {
+      const hasRouterConflict = (routeCounts.get(`${r.router}:${r.routePath}`) ?? 0) > 1;
+      if (hasRouterConflict && (r.router === "app" || !claimedPaths.has(r.routePath))) {
+        const routerName = r.router === "app" ? "App Router" : "Pages Router";
+        throw toError(
+          createError({
+            type: "build",
+            message: `Multiple ${routerName} files resolve to "${r.routePath}"`,
+          }),
+        );
+      }
       if (claimedPaths.has(r.routePath)) continue;
 
       try {
@@ -242,25 +256,6 @@ export function normalizePageRoutePath(relPath: string): string {
 /** @internal — exported for testing */
 export function isPageFile(name: string): boolean {
   return (name.endsWith(".mdx") || name.endsWith(".md")) && !name.startsWith("_");
-}
-
-function assertNoIntraRouterRouteConflicts(
-  routes: ReadonlyArray<EmbeddedDiscoveredRoute>,
-): void {
-  const seen = new Set<string>();
-  for (const route of routes) {
-    const key = `${route.router}\0${route.routePath}`;
-    if (seen.has(key)) {
-      const routerName = route.router === "app" ? "App Router" : "Pages Router";
-      throw toError(
-        createError({
-          type: "build",
-          message: `Multiple ${routerName} files resolve to "${route.routePath}"`,
-        }),
-      );
-    }
-    seen.add(key);
-  }
 }
 
 async function findOrCreateEntryPath(
