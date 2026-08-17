@@ -862,6 +862,7 @@ function moduleScopeBindingNames(body: Node[]): Set<string> {
 interface LexicalScope {
   kind: "var" | "block";
   names: Set<string>;
+  module?: true;
 }
 
 function isLexicallyBound(name: string, scopes: LexicalScope[]): boolean {
@@ -907,9 +908,14 @@ function freeReferencedIdentifiers(
   deferred: ReadonlySet<Node> = NOTHING_ELIDED,
   initiallyBound: ReadonlySet<string> = NO_BOUND_NAMES,
   onFreeIdentifier?: (node: Node) => void,
+  onIdentifier?: (node: Node, binding: LexicalScope | undefined) => void,
 ): Set<string> {
   const free = new Set<string>();
-  const rootScope: LexicalScope = { kind: "var", names: new Set(initiallyBound) };
+  const rootScope: LexicalScope = {
+    kind: "var",
+    names: new Set(initiallyBound),
+    module: root.type === "Program" ? true : undefined,
+  };
 
   const currentVarScope = (scopes: LexicalScope[]): LexicalScope =>
     scopes.find((scope) => scope.kind === "var") ?? scopes[0] ?? rootScope;
@@ -1282,7 +1288,9 @@ function freeReferencedIdentifiers(
     if (visitTsExpression(node, scopes)) return;
 
     if (node.type === "Identifier") {
-      addFreeName(nodeName(node), scopes, node);
+      const name = nodeName(node);
+      onIdentifier?.(node, name ? scopes.find((scope) => scope.names.has(name)) : undefined);
+      addFreeName(name, scopes, node);
       return;
     }
 
@@ -1333,7 +1341,11 @@ function freeReferencedIdentifiers(
     if (node.type === "JSXNamespacedName") return;
 
     if (node.type === "Program" || node.type === "BlockStatement") {
-      const scope: LexicalScope = { kind: "block", names: new Set() };
+      const scope: LexicalScope = {
+        kind: "block",
+        names: new Set(),
+        module: node.type === "Program" ? true : undefined,
+      };
       bindDirectDeclarations(scope, node);
       for (const statement of Array.isArray(node.body) ? node.body : []) {
         if (isNode(statement)) visit(statement, [scope, ...scopes]);
@@ -1486,13 +1498,12 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
  * local that shadows a hook name and is assigned also stops the build, because
  * on this boundary a stopped build is recoverable and a shipped loader is not.
  */
-function assignedNames(body: Node[]): Set<string> {
-  const assigned = new Set<string>();
+function assignedIdentifierNodes(body: Node[]): Set<Node> {
+  const assigned = new Set<Node>();
 
   const collectTargets = (target: Node): void => {
     if (target.type === "Identifier") {
-      const name = nodeName(target);
-      if (name) assigned.add(name);
+      assigned.add(target);
       return;
     }
 
@@ -1548,6 +1559,32 @@ function assignedNames(body: Node[]): Set<string> {
       return true;
     });
   }
+
+  return assigned;
+}
+
+function assignedNames(body: Node[]): Set<string> {
+  return new Set(
+    [...assignedIdentifierNodes(body)].map(nodeName).filter((name): name is string => !!name),
+  );
+}
+
+/** Assignment targets that resolve to a binding declared by this module. */
+function assignedModuleBindingNames(body: Node[]): Set<string> {
+  const targets = assignedIdentifierNodes(body);
+  const assigned = new Set<string>();
+
+  freeReferencedIdentifiers(
+    { type: "Program", body },
+    NOTHING_ELIDED,
+    NOTHING_ELIDED,
+    NO_BOUND_NAMES,
+    undefined,
+    (identifier, binding) => {
+      const name = nodeName(identifier);
+      if (name && targets.has(identifier) && binding?.module === true) assigned.add(name);
+    },
+  );
 
   return assigned;
 }
@@ -1694,8 +1731,25 @@ function isDocumentDefaultView(node: Node | undefined, globals: ReadonlySet<Node
 }
 
 function isUnshadowedGlobalObject(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
-  if (isDocumentDefaultView(node, globals)) return true;
-  return GLOBAL_OBJECT_NAMES.some((name) => isUnshadowedGlobalIdentifier(node, name, globals));
+  if (!node) return false;
+  const value = unwrapTransparent(node);
+  if (isDocumentDefaultView(value, globals)) return true;
+  if (
+    GLOBAL_OBJECT_NAMES.some((name) => isUnshadowedGlobalIdentifier(value, name, globals))
+  ) {
+    return true;
+  }
+  if (value.type !== "MemberExpression" && value.type !== "OptionalMemberExpression") {
+    return false;
+  }
+
+  const object = isNode(value.object) ? value.object : undefined;
+  if (!isUnshadowedGlobalObject(object, globals)) return false;
+  const alias = memberKey(value);
+  // A dynamic member may resolve to any of the standard self aliases. Failing
+  // closed here prevents an indirect intrinsic mutation from being mistaken
+  // for removable compiler metadata.
+  return alias === null || GLOBAL_OBJECT_NAMES.includes(alias);
 }
 
 function isGlobalObjectSlot(node: Node | undefined, globals: ReadonlySet<Node>): boolean {
@@ -2366,7 +2420,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
       isNode(specifier) && specifier.importKind !== "type" && nodeName(specifier.local) === "Object"
     )
   );
-  const reassigned = assignedNames(body);
+  const reassigned = assignedModuleBindingNames(body);
   const hoisted = hoistedVarNames(body);
   const globals = unshadowedGlobalIdentifierNodes(body);
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||

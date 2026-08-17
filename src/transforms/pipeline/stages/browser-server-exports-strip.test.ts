@@ -1214,6 +1214,50 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("ignores assignments to a lexically shadowed name helper", async () => {
+      const code = [
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `function configure(setName) { setName = (target) => target; }`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "function configure(setName)");
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("keeps metadata when a nested assignment reaches the module helper", async () => {
+      const code = [
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `function recordAndReturn(target) { return target; }`,
+        `function configure() { setName = recordAndReturn; }`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "setName = recordAndReturn");
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     it("does not treat a mutated Object.defineProperty as compiler metadata", async () => {
       const code = [
         `function recordAndReturn(target) {`,
@@ -1397,9 +1441,44 @@ describe("browser-server-exports-strip", () => {
         "self.Object",
         "frames.Object",
         'window["Object"]',
+        "(window as any).Object",
       ]
     ) {
       it(`does not treat an aliased ${globalObject} intrinsic as compiler metadata`, async () => {
+        const code = [
+          `function recordAndReturn(target) {`,
+          `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+          `  return target;`,
+          `}`,
+          `const intrinsic = ${globalObject};`,
+          `intrinsic.defineProperty = recordAndReturn;`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `const intrinsic = ${globalObject}`);
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    for (
+      const globalObject of [
+        "window.window.Object",
+        "window.self.Object",
+        "window.frames.Object",
+      ]
+    ) {
+      it(`does not treat nested alias ${globalObject} as compiler metadata`, async () => {
         const code = [
           `function recordAndReturn(target) {`,
           `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
@@ -1498,6 +1577,28 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
       assertStringIncludes(result, "typeof (window as unknown)");
       assertStringIncludes(result, "typeof self!");
+    });
+
+    it("preserves member-base context through TypeScript wrappers", async () => {
+      const code = [
+        `const hasDocument = (window as unknown as { document?: unknown }).document !== undefined;`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return hasDocument ? null : null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, ").document");
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
     });
 
     for (const globalObject of ["globalThis.Object", 'globalThis["Object"]']) {
