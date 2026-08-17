@@ -84,7 +84,10 @@ export interface NodeRedisClient {
   ): Promise<unknown>;
   close(): Promise<void>;
   destroy(): void;
-  on(event: "error", listener: (error: unknown) => void): unknown;
+  on: {
+    (event: "error", listener: (error: unknown) => void): unknown;
+    (event: "ready", listener: () => void): unknown;
+  };
 }
 
 /** Structural client surface used by core cache features. */
