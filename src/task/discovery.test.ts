@@ -292,6 +292,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       const originalGetPrototypeOf = Reflect.getPrototypeOf;
       const originalOwnKeys = Reflect.ownKeys;
       const originalDefineProperty = Object.defineProperty;
+      const originalIsArray = Array.isArray;
       const originalHasOwn = Object.hasOwn;
       const originalFreeze = Object.freeze;
       const originalValues = Object.values;
@@ -310,6 +311,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       let requirements: TaskDefinition["integrationRequirements"];
       const sourceInputSchema = {
         type: "object",
+        required: ["name"],
         properties: { name: { type: "string" } },
       };
 
@@ -319,6 +321,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         Reflect.getPrototypeOf = poison;
         Reflect.ownKeys = poison;
         Object.defineProperty = poison;
+        Array.isArray = poison as unknown as typeof Array.isArray;
         Object.hasOwn = poison;
         Object.freeze = freezePoison;
         Object.values = poison;
@@ -352,21 +355,25 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         Reflect.getPrototypeOf = originalGetPrototypeOf;
         Reflect.ownKeys = originalOwnKeys;
         Object.defineProperty = originalDefineProperty;
+        Array.isArray = originalIsArray;
         Object.hasOwn = originalHasOwn;
         Object.freeze = originalFreeze;
         Object.values = originalValues;
       }
 
       sourceInputSchema.properties.name.type = "number";
+      sourceInputSchema.required[0] = "mutated";
       assertEquals(output, "stable");
       assertEquals(poisonCalls, 0);
       assertEquals(freezePoisonCalls, 0);
       assertEquals(inputSchema, {
         type: "object",
+        required: ["name"],
         properties: { name: { type: "string" } },
       });
       assertEquals(inputSchema === sourceInputSchema, false);
       assertEquals(Object.isFrozen(inputSchema), true);
+      assertEquals(Object.isFrozen(inputSchema?.required), true);
       assertEquals(Object.isFrozen(inputSchema?.properties), true);
       assertEquals(Object.isFrozen(requirements), true);
       assertEquals(Object.isFrozen(requirements?.[0]), true);

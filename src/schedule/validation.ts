@@ -20,6 +20,7 @@ import type {
   ScheduleIntegrationResourceIdentity,
 } from "./types.ts";
 
+const arrayIsArray = Array.isArray;
 const ARRAY_PROTOTYPE = Array.prototype;
 const OBJECT_PROTOTYPE = Object.prototype;
 const objectCreate = Object.create;
@@ -101,7 +102,7 @@ function snapshotDataRecord(
   label: string,
   allowedKeys: readonly string[],
 ): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || arrayIsArray(value)) {
     invalid(`${label} must be an object.`);
   }
   if (isProxyWithoutHooks(value)) {
@@ -247,7 +248,7 @@ function snapshotDataArray(
   label: string,
   maxLength: number,
 ): unknown[] {
-  if (!Array.isArray(value)) invalid(`${label} must be an array.`);
+  if (!arrayIsArray(value)) invalid(`${label} must be an array.`);
   if (isProxyWithoutHooks(value)) invalid(`${label} must be a non-Proxy plain array.`);
   if (reflectGetPrototypeOf(value) !== ARRAY_PROTOTYPE) {
     invalid(`${label} must be a plain array.`);
@@ -386,7 +387,7 @@ function legacyScheduleConversation(
 ): { conversationMode: unknown; conversationId: unknown } {
   const legacyTarget = input?._schedule_target;
   if (
-    !legacyTarget || typeof legacyTarget !== "object" || Array.isArray(legacyTarget)
+    !legacyTarget || typeof legacyTarget !== "object" || arrayIsArray(legacyTarget)
   ) {
     return { conversationMode: undefined, conversationId: undefined };
   }
@@ -419,7 +420,7 @@ export function legacyScheduleTargetDiagnostic(
   if (legacyTarget === undefined) return null;
   if (
     legacyTarget === null || typeof legacyTarget !== "object" ||
-    Array.isArray(legacyTarget)
+    arrayIsArray(legacyTarget)
   ) {
     return `${label} must be an object.`;
   }
@@ -437,7 +438,7 @@ export function legacyScheduleTargetDiagnostic(
 
 function normalizeInput(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== "object" || arrayIsArray(value)) {
     invalid("Schedule input must be an object.");
   }
   try {
