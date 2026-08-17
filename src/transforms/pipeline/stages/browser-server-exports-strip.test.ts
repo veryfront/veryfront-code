@@ -1080,6 +1080,34 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
     });
 
+    it("removes a pre-strip inline map before an appended MDX export", async () => {
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SERVER_VALUE");`,
+        `const CLIENT_MARKER = "//# sourceMappingURL=data:text/plain;base64,AAAA";`,
+        `const MDXLayout = () => CLIENT_MARKER;`,
+        `export async function getServerData() { return { props: { key: KEY } }; }`,
+      ].join("\n");
+      const compiled = await compilePlugin.transform({
+        ...ctx(source, "browser"),
+        filePath: "pages/test.mdx",
+        dev: true,
+        jsxImportSource: "react",
+      });
+      assertStringIncludes(compiled, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(compiled, "export { MDXLayout };");
+
+      const result = await browserServerExportsStripPlugin.transform({
+        ...ctx(compiled, "browser"),
+        filePath: "pages/test.mdx",
+      });
+
+      assertNotIncludes(result, "SERVER_VALUE");
+      assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
+      assertStringIncludes(result, "export { MDXLayout };");
+    });
+
     it("removes an external source map reference after stripping", async () => {
       const code = [
         `export function getStaticData() { return readSecret(); }`,

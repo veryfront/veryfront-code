@@ -13,6 +13,14 @@ const ESBUILD_SOURCE_DIAGNOSTIC = Symbol.for(
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ReflectApply = Reflect.apply;
 const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const SOURCE_MAP_SUFFIX =
+  /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
+
+function appendBeforeSourceMap(code: string, addition: string): string {
+  const match = SOURCE_MAP_SUFFIX.exec(code);
+  if (match?.index === undefined) return code + addition;
+  return code.slice(0, match.index) + addition + match[0].slice((match[1] ?? "").length);
+}
 
 function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
   if (
@@ -90,7 +98,10 @@ export const compilePlugin: TransformPlugin = {
         /\bconst\s+MDXLayout\b/.test(code) &&
         !/export\s+\{[^}]*MDXLayout/.test(code)
       ) {
-        code += "\nexport { MDXLayout };\n";
+        // Keep esbuild's directive last. Browser server-hook stripping removes
+        // a stale compile map after rewriting, and a framework export appended
+        // after the directive would otherwise hide that suffix.
+        code = appendBeforeSourceMap(code, "\nexport { MDXLayout };\n");
       }
 
       return code;
