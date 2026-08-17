@@ -1482,8 +1482,6 @@ Deno.test({
 
 Deno.test({
   name: "createDistributedCacheAccessor isolates memoized backends by scope",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const { ApiCacheBackend, createDistributedCacheAccessor } = await importBackend();
     const first = new ApiCacheBackend({});
