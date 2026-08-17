@@ -1007,6 +1007,70 @@ describe("VeryfrontFSAdapter", () => {
       });
     });
 
+    it("discards initialization files when the request branch changes during cache write", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: true },
+        },
+      });
+      const internals = adapter as unknown as {
+        client: {
+          initialize: () => Promise<void>;
+          getProjectSlug: () => string;
+          getProjectId: () => string;
+          getCachedProject: () => { provider: string; layout: string };
+          getContext: () => { type: string; name?: string };
+          listAllFiles: () => Promise<Array<{ path: string; content: string }>>;
+        };
+        cache: {
+          setAsync: (key: string, value: unknown) => Promise<void>;
+        };
+        wsManager: { connect: (_projectId: string) => void };
+      };
+
+      internals.client.initialize = () => Promise.resolve();
+      internals.client.getProjectSlug = () => "test-project";
+      internals.client.getProjectId = () => "project-123";
+      internals.client.getCachedProject = () => ({ provider: "veryfront", layout: "default" });
+
+      let listAllFilesCalls = 0;
+      internals.client.listAllFiles = () => {
+        listAllFilesCalls++;
+        const branch = internals.client.getContext().name ?? "main";
+        return Promise.resolve([{
+          path: "pages/index.tsx",
+          content: branch,
+        }]);
+      };
+      internals.wsManager.connect = () => {};
+
+      const setStarted = Promise.withResolvers<void>();
+      const releaseSet = Promise.withResolvers<void>();
+      const setAsync = internals.cache.setAsync.bind(internals.cache);
+      let setCalls = 0;
+      internals.cache.setAsync = async (key, value) => {
+        setCalls++;
+        if (setCalls === 1) {
+          setStarted.resolve();
+          await releaseSet.promise;
+        }
+        await setAsync(key, value);
+      };
+
+      const initialization = adapter.initialize();
+      await setStarted.promise;
+      adapter.setRequestBranch("draft");
+      releaseSet.resolve();
+      await initialization;
+
+      assertEquals(await adapter.readTextFile("pages/index.tsx"), "draft");
+      assertEquals(listAllFilesCalls, 2);
+    });
+
     it("does not reuse a freshness lease after the request branch changes", async () => {
       const adapter = createAdapter({
         veryfront: {

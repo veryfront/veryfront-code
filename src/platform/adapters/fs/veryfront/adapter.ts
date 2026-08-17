@@ -549,30 +549,55 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     const cacheKey = buildFileListCacheKey(contentContext);
+    const initializationIdentity = this.getCurrentSourceSnapshotIdentity();
+    const initializationSnapshotVersion = this.sourceSnapshotVersion;
     logger.debug("Step 4: fetchFileList START", { projectSlug, cacheKey });
 
     try {
       const files = await fetchFileListForContext(this.client, contentContext);
       const fileSummary = summarizeFileList(files);
 
-      await this.cache.setAsync(cacheKey, files);
-      this.markSourceSnapshotChanged(files);
+      const initialSnapshotApplied = await this.runSourceSnapshotMutation(async () => {
+        const isSnapshotSuperseded = () =>
+          this.contentContext !== contentContext ||
+          this.getCurrentSourceSnapshotIdentity() !== initializationIdentity ||
+          this.sourceSnapshotVersion !== initializationSnapshotVersion;
+        if (isSnapshotSuperseded()) return false;
+
+        await this.cache.setAsync(cacheKey, files);
+        if (isSnapshotSuperseded()) {
+          await this.cache.deleteAsync(cacheKey);
+          return false;
+        }
+
+        this.markSourceSnapshotChanged(files, initializationIdentity);
+        return true;
+      });
 
       this.fileListReadyResolve?.();
       this.fileListReadyResolve = null;
 
-      logger.debug("Fetched files during initialization", {
-        cacheKey,
-        totalFiles: fileSummary.totalFiles,
-        filesWithContent: fileSummary.filesWithContent,
-        sourceFiles: fileSummary.sourceFiles,
-        sourceFilesWithContent: fileSummary.sourceFilesWithContent,
-      });
+      logger.debug(
+        initialSnapshotApplied
+          ? "Fetched files during initialization"
+          : "Discarded initialization files superseded by a newer source snapshot",
+        {
+          cacheKey,
+          totalFiles: fileSummary.totalFiles,
+          filesWithContent: fileSummary.filesWithContent,
+          sourceFiles: fileSummary.sourceFiles,
+          sourceFilesWithContent: fileSummary.sourceFilesWithContent,
+        },
+      );
 
       // Trigger CSS pre-generation after the initial file snapshot is ready for
       // published contexts. Branch previews should first try remote metadata
       // recovery on cold starts instead of repopulating the prepared cache here.
-      if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
+      if (
+        initialSnapshotApplied &&
+        fileSummary.sourceFilesWithContent > 0 &&
+        this.shouldBackgroundPregenerateStyles()
+      ) {
         this.triggerCSSPregeneration(files).catch(() => {
           // Error already logged in triggerCSSPregeneration
         });
@@ -582,15 +607,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       logger.debug("initialize COMPLETE", {
         projectSlug,
-        fileCount: files.length,
+        fileCount: initialSnapshotApplied ? files.length : 0,
         totalDuration: `${(performance.now() - initStartTime).toFixed(2)}ms`,
       });
 
-      if (contentContext.sourceType === "branch") {
+      const initializedContext = this.contentContext;
+      if (initializedContext?.sourceType === "branch") {
         logger.debug("Initialized (branch mode)", {
           projectId: this.client.getProjectId(),
-          files: files.length,
-          branch: contentContext.branch,
+          files: initialSnapshotApplied ? files.length : 0,
+          branch: initializedContext.branch,
           proxyMode: this.proxyMode,
         });
         this.wsManager.connect(projectId);
@@ -599,15 +625,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
       logger.debug("Initialized (published mode)", {
         projectId: this.client.getProjectId(),
-        files: files.length,
-        sourceType: contentContext.sourceType,
-        environmentName: contentContext.environmentName,
-        releaseId: contentContext.releaseId,
+        files: initialSnapshotApplied ? files.length : 0,
+        sourceType: initializedContext?.sourceType,
+        environmentName: initializedContext?.environmentName,
+        releaseId: initializedContext?.releaseId,
       });
 
       // Keep a WebSocket connection in environment mode to receive deployment pokes.
       // Release mode is immutable, so no need to keep a live connection.
-      if (contentContext.sourceType === "environment") {
+      if (initializedContext?.sourceType === "environment") {
         this.wsManager.connect(projectId);
       }
     } catch (error) {
