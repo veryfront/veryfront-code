@@ -13,6 +13,11 @@ const JSON_VALUE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
 const JSON_VALUE_MAX_STRING_BYTES = 1024 * 1024;
 const JSON_VALUE_MAX_KEY_BYTES = 16 * 1024;
 const JSON_UTF8_ENCODER = new TextEncoder();
+const OBJECT_PROTOTYPE = Object.prototype;
+const objectDefineProperty = Object.defineProperty;
+const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const reflectGetPrototypeOf = Reflect.getPrototypeOf;
+const reflectOwnKeys = Reflect.ownKeys;
 
 export type BoundedJsonValue =
   | string
@@ -220,8 +225,8 @@ function snapshotArray(
   addSerializedBytes: (amount: number) => boolean,
   assign: (frame: SnapshotVisitFrame, canonical: BoundedJsonValue) => void,
 ): InvalidSnapshotPath | null {
-  const ownKeys = Reflect.ownKeys(value);
-  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+  const ownKeys = reflectOwnKeys(value);
+  const lengthDescriptor = reflectGetOwnPropertyDescriptor(value, "length");
   const length = lengthDescriptor && "value" in lengthDescriptor
     ? lengthDescriptor.value
     : undefined;
@@ -240,7 +245,7 @@ function snapshotArray(
 
   const values: unknown[] = [];
   for (let index = 0; index < length; index++) {
-    const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+    const descriptor = reflectGetOwnPropertyDescriptor(value, String(index));
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       return invalidSnapshotPath(appendSnapshotPath(frame.path, index));
     }
@@ -272,12 +277,12 @@ function snapshotObject(
   addSerializedBytes: (amount: number) => boolean,
   assign: (frame: SnapshotVisitFrame, canonical: BoundedJsonValue) => void,
 ): InvalidSnapshotPath | null {
-  const prototype = Reflect.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
+  const prototype = reflectGetPrototypeOf(value);
+  if (prototype !== OBJECT_PROTOTYPE && prototype !== null) {
     return invalidSnapshotPath(frame.path);
   }
 
-  const ownKeys = Reflect.ownKeys(value);
+  const ownKeys = reflectOwnKeys(value);
   if (
     ownKeys.length > JSON_VALUE_MAX_NODES ||
     ownKeys.some((key) => typeof key === "symbol") ||
@@ -297,7 +302,7 @@ function snapshotObject(
       return invalidSnapshotPath(childPath);
     }
 
-    const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+    const descriptor = reflectGetOwnPropertyDescriptor(value, key);
     if (!descriptor || !("value" in descriptor) || descriptor.enumerable !== true) {
       return invalidSnapshotPath(childPath);
     }
@@ -326,7 +331,7 @@ function defineOwnDataProperty(
   key: string,
   value: BoundedJsonValue,
 ): void {
-  Object.defineProperty(target, key, {
+  objectDefineProperty(target, key, {
     value,
     enumerable: true,
     configurable: true,

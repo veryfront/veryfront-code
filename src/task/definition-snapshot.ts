@@ -20,6 +20,7 @@ const MAX_TASK_PROTOTYPE_DEPTH = 32;
 const OBJECT_PROTOTYPE = Object.prototype;
 const hasOwn = Object.hasOwn;
 const objectFreeze = Object.freeze;
+const objectValues = Object.values;
 const reflectApply = Reflect.apply;
 const reflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const reflectGetPrototypeOf = Reflect.getPrototypeOf;
@@ -120,7 +121,7 @@ function optionalRecord(
 
 function freezeJsonSnapshot(value: BoundedJsonValue): BoundedJsonValue {
   if (typeof value !== "object" || value === null) return value;
-  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+  for (const nested of Array.isArray(value) ? value : objectValues(value)) {
     freezeJsonSnapshot(nested);
   }
   objectFreeze(value);

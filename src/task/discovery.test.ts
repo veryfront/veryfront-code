@@ -290,8 +290,11 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
       const originalApply = Reflect.apply;
       const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
       const originalGetPrototypeOf = Reflect.getPrototypeOf;
+      const originalOwnKeys = Reflect.ownKeys;
+      const originalDefineProperty = Object.defineProperty;
       const originalHasOwn = Object.hasOwn;
       const originalFreeze = Object.freeze;
+      const originalValues = Object.values;
       let poisonCalls = 0;
       let freezePoisonCalls = 0;
       const poison = (): never => {
@@ -303,14 +306,22 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
         return value;
       }) as typeof Object.freeze;
       let output: unknown;
+      let inputSchema: TaskDefinition["inputSchema"];
       let requirements: TaskDefinition["integrationRequirements"];
+      const sourceInputSchema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+      };
 
       try {
         Reflect.apply = poison;
         Reflect.getOwnPropertyDescriptor = poison;
         Reflect.getPrototypeOf = poison;
+        Reflect.ownKeys = poison;
+        Object.defineProperty = poison;
         Object.hasOwn = poison;
         Object.freeze = freezePoison;
+        Object.values = poison;
 
         const registered = taskHandler.register(
           "stable",
@@ -318,6 +329,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
             run() {
               return "stable";
             },
+            inputSchema: sourceInputSchema,
             integrationRequirements: [{
               integration: "slack",
               requiredScopes: ["channels:read"],
@@ -332,18 +344,30 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
           "tasks",
         );
         output = registered.run({ env: {}, config: {} });
+        inputSchema = registered.inputSchema;
         requirements = registered.integrationRequirements;
       } finally {
         Reflect.apply = originalApply;
         Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
         Reflect.getPrototypeOf = originalGetPrototypeOf;
+        Reflect.ownKeys = originalOwnKeys;
+        Object.defineProperty = originalDefineProperty;
         Object.hasOwn = originalHasOwn;
         Object.freeze = originalFreeze;
+        Object.values = originalValues;
       }
 
+      sourceInputSchema.properties.name.type = "number";
       assertEquals(output, "stable");
       assertEquals(poisonCalls, 0);
       assertEquals(freezePoisonCalls, 0);
+      assertEquals(inputSchema, {
+        type: "object",
+        properties: { name: { type: "string" } },
+      });
+      assertEquals(inputSchema === sourceInputSchema, false);
+      assertEquals(Object.isFrozen(inputSchema), true);
+      assertEquals(Object.isFrozen(inputSchema?.properties), true);
       assertEquals(Object.isFrozen(requirements), true);
       assertEquals(Object.isFrozen(requirements?.[0]), true);
       assertEquals(Object.isFrozen(requirements?.[0]?.requiredScopes), true);
