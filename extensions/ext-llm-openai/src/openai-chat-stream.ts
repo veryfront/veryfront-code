@@ -300,14 +300,19 @@ export async function* streamOpenAICompatibleParts(
       delta = deltaRecord;
     }
 
+    // Optional delta fields are `null` rather than absent on many
+    // OpenAI-compatible gateways (Moonshot/Kimi sends `reasoning_content: null`
+    // on both the opening and the finish chunk). Treat `null` as "not present
+    // on this chunk", matching how `content`, `refusal`, `tool_calls`, and
+    // `finish_reason` are already handled below.
     if (
-      delta.role !== undefined &&
+      delta.role !== undefined && delta.role !== null &&
       delta.role !== "assistant"
     ) {
       throw invalidOpenAIStream(context, "choice delta role was not assistant");
     }
     if (
-      delta.reasoning_content !== undefined &&
+      delta.reasoning_content !== undefined && delta.reasoning_content !== null &&
       typeof delta.reasoning_content !== "string"
     ) {
       throw invalidOpenAIStream(context, "reasoning delta was malformed");

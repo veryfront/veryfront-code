@@ -431,6 +431,85 @@ describe("ext-llm-openai/openai-chat-stream", () => {
     }
   });
 
+  it("treats null reasoning, role, and refusal deltas as absent", async () => {
+    // Verbatim chunk shape from the Veryfront Cloud Moonshot gateway
+    // (`kimi-k2.6`): optional delta fields are encoded as `null` rather than
+    // being omitted, on both the opening chunk and the finish chunk.
+    assertEquals(
+      await collectParts(streamFromText([
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: null, role: "assistant", content: "" },
+            logprobs: null,
+            finish_reason: null,
+            matched_stop: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: "weighing it" },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { role: null, refusal: null, content: "hi there friend" },
+            finish_reason: null,
+          }],
+        }),
+        data({
+          choices: [{
+            index: 0,
+            delta: { reasoning_content: null },
+            logprobs: null,
+            finish_reason: "stop",
+            matched_stop: null,
+          }],
+        }),
+        "data: [DONE]\r\n\r\n",
+      ].join(""))),
+      [
+        { type: "reasoning-start", id: "reasoning-0" },
+        { type: "reasoning-delta", id: "reasoning-0", delta: "weighing it" },
+        { type: "reasoning-end", id: "reasoning-0" },
+        { type: "text-delta", delta: "hi there friend" },
+        { type: "finish", finishReason: "stop" },
+      ],
+    );
+  });
+
+  it("still rejects reasoning and role deltas of a genuinely wrong type", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { reasoning_content: 42 } }],
+        }))),
+      ProviderRequestError,
+      "reasoning delta was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { reasoning_content: { text: "think" } } }],
+        }))),
+      ProviderRequestError,
+      "reasoning delta was malformed",
+    );
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          choices: [{ delta: { role: "user", content: "hi" } }],
+        }))),
+      ProviderRequestError,
+      "choice delta role was not assistant",
+    );
+  });
+
   it("rejects structurally empty and unterminated successful streams", async () => {
     await assertRejects(
       () => collectParts(streamFromText(data({}))),
