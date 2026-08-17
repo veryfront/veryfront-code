@@ -33,6 +33,8 @@ import {
 import {
   attachDataResponseMetadata,
   getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+  wrapDataResponseMetadataError,
 } from "#veryfront/data/response-metadata.ts";
 import { redirect } from "#veryfront/data/helpers.ts";
 
@@ -551,6 +553,84 @@ describe("Renderer response metadata", () => {
       (followerControl as { cookies?: Array<{ value?: string }> }).cookies?.[0]?.value,
       "follower",
     );
+    assertEquals(renderCalls, 2);
+    assertEquals(store.data.size, 0);
+  });
+
+  it("rerenders singleflight followers when a metadata wrapper carries a cookie control", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    const firstStarted = Promise.withResolvers<void>();
+    const releaseFirst = Promise.withResolvers<void>();
+    let renderCalls = 0;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (_slug: string, options?: RenderOptions) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: async (_slug, options) => {
+          renderCalls++;
+          if (renderCalls === 1) {
+            firstStarted.resolve();
+            await releaseFirst.promise;
+          }
+          const user = options?.request?.headers.get("x-test-user") ?? "missing";
+          throw wrapDataResponseMetadataError(
+            redirect("/login", false, {
+              cookies: [{ name: "session", value: user, path: "/" }],
+            }),
+            { headers: { "x-loader": "ready" } },
+          );
+        },
+      },
+    });
+    const baseOptions = {
+      environment: "production" as const,
+      releaseId: "rel-1",
+      releaseAssetManifest: null,
+    };
+    const captureFailure = async (promise: Promise<RenderResult>): Promise<Error> => {
+      try {
+        await promise;
+      } catch (error) {
+        if (error instanceof Error) return error;
+      }
+      throw new Error("Expected render to fail");
+    };
+
+    const leader = captureFailure(
+      renderer.renderPage("/concurrent-wrapped-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-wrapped-control", {
+          headers: { "x-test-user": "leader" },
+        }),
+      }),
+    );
+    await firstStarted.promise;
+    const follower = captureFailure(
+      renderer.renderPage("/concurrent-wrapped-control", makeRenderContext(), {
+        ...baseOptions,
+        request: new Request("https://example.test/concurrent-wrapped-control", {
+          headers: { "x-test-user": "follower" },
+        }),
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirst.resolve();
+
+    const [leaderError, followerError] = await Promise.all([leader, follower]);
+    const leaderControl = unwrapDataResponseMetadataError(leaderError) as {
+      cookies?: Array<{ value?: string }>;
+    };
+    const followerControl = unwrapDataResponseMetadataError(followerError) as {
+      cookies?: Array<{ value?: string }>;
+    };
+    assertEquals(leaderControl.cookies?.[0]?.value, "leader");
+    assertEquals(followerControl.cookies?.[0]?.value, "follower");
     assertEquals(renderCalls, 2);
     assertEquals(store.data.size, 0);
   });

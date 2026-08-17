@@ -200,10 +200,12 @@ interface DataResult<T = any> {
 }
 ```
 
-The response metadata fields apply only to `getServerData`. `getStaticData`
-returns `StaticDataResult`, which excludes them so static caches cannot replay
-cookies. Framework-owned CORS, cache, content, redirect, security, transport,
-and `x-veryfront-*` headers cannot be set through `headers`.
+The response metadata fields apply only to `getServerData`. Veryfront validates
+the value from `getStaticData` as a `StaticDataResult`, which excludes response
+metadata so static caches cannot replay cookies. The public page type continues
+to accept legacy `DataResult` return annotations, but metadata returned at
+runtime is rejected. Framework-owned CORS, cache, content, redirect, security,
+transport, and `x-veryfront-*` headers cannot be set through `headers`.
 
 ### 3. Response Helpers
 

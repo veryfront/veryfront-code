@@ -16,12 +16,7 @@ export type {
 } from "./schemas/index.ts";
 
 // Import for use in interfaces
-import type {
-  DataContext,
-  DataResult,
-  StaticDataResult,
-  StaticPathsResult,
-} from "./schemas/index.ts";
+import type { DataContext, DataResult, StaticPathsResult } from "./schemas/index.ts";
 
 /**
  * Page with data fetching capabilities
@@ -31,7 +26,7 @@ export interface PageWithData<T = unknown> {
   getServerData?: (context: DataContext) => DataResult<T> | Promise<DataResult<T>>;
   getStaticData?: (
     context: Omit<DataContext, "request" | "query">,
-  ) => StaticDataResult<T> | Promise<StaticDataResult<T>>;
+  ) => DataResult<T> | Promise<DataResult<T>>;
   getStaticPaths?: () => StaticPathsResult | Promise<StaticPathsResult>;
 }
 

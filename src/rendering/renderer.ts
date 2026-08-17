@@ -97,7 +97,10 @@ import {
   resolveDependencyWritebackTarget,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { bindHtmlNonceFromCache, sealHtmlNonceForCache } from "#veryfront/html/nonce-injection.ts";
-import { getAttachedDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import {
+  getAttachedDataResponseMetadata,
+  unwrapDataResponseMetadataError,
+} from "#veryfront/data/response-metadata.ts";
 import { resolveSSRControlOutcome } from "./ssr-outcome.ts";
 
 const logger = rendererLogger.component("renderer");
@@ -830,7 +833,11 @@ export class Renderer {
       const attachedCookies = error instanceof Error
         ? getAttachedDataResponseMetadata(error).cookies
         : undefined;
-      const controlCookies = resolveSSRControlOutcome(error)?.cookies;
+      const unwrappedError = error instanceof Error
+        ? unwrapDataResponseMetadataError(error)
+        : error;
+      const controlCookies = resolveSSRControlOutcome(unwrappedError)?.cookies ??
+        resolveSSRControlOutcome(error)?.cookies;
       if (
         isFollower &&
         ((attachedCookies?.length ?? 0) > 0 || (controlCookies?.length ?? 0) > 0)
