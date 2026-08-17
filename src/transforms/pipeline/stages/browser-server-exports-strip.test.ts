@@ -2919,6 +2919,30 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "helper2"), 0);
       assertStringIncludes(result, "@/lib/helper");
     });
+
+    for (
+      const [method, args] of [
+        ["call", "null"],
+        ["apply", "null, []"],
+      ] as const
+    ) {
+      it(`keeps a module-evaluation read from a function-expression .${method} IIFE`, async () => {
+        const source = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SERVER_VALUE");`,
+          `const ran = (function () { globalThis.registered = KEY; return true; }).${method}(${args});`,
+          `export async function getServerData() { return { props: { k: KEY } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await compileThenStrip(source, "/project/app/page.tsx");
+
+        assertStringIncludes(result, `const KEY = getEnv("SERVER_VALUE")`);
+        assertStringIncludes(result, `.${method}(${args})`);
+        assertStringIncludes(result, `throw new Error("server-only")`);
+        assertNotIncludes(result, "props:");
+      });
+    }
   });
 
   describe("remediation advice", () => {
