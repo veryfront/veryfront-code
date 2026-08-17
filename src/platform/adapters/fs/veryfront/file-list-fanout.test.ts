@@ -366,4 +366,46 @@ describe("file list fan-out (issue inbox#32)", () => {
       "the obsolete warmup must not overwrite the newer snapshot in the cache",
     );
   });
+
+  it("discards a warmup that resolves after a poke clears memory caches", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default 'v1';" },
+    ];
+    const { adapter, counts } = createDraftAdapter(files);
+
+    let releaseFetch: (() => void) | undefined;
+    const fetchReleased = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const client = adapter.getClient() as unknown as {
+      listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+    };
+    const staleListing = files.map((file) => ({ ...file }));
+    client.listAllFiles = async () => {
+      counts.listAllFiles++;
+      await fetchReleased;
+      return staleListing;
+    };
+
+    const readPromise = adapter.readTextFile("pages/index.tsx");
+    await waitFor(() => Promise.resolve(counts.listAllFiles === 1));
+
+    files[0] = { path: "pages/index.tsx", content: "export default 'v2';" };
+    const internals = adapter as unknown as {
+      clearMemoryCaches: () => void;
+    };
+    internals.clearMemoryCaches();
+    releaseFetch?.();
+
+    assertEquals(
+      await readPromise,
+      "export default 'v2';",
+      "a pre-poke warmup must not answer after the poke invalidates memory caches",
+    );
+    assertEquals(
+      counts.getFileContent,
+      1,
+      "the invalidated warmup must fall back to a fresh exact-file read",
+    );
+  });
 });

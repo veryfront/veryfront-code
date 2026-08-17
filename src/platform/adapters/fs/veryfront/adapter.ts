@@ -865,6 +865,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
    */
   private clearMemoryCaches(): void {
     clearCachedReleaseAssetManifests();
+    // An accepted poke may clear memory before its debounced replacement
+    // listing arrives. Advance the generation immediately so an older warmup
+    // cannot repopulate the cache or answer a waiting read in that window.
+    this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
     this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
