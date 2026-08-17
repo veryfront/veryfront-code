@@ -1365,6 +1365,57 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("does not treat an aliased intrinsic as compiler metadata", async () => {
+      const code = [
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `const intrinsic = Object;`,
+        `intrinsic.defineProperty = recordAndReturn;`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "intrinsic.defineProperty = recordAndReturn");
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
+    it("does not treat a hoisted name helper redeclaration as compiler metadata", async () => {
+      const code = [
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `if (globalThis.patchNames) { var setName = recordAndReturn; }`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "setName = recordAndReturn");
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [

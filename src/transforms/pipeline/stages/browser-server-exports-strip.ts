@@ -1651,6 +1651,63 @@ function writesObjectDefineProperty(body: Node[]): boolean {
   return writes;
 }
 
+/** TypeScript nodes that still carry a runtime expression underneath. */
+const TS_EXPRESSION_TYPES = new Set([
+  "TSAsExpression",
+  "TSTypeAssertion",
+  "TSNonNullExpression",
+  "TSInstantiationExpression",
+  "TSSatisfiesExpression",
+]);
+
+/**
+ * Whether `key` holds a name rather than a read of the value behind it: the
+ * base of a member access (`Object.defineProperty`), a static member or object
+ * key, and every binding position.
+ */
+function isNamePosition(parent: Node, key: string): boolean {
+  if (key === "object") return true;
+  if (key === "property" || key === "key") return parent.computed !== true;
+  return key === "id" || key === "local" || key === "imported" || key === "exported" ||
+    key === "label" || key === "params";
+}
+
+/**
+ * Whether the module reads the `Object` intrinsic as a value instead of only
+ * reaching through it with a member access.
+ *
+ * `writesObjectDefineProperty` only sees assignment-shaped writes, so a module
+ * that hands the intrinsic to a callee replaces the helper's callee without
+ * ever naming `Object.defineProperty` as a target:
+ * `Object.defineProperty(Object, "defineProperty", { value: recordAndReturn })`
+ * redefines it through a call, and `const alias = Object; alias.defineProperty
+ * = recordAndReturn` redefines it through a second binding. Anything holding
+ * the intrinsic can rewrite `defineProperty` on it, so every value read fails
+ * closed and the module's apparent registrations stay ordinary user code.
+ */
+function readsObjectAsValue(body: Node[]): boolean {
+  const reads = (node: Node): boolean => {
+    if (node.type.startsWith("TS") && !TS_EXPRESSION_TYPES.has(node.type)) return false;
+
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "loc" || key === "leadingComments" || key === "trailingComments") continue;
+
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        if (!isNode(entry)) continue;
+        if (entry.type === "Identifier" && entry.name === "Object") {
+          if (!isNamePosition(node, key)) return true;
+          continue;
+        }
+        if (reads(entry)) return true;
+      }
+    }
+
+    return false;
+  };
+
+  return body.some((statement) => statement.type !== "ImportDeclaration" && reads(statement));
+}
+
 function returnedCall(node: Node): Node | null {
   const body = node.body;
   if (!isNode(body)) return null;
@@ -1722,36 +1779,43 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     )
   );
   const reassigned = assignedNames(body);
+  const hoisted = hoistedVarNames(body);
   const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
-    hoistedVarNames(body).has("Object") || importsRuntimeObject || reassigned.has("Object") ||
-    writesObjectDefineProperty(body);
+    hoisted.has("Object") || importsRuntimeObject || reassigned.has("Object") ||
+    writesObjectDefineProperty(body) || readsObjectAsValue(body);
   if (objectIsModuleLocal) return new Set<string>();
 
+  // A `var` may be declared more than once, and only the initialiser that ran
+  // last is visible here. Classifying a binding from it would apply that shape
+  // to calls made earlier, when a different function was live: in
+  // `var setName = recordAndReturn; setName(secret, "secret"); var setName =
+  // (target, value) => Object.defineProperty(…)` the observable first call
+  // would be deleted as metadata. A hoisted redeclaration below the top level
+  // rebinds the same way without appearing here at all, so both shapes are
+  // rejected and stay ordinary user code.
   const initializers = new Map<string, Node>();
-  const multiplyInitialized = new Set<string>();
+  const rebound = new Set<string>(hoisted);
   for (const statement of body) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const declarator of Array.isArray(statement.declarations) ? statement.declarations : []) {
       if (!isNode(declarator) || !isNode(declarator.init)) continue;
       const name = nodeName(declarator.id);
       if (!name) continue;
-      if (initializers.has(name)) multiplyInitialized.add(name);
+      if (initializers.has(name)) rebound.add(name);
       initializers.set(name, declarator.init);
     }
   }
 
   const definePropertyBindings = new Set<string>();
   for (const [name, init] of initializers) {
-    if (
-      !multiplyInitialized.has(name) && !reassigned.has(name) && isObjectDefineProperty(init)
-    ) {
+    if (!rebound.has(name) && !reassigned.has(name) && isObjectDefineProperty(init)) {
       definePropertyBindings.add(name);
     }
   }
 
   const helpers = new Set<string>();
   for (const [name, init] of initializers) {
-    if (multiplyInitialized.has(name) || reassigned.has(name)) continue;
+    if (rebound.has(name) || reassigned.has(name)) continue;
     if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
     const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
     if (params.length !== 2) continue;
