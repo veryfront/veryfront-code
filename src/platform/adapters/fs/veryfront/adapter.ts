@@ -37,6 +37,7 @@ import {
 import {
   buildFileCacheOptions,
   buildRetryConfig,
+  DEFAULT_CACHE_TTL_MS,
   shouldBackgroundPregenerateStyles,
 } from "./adapter-helpers.ts";
 import { isNotFoundLikeError } from "./read-operations-helpers.ts";
@@ -136,6 +137,25 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private fileListWarmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null =
     null;
   private fileListWarmupKey: string | null = null;
+  /**
+   * Last listing this adapter fetched or was poked with, kept in memory because
+   * a cache write is not guaranteed to retain it: writes are skipped entirely
+   * when caching is disabled, oversized listings are dropped by the memory
+   * cache, and backend writes can fail. Without this, every module lookup of a
+   * render would miss the cache and await its own full listing fetch -- more
+   * API traffic than the per-file probing this replaced. It expires with the
+   * same TTL as the cache entry it stands in for and is dropped by every
+   * invalidation, so it is never fresher or staler than a retained cache write.
+   */
+  private retainedFileList:
+    | {
+      cacheKey: string;
+      files: Array<{ path: string; content?: string }>;
+      snapshotVersion: number;
+      retainedAt: number;
+    }
+    | null = null;
+  private readonly fileListRetentionMs: number;
   /** Single-flight foreground refresh when a branch preview read misses a newly pushed file. */
   private branchMissRecoveryPromise: Promise<void> | null = null;
   private branchMissRecoveryGeneration = 0;
@@ -231,6 +251,10 @@ export class VeryfrontFSAdapter implements FSAdapter {
     });
 
     if (!files?.length) {
+      files = this.readRetainedFileList<T>(cacheKey);
+    }
+
+    if (!files?.length) {
       this.scheduleFileListWarmup(missReason, cacheKey);
       if (options.waitForWarmup) {
         files = await this.awaitFileListWarmup<T>(cacheKey) ?? files;
@@ -238,6 +262,52 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     return { cacheKey, files };
+  }
+
+  /** Keep `files` answerable from memory for as long as a cache write would. */
+  private retainFileList(
+    cacheKey: string,
+    files: Array<{ path: string; content?: string }>,
+  ): void {
+    this.retainedFileList = {
+      cacheKey,
+      files,
+      snapshotVersion: this.sourceSnapshotVersion,
+      retainedAt: Date.now(),
+    };
+  }
+
+  private clearRetainedFileList(): void {
+    this.retainedFileList = null;
+  }
+
+  /**
+   * The retained listing, if it still describes the snapshot the caller is
+   * reading. Anything that supersedes the snapshot -- a poke, a refresh, a
+   * branch or token change -- either drops it outright or moves the snapshot
+   * version past it, so a superseded listing can never answer a read.
+   */
+  private readRetainedFileList<T extends { path: string }>(
+    cacheKey: string,
+  ): T[] | undefined {
+    const retained = this.retainedFileList;
+    if (!retained) return undefined;
+
+    if (
+      retained.cacheKey !== cacheKey ||
+      retained.snapshotVersion !== this.sourceSnapshotVersion
+    ) {
+      this.clearRetainedFileList();
+      return undefined;
+    }
+
+    if (Date.now() - retained.retainedAt > this.fileListRetentionMs) {
+      logger.debug("Retained file list expired", { cacheKey });
+      this.clearRetainedFileList();
+      return undefined;
+    }
+
+    return retained.files.length ? (retained.files as T[]) : undefined;
   }
 
   /**
@@ -295,6 +365,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     const cacheConfig = buildFileCacheOptions(vf.cache);
 
     this.cache = new FileCache(cacheConfig);
+    this.fileListRetentionMs = cacheConfig.ttl ?? DEFAULT_CACHE_TTL_MS;
     this.normalizer = new PathNormalizer(config.projectDir);
     // Per-releaseId fetcher registration is done in setContentContext when a
     // release context is resolved, ensuring the correct project-scoped token.
@@ -377,12 +448,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       getContentContext: () => this.contentContext,
       getContentSource: () => this.contentSource,
       getProjectDir: () => this.normalizer.getProjectDir(),
-      clearMemoryCaches: () => {
-        clearCachedReleaseAssetManifests();
-        this.readOps.clearFileListIndex();
-        this.statOps.clearIndex();
-        this.dirOps.clearTree();
-      },
+      clearMemoryCaches: () => this.clearMemoryCaches(),
       replaceSourceSnapshot: (cacheKey, files) => this.replaceSourceSnapshot(cacheKey, files),
       pregenerateStyles: (files) => this.triggerCSSPregeneration(files),
     });
@@ -695,6 +761,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     }
 
     const warmupContext = this.contentContext;
+    const warmupSnapshotVersion = this.sourceSnapshotVersion;
     let warmupPromise: Promise<Array<{ path: string; content?: string }> | null> | null = null;
     warmupPromise = (async () => {
       try {
@@ -721,7 +788,38 @@ export class VeryfrontFSAdapter implements FSAdapter {
         });
 
         const files = await fetchFileListForContext(this.client, warmupContext);
-        await this.cache.setAsync(effectiveCacheKey, files);
+
+        // A WebSocket snapshot can land while this fetch is open. Publishing
+        // the pre-poke listing would roll both the cache and this caller's
+        // answer back to the older draft, so the write is serialized against
+        // snapshot mutations and stands down when one won the race.
+        const applied = await this.runSourceSnapshotMutation(async () => {
+          if (
+            this.contentContext !== warmupContext ||
+            this.sourceSnapshotVersion !== warmupSnapshotVersion
+          ) {
+            return false;
+          }
+
+          await this.cache.setAsync(effectiveCacheKey, files);
+          this.retainFileList(effectiveCacheKey, files);
+          return true;
+        });
+
+        if (!applied) {
+          logger.debug("Discarding file list warmup superseded by a newer source snapshot", {
+            reason,
+            cacheKey: effectiveCacheKey,
+          });
+
+          // Answer with the snapshot that superseded this fetch rather than
+          // the listing it carries, so the caller stays as fresh as the poke.
+          return await this.cache.getAsync<Array<{ path: string; content?: string }>>(
+            effectiveCacheKey,
+          ) ?? this.readRetainedFileList<{ path: string; content?: string }>(effectiveCacheKey) ??
+            null;
+        }
+
         const fileSummary = summarizeFileList(files);
 
         if (fileSummary.sourceFilesWithContent > 0 && this.shouldBackgroundPregenerateStyles()) {
@@ -758,6 +856,19 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.fileListWarmupKey = effectiveCacheKey;
     // That collaborator only needs completion, not the payload.
     this.readOps.setFileListReadyPromise(warmupPromise.then(() => {}));
+  }
+
+  /**
+   * Drop every in-memory view of the current source snapshot. Used by pokes
+   * that invalidate without carrying replacement files inline, so the next read
+   * re-derives everything from the API rather than from a superseded listing.
+   */
+  private clearMemoryCaches(): void {
+    clearCachedReleaseAssetManifests();
+    this.clearRetainedFileList();
+    this.readOps.clearFileListIndex();
+    this.statOps.clearIndex();
+    this.dirOps.clearTree();
   }
 
   private markSourceSnapshotChanged(
@@ -798,6 +909,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
       await this.cache.setAsync(cacheKey, files);
       this.readOps.clearFileListIndex();
       this.markSourceSnapshotChanged(files);
+      // Retain after the version bump so the poked listing -- not the one it
+      // replaced -- is what later reads see when the cache keeps nothing.
+      this.retainFileList(cacheKey, files);
     });
   }
 
@@ -862,6 +976,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       if (sourceChanged) {
         this.fileListWarmupPromise = null;
         this.fileListWarmupKey = null;
+        this.clearRetainedFileList();
         this.readOps.clearFileListIndex();
         this.statOps.clearIndex();
         this.dirOps.clearTree();
@@ -888,6 +1003,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.sourceSnapshotIdentity = refreshIdentity;
         this.sourceSnapshotCheckedAt = Date.now();
       }
+
+      this.retainFileList(cacheKey, files);
 
       return { applied: true, sourceChanged };
     });
@@ -1062,6 +1179,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.exactReadInitializationGeneration++;
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
+    this.clearRetainedFileList();
     this.branchMissRecoveryPromise = null;
     this.branchMissRecoveryGeneration++;
     this.branchMissRecoveryFailures.clear();
@@ -1202,6 +1320,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   private invalidateRequestAuthoritySnapshot(): void {
     this.cache.clear();
+    this.clearRetainedFileList();
     this.readOps.clearFileListIndex();
     this.statOps.clearIndex();
     this.dirOps.clearTree();
@@ -1277,6 +1396,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.dirOps.clearTree();
       this.fileListWarmupPromise = null;
       this.fileListWarmupKey = null;
+      this.clearRetainedFileList();
       this.branchMissRecoveryPromise = null;
       this.branchMissRecoveryGeneration++;
       this.branchMissRecoveryFailures.clear();

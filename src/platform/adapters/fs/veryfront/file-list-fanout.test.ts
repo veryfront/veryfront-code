@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontFSAdapter } from "./adapter.ts";
 import { buildFileListCacheKey } from "./cache-keys.ts";
-import { createAdapter } from "./adapter.test-helpers.ts";
+import { createAdapter, waitFor } from "./adapter.test-helpers.ts";
 
 interface StubFile {
   path: string;
@@ -61,7 +61,7 @@ function stubClient(
   return counts;
 }
 
-function createDraftAdapter(files: StubFile[]): {
+function createDraftAdapter(files: StubFile[], cacheEnabled = true): {
   adapter: VeryfrontFSAdapter;
   counts: ClientCallCounts;
 } {
@@ -70,7 +70,7 @@ function createDraftAdapter(files: StubFile[]): {
       apiBaseUrl: "https://api.example.com",
       apiToken: "test-token",
       projectSlug: "test-project",
-      cache: { enabled: true },
+      cache: { enabled: cacheEnabled },
     },
   });
   const counts = stubClient(adapter, files);
@@ -198,19 +198,17 @@ describe("file list fan-out (issue inbox#32)", () => {
     assertEquals(first, "export default 'v1';", "first read must see the initial draft");
     assertEquals(counts.listAllFiles, 1, "first read warms the listing once");
 
-    // Simulate the invalidation path that clears caches without replacing the
-    // snapshot (e.g. a poke that could not fetch files inline).
+    // Drive the real invalidation path that clears caches without replacing the
+    // snapshot (a poke that could not fetch files inline).
     files[0] = { path: "pages/index.tsx", content: "export default 'v2';" };
     const context = adapter.getContentContext();
     if (!context) throw new Error("content context required");
     const internals = adapter as unknown as {
       cache: { delete: (key: string) => void };
-      readOps: { clearFileListIndex: () => void };
-      statOps: { clearIndex: () => void };
+      clearMemoryCaches: () => void;
     };
     internals.cache.delete(buildFileListCacheKey(context));
-    internals.readOps.clearFileListIndex();
-    internals.statOps.clearIndex();
+    internals.clearMemoryCaches();
 
     const second = await adapter.readTextFile("pages/index.tsx");
     assertEquals(
@@ -222,6 +220,150 @@ describe("file list fan-out (issue inbox#32)", () => {
       counts.listAllFiles,
       2,
       "the invalidated listing must be refetched exactly once",
+    );
+  });
+
+  it("serves later module reads from the warmed listing when cache storage retains nothing", async () => {
+    // Caching disabled is the sharpest form of "the cache write did not
+    // retain": setAsync is a no-op, exactly like an oversized listing dropped
+    // by the memory cache or a failed backend write. Without in-adapter
+    // retention every module lookup would start and await its own full
+    // listing fetch -- more API traffic than the per-file probing this
+    // change replaced.
+    const files: StubFile[] = Array.from({ length: 8 }, (_, index) => ({
+      path: `components/mod${index}.tsx`,
+      content: `export const mod${index} = ${index};`,
+    }));
+    const { adapter, counts } = createDraftAdapter(files, false);
+
+    const contents: string[] = [];
+    for (const file of files) {
+      contents.push(await adapter.readTextFile(file.path));
+    }
+
+    assertEquals(
+      contents,
+      files.map((file) => file.content),
+      "every module must be served with its draft content",
+    );
+    assertEquals(
+      counts.listAllFiles,
+      1,
+      "a non-retaining cache must not turn each module lookup into its own listing fetch",
+    );
+    assertEquals(
+      counts.getFileContent,
+      0,
+      "module reads must come from the warmed listing, not per-file API probes",
+    );
+  });
+
+  it("drops the retained listing on a poke so a non-retaining cache never serves stale drafts", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default 'v1';" },
+    ];
+    const { adapter, counts } = createDraftAdapter(files, false);
+
+    assertEquals(
+      await adapter.readTextFile("pages/index.tsx"),
+      "export default 'v1';",
+      "first read must see the initial draft",
+    );
+
+    files[0] = { path: "pages/index.tsx", content: "export default 'v2';" };
+    const context = adapter.getContentContext();
+    if (!context) throw new Error("content context required");
+    const internals = adapter as unknown as {
+      replaceSourceSnapshot: (
+        cacheKey: string,
+        snapshotFiles: Array<{ path: string; content?: string }>,
+      ) => Promise<void>;
+      clearMemoryCaches: () => void;
+    };
+
+    await internals.replaceSourceSnapshot(
+      buildFileListCacheKey(context),
+      files.map((file) => ({ ...file })),
+    );
+
+    assertEquals(
+      await adapter.readTextFile("pages/index.tsx"),
+      "export default 'v2';",
+      "a poked snapshot must win over the retained listing",
+    );
+
+    // A poke that could not carry files inline only clears memory caches. The
+    // retained listing must go with them, or the next read serves the old draft.
+    files[0] = { path: "pages/index.tsx", content: "export default 'v3';" };
+    internals.clearMemoryCaches();
+
+    assertEquals(
+      await adapter.readTextFile("pages/index.tsx"),
+      "export default 'v3';",
+      "clearing memory caches must invalidate the retained listing",
+    );
+    assertEquals(
+      counts.listAllFiles,
+      2,
+      "only the memory-cache invalidation may cost a refetch; the poked snapshot must not",
+    );
+  });
+
+  it("discards a warmup that resolves after a newer snapshot replaced it", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default 'v1';" },
+    ];
+    const { adapter, counts } = createDraftAdapter(files);
+
+    // Hold the listing fetch open so a WebSocket snapshot can land while it is
+    // in flight. The fetch resolves with the listing as it was *before* the
+    // snapshot -- writing that through would roll the cache back to v1.
+    let releaseFetch: (() => void) | undefined;
+    const fetchReleased = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const client = adapter.getClient() as unknown as {
+      listAllFiles: () => Promise<Array<{ path: string; content?: string }>>;
+    };
+    const staleListing = files.map((file) => ({ ...file }));
+    client.listAllFiles = async () => {
+      counts.listAllFiles++;
+      await fetchReleased;
+      return staleListing;
+    };
+
+    const readPromise = adapter.readTextFile("pages/index.tsx");
+    await waitFor(() => Promise.resolve(counts.listAllFiles === 1));
+
+    const context = adapter.getContentContext();
+    if (!context) throw new Error("content context required");
+    const cacheKey = buildFileListCacheKey(context);
+    const internals = adapter as unknown as {
+      replaceSourceSnapshot: (
+        key: string,
+        snapshotFiles: Array<{ path: string; content?: string }>,
+      ) => Promise<void>;
+      cache: { getAsync: <T>(key: string) => Promise<T | undefined> };
+    };
+    await internals.replaceSourceSnapshot(cacheKey, [
+      { path: "pages/index.tsx", content: "export default 'v2';" },
+    ]);
+
+    releaseFetch?.();
+
+    assertEquals(
+      await readPromise,
+      "export default 'v2';",
+      "a warmup that started before the poke must not answer with its pre-poke listing",
+    );
+
+    const cached = await internals.cache.getAsync<Array<{ path: string; content?: string }>>(
+      cacheKey,
+    );
+    assertEquals(
+      cached?.[0]?.content,
+      "export default 'v2';",
+      "the obsolete warmup must not overwrite the newer snapshot in the cache",
     );
   });
 });
