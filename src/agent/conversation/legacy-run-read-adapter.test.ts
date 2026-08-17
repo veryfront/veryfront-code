@@ -90,6 +90,91 @@ describe("conversation run lifecycle read adapter", () => {
     );
   });
 
+  it("projects a legacy completed tool call without a result as an explicit error", () => {
+    const events = [
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: "legacy-fetch",
+        toolCallName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "TOOL_CALL_ARGS",
+        toolCallId: "legacy-fetch",
+        delta: '{"url":"https://docs.example/page"}',
+      },
+      {
+        type: "TOOL_CALL_END",
+        toolCallId: "legacy-fetch",
+      },
+    ];
+    const source = structuredClone(events);
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events,
+    });
+
+    assertEquals(events, source);
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(result.repairs, ["legacy_missing_tool_result"]);
+    const agui = createLifecycleAgUiBrowserAdapter({ messageId: "message-1" });
+    assertEquals(
+      result.frames.flatMap((frame) => agui.encode(frame)).filter((event) =>
+        event.event === "ToolCallResult"
+      ),
+      [{
+        event: "ToolCallResult",
+        payload: {
+          toolCallId: "legacy-fetch",
+          result: { error: "Stored tool call ended without a result" },
+          isError: true,
+        },
+      }],
+    );
+  });
+
+  it("leaves an unmarked legacy local tool handoff unresolved", () => {
+    const events = [
+      {
+        type: "TOOL_CALL_START",
+        toolCallId: "legacy-local",
+        toolCallName: "request_approval",
+      },
+      {
+        type: "TOOL_CALL_ARGS",
+        toolCallId: "legacy-local",
+        delta: '{"message":"Continue?"}',
+      },
+      {
+        type: "TOOL_CALL_END",
+        toolCallId: "legacy-local",
+      },
+    ];
+
+    const result = readConversationRunLifecycleFrames({
+      streamProtocolVersion: 1,
+      events,
+    });
+
+    assertEquals(result.status, "ok");
+    if (result.status !== "ok") return;
+    assertEquals(result.repairs, []);
+    assertEquals(
+      result.frames.some((frame) =>
+        frame.class === "semantic" && frame.event.type === "provider_tool_result"
+      ),
+      false,
+    );
+    assertEquals(
+      result.frames.some((frame) =>
+        frame.class === "semantic" && frame.event.type === "tool_input_ready"
+      ),
+      true,
+    );
+  });
+
   it("rejects the same malformed sequence for version 2", () => {
     const result = readConversationRunLifecycleFrames({
       streamProtocolVersion: 2,

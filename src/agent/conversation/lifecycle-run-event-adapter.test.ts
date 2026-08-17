@@ -266,6 +266,68 @@ describe("lifecycle run event adapter", () => {
     assertEquals(emitted[3]?.providerExecuted, true);
   });
 
+  it("persists only the final provider result after preliminary output", () => {
+    const { emitted, adapter } = createCollector();
+    for (
+      const frame of frames([
+        {
+          event: {
+            type: "tool_input_start",
+            toolCallId: "native-1",
+            toolName: "web_fetch",
+            providerExecuted: true,
+          },
+        },
+        {
+          event: {
+            type: "tool_input_ready",
+            toolCallId: "native-1",
+            toolName: "web_fetch",
+            input: { url: "https://docs.example/page" },
+            providerExecuted: true,
+          },
+        },
+        {
+          event: {
+            type: "provider_tool_start",
+            toolCallId: "native-1",
+            toolName: "web_fetch",
+            providerExecuted: true,
+          },
+        },
+        {
+          event: {
+            type: "provider_tool_result",
+            toolCallId: "native-1",
+            toolName: "web_fetch",
+            output: { partial: true },
+            isError: false,
+            providerExecuted: true,
+            preliminary: true,
+          },
+        },
+        {
+          event: {
+            type: "provider_tool_result",
+            toolCallId: "native-1",
+            toolName: "web_fetch",
+            output: { content: "final" },
+            isError: false,
+            providerExecuted: true,
+          },
+        },
+      ])
+    ) {
+      adapter.handleFrame(frame);
+    }
+    adapter.dispose();
+
+    const results = emitted.filter((event) => event.type === "TOOL_CALL_RESULT");
+    assertEquals(results.length, 1);
+    assertEquals(results[0]?.content, '{"content":"final"}');
+    assertEquals(results[0]?.input, { url: "https://docs.example/page" });
+  });
+
   it("marks denied and cancelled provider tool results as provider executed", () => {
     for (const terminal of ["provider_tool_denied", "provider_tool_cancelled"] as const) {
       const { emitted, adapter } = createCollector();

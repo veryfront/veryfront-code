@@ -470,6 +470,59 @@ describe("stream lifecycle reducer", () => {
     assertEquals(state.snapshot.tools[0]?.phase, "succeeded");
   });
 
+  it("keeps provider tools running across preliminary output", () => {
+    let state = reduceEvents([
+      {
+        type: "tool_input_start",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "tool_input_ready",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        input: { url: "https://docs.example/page" },
+        providerExecuted: true,
+      },
+      {
+        type: "provider_tool_start",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        providerExecuted: true,
+      },
+      {
+        type: "provider_tool_result",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        output: { partial: true },
+        isError: false,
+        providerExecuted: true,
+        preliminary: true,
+      },
+    ]);
+
+    assertEquals(state.snapshot.phase, "streaming");
+    assertEquals(state.snapshot.tools[0]?.phase, "running");
+
+    state = reduceStreamSignal(
+      state,
+      protocol({
+        type: "provider_tool_result",
+        toolCallId: "native-1",
+        toolName: "web_fetch",
+        output: { content: "final" },
+        isError: false,
+        providerExecuted: true,
+      }),
+      5,
+    ).state;
+
+    assertEquals(state.snapshot.phase, "streaming");
+    assertEquals(state.snapshot.tools[0]?.phase, "succeeded");
+    assertEquals(state.snapshot.tools[0]?.output, { content: "final" });
+  });
+
   it("uses running as the only entry to every provider tool terminal state", () => {
     const terminals = [
       {

@@ -308,6 +308,7 @@ export class ConversationRunEventEncoder {
       }
 
       case "tool-output-available": {
+        if (chunk.preliminary === true) return [];
         const events: ConversationRunEvent[] = [{
           type: conversationRunEventTypes.toolCallResult,
           messageId: this.getToolResultMessageId(chunk.toolCallId),

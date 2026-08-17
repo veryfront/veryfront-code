@@ -2086,6 +2086,12 @@ describe("processStream active mode", () => {
         toolName: "web_search",
         result: { answer: 42 },
       },
+      {
+        type: "tool-result",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        result: { answer: "duplicate" },
+      },
       { type: "text-delta", text: "done" },
       { type: "finish", finishReason: "stop", totalUsage: null },
     ]);
@@ -2491,6 +2497,13 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
         result: { type: "web_fetch_result", url: "https://a.test" },
         providerExecuted: true,
       },
+      {
+        type: "tool-result",
+        toolCallId: "srvtoolu_01",
+        toolName: "web_fetch",
+        result: { type: "web_fetch_result", url: "https://duplicate.test" },
+        providerExecuted: true,
+      },
       { type: "finish", finishReason: "stop", totalUsage: null },
     ]);
 
@@ -2508,6 +2521,64 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       providerExecuted: true,
     }]);
     assertEquals(state.toolResults.length, 1);
+  });
+
+  it("associates one terminal result with each parallel provider fetch", async () => {
+    const { events, controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    const calls = [
+      ["fetch-skill", "https://docs.example/create-skill.md"],
+      ["fetch-agent", "https://docs.example/create-agent.md"],
+      ["fetch-schedule", "https://docs.example/schedule-agent.md"],
+    ] as const;
+    const chunks: Array<Record<string, unknown>> = [];
+
+    for (const [toolCallId, url] of calls) {
+      chunks.push(
+        {
+          type: "tool-input-start",
+          id: toolCallId,
+          toolName: "web_fetch",
+          providerExecuted: true,
+        },
+        { type: "tool-input-delta", id: toolCallId, delta: JSON.stringify({ url }) },
+        { type: "tool-input-end", id: toolCallId },
+      );
+    }
+    for (const [toolCallId, url] of [...calls].reverse()) {
+      chunks.push({
+        type: "tool-result",
+        toolCallId,
+        toolName: "web_fetch",
+        result: { type: "web_fetch_result", url, content: `content:${toolCallId}` },
+        providerExecuted: true,
+      });
+    }
+    chunks.push({ type: "finish", finishReason: "stop", totalUsage: null });
+
+    await processStream(createMockResult(chunks as never), state, controller, encoder, "t", {
+      providerExecutedToolNames: ["web_fetch"],
+    });
+
+    const terminalEvents = events.filter((event) =>
+      event.type === "tool-output-available" || event.type === "tool-output-error"
+    );
+    assertEquals(terminalEvents.length, calls.length);
+    assertEquals(state.toolResults.length, calls.length);
+    for (const [toolCallId, url] of calls) {
+      const matchingEvents = terminalEvents.filter((event) => event.toolCallId === toolCallId);
+      const matchingResults = state.toolResults.filter((result) =>
+        result.toolCallId === toolCallId
+      );
+      assertEquals(matchingEvents.length, 1);
+      assertEquals(matchingResults.length, 1);
+      assertEquals(matchingResults[0]?.output, {
+        type: "web_fetch_result",
+        url,
+        content: `content:${toolCallId}`,
+      });
+    }
+    assertEquals(shouldContinueAfterStreamStep(state), true);
   });
 
   it("finalizes a provider tool call that never produced a result", async () => {
@@ -2543,10 +2614,9 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     const { events, controller, encoder } = createSSECollector();
     const state = createStreamState();
 
-    // A preliminary result lands in `state.toolResults` like any other, so the
-    // finalizer must not read it as proof the provider answered. Otherwise a
-    // stream that ends after only a preliminary result emits no terminal part
-    // and the card is stranded exactly as it was before this fix.
+    // Preliminary output is progress, not proof the provider answered. A
+    // stream that ends after only preliminary output still needs an explicit
+    // terminal error so the card cannot remain stranded.
     const result = createMockResult([
       {
         type: "tool-input-start",
@@ -2765,8 +2835,18 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     result.cleanup();
 
     const outputs = events.filter((event) => event.type === "tool-output-available");
-    assertEquals(outputs.length, 2);
-    assertEquals(outputs[1]?.output, { type: "web_fetch_result", url: "https://a.test" });
+    assertEquals(outputs, [{
+      type: "tool-output-available",
+      toolCallId: "srvtoolu_prelim",
+      output: { type: "web_fetch_result", url: "https://a.test" },
+      providerExecuted: true,
+    }]);
+    assertEquals(state.toolResults, [{
+      toolCallId: "srvtoolu_prelim",
+      toolName: "web_fetch",
+      output: { type: "web_fetch_result", url: "https://a.test" },
+      providerExecuted: true,
+    }]);
   });
 
   it("still truncates after a committed local tool call when no provider call is pending", async () => {
@@ -2996,15 +3076,10 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
     );
   });
 
-  it("documents that active mode does not yet finalize unresolved provider calls", async () => {
+  it("finalizes unresolved provider calls in active lifecycle mode", async () => {
     const { events, controller, encoder } = createSSECollector();
     const state = createStreamState();
 
-    // Tripwire, not an endorsement. Both strands live below the
-    // `processActiveStream()` early return, so `active` still reproduces the
-    // reported incident. See the "Provider-executed tool finalization" row in
-    // docs/internal/stream-lifecycle-rollout.md. It blocks advancing past
-    // `shadow`. When the reducer port lands, this expectation flips.
     const parts = [
       {
         type: "tool-input-start",
@@ -3014,6 +3089,14 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       },
       { type: "tool-input-delta", id: "srvtoolu_active", delta: '{"url":"https://a.test"}' },
       { type: "tool-input-end", id: "srvtoolu_active" },
+      {
+        type: "tool-result",
+        toolCallId: "srvtoolu_active",
+        toolName: "web_fetch",
+        result: { type: "web_fetch_result", url: "https://a.test", partial: true },
+        providerExecuted: true,
+        preliminary: true,
+      },
       { type: "finish", finishReason: "stop", totalUsage: null },
     ];
 
@@ -3030,7 +3113,13 @@ describe("chat-stream-handler provider-executed tool finalization", () => {
       undefined,
     );
 
-    assertEquals(events.filter((event) => event.type === "tool-output-error"), []);
+    assertEquals(events.filter((event) => event.type === "tool-output-error"), [{
+      type: "tool-output-error",
+      toolCallId: "srvtoolu_active",
+      errorText:
+        'Provider-executed tool "web_fetch" returned no result before the model turn ended.',
+      providerExecuted: true,
+    }]);
     assertEquals(state.toolCalls.get("srvtoolu_active")?.inputAvailable, true);
     assertEquals(state.toolResults, []);
   });

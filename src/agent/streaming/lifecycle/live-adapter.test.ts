@@ -115,6 +115,18 @@ describe("stream lifecycle live adapter", () => {
     assertEquals(
       frames([{
         type: "provider_tool_result",
+        toolCallId: "native-preliminary",
+        toolName: "web_fetch",
+        output: { partial: true },
+        isError: false,
+        providerExecuted: true,
+        preliminary: true,
+      }]).flatMap((frame) => adapter.encode(frame)),
+      [],
+    );
+    assertEquals(
+      frames([{
+        type: "provider_tool_result",
         toolCallId: "native-data",
         toolName: "web_search",
         output: { error: "result metadata", answer: 42 },

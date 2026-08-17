@@ -9,12 +9,17 @@ import {
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
 import type { StreamProtocolVersion } from "./durable-contracts.ts";
 
+/** Projection-only repairs applied while reading historical run events. */
+export type ConversationRunLifecycleRepair =
+  | "legacy_text_content_after_end"
+  | "legacy_missing_tool_result";
+
 /** Result of projecting stored conversation run events into lifecycle frames. */
 export type ConversationRunLifecycleReadResult =
   | {
     status: "ok";
     frames: readonly StreamLifecycleFrame[];
-    repairs: readonly "legacy_text_content_after_end"[];
+    repairs: readonly ConversationRunLifecycleRepair[];
   }
   | {
     status: "invalid";
@@ -45,8 +50,9 @@ function readVersion1(
 ): ConversationRunLifecycleReadResult {
   let reducer = createInitialReducerState();
   const frames: StreamLifecycleFrame[] = [];
-  const repairs = new Set<"legacy_text_content_after_end">();
+  const repairs = new Set<ConversationRunLifecycleRepair>();
   const closedTextIds = new Set<string>();
+  const resultToolCallIds = new Set<string>();
 
   const reduce = (event: StreamProtocolEvent): void => {
     const reduced = reduceStreamSignal(
@@ -72,7 +78,11 @@ function readVersion1(
     const type = typeof event.type === "string" ? event.type : null;
     const contentId = typeof event.contentId === "string" ? event.contentId : undefined;
     const toolCallId = typeof event.toolCallId === "string" ? event.toolCallId : "";
-    const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+    const toolName = typeof event.toolName === "string"
+      ? event.toolName
+      : typeof event.toolCallName === "string"
+      ? event.toolCallName
+      : "tool";
     switch (type) {
       case "TEXT_MESSAGE_START":
         reduce({ type: "text_start", ...(contentId ? { id: contentId } : {}) });
@@ -113,7 +123,12 @@ function readVersion1(
         reduce({ type: "reasoning_end", id: contentId ?? "reasoning" });
         break;
       case "TOOL_CALL_START":
-        reduce({ type: "tool_input_start", toolCallId, toolName });
+        reduce({
+          type: "tool_input_start",
+          toolCallId,
+          toolName,
+          ...(event.providerExecuted === true ? { providerExecuted: true } : {}),
+        });
         break;
       case "TOOL_CALL_ARGS":
         reduce({
@@ -125,12 +140,15 @@ function readVersion1(
       case "TOOL_CALL_END": {
         const stored = toolInputTextFor(reducer, toolCallId);
         const parsed = parseCanonicalToolInput(stored);
+        const providerExecuted = event.providerExecuted === true ||
+          reducer.tools.get(toolCallId)?.providerExecuted === true;
         if (parsed.ok) {
           reduce({
             type: "tool_input_ready",
             toolCallId,
             toolName: toolNameFor(reducer, toolCallId) ?? toolName,
             input: parsed.value,
+            ...(providerExecuted ? { providerExecuted: true } : {}),
           });
         } else {
           reduce({
@@ -143,6 +161,7 @@ function readVersion1(
         break;
       }
       case "TOOL_CALL_RESULT": {
+        resultToolCallIds.add(toolCallId);
         const tool = reducer.tools.get(toolCallId);
         if (tool?.providerExecuted === true) {
           reduce({
@@ -180,6 +199,32 @@ function readVersion1(
         rejectUnknown();
         break;
     }
+  }
+
+  // Version 1 did not require a provider-execution marker. Only repair calls
+  // that stored one explicitly, because an unmarked call may be a legitimate
+  // local handoff waiting for a client or later continuation.
+  for (const [toolCallId, tool] of reducer.tools) {
+    if (
+      tool.phase !== "input_ready" || tool.providerExecuted !== true ||
+      resultToolCallIds.has(toolCallId)
+    ) continue;
+
+    repairs.add("legacy_missing_tool_result");
+    reduce({
+      type: "provider_tool_start",
+      toolCallId,
+      toolName: tool.name,
+      providerExecuted: true,
+    });
+    reduce({
+      type: "provider_tool_result",
+      toolCallId,
+      toolName: tool.name,
+      output: { error: "Stored tool call ended without a result" },
+      isError: true,
+      providerExecuted: true,
+    });
   }
 
   const finalized = finalizeStreamProjection(reducer, 0);

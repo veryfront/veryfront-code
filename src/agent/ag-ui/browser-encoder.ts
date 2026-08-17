@@ -916,15 +916,11 @@ function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
 
     case "tool-input-available": {
       state.sawVisibleOutput = true;
-      const events = [
+      return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
         ...completeToolInput(state, event),
       ];
-      if (event.providerExecuted === true) {
-        events.push(createToolResultEvent(event.toolCallId, null));
-      }
-      return events;
     }
 
     case "tool-input-error": {
@@ -948,6 +944,7 @@ function mapRuntimeStreamEventToAgUiBrowserEventsUnstamped(
     }
 
     case "tool-output-available":
+      if (event.preliminary === true) return [];
       state.sawVisibleOutput = true;
       return [
         ...closeOpenTextEvent(state),
