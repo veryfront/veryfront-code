@@ -10,17 +10,21 @@ describe("BabelParseOnlyParser", () => {
       code: "export const view: JSX.Element = <main />;",
       filePath: "view.tsx",
     });
-    const commonJs = await parser.parse({
-      code: "if (module.parent) return; module.exports = true;",
-      filePath: "entry.cjs",
-    });
+    const commonJs = await Promise.all(
+      ["entry.cjs", "entry.js"].map((filePath) =>
+        parser.parse({
+          code: "if (module.parent) return; module.exports = true;",
+          filePath,
+        })
+      ),
+    );
     const decorated = await parser.parse({
       code: "class Store { @logged accessor value = 1; }",
       filePath: "store.ts",
     });
 
     assertEquals(typedJsx.type, "File");
-    assertEquals(commonJs.type, "File");
+    assertEquals(commonJs.map((ast) => ast.type), ["File", "File"]);
     assertEquals(decorated.type, "File");
   });
 

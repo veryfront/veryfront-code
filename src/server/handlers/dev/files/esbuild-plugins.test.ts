@@ -90,10 +90,13 @@ async function resolveWithBareExternalPlugin(
 
 async function resolveWithHttpExternalPlugin(
   path: string,
+  importer: string,
+  projectDir: string,
+  serverExternalPackages: readonly string[],
   kind: OnResolveArgs["kind"],
 ): Promise<string> {
   let resolveHandler: ((args: OnResolveArgs) => unknown) | undefined;
-  const plugin = createHttpExternalPlugin({ serverExternalPackages: ["knex"] });
+  const plugin = createHttpExternalPlugin({ projectDir, serverExternalPackages });
   const build = createMockBuild(() => {});
   build.onResolve = (_options, handler) => {
     resolveHandler = handler;
@@ -103,14 +106,14 @@ async function resolveWithHttpExternalPlugin(
 
   const result = await resolveHandler({
     path,
-    importer: "/project/app/page.js",
+    importer,
     namespace: "file",
-    resolveDir: "/project/app",
+    resolveDir: projectDir,
     kind,
     pluginData: undefined,
-  }) as { errors?: Array<{ text: string }> };
+  }) as { errors?: Array<{ text: string }> } | undefined;
 
-  assertExists(result.errors?.[0]);
+  assertExists(result?.errors?.[0]);
   return result.errors[0].text;
 }
 
@@ -344,6 +347,9 @@ describe(
       for (const kind of ["require-call", "require-resolve"] as const) {
         const message = await resolveWithHttpExternalPlugin(
           "https://esm.sh/knex@3.1.0",
+          "/redacted-project-root/app/page.js",
+          "/redacted-project-root",
+          ["knex"],
           kind,
         );
         assertEquals(message.includes("server-only-in-client"), true);

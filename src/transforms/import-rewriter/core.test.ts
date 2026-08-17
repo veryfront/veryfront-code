@@ -363,7 +363,7 @@ describe("import rewrite core runner", () => {
     );
   });
 
-  it("falls back when the active parser only provides the base contract", async () => {
+  it("preserves local require calls when the active parser lacks CommonJS analysis", async () => {
     await ensureDefaultParserContracts();
     const parser = tryResolve<CodeParser>("CodeParser");
     if (!parser) throw new Error("CodeParser test setup failed");

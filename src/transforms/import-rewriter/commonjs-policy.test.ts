@@ -26,6 +26,17 @@ describe("CommonJS browser policy", () => {
     });
   });
 
+  it("accepts a CommonJS top-level return in a .js browser module", async () => {
+    await assertNoConfiguredCommonJsBrowserImports(
+      "if (module.parent) return; module.exports = true;",
+      {
+        filePath: "/project/entry.js",
+        projectDir: "/project",
+        serverExternalPackages: ["knex"],
+      },
+    );
+  });
+
   it("fails closed when the parser's array iterator has changed", async () => {
     await assertNoConfiguredCommonJsBrowserImports("export default 1", {
       filePath: "/project/warm.ts",

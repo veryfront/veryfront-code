@@ -65,11 +65,13 @@ describe("ext-parser-babel", () => {
     });
 
     it("parses CommonJS top-level return accepted by the bundler", async () => {
-      const ast = await parser.parse({
-        code: "if (module.parent) return; module.exports = true;",
-        filePath: "file.cjs",
-      });
-      assert(ast);
+      for (const filePath of ["file.cjs", "file.js"]) {
+        const ast = await parser.parse({
+          code: "if (module.parent) return; module.exports = true;",
+          filePath,
+        });
+        assert(ast);
+      }
     });
 
     it("parses legacy import assertions accepted by the bundler", async () => {
