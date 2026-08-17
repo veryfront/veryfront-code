@@ -6,7 +6,7 @@ import fixture from "../conversation/fixtures/legacy-content-after-end.json" wit
   type: "json",
 };
 import { readConversationRunLifecycleFrames } from "../conversation/legacy-run-read-adapter.ts";
-import { createLifecycleAgUiAdapter } from "./lifecycle-adapter.ts";
+import { createLifecycleAgUiAdapter } from "#veryfront/agent/ag-ui/lifecycle-adapter.ts";
 
 function frames(
   entries: readonly {

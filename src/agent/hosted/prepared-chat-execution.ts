@@ -1,5 +1,5 @@
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
-import { createAgUiChatUiTrackedResponse } from "../ag-ui/chat-ui-chunk-encoder.ts";
+import { createAgUiChatUiTrackedResponse } from "#veryfront/agent/ag-ui/chat-ui-chunk-encoder.ts";
 import {
   type BootstrappedHostedChatExecutionRuntime,
   createBootstrappedHostedChatExecutionRuntime,

@@ -1,6 +1,6 @@
 import { assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import * as agent from "../index.ts";
+import * as agent from "veryfront/agent";
 
 describe("AG-UI encoder public names", () => {
   it("keeps browser-prefixed functions as compatibility aliases", () => {

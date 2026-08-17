@@ -3,14 +3,14 @@ import type {
   AgUiEncoderState,
   AgUiRunFinishedMetadata,
   AgUiRuntimeStreamEvent,
-} from "../agent/ag-ui/encoder.ts";
+} from "#veryfront/agent/ag-ui/encoder.ts";
 import { parseDataStreamSseEvents } from "#veryfront/agent/streaming/data-stream.ts";
 import {
   type AgUiEncoderStateOptions,
   createAgUiEncoderState,
   finalizeAgUiEvents,
   mapRuntimeStreamEventToAgUiEvents,
-} from "../agent/ag-ui/encoder.ts";
+} from "#veryfront/agent/ag-ui/encoder.ts";
 import { resolveSchemaValidator } from "#veryfront/schemas/define.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 

@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiFinalizeTracker } from "./finalize-tracker.ts";
-import { createAgUiChunkEncoderBridge } from "./chunk-encoder-bridge.ts";
-import { createAgUiTrackedResponse } from "./tracked-response.ts";
+import { createAgUiFinalizeTracker } from "#veryfront/agent/ag-ui/finalize-tracker.ts";
+import { createAgUiChunkEncoderBridge } from "#veryfront/agent/ag-ui/chunk-encoder-bridge.ts";
+import { createAgUiTrackedResponse } from "#veryfront/agent/ag-ui/tracked-response.ts";
 
 function parseSseFrames(body: string): Array<{ event: string; data: Record<string, unknown> }> {
   return body.split("\n\n").flatMap((frame) => {

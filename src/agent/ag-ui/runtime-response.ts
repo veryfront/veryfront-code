@@ -4,8 +4,11 @@ import {
   createAgUiResponseStream,
 } from "./response-stream.ts";
 import { createAgUiSseResponse } from "./host-support.ts";
-import { type AgUiRuntimeRequest, normalizeAgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
-import type { AgentResponse } from "../types.ts";
+import {
+  type AgUiRuntimeRequest,
+  normalizeAgUiRuntimeRequest,
+} from "#veryfront/agent/runtime/ag-ui-contract.ts";
+import type { AgentResponse } from "#veryfront/agent/types.ts";
 
 /** Input payload for create AG-UI runtime response. */
 export interface CreateAgUiRuntimeResponseInput<TChunk, TState> {

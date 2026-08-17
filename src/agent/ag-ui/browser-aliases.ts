@@ -39,7 +39,7 @@ import {
   createAgUiTrackedResponse,
   type CreateAgUiTrackedResponseInput,
 } from "./tracked-response.ts";
-import { normalizeAgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
+import { normalizeAgUiRuntimeRequest } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 
 /**
  * Deprecated compatibility alias for {@link AgUiRunFinishedMetadata}.

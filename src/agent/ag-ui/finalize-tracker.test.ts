@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiFinalizeTracker } from "./finalize-tracker.ts";
+import { createAgUiFinalizeTracker } from "#veryfront/agent/ag-ui/finalize-tracker.ts";
 
 describe("agent/ag-ui-finalize-tracker", () => {
   it("builds a final response from observed chunk metadata", () => {

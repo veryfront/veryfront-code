@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createAgUiChunkEncoder } from "./chunk-encoder.ts";
+import { createAgUiChunkEncoder } from "#veryfront/agent/ag-ui/chunk-encoder.ts";
 
 describe("agent/ag-ui-chunk-encoder", () => {
   it("exposes its state as the response timing anchor", () => {

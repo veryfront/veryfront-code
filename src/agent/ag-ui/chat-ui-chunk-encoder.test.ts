@@ -8,7 +8,7 @@ import {
   getAgUiChatUiMessageChunkMetadata,
   getAgUiChatUiMessageUsageMetadata,
   normalizeChatUiMessageChunkToAgUiRuntimeEvent,
-} from "./chat-ui-chunk-encoder.ts";
+} from "#veryfront/agent/ag-ui/chat-ui-chunk-encoder.ts";
 
 describe("agent/ag-ui-chat-ui-chunk-encoder", () => {
   it("extracts usage and total token metadata", () => {
