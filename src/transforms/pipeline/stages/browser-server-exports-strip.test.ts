@@ -2804,4 +2804,153 @@ describe("browser-server-exports-strip", () => {
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "browser")), true);
     });
   });
+
+  // Everything above hands this stage source as the author wrote it. In the real
+  // browser pipeline esbuild runs first, and it rewrites the module's export
+  // shape: every named export is hoisted into one trailing `export { … }` clause
+  // and the declarations are left bare. That difference is not cosmetic — it is
+  // the only form in which the export contract reaches this stage, and a rule
+  // keyed on `export`-wrapped declarations silently does nothing here. These
+  // cases compile first, so a regression that only shows up after esbuild
+  // cannot pass unnoticed.
+  describe("compiled input", () => {
+    afterAll(async () => {
+      await stopEsbuild();
+    });
+
+    function ctx(code: string, filePath: string): TransformContext {
+      return {
+        code,
+        originalSource: code,
+        filePath,
+        projectDir: "/project",
+        projectId: "project",
+        target: "browser",
+        dev: true,
+        contentHash: "hash",
+        jsxImportSource: "react",
+        timing: new Map(),
+        debug: false,
+        metadata: new Map(),
+        reactVersion: "19.1.1",
+      } as TransformContext;
+    }
+
+    /** The real browser pipeline: esbuild, then this stage. */
+    async function compileThenStrip(source: string, filePath: string): Promise<string> {
+      const compiled = await compilePlugin.transform!(ctx(source, filePath));
+      return await stripServerOnlyExports(compiled, filePath);
+    }
+
+    it("keeps an exported client value that shares a binding with the hook", async () => {
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `import { makeClient } from "@/lib/client";`,
+        `const API_KEY = getEnv("API_KEY");`,
+        `export const client = makeClient({ get: () => API_KEY });`,
+        `export async function getServerData() { return { props: { k: API_KEY } }; }`,
+      ].join("\n");
+
+      const result = await compileThenStrip(source, "/project/app/page.tsx");
+
+      // `client` is exported, so the browser reaches `API_KEY` through it. The
+      // honest outcome is to keep both, not to fail the build over a value the
+      // module deliberately publishes.
+      assertStringIncludes(result, "const client = makeClient");
+      assertStringIncludes(result, `const API_KEY = getEnv("API_KEY")`);
+      assertStringIncludes(result, `throw new Error("server-only")`);
+      assertNotIncludes(result, "props:");
+    });
+
+    it("keeps a forwardRef component that defers a read of the hook's binding", async () => {
+      const source = [
+        `import { forwardRef } from "react";`,
+        `import { getEnv } from "veryfront";`,
+        `const TOKEN = getEnv("INPUT_BOX_TOKEN");`,
+        `export const InputBox = forwardRef(function InputBox(props, ref) {`,
+        `  return <input ref={ref} data-token={TOKEN} {...props} />;`,
+        `});`,
+        `export async function getServerData() { return { props: { t: TOKEN } }; }`,
+      ].join("\n");
+
+      const result = await compileThenStrip(source, "/project/react/primitives/input-box.tsx");
+
+      // Nothing in the module calls `InputBox` — its only consumer is the export
+      // clause esbuild emitted, which is exactly the edge that used to be missed.
+      assertStringIncludes(result, "forwardRef(");
+      assertStringIncludes(result, `const TOKEN = getEnv("INPUT_BOX_TOKEN")`);
+      assertStringIncludes(result, "InputBox");
+      assertStringIncludes(result, `throw new Error("server-only")`);
+    });
+
+    it("still drops a hook-only secret and its import from compiled output", async () => {
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("API_KEY");`,
+        `function readKey() { return API_KEY; }`,
+        `export async function getServerData() { return { props: { k: readKey() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await compileThenStrip(source, "/project/app/page.tsx");
+
+      // Rooting the export clause must not turn this stage into a no-op: nothing
+      // exported reaches `API_KEY`, so it and its import still go.
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertEquals(occurrences(result, "readKey"), 0);
+      assertNotIncludes(result, `from "veryfront"`);
+      assertStringIncludes(result, "Page as default");
+    });
+
+    it("does not root a re-exported name as a local binding", async () => {
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `export { helper } from "@/lib/helper";`,
+        `const API_KEY = getEnv("API_KEY");`,
+        `function helper2() { return API_KEY; }`,
+        `export async function getServerData() { return { props: { k: helper2() } }; }`,
+      ].join("\n");
+
+      const result = await compileThenStrip(source, "/project/app/page.tsx");
+
+      // `export { helper } from "…"` names no binding this module declares, so it
+      // must not keep a same-named local alive.
+      assertEquals(occurrences(result, "API_KEY"), 0);
+      assertEquals(occurrences(result, "helper2"), 0);
+      assertStringIncludes(result, "@/lib/helper");
+    });
+  });
+
+  describe("remediation advice", () => {
+    it("tells the author to separate the value, not to re-declare the hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import { makeClient } from "@/lib/client";`,
+        `const API_KEY = getEnv("API_KEY");`,
+        `const client = makeClient({ get: () => API_KEY });`,
+        `export async function getServerData() { return { props: { k: API_KEY } }; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "/project/app/page.tsx")
+      );
+      const { message } = error as Error;
+
+      // The hook here *is* declared directly, so repeating that advice was noise
+      // covering up the only thing the author can actually act on.
+      assertStringIncludes(message, "still reads it from a body that runs only when");
+      assertStringIncludes(message, "Move the shared value into a module the hook imports");
+      assertNotIncludes(message, "Declare the hook directly");
+    });
+
+    it("still tells the author to declare a re-exported hook directly", async () => {
+      const code = `export { loadIt as getServerData } from "./loader.ts";`;
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "/project/app/page.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "Declare the hook directly");
+    });
+  });
 });

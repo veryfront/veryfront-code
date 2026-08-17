@@ -1993,6 +1993,45 @@ function serverTaintedSites(
 }
 
 /**
+ * The local names a surviving `export { … }` clause publishes.
+ *
+ * A clause entry is a real browser consumer of the binding it names — whatever
+ * imports the module reads it — but `freeReferencedIdentifiers` cannot see that:
+ * `visit(ExportSpecifier)` resolves `local` against the synthetic root scope,
+ * which binds every declaration the module still has, so the read is bound and
+ * never free.
+ *
+ * `BindingSite.exported` only compensates for that when the `export` keyword
+ * wraps the declaration itself. In the compiled input this stage actually runs
+ * on it never does: esbuild hoists every named export into one trailing clause
+ * and leaves the declarations as plain `const`/`function` statements, so no site
+ * is `exported` and nothing roots them. That is what made a surviving
+ * `export const client = makeClient({ get: () => API_KEY })` look dead beside an
+ * emptied hook, and fail the build over a secret the browser can plainly reach.
+ *
+ * A re-export (`export { x } from "./m"`) binds nothing here, so its specifiers
+ * name no module binding and are skipped.
+ */
+function exportClauseLocalNames(body: Node[]): Set<string> {
+  const names = new Set<string>();
+
+  for (const statement of body) {
+    if (statement.type !== "ExportNamedDeclaration") continue;
+    if (statement.exportKind === "type") continue;
+    if (isNode(statement.source)) continue;
+
+    for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
+      if (!isNode(specifier)) continue;
+      if (specifier.exportKind === "type") continue;
+      const local = nodeName(specifier.local);
+      if (local) names.add(local);
+    }
+  }
+
+  return names;
+}
+
+/**
  * Drop the module-scope bindings the emptied server-only hooks closed over.
  *
  * Liveness is reachability from the code that survives, not "is this name
@@ -2031,7 +2070,7 @@ function dropUnreachableModuleScopeBindings(
   hookClosure: ReadonlySet<string>,
   removeStatement: (statement: Node) => void,
   removedNames: Set<string>,
-): string[] {
+): Blocker[] {
   const nameHelpers = compilerNameHelperBindings(body);
   const reasons = new Map<BindingSite, ElisionReason>();
   for (const site of sites) {
@@ -2067,6 +2106,9 @@ function dropUnreachableModuleScopeBindings(
   for (const site of sites) {
     if (site.exported) { for (const name of site.names) roots.add(name); }
   }
+  // The same contract written the other way round, which is the only way the
+  // compiled input writes it.
+  for (const name of exportClauseLocalNames(body)) roots.add(name);
 
   // Every site carries edges, so an elided declaration the roots do reach still
   // keeps what it reads: `const shared = KEY.trim()` read by the client roots
@@ -2097,18 +2139,22 @@ function dropUnreachableModuleScopeBindings(
     sites.filter((site) => !removableSites.has(site)).flatMap((site) => site.names),
   );
 
-  const blocked: string[] = [];
+  const blocked: Blocker[] = [];
   for (const site of removable) {
     const shared = site.names.find((name) => survivingNames.has(name));
     if (shared) {
-      blocked.push(`\`${shared}\` is declared more than once and only one declaration is dead`);
+      blocked.push({
+        reason: `\`${shared}\` is declared more than once and only one declaration is dead`,
+        remedy: REMEDY.rewriteTheDeclaration,
+      });
       continue;
     }
     if (site.remove === null) {
-      blocked.push(
-        `\`${site.names[0]}\` is a dead server-only binding declared in a position ` +
+      blocked.push({
+        reason: `\`${site.names[0]}\` is a dead server-only binding declared in a position ` +
           `this pass cannot remove`,
-      );
+        remedy: REMEDY.rewriteTheDeclaration,
+      });
     }
   }
 
@@ -2123,11 +2169,12 @@ function dropUnreachableModuleScopeBindings(
     if (removableSites.has(site)) continue;
     const held = [...site.references].find((name) => goingAway.has(name));
     if (held) {
-      blocked.push(
-        `\`${held}\` is a server-only binding that nothing in the browser reaches, ` +
+      blocked.push({
+        reason: `\`${held}\` is a server-only binding that nothing in the browser reaches, ` +
           `but \`${site.names[0]}\` still reads it from a body that runs only when ` +
           `it is called, and that declaration runs at module load`,
-      );
+        remedy: REMEDY.separateTheValue,
+      });
     }
   }
   if (blocked.length > 0) return blocked;
@@ -2215,17 +2262,49 @@ function setBody(ast: ASTNode, body: Node[]): void {
 }
 
 /**
+ * What the author can do about a failure, chosen per failure class.
+ *
+ * The advice used to be one sentence appended to every message, telling the
+ * author to declare the hook directly. That is the fix for an export form this
+ * pass cannot follow, and nonsense for everything else: a module blocked over a
+ * binding its client code still reads has already declared the hook directly,
+ * and a missing parser extension is not the author's doing at all.
+ */
+const REMEDY = {
+  /** The hook is exported in a form with no local declaration to empty. */
+  declareDirectly: "Declare the hook directly (`export async function getServerData() {…}`) " +
+    "so the framework can strip it from the client build.",
+  /** The hook is fine; a value it shares with client code is the problem. */
+  separateTheValue: "Move the shared value into a module the hook imports, or read it from code " +
+    "the browser reaches so it is intentionally part of the client bundle.",
+  /** The declaration form itself is what blocks the removal. */
+  rewriteTheDeclaration:
+    "Declare the value once, at the top level, so the stripped hook's state can " +
+    "be removed from the client build.",
+  /** Nothing about the module is wrong. */
+  none: "",
+} as const;
+
+/** A removal this pass refused to make, with the advice that fits it. */
+interface Blocker {
+  reason: string;
+  remedy: string;
+}
+
+/**
  * Raised when a module names a server-only export that this pass cannot remove.
  * Emitting the module anyway would put the loader, its imports and anything it
  * closes over into the browser bundle, so the build stops instead.
  */
 class ServerExportStripError extends Error {
-  constructor(filePath: string | undefined, reason: string) {
+  constructor(
+    filePath: string | undefined,
+    reason: string,
+    remedy: string = REMEDY.declareDirectly,
+  ) {
     super(
       `Cannot remove the server-only export from ${filePath ?? "this module"} ` +
-        `before it is sent to the browser: ${reason}. ` +
-        `Declare the hook directly (\`export async function getServerData() {…}\`) ` +
-        `so the framework can strip it from the client build.`,
+        `before it is sent to the browser: ${reason}.` + (remedy ? ` ${remedy}` : ""),
     );
     this.name = "ServerExportStripError";
   }
@@ -2249,7 +2328,11 @@ export async function stripServerOnlyExports(
 
   const parser = tryResolve<CodeParser>("CodeParser");
   if (!parser) {
-    throw new ServerExportStripError(filePath, "no CodeParser extension is registered");
+    throw new ServerExportStripError(
+      filePath,
+      "no CodeParser extension is registered",
+      REMEDY.none,
+    );
   }
 
   let body: Node[];
@@ -2267,6 +2350,7 @@ export async function stripServerOnlyExports(
     throw new ServerExportStripError(
       filePath,
       error instanceof Error ? error.message : String(error),
+      REMEDY.none,
     );
   }
 
@@ -2351,15 +2435,16 @@ export async function stripServerOnlyExports(
   const hookClosure = new Set(
     [...reachableNames(hookSeed, sites)].filter((name) => moduleBindings.has(name)),
   );
-  const blocked = dropUnreachableModuleScopeBindings(
+  const [firstBlocked] = dropUnreachableModuleScopeBindings(
     body,
     sites,
     hookClosure,
     (statement) => removableStatements.add(statement),
     removedNames,
   );
-  const [firstBlocked] = blocked;
-  if (firstBlocked) throw new ServerExportStripError(filePath, firstBlocked);
+  if (firstBlocked) {
+    throw new ServerExportStripError(filePath, firstBlocked.reason, firstBlocked.remedy);
+  }
 
   const pruned = body.filter((statement) => !removableStatements.has(statement));
   const finalBody = dropUnusedImportBindings(pruned, hookClosure, removedNames);
@@ -2388,6 +2473,7 @@ export async function stripServerOnlyExports(
         `the stripped output no longer parses: ${
           error instanceof Error ? error.message : String(error)
         }`,
+        REMEDY.none,
       );
     }
 
@@ -2405,6 +2491,7 @@ export async function stripServerOnlyExports(
       throw new ServerExportStripError(
         filePath,
         `the server-only binding \`${leaked[0]}\` still appears in the stripped output`,
+        REMEDY.none,
       );
     }
   }
