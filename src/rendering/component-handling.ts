@@ -121,8 +121,6 @@ export async function handleComponentPage(
     dependencyPinningSource?: DependencyPinningSourceInput;
     /** Bare npm package roots that the runtime resolves without bundling. */
     serverExternalPackages?: readonly string[];
-    /** Cooperative cancellation for this render's SSR transforms. */
-    signal?: AbortSignal;
   },
 ): Promise<ComponentPageResult> {
   try {
@@ -172,7 +170,6 @@ export async function handleComponentPage(
         dependencyPinningDependencies: options?.dependencyPinningDependencies,
         dependencyPinningSource: options?.dependencyPinningSource,
         mode: options?.mode,
-        signal: options?.signal,
       },
     );
 

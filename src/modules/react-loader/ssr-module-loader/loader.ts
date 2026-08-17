@@ -250,9 +250,7 @@ export class SSRModuleLoader {
 
     try {
       if (semaphore) {
-        const report = await semaphore.tryAcquireWithReport(acquireTimeoutMs, {
-          signal: this.options.signal,
-        });
+        const report = await semaphore.tryAcquireWithReport(acquireTimeoutMs);
         semaphoreAcquired = report.acquired;
         if (!semaphoreAcquired) {
           throw createTransformCapacityError(

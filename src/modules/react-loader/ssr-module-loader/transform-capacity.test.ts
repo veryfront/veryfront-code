@@ -20,17 +20,12 @@ function transformCapacity(loader: SSRModuleLoader): TransformCapacityRunner {
   return internal.withTransformCapacity.bind(loader);
 }
 
-function createLoader(
-  projectId: string,
-  dev: boolean,
-  signal?: AbortSignal,
-): SSRModuleLoader {
+function createLoader(projectId: string, dev: boolean): SSRModuleLoader {
   return new SSRModuleLoader({
     projectDir: "/projects/capacity",
     projectId,
     adapter: denoAdapter,
     dev,
-    signal,
   });
 }
 
@@ -129,47 +124,6 @@ describe("modules/react-loader/ssr-module-loader/transform-capacity", () => {
       );
     } finally {
       time.restore();
-      releaseTransformPermits(held);
-      clearSSRModuleCache();
-    }
-  });
-
-  it("should remove a queued dev transform when its render is cancelled", async () => {
-    clearSSRModuleCache();
-    const controller = new AbortController();
-    const loader = createLoader("capacity-cancelled", true, controller.signal);
-    let held = await exhaustTransformPermits();
-    const semaphore = getTransformSemaphore();
-    let operationRan = false;
-
-    try {
-      const outcome = settle(
-        transformCapacity(loader)(
-          "/projects/capacity/cancelled.tsx",
-          "build",
-          () => {
-            operationRan = true;
-            return Promise.resolve("ran");
-          },
-        ),
-      );
-      await Promise.resolve();
-      assertEquals(semaphore.waiting, 1);
-
-      const reason = new DOMException("render cancelled", "AbortError");
-      controller.abort(reason);
-      await Promise.resolve();
-      const waitingAfterAbort = semaphore.waiting;
-
-      releaseTransformPermits(held);
-      held = 0;
-      const result = await outcome;
-
-      assertEquals(waitingAfterAbort, 0, "the cancelled waiter must leave the queue");
-      assertEquals(operationRan, false, "cancelled transform work must not start");
-      assert(!result.ok, "the render abort must reject the queued acquisition");
-      assertStringIncludes(result.error.message, "render cancelled");
-    } finally {
       releaseTransformPermits(held);
       clearSSRModuleCache();
     }
