@@ -215,6 +215,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "Local agent delegation with `delegates`");
     assertStringIncludes(guide, "Remote integration tools");
     assertStringIncludes(guide, "Salesforce service account");
+    assertStringIncludes(guide, "External Client App");
     assertStringIncludes(guide, "createSalesforceServiceAccountToolSource");
     assertStringIncludes(guide, "loadRemoteToolsFromSource");
     assertStringIncludes(guide, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID");

@@ -37,8 +37,9 @@ tool implementation or backing service layer.
 
 ## Run Salesforce integration tools locally
 
-Use a dedicated Salesforce integration user and Connected App with the OAuth
-client credentials flow. Set these values in the host environment:
+Use a dedicated Salesforce integration user and External Client App with the
+OAuth client credentials flow. Existing Connected Apps remain supported. Set
+these values in the host environment:
 
 ```dotenv title=".env"
 SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID=<CLIENT_ID>
