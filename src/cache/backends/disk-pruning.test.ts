@@ -80,4 +80,49 @@ describe("DiskCacheBackend expiry pruning", () => {
       assertEquals(await writer.get(key), "fresh");
     }, { prefix: "expired-entry-race-test-" });
   });
+
+  it("does not delete a fresh replacement while cleaning up after a read", async () => {
+    await withTempDir(async (isolatedDir) => {
+      const key = "read-write-race";
+      const reader = new DiskCacheBackend(isolatedDir);
+      const writer = new DiskCacheBackend(isolatedDir);
+      await reader.set(key, "expired", 0);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+
+      const internals = reader as unknown as { readFramedFile: ReadFramedFile };
+      const originalRead = internals.readFramedFile.bind(reader);
+      let resumeRead!: () => void;
+      let reportInspection!: () => void;
+      const resume = new Promise<void>((resolve) => {
+        resumeRead = resolve;
+      });
+      const inspected = new Promise<void>((resolve) => {
+        reportInspection = resolve;
+      });
+      let paused = false;
+      internals.readFramedFile = async (...args) => {
+        const envelope = await originalRead(...args);
+        if (!paused && envelope.key === key) {
+          paused = true;
+          reportInspection();
+          await resume;
+        }
+        return envelope;
+      };
+
+      // Hold the read between finding the entry expired and cleaning it up,
+      // which is the window another process replaces the pathname in.
+      const expiredRead = reader.get(key);
+      await inspected;
+      await writer.set(key, "fresh", 60);
+      resumeRead();
+      assertEquals(await expiredRead, null);
+
+      // The cleanup is queued on the reader's mutation tail, so any later
+      // reader operation waits for it.
+      await reader.get("flush-marker");
+
+      assertEquals(await writer.get(key), "fresh");
+    }, { prefix: "expired-read-race-test-" });
+  });
 });

@@ -452,8 +452,65 @@ export class DiskCacheBackend implements CacheBackend {
     }
   }
 
+  /**
+   * Remove a cache file, but only while it still holds the expired entry.
+   *
+   * Dev servers and build steps share a project cache, so another process can
+   * replace the pathname between the expiry check and the deletion. Deleting by
+   * pathname would then remove that fresh entry. The file is claimed with an
+   * atomic rename and revalidated on the claimed inode instead, and a claim
+   * that turns out to hold a fresh entry is linked back under its original
+   * name. Both the write-time sweep and the read-time cleanup go through this,
+   * so neither can delete a write that won the race.
+   */
+  private async removeExpiredEntryFile(filePath: string): Promise<void> {
+    const { link, rename, unlink } = await fsPromises;
+    const claimPath = `${filePath}.prune.${crypto.randomUUID()}`;
+    try {
+      await rename(filePath, claimPath);
+    } catch {
+      // Another process already replaced or removed the entry.
+      return;
+    }
+
+    let restoreClaim = true;
+    try {
+      const claimed = await this.readFramedFile(claimPath, undefined, undefined, false);
+      if (claimed.expiresAt !== undefined && Date.now() >= claimed.expiresAt) {
+        await unlink(claimPath);
+        restoreClaim = false;
+      }
+    } catch {
+      // An unreadable claim is restored rather than deleted: the pathname may
+      // now hold a fresh entry this process never validated.
+    }
+
+    if (!restoreClaim) return;
+    let discardClaim = false;
+    try {
+      await link(claimPath, filePath);
+      discardClaim = true;
+    } catch (error) {
+      // A newer writer already owns the pathname, so its entry wins.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") discardClaim = true;
+    }
+    if (discardClaim) await unlink(claimPath).catch(() => {});
+  }
+
+  /**
+   * Drop an entry a read found expired.
+   *
+   * Queued on the mutation tail so it cannot interleave with this instance's
+   * own writes, and so a caller can flush it by awaiting any later operation.
+   */
+  private expireEntry(key: string): Promise<void> {
+    return this.withMutation(async () => {
+      await this.removeExpiredEntryFile(await this.filePath(key));
+    });
+  }
+
   private async pruneExpiredEntries(): Promise<void> {
-    const { link, opendir, rename, unlink } = await fsPromises;
+    const { opendir } = await fsPromises;
     const directory = await opendir(this.dir);
     let scanned = 0;
     let eligible = 0;
@@ -468,36 +525,13 @@ export class DiskCacheBackend implements CacheBackend {
       processed++;
 
       const filePath = join(this.dir, entry.name);
-      let claimPath: string | undefined;
       try {
         const envelope = await this.readFramedFile(filePath, undefined, undefined, false);
         if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
-          claimPath = `${filePath}.prune.${crypto.randomUUID()}`;
-          await rename(filePath, claimPath);
-
-          // The pathname may have been replaced after the first read. Re-read
-          // the atomically claimed inode so pruning never deletes a fresh
-          // cross-process write that won that race.
-          const claimed = await this.readFramedFile(claimPath, undefined, undefined, false);
-          if (claimed.expiresAt !== undefined && Date.now() >= claimed.expiresAt) {
-            await unlink(claimPath);
-            claimPath = undefined;
-          }
+          await this.removeExpiredEntryFile(filePath);
         }
       } catch {
         // Cache files are disposable and may be replaced by another process.
-      } finally {
-        if (claimPath !== undefined) {
-          let discardClaim = false;
-          try {
-            await link(claimPath, filePath);
-            discardClaim = true;
-          } catch (error) {
-            // A newer writer already owns the pathname, so its entry wins.
-            if ((error as NodeJS.ErrnoException).code === "EEXIST") discardClaim = true;
-          }
-          if (discardClaim) await unlink(claimPath).catch(() => {});
-        }
       }
     }
 
@@ -532,7 +566,7 @@ export class DiskCacheBackend implements CacheBackend {
         return null;
       }
       if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
-        this.del(key).catch(async (cleanupError) => {
+        this.expireEntry(key).catch(async (cleanupError) => {
           logger.debug("[DiskCache] Expired entry cleanup failed", {
             keyDigest: await logKeyDigest(key),
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
@@ -560,7 +594,7 @@ export class DiskCacheBackend implements CacheBackend {
       const envelope = await this.readEnvelopeWithinValueLimit(key, admittedMaximum);
       if (!envelope || envelope.key !== key) return null;
       if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
-        void this.del(key);
+        void this.expireEntry(key);
         return null;
       }
       if (envelope.value === undefined) throw new InvalidDiskCacheFileError();

@@ -135,9 +135,12 @@ Deno.test("DiskCacheBackend", async (t) => {
     await backend.set(key, "val", 0);
     await new Promise((r) => setTimeout(r, 5));
 
-    const originalDel = backend.del.bind(backend);
-    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = (entryKey: string) =>
-      entryKey === key ? Promise.reject(new Error("delete rejected")) : originalDel(entryKey);
+    const internals = backend as unknown as {
+      expireEntry: (entryKey: string) => Promise<void>;
+    };
+    const originalExpire = internals.expireEntry.bind(backend);
+    internals.expireEntry = (entryKey: string) =>
+      entryKey === key ? Promise.reject(new Error("delete rejected")) : originalExpire(entryKey);
 
     const debugCapture = captureDebugLogs();
     try {
@@ -155,7 +158,7 @@ Deno.test("DiskCacheBackend", async (t) => {
       assertEquals(JSON.stringify(context).includes(key), false);
     } finally {
       debugCapture.restore();
-      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+      internals.expireEntry = originalExpire;
     }
   });
 
@@ -211,9 +214,11 @@ Deno.test("DiskCacheBackend", async (t) => {
     const fileName = await onlyCacheFileName(cacheDir);
     await new Promise((r) => setTimeout(r, 5));
 
-    const originalDel = backend.del.bind(backend);
-    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = () =>
-      Promise.reject(new Error("delete rejected"));
+    const internals = backend as unknown as {
+      expireEntry: (entryKey: string) => Promise<void>;
+    };
+    const originalExpire = internals.expireEntry.bind(backend);
+    internals.expireEntry = () => Promise.reject(new Error("delete rejected"));
 
     const debugCapture = captureDebugLogs();
     try {
@@ -239,7 +244,7 @@ Deno.test("DiskCacheBackend", async (t) => {
       assertEquals(fileName.startsWith(String(context?.keyDigest)), true);
     } finally {
       debugCapture.restore();
-      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
+      internals.expireEntry = originalExpire;
     }
   });
 
