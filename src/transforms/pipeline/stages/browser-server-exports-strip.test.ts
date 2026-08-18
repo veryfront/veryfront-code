@@ -2670,6 +2670,40 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-after-throw.tsx");
     });
 
+    it("does not evaluate a throw operand tail after its prefix aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { throw (missing, KEY); })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-throw-operand.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-throw-operand.tsx");
+    });
+
+    it("does not evaluate a return operand tail after its prefix aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { return (missing, KEY); })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-return-operand.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-return-operand.tsx");
+    });
+
     it("does not evaluate statements after an unproven IIFE statement", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3551,6 +3585,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "inline-class-field-bigint.tsx");
     });
 
+    it("does not evaluate arguments of a statically skipped optional call", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { first = null?.(KEY); }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-field-optional-call.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-field-optional-call.tsx");
+    });
+
     it("does not evaluate conditional branches after the test aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3600,6 +3651,23 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "throwing-inline-class-definition.tsx");
+    });
+
+    it("does not evaluate a static initializer tail after its prefix aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `class Value { static first = (missing, KEY); }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-static-initializer-tail.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-static-initializer-tail.tsx");
     });
 
     it("does not run static elements after static initialization throws", async () => {

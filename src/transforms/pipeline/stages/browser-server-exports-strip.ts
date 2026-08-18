@@ -2194,6 +2194,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     let continues = classDefinitionPrefixCompletes(node);
     for (const member of classMembers(node)) {
       if (
+        continues && classMemberPrefixCompletes(member) &&
+        isStaticInitializationElement(member) && isNode(member.value)
+      ) deferOrderedExpressionTail(member.value, noInitializedNames);
+      if (
         (!continues || !classMemberPrefixCompletes(member)) &&
         isStaticInitializationElement(member)
       ) deferred.add(member);
@@ -2306,6 +2310,18 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     initializedNames: ReadonlySet<string>,
   ): void => {
     const expression = unwrap(node);
+    if (
+      expression.type === "OptionalCallExpression" && expression.optional === true &&
+      isNode(expression.callee) && Array.isArray(expression.arguments)
+    ) {
+      const callee = staticPrimitiveValue(expression.callee);
+      if (callee.known && callee.value === null) {
+        for (const argument of expression.arguments) {
+          if (isNode(argument)) deferred.add(argument);
+        }
+        return;
+      }
+    }
     if (
       (expression.type === "CallExpression" || expression.type === "OptionalCallExpression") &&
       isNode(expression.callee) && Array.isArray(expression.arguments)
@@ -2555,13 +2571,17 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
               if (!isNode(nested)) continue;
               if (!blockContinues) {
                 deferred.add(nested);
-              } else if (nested.type === "ThrowStatement" || nested.type === "ReturnStatement") {
-                blockContinues = false;
               } else if (!statementCompletes(nested)) {
                 blockContinues = false;
               }
             }
             return blockContinues;
+          }
+          if (statement.type === "ThrowStatement" || statement.type === "ReturnStatement") {
+            if (isNode(statement.argument)) {
+              deferOrderedExpressionTail(statement.argument, initializedAtCall);
+            }
+            return false;
           }
           if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
             return true;
@@ -2627,9 +2647,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             deferred.add(statement);
             continue;
           }
-          if (statement.type === "ThrowStatement" || statement.type === "ReturnStatement") {
-            continues = false;
-          } else if (!statementCompletes(statement)) {
+          if (!statementCompletes(statement)) {
             continues = false;
           }
         }
