@@ -301,39 +301,12 @@ describe("proxy routing invalidation ingress", () => {
     assertStringIncludes(String(warnings[0]?.extra?.reason), "missing");
   });
 
-  it("reports a missing SchemaValidator as the reason a signature could not be checked", async () => {
-    // The production failure mode: the dedicated proxy binary never registered
-    // a SchemaValidator, so claim parsing threw before any signature check and
-    // the bare `catch` turned it into an unexplained 401.
-    const body = createBody();
-    const { jws } = await createDispatchSignature(body);
-    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
-    const previous = tryResolve<unknown>("SchemaValidator");
-    unregister("SchemaValidator");
-    let response: Response;
-    try {
-      response = await handleProxyRoutingInvalidationRequest(
-        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
-          method: "POST",
-          headers: { "x-veryfront-dispatch-jws": jws },
-          body,
-        }),
-        {
-          publicKeyPem: "configured",
-          logger: {
-            warn: (message, extra) => warnings.push({ message, extra }),
-          },
-          publisher: {
-            publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
-          },
-        },
-      );
-    } finally {
-      if (previous !== undefined) register("SchemaValidator", previous);
-    }
-
-    assertEquals(response.status, 401);
-    assertEquals(warnings.length, 1);
-    assertEquals(typeof warnings[0]?.extra?.reason, "string");
-  });
+  // Deliberately no in-process "missing SchemaValidator" test. One was written
+  // and removed: `lazySchema` memoises a materialized schema permanently, so an
+  // in-process `unregister("SchemaValidator")` is a no-op once any earlier test
+  // in this file has parsed a JWS — and an invalid `publicKeyPem` makes WebCrypto
+  // throw "Invalid key data" first regardless. It asserted only that some reason
+  // string existed, which every rejection path satisfies, so it would have passed
+  // with the fix deleted. The production failure mode needs a clean process and is
+  // covered by cli/commands/serve/proxy-runtime-schema-contracts.test.ts.
 });

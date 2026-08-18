@@ -16,7 +16,7 @@ import { runStandaloneProxyRuntime } from "./proxy-runtime.ts";
 const FIXTURE_RESULT_PREFIX = "__RESULT__";
 
 const FIXTURE_URL = new URL(
-  "./_routing-invalidation-bootstrap-fixture.ts",
+  "../../../tests/proxy/routing-invalidation-bootstrap-fixture.ts",
   import.meta.url,
 );
 const REPOSITORY_ROOT_URL = new URL("../../../", import.meta.url);

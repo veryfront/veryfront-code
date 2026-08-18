@@ -22,9 +22,9 @@ import {
   PROXY_ROUTING_INVALIDATION_PLATFORM,
   PROXY_ROUTING_INVALIDATION_SUBJECT,
 } from "#veryfront/proxy/routing-invalidation.ts";
-import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { base64urlEncode, base64urlEncodeBytes } from "veryfront/utils";
 import { tryResolve } from "veryfront/extensions/contracts";
-import { runStandaloneProxyRuntime } from "./proxy-runtime.ts";
+import { runStandaloneProxyRuntime } from "../../cli/commands/serve/proxy-runtime.ts";
 
 /** Marker prefix for the single machine-readable stdout line. */
 const ROUTING_INVALIDATION_FIXTURE_RESULT_PREFIX = "__RESULT__";
