@@ -1505,8 +1505,83 @@ function stringLiteralText(node: Node | undefined): string | null {
 
 function isObjectDefineProperty(node: Node | undefined): boolean {
   if (!node || node.type !== "MemberExpression") return false;
-  return nodeName(node.object) === "Object" &&
-    literalText(isNode(node.property) ? node.property : undefined) === "defineProperty";
+  if (nodeName(node.object) !== "Object") return false;
+  const property = isNode(node.property) ? node.property : undefined;
+  return node.computed === true
+    ? stringLiteralText(property) === "defineProperty"
+    : nodeName(property) === "defineProperty";
+}
+
+function writesObjectDefineProperty(body: Node[]): boolean {
+  const targetWritesDefineProperty = (target: Node): boolean => {
+    if (isObjectDefineProperty(target)) return true;
+
+    if (target.type === "AssignmentPattern" && isNode(target.left)) {
+      return targetWritesDefineProperty(target.left);
+    }
+    if (
+      (target.type === "RestElement" || target.type === "SpreadElement") &&
+      isNode(target.argument)
+    ) {
+      return targetWritesDefineProperty(target.argument);
+    }
+    if (target.type === "ArrayPattern" || target.type === "ArrayExpression") {
+      return (Array.isArray(target.elements) ? target.elements : []).some((element) =>
+        isNode(element) && targetWritesDefineProperty(element)
+      );
+    }
+    if (target.type === "ObjectPattern" || target.type === "ObjectExpression") {
+      return (Array.isArray(target.properties) ? target.properties : []).some((property) => {
+        if (!isNode(property)) return false;
+        if (isNode(property.argument)) return targetWritesDefineProperty(property.argument);
+        return isNode(property.value) && targetWritesDefineProperty(property.value);
+      });
+    }
+    return isNode(target.expression) && targetWritesDefineProperty(target.expression);
+  };
+
+  let written = false;
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (written) return false;
+      if (node.type === "ImportDeclaration") return false;
+
+      if (
+        node.type === "AssignmentExpression" && isNode(node.left) &&
+        targetWritesDefineProperty(node.left)
+      ) {
+        written = true;
+        return false;
+      }
+      if (
+        node.type === "UpdateExpression" && isNode(node.argument) &&
+        targetWritesDefineProperty(node.argument)
+      ) {
+        written = true;
+        return false;
+      }
+      if (
+        node.type === "UnaryExpression" && node.operator === "delete" &&
+        isNode(node.argument) && targetWritesDefineProperty(node.argument)
+      ) {
+        written = true;
+        return false;
+      }
+      if (
+        (node.type === "ForInStatement" || node.type === "ForOfStatement") &&
+        isNode(node.left) && node.left.type !== "VariableDeclaration" &&
+        targetWritesDefineProperty(node.left)
+      ) {
+        written = true;
+        return false;
+      }
+
+      return true;
+    });
+    if (written) return true;
+  }
+  return false;
 }
 
 function returnedCall(node: Node): Node | null {
@@ -1585,25 +1660,29 @@ function analyzeCompilerNameHelpers(body: Node[]): CompilerNameHelperAnalysis {
     for (const name of importedBindings(statement)) localBindings.add(name);
   }
   const objectBindingIsUnsafe = localBindings.has("Object") || assigned.has("Object");
+  const definePropertyIsWritten = writesObjectDefineProperty(body);
 
-  const initializers = new Map<string, Node>();
+  const initializers: Array<{ name: string; init: Node }> = [];
+  const initializerCounts = new Map<string, number>();
   for (const statement of body) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const declarator of Array.isArray(statement.declarations) ? statement.declarations : []) {
       if (!isNode(declarator) || !isNode(declarator.init)) continue;
       const name = nodeName(declarator.id);
-      if (name) initializers.set(name, declarator.init);
+      if (!name) continue;
+      initializers.push({ name, init: declarator.init });
+      initializerCounts.set(name, (initializerCounts.get(name) ?? 0) + 1);
     }
   }
 
   const definePropertyBindings = new Set<string>();
-  for (const [name, init] of initializers) {
+  for (const { name, init } of initializers) {
     if (isObjectDefineProperty(init)) definePropertyBindings.add(name);
   }
 
   const helpers = new Set<string>();
   const usedDefinePropertyBindings = new Set<string>();
-  for (const [name, init] of initializers) {
+  for (const { name, init } of initializers) {
     if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
     const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
     if (params.length !== 2) continue;
@@ -1629,19 +1708,32 @@ function analyzeCompilerNameHelpers(body: Node[]): CompilerNameHelperAnalysis {
     }
   }
 
-  if (objectBindingIsUnsafe && helpers.size > 0) {
+  if ((objectBindingIsUnsafe || definePropertyIsWritten) && helpers.size > 0) {
     return {
       bindings: new Set(),
-      unsafeReason:
-        "`Object.defineProperty` cannot be treated as inert because `Object` is declared, " +
-        "imported, hoisted, or assigned in the module",
+      unsafeReason: definePropertyIsWritten
+        ? "`Object.defineProperty` is written in a module that uses compiler-generated " +
+          "name registrations"
+        : "`Object.defineProperty` cannot be treated as inert because `Object` is declared, " +
+          "imported, hoisted, or assigned in the module",
       unsafeKind: "object",
     };
   }
 
-  const reassignedHelperBinding = [...usedDefinePropertyBindings, ...helpers].find((name) =>
-    assigned.has(name)
+  const mutableHelperBindings = [...usedDefinePropertyBindings, ...helpers];
+  const redeclaredHelperBinding = mutableHelperBindings.find((name) =>
+    (initializerCounts.get(name) ?? 0) > 1
   );
+  if (redeclaredHelperBinding) {
+    return {
+      bindings: new Set(),
+      unsafeReason: `\`${redeclaredHelperBinding}\` is initialized more than once after it is ` +
+        "recognized as compiler-generated name helper state",
+      unsafeKind: "helper-binding",
+    };
+  }
+
+  const reassignedHelperBinding = mutableHelperBindings.find((name) => assigned.has(name));
   if (reassignedHelperBinding) {
     return {
       bindings: new Set(),
@@ -2436,11 +2528,12 @@ const REMEDY = {
     "Declare the value once, at the top level, so the stripped hook's state can " +
     "be removed from the client build.",
   /** A compiler-generated name helper no longer calls the global built-in. */
-  preserveGlobalObject: "Keep `Object` as the unshadowed, unassigned global in modules that use " +
+  preserveGlobalObject:
+    "Keep `Object` and `Object.defineProperty` unshadowed and unassigned in modules that use " +
     "compiler-generated name registrations.",
   /** A compiler-generated name helper or its built-in alias is reassigned. */
   preserveNameHelperBindings:
-    "Do not reassign compiler-generated name helper bindings in modules with " +
+    "Do not reassign or redeclare compiler-generated name helper bindings in modules with " +
     "server-only exports.",
   /** Nothing about the module is wrong. */
   none: "",

@@ -1272,6 +1272,62 @@ describe("browser-server-exports-strip", () => {
       }
     });
 
+    it("fails closed when compiler name helper bindings are redeclared with var", async () => {
+      for (
+        const redeclaration of [
+          `var defineName = (target) => (bootClient(), target);`,
+          `var setName = (target) => (bootClient(), target);`,
+        ]
+      ) {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function bootClient() { globalThis.clientStarted = true; }`,
+          `var defineName = Object.defineProperty;`,
+          `var setName = (target, value) => defineName(target, "name", {`,
+          `  value, configurable: true,`,
+          `});`,
+          redeclaration,
+          `function dead() { return KEY; }`,
+          `setName(dead, "dead");`,
+          `function loadServer() { return KEY; }`,
+          `function Page() { return null; }`,
+          `export { Page as default, loadServer as getServerData };`,
+        ].join("\n");
+
+        await assertRejects(() => stripServerOnlyExports(code, "pages/redeclared-helper.tsx"));
+      }
+    });
+
+    it("fails closed when Object.defineProperty is reassigned before helper capture", async () => {
+      for (
+        const write of [
+          `Object.defineProperty = (target) => (bootClient(), target);`,
+          `Object["defineProperty"] = (target) => (bootClient(), target);`,
+        ]
+      ) {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function bootClient() { globalThis.clientStarted = true; }`,
+          write,
+          `var defineName = Object.defineProperty;`,
+          `var setName = (target, value) => defineName(target, "name", {`,
+          `  value, configurable: true,`,
+          `});`,
+          `function dead() { return KEY; }`,
+          `setName(dead, "dead");`,
+          `function loadServer() { return KEY; }`,
+          `function Page() { return null; }`,
+          `export { Page as default, loadServer as getServerData };`,
+        ].join("\n");
+
+        await assertRejects(() =>
+          stripServerOnlyExports(code, "pages/reassigned-define-property.tsx")
+        );
+      }
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [
