@@ -2704,6 +2704,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-return-operand.tsx");
     });
 
+    it("does not evaluate constructor arguments after callee resolution aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { throw new missing(KEY); })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-constructor-callee.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-constructor-callee.tsx");
+    });
+
     it("does not evaluate statements after an unproven IIFE statement", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3602,6 +3619,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "inline-class-field-optional-call.tsx");
     });
 
+    it("does not evaluate a computed key on a statically skipped optional member", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { first = null?.[KEY]; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-field-optional-member.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-field-optional-member.tsx");
+    });
+
     it("does not evaluate conditional branches after the test aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3668,6 +3702,57 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "throwing-static-initializer-tail.tsx");
+    });
+
+    it("does not evaluate a static block tail after its prefix aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `class Value { static { missing; globalThis.registered = KEY; } }`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-static-block-tail.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-static-block-tail.tsx");
+    });
+
+    it("does not evaluate a logical operand after a false unary primitive", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { static field = !true && KEY; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/static-unary-logical.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "static-unary-logical.tsx");
+    });
+
+    it("does not evaluate a logical operand after a void primitive", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { static field = void 0 && KEY; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/static-void-logical.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "static-void-logical.tsx");
     });
 
     it("does not run static elements after static initialization throws", async () => {

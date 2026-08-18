@@ -2198,6 +2198,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         isStaticInitializationElement(member) && isNode(member.value)
       ) deferOrderedExpressionTail(member.value, noInitializedNames);
       if (
+        continues && classMemberPrefixCompletes(member) && member.type === "StaticBlock" &&
+        Array.isArray(member.body)
+      ) deferStatementListTail(member.body, noInitializedNames);
+      if (
         (!continues || !classMemberPrefixCompletes(member)) &&
         isStaticInitializationElement(member)
       ) deferred.add(member);
@@ -2284,9 +2288,24 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
 
   const staticPrimitiveValue = (
     node: Node,
-  ): { known: true; value: string | number | boolean | bigint | null } | { known: false } => {
+    initializedNames: ReadonlySet<string> = noInitializedNames,
+  ):
+    | { known: true; value: string | number | boolean | bigint | null | undefined }
+    | { known: false } => {
     const expression = unwrap(node);
     if (expression.type === "NullLiteral") return { known: true, value: null };
+    if (expression.type === "UnaryExpression" && isNode(expression.argument)) {
+      if (
+        expression.operator === "void" &&
+        isInertExpression(expression.argument, noNameHelpers, initializedNames)
+      ) return { known: true, value: undefined };
+      if (expression.operator === "!") {
+        const argument = staticPrimitiveValue(expression.argument, initializedNames);
+        return argument.known
+          ? { known: true, value: !staticValueIsTruthy(argument.value) }
+          : { known: false };
+      }
+    }
     if (expression.type === "BigIntLiteral" && typeof expression.value === "string") {
       try {
         return { known: true, value: BigInt(expression.value) };
@@ -2302,8 +2321,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     return { known: false };
   };
 
-  const staticValueIsTruthy = (value: string | number | boolean | bigint | null): boolean =>
-    value !== false && value !== 0 && value !== 0n && value !== "" && value !== null;
+  const staticValueIsTruthy = (
+    value: string | number | boolean | bigint | null | undefined,
+  ): boolean =>
+    value !== false && value !== 0 && value !== 0n && value !== "" && value !== null &&
+    value !== undefined;
 
   const deferOrderedExpressionTail = (
     node: Node,
@@ -2311,11 +2333,38 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   ): void => {
     const expression = unwrap(node);
     if (
+      (expression.type === "MemberExpression" ||
+        expression.type === "OptionalMemberExpression") &&
+      isNode(expression.object)
+    ) {
+      if (!isInertExpression(expression.object, noNameHelpers, initializedNames)) {
+        deferOrderedExpressionTail(expression.object, initializedNames);
+        if (expression.computed === true && isNode(expression.property)) {
+          deferred.add(expression.property);
+        }
+        return;
+      }
+      if (
+        expression.type === "OptionalMemberExpression" && expression.optional === true &&
+        expression.computed === true && isNode(expression.property)
+      ) {
+        const object = staticPrimitiveValue(expression.object, initializedNames);
+        if (object.known && (object.value === null || object.value === undefined)) {
+          deferred.add(expression.property);
+          return;
+        }
+      }
+      if (expression.computed === true && isNode(expression.property)) {
+        deferOrderedExpressionTail(expression.property, initializedNames);
+      }
+      return;
+    }
+    if (
       expression.type === "OptionalCallExpression" && expression.optional === true &&
       isNode(expression.callee) && Array.isArray(expression.arguments)
     ) {
-      const callee = staticPrimitiveValue(expression.callee);
-      if (callee.known && callee.value === null) {
+      const callee = staticPrimitiveValue(expression.callee, initializedNames);
+      if (callee.known && (callee.value === null || callee.value === undefined)) {
         for (const argument of expression.arguments) {
           if (isNode(argument)) deferred.add(argument);
         }
@@ -2323,7 +2372,8 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       }
     }
     if (
-      (expression.type === "CallExpression" || expression.type === "OptionalCallExpression") &&
+      (expression.type === "CallExpression" || expression.type === "OptionalCallExpression" ||
+        expression.type === "NewExpression") &&
       isNode(expression.callee) && Array.isArray(expression.arguments)
     ) {
       if (!isInertExpression(expression.callee, noNameHelpers, initializedNames)) {
@@ -2354,13 +2404,13 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         deferred.add(expression.right);
         return;
       }
-      const left = staticPrimitiveValue(expression.left);
+      const left = staticPrimitiveValue(expression.left, initializedNames);
       if (!left.known) return;
       const evaluatesRight = expression.operator === "&&"
         ? staticValueIsTruthy(left.value)
         : expression.operator === "||"
         ? !staticValueIsTruthy(left.value)
-        : left.value === null;
+        : left.value === null || left.value === undefined;
       if (evaluatesRight) deferOrderedExpressionTail(expression.right, initializedNames);
       else deferred.add(expression.right);
       return;
@@ -2375,7 +2425,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         deferred.add(expression.alternate);
         return;
       }
-      const test = staticPrimitiveValue(expression.test);
+      const test = staticPrimitiveValue(expression.test, initializedNames);
       if (!test.known) return;
       const selected = staticValueIsTruthy(test.value)
         ? expression.consequent
@@ -2409,6 +2459,90 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       return;
     }
   };
+
+  function deferStatementListTail(
+    statements: unknown[],
+    initializedNames: ReadonlySet<string>,
+  ): boolean {
+    const statementCompletes = (statement: Node): boolean => {
+      if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
+        return deferStatementListTail(statement.body, initializedNames);
+      }
+      if (statement.type === "ThrowStatement" || statement.type === "ReturnStatement") {
+        if (isNode(statement.argument)) {
+          deferOrderedExpressionTail(statement.argument, initializedNames);
+        }
+        return false;
+      }
+      if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
+        return true;
+      }
+      if (statement.type === "ExpressionStatement") {
+        const expression = isNode(statement.expression) ? statement.expression : undefined;
+        const completes = isInertExpression(
+          expression,
+          noNameHelpers,
+          initializedNames,
+        );
+        if (!completes && expression) {
+          deferOrderedExpressionTail(expression, initializedNames);
+        }
+        return completes;
+      }
+      if (statement.type === "IfStatement") {
+        const test = isNode(statement.test) ? statement.test : undefined;
+        if (test) {
+          const value = staticPrimitiveValue(test, initializedNames);
+          if (value.known) {
+            const selected = staticValueIsTruthy(value.value)
+              ? statement.consequent
+              : statement.alternate;
+            const skipped = staticValueIsTruthy(value.value)
+              ? statement.alternate
+              : statement.consequent;
+            if (isNode(skipped)) deferred.add(skipped);
+            return isNode(selected) ? statementCompletes(selected) : true;
+          }
+        }
+        if (test && !isInertExpression(test, noNameHelpers, initializedNames)) {
+          deferOrderedExpressionTail(test, initializedNames);
+          if (isNode(statement.consequent)) deferred.add(statement.consequent);
+          if (isNode(statement.alternate)) deferred.add(statement.alternate);
+        }
+        return false;
+      }
+      if (statement.type !== "VariableDeclaration") return false;
+      const declarators = declaratorsOf(statement);
+      for (let index = 0; index < declarators.length; index++) {
+        const declarator = declarators[index];
+        if (!declarator) return false;
+        const completes = isNode(declarator.id) && declarator.id.type === "Identifier" &&
+          isInertExpression(
+            isNode(declarator.init) ? declarator.init : undefined,
+            noNameHelpers,
+            initializedNames,
+          );
+        if (completes) continue;
+        if (isNode(declarator.init)) {
+          deferOrderedExpressionTail(declarator.init, initializedNames);
+        }
+        for (const later of declarators.slice(index + 1)) deferred.add(later);
+        return false;
+      }
+      return true;
+    };
+
+    let continues = true;
+    for (const statement of statements) {
+      if (!isNode(statement)) continue;
+      if (!continues) {
+        deferred.add(statement);
+      } else if (!statementCompletes(statement)) {
+        continues = false;
+      }
+    }
+    return continues;
+  }
 
   const evaluatedInvocationArguments = (node: Node): unknown[] | null => {
     if (
@@ -2564,93 +2698,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         isNode(target.body) && target.body.type === "BlockStatement" &&
         Array.isArray(target.body.body)
       ) {
-        const statementCompletes: (statement: Node) => boolean = (statement) => {
-          if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
-            let blockContinues = true;
-            for (const nested of statement.body) {
-              if (!isNode(nested)) continue;
-              if (!blockContinues) {
-                deferred.add(nested);
-              } else if (!statementCompletes(nested)) {
-                blockContinues = false;
-              }
-            }
-            return blockContinues;
-          }
-          if (statement.type === "ThrowStatement" || statement.type === "ReturnStatement") {
-            if (isNode(statement.argument)) {
-              deferOrderedExpressionTail(statement.argument, initializedAtCall);
-            }
-            return false;
-          }
-          if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
-            return true;
-          }
-          if (statement.type === "ExpressionStatement") {
-            const expression = isNode(statement.expression) ? statement.expression : undefined;
-            const completes = isInertExpression(
-              expression,
-              noNameHelpers,
-              initializedAtCall,
-            );
-            if (!completes && expression) {
-              deferOrderedExpressionTail(expression, initializedAtCall);
-            }
-            return completes;
-          }
-          if (statement.type === "IfStatement") {
-            const test = isNode(statement.test) ? statement.test : undefined;
-            if (test) {
-              const value = staticPrimitiveValue(test);
-              if (value.known) {
-                const selected = staticValueIsTruthy(value.value)
-                  ? statement.consequent
-                  : statement.alternate;
-                const skipped = staticValueIsTruthy(value.value)
-                  ? statement.alternate
-                  : statement.consequent;
-                if (isNode(skipped)) deferred.add(skipped);
-                return isNode(selected) ? statementCompletes(selected) : true;
-              }
-            }
-            if (test && !isInertExpression(test, noNameHelpers, initializedAtCall)) {
-              deferOrderedExpressionTail(test, initializedAtCall);
-              if (isNode(statement.consequent)) deferred.add(statement.consequent);
-              if (isNode(statement.alternate)) deferred.add(statement.alternate);
-            }
-            return false;
-          }
-          if (statement.type !== "VariableDeclaration") return false;
-          const declarators = declaratorsOf(statement);
-          for (let index = 0; index < declarators.length; index++) {
-            const declarator = declarators[index];
-            if (!declarator) return false;
-            const completes = isNode(declarator.id) && declarator.id.type === "Identifier" &&
-              isInertExpression(
-                isNode(declarator.init) ? declarator.init : undefined,
-                noNameHelpers,
-                initializedAtCall,
-              );
-            if (completes) continue;
-            if (isNode(declarator.init)) {
-              deferOrderedExpressionTail(declarator.init, initializedAtCall);
-            }
-            for (const later of declarators.slice(index + 1)) deferred.add(later);
-            return false;
-          }
-          return true;
-        };
-        let continues = true;
-        for (const statement of target.body.body) {
-          if (!isNode(statement)) continue;
-          if (!continues) {
-            deferred.add(statement);
-            continue;
-          }
-          if (!statementCompletes(statement)) {
-            continues = false;
-          }
-        }
+        deferStatementListTail(target.body.body, initializedAtCall);
       }
       return true;
     }
