@@ -62,6 +62,7 @@ export async function cacheModule(
   dependencyPinningCacheKey = "off",
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  dev = false,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
 
@@ -83,6 +84,7 @@ export async function cacheModule(
       dependencyPinningCacheKey,
       moduleServerOrigin,
       serverExternalPackages,
+      dev,
     ),
   );
 

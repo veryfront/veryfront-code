@@ -66,6 +66,7 @@ registerLRUCache("component-hydration-cache", componentHydrationCache);
 
 async function buildComponentHydrationCacheHash(
   source: string,
+  dev: boolean,
   moduleServerUrl?: string,
   reactVersion?: string,
   serverExternalPackages?: readonly string[],
@@ -80,11 +81,15 @@ async function buildComponentHydrationCacheHash(
   const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
     serverExternalPackages,
   );
-  const cacheIdentity = JSON.stringify(
-    serverExternalPackagesIdentity
-      ? [...legacyCacheIdentity, serverExternalPackagesIdentity]
-      : legacyCacheIdentity,
-  );
+  const packageScopedIdentity = serverExternalPackagesIdentity
+    ? [...legacyCacheIdentity, serverExternalPackagesIdentity]
+    : legacyCacheIdentity;
+  // The compile mode decides minification, tree shaking and whether an inline
+  // sourcemap is emitted, so two modes must never share one hydration entry.
+  const cacheIdentity = JSON.stringify([
+    ...packageScopedIdentity,
+    dev ? "compile-dev" : "compile-production",
+  ]);
   return (await computeHash(cacheIdentity)).slice(0, 16);
 }
 
@@ -134,6 +139,7 @@ export async function handleComponentPage(
     const fileContent = await adapter.fs.readFile(pageInfo.entity.path);
     const dependencyPinningCacheKey = options?.dependencyPinningCacheKey ??
       await getDependencyPinningCacheKey(projectDir);
+    const dev = options?.mode === "development";
 
     const clientModuleCode = options?.cachedClientModule ??
       (await bundleComponentForClient(
@@ -150,10 +156,10 @@ export async function handleComponentPage(
         options?.dependencyPinningDependencies,
         options?.dependencyPinningSource,
         options?.serverExternalPackages,
+        dev,
       ));
 
     const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
-    const dev = options?.mode === "development";
     const PageComponent = await loadComponentFromSource(
       fileContent,
       pageInfo.entity.path,
@@ -226,10 +232,17 @@ export async function bundleComponentForClient(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   serverExternalPackages?: readonly string[],
+  /**
+   * Compile the hydration bundle in development mode. Production renders must
+   * leave this false: dev output is unminified, not tree-shaken and carries an
+   * inline sourcemap that discloses the project source.
+   */
+  dev = false,
 ): Promise<string> {
   try {
     const cacheHash = await buildComponentHydrationCacheHash(
       source,
+      dev,
       moduleServerUrl,
       reactVersion,
       serverExternalPackages,
@@ -253,7 +266,7 @@ export async function bundleComponentForClient(
         const { transformToESM } = injectedDeps ?? await getBundleComponentForClientDeps();
         const transformed = await transformToESM(source, filePath, projectDir, adapter, {
           projectId: projectId ?? projectDir,
-          dev: true,
+          dev,
           jsxImportSource: "react",
           moduleServerUrl,
           moduleServerOrigin,

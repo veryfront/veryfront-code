@@ -112,6 +112,12 @@ function buildMdxEsmCacheSchemaSample() {
       "_vf_modules/pages/index.js",
       "deadbeef",
     ),
+    // Development artifacts carry a compile-mode variant segment; production
+    // artifacts stay on the unsegmented key. Naming the split here rolls the
+    // namespace, so entries written before the compile mode was part of the
+    // cache identity (all of them development-compiled) cannot be served to a
+    // production render.
+    devCompileVariant: "on:compile-dev",
     pathKey: formatMdxEsmPathCacheKey(
       CACHE_NAMESPACE_SENTINEL,
       REACT_DEFAULT_VERSION,
