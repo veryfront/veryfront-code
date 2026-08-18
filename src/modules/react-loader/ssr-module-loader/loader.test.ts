@@ -1300,16 +1300,15 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(result, { transformed: "compiled", dependencies: "resolved" });
   });
 
-  it("preserves dependency error precedence while draining a failed transform", async () => {
-    const transformError = new Error("transform failed");
+  it("returns a dependency error without draining a stalled transform", async () => {
     const dependencyError = new Error("dependency failed");
-    let rejectTransform!: (error: Error) => void;
+    let finishTransform!: () => void;
     let resultSettled = false;
 
     const result = __ssrModuleLoaderInternals.runTransformAndDependencies(
       () =>
-        new Promise<never>((_resolve, reject) => {
-          rejectTransform = reject;
+        new Promise<void>((resolve) => {
+          finishTransform = resolve;
         }),
       () => Promise.reject(dependencyError),
     );
@@ -1323,11 +1322,15 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       "dependency failed",
     );
 
-    await Promise.resolve();
-    assertEquals(resultSettled, false);
-    rejectTransform(transformError);
-    const error = await rejected;
-    assertStrictEquals(error, dependencyError);
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(resultSettled, true);
+      const error = await rejected;
+      assertStrictEquals(error, dependencyError);
+    } finally {
+      finishTransform();
+    }
   });
 
   it("bounds a caller wait without evicting the shared transform", async () => {

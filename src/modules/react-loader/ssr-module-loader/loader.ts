@@ -209,8 +209,9 @@ function startSettledOperation<T>(operation: () => Promise<T>): Promise<SettledO
 /**
  * Start compilation before walking dependencies, then join both results.
  *
- * The compiler rejection is handled immediately so dependency resolution can
- * retain its historical error precedence without risking an unhandled promise.
+ * The compiler settlement is handled immediately, so dependency resolution
+ * can retain its historical error precedence without draining a compiler that
+ * cannot be aborted.
  */
 async function runTransformAndDependencies<T, D>(
   transform: () => Promise<T>,
@@ -222,9 +223,6 @@ async function runTransformAndDependencies<T, D>(
   try {
     resolvedDependencies = await dependencies();
   } catch (dependencyError) {
-    // Drain the compiler before rejecting the leader. This releases its
-    // capacity slot before another request can start a replacement transform.
-    await transformResult;
     throw dependencyError;
   }
 
