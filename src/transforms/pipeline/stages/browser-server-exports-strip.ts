@@ -2676,7 +2676,7 @@ function invokedFunctionParameterBindings(
 
   const collect = (
     callee: unknown,
-    runGenerator: boolean,
+    runGenerator: false | "once" | "all",
     seenBindings = new Set<LexicalBindingIdentity>(),
   ): void => {
     if (!isNode(callee)) return;
@@ -2756,7 +2756,7 @@ function invokedFunctionParameterBindings(
     ) return;
     // Invoking a generator only creates its iterator. Its body remains deferred
     // until `next()` advances that exact call result.
-    if (target.generator === true && !runGenerator) return;
+    if (target.generator === true && runGenerator === false) return;
     for (const param of Array.isArray(target.params) ? target.params : []) {
       if (!isNode(param)) continue;
       for (const identifier of patternBindingIdentifiers(param)) {
@@ -2764,8 +2764,8 @@ function invokedFunctionParameterBindings(
         if (binding) invoked.add(binding);
       }
     }
-    if (target.generator === true && runGenerator && isNode(target.body)) {
-      walk(target.body, (node) => {
+    if (target.generator === true && runGenerator !== false && isNode(target.body)) {
+      const collectDelegatedYield = (node: Node): boolean => {
         if (
           node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
           node.type === "ArrowFunctionExpression"
@@ -2774,14 +2774,36 @@ function invokedFunctionParameterBindings(
           node.type === "YieldExpression" && node.delegate === true &&
           isNode(node.argument)
         ) {
-          collectAdvanced(node.argument);
+          collectAdvanced(
+            node.argument,
+            new Set<LexicalBindingIdentity>(),
+            runGenerator,
+          );
         }
         return true;
-      });
+      };
+      if (runGenerator === "all" || target.body.type !== "BlockStatement") {
+        walk(target.body, collectDelegatedYield);
+      } else {
+        // One `next()` stops at the first direct, non-delegated yield. Do not
+        // advance a later delegated iterator that this call cannot reach.
+        for (const statement of Array.isArray(target.body.body) ? target.body.body : []) {
+          if (!isNode(statement)) continue;
+          const expression = statement.type === "ExpressionStatement" &&
+              isNode(statement.expression)
+            ? unwrapTransparent(statement.expression)
+            : undefined;
+          if (expression?.type === "YieldExpression" && expression.delegate !== true) break;
+          walk(statement, collectDelegatedYield);
+        }
+      }
     }
   };
 
-  const collectInvocation = (value: Node, runGenerator: boolean): void => {
+  const collectInvocation = (
+    value: Node,
+    runGenerator: false | "once" | "all",
+  ): void => {
     const call = unwrapTransparent(value);
     const invocation = normalizeCall(call, globals);
     if (invocation) collect(invocation.callee, runGenerator);
@@ -2790,6 +2812,7 @@ function invokedFunctionParameterBindings(
   function collectAdvanced(
     value: Node,
     seenBindings = new Set<LexicalBindingIdentity>(),
+    runGenerator: "once" | "all" = "all",
   ): void {
     const advanced = unwrapTransparent(value);
     if (advanced.type === "Identifier") {
@@ -2797,7 +2820,7 @@ function invokedFunctionParameterBindings(
       if (!binding || seenBindings.has(binding)) return;
       seenBindings.add(binding);
       for (const source of valueFlows.get(binding) ?? []) {
-        collectAdvanced(source, seenBindings);
+        collectAdvanced(source, seenBindings, runGenerator);
       }
       return;
     }
@@ -2806,24 +2829,28 @@ function invokedFunctionParameterBindings(
         ? advanced.expressions.filter(isNode)
         : [];
       const last = expressions.at(-1);
-      if (last) collectAdvanced(last, seenBindings);
+      if (last) collectAdvanced(last, seenBindings, runGenerator);
       return;
     }
     if (advanced.type === "ConditionalExpression") {
-      if (isNode(advanced.consequent)) collectAdvanced(advanced.consequent, seenBindings);
-      if (isNode(advanced.alternate)) collectAdvanced(advanced.alternate, seenBindings);
+      if (isNode(advanced.consequent)) {
+        collectAdvanced(advanced.consequent, seenBindings, runGenerator);
+      }
+      if (isNode(advanced.alternate)) {
+        collectAdvanced(advanced.alternate, seenBindings, runGenerator);
+      }
       return;
     }
     if (advanced.type === "LogicalExpression") {
-      if (isNode(advanced.left)) collectAdvanced(advanced.left, seenBindings);
-      if (isNode(advanced.right)) collectAdvanced(advanced.right, seenBindings);
+      if (isNode(advanced.left)) collectAdvanced(advanced.left, seenBindings, runGenerator);
+      if (isNode(advanced.right)) collectAdvanced(advanced.right, seenBindings, runGenerator);
       return;
     }
     if (advanced.type === "AssignmentExpression" && isNode(advanced.right)) {
-      collectAdvanced(advanced.right, seenBindings);
+      collectAdvanced(advanced.right, seenBindings, runGenerator);
       return;
     }
-    collectInvocation(advanced, true);
+    collectInvocation(advanced, runGenerator);
   }
 
   for (const statement of body) {
@@ -2844,7 +2871,7 @@ function invokedFunctionParameterBindings(
           (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
           memberKey(callee) === "next" && isNode(callee.object)
         ) {
-          collectAdvanced(callee.object);
+          collectAdvanced(callee.object, new Set<LexicalBindingIdentity>(), "once");
         }
       }
       if (node.type === "NewExpression") {
@@ -2986,7 +3013,10 @@ function hasReflectionRoute(
     }
     if (value.type === "MemberExpression" || value.type === "OptionalMemberExpression") {
       const key = memberKey(value);
-      return key !== null && REFLECTION_KEYS.has(key);
+      if (key !== null && REFLECTION_KEYS.has(key)) return true;
+      const object = isNode(value.object) ? value.object : undefined;
+      return (key === null || CODE_FROM_STRING_NAMES.has(key)) &&
+        isUnshadowedGlobalObject(object, globals);
     }
     if (value.type === "SequenceExpression") {
       const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
@@ -3020,6 +3050,15 @@ function hasReflectionRoute(
     }
     return false;
   };
+
+  for (const target of propertyWriteTargets(body)) {
+    const member = unwrapTransparent(target);
+    if (member.type !== "MemberExpression" && member.type !== "OptionalMemberExpression") continue;
+    const key = memberKey(member);
+    if (key !== null && !GUARDED_INTRINSIC_KEYS.has(key)) continue;
+    const base = isNode(member.object) ? member.object : undefined;
+    if (isRoute(base)) return true;
+  }
 
   let found = false;
   for (const statement of body) {
