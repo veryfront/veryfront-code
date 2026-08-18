@@ -377,6 +377,8 @@ export function loadMDXLayout(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
+  /** Render mode for the layout's own `/_vf_modules/*` imports. */
+  mode?: "development" | "production",
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -407,6 +409,7 @@ export function loadMDXLayout(
         projectDir,
         projectSlug,
         contentSourceId,
+        mode,
         reactVersion,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
@@ -446,6 +449,7 @@ export async function preloadMDXLayoutModule(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
+  mode?: "development" | "production",
 ): Promise<void> {
   await loadMDXLayout(
     bundle,
@@ -462,6 +466,7 @@ export async function preloadMDXLayoutModule(
     moduleServerOrigin,
     config,
     isLocalProject,
+    mode,
   );
 }
 
@@ -556,6 +561,7 @@ export async function applyMDXLayout(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
+  mode?: "development" | "production",
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
@@ -573,6 +579,7 @@ export async function applyMDXLayout(
     moduleServerOrigin,
     config,
     isLocalProject,
+    mode,
   );
 
   if (!LayoutFn) {
