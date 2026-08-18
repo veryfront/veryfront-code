@@ -285,6 +285,26 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "`scope`, `perUser`, and\n`tools` fields are rejected");
   });
 
+  it("documents account-free local integration credentials without weakening grants", async () => {
+    const integrations = await Deno.readTextFile("docs/guides/integrations.md");
+    const salesforce = await Deno.readTextFile(
+      "docs/guides/integrations/salesforce.md",
+    );
+    const selfHosting = await Deno.readTextFile("docs/guides/self-hosting.md");
+    const docs = [integrations, salesforce, selfHosting].join("\n");
+
+    assertStringIncludes(docs, "createLocalIntegrationToolSource");
+    assertStringIncludes(docs, "loadRemoteToolsFromSource");
+    assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID");
+    assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET");
+    assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL");
+    assertStringIncludes(integrations, "integrations.allow only narrows");
+    assertStringIncludes(integrations, "never sends local credentials to Veryfront");
+    assertStringIncludes(integrations, "authorization-code OAuth");
+    assertStringIncludes(integrations, "query-string credentials");
+    assertEquals(selfHosting.includes("have no standalone credential path"), false);
+  });
+
   it("documents fail-closed extension activation modes", async () => {
     const guide = await Deno.readTextFile(
       "docs/guides/extension-authoring.md",

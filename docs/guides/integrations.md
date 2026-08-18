@@ -13,10 +13,51 @@ inventory records credential readiness independently of all three.
 
 - A Veryfront project with a configured agent (see [Agents](./agents.md)).
 - The integration tool names the agent needs.
-- A project token or hosted runtime that can reach the Veryfront integration
-  tool endpoints.
+- For managed execution, a project token or hosted runtime that can reach the
+  Veryfront integration tool endpoints.
+- For local execution, provider credentials in the project environment.
 - Project environment credentials only for static-credential connectors or an
   explicitly selected custom OAuth app override (see [OAuth](./oauth.md)).
+
+## Run account-free local integration tools
+
+Use the catalog-backed local source when a local or self-hosted project should
+call supported REST integrations without a Veryfront account or project token:
+
+```ts
+import { agent } from "veryfront/agent";
+import { createLocalIntegrationToolSource } from "veryfront/integrations";
+import { loadRemoteToolsFromSource } from "veryfront/tool";
+
+const source = createLocalIntegrationToolSource({
+  tools: ["salesforce__find_customer"],
+});
+const integrationTools = await loadRemoteToolsFromSource(source);
+
+export default agent({
+  system: "Use Salesforce when the user asks about a customer.",
+  tools: integrationTools,
+});
+```
+
+The exact canonical IDs passed to `tools` are the source's capability grant.
+Source configuration is monotonic: integrations.allow only narrows that grant
+when the source runs inside a Veryfront project runtime. It never enables
+another tool or selects a credential. The runtime resolves each credential
+immediately before the request and never sends local credentials to Veryfront,
+the model, tool arguments, logs, or request URLs.
+
+By default, the source reads the credential environment variables declared by
+the connector catalog from the active project environment. An application can
+instead pass a `credentialProvider` that resolves those names from its own
+secret manager. The provider receives credential names only.
+
+This first local execution path supports fixed HTTPS REST endpoints with
+header API keys, Basic authentication, OAuth 2.0 client credentials, and the
+Salesforce service-account specialization. It rejects authorization-code OAuth,
+query-string credentials, GraphQL, response enrichment, multipart bodies, raw
+bodies, dynamic endpoint origins, and tools outside the exact grant. Use managed
+execution for per-user OAuth and other unsupported connector features.
 
 ## Declare agent tool access
 
