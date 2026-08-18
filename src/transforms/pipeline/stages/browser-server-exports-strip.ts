@@ -1977,6 +1977,12 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 
     const constructsInlineClass =
       (node.type === "ClassDeclaration" || node.type === "ClassExpression") && executesNow;
+    if (constructsInlineClass && isNode(node.superClass)) {
+      const superClass = unwrap(node.superClass);
+      // A derived constructor synchronously constructs an inline base class,
+      // so its constructor and instance fields execute in the same evaluation.
+      if (superClass.type === "ClassExpression") invokedFunctions.add(superClass);
+    }
     const nextInvoked = invokedChild(node);
     if (nextInvoked) invokedFunctions.add(nextInvoked);
     for (const child of children(node)) {
