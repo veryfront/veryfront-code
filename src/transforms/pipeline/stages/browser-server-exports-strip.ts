@@ -505,7 +505,12 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
     // require("./lib.js")`. Left in place it reaches the browser, where the
     // module stays in the graph and `require` is not even defined, so the page
     // dies on a ReferenceError instead of rendering.
-    if (statement.type === "TSImportEqualsDeclaration" && !isErasedTypeNode(statement)) {
+    // `export import A = require("./a.js")` is part of the module's contract,
+    // like any other exported declaration, so it is never a candidate.
+    if (
+      statement.type === "TSImportEqualsDeclaration" && statement.isExport !== true &&
+      !isErasedTypeNode(statement)
+    ) {
       const id = statement.id;
       const name = nodeName(id);
       if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });

@@ -2053,6 +2053,20 @@ export function hook() {
         assertStringIncludes(result, "import Alias = ClientNS");
       });
 
+      it("keeps an exported import-equals the hook was the only reader of", async () => {
+        // `export import` is part of the module's contract, so it is never a
+        // pruning candidate even when the stripped hook was its only reader.
+        const code = [
+          `export import srv = require("../lib/server-only.ts");`,
+          `export function getServerData() { return { props: { s: srv.load() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, `export import srv = require("../lib/server-only.ts")`);
+      });
+
       it("drops a hook-only binding that matches a qualified-name property", async () => {
         const code = [
           `import { getEnv } from "veryfront";`,
