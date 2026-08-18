@@ -1487,6 +1487,19 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "an invoked method-factory-returned function mutation",
+          [
+            `const factory = {`,
+            `  make() {`,
+            `    return function (intrinsic) {`,
+            `      intrinsic.defineProperty = recordAndReturn;`,
+            `    };`,
+            `  },`,
+            `};`,
+            `factory.make()(Object);`,
+          ].join("\n"),
+        ],
+        [
           "an intrinsic mutation invoked through call",
           `Object.defineProperty.call(null, Object, "defineProperty", { value: recordAndReturn });`,
         ],
@@ -2306,6 +2319,13 @@ describe("browser-server-exports-strip", () => {
           "array-destructured global-object eval",
           [
             `const [run] = [globalThis.eval];`,
+            `run("Object.defineProperty = (target) => target");`,
+          ].join("\n"),
+        ],
+        [
+          "defaulted array-destructured global-object eval",
+          [
+            `const [run = globalThis.eval] = [];`,
             `run("Object.defineProperty = (target) => target");`,
           ].join("\n"),
         ],

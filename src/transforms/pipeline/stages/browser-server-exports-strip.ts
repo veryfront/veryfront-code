@@ -2715,6 +2715,49 @@ function invokedFunctionParameterBindings(
       return concreteValues(value.argument, seenBindings);
     }
     if (
+      (value.type === "MemberExpression" || value.type === "OptionalMemberExpression") &&
+      isNode(value.object)
+    ) {
+      const key = memberKey(value);
+      if (key === null) return [];
+      const members: Node[] = [];
+      for (const owner of concreteValues(value.object, new Set(seenBindings))) {
+        if (owner.type === "ObjectExpression") {
+          for (const property of Array.isArray(owner.properties) ? owner.properties : []) {
+            if (!isNode(property) || property.type === "SpreadElement") continue;
+            const propertyKey = isNode(property.key) ? property.key : undefined;
+            const name = property.computed === true
+              ? stringLiteralText(propertyKey)
+              : literalText(propertyKey);
+            if (name !== key) continue;
+            if (property.type === "ObjectMethod") {
+              members.push(property);
+            } else if (property.type === "ObjectProperty" && isNode(property.value)) {
+              members.push(...concreteValues(property.value, new Set(seenBindings)));
+            }
+          }
+          continue;
+        }
+        if (owner.type !== "ClassDeclaration" && owner.type !== "ClassExpression") continue;
+        const classMembers = isNode(owner.body) && Array.isArray(owner.body.body)
+          ? owner.body.body.filter(isNode)
+          : [];
+        for (const property of classMembers) {
+          if (property.static !== true || !isNode(property.key)) continue;
+          const name = property.computed === true
+            ? stringLiteralText(property.key)
+            : literalText(property.key);
+          if (name !== key) continue;
+          if (property.type === "ClassMethod") {
+            members.push(property);
+          } else if (isNode(property.value)) {
+            members.push(...concreteValues(property.value, new Set(seenBindings)));
+          }
+        }
+      }
+      return members;
+    }
+    if (
       (value.type === "CallExpression" || value.type === "OptionalCallExpression") &&
       isNode(value.callee)
     ) {
@@ -2732,7 +2775,8 @@ function invokedFunctionParameterBindings(
       for (const callee of concreteValues(invocation.callee, new Set(seenBindings))) {
         if (
           callee.type !== "FunctionDeclaration" && callee.type !== "FunctionExpression" &&
-          callee.type !== "ArrowFunctionExpression"
+          callee.type !== "ArrowFunctionExpression" && callee.type !== "ObjectMethod" &&
+          callee.type !== "ClassMethod"
         ) continue;
         // Async factories return a promise and generator factories return an
         // iterator, neither synchronously hands the caller a callable value.
@@ -2801,6 +2845,12 @@ function invokedFunctionParameterBindings(
       collect(target.right, runGenerator, seenBindings);
       return;
     }
+    if (target.type === "MemberExpression" || target.type === "OptionalMemberExpression") {
+      for (const member of concreteValues(target, new Set(seenBindings))) {
+        collect(member, runGenerator, new Set(seenBindings));
+      }
+      return;
+    }
     if (
       (target.type === "CallExpression" || target.type === "OptionalCallExpression") &&
       isNode(target.callee)
@@ -2842,7 +2892,8 @@ function invokedFunctionParameterBindings(
     }
     if (
       target.type !== "FunctionDeclaration" && target.type !== "FunctionExpression" &&
-      target.type !== "ArrowFunctionExpression"
+      target.type !== "ArrowFunctionExpression" && target.type !== "ObjectMethod" &&
+      target.type !== "ClassMethod"
     ) return;
     // Invoking a generator only creates its iterator. Its body remains deferred
     // until `next()` advances that exact call result.
@@ -3282,6 +3333,50 @@ function hasReflectionRoute(
     return [];
   };
 
+  const cannotBeUndefined = (
+    entry: Node,
+    seen = new Set<LexicalBindingIdentity>(),
+  ): boolean => {
+    const value = unwrapTransparent(entry);
+    if (value.type === "Identifier") {
+      const binding = bindings.reference(value);
+      if (!binding || seen.has(binding)) return false;
+      const sources = flows.get(binding) ?? [];
+      if (sources.length === 0) return false;
+      const nextSeen = new Set(seen);
+      nextSeen.add(binding);
+      return sources.every((source) => cannotBeUndefined(source, new Set(nextSeen)));
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return !!last && cannotBeUndefined(last, seen);
+    }
+    if (value.type === "ConditionalExpression") {
+      return isNode(value.consequent) && isNode(value.alternate) &&
+        cannotBeUndefined(value.consequent, new Set(seen)) &&
+        cannotBeUndefined(value.alternate, new Set(seen));
+    }
+    if (value.type === "LogicalExpression") {
+      return isNode(value.left) && isNode(value.right) &&
+        cannotBeUndefined(value.left, new Set(seen)) &&
+        cannotBeUndefined(value.right, new Set(seen));
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return cannotBeUndefined(value.right, seen);
+    }
+    if (value.type === "UnaryExpression") return value.operator !== "void";
+    return value.type === "ObjectExpression" || value.type === "ArrayExpression" ||
+      value.type === "FunctionExpression" || value.type === "ArrowFunctionExpression" ||
+      value.type === "ClassExpression" || value.type === "NewExpression" ||
+      value.type === "TemplateLiteral" || value.type === "StringLiteral" ||
+      value.type === "NumericLiteral" || value.type === "BooleanLiteral" ||
+      value.type === "RegExpLiteral" || value.type === "NullLiteral" ||
+      value.type === "BigIntLiteral" || value.type === "DecimalLiteral" ||
+      value.type === "MetaProperty" ||
+      value.type === "BinaryExpression" || value.type === "UpdateExpression";
+  };
+
   for (const { pattern, value, declaration } of destructured) {
     if (pattern.type === "ObjectPattern") {
       if (!carriesGlobalObject(value)) continue;
@@ -3305,7 +3400,11 @@ function hasReflectionRoute(
     const elements = Array.isArray(pattern.elements) ? pattern.elements : [];
     for (const values of arrayValues(value)) {
       for (const [index, element] of elements.entries()) {
-        if (!isNode(element) || !isRoute(values[index])) continue;
+        if (!isNode(element)) continue;
+        const source = values[index];
+        const defaultRoute = element.type === "AssignmentPattern" && isNode(element.right) &&
+          (!source || !cannotBeUndefined(source)) && isRoute(element.right);
+        if (!isRoute(source) && !defaultRoute) continue;
         for (const identifier of patternBindingIdentifiers(element)) {
           const binding = declaration
             ? bindings.declaration(identifier)
