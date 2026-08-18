@@ -55,11 +55,11 @@ module as a function declaration or as an initializer on a `const`, `let`, or
 ```tsx
 // Supported
 export async function getServerData(ctx: DataContext) {
-  return { props: await load(ctx) };
+  return { props: { query: ctx.query.toString() } };
 }
 
 // Also supported
-export const getStaticData = async () => ({ props: await load() });
+export const getStaticData = async () => ({ props: { generated: true } });
 ```
 
 These forms have no declaration to empty and fail the build with

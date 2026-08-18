@@ -118,11 +118,11 @@ title: My Post
       "client build cannot empty. Emitting the module would send the loader, its imports, and " +
       "the values it reads to the browser, so the build stops instead.",
     steps: [
-      "Declare the hook directly in the route module as a function or an arrow initializer",
+      "Declare the hook directly as a function declaration or a const, let, or var declaration",
       "Replace a re-export such as `export { loadIt as getServerData }` with a direct declaration",
       "Replace a class or an alias export of the hook with an exported async function",
       "Declare any value the hook reads once, at module scope, not inside a loop head",
-      "Move a value the browser also needs into a module the hook imports",
+      "Keep a browser-needed value in a client-referenced module before importing it into the hook",
     ],
     tips: [
       "The error message names the export and the declaration form that blocked the removal",
