@@ -2343,6 +2343,14 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "a Reflect.apply sequence-wrapped function-literal mutation",
+          [
+            `Reflect.apply((0, function (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `}), null, [Object]);`,
+          ].join("\n"),
+        ],
+        [
           "an immediately advanced generator mutation",
           [
             `(function* (intrinsic) {`,
@@ -2367,6 +2375,27 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "a destructuring-consumed generator mutation",
+          [
+            `const [unused] = (function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `  yield 1;`,
+            `})(Object);`,
+            `void unused;`,
+          ].join("\n"),
+        ],
+        [
+          "an assignment-destructuring-consumed generator mutation",
+          [
+            `let unused;`,
+            `[unused] = (function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `  yield 1;`,
+            `})(Object);`,
+            `void unused;`,
+          ].join("\n"),
+        ],
+        [
           "an aliased intrinsic mutator",
           [
             `const mutate = Object.defineProperty;`,
@@ -2385,6 +2414,13 @@ describe("browser-server-exports-strip", () => {
           "a bound intrinsic mutator alias",
           [
             `const mutate = Object.defineProperty.bind(Object);`,
+            `mutate(Object, "defineProperty", { value: recordAndReturn });`,
+          ].join("\n"),
+        ],
+        [
+          "a destructured intrinsic mutator alias",
+          [
+            `const { defineProperty: mutate } = Object;`,
             `mutate(Object, "defineProperty", { value: recordAndReturn });`,
           ].join("\n"),
         ],

@@ -1965,6 +1965,35 @@ function intrinsicDefinePropertyAliases(
   bindings: LexicalBindingIndex,
 ): Set<LexicalBindingIdentity> {
   const flows: Array<{ target: LexicalBindingIdentity; value: Node }> = [];
+  const aliases = new Set<LexicalBindingIdentity>();
+  const collectDestructured = (
+    pattern: Node,
+    valueNode: Node,
+    declaration: boolean,
+  ): void => {
+    if (pattern.type !== "ObjectPattern") return;
+    const value = unwrapTransparent(valueNode);
+    if (
+      !isUnshadowedGlobalIdentifier(value, "Object", globals) &&
+      !isGlobalObjectSlot(value, globals)
+    ) return;
+
+    for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
+      if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.value)) {
+        continue;
+      }
+      const key = isNode(property.key) ? property.key : undefined;
+      const name = property.computed === true ? stringLiteralText(key) : literalText(key);
+      if (name !== null && name !== "defineProperty") continue;
+      for (const identifier of patternBindingIdentifiers(property.value)) {
+        const target = declaration
+          ? bindings.declaration(identifier)
+          : bindings.reference(identifier);
+        if (target) aliases.add(target);
+      }
+    }
+  };
+
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
@@ -1979,6 +2008,7 @@ function intrinsicDefinePropertyAliases(
         targetNode = isNode(node.left) ? unwrapTransparent(node.left) : undefined;
         value = isNode(node.right) ? node.right : undefined;
       }
+      if (targetNode && value) collectDestructured(targetNode, value, declaration);
       if (targetNode?.type !== "Identifier" || !value) return;
       const target = declaration
         ? bindings.declaration(targetNode)
@@ -1987,7 +2017,6 @@ function intrinsicDefinePropertyAliases(
     });
   }
 
-  const aliases = new Set<LexicalBindingIdentity>();
   const carriesIntrinsic = (node: Node): boolean => {
     const value = unwrapTransparent(node);
     if (isIntrinsicDefinePropertyCall(value, globals)) return true;
@@ -2489,6 +2518,41 @@ function invokedFunctionParameterBindings(
     ) {
       target = unwrapTransparent(target.object);
     }
+    if (target.type === "SequenceExpression") {
+      const expressions = Array.isArray(target.expressions)
+        ? target.expressions.filter(isNode)
+        : [];
+      const last = expressions.at(-1);
+      if (last) collect(last, runGenerator);
+      return;
+    }
+    if (target.type === "ConditionalExpression") {
+      if (isNode(target.consequent)) collect(target.consequent, runGenerator);
+      if (isNode(target.alternate)) collect(target.alternate, runGenerator);
+      return;
+    }
+    if (target.type === "LogicalExpression") {
+      if (target.operator !== "&&" && isNode(target.left)) collect(target.left, runGenerator);
+      if (isNode(target.right)) collect(target.right, runGenerator);
+      return;
+    }
+    if (target.type === "AssignmentExpression" && isNode(target.right)) {
+      collect(target.right, runGenerator);
+      return;
+    }
+    if (
+      (target.type === "CallExpression" || target.type === "OptionalCallExpression") &&
+      isNode(target.callee)
+    ) {
+      const binder = unwrapTransparent(target.callee);
+      if (
+        (binder.type === "MemberExpression" || binder.type === "OptionalMemberExpression") &&
+        memberKey(binder) === "bind" && isNode(binder.object)
+      ) {
+        collect(binder.object, runGenerator);
+        return;
+      }
+    }
     if (target.type !== "FunctionExpression" && target.type !== "ArrowFunctionExpression") return;
     // Invoking a generator only creates its iterator. Its body remains deferred
     // until `next()` advances that exact call result.
@@ -2536,6 +2600,19 @@ function invokedFunctionParameterBindings(
         collectInvocation(node.argument, true);
       }
       if (node.type === "ForOfStatement" && isNode(node.right)) {
+        collectInvocation(node.right, true);
+      }
+      if (
+        node.type === "VariableDeclarator" && isNode(node.id) &&
+        node.id.type === "ArrayPattern" && isNode(node.init)
+      ) {
+        collectInvocation(node.init, true);
+      }
+      if (
+        node.type === "AssignmentExpression" && isNode(node.left) &&
+        (node.left.type === "ArrayPattern" || node.left.type === "ArrayExpression") &&
+        isNode(node.right)
+      ) {
         collectInvocation(node.right, true);
       }
     });
