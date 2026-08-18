@@ -1510,6 +1510,17 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "an alias-assigned method-factory-returned function mutation",
+          [
+            `const factory = {};`,
+            `const alias = factory;`,
+            `alias.make = () => function (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `};`,
+            `factory.make()(Object);`,
+          ].join("\n"),
+        ],
+        [
           "an intrinsic mutation invoked through call",
           `Object.defineProperty.call(null, Object, "defineProperty", { value: recordAndReturn });`,
         ],

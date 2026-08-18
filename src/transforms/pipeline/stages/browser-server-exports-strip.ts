@@ -2651,11 +2651,63 @@ function invokedFunctionParameterBindings(
   // iterator advanced through a later alias resolve to the same body.
   const valueFlows = new Map<LexicalBindingIdentity, Node[]>();
   const memberValueFlows = new Map<LexicalBindingIdentity, Map<string, Node[]>>();
+  const memberOwnerAliases = new Map<LexicalBindingIdentity, Set<LexicalBindingIdentity>>();
+  const aliasSourceBindings = (entry: Node): Set<LexicalBindingIdentity> => {
+    const aliases = new Set<LexicalBindingIdentity>();
+    const collectAlias = (source: Node): void => {
+      const value = unwrapTransparent(source);
+      if (value.type === "Identifier") {
+        const binding = bindings.reference(value);
+        if (binding) aliases.add(binding);
+        return;
+      }
+      if (value.type === "SequenceExpression") {
+        const expressions = Array.isArray(value.expressions)
+          ? value.expressions.filter(isNode)
+          : [];
+        const last = expressions.at(-1);
+        if (last) collectAlias(last);
+        return;
+      }
+      if (value.type === "ConditionalExpression") {
+        if (isNode(value.consequent)) collectAlias(value.consequent);
+        if (isNode(value.alternate)) collectAlias(value.alternate);
+        return;
+      }
+      if (value.type === "LogicalExpression") {
+        if (isNode(value.left)) collectAlias(value.left);
+        if (isNode(value.right)) collectAlias(value.right);
+        return;
+      }
+      if (value.type === "AssignmentExpression" && isNode(value.right)) {
+        collectAlias(value.right);
+        return;
+      }
+      if (value.type === "AwaitExpression" && isNode(value.argument)) {
+        collectAlias(value.argument);
+      }
+    };
+    collectAlias(entry);
+    return aliases;
+  };
+  const linkMemberOwnerAliases = (
+    left: LexicalBindingIdentity,
+    right: LexicalBindingIdentity,
+  ): void => {
+    if (left === right) return;
+    const leftAliases = memberOwnerAliases.get(left) ?? new Set<LexicalBindingIdentity>();
+    const rightAliases = memberOwnerAliases.get(right) ?? new Set<LexicalBindingIdentity>();
+    leftAliases.add(right);
+    rightAliases.add(left);
+    memberOwnerAliases.set(left, leftAliases);
+    memberOwnerAliases.set(right, rightAliases);
+  };
   const addValueFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
     if (!target) return;
     const values = valueFlows.get(target) ?? [];
     values.push(value);
     valueFlows.set(target, values);
+    for (const alias of aliasSourceBindings(value)) linkMemberOwnerAliases(target, alias);
   };
   const addMemberValueFlow = (
     target: LexicalBindingIdentity | null,
@@ -2746,10 +2798,18 @@ function invokedFunctionParameterBindings(
       const ownerReference = unwrapTransparent(value.object);
       if (ownerReference.type === "Identifier") {
         const ownerBinding = bindings.reference(ownerReference);
-        for (
-          const source of ownerBinding ? memberValueFlows.get(ownerBinding)?.get(key) ?? [] : []
-        ) {
-          members.push(...concreteValues(source, new Set(seenBindings)));
+        if (ownerBinding) {
+          const pending = [ownerBinding];
+          const visited = new Set<LexicalBindingIdentity>();
+          while (pending.length > 0) {
+            const candidate = pending.pop();
+            if (!candidate || visited.has(candidate)) continue;
+            visited.add(candidate);
+            for (const source of memberValueFlows.get(candidate)?.get(key) ?? []) {
+              members.push(...concreteValues(source, new Set(seenBindings)));
+            }
+            pending.push(...memberOwnerAliases.get(candidate) ?? []);
+          }
         }
       }
 
