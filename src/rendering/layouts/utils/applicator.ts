@@ -91,7 +91,7 @@ export function applyLayoutsESM(
                   moduleServerOrigin,
                   config,
                   isLocalProject,
-                  mode,
+                  modes.compileMode,
                 ),
               spanAttrs,
             );
@@ -159,7 +159,7 @@ export function applyLayoutsESM(
             moduleServerOrigin,
             config,
             isLocalProject,
-            mode,
+            modes.compileMode,
           ),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
