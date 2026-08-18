@@ -7,7 +7,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { LayoutItem } from "#veryfront/types";
+import type { LayoutItem, MdxBundle } from "#veryfront/types";
+import type { VeryfrontConfig } from "#veryfront/config";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
+import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import { createLayoutComponentCache } from "./component-loader.ts";
 import {
@@ -136,6 +139,100 @@ describe(
         );
 
         assertEquals(React.isValidElement(result), true);
+      });
+
+      it("threads the compile mode into every MDX layout load", async () => {
+        __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+        const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+        const mutableRenderer = mdxRenderer as unknown as {
+          loadModuleESM: typeof mdxRenderer.loadModuleESM;
+        };
+        const observed: Array<Record<string, unknown>> = [];
+        mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+          observed.push({ ...(options as Record<string, unknown> | undefined) });
+          return Promise.resolve({ default: () => null });
+        };
+
+        const config = {
+          build: { serverExternalPackages: ["knex"] },
+        } as unknown as VeryfrontConfig;
+
+        const applyWithModes = (modes: RenderModes) =>
+          applyLayoutsESM(
+            React.createElement("div", null, "page") as React.ReactElement,
+            {
+              compiledCode: "export default function NamedLayout() { return null; }",
+            } as MdxBundle,
+            [{
+              kind: "mdx",
+              path: "/project/layout.mdx",
+              bundle: {
+                compiledCode: "export default function NestedLayout() { return null; }",
+              },
+            }] as LayoutItem[],
+            "/project",
+            {},
+            createLayoutComponentCache(),
+            createMockAdapter(),
+            undefined,
+            "project-id",
+            "project-slug",
+            "content-source-id",
+            modes,
+            { imports: {} },
+            "19.1.1",
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            config,
+            true,
+            undefined,
+          );
+
+        try {
+          await applyWithModes(DEVELOPMENT_MODES);
+          await applyWithModes(PREVIEW_MODES);
+          await applyWithModes(PRODUCTION_MODES);
+
+          // Both MDX layout call sites (the nested layouts and the
+          // frontmatter-named bundle) decide the compile mode of the layout's
+          // own `/_vf_modules/*` imports, so both must carry it. A hosted
+          // preview render proves the compile half of the pair travels, not
+          // the environment half.
+          assertEquals(observed.length, 6);
+          assertEquals(observed.map((options) => options.mode), [
+            "development",
+            "development",
+            "production",
+            "production",
+            "production",
+            "production",
+          ]);
+          // The compile mode rides a positional chain long enough that a value
+          // in the wrong slot still type-checks, so pin its neighbours here.
+          assertEquals(
+            observed.map((options) => options.isLocalProject),
+            [true, true, true, true, true, true],
+          );
+          assertEquals(
+            observed.map((options) => options.serverExternalPackages),
+            [["knex"], ["knex"], ["knex"], ["knex"], ["knex"], ["knex"]],
+          );
+          assertEquals(
+            observed.map((options) => options.projectSlug),
+            [
+              "project-slug",
+              "project-slug",
+              "project-slug",
+              "project-slug",
+              "project-slug",
+              "project-slug",
+            ],
+          );
+        } finally {
+          mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        }
       });
     });
 
