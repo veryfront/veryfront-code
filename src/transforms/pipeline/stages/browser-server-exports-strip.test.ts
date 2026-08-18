@@ -1453,6 +1453,25 @@ export const c = generic<TArg>;`,
           ["raw", "maybe", "generic"],
         );
       });
+
+      it("treats runtime TypeScript declaration names as bindings, not reads", async () => {
+        // The flat walker deliberately over-approximates, so it still counts
+        // these fixed names; over-counting there only ever keeps a binding. The
+        // scope-aware walker must not, because a name it reports grows the
+        // hook's dependency closure and can delete an unrelated declaration.
+        const { referenced, free } = await referencesAmong(
+          `import { Level, Low, Runtime, Alias } from "./server.ts";
+export function hook() {
+  enum Level { Low = 1 }
+  namespace Runtime { export const v = 1; }
+  return Level.Low;
+}`,
+          ["Level", "Low", "Runtime", "Alias"],
+        );
+
+        assertEquals(free, []);
+        assertEquals(referenced, ["Level", "Low", "Runtime"]);
+      });
     });
 
     describe("stripping authored TypeScript source", () => {
@@ -1524,6 +1543,23 @@ export const c = generic<TArg>;`,
 
         assertStringIncludes(result, "shared.ts");
         assertStringIncludes(result, "DEFAULT_DEP");
+      });
+
+      it("keeps a declaration whose name matches a hook-local enum member", async () => {
+        const code = [
+          `import { boot } from "../lib/analytics.ts";`,
+          `const Low = boot();`,
+          `export function getServerData() {`,
+          `  enum Level { Low = 1 }`,
+          `  return { props: { l: Level.Low } };`,
+          `}`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, "const Low = boot()");
+        assertStringIncludes(result, "analytics.ts");
       });
     });
   });

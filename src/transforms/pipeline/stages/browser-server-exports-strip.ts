@@ -735,6 +735,37 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       return;
     }
 
+    // A runtime TypeScript declaration binds its own name and, for an enum,
+    // names its members. Only the initialisers read anything, so descending
+    // blindly would report `enum Level { Low }` as a read of an unrelated
+    // module-scope `Low` and let the pass delete it.
+    if (node.type === "TSEnumDeclaration") {
+      bindPatternNames(scopes[0] ?? rootScope, node.id);
+      const container = isNode(node.body) ? node.body : node;
+      for (const member of Array.isArray(container.members) ? container.members : []) {
+        if (isNode(member) && isNode(member.initializer)) visit(member.initializer, scopes);
+      }
+      return;
+    }
+
+    if (node.type === "TSModuleDeclaration") {
+      bindPatternNames(scopes[0] ?? rootScope, node.id);
+      if (isNode(node.body)) visit(node.body, scopes);
+      return;
+    }
+
+    if (node.type === "TSImportEqualsDeclaration") {
+      bindPatternNames(scopes[0] ?? rootScope, node.id);
+      if (isNode(node.moduleReference)) visit(node.moduleReference, scopes);
+      return;
+    }
+
+    // `import Alias = NS.Sub`: only `NS` is a read, `Sub` is a fixed name.
+    if (node.type === "TSQualifiedName") {
+      if (isNode(node.left)) visit(node.left, scopes);
+      return;
+    }
+
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
       if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
       visitDecorators(node, scopes);
