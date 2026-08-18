@@ -2653,21 +2653,29 @@ function invokedFunctionParameterBindings(
   interface OwnerValueFlow {
     value: Node;
     order: number;
-    uncertain: boolean;
+    controlUncertain: boolean;
+    scope: Node | null;
   }
   interface MemberValueFlow {
     owner: Node;
     value: Node;
     order: number;
-    uncertain: boolean;
+    controlUncertain: boolean;
+    scope: Node | null;
   }
   const ownerValueFlows = new Map<LexicalBindingIdentity, OwnerValueFlow[]>();
   const memberValueFlows = new Map<string, MemberValueFlow[]>();
   const nodeOrders = new Map<Node, number>();
-  const uncertainNodes = new Set<Node>();
+  const controlUncertainNodes = new Set<Node>();
+  const ownerExecutionScopes = new Map<Node, Node | null>();
   const addValueFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
     if (!target) return;
-    const values = valueFlows.get(target) ?? [];
+    // Function declarations initialize their binding at scope entry, where
+    // only the final duplicate declaration is effective. Assignments remain
+    // separate possible values because this pass does not model call order.
+    const values = value.type === "FunctionDeclaration"
+      ? (valueFlows.get(target) ?? []).filter((entry) => entry.type !== "FunctionDeclaration")
+      : valueFlows.get(target) ?? [];
     values.push(value);
     valueFlows.set(target, values);
   };
@@ -2675,11 +2683,12 @@ function invokedFunctionParameterBindings(
     target: LexicalBindingIdentity | null,
     value: Node,
     order: number,
-    uncertain: boolean,
+    controlUncertain: boolean,
+    scope: Node | null,
   ): void => {
     if (!target) return;
     const values = ownerValueFlows.get(target) ?? [];
-    values.push({ value, order, uncertain });
+    values.push({ value, order, controlUncertain, scope });
     ownerValueFlows.set(target, values);
   };
 
@@ -2706,13 +2715,15 @@ function invokedFunctionParameterBindings(
     });
   }
 
-  const uncertainFlowParentTypes = new Set([
+  const ownerExecutionScopeTypes = new Set([
     "FunctionDeclaration",
     "FunctionExpression",
     "ArrowFunctionExpression",
     "ObjectMethod",
     "ClassMethod",
     "ClassPrivateMethod",
+  ]);
+  const controlUncertainFlowParentTypes = new Set([
     "ClassDeclaration",
     "ClassExpression",
     "ConditionalExpression",
@@ -2733,7 +2744,8 @@ function invokedFunctionParameterBindings(
     source: Node,
     declaration: boolean,
     order: number,
-    uncertain: boolean,
+    controlUncertain: boolean,
+    scope: Node | null,
   ): void => {
     const target = unwrapTransparent(pattern);
     const value = unwrapTransparent(source);
@@ -2742,43 +2754,50 @@ function invokedFunctionParameterBindings(
         declaration ? bindings.declaration(target) : bindings.reference(target),
         value,
         order,
-        uncertain,
+        controlUncertain,
+        scope,
       );
       return;
     }
     if (target.type === "AssignmentPattern" && isNode(target.left)) {
-      addPatternOwnerFlows(target.left, value, declaration, order, uncertain);
+      addPatternOwnerFlows(target.left, value, declaration, order, controlUncertain, scope);
       if (isNode(target.right)) {
-        addPatternOwnerFlows(target.left, target.right, declaration, order, true);
+        addPatternOwnerFlows(target.left, target.right, declaration, order, true, scope);
       }
       return;
     }
     if (value.type === "SequenceExpression") {
       const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
       const last = expressions.at(-1);
-      if (last) addPatternOwnerFlows(target, last, declaration, order, uncertain);
+      if (last) {
+        addPatternOwnerFlows(target, last, declaration, order, controlUncertain, scope);
+      }
       return;
     }
     if (value.type === "ConditionalExpression") {
       if (isNode(value.consequent)) {
-        addPatternOwnerFlows(target, value.consequent, declaration, order, true);
+        addPatternOwnerFlows(target, value.consequent, declaration, order, true, scope);
       }
       if (isNode(value.alternate)) {
-        addPatternOwnerFlows(target, value.alternate, declaration, order, true);
+        addPatternOwnerFlows(target, value.alternate, declaration, order, true, scope);
       }
       return;
     }
     if (value.type === "LogicalExpression") {
-      if (isNode(value.left)) addPatternOwnerFlows(target, value.left, declaration, order, true);
-      if (isNode(value.right)) addPatternOwnerFlows(target, value.right, declaration, order, true);
+      if (isNode(value.left)) {
+        addPatternOwnerFlows(target, value.left, declaration, order, true, scope);
+      }
+      if (isNode(value.right)) {
+        addPatternOwnerFlows(target, value.right, declaration, order, true, scope);
+      }
       return;
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
-      addPatternOwnerFlows(target, value.right, declaration, order, uncertain);
+      addPatternOwnerFlows(target, value.right, declaration, order, controlUncertain, scope);
       return;
     }
     if (value.type === "AwaitExpression" && isNode(value.argument)) {
-      addPatternOwnerFlows(target, value.argument, declaration, order, uncertain);
+      addPatternOwnerFlows(target, value.argument, declaration, order, controlUncertain, scope);
       return;
     }
     if (
@@ -2790,16 +2809,28 @@ function invokedFunctionParameterBindings(
     for (const [index, element] of targets.entries()) {
       const elementValue = sources[index];
       if (isNode(element) && isNode(elementValue)) {
-        addPatternOwnerFlows(element, elementValue, declaration, order, uncertain);
+        addPatternOwnerFlows(
+          element,
+          elementValue,
+          declaration,
+          order,
+          controlUncertain,
+          scope,
+        );
       }
     }
   };
 
   let visitOrder = 0;
-  const collectOwnerFlows = (node: Node, uncertain: boolean): void => {
+  const collectOwnerFlows = (
+    node: Node,
+    controlUncertain: boolean,
+    scope: Node | null,
+  ): void => {
     const order = visitOrder++;
     nodeOrders.set(node, order);
-    if (uncertain) uncertainNodes.add(node);
+    ownerExecutionScopes.set(node, scope);
+    if (controlUncertain) controlUncertainNodes.add(node);
 
     if (
       (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
@@ -2809,20 +2840,38 @@ function invokedFunctionParameterBindings(
       // property writes before the declaration refer to the hoisted function.
       // Classes retain their lexical occurrence because they have a TDZ.
       const flowOrder = node.type === "FunctionDeclaration" ? Number.NEGATIVE_INFINITY : order;
-      addOwnerValueFlow(bindings.declaration(node.id), node, flowOrder, uncertain);
+      addOwnerValueFlow(
+        bindings.declaration(node.id),
+        node,
+        flowOrder,
+        controlUncertain,
+        scope,
+      );
     } else if (node.type === "VariableDeclarator" && isNode(node.id) && isNode(node.init)) {
       if (node.id.type === "Identifier") {
-        addOwnerValueFlow(bindings.declaration(node.id), node.init, order, uncertain);
+        addOwnerValueFlow(
+          bindings.declaration(node.id),
+          node.init,
+          order,
+          controlUncertain,
+          scope,
+        );
       } else if (node.id.type === "ArrayPattern") {
-        addPatternOwnerFlows(node.id, node.init, true, order, uncertain);
+        addPatternOwnerFlows(node.id, node.init, true, order, controlUncertain, scope);
       }
     } else if (
       node.type === "AssignmentExpression" && isNode(node.left) && isNode(node.right)
     ) {
       if (node.left.type === "Identifier") {
-        addOwnerValueFlow(bindings.reference(node.left), node.right, order, uncertain);
+        addOwnerValueFlow(
+          bindings.reference(node.left),
+          node.right,
+          order,
+          controlUncertain,
+          scope,
+        );
       } else if (node.left.type === "ArrayPattern" || node.left.type === "ArrayExpression") {
-        addPatternOwnerFlows(node.left, node.right, false, order, uncertain);
+        addPatternOwnerFlows(node.left, node.right, false, order, controlUncertain, scope);
       } else if (
         (node.left.type === "MemberExpression" ||
           node.left.type === "OptionalMemberExpression") && isNode(node.left.object)
@@ -2834,18 +2883,23 @@ function invokedFunctionParameterBindings(
             owner: node.left.object,
             value: node.right,
             order,
-            uncertain,
+            controlUncertain,
+            scope,
           });
           memberValueFlows.set(key, flows);
         }
       }
     }
 
-    const childUncertain = uncertain || uncertainFlowParentTypes.has(node.type);
-    for (const child of children(node)) collectOwnerFlows(child, childUncertain);
+    const childControlUncertain = controlUncertain ||
+      controlUncertainFlowParentTypes.has(node.type);
+    const childScope = ownerExecutionScopeTypes.has(node.type) ? node : scope;
+    for (const child of children(node)) {
+      collectOwnerFlows(child, childControlUncertain, childScope);
+    }
   };
   for (const statement of body) {
-    if (statement.type !== "ImportDeclaration") collectOwnerFlows(statement, false);
+    if (statement.type !== "ImportDeclaration") collectOwnerFlows(statement, false, null);
   }
 
   type OwnerIdentity = Node | LexicalBindingIdentity;
@@ -2853,6 +2907,7 @@ function invokedFunctionParameterBindings(
     binding: LexicalBindingIdentity,
     atOrder: number,
     allPossible: boolean,
+    scope: Node | null,
   ): OwnerValueFlow[] => {
     const applicable = (ownerValueFlows.get(binding) ?? []).filter((flow) =>
       allPossible || flow.order <= atOrder
@@ -2862,25 +2917,29 @@ function invokedFunctionParameterBindings(
     // writes after it remain possible until another certain write occurs.
     let lastCertain = -1;
     for (let index = applicable.length - 1; index >= 0; index--) {
-      if (!applicable[index]?.uncertain) {
+      const flow = applicable[index];
+      if (flow && !flow.controlUncertain && flow.scope === scope) {
         lastCertain = index;
         break;
       }
     }
     if (lastCertain < 0) return applicable;
-    return applicable.slice(lastCertain).filter((flow, index) => index === 0 || flow.uncertain);
+    return applicable.slice(lastCertain).filter((flow, index) =>
+      index === 0 || flow.controlUncertain || flow.scope !== scope
+    );
   };
   const ownerIdentities = (
     entry: Node,
     atOrder: number,
     allPossible: boolean,
+    scope: Node | null,
     seenBindings = new Set<LexicalBindingIdentity>(),
   ): OwnerIdentity[] => {
     const value = unwrapTransparent(entry);
     if (value.type === "Identifier") {
       const binding = bindings.reference(value);
       if (!binding || seenBindings.has(binding)) return binding ? [binding] : [value];
-      const flows = activeOwnerFlows(binding, atOrder, allPossible);
+      const flows = activeOwnerFlows(binding, atOrder, allPossible, scope);
       if (flows.length === 0) return [binding];
       const nextSeen = new Set(seenBindings);
       nextSeen.add(binding);
@@ -2888,7 +2947,8 @@ function invokedFunctionParameterBindings(
         ownerIdentities(
           flow.value,
           flow.order,
-          allPossible || flow.uncertain,
+          allPossible || flow.controlUncertain || flow.scope !== scope,
+          flow.scope,
           new Set(nextSeen),
         )
       );
@@ -2896,23 +2956,23 @@ function invokedFunctionParameterBindings(
     if (value.type === "SequenceExpression") {
       const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
       const last = expressions.at(-1);
-      return last ? ownerIdentities(last, atOrder, allPossible, seenBindings) : [];
+      return last ? ownerIdentities(last, atOrder, allPossible, scope, seenBindings) : [];
     }
     if (value.type === "ConditionalExpression") {
       return [value.consequent, value.alternate].filter(isNode).flatMap((branch) =>
-        ownerIdentities(branch, atOrder, true, new Set(seenBindings))
+        ownerIdentities(branch, atOrder, true, scope, new Set(seenBindings))
       );
     }
     if (value.type === "LogicalExpression") {
       return [value.left, value.right].filter(isNode).flatMap((branch) =>
-        ownerIdentities(branch, atOrder, true, new Set(seenBindings))
+        ownerIdentities(branch, atOrder, true, scope, new Set(seenBindings))
       );
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
-      return ownerIdentities(value.right, atOrder, allPossible, seenBindings);
+      return ownerIdentities(value.right, atOrder, allPossible, scope, seenBindings);
     }
     if (value.type === "AwaitExpression" && isNode(value.argument)) {
-      return ownerIdentities(value.argument, atOrder, allPossible, seenBindings);
+      return ownerIdentities(value.argument, atOrder, allPossible, scope, seenBindings);
     }
     return [value];
   };
@@ -2960,14 +3020,21 @@ function invokedFunctionParameterBindings(
       if (key === null) return [];
       const members: Node[] = [];
       const readOrder = nodeOrders.get(value) ?? Number.POSITIVE_INFINITY;
+      const readScope = ownerExecutionScopes.get(value) ?? null;
       const readOwners = new Set(
-        ownerIdentities(value.object, readOrder, uncertainNodes.has(value)),
+        ownerIdentities(
+          value.object,
+          readOrder,
+          controlUncertainNodes.has(value),
+          readScope,
+        ),
       );
       for (const flow of memberValueFlows.get(key) ?? []) {
         const writeOwners = ownerIdentities(
           flow.owner,
           flow.order,
-          flow.uncertain,
+          flow.controlUncertain,
+          flow.scope,
         );
         if (writeOwners.some((owner) => readOwners.has(owner))) {
           members.push(...concreteValues(flow.value, new Set(seenBindings)));
