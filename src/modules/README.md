@@ -126,6 +126,9 @@ export async function loadPage(
     adapter,
     {
       projectId: "project-uuid",
+      // Required. Pass the render mode of the current request. `true` selects
+      // development semantics, so a production render must pass `false`.
+      dev: false,
       contentSourceId: "preview-main",
       reactVersion: "19.1.1",
       ssr: true,
