@@ -53,5 +53,28 @@ describe("errors/catalog/build-errors", () => {
       const solution = BUILD_ERROR_CATALOG["mdx-compile-error"]!;
       assertEquals(typeof solution.example, "string");
     });
+
+    it("documents server export stripping remediation", () => {
+      const solution = BUILD_ERROR_CATALOG["server-export-strip-failed"]!;
+      assertEquals(
+        solution.title,
+        "Server-only export cannot be removed from the client build",
+      );
+      assertEquals(solution.message.includes("getServerData"), true);
+      assertEquals(
+        solution.steps?.includes(
+          "Declare the hook directly as a function declaration or a const, let, or var declaration",
+        ),
+        true,
+      );
+      assertEquals(
+        solution.steps?.includes(
+          "Keep a browser-needed value in a client-referenced module before importing it into the hook",
+        ),
+        true,
+      );
+      assertEquals(solution.example?.includes("export { loadIt as getServerData };"), true);
+      assertEquals(solution.example?.includes("export async function getServerData(ctx)"), true);
+    });
   });
 });
