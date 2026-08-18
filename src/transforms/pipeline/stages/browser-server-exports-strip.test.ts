@@ -1254,6 +1254,26 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result.code, "server-only-lib");
     });
 
+    it("keeps a jsx pragma that sits above a removed import", async () => {
+      // Babel attaches the file's opening comments to its first statement, so
+      // removing that import would take the pragma with it and silently switch
+      // the JSX factory back to the configured default.
+      const source = [
+        `/** @jsxImportSource preact */`,
+        `import { hashOf } from "./lib/server-only-lib.ts";`,
+        `export async function getServerData() { return { props: { h: hashOf(1) } }; }`,
+        `export default function Page() { return <div />; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-jsx-pragma",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
+      assertStringIncludes(result.code, "preact/jsx-runtime");
+    });
+
     it("does not run for the ssr target", () => {
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "ssr")), false);
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "browser")), true);

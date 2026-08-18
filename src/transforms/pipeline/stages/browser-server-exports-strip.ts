@@ -1275,6 +1275,38 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
   });
 }
 
+/**
+ * Move the leading comments of removed statements onto the next surviving one.
+ *
+ * Babel attaches a file's opening comments to its first statement, so removing
+ * that statement takes them with it. Before the reorder this pass ran on
+ * compiled output, where esbuild had already consumed the pragmas and hoisted
+ * what it kept. On authored source a `@jsxImportSource` pragma above a
+ * hook-only import would silently switch the JSX factory, and legal banners and
+ * lint suppressions would disappear the same way.
+ */
+function retainLeadingComments(before: Node[], after: Node[]): Node[] {
+  const kept = new Set<Node>(after);
+  let orphaned: unknown[] = [];
+
+  for (const statement of before) {
+    if (!kept.has(statement)) {
+      const comments = statement.leadingComments;
+      if (Array.isArray(comments)) orphaned = [...orphaned, ...comments];
+      continue;
+    }
+    if (orphaned.length === 0) continue;
+    const existing = Array.isArray(statement.leadingComments) ? statement.leadingComments : [];
+    statement.leadingComments = [
+      ...orphaned,
+      ...existing.filter((comment) => !orphaned.includes(comment)),
+    ];
+    orphaned = [];
+  }
+
+  return after;
+}
+
 function setBody(ast: ASTNode, body: Node[]): void {
   const program = (ast as { program?: unknown }).program;
   const target: Node = isNode(program) ? program : ast;
@@ -1352,8 +1384,8 @@ export async function stripServerOnlyExports(
   // Drop the module-scope state the emptied hooks were the last user of, then
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
-  const pruned = dropUnusedModuleScopeBindings(body, hookClosure);
-  setBody(ast, dropUnusedImportBindings(pruned, hookClosure));
+  const pruned = retainLeadingComments(body, dropUnusedModuleScopeBindings(body, hookClosure));
+  setBody(ast, retainLeadingComments(pruned, dropUnusedImportBindings(pruned, hookClosure)));
 
   const generated = await parser.generate(ast);
   return dropSourceMapSuffix(generated.code);
