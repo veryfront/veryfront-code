@@ -3343,6 +3343,22 @@ function invokedFunctionParameterBindings(
     return returned;
   }
 
+  const resolvedMemberKeyMatch = (
+    property: Node,
+    key: string,
+    seenBindings: Set<LexicalBindingIdentity>,
+    seenMemberFlows: Set<MemberValueFlow | Node>,
+  ): "none" | "possible" | "certain" => {
+    const resolution = resolveStringValues(
+      property,
+      new Set(seenBindings),
+      new Set(seenMemberFlows),
+    );
+    if (!resolution.complete) return "possible";
+    if (!resolution.values.includes(key)) return "none";
+    return resolution.values.every((name) => name === key) ? "certain" : "possible";
+  };
+
   const concreteValues = (
     entry: Node,
     seenBindings = new Set<LexicalBindingIdentity>(),
@@ -3418,7 +3434,10 @@ function invokedFunctionParameterBindings(
               (!readAllPossible && flow.order > readOrder &&
                 !flow.controlUncertain && flow.scope === readScope)
             ) continue;
-            const resolveOwnerIdentities = (owners: OwnerIdentity[]): OwnerIdentity[] =>
+            const resolveOwnerIdentities = (
+              owners: OwnerIdentity[],
+              traversal = seenMemberFlows,
+            ): OwnerIdentity[] =>
               owners.flatMap((owner): OwnerIdentity[] => {
                 if (!isNode(owner)) return [owner];
                 const candidate = unwrapTransparent(owner);
@@ -3429,7 +3448,7 @@ function invokedFunctionParameterBindings(
                 const resolved = concreteValues(
                   candidate,
                   new Set(seenBindings),
-                  new Set(seenMemberFlows),
+                  new Set(traversal),
                 );
                 return resolved.length > 0 ? resolved : [owner];
               });
@@ -3439,12 +3458,17 @@ function invokedFunctionParameterBindings(
               readAllPossible,
               readScope,
             )));
-            const flowOwners = new Set(resolveOwnerIdentities(ownerIdentities(
-              flow.owner,
-              flow.order,
-              flow.controlUncertain,
-              flow.scope,
-            )));
+            const flowOwners = new Set(
+              resolveOwnerIdentities(
+                ownerIdentities(
+                  flow.owner,
+                  flow.order,
+                  flow.controlUncertain,
+                  flow.scope,
+                ),
+                nextSeenMemberFlows,
+              ),
+            );
             if (![...readOwners].some((owner) => flowOwners.has(owner))) continue;
             members.push(...concreteValues(
               flow.value,
@@ -3570,7 +3594,10 @@ function invokedFunctionParameterBindings(
       const readOrder = nodeOrders.get(value) ?? Number.POSITIVE_INFINITY;
       const readScope = ownerExecutionScopes.get(value) ?? null;
       const readAllPossible = repeatedControlNodes.has(value);
-      const resolveOwnerIdentities = (owners: OwnerIdentity[]): OwnerIdentity[] =>
+      const resolveOwnerIdentities = (
+        owners: OwnerIdentity[],
+        traversal = seenMemberFlows,
+      ): OwnerIdentity[] =>
         owners.flatMap((owner): OwnerIdentity[] => {
           if (!isNode(owner)) return [owner];
           const candidate = unwrapTransparent(owner);
@@ -3581,7 +3608,7 @@ function invokedFunctionParameterBindings(
           const resolved = concreteValues(
             candidate,
             new Set(seenBindings),
-            new Set(seenMemberFlows),
+            new Set(traversal),
           );
           // Keep an unresolved syntax identity so an analysis gap cannot make
           // distinct writes look like certain writes to the same owner.
@@ -3599,36 +3626,46 @@ function invokedFunctionParameterBindings(
       );
 
       const resolvedMemberFlows = [
-        ...(memberValueFlows.get(key) ?? []),
-        ...computedMemberValueFlows.filter((flow) => {
-          if (seenMemberFlows.has(flow)) return false;
+        ...(memberValueFlows.get(key) ?? []).map((flow) => ({
+          flow,
+          keyUncertain: false,
+        })),
+        ...computedMemberValueFlows.flatMap((flow) => {
+          if (seenMemberFlows.has(flow)) return [];
           const nextSeenMemberFlows = new Set(seenMemberFlows);
           nextSeenMemberFlows.add(flow);
-          const resolution = resolveStringValues(
+          const match = resolvedMemberKeyMatch(
             flow.key,
+            key,
             new Set(seenBindings),
             nextSeenMemberFlows,
           );
-          return !resolution.complete || resolution.values.includes(key);
+          return match === "none" ? [] : [{ flow, keyUncertain: match !== "certain" }];
         }),
       ]
-        .filter((flow) =>
+        .filter(({ flow }) =>
           readAllPossible || flow.order <= readOrder || flow.controlUncertain ||
           flow.scope !== readScope
         )
-        .map((flow) => ({
-          flow,
-          owners: new Set(
-            resolveOwnerIdentities(
-              ownerIdentities(
-                flow.owner,
-                flow.order,
-                flow.controlUncertain,
-                flow.scope,
+        .map(({ flow, keyUncertain }) => {
+          const nextSeenMemberFlows = new Set(seenMemberFlows);
+          nextSeenMemberFlows.add(flow);
+          return {
+            flow,
+            keyUncertain,
+            owners: new Set(
+              resolveOwnerIdentities(
+                ownerIdentities(
+                  flow.owner,
+                  flow.order,
+                  flow.controlUncertain,
+                  flow.scope,
+                ),
+                nextSeenMemberFlows,
               ),
             ),
-          ),
-        }))
+          };
+        })
         .sort((left, right) => left.flow.order - right.flow.order)
         .filter(({ flow }) => !seenMemberFlows.has(flow));
       const activeMemberFlows = new Set<MemberValueFlow>();
@@ -3640,7 +3677,7 @@ function invokedFunctionParameterBindings(
           for (let index = applicable.length - 1; index >= 0; index--) {
             const candidate = applicable[index];
             if (
-              candidate && !candidate.flow.controlUncertain &&
+              candidate && !candidate.flow.controlUncertain && !candidate.keyUncertain &&
               candidate.flow.scope === readScope && candidate.owners.size === 1
             ) {
               lastCertain = index;
@@ -3650,8 +3687,9 @@ function invokedFunctionParameterBindings(
         }
         const active = lastCertain < 0
           ? applicable
-          : applicable.slice(lastCertain).filter(({ flow, owners }, index) =>
-            index === 0 || flow.controlUncertain || flow.scope !== readScope || owners.size !== 1
+          : applicable.slice(lastCertain).filter(({ flow, keyUncertain, owners }, index) =>
+            index === 0 || flow.controlUncertain || keyUncertain || flow.scope !== readScope ||
+            owners.size !== 1
           );
         for (const { flow } of active) activeMemberFlows.add(flow);
         if (lastCertain >= 0) overriddenOwners.add(readOwner);
@@ -3671,6 +3709,7 @@ function invokedFunctionParameterBindings(
         if (seenOwners.has(owner)) return [];
         seenOwners.add(owner);
         const candidates: Node[] = [];
+        let prototypeValue: Node | null = null;
         const properties = Array.isArray(owner.properties) ? owner.properties : [];
         // Object literal definitions are applied from left to right. Search
         // backwards so a final explicit property replaces earlier duplicates,
@@ -3695,17 +3734,25 @@ function invokedFunctionParameterBindings(
             continue;
           }
           const propertyKey = isNode(property.key) ? property.key : undefined;
-          const matches = property.computed === true && propertyKey
-            ? (() => {
-              const resolution = resolveStringValues(
-                propertyKey,
-                new Set(seenBindings),
-                new Set(seenMemberFlows),
-              );
-              return !resolution.complete || resolution.values.includes(key);
-            })()
-            : literalText(propertyKey) === key;
-          if (!matches) continue;
+          if (
+            property.type === "ObjectProperty" && property.computed !== true &&
+            property.shorthand !== true && literalText(propertyKey) === "__proto__" &&
+            isNode(property.value)
+          ) {
+            prototypeValue = property.value;
+            continue;
+          }
+          const match = property.computed === true && propertyKey
+            ? resolvedMemberKeyMatch(
+              propertyKey,
+              key,
+              new Set(seenBindings),
+              new Set(seenMemberFlows),
+            )
+            : literalText(propertyKey) === key
+            ? "certain"
+            : "none";
+          if (match === "none") continue;
           if (property.type === "ObjectMethod") {
             if (property.kind === "get") {
               candidates.push(...synchronousReturnValues(
@@ -3723,18 +3770,27 @@ function invokedFunctionParameterBindings(
               new Set(seenMemberFlows),
             ));
           }
-          return candidates;
+          if (match === "certain") return candidates;
+        }
+        if (prototypeValue) {
+          for (
+            const prototype of concreteValues(
+              prototypeValue,
+              new Set(seenBindings),
+              new Set(seenMemberFlows),
+            )
+          ) {
+            if (prototype.type === "ObjectExpression") {
+              candidates.push(...collectObjectMember(prototype));
+            }
+          }
         }
         return candidates;
       };
 
-      for (const owner of readOwners) {
-        if (!isNode(owner) || overriddenOwners.has(owner)) continue;
-        if (owner.type === "ObjectExpression") {
-          members.push(...collectObjectMember(owner));
-          continue;
-        }
-        if (owner.type !== "ClassDeclaration" && owner.type !== "ClassExpression") continue;
+      const collectClassMember = (owner: Node): void => {
+        if (seenOwners.has(owner)) return;
+        seenOwners.add(owner);
         const classMembers = isNode(owner.body) && Array.isArray(owner.body.body)
           ? owner.body.body.filter(isNode)
           : [];
@@ -3742,17 +3798,17 @@ function invokedFunctionParameterBindings(
           const property = classMembers[index];
           if (!property) continue;
           if (property.static !== true || !isNode(property.key)) continue;
-          const matches = property.computed === true
-            ? (() => {
-              const resolution = resolveStringValues(
-                property.key,
-                new Set(seenBindings),
-                new Set(seenMemberFlows),
-              );
-              return !resolution.complete || resolution.values.includes(key);
-            })()
-            : literalText(property.key) === key;
-          if (!matches) continue;
+          const match = property.computed === true
+            ? resolvedMemberKeyMatch(
+              property.key,
+              key,
+              new Set(seenBindings),
+              new Set(seenMemberFlows),
+            )
+            : literalText(property.key) === key
+            ? "certain"
+            : "none";
+          if (match === "none") continue;
           if (property.type === "ClassMethod") {
             if (property.kind === "get") {
               members.push(...synchronousReturnValues(
@@ -3770,8 +3826,30 @@ function invokedFunctionParameterBindings(
               new Set(seenMemberFlows),
             ));
           }
-          break;
+          if (match === "certain") return;
         }
+        if (!isNode(owner.superClass)) return;
+        for (
+          const base of concreteValues(
+            owner.superClass,
+            new Set(seenBindings),
+            new Set(seenMemberFlows),
+          )
+        ) {
+          if (base.type === "ClassDeclaration" || base.type === "ClassExpression") {
+            collectClassMember(base);
+          }
+        }
+      };
+
+      for (const owner of readOwners) {
+        if (!isNode(owner) || overriddenOwners.has(owner)) continue;
+        if (owner.type === "ObjectExpression") {
+          members.push(...collectObjectMember(owner));
+          continue;
+        }
+        if (owner.type !== "ClassDeclaration" && owner.type !== "ClassExpression") continue;
+        collectClassMember(owner);
       }
       return members;
     }

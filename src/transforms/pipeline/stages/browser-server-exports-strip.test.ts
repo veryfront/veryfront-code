@@ -2422,21 +2422,110 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("keeps metadata when a nested computed write resolves its owner", async () => {
+      const code = [
+        `const mutatingFactory = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `const safeFactory = () => function (_intrinsic) {};`,
+        `const owner = { slot: { make: safeFactory } };`,
+        `const outerKey = globalThis.outerKey;`,
+        `const memberName = globalThis.memberName;`,
+        `owner[outerKey][memberName] = mutatingFactory;`,
+        `owner.slot.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
+    for (
+      const [label, ownerFlow] of [
+        [
+          "computed declaration",
+          [
+            `const key = globalThis.factoryKey;`,
+            `const owner = { make: mutatingFactory, [key]: safeFactory };`,
+          ].join("\n"),
+        ],
+        [
+          "computed write",
+          [
+            `const owner = { make: mutatingFactory };`,
+            `const key = globalThis.useSafe ? "make" : "other";`,
+            `owner[key] = safeFactory;`,
+          ].join("\n"),
+        ],
+      ] as const
+    ) {
+      it(`keeps an earlier mutator behind a possible ${label}`, async () => {
+        const code = [
+          `const mutatingFactory = () => function (intrinsic) {`,
+          `  intrinsic.defineProperty = (target) => target;`,
+          `};`,
+          `const safeFactory = () => function (_intrinsic) {};`,
+          ownerFlow,
+          `owner.make()(Object);`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
     for (
       const [label, ownerDeclaration, invocation] of [
         [
-          "object getter",
+          "an object getter",
           `const owner = { get make() { return mutator; } };`,
           `owner.make(Object);`,
         ],
         [
-          "static class getter",
+          "a static class getter",
           `class Owner { static get make() { return mutator; } }`,
+          `Owner.make(Object);`,
+        ],
+        [
+          "an inherited object getter",
+          [
+            `const base = { get make() { return mutator; } };`,
+            `const owner = { __proto__: base };`,
+          ].join("\n"),
+          `owner.make(Object);`,
+        ],
+        [
+          "an inherited static class getter",
+          [
+            `class Base { static get make() { return mutator; } }`,
+            `class Owner extends Base {}`,
+          ].join("\n"),
           `Owner.make(Object);`,
         ],
       ] as const
     ) {
-      it(`keeps metadata through a callable returned by a ${label}`, async () => {
+      it(`keeps metadata through a callable returned by ${label}`, async () => {
         const code = [
           `const mutator = (intrinsic) => {`,
           `  intrinsic.defineProperty = (target) => target;`,
