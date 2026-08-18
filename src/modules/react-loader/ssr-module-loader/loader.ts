@@ -71,6 +71,7 @@ import {
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
 import { getMdxModuleCacheVariant } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
+import { composeAbortSignals } from "#veryfront/extensions/abort-signal.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
@@ -107,6 +108,7 @@ const inProgressTransformObservers = new WeakMap<
   Promise<ModuleCacheEntry>,
   InProgressTransformObserverState
 >();
+const retainedInProgressTransformLeaders = new WeakSet<Promise<ModuleCacheEntry>>();
 
 function signalAbortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
@@ -133,6 +135,12 @@ function registerInProgressTransformObservers(
 function markInProgressTransformSettled(transformPromise: Promise<ModuleCacheEntry>): void {
   const state = inProgressTransformObservers.get(transformPromise);
   if (state) state.settled = true;
+}
+
+function inProgressTransformObserverCount(
+  transformPromise: Promise<ModuleCacheEntry>,
+): number {
+  return inProgressTransformObservers.get(transformPromise)?.observerCount ?? 0;
 }
 
 function shouldRetryRejectedInProgressTransform(rejectedLeaderCount: number): boolean {
@@ -178,6 +186,33 @@ function publishTransformCacheIfCurrent(input: {
   return true;
 }
 
+/** Keep a failed singleflight reserved until its abandoned transform settles. */
+function retainInProgressTransformUntilSettled(
+  key: string,
+  leader: Promise<ModuleCacheEntry>,
+  transformSettlement: Promise<void>,
+  error: unknown,
+): Promise<ModuleCacheEntry> | null {
+  if (globalInProgress.get(key) !== leader) return null;
+  const retainedError = error instanceof Error ? error : new Error(String(error));
+  const retained = transformSettlement.then<ModuleCacheEntry>(() => {
+    throw retainedError;
+  });
+  retainedInProgressTransformLeaders.add(leader);
+  globalInProgress.set(key, retained);
+  void retained.then(
+    () => deleteInProgressTransformIfCurrent(key, retained),
+    () => deleteInProgressTransformIfCurrent(key, retained),
+  );
+  return retained;
+}
+
+function wasRetainedInProgressTransformLeader(
+  leader: Promise<ModuleCacheEntry>,
+): boolean {
+  return retainedInProgressTransformLeaders.has(leader);
+}
+
 function getMdxEsmCacheVariant(
   options: Pick<
     SSRModuleLoaderOptions,
@@ -191,12 +226,63 @@ function getMdxEsmCacheVariant(
   );
 }
 
+type SettledOperation<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: unknown };
+
+function startSettledOperation<T>(operation: () => Promise<T>): Promise<SettledOperation<T>> {
+  try {
+    return operation().then(
+      (value) => ({ ok: true, value }),
+      (error: unknown) => ({ ok: false, error }),
+    );
+  } catch (error) {
+    return Promise.resolve({ ok: false, error });
+  }
+}
+
+/**
+ * Start compilation before walking dependencies, then join both results.
+ *
+ * Compiler settlement handlers are attached immediately, so dependency
+ * resolution can retain its historical error precedence without draining a
+ * compiler that cannot be aborted.
+ */
+async function runTransformAndDependencies<T, D>(
+  transform: () => Promise<T>,
+  dependencies: () => Promise<D>,
+  onDependencyFailure?: (error: unknown, transformSettlement: Promise<void>) => void,
+): Promise<{ transformed: T; dependencies: D }> {
+  const transformResult = startSettledOperation(transform);
+
+  let resolvedDependencies: D;
+  try {
+    resolvedDependencies = await dependencies();
+  } catch (dependencyError) {
+    onDependencyFailure?.(
+      dependencyError,
+      transformResult.then(() => undefined),
+    );
+    throw dependencyError;
+  }
+
+  const settledTransform = await transformResult;
+  if (!settledTransform.ok) throw settledTransform.error;
+  return {
+    transformed: settledTransform.value,
+    dependencies: resolvedDependencies,
+  };
+}
+
 /** Internal test seam for the singleflight timeout lifecycle. */
 export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
   getMdxEsmCacheVariant,
+  inProgressTransformObserverCount,
   publishTransformCacheIfCurrent,
   registerInProgressTransformObservers,
+  retainInProgressTransformUntilSettled,
+  runTransformAndDependencies,
   scheduleStaleInProgressTransformEviction,
   shouldRetryRejectedInProgressTransform,
   waitForInProgressTransform,
@@ -818,6 +904,11 @@ export class SSRModuleLoader {
           // not multiplied into competing retries.
           throw error;
         }
+        // Callers already joined to this failed leader receive its dependency
+        // error now. The replacement only reserves capacity for new callers.
+        if (wasRetainedInProgressTransformLeader(existingTransform)) {
+          throw error;
+        }
 
         // Retry only after the leader actually rejects. A time-based retry can
         // delete live singleflight state and multiply one slow cold transform
@@ -904,45 +995,40 @@ export class SSRModuleLoader {
           }
         }
 
-        // Process recursive imports FIRST, without holding a project slot.
-        // Each recursive child acquires its own slot for its own transform only.
-        // This prevents hierarchical deadlock where parent holds a slot while
-        // children also need slots (10 batch x 2 depth = 21 slots, but limit is 17).
+        const projectId = this.options.projectId;
+        const transformOpts: TransformOptions = {
+          projectId,
+          dev: this.options.dev,
+          ssr: true,
+          apiBaseUrl: this.options.apiBaseUrl,
+          moduleServerOrigin: this.options.moduleServerOrigin,
+          reactVersion: this.options.reactVersion,
+          serverExternalPackages: this.options.serverExternalPackages,
+          dependencyHashCache,
+          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningSource: this.options.dependencyPinningSource,
+        };
         const localFs = createFileSystem();
 
-        const localImportPaths = await this.depValidator.processLocalImports(
-          parseResult.imports,
-          filePath,
-          depth,
-          localFs,
-          dependencyHashCache,
-          sharedSignal,
-        );
-
-        const crossProjectPaths = await this.depValidator.processCrossProjectImports(
-          parseResult.crossProjectImports,
-          filePath,
-          sharedSignal,
-        );
-
-        // Hold project slots only around the actual transform and file write.
-        const entry = await this.withTransformCapacity(filePath, "build", async () => {
-          const projectId = this.options.projectId;
-          const transformOpts: TransformOptions = {
-            projectId,
-            dev: this.options.dev,
-            ssr: true,
-            apiBaseUrl: this.options.apiBaseUrl,
-            moduleServerOrigin: this.options.moduleServerOrigin,
-            reactVersion: this.options.reactVersion,
-            serverExternalPackages: this.options.serverExternalPackages,
+        const resolveDependencies = async () => {
+          const localImportPaths = await this.depValidator.processLocalImports(
+            parseResult.imports,
+            filePath,
+            depth,
+            localFs,
             dependencyHashCache,
-            dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
-            dependencyPinningDependencies: this.options.dependencyPinningDependencies,
-            dependencyPinningSource: this.options.dependencyPinningSource,
-          };
-
-          let transformed = await withSpan(
+            sharedSignal,
+          );
+          const crossProjectPaths = await this.depValidator.processCrossProjectImports(
+            parseResult.crossProjectImports,
+            filePath,
+            sharedSignal,
+          );
+          return { localImportPaths, crossProjectPaths };
+        };
+        const compile = async (signal: AbortSignal): Promise<string> => {
+          const transformed = await withSpan(
             SpanNames.SSR_TRANSFORM_SINGLE,
             () =>
               transformToESM(
@@ -954,7 +1040,16 @@ export class SSRModuleLoader {
               ),
             { "ssr.file": filePath.split("/").pop() || filePath },
           );
+          throwIfAborted(signal);
+          return transformed;
+        };
+        const finishTransform = async (
+          compiled: string,
+          dependencies: Awaited<ReturnType<typeof resolveDependencies>>,
+        ): Promise<ModuleCacheEntry> => {
           throwIfAborted(sharedSignal);
+          const { localImportPaths, crossProjectPaths } = dependencies;
+          let transformed = compiled;
 
           for (const [specifier, tempPath] of crossProjectPaths.entries()) {
             transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
@@ -1059,7 +1154,53 @@ export class SSRModuleLoader {
           // A revoked leader must not update shared caches, but its immutable
           // output is still valid for requests that joined this singleflight.
           return entry;
-        }, sharedSignal);
+        };
+
+        let entry: ModuleCacheEntry;
+        if (this.options.dev) {
+          // Dev cold starts overlap compilation with dependency traversal. The
+          // first capacity slot ends with compilation, before the helper waits
+          // for children, and post-processing reacquires a slot separately.
+          const compileController = new AbortController();
+          const compileSignal = composeAbortSignals([
+            sharedSignal,
+            compileController.signal,
+          ]);
+          const prepared = await runTransformAndDependencies(
+            () =>
+              this.withTransformCapacity(
+                filePath,
+                "build",
+                () => compile(compileSignal),
+                compileSignal,
+              ),
+            resolveDependencies,
+            (dependencyError, transformSettlement) => {
+              retainInProgressTransformUntilSettled(
+                inProgressKey,
+                transformPromise,
+                transformSettlement,
+                dependencyError,
+              );
+              compileController.abort(dependencyError);
+            },
+          );
+          entry = await this.withTransformCapacity(
+            filePath,
+            "build",
+            () => finishTransform(prepared.transformed, prepared.dependencies),
+            sharedSignal,
+          );
+        } else {
+          // Preserve production ordering and its single capacity window.
+          const dependencies = await resolveDependencies();
+          entry = await this.withTransformCapacity(
+            filePath,
+            "build",
+            async () => await finishTransform(await compile(sharedSignal), dependencies),
+            sharedSignal,
+          );
+        }
 
         markInProgressTransformSettled(transformPromise);
         resolveTransform(entry);

@@ -1267,6 +1267,149 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("returns a dependency error to followers already waiting on its leader", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-retained-follower-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "RetainedFollower.tsx");
+    const projectId = "project-retained-follower";
+    const contentSourceId = "local-main";
+    const source = "export default function RetainedFollower() { return null; }";
+    const dependencyError = new Error("dependency failed");
+    let finishTransform!: () => void;
+    let rejectLeader!: (error: Error) => void;
+    let retained: Promise<ModuleCacheEntry> | null = null;
+    let follower: Promise<React.ComponentType<Record<string, unknown>>> | undefined;
+    let contentCacheKey = "";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const leader = new Promise<ModuleCacheEntry>((_, reject) => {
+        rejectLeader = reject;
+      });
+      leader.catch(() => {});
+      const transformSettlement = new Promise<void>((resolve) => {
+        finishTransform = resolve;
+      });
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      contentCacheKey = (loader as unknown as {
+        cache: { getCacheKey(value: string): string };
+      }).cache.getCacheKey(`${filePath}:${contentHash}`);
+      globalInProgress.set(contentCacheKey, leader);
+      __ssrModuleLoaderInternals.registerInProgressTransformObservers(contentCacheKey, leader);
+
+      follower = loader.loadModule(filePath, source);
+      let attempts = 0;
+      while (
+        __ssrModuleLoaderInternals.inProgressTransformObserverCount(leader) === 0 &&
+        attempts++ < 100
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(__ssrModuleLoaderInternals.inProgressTransformObserverCount(leader), 1);
+
+      retained = __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+        contentCacheKey,
+        leader,
+        transformSettlement,
+        dependencyError,
+      );
+      assert(retained);
+      rejectLeader(dependencyError);
+
+      let followerError: unknown;
+      void follower.catch((error) => followerError = error);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertStrictEquals(followerError, dependencyError);
+      assertStrictEquals(globalInProgress.get(contentCacheKey), retained);
+    } finally {
+      rejectLeader?.(dependencyError);
+      finishTransform?.();
+      await retained?.catch(() => {});
+      await follower?.catch(() => {});
+      if (contentCacheKey) globalInProgress.delete(contentCacheKey);
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("returns a dependency error to followers after retained work already settled", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-settled-follower-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "SettledFollower.tsx");
+    const projectId = "project-settled-follower";
+    const contentSourceId = "local-main";
+    const source = "export default function SettledFollower() { return null; }";
+    const dependencyError = new Error("dependency failed");
+    let rejectLeader!: (error: Error) => void;
+    let follower: Promise<React.ComponentType<Record<string, unknown>>> | undefined;
+    let contentCacheKey = "";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const leader = new Promise<ModuleCacheEntry>((_, reject) => {
+        rejectLeader = reject;
+      });
+      leader.catch(() => {});
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      contentCacheKey = (loader as unknown as {
+        cache: { getCacheKey(value: string): string };
+      }).cache.getCacheKey(`${filePath}:${contentHash}`);
+      globalInProgress.set(contentCacheKey, leader);
+      __ssrModuleLoaderInternals.registerInProgressTransformObservers(contentCacheKey, leader);
+
+      follower = loader.loadModule(filePath, source);
+      let attempts = 0;
+      while (
+        __ssrModuleLoaderInternals.inProgressTransformObserverCount(leader) === 0 &&
+        attempts++ < 100
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(__ssrModuleLoaderInternals.inProgressTransformObserverCount(leader), 1);
+
+      __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+        contentCacheKey,
+        leader,
+        Promise.resolve(),
+        dependencyError,
+      );
+      rejectLeader(dependencyError);
+
+      const error = await assertRejects(() => follower!, Error, "dependency failed");
+      assertStrictEquals(error, dependencyError);
+    } finally {
+      rejectLeader?.(dependencyError);
+      await follower?.catch(() => {});
+      if (contentCacheKey) globalInProgress.delete(contentCacheKey);
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("allows one rejected shared transform retry per caller", () => {
     assertEquals(
       __ssrModuleLoaderInternals.shouldRetryRejectedInProgressTransform(1),
@@ -1276,6 +1419,109 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       __ssrModuleLoaderInternals.shouldRetryRejectedInProgressTransform(2),
       false,
     );
+  });
+
+  it("starts a module transform before recursive dependencies settle", async () => {
+    const events: string[] = [];
+    let finishTransform!: (value: string) => void;
+
+    const result = await __ssrModuleLoaderInternals.runTransformAndDependencies(
+      async () => {
+        events.push("transform:start");
+        return await new Promise<string>((resolve) => {
+          finishTransform = resolve;
+        });
+      },
+      async () => {
+        events.push("dependencies:start");
+        assertEquals(events, ["transform:start", "dependencies:start"]);
+        finishTransform("compiled");
+        return await Promise.resolve("resolved");
+      },
+    );
+
+    assertEquals(result, { transformed: "compiled", dependencies: "resolved" });
+  });
+
+  it("returns a dependency error without draining a stalled transform", async () => {
+    const dependencyError = new Error("dependency failed");
+    let finishTransform!: () => void;
+    let failedTransformSettlement: Promise<void> | undefined;
+    let observedDependencyError: unknown;
+    let resultSettled = false;
+
+    const result = __ssrModuleLoaderInternals.runTransformAndDependencies(
+      () =>
+        new Promise<void>((resolve) => {
+          finishTransform = resolve;
+        }),
+      () => Promise.reject(dependencyError),
+      (error, transformSettlement) => {
+        observedDependencyError = error;
+        failedTransformSettlement = transformSettlement;
+      },
+    );
+    void result.then(
+      () => resultSettled = true,
+      () => resultSettled = true,
+    );
+    const rejected = assertRejects(
+      () => result,
+      Error,
+      "dependency failed",
+    );
+
+    try {
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(resultSettled, true);
+      const error = await rejected;
+      assertStrictEquals(error, dependencyError);
+      assertStrictEquals(observedDependencyError, dependencyError);
+      assert(failedTransformSettlement);
+    } finally {
+      finishTransform();
+    }
+    await failedTransformSettlement;
+  });
+
+  it("retains a failed leader until its abandoned transform releases capacity", async () => {
+    const key = "test:retained-failed-transform";
+    const dependencyError = new Error("dependency failed");
+    const leader = new Promise<ModuleCacheEntry>(() => {});
+    let finishTransform!: () => void;
+    const transformSettlement = new Promise<void>((resolve) => {
+      finishTransform = resolve;
+    });
+    globalInProgress.set(key, leader);
+
+    const retained = __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+      key,
+      leader,
+      transformSettlement,
+      dependencyError,
+    );
+
+    try {
+      assert(retained);
+      assertStrictEquals(globalInProgress.get(key), retained);
+      let retainedSettled = false;
+      void retained.catch(() => retainedSettled = true);
+      await Promise.resolve();
+      assertEquals(retainedSettled, false);
+
+      finishTransform();
+      const error = await assertRejects(
+        () => retained,
+        Error,
+        "dependency failed",
+      );
+      assertStrictEquals(error, dependencyError);
+      assertEquals(globalInProgress.has(key), false);
+    } finally {
+      globalInProgress.delete(key);
+      finishTransform();
+    }
   });
 
   it("bounds a caller wait without evicting the shared transform", async () => {
