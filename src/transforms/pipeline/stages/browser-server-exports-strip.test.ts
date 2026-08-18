@@ -1711,6 +1711,24 @@ export function hook() {
         assertStringIncludes(result, "analytics.ts");
       });
 
+      it("does not keep an import shadowed by a hoisted namespace alias", async () => {
+        const code = [
+          `import { secretOnly, Alias } from "../lib/server-only.ts";`,
+          `export namespace M {`,
+          `  queue(() => Alias.x);`,
+          `  import Alias = ClientNS;`,
+          `}`,
+          `export function getServerData() { return { props: { s: secretOnly } }; }`,
+          `export default function Page() { return M; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "{ secretOnly, Alias }");
+        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, "import Alias = ClientNS");
+      });
+
       it("keeps a declaration whose name matches a hook-local enum member", async () => {
         const code = [
           `import { boot } from "../lib/analytics.ts";`,

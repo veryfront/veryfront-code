@@ -564,6 +564,10 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
         bindPatternNames(scope, statement.id);
         continue;
       }
+      if (statement.type === "TSImportEqualsDeclaration") {
+        bindPatternNames(scope, statement.id);
+        continue;
+      }
       if (statement.type !== "VariableDeclaration") continue;
       for (
         const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
@@ -591,6 +595,10 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
         ) {
           if (isNode(declarator)) bindPatternNames(scope, declarator.id);
         }
+      }
+      if (child.type === "TSImportEqualsDeclaration") {
+        bindPatternNames(scope, child.id);
+        continue;
       }
 
       bindNestedVarDeclarations(scope, child);
