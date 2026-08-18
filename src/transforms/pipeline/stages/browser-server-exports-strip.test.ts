@@ -1729,6 +1729,40 @@ export function hook() {
         assertStringIncludes(result, "import Alias = ClientNS");
       });
 
+      it("drops a hook-only binding that matches a qualified-name property", async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const Sub = getEnv("SECRET_KEY");`,
+          `import Alias = ClientNS.Sub;`,
+          `export function getServerData() { return { props: { s: Sub } }; }`,
+          `export default function Page() { return Alias; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "SECRET_KEY");
+        assertNotIncludes(result, "const Sub =");
+        assertStringIncludes(result, "ClientNS.Sub");
+      });
+
+      it("does not keep an import shadowed by a namespace-local enum", async () => {
+        const code = [
+          `import { secretOnly, Alias } from "../lib/server-only.ts";`,
+          `export namespace M {`,
+          `  queue(() => Alias);`,
+          `  enum Alias { X }`,
+          `}`,
+          `export function getServerData() { return { props: { s: secretOnly } }; }`,
+          `export default function Page() { return M; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "{ secretOnly, Alias }");
+        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, "enum Alias");
+      });
+
       it("keeps a declaration whose name matches a hook-local enum member", async () => {
         const code = [
           `import { boot } from "../lib/analytics.ts";`,

@@ -418,6 +418,8 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
       ? node.key
       : node.type === "TSEnumDeclaration" || node.type === "TSEnumMember"
       ? node.id
+      : node.type === "TSQualifiedName"
+      ? node.right
       : undefined;
 
     if (node.computed === true) return;
@@ -554,6 +556,15 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     for (const name of patternBoundNames(value)) scope.names.add(name);
   };
 
+  const bindHoistedRuntimeTsDeclaration = (scope: LexicalScope, node: Node): boolean => {
+    if (
+      node.type !== "TSEnumDeclaration" && node.type !== "TSModuleDeclaration" &&
+      node.type !== "TSImportEqualsDeclaration"
+    ) return false;
+    if (!isErasedTypeNode(node)) bindPatternNames(scope, node.id);
+    return true;
+  };
+
   const bindDirectDeclarations = (scope: LexicalScope, node: Node): void => {
     const body = node.body;
     if (!Array.isArray(body)) return;
@@ -564,10 +575,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
         bindPatternNames(scope, statement.id);
         continue;
       }
-      if (statement.type === "TSImportEqualsDeclaration") {
-        bindPatternNames(scope, statement.id);
-        continue;
-      }
+      if (bindHoistedRuntimeTsDeclaration(scope, statement)) continue;
       if (statement.type !== "VariableDeclaration") continue;
       for (
         const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
@@ -579,6 +587,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
   const bindNestedVarDeclarations = (scope: LexicalScope, node: Node): void => {
     for (const child of children(node)) {
+      if (bindHoistedRuntimeTsDeclaration(scope, child)) continue;
       if (
         child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
         child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||
@@ -596,11 +605,6 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
           if (isNode(declarator)) bindPatternNames(scope, declarator.id);
         }
       }
-      if (child.type === "TSImportEqualsDeclaration") {
-        bindPatternNames(scope, child.id);
-        continue;
-      }
-
       bindNestedVarDeclarations(scope, child);
     }
   };
