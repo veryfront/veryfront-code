@@ -266,22 +266,22 @@ export class LayoutOrchestrator {
           preloadPromises.push(
             (async (): Promise<LayoutPreloadResult> => {
               try {
-                await preloadMDXLayoutModule(
-                  layout.bundle!,
-                  this.config.projectDir,
-                  this.config.adapter,
-                  this.config.projectId,
-                  this.config.projectSlug,
-                  this.config.contentSourceId,
+                await preloadMDXLayoutModule({
+                  bundle: layout.bundle!,
+                  projectDir: this.config.projectDir,
+                  adapter: this.config.adapter,
+                  projectId: this.config.projectId,
+                  projectSlug: this.config.projectSlug,
+                  contentSourceId: this.config.contentSourceId,
+                  modes: this.renderModes,
                   reactVersion,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
-                  this.config.config,
-                  this.config.isLocalProject === true,
-                  this.config.mode,
-                );
+                  config: this.config.config,
+                  isLocalProject: this.config.isLocalProject === true,
+                });
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
                 throwIfAborted(signal);

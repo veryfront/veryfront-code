@@ -19,8 +19,11 @@ export { compileMDXLayouts } from "./utils/compiler.ts";
 export { computeDepsHash } from "./utils/hash-calculator.ts";
 export {
   applyMDXLayout,
+  type ApplyMDXLayoutOptions,
   applyTSXLayout,
   loadMDXLayout,
+  type LoadMDXLayoutOptions,
   loadTSXComponent,
+  type MDXLayoutModuleOptions,
 } from "./utils/component-loader.ts";
 export { applyLayoutsESM, applyLayoutsFunctionBody } from "./utils/applicator.ts";
