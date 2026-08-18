@@ -2278,18 +2278,76 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       (!isNode(statement.argument) || inertCompletionExpression(statement.argument));
   };
 
+  const staticPrimitiveValue = (
+    node: Node,
+  ): { known: true; value: string | number | boolean | null } | { known: false } => {
+    const expression = unwrap(node);
+    if (expression.type === "NullLiteral") return { known: true, value: null };
+    if (
+      (expression.type === "StringLiteral" && typeof expression.value === "string") ||
+      (expression.type === "NumericLiteral" && typeof expression.value === "number") ||
+      (expression.type === "BooleanLiteral" && typeof expression.value === "boolean")
+    ) return { known: true, value: expression.value };
+    return { known: false };
+  };
+
+  const staticValueIsTruthy = (value: string | number | boolean | null): boolean =>
+    value !== false && value !== 0 && value !== "" && value !== null;
+
   const deferOrderedExpressionTail = (
     node: Node,
     initializedNames: ReadonlySet<string>,
   ): void => {
     const expression = unwrap(node);
+    if (
+      expression.type === "LogicalExpression" && isNode(expression.left) &&
+      isNode(expression.right)
+    ) {
+      if (!isInertExpression(expression.left, noNameHelpers, initializedNames)) {
+        deferOrderedExpressionTail(expression.left, initializedNames);
+        deferred.add(expression.right);
+        return;
+      }
+      const left = staticPrimitiveValue(expression.left);
+      if (!left.known) return;
+      const evaluatesRight = expression.operator === "&&"
+        ? staticValueIsTruthy(left.value)
+        : expression.operator === "||"
+        ? !staticValueIsTruthy(left.value)
+        : left.value === null;
+      if (evaluatesRight) deferOrderedExpressionTail(expression.right, initializedNames);
+      else deferred.add(expression.right);
+      return;
+    }
+    if (
+      expression.type === "ConditionalExpression" && isNode(expression.test) &&
+      isNode(expression.consequent) && isNode(expression.alternate)
+    ) {
+      if (!isInertExpression(expression.test, noNameHelpers, initializedNames)) {
+        deferOrderedExpressionTail(expression.test, initializedNames);
+        deferred.add(expression.consequent);
+        deferred.add(expression.alternate);
+        return;
+      }
+      const test = staticPrimitiveValue(expression.test);
+      if (!test.known) return;
+      const selected = staticValueIsTruthy(test.value)
+        ? expression.consequent
+        : expression.alternate;
+      const skipped = staticValueIsTruthy(test.value)
+        ? expression.alternate
+        : expression.consequent;
+      deferred.add(skipped);
+      deferOrderedExpressionTail(selected, initializedNames);
+      return;
+    }
     const ordered =
       expression.type === "SequenceExpression" && Array.isArray(expression.expressions)
         ? expression.expressions
         : expression.type === "ArrayExpression" && Array.isArray(expression.elements)
         ? expression.elements
-        : (expression.type === "BinaryExpression" || expression.type === "LogicalExpression") &&
-            isNode(expression.left) && isNode(expression.right)
+        : expression.type === "BinaryExpression" && isNode(expression.left) &&
+            isNode(expression.right)
         ? [expression.left, expression.right]
         : null;
     if (!ordered) return;
@@ -2460,7 +2518,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         isNode(target.body) && target.body.type === "BlockStatement" &&
         Array.isArray(target.body.body)
       ) {
-        const statementCompletes = (statement: Node): boolean => {
+        const statementCompletes: (statement: Node) => boolean = (statement) => {
           if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
             return true;
           }
@@ -2478,6 +2536,19 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           }
           if (statement.type === "IfStatement") {
             const test = isNode(statement.test) ? statement.test : undefined;
+            if (test) {
+              const value = staticPrimitiveValue(test);
+              if (value.known) {
+                const selected = staticValueIsTruthy(value.value)
+                  ? statement.consequent
+                  : statement.alternate;
+                const skipped = staticValueIsTruthy(value.value)
+                  ? statement.alternate
+                  : statement.consequent;
+                if (isNode(skipped)) deferred.add(skipped);
+                return isNode(selected) ? statementCompletes(selected) : true;
+              }
+            }
             if (test && !isInertExpression(test, noNameHelpers, initializedAtCall)) {
               deferOrderedExpressionTail(test, initializedAtCall);
               if (isNode(statement.consequent)) deferred.add(statement.consequent);
@@ -2576,6 +2647,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           property.computed === true && isNode(property.key) &&
           !inertCompletionExpression(property.key)
         ) {
+          deferOrderedExpressionTail(property.key, noInitializedNames);
           if (property.type === "ObjectProperty" && isNode(property.value)) {
             deferred.add(property.value);
           } else if (property.type === "SpreadElement" && isNode(property.argument)) {
