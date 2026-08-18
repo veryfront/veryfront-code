@@ -1577,7 +1577,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     if (statement.type !== "ImportDeclaration") continue;
     for (const name of importedBindings(statement)) localBindings.add(name);
   }
-  if (localBindings.has("Object")) return new Set();
+  if (localBindings.has("Object") || assignedNames(body).has("Object")) return new Set();
 
   const initializers = new Map<string, Node>();
   for (const statement of body) {

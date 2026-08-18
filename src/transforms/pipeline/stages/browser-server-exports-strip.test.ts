@@ -1200,6 +1200,28 @@ describe("browser-server-exports-strip", () => {
       await assertRejects(() => stripServerOnlyExports(code, "pages/hoisted-object.tsx"));
     });
 
+    it("fails closed when global Object is reassigned before name helper capture", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function bootClient() { globalThis.clientStarted = true; }`,
+        `const customObject = {`,
+        `  defineProperty(target, key, descriptor) { bootClient(); return target; },`,
+        `};`,
+        `Object = customObject;`,
+        `var defineName = Object.defineProperty;`,
+        `var setName = (target, value) => defineName(target, "name", {`,
+        `  value, configurable: true,`,
+        `});`,
+        `const dead = setName(() => KEY, "dead");`,
+        `function loadServer() { return KEY; }`,
+        `function Page() { return null; }`,
+        `export { Page as default, loadServer as getServerData };`,
+      ].join("\n");
+
+      await assertRejects(() => stripServerOnlyExports(code, "pages/reassigned-object.tsx"));
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [
