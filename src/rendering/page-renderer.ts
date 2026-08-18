@@ -297,6 +297,7 @@ export class PageRenderer {
                 projectId: options?.projectId,
                 studioEmbed: options?.studioEmbed,
                 projectSlug: options?.projectSlug,
+                mode: this.mode,
                 contentSourceId: options?.contentSourceId,
                 reactVersion,
                 serverExternalPackages: this.config.build?.serverExternalPackages,

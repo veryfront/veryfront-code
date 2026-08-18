@@ -430,6 +430,7 @@ export class Renderer {
         ctx.projectId,
         ctx.environment,
         releaseKey,
+        ctx.mode,
         releaseManifest.manifestVersion,
       ),
     };

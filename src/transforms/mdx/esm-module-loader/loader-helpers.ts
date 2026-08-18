@@ -196,11 +196,11 @@ export async function processVfModuleImports(
     {
       contentSourceId: context.contentSourceId,
       isLocalProject: context.isLocalProject,
-      // The compiled-MDX entry path carries no render mode yet, so it keeps the
-      // development compile mode it has always used. The flag is part of the
-      // module cache identity, so these artifacts stay isolated from the
-      // production-compiled ones the SSR module loader fetches.
-      dev: true,
+      // The render mode decides the compile mode for every `/_vf_modules/*`
+      // import of this compiled-MDX entry. A context without one compiles for
+      // production, so a hosted production render never ships unminified,
+      // untree-shaken code carrying an inline sourcemap of the project source.
+      dev: context.mode === "development",
       reactVersion: context.reactVersion,
       serverExternalPackages: context.serverExternalPackages,
       moduleServerOrigin: context.moduleServerOrigin,

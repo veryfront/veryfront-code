@@ -120,6 +120,20 @@ describe("enriched-context", () => {
       assertEquals(ctx.cachePrefix.startsWith("proj_1:production:rel_99:"), true);
     });
 
+    it("separates the local development cache prefix from the hosted preview one", () => {
+      const shared = { environment: "preview" as const, branch: "main", releaseId: undefined };
+      const localDev = buildEnrichedContext(
+        makeOptions({ ...shared, isLocalProject: true, contentSourceId: "local-main" }),
+      );
+      const hostedPreview = buildEnrichedContext(
+        makeOptions({ ...shared, isLocalProject: false, contentSourceId: "preview-main" }),
+      );
+
+      assertEquals(localDev.mode, "development");
+      assertEquals(hostedPreview.mode, "production");
+      assertEquals(localDev.cachePrefix === hostedPreview.cachePrefix, false);
+    });
+
     it("should throw when releaseId is undefined in production", () => {
       assertThrows(
         () =>

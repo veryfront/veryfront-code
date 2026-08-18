@@ -7,6 +7,7 @@ import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   buildMdxEsmPathCacheKey,
+  MDX_MODULE_DEV_COMPILE_VARIANT,
   UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
@@ -97,6 +98,58 @@ describe("module-loader/module-persistence", () => {
 
       assertEquals(moduleCache.get("deferred"), result);
       assertEquals(pathCache.get(mdxCacheKey), result);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("registers the artifact under the compile mode it was transformed with", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.ts");
+    const moduleCache = new Map<string, string>();
+
+    try {
+      const developmentPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const compiledFor = 'development';",
+        localAdapter,
+        moduleCache,
+        cacheKey: "development",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        dev: true,
+      });
+      const productionPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const compiledFor = 'production';",
+        localAdapter,
+        moduleCache,
+        cacheKey: "production",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+        dev: false,
+      });
+
+      const pathCache = await getModulePathCache(tmpDir);
+      const developmentKey = buildMdxEsmPathCacheKey(
+        "_vf_modules/app/page.js",
+        "19.1.1",
+        MDX_MODULE_DEV_COMPILE_VARIANT,
+      );
+      const productionKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+      // A production reader resolves the production key, so the two artifacts
+      // must sit under separate entries rather than overwriting each other.
+      assertNotEquals(developmentKey, productionKey);
+      assertEquals(pathCache.get(developmentKey), developmentPath);
+      assertEquals(pathCache.get(productionKey), productionPath);
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);

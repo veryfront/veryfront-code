@@ -15,20 +15,31 @@ import { CACHE_INVARIANT_VIOLATION } from "#veryfront/errors";
 import { encodeCacheSourceIdentity } from "../source-identity.ts";
 import { buildDependencyPinningCacheVariant } from "../dependency-pinning.ts";
 import { encodeCacheKeyLiteralSegment } from "../segment-codec.ts";
+import { RENDER_COMPILE_MODE_SEGMENTS, type RenderCompileMode } from "../render-compile-mode.ts";
 
 export function buildRenderCachePrefix(
   projectId: string,
   environment: "preview" | "production",
   releaseKey: string,
   /**
+   * Compile mode of the render this prefix caches. It is required because
+   * `environment` does not imply it: a local development server and a hosted
+   * preview server share `preview`, the same branch and the same release key,
+   * yet compile with different modes. The cached render carries a hydration
+   * bundle and a page module, so without this segment a development-compiled
+   * bundle can be served to a production-mode render.
+   */
+  compileMode: RenderCompileMode,
+  /**
    * Release asset manifest version currently being consumed for this render.
    * When set (a ready manifest is in use), it is folded into the prefix so
-   * manifest-rewritten HTML is cached separately from JIT HTML. Omitted when
-   * no manifest is consumed — preserving today's cache keys byte-for-byte.
+   * manifest-rewritten HTML is cached separately from JIT HTML.
    */
   manifestVersion?: number,
 ): string {
-  const base = `${projectId}:${environment}:${releaseKey}:${VERSION}`;
+  const base = `${projectId}:${environment}:${releaseKey}:${VERSION}:${
+    RENDER_COMPILE_MODE_SEGMENTS[compileMode]
+  }`;
   return manifestVersion === undefined ? base : `${base}:m${manifestVersion}`;
 }
 

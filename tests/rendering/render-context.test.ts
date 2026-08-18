@@ -96,7 +96,7 @@ describe("RenderContext", () => {
       assertEquals(ctx.releaseId, "rel_456");
       assertEquals(ctx.proxyToken, "token_xyz");
       // Local dev uses branch for cache prefix (no real releases in local dev)
-      assertEquals(ctx.cachePrefix, `proj_123:production:main:${VERSION}`);
+      assertEquals(ctx.cachePrefix, `proj_123:production:main:${VERSION}:cdev`);
       // Local dev uses local-{branch} format
       assertEquals(ctx.contentSourceId, "local-main");
     });
@@ -117,8 +117,34 @@ describe("RenderContext", () => {
       const ctx = createRenderContext(handlerCtx);
 
       assertEquals(ctx.environment, "preview");
-      assertEquals(ctx.cachePrefix, `proj_123:preview:main:${VERSION}`);
+      assertEquals(ctx.cachePrefix, `proj_123:preview:main:${VERSION}:cdev`);
       assertEquals(ctx.contentSourceId, "local-main");
+    });
+
+    it("separates the local development render cache from the hosted preview cache", () => {
+      const shared = {
+        projectId: "proj_1",
+        projectSlug: "test-project",
+        requestContext: {
+          mode: "preview" as const,
+          slug: "test-project",
+          branch: "main",
+          token: "",
+        },
+      };
+
+      const localDev = createRenderContext(
+        createHandlerContext({ ...shared, isLocalProject: true }),
+      );
+      const hostedPreview = createRenderContext(
+        createHandlerContext({ ...shared, isLocalProject: false }),
+      );
+
+      // The two servers compile with different modes, so the hydration bundle
+      // and page module they cache are not interchangeable.
+      assertEquals(localDev.mode, "development");
+      assertEquals(hostedPreview.mode, "production");
+      assertEquals(localDev.cachePrefix === hostedPreview.cachePrefix, false);
     });
 
     it("throws without projectSlug or projectId", () => {

@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildFrameworkVfModuleCacheFileName,
+  buildMdxEsmCacheSchemaSample,
   buildMdxEsmModuleFileName,
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
@@ -12,7 +13,10 @@ import {
   MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE,
   MDX_ESM_CACHE_NAMESPACE,
   MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE,
+  MDX_MODULE_DEV_COMPILE_VARIANT,
 } from "./cache-format.ts";
+import { createCacheNamespace } from "#veryfront/utils/cache-namespace.ts";
+import { getMdxModuleCacheVariant } from "./module-fetcher/cache-keys.ts";
 
 describe("transforms/mdx/esm-module-loader/cache-format", () => {
   describe("namespaces", () => {
@@ -22,6 +26,92 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       assertEquals(typeof FRAMEWORK_VF_MODULE_CACHE_NAMESPACE, "string");
       assertEquals(FRAMEWORK_VF_MODULE_CACHE_NAMESPACE.length > 0, true);
       assertEquals(MDX_ESM_CACHE_NAMESPACE !== FRAMEWORK_VF_MODULE_CACHE_NAMESPACE, true);
+    });
+  });
+
+  describe("compile-mode isolation", () => {
+    /**
+     * Every current key builder, with the production compile mode. A production
+     * render can only ever reach an entry stored under one of these.
+     */
+    function buildProductionKeys(): string[] {
+      const productionVariant = getMdxModuleCacheVariant("off", undefined, undefined, false);
+      const moduleFile = buildMdxEsmModuleFileName("deadbeef");
+      return [
+        buildMdxEsmTransformCacheKey(
+          "proj",
+          "release-1",
+          "19.1.1",
+          "_vf_modules/lib/label.js",
+          "deadbeef",
+          productionVariant,
+        ),
+        buildMdxEsmPathCacheKey("_vf_modules/lib/label.js", "19.1.1", productionVariant),
+        buildMdxEsmModuleRecoveryCacheKey("proj", "release-1", moduleFile),
+        moduleFile,
+        buildMdxJsxCacheFileName("/project/Button.tsx", "export default function Button() {}"),
+      ];
+    }
+
+    it("keeps a development-compiled writer off every production key", () => {
+      const developmentVariant = getMdxModuleCacheVariant("off", undefined, undefined, true);
+      const productionVariant = getMdxModuleCacheVariant("off", undefined, undefined, false);
+
+      assertEquals(developmentVariant, MDX_MODULE_DEV_COMPILE_VARIANT);
+      assertEquals(productionVariant, undefined);
+
+      const productionKeys = buildProductionKeys();
+      const developmentKeys = [
+        buildMdxEsmTransformCacheKey(
+          "proj",
+          "release-1",
+          "19.1.1",
+          "_vf_modules/lib/label.js",
+          "deadbeef",
+          developmentVariant,
+        ),
+        buildMdxEsmPathCacheKey("_vf_modules/lib/label.js", "19.1.1", developmentVariant),
+      ];
+
+      for (const developmentKey of developmentKeys) {
+        assertEquals(
+          productionKeys.includes(developmentKey),
+          false,
+          `production render can reach a development-compiled entry at ${developmentKey}`,
+        );
+      }
+    });
+
+    it("keeps a legacy, always-development-compiled entry off every production key", () => {
+      // Before the compile mode entered the cache identity every artifact was
+      // development-compiled and every key was unsegmented, so a production
+      // render would read one straight off its own key. The only thing stopping
+      // that is the namespace roll the schema sample below carries. Rebuild the
+      // pre-roll namespace and prove no current production key can reach it.
+      const { devCompileVariant, ...legacySchemaSample } = buildMdxEsmCacheSchemaSample();
+      assertEquals(devCompileVariant, MDX_MODULE_DEV_COMPILE_VARIANT);
+
+      const legacyNamespace = createCacheNamespace("mdx-esm", legacySchemaSample);
+
+      assertEquals(
+        legacyNamespace === MDX_ESM_CACHE_NAMESPACE,
+        false,
+        "the cache namespace no longer names the compile-mode split, so legacy " +
+          "development-compiled entries are readable from a production key",
+      );
+
+      for (const productionKey of buildProductionKeys()) {
+        assertEquals(
+          productionKey.includes(MDX_ESM_CACHE_NAMESPACE),
+          true,
+          `production key is outside the current namespace: ${productionKey}`,
+        );
+        assertEquals(
+          productionKey.includes(legacyNamespace),
+          false,
+          `production key can reach a legacy entry: ${productionKey}`,
+        );
+      }
     });
   });
 
