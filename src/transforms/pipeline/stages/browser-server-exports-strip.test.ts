@@ -3409,6 +3409,40 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("analyzes a catch pattern default in order", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { try { throw {}; } catch ({ x = (missing, KEY) }) {} })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-catch-default-order.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-catch-default-order.tsx");
+    });
+
+    it("does not trust a thrown class whose evaluation aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { try { throw class { static { throw null; } }; } catch ({}) { globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-catch-thrown-class.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-catch-thrown-class.tsx");
+    });
+
     it("does not enter a catch after a return from the try block", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3503,6 +3537,25 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(
         code,
         "pages/root-iife-stacked-labels.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("merges continues that target the same stacked-label loop", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { outer: inner: for (; true; globalThis.registered = KEY) { if (cond) continue outer; else continue inner; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-stacked-label-continues.tsx",
       );
 
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);

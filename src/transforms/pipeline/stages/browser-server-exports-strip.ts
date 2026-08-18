@@ -2920,6 +2920,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     | `break:${string}`
     | `continue:${string}`
     | "unknown";
+  const activeContinueLabelGroups: Array<readonly string[]> = [];
 
   function deferStatementListTail(
     statements: unknown[],
@@ -2939,9 +2940,12 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       const primitive = staticPrimitiveValue(value, initializedNames);
       if (primitive.known) return primitive.value !== null && primitive.value !== undefined;
       const unwrapped = unwrap(value);
-      return unwrapped.type === "ObjectExpression" || unwrapped.type === "ArrayExpression" ||
+      const syntacticallyNonNullish = unwrapped.type === "ObjectExpression" ||
+        unwrapped.type === "ArrayExpression" ||
         unwrapped.type === "FunctionExpression" || unwrapped.type === "ArrowFunctionExpression" ||
         unwrapped.type === "ClassExpression" || unwrapped.type === "RegExpLiteral";
+      return syntacticallyNonNullish &&
+        isInertExpression(value, noNameHelpers, initializedNames);
     };
     const catchParameterCompletion = (
       parameter: Node | null,
@@ -2969,6 +2973,17 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (property.type === "ObjectProperty" && isNode(property.value)) {
             deferred.add(property.value);
           }
+        }
+        const value = property.type === "ObjectProperty" && isNode(property.value)
+          ? property.value
+          : null;
+        if (
+          value?.type === "AssignmentPattern" && isNode(value.right) &&
+          !isInertExpression(value.right, noNameHelpers, initializedNames)
+        ) {
+          deferOrderedExpressionTail(value.right, initializedNames);
+        } else if (value && value.type !== "Identifier") {
+          deferred.add(value);
         }
         for (const later of properties.slice(index + 1)) {
           if (isNode(later)) deferred.add(later);
@@ -3383,10 +3398,20 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           statement.body.type === "ForInStatement" || statement.body.type === "ForOfStatement";
         const carriesLoopLabels = bodyIsLoop || statement.body.type === "LabeledStatement";
         const nestedLoopLabels = label ? [...loopLabels, label] : loopLabels;
-        const completion = statementCompletion(
-          statement.body,
-          carriesLoopLabels ? nestedLoopLabels : [],
-        );
+        if (bodyIsLoop && nestedLoopLabels.length > 0) {
+          activeContinueLabelGroups.push(nestedLoopLabels);
+        }
+        let completion: Completion;
+        try {
+          completion = statementCompletion(
+            statement.body,
+            carriesLoopLabels ? nestedLoopLabels : [],
+          );
+        } finally {
+          if (bodyIsLoop && nestedLoopLabels.length > 0) {
+            activeContinueLabelGroups.pop();
+          }
+        }
         if (label && completion === `break:${label}`) return "normal";
         if (label && completion === `continue:${label}`) return "unknown";
         return completion;
@@ -3419,7 +3444,19 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           const alternateCompletion = isNode(statement.alternate)
             ? statementCompletion(statement.alternate)
             : "normal";
-          return consequentCompletion === alternateCompletion ? consequentCompletion : "unknown";
+          if (consequentCompletion === alternateCompletion) return consequentCompletion;
+          const consequentLabel = consequentCompletion.startsWith("continue:")
+            ? consequentCompletion.slice("continue:".length)
+            : null;
+          const alternateLabel = alternateCompletion.startsWith("continue:")
+            ? alternateCompletion.slice("continue:".length)
+            : null;
+          const sharedTarget = consequentLabel && alternateLabel
+            ? activeContinueLabelGroups.find((group) =>
+              group.includes(consequentLabel) && group.includes(alternateLabel)
+            )
+            : undefined;
+          return sharedTarget?.[0] ? `continue:${sharedTarget[0]}` : "unknown";
         }
         return "unknown";
       }
