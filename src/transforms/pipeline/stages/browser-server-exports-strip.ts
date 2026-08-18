@@ -224,6 +224,10 @@ function nodeStart(node: Node): number | null {
   return typeof node.start === "number" ? node.start : null;
 }
 
+function nodeEnd(node: Node): number | null {
+  return typeof node.end === "number" ? node.end : null;
+}
+
 /**
  * The name an export clause publishes. Usually an identifier, but ES2022 also
  * allows a string literal (`export { loadIt as "getServerData" }`), which the
@@ -1897,7 +1901,7 @@ function evaluationIsInert(
  * its body exactly where it sits, as does esbuild's lowering of a TypeScript
  * enum or namespace.
  */
-function deferredExecutionNodes(root: Node): Set<Node> {
+function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   const deferred = new Set<Node>();
   const executedNodes = new Set<Node>();
   const constructedClasses = new Set<Node>();
@@ -2106,19 +2110,78 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       : null;
   };
 
-  const hasSimpleParameterInitialization = (node: Node): boolean =>
-    Array.isArray(node.params) && node.params.every((parameter) =>
-      isNode(parameter) &&
-      (parameter.type === "Identifier" ||
-        (parameter.type === "RestElement" && isNode(parameter.argument) &&
-          parameter.argument.type === "Identifier"))
-    );
-
-  const callArgumentsComplete = (node: Node): boolean =>
+  const callArgumentsComplete = (
+    node: Node,
+    initializedNames: ReadonlySet<string>,
+  ): boolean =>
     (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
     Array.isArray(node.arguments) && node.arguments.every((argument) =>
-      isNode(argument) && inertCompletionExpression(argument)
+      isNode(argument) && isInertExpression(argument, noNameHelpers, initializedNames)
     );
+
+  const isDefinitelyDefinedArgument = (node: Node): boolean => {
+    const argument = unwrap(node);
+    return argument.type === "StringLiteral" || argument.type === "NumericLiteral" ||
+      argument.type === "BooleanLiteral" || argument.type === "NullLiteral" ||
+      argument.type === "BigIntLiteral" || argument.type === "DecimalLiteral" ||
+      argument.type === "RegExpLiteral" || argument.type === "FunctionExpression" ||
+      argument.type === "ArrowFunctionExpression" || argument.type === "ClassExpression" ||
+      argument.type === "ArrayExpression" || argument.type === "ObjectExpression" ||
+      (argument.type === "TemplateLiteral" &&
+        (!Array.isArray(argument.expressions) || argument.expressions.length === 0));
+  };
+
+  const parameterInitializationCompletes = (
+    node: Node,
+    invocation: Node,
+    initializedNames: ReadonlySet<string>,
+  ): boolean => {
+    if (!Array.isArray(node.params) || !Array.isArray(invocation.arguments)) return false;
+
+    const parameterNames = new Set<string>();
+    for (const parameter of node.params) {
+      if (!isNode(parameter)) return false;
+      for (const binding of patternBindingIdentifiers(parameter)) {
+        const name = nodeName(binding);
+        if (name) parameterNames.add(name);
+      }
+    }
+    const initializedForDefault = new Set(
+      [...initializedNames].filter((name) => !parameterNames.has(name)),
+    );
+
+    for (let index = 0; index < node.params.length; index++) {
+      const parameter = node.params[index];
+      if (!isNode(parameter)) return false;
+      if (parameter.type === "Identifier") {
+        const name = nodeName(parameter);
+        if (name) initializedForDefault.add(name);
+        continue;
+      }
+      if (
+        parameter.type === "RestElement" && isNode(parameter.argument) &&
+        parameter.argument.type === "Identifier"
+      ) {
+        const name = nodeName(parameter.argument);
+        if (name) initializedForDefault.add(name);
+        continue;
+      }
+      if (
+        parameter.type !== "AssignmentPattern" || !isNode(parameter.left) ||
+        parameter.left.type !== "Identifier" || !isNode(parameter.right)
+      ) return false;
+
+      const argument = invocation.arguments[index];
+      const defaultIsSkipped = isNode(argument) && isDefinitelyDefinedArgument(argument);
+      if (
+        !defaultIsSkipped &&
+        !isInertExpression(parameter.right, noNameHelpers, initializedForDefault)
+      ) return false;
+      const name = nodeName(parameter.left);
+      if (name) initializedForDefault.add(name);
+    }
+    return true;
+  };
 
   const invokedInlineObjectFunction = (callee: Node): Node | null => {
     if (
@@ -2266,9 +2329,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       ) {
         executedNodes.add(nextInvoked);
         const getterResult = returnedInlineGetterFunction(nextInvoked);
+        const initializedAtCall = initializedNamesBefore(node, sites);
         if (
-          getterResult && hasSimpleParameterInitialization(getterResult) &&
-          callArgumentsComplete(node)
+          getterResult && callArgumentsComplete(node, initializedAtCall) &&
+          parameterInitializationCompletes(getterResult, node, initializedAtCall)
         ) executedNodes.add(getterResult);
       }
     }
@@ -2324,20 +2388,24 @@ type ElisionReason =
   | "does-not-run";
 
 /** Names whose reads cannot fail before this site starts evaluating. */
-function initializedNamesAt(site: BindingSite, sites: BindingSite[]): Set<string> {
+function initializedNamesBefore(node: Node, sites: BindingSite[]): Set<string> {
   const initialized = new Set<string>();
-  const siteStart = nodeStart(site.node);
+  const siteStart = nodeStart(node);
 
   for (const candidate of sites) {
-    const candidateStart = nodeStart(candidate.node);
+    const candidateEnd = nodeEnd(candidate.node);
     const initializedAtInstantiation = candidate.initialization === "instantiation";
-    const evaluatedEarlier = siteStart !== null && candidateStart !== null &&
-      candidateStart < siteStart;
+    const evaluatedEarlier = siteStart !== null && candidateEnd !== null &&
+      candidateEnd < siteStart;
     if (!initializedAtInstantiation && !evaluatedEarlier) continue;
     for (const name of candidate.names) initialized.add(name);
   }
 
   return initialized;
+}
+
+function initializedNamesAt(site: BindingSite, sites: BindingSite[]): Set<string> {
+  return initializedNamesBefore(site.node, sites);
 }
 
 function elisionReason(
@@ -2503,7 +2571,7 @@ function dropUnreachableModuleScopeBindings(
   // The reads in a body that only runs when something calls it are edges of the
   // declaration's own binding, so they keep the secret alive exactly as long as
   // the browser can still reach that binding.
-  const deferred = deferredExecutionNodes({ type: "Program", body });
+  const deferred = deferredExecutionNodes({ type: "Program", body }, sites);
 
   const roots = freeReferencedIdentifiers({ type: "Program", body }, elided, deferred);
   for (const site of sites) {
