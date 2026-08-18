@@ -1915,7 +1915,12 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       ? node.body.body.find((member) => isNode(member) && isConstructor(member))
       : undefined;
 
-  const constructorBeginsWithSimpleSuper = (node: Node): boolean => {
+  const noNameHelpers: ReadonlySet<string> = new Set<string>();
+  const noInitializedNames: ReadonlySet<string> = new Set<string>();
+  const inertCompletionExpression = (node: Node | undefined): boolean =>
+    isInertExpression(node, noNameHelpers, noInitializedNames);
+
+  const constructorBeginsWithCompletingSuper = (node: Node): boolean => {
     const constructor = explicitConstructor(node);
     if (!constructor || !isNode(constructor.body) || !Array.isArray(constructor.body.body)) {
       return false;
@@ -1927,7 +1932,9 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     const expression = first.expression;
     return expression.type === "CallExpression" && isNode(expression.callee) &&
       expression.callee.type === "Super" && Array.isArray(expression.arguments) &&
-      expression.arguments.length === 0;
+      expression.arguments.every((argument) =>
+        isNode(argument) && inertCompletionExpression(argument)
+      );
   };
 
   const unwrap = (node: Node): Node => {
@@ -1952,7 +1959,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 
   const invokesSuperclass = (node: Node): boolean =>
     isNode(node.superClass) &&
-    (!explicitConstructor(node) || constructorBeginsWithSimpleSuper(node));
+    (!explicitConstructor(node) || constructorBeginsWithCompletingSuper(node));
 
   const explicitConstructorCompletes = (node: Node): boolean => {
     const constructor = explicitConstructor(node);
@@ -1962,16 +1969,11 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       !isNode(constructor.body) || !Array.isArray(constructor.body.body)
     ) return false;
     if (!isNode(node.superClass)) return constructor.body.body.length === 0;
-    return constructor.body.body.length === 1 && constructorBeginsWithSimpleSuper(node);
+    return constructor.body.body.length === 1 && constructorBeginsWithCompletingSuper(node);
   };
 
   const classMembers = (node: Node): Node[] =>
     isNode(node.body) && Array.isArray(node.body.body) ? node.body.body.filter(isNode) : [];
-
-  const noNameHelpers: ReadonlySet<string> = new Set<string>();
-  const noInitializedNames: ReadonlySet<string> = new Set<string>();
-  const inertCompletionExpression = (node: Node | undefined): boolean =>
-    isInertExpression(node, noNameHelpers, noInitializedNames);
 
   function classDefinitionPrefixCompletes(node: Node): boolean {
     if (hasDecorators(node)) return false;
@@ -2107,10 +2109,14 @@ function deferredExecutionNodes(root: Node): Set<Node> {
           target = value;
         }
       }
-      // Plain methods and function literals are inert while the object is
-      // created. Keep the proof narrow so a spread, ordinary initializer,
-      // accessor, or computed key cannot make a later function look invoked.
-      if (target === null) return null;
+      const creationCompletes = target !== null ||
+        (property.type === "ObjectProperty" && propertyName !== "__proto__" &&
+          isNode(property.value) && inertCompletionExpression(property.value)) ||
+        property.type === "ObjectMethod";
+      // Creation must finish before member access and invocation. Track the
+      // last property with the selected name so an inert value or accessor
+      // that overwrites a method does not make the earlier body look invoked.
+      if (!creationCompletes) return null;
       if (propertyName === selectedName) selected = target;
     }
     return selected;
