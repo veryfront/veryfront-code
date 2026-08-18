@@ -119,6 +119,69 @@ function walk(node: Node, visit: (node: Node) => boolean | void): void {
   for (const child of children(node)) walk(child, visit);
 }
 
+/**
+ * TypeScript nodes that survive type erasure and emit runtime code.
+ *
+ * Everything else the TypeScript grammar adds is erased before the module
+ * runs, so an identifier read inside it is a type reference and must not keep a
+ * binding alive. Getting the split wrong is unsafe in both directions: treating
+ * a runtime node as erased deletes live code, and treating an erased node as
+ * runtime pins a server-only import into the browser artifact.
+ *
+ * The list is closed and enumerable, which is the point: it is a decidable
+ * question, unlike proving what a module does to an intrinsic. A TypeScript
+ * node type this pass does not know is treated as runtime code, because
+ * over-counting a reference only ever keeps a binding.
+ *
+ * The split is invisible while this stage runs after the compile stage, which
+ * erases every TypeScript node before this pass sees the module. It exists so
+ * the stage stays correct when it runs on authored source.
+ */
+const RUNTIME_TS_NODE_TYPES = new Set<string>([
+  // Value expressions wrapping a value expression plus an erased type operand.
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+  "TSInstantiationExpression",
+  // `enum E { A = compute() }` emits an object and evaluates each initialiser.
+  "TSEnumDeclaration",
+  "TSEnumBody",
+  "TSEnumMember",
+  // `namespace N { … }` with a body emits an IIFE over a runtime object.
+  "TSModuleDeclaration",
+  "TSModuleBlock",
+  // `constructor(private dep = fallback())` emits an assignment in the body.
+  "TSParameterProperty",
+  // `import L = require("./l.ts")` and `import A = N.Sub` both emit a binding.
+  "TSImportEqualsDeclaration",
+  "TSExternalModuleReference",
+  "TSQualifiedName",
+  // `export = handler` emits an assignment to the module export.
+  "TSExportAssignment",
+]);
+
+/**
+ * Whether the compiler erases `node` and everything under it, so no identifier
+ * inside it is a runtime read.
+ *
+ * Both reference walkers ask this, and they must ask the same question. A
+ * walker that counts a type-position read as a runtime reference keeps the
+ * server-only import that binding came from; a walker that skips a runtime
+ * TypeScript node reports live code as dead.
+ */
+function isErasedTypeNode(node: Node): boolean {
+  // `declare const`, `declare class`, `declare namespace`, `declare enum` and
+  // `declare prop: T` are all ambient: they emit nothing.
+  if (node.declare === true) return true;
+  // `import { type Cfg }`, `export { type Cfg }`, `export type { Cfg }`.
+  if (node.importKind === "type" || node.exportKind === "type") return true;
+  if (!node.type.startsWith("TS")) return false;
+  if (!RUNTIME_TS_NODE_TYPES.has(node.type)) return true;
+  // An ambient `declare module "x";` has no body to run.
+  return node.type === "TSModuleDeclaration" && !isNode(node.body);
+}
+
 function nodeName(value: unknown): string | null {
   if (!isNode(value)) return null;
   const name = value.name;
@@ -165,6 +228,13 @@ function patternBoundNames(pattern: Node): string[] {
 
     if (node.type === "RestElement") {
       if (isNode(node.argument)) collect(node.argument);
+      return;
+    }
+
+    // `constructor(private dep: Dep)` binds `dep` as a parameter and assigns
+    // it to `this` at runtime.
+    if (node.type === "TSParameterProperty") {
+      if (isNode(node.parameter)) collect(node.parameter);
       return;
     }
 
@@ -329,7 +399,8 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
     const property = node.type === "MemberExpression" || node.type === "OptionalMemberExpression"
       ? node.property
       : node.type === "ObjectProperty" || node.type === "ObjectMethod" ||
-          node.type === "ClassMethod" || node.type === "ClassProperty"
+          node.type === "ClassMethod" || node.type === "ClassProperty" ||
+          node.type === "ClassAccessorProperty"
       ? node.key
       : undefined;
 
@@ -342,6 +413,10 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
 
     walk(statement, (node) => {
       if (node.type === "ImportDeclaration") return false;
+      // A type position is not a runtime read. Without this the walker counts
+      // `p: typeof KEY` as a use of `KEY` and keeps the server-only import it
+      // came from.
+      if (isErasedTypeNode(node)) return false;
 
       markFixedName(node);
 
@@ -483,8 +558,23 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     for (const child of children(node)) visit(child, scopes);
   };
 
+  const visitDecorators = (node: Node, scopes: LexicalScope[]): void => {
+    for (const decorator of Array.isArray(node.decorators) ? node.decorators : []) {
+      if (isNode(decorator)) visit(decorator, scopes);
+    }
+  };
+
   const visitPatternRuntime = (pattern: Node, scopes: LexicalScope[]): void => {
-    if (pattern.type === "Identifier") return;
+    if (pattern.type === "Identifier") {
+      visitDecorators(pattern, scopes);
+      return;
+    }
+
+    if (pattern.type === "TSParameterProperty") {
+      visitDecorators(pattern, scopes);
+      if (isNode(pattern.parameter)) visitPatternRuntime(pattern.parameter, scopes);
+      return;
+    }
 
     if (pattern.type === "AssignmentPattern") {
       if (isNode(pattern.left)) visitPatternRuntime(pattern.left, scopes);
@@ -572,6 +662,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
   };
 
   const visitObjectMember = (node: Node, scopes: LexicalScope[]): void => {
+    visitDecorators(node, scopes);
     if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
     if (isNode(node.value)) visit(node.value, scopes);
   };
@@ -606,23 +697,12 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
   };
 
-  const visitTsExpression = (node: Node, scopes: LexicalScope[]): boolean => {
-    if (
-      node.type === "TSAsExpression" || node.type === "TSTypeAssertion" ||
-      node.type === "TSNonNullExpression" || node.type === "TSInstantiationExpression" ||
-      node.type === "TSSatisfiesExpression"
-    ) {
-      if (isNode(node.expression)) visit(node.expression, scopes);
-      return true;
-    }
-
-    if (node.type.startsWith("TS")) return true;
-    return false;
-  };
-
   const visit = (node: Node, scopes: LexicalScope[]): void => {
     if (node.type === "ImportDeclaration") return;
-    if (visitTsExpression(node, scopes)) return;
+    // Same classification `referencedIdentifiers` uses. A value-emitting
+    // TypeScript node such as an enum or a namespace body falls through to the
+    // generic walk below, and its erased type operand is skipped there in turn.
+    if (isErasedTypeNode(node)) return;
 
     if (node.type === "Identifier" || node.type === "JSXIdentifier") {
       const name = nodeName(node);
@@ -630,7 +710,10 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       return;
     }
 
-    if (node.type === "Program" || node.type === "BlockStatement") {
+    if (
+      node.type === "Program" || node.type === "BlockStatement" ||
+      node.type === "TSModuleBlock"
+    ) {
       const scope: LexicalScope = { kind: "block", names: new Set() };
       bindDirectDeclarations(scope, node);
       for (const statement of Array.isArray(node.body) ? node.body : []) {
@@ -654,6 +737,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
       if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
+      visitDecorators(node, scopes);
       const body = node.body;
       if (isNode(body)) visitChildren(body, scopes);
       if (isNode(node.superClass)) visit(node.superClass, scopes);
@@ -689,12 +773,16 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       return;
     }
 
-    if (node.type === "ObjectProperty" || node.type === "ClassProperty") {
+    if (
+      node.type === "ObjectProperty" || node.type === "ClassProperty" ||
+      node.type === "ClassAccessorProperty"
+    ) {
       visitObjectMember(node, scopes);
       return;
     }
 
     if (node.type === "ObjectMethod" || node.type === "ClassMethod") {
+      visitDecorators(node, scopes);
       if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
       visitFunction(node, scopes);
       return;
@@ -746,6 +834,33 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
   }
 
   return referenced;
+}
+
+/**
+ * Both reference walkers' answers for one parsed module.
+ *
+ * `referenced` is the flat over-approximation that decides whether a
+ * declaration or an import binding is still live. `free` is the scope-aware
+ * walk that seeds and grows the stripped hooks' dependency closure. The two
+ * must classify TypeScript syntax identically: if one counts a type-position
+ * read as a runtime reference and the other does not, a hook-only import stays
+ * in the browser artifact, and if one skips a value-emitting TypeScript node
+ * the pass deletes live code.
+ *
+ * Exported so that agreement can be tested directly. It is not observable
+ * through `stripServerOnlyExports` on compiled input, because the compile stage
+ * erases every TypeScript node before this stage runs today.
+ */
+export function moduleReferenceWalkers(ast: ASTNode): {
+  referenced: Set<string>;
+  free: Set<string>;
+} {
+  const program = (ast as { program?: unknown }).program;
+  const root: Node = isNode(program) ? program : ast;
+  return {
+    referenced: referencedIdentifiers(bodyOf(ast)),
+    free: freeReferencedIdentifiers(root),
+  };
 }
 
 function literalText(node: Node | undefined): string | null {
@@ -980,6 +1095,11 @@ function importedBindings(statement: Node): string[] {
 
   for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
     if (!isNode(specifier)) continue;
+    // `import { hashOf, type Cfg }`: `Cfg` is erased before the module runs, so
+    // it is not a binding that has to be kept alive. Counting it would stop
+    // `hashOf` alone from proving the import hook-only, and the statement would
+    // be reduced to a side-effect import instead of deleted.
+    if (specifier.importKind === "type") continue;
     const name = nodeName(specifier.local);
     if (name) bindings.push(name);
   }
