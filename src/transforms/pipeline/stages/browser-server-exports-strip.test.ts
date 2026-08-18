@@ -10,7 +10,6 @@ import {
   moduleReferenceWalkers,
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
-import { COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, compilePlugin } from "./compile.ts";
 import { runPipeline } from "../index.ts";
 import { type TransformContext, TransformStage } from "../types.ts";
 
@@ -1052,80 +1051,88 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "TestD as default");
     });
 
-    it("does not retain a pre-strip inline source map", async () => {
+    it("emits a compile map built from already-stripped input", async () => {
+      // The strip runs before compile, so the compiler never sees the hook and
+      // its map cannot carry the server-only source. Nothing has to stash or
+      // restore the directive, and the map survives to the browser normally.
       const source = [
         `import { getEnv } from "veryfront";`,
-        `const KEY = getEnv("SERVER_VALUE");`,
-        `const CLIENT_MARKER = "//# sourceMappingURL=data:text/plain;base64,AAAA";`,
+        `const KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
         `export async function getServerData() { return { props: { key: KEY } }; }`,
-        `export default function Page() { return CLIENT_MARKER; }`,
+        `export default function Page() { return null; }`,
       ].join("\n");
-      const compileContext = {
-        ...ctx(source, "browser"),
-        dev: true,
-        jsxImportSource: "react",
-      };
-      const compiled = await compilePlugin.transform(compileContext);
-      const directive = compileContext.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-      assertEquals(typeof directive, "string");
-      const match = String(directive).match(
-        /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/]+={0,2})/,
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-post-reorder", dev: true, ssr: false },
       );
-      assertEquals(match === null, false);
-      const sourceMap = JSON.parse(atob(match?.[1] ?? "")) as {
-        sourcesContent?: string[];
-      };
+
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+      assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+
+      const encoded = result.code.match(
+        /sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/]+={0,2})/,
+      )?.[1];
+      assertEquals(typeof encoded, "string");
+      const map = JSON.parse(atob(String(encoded))) as { sourcesContent?: string[] };
       assertEquals(
-        sourceMap.sourcesContent?.some((content) => content.includes("SERVER_VALUE")),
-        true,
+        map.sourcesContent?.some((content) => content.includes("SERVER_ONLY_HOOK_SOURCE")),
+        false,
       );
-
-      const result = await browserServerExportsStripPlugin.transform({
-        ...compileContext,
-        code: compiled,
-      });
-
-      assertNotIncludes(result, "SERVER_VALUE");
-      assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
-      assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
     });
 
-    it("removes a pre-strip inline map before an appended MDX export", async () => {
+    it("runs before compile even when a custom plugin re-sorts the pipeline", async () => {
+      // Array position decides order until a custom plugin registers, at which
+      // point the pipeline is re-sorted by `stage`. Both must place this pass
+      // before compile, so this case pins the stage number and the case above
+      // pins the array position.
       const source = [
         `import { getEnv } from "veryfront";`,
-        `const KEY = getEnv("SERVER_VALUE");`,
-        `const CLIENT_MARKER = "//# sourceMappingURL=data:text/plain;base64,AAAA";`,
-        `const MDXLayout = () => CLIENT_MARKER;`,
+        `const KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
         `export async function getServerData() { return { props: { key: KEY } }; }`,
+        `export default function Page() { return null; }`,
       ].join("\n");
-      const compileContext = {
-        ...ctx(source, "browser"),
-        filePath: "pages/test.mdx",
-        dev: true,
-        jsxImportSource: "react",
-      };
-      const compiled = await compilePlugin.transform(compileContext);
-      assertEquals(
-        String(compileContext.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA)).includes(
-          "sourceMappingURL=data:application/json;base64,",
-        ),
-        true,
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-post-reorder-sorted", dev: true, ssr: false },
+        {
+          plugins: [{
+            name: "inert-custom-plugin",
+            stage: TransformStage.FINALIZE + 0.5,
+            transform: (ctx) => ctx.code,
+          }],
+        },
       );
-      assertNotIncludes(compiled, "sourceMappingURL=data:application/json;base64,");
-      assertStringIncludes(compiled, "export { MDXLayout };");
 
-      const result = await browserServerExportsStripPlugin.transform({
-        ...compileContext,
-        code: compiled,
-      });
-
-      assertNotIncludes(result, "SERVER_VALUE");
-      assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
-      assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
-      assertStringIncludes(result, "export { MDXLayout };");
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+      const encoded = result.code.match(
+        /sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/]+={0,2})/,
+      )?.[1];
+      assertEquals(typeof encoded, "string");
+      const map = JSON.parse(atob(String(encoded))) as { sourcesContent?: string[] };
+      assertEquals(
+        map.sourcesContent?.some((content) => content.includes("SERVER_ONLY_HOOK_SOURCE")),
+        false,
+      );
     });
 
-    it("removes the compile map after an intermediate plugin appends code", async () => {
+    it("keeps the compile map when no server hook exists", async () => {
+      const result = await runPipeline(
+        `export default function Page() { return null; }`,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-no-server-hook", dev: true, ssr: false },
+      );
+
+      assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+    });
+
+    it("leaves a post-compile plugin's appended code alone", async () => {
       const source = [
         `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
         `export async function getServerData() { return { props: { key: KEY } }; }`,
@@ -1147,80 +1154,7 @@ describe("browser-server-exports-strip", () => {
       );
 
       assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
-      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
       assertStringIncludes(result.code, "export const APPENDED = true;");
-    });
-
-    it("does not confuse a copied map string with the compile map comment", async () => {
-      const source = [
-        `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
-        `export async function getServerData() { return { props: { key: KEY } }; }`,
-        `export default function Page() { return null; }`,
-      ].join("\n");
-
-      const result = await runPipeline(
-        source,
-        "/project/pages/test.tsx",
-        "/project",
-        { projectId: "source-map-duplicate-text", dev: true, ssr: false },
-        {
-          plugins: [{
-            name: "copy-map-before-appending",
-            stage: TransformStage.COMPILE + 0.5,
-            transform: (ctx) => {
-              const directive = ctx.code.match(
-                /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,[A-Za-z0-9+/]+={0,2}/,
-              )?.[0];
-              const copied = directive
-                ? `export const COPIED_COMPILE_MAP = ${JSON.stringify(directive)};\n`
-                : "";
-              return `${copied}${ctx.code}\nexport const APPENDED = true;`;
-            },
-          }],
-        },
-      );
-
-      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
-      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
-      assertNotIncludes(result.code, "COPIED_COMPILE_MAP");
-      assertStringIncludes(result.code, "export const APPENDED = true;");
-    });
-
-    it("does not restore a compile map after an intermediate plugin removes the hook", async () => {
-      const source = [
-        `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
-        `export async function getServerData() { return { props: { key: KEY } }; }`,
-        `export default function Page() { return null; }`,
-      ].join("\n");
-
-      const result = await runPipeline(
-        source,
-        "/project/pages/test.tsx",
-        "/project",
-        { projectId: "source-map-intermediate-removal", dev: true, ssr: false },
-        {
-          plugins: [{
-            name: "remove-server-hook",
-            stage: TransformStage.COMPILE + 0.5,
-            transform: () => `export default function Page() { return null; }`,
-          }],
-        },
-      );
-
-      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
-      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
-      assertStringIncludes(result.code, "export default function Page()");
-    });
-
-    it("keeps the compile map when no server hook or intermediate change exists", async () => {
-      const result = await runPipeline(
-        `export default function Page() { return null; }`,
-        "/project/pages/test.tsx",
-        "/project",
-        { projectId: "source-map-no-server-hook", dev: true, ssr: false },
-      );
-
-      assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
     });
 
     it("removes an external source map reference after stripping", async () => {
@@ -1234,6 +1168,90 @@ describe("browser-server-exports-strip", () => {
 
       assertNotIncludes(result, "readSecret");
       assertNotIncludes(result, "sourceMappingURL=page.js.map");
+    });
+
+    it("keeps a server import, a secret and a hook-only helper out of the artifact", async () => {
+      // The security property this stage exists for, asserted through the real
+      // browser pipeline rather than through `stripServerOnlyExports` alone.
+      const source = [
+        `import { hashOf } from "./lib/uses-crypto.ts";`,
+        `import { getEnv } from "veryfront";`,
+        `const API_KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
+        `function loadUser(id) { return hashOf(API_KEY + id); }`,
+        `export async function getServerData(ctx) {`,
+        `  return { props: { user: loadUser(ctx.params.id) } };`,
+        `}`,
+        `export default function Page({ user }) { return user; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-security-property",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "uses-crypto");
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+      assertStringIncludes(result.code, "server-only");
+    });
+
+    it("does not pin a hook-only binding read from a type position", async () => {
+      // Pre-compile input carries TypeScript the compiled input never had. A
+      // `typeof` in an erased parameter annotation must not count as a browser
+      // read and keep the secret alive.
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page(p: { k: typeof KEY }) { return p.k; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-typeof-parameter",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+    });
+
+    it("does not drag a server module in through a `ReturnType<typeof ...>` alias", async () => {
+      const source = [
+        `import { schema } from "./lib/server-schema.ts";`,
+        `import { getEnv } from "veryfront";`,
+        `const SECRET = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
+        `type Data = ReturnType<typeof schema.parse>;`,
+        `export async function getServerData() {`,
+        `  return { props: { d: schema.parse(SECRET) as Data } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-returntype-alias",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+      assertNotIncludes(result.code, "server-schema");
+    });
+
+    it("deletes a mixed value and type import the hook owned", async () => {
+      // `Cfg` is erased before the module runs, so counting it would leave a
+      // bare `import "./lib/server-only-lib.js"` that executes in the browser.
+      const source = [
+        `import { hashOf, type Cfg } from "./lib/server-only-lib.ts";`,
+        `export async function getServerData() {`,
+        `  const c: Cfg = { a: 1 };`,
+        `  return { props: { h: hashOf(c) } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-mixed-specifier-import",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
     });
 
     it("does not run for the ssr target", () => {

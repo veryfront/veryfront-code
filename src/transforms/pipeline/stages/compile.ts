@@ -15,18 +15,6 @@ const ReflectApply = Reflect.apply;
 const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const SOURCE_MAP_SUFFIX =
   /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
-export const COMPILE_SOURCE_MAP_DIRECTIVE_METADATA = "compileSourceMapDirective";
-export const COMPILE_SOURCE_MAP_INPUT_METADATA = "compileSourceMapInput";
-
-function trailingSourceMapDirective(code: string): string | undefined {
-  const match = SOURCE_MAP_SUFFIX.exec(code);
-  return match?.[0].slice((match[1] ?? "").length).trimEnd();
-}
-
-function dropTrailingSourceMapDirective(code: string): string {
-  return code.replace(SOURCE_MAP_SUFFIX, "$1");
-}
-
 function appendBeforeSourceMap(code: string, addition: string): string {
   const match = SOURCE_MAP_SUFFIX.exec(code);
   if (match?.index === undefined) return code + addition;
@@ -108,25 +96,8 @@ export const compilePlugin: TransformPlugin = {
         /\bconst\s+MDXLayout\b/.test(code) &&
         !/export\s+\{[^}]*MDXLayout/.test(code)
       ) {
-        // Keep esbuild's directive last. Browser server-hook stripping removes
-        // a stale compile map after rewriting, and a framework export appended
-        // after the directive would otherwise hide that suffix.
+        // Keep esbuild's directive last.
         code = appendBeforeSourceMap(code, "\nexport { MDXLayout };\n");
-      }
-
-      const sourceMapDirective = trailingSourceMapDirective(code);
-      if (ctx.target === "browser" && sourceMapDirective) {
-        // Keep the compiler map out of intermediate browser plugins. The
-        // server-export strip stage restores it only when the map-free compile
-        // output is unchanged and no hook is rewritten. This makes the real
-        // comment unambiguous even if a plugin copies its text into a string,
-        // appends code, or removes the hook itself.
-        ctx.metadata.set(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, sourceMapDirective);
-        code = dropTrailingSourceMapDirective(code);
-        ctx.metadata.set(COMPILE_SOURCE_MAP_INPUT_METADATA, code);
-      } else {
-        ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-        ctx.metadata.delete(COMPILE_SOURCE_MAP_INPUT_METADATA);
       }
 
       return code;

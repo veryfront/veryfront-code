@@ -59,28 +59,20 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
-import {
-  COMPILE_SOURCE_MAP_DIRECTIVE_METADATA,
-  COMPILE_SOURCE_MAP_INPUT_METADATA,
-} from "./compile.ts";
 
 /** Exports that only ever execute on the server. */
 const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
 
-// The compile stage runs before this pass and embeds its input in a development
-// sourcemap. Once a hook is stripped, any prior map is stale and may contain or
-// point at a verbatim copy of the server-only source. Match only an actual
-// trailing directive so source-map-like text inside authored strings survives.
+// This pass runs on pre-compile source, so no compiler map exists yet. A map
+// directive can still be present in checked-in build output. Once a hook is
+// stripped that map is stale and may point at a verbatim copy of the
+// server-only source, so drop it. Match only an actual trailing directive so
+// source-map-like text inside authored strings survives.
 const SOURCE_MAP_SUFFIX =
   /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
 
 function dropSourceMapSuffix(code: string): string {
   return code.replace(SOURCE_MAP_SUFFIX, "$1");
-}
-
-function appendSourceMapDirective(code: string, directive: string): string {
-  const separator = code.length > 0 && !code.endsWith("\n") ? "\n" : "";
-  return `${code}${separator}${directive}\n`;
 }
 
 /** Source the stub nodes are lifted from, so no node shape is hand-built. */
@@ -978,9 +970,8 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
  * in the browser artifact, and if one skips a value-emitting TypeScript node
  * the pass deletes live code.
  *
- * Exported so that agreement can be tested directly. It is not observable
- * through `stripServerOnlyExports` on compiled input, because the compile stage
- * erases every TypeScript node before this stage runs today.
+ * Exported so that agreement can be tested directly, on inputs that reach
+ * neither walker through `stripServerOnlyExports`.
  */
 export function moduleReferenceWalkers(ast: ASTNode): {
   referenced: Set<string>;
@@ -1048,11 +1039,14 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
 }
 
 /**
- * Bindings for esbuild's `keepNames` helper. Release modules are compiled
- * before the browser transform, so their declarations are followed by calls
- * like `__name(loadPage, "loadPage")`. Recognise the helper by its exact
- * `Object.defineProperty(target, "name", …)` semantics rather than by its
- * minified binding name.
+ * Bindings for esbuild's `keepNames` helper: a declaration in compiled output
+ * is followed by a call like `__name(loadPage, "loadPage")`. Recognise the
+ * helper by its exact `Object.defineProperty(target, "name", ...)` semantics
+ * rather than by its minified binding name.
+ *
+ * Neither caller feeds this pass compiled input any more: the browser pipeline
+ * now runs it before the compile stage, and the code splitter reads raw project
+ * files. It is kept for a module that already carries checked-in build output.
  */
 function compilerNameHelperBindings(body: Node[]): Set<string> {
   const initializers = new Map<string, Node>();
@@ -1367,18 +1361,12 @@ export async function stripServerOnlyExports(
 
 export const browserServerExportsStripPlugin: TransformPlugin = {
   name: "browser-server-exports-strip",
-  // After esbuild compile and CSS strip, before any import resolution, so the
-  // dropped bindings are never rewritten or pre-fetched.
-  stage: TransformStage.COMPILE + 0.6,
+  // After the MDX parse, before the esbuild compile, so the hook body never
+  // reaches the compiler: no keepNames helper is emitted for a declaration this
+  // pass removes, and the compile sourcemap is built from stripped input. The
+  // array position in BROWSER_PIPELINE and this stage number must agree,
+  // because a registered custom plugin re-sorts the pipeline by stage.
+  stage: TransformStage.PARSE + 0.5,
   condition: (ctx: TransformContext) => ctx.target === "browser",
-  transform: async (ctx: TransformContext) => {
-    const directive = ctx.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-    const compileInput = ctx.metadata.get(COMPILE_SOURCE_MAP_INPUT_METADATA);
-    ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-    ctx.metadata.delete(COMPILE_SOURCE_MAP_INPUT_METADATA);
-    const result = await stripServerOnlyExports(ctx.code, ctx.filePath);
-    return result === ctx.code && compileInput === ctx.code && typeof directive === "string"
-      ? appendSourceMapDirective(result, directive)
-      : result;
-  },
+  transform: (ctx: TransformContext) => stripServerOnlyExports(ctx.code, ctx.filePath),
 };
