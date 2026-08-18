@@ -30,9 +30,11 @@
  *   import keeps the imported module in the browser graph, including any
  *   transitive server-only modules it reaches. Node built-ins and Veryfront
  *   framework imports are also deleted when unused, because their browser
- *   side-effect imports are known unsafe or unnecessary. Other already-unused
- *   imports are still reduced to side-effect imports for compatibility with the
- *   older conservative behavior.
+ *   side-effect imports are known unsafe or unnecessary. Anything else is left
+ *   exactly as authored: this pass takes out only the specifiers the stripped
+ *   hooks owned, and never writes a side-effect import of its own. The compile
+ *   stage runs after this one and erases whatever is genuinely unused. See the
+ *   ordering note in `stripServerOnlyExports`.
  *
  * Hooks are matched on the name they are *exported* under, not the name they
  * are declared with, because that is what the runtime looks up: the data
@@ -1223,7 +1225,7 @@ function importedBindings(statement: Node): string[] {
     // `import { hashOf, type Cfg }`: `Cfg` is erased before the module runs, so
     // it is not a binding that has to be kept alive. Counting it would stop
     // `hashOf` alone from proving the import hook-only, and the statement would
-    // be reduced to a side-effect import instead of deleted.
+    // survive as `import { type Cfg }` instead of being deleted.
     if (specifier.importKind === "type") continue;
     const name = nodeName(specifier.local);
     if (name) bindings.push(name);
@@ -1232,13 +1234,29 @@ function importedBindings(statement: Node): string[] {
   return bindings;
 }
 
+/** Remove the specifiers whose bindings the stripped hooks owned. */
+function dropOwnedSpecifiers(statement: Node, hookClosure: Set<string>): void {
+  const specifiers = Array.isArray(statement.specifiers) ? statement.specifiers : [];
+  const kept = specifiers.filter((specifier) => {
+    if (!isNode(specifier)) return true;
+    if (specifier.importKind === "type") return true;
+    const name = nodeName(specifier.local);
+    return !name || !hookClosure.has(name);
+  });
+  // Emptying the list would produce the bare side-effect import this pass must
+  // never synthesise, so keep the statement as authored if nothing survives.
+  if (kept.length === 0 || kept.length === specifiers.length) return;
+  statement.specifiers = kept;
+}
+
 /**
  * Drop imports nothing references any more when their bindings are in the
  * stripped hook's dependency closure, or when their source is known unsafe or
  * unnecessary as a browser side-effect import. Keeping a hook-only import as a
  * bare side-effect import would keep its transitive graph in the browser
- * artifact, which is exactly what this stage strips. Other unused imports keep
- * the legacy conservative side-effect rewrite.
+ * artifact, which is exactly what this stage strips. An import whose remaining
+ * bindings the hooks never owned keeps every one of those bindings exactly as
+ * authored, and a bare `import "./x.ts"` written by hand is never touched.
  */
 function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[] {
   // Import liveness must be scope-aware. A local enum member, namespace,
@@ -1258,19 +1276,22 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
     const source = isNode(statement.source) ? statement.source.value : undefined;
     const isKnownDroppableSource = typeof source === "string" &&
       (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
-    // Two different reasons to delete rather than reduce, and one to reduce.
-    // A node: or veryfront source is unsafe or pointless as a browser
-    // side-effect import whatever used it. A project-relative source is deleted
-    // only when the stripped hook owned every binding, because that module is
-    // reached solely through server-only code and a bare side-effect import
-    // would keep its whole transitive graph in the browser artifact. An import
-    // the hook never touched was already unused before this pass ran, so it
-    // keeps the legacy reduction and its side effects with it.
+    // Two reasons to delete the whole statement. A node: or veryfront source is
+    // unsafe or pointless as a browser side-effect import whatever used it. A
+    // project-relative source goes only when the stripped hook owned every
+    // binding, because that module is reached solely through server-only code
+    // and a bare side-effect import would keep its whole transitive graph in
+    // the browser artifact.
     if (isKnownDroppableSource || bindings.every((binding) => hookClosure.has(binding))) {
       return false;
     }
 
-    statement.specifiers = [];
+    // Anything else is an import this pass does not own. Take out only the
+    // specifiers the stripped hooks owned and leave the rest as authored. See
+    // the ordering note at the call site: demoting the statement to a bare
+    // `import "./x.ts"` would turn an import the compiler can erase into one it
+    // must preserve, which is how a server-only module leaks into the browser.
+    dropOwnedSpecifiers(statement, hookClosure);
     return true;
   });
 }
@@ -1397,6 +1418,17 @@ export async function stripServerOnlyExports(
   // Drop the module-scope state the emptied hooks were the last user of, then
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
+  //
+  // PIPELINE ORDERING DEPENDENCY. `dropUnusedImportBindings` leaves an import
+  // it does not own exactly as authored, including a named import nothing
+  // references any more. That is only safe because
+  // `browserServerExportsStripPlugin` runs at `TransformStage.PARSE + 0.5`, so
+  // `compilePlugin` (`TransformStage.COMPILE`) runs AFTER this pass and esbuild
+  // erases the import it now finds unused. Move this pass back after compile
+  // and nothing erases those imports: the module ships to the browser with its
+  // whole transitive graph. Any change to that ordering must either keep a
+  // stage that erases unused imports after this one or restore the old
+  // reduction to a bare side-effect import here.
   const pruned = retainLeadingComments(body, dropUnusedModuleScopeBindings(body, hookClosure));
   setBody(ast, retainLeadingComments(pruned, dropUnusedImportBindings(pruned, hookClosure)));
 
@@ -1411,6 +1443,9 @@ export const browserServerExportsStripPlugin: TransformPlugin = {
   // pass removes, and the compile sourcemap is built from stripped input. The
   // array position in BROWSER_PIPELINE and this stage number must agree,
   // because a registered custom plugin re-sorts the pipeline by stage.
+  // `stripServerOnlyExports` also depends on compile running after this stage
+  // to erase the imports it leaves unused. Read the ordering note there before
+  // changing this number.
   stage: TransformStage.PARSE + 0.5,
   condition: (ctx: TransformContext) => ctx.target === "browser",
   transform: (ctx: TransformContext) => stripServerOnlyExports(ctx.code, ctx.filePath),

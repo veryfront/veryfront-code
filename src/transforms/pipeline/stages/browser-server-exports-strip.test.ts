@@ -285,7 +285,11 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "loadJob"), 0);
     });
 
-    it("keeps an unrelated unused project import as a side-effect import", async () => {
+    // The pass owns nothing in this import, so it does not touch it. Reducing
+    // it to `import "./client-metrics.ts"` would convert an import the compiler
+    // can erase into one it must preserve. `compile` runs after this stage and
+    // erases it, which is what keeps the browser artifact free of the module.
+    it("leaves an unrelated unused project import exactly as authored", async () => {
       const code = [
         `import { initClientMetrics } from "./client-metrics.ts";`,
         `export async function getServerData() { return { props: {} }; }`,
@@ -294,8 +298,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import "./client-metrics.ts"`);
-      assertEquals(occurrences(result, "initClientMetrics"), 0);
+      assertStringIncludes(result, `import { initClientMetrics } from "./client-metrics.ts"`);
     });
 
     it("keeps an unrelated import when a hook-local binding shadows its name", async () => {
@@ -310,8 +313,9 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import "./client-metrics.ts"`);
-      assertEquals(occurrences(result, "initClientMetrics"), 0);
+      // The shadowing local does not make the import hook-owned, so the import
+      // is not deleted. Nothing the pass owns is in it, so it stays as authored.
+      assertStringIncludes(result, `import { initClientMetrics } from "./client-metrics.ts"`);
     });
 
     it("removes a hook-only import even when a nested hook scope shadows its name", async () => {
@@ -350,8 +354,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import "./client-metrics.ts"`);
-      assertEquals(occurrences(result, "initClientMetrics"), 0);
+      assertStringIncludes(result, `import { initClientMetrics } from "./client-metrics.ts"`);
       assertEquals(occurrences(result, "makeData"), 0);
     });
 
@@ -417,8 +420,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import "./client-metrics.ts"`);
-      assertEquals(occurrences(result, "initClientMetrics"), 0);
+      assertStringIncludes(result, `import { initClientMetrics } from "./client-metrics.ts"`);
     });
 
     it("removes a hook-only import read after a for-loop block binding of the same name", async () => {
@@ -469,8 +471,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import "./client-init.ts"`);
-      assertEquals(occurrences(result, "ctx"), 0);
+      assertStringIncludes(result, `import { ctx } from "./client-init.ts"`);
     });
 
     it("tracks a hook dependency inside TypeScript expression wrappers", async () => {
@@ -801,7 +802,11 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "a, b");
     });
 
-    it("keeps side effects for ordinary imports with mixed hook-only bindings", async () => {
+    // Mixed import: the pass owns `loadSecret` and nothing else. It takes that
+    // one specifier out and leaves `initClient` as authored. Emptying the
+    // specifier list instead would leave a bare side-effect import that the
+    // compiler must preserve, keeping the module in the browser artifact.
+    it("removes only the hook-owned specifier from a mixed import", async () => {
       const code = [
         `import { initClient, loadSecret } from "./client-setup.ts";`,
         `export async function getServerData() { return { props: { token: loadSecret() } }; }`,
@@ -810,8 +815,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import "./client-setup.ts"`);
-      assertEquals(occurrences(result, "initClient"), 0);
+      assertStringIncludes(result, `import { initClient } from "./client-setup.ts"`);
       assertEquals(occurrences(result, "loadSecret"), 0);
     });
 
@@ -1254,6 +1258,48 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result.code, "server-only-lib");
     });
 
+    it("does not demote an unrelated unused import to a side-effect import", async () => {
+      // The pre-compile leak this ordering used to open. The pass owns nothing
+      // in this import, and the old reduction to `import "./lib/server-only-lib.js"`
+      // turned an import the compiler can erase into one it must preserve, so
+      // the module and its transitive graph executed in the browser. Left as
+      // authored, `compile` erases it and the artifact matches `main`.
+      const source = [
+        `import { unusedThing } from "./lib/server-only-lib.ts";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-unused-import-demotion",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
+      assertEquals(occurrences(result.code, "unusedThing"), 0);
+    });
+
+    it("keeps a genuine side-effect import in the artifact", async () => {
+      // Paired with the case above. An import authored as a side-effect import
+      // is preserved by design: it is not an unused named import, and nothing
+      // about the ordering change makes it droppable.
+      const source = [
+        `import "./lib/analytics.ts";`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-genuine-side-effect-import",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/analytics");
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+    });
+
     it("keeps a jsx pragma that sits above a removed import", async () => {
       // Babel attaches the file's opening comments to its first statement, so
       // removing that import would take the pragma with it and silently switch
@@ -1421,11 +1467,14 @@ export const v = live();`,
         // esbuild both emit a `__decorate` call for it, so the decorator is a
         // real read. Erasing it deleted the import the call needs and produced a
         // ReferenceError at browser module evaluation.
+        // The hook reads `audit` too, so the import is hook-owned and the pass
+        // deletes it outright unless the decorator counts as a runtime read.
+        // That makes the paired case below discriminate.
         const code = [
           'import { audit } from "./audit.ts";',
           'import { getEnv } from "veryfront";',
           'const KEY = getEnv("SECRET");',
-          "export async function getServerData() { return { props: { k: KEY } }; }",
+          "export async function getServerData() { return { props: { k: KEY, a: audit } }; }",
           "class Model {",
           "  @audit declare id: string;",
           "}",
@@ -1435,8 +1484,7 @@ export const v = live();`,
         const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
 
         // The NAMED binding must survive: the emitted `__decorate` call reads
-        // `audit` by name. Asserting only on the specifier would pass even when
-        // the import is demoted to a bare side-effect import, which is the bug.
+        // `audit` by name.
         assertStringIncludes(result, "{ audit }");
         assertNotIncludes(result, 'getEnv("SECRET")');
       });
@@ -1446,7 +1494,7 @@ export const v = live();`,
           'import { audit } from "./audit.ts";',
           'import { getEnv } from "veryfront";',
           'const KEY = getEnv("SECRET");',
-          "export async function getServerData() { return { props: { k: KEY } }; }",
+          "export async function getServerData() { return { props: { k: KEY, a: audit } }; }",
           "class Model {",
           "  declare id: string;",
           "}",
@@ -1455,10 +1503,11 @@ export const v = live();`,
 
         const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
 
-        // The binding goes; the module specifier is demoted to a side-effect
-        // import by dropUnusedImportBindings, which is pre-existing behaviour
-        // and not what this case is about.
-        assertNotIncludes(result, "{ audit }");
+        // Nothing reads `audit` once the hook is emptied, and the hook owned it,
+        // so the whole import goes. Contrast the decorated case above, where the
+        // `__decorate` call keeps the named binding alive.
+        assertNotIncludes(result, "./audit.ts");
+        assertEquals(occurrences(result, "audit"), 0);
         assertNotIncludes(result, 'getEnv("SECRET")');
       });
 
@@ -1508,11 +1557,13 @@ export enum Level { Low = compute(SEED) }`,
       it("does not hoist a block-scoped enum into the enclosing function scope", async () => {
         // An enum nested in a block is block scoped: TypeScript emits `let` there.
         // Hoisting it into the function scope made the outer `consume(Alias)` read
-        // look shadowed, so import liveness reduced the named import to a bare
-        // side-effect import and left `client` with an unresolved binding.
+        // look shadowed, so import liveness treated the whole import as hook-owned
+        // and deleted it, leaving `client` with an unresolved binding. The hook
+        // reads `Alias` as well, so only the `consume(Alias)` read keeps the
+        // import alive and the assertion below discriminates.
         const code = [
           'import { Alias, secret } from "./lib.ts";',
-          "export async function getServerData() { return { props: { s: secret } }; }",
+          "export async function getServerData() { return { props: { s: secret, a: Alias } }; }",
           "export function client() {",
           "  consume(Alias);",
           "  if (false) { enum Alias { X } }",
@@ -1526,12 +1577,14 @@ export enum Level { Low = compute(SEED) }`,
         assertStringIncludes(result, "import { Alias");
       });
 
-      it("still reduces an import a same-scope enum genuinely shadows", async () => {
+      it("still deletes an import a same-scope enum genuinely shadows", async () => {
         // Paired with the case above: asserting only that the import survives
-        // would also pass if the pass stopped reducing imports altogether.
+        // would also pass if the pass stopped classifying shadows at all. Here
+        // the enum really does shadow `Alias`, so both bindings are hook-owned
+        // and unread, and the whole import goes.
         const code = [
           'import { Alias, secret } from "./lib.ts";',
-          "export async function getServerData() { return { props: { s: secret } }; }",
+          "export async function getServerData() { return { props: { s: secret, a: Alias } }; }",
           "export function client() {",
           "  enum Alias { X }",
           "  consume(Alias);",
@@ -1542,7 +1595,7 @@ export enum Level { Low = compute(SEED) }`,
 
         const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
 
-        assertNotIncludes(result, "import { Alias");
+        assertNotIncludes(result, "./lib.ts");
       });
 
       it("still strips a module binding an enum initialiser genuinely reads", async () => {
@@ -1735,11 +1788,11 @@ export function hook() {
 
         const result = await stripServerOnlyExports(code, "page.tsx");
 
-        assertNotIncludes(result, "{ secretOnly, Low }");
-        // A mixed project import keeps its pre-existing side-effect contract.
-        // The TypeScript fix removes the false live binding; it does not prove
-        // that evaluating the imported module is safe to delete.
-        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        // `secretOnly` is the only binding the hook owned, so it is the only one
+        // removed. `Low` was never read and was never the pass's to touch, so it
+        // stays as authored for the compiler to erase.
+        assertStringIncludes(result, `import { Low } from "../lib/server-only.ts"`);
+        assertEquals(occurrences(result, "secretOnly"), 0);
         assertStringIncludes(result, "Level.Low");
       });
 
@@ -1818,8 +1871,8 @@ export function hook() {
 
         const result = await stripServerOnlyExports(code, "page.tsx");
 
-        assertNotIncludes(result, "{ secretOnly, Alias }");
-        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, `import { Alias } from "../lib/server-only.ts"`);
+        assertEquals(occurrences(result, "secretOnly"), 0);
         assertStringIncludes(result, "import Alias = ClientNS");
       });
 
@@ -1852,8 +1905,8 @@ export function hook() {
 
         const result = await stripServerOnlyExports(code, "page.tsx");
 
-        assertNotIncludes(result, "{ secretOnly, Alias }");
-        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, `import { Alias } from "../lib/server-only.ts"`);
+        assertEquals(occurrences(result, "secretOnly"), 0);
         assertStringIncludes(result, "enum Alias");
       });
 
