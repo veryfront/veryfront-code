@@ -2738,6 +2738,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-if-constant.tsx");
     });
 
+    it("does not evaluate a nested block tail after an unconditional throw", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { if (true) { throw 0; globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-if-block.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-if-block.tsx");
+    });
+
     it("does not evaluate a nested pattern default after destructuring aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2849,6 +2866,23 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-object-computed-key-tail.tsx");
+    });
+
+    it("does not evaluate call arguments after a computed-key callee aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ [missing(KEY)]: 0, run() {} }).run();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-object-computed-call.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-object-computed-call.tsx");
     });
 
     it("keeps a secret read by a selected inline-object getter", async () => {
@@ -3498,6 +3532,23 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "inline-class-field-short-circuit.tsx");
+    });
+
+    it("does not evaluate a short-circuited logical operand after BigInt zero", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { first = 0n && KEY; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-field-bigint.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-field-bigint.tsx");
     });
 
     it("does not evaluate conditional branches after the test aborts", async () => {

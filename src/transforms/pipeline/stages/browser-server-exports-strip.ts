@@ -2280,9 +2280,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
 
   const staticPrimitiveValue = (
     node: Node,
-  ): { known: true; value: string | number | boolean | null } | { known: false } => {
+  ): { known: true; value: string | number | boolean | bigint | null } | { known: false } => {
     const expression = unwrap(node);
     if (expression.type === "NullLiteral") return { known: true, value: null };
+    if (expression.type === "BigIntLiteral" && typeof expression.value === "string") {
+      try {
+        return { known: true, value: BigInt(expression.value) };
+      } catch {
+        return { known: false };
+      }
+    }
     if (
       (expression.type === "StringLiteral" && typeof expression.value === "string") ||
       (expression.type === "NumericLiteral" && typeof expression.value === "number") ||
@@ -2291,14 +2298,37 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     return { known: false };
   };
 
-  const staticValueIsTruthy = (value: string | number | boolean | null): boolean =>
-    value !== false && value !== 0 && value !== "" && value !== null;
+  const staticValueIsTruthy = (value: string | number | boolean | bigint | null): boolean =>
+    value !== false && value !== 0 && value !== 0n && value !== "" && value !== null;
 
   const deferOrderedExpressionTail = (
     node: Node,
     initializedNames: ReadonlySet<string>,
   ): void => {
     const expression = unwrap(node);
+    if (
+      (expression.type === "CallExpression" || expression.type === "OptionalCallExpression") &&
+      isNode(expression.callee) && Array.isArray(expression.arguments)
+    ) {
+      if (!isInertExpression(expression.callee, noNameHelpers, initializedNames)) {
+        deferOrderedExpressionTail(expression.callee, initializedNames);
+        for (const argument of expression.arguments) {
+          if (isNode(argument)) deferred.add(argument);
+        }
+        return;
+      }
+      for (let index = 0; index < expression.arguments.length; index++) {
+        const argument = expression.arguments[index];
+        if (!isNode(argument)) continue;
+        if (isInertExpression(argument, noNameHelpers, initializedNames)) continue;
+        deferOrderedExpressionTail(argument, initializedNames);
+        for (const later of expression.arguments.slice(index + 1)) {
+          if (isNode(later)) deferred.add(later);
+        }
+        return;
+      }
+      return;
+    }
     if (
       expression.type === "LogicalExpression" && isNode(expression.left) &&
       isNode(expression.right)
@@ -2519,6 +2549,20 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         Array.isArray(target.body.body)
       ) {
         const statementCompletes: (statement: Node) => boolean = (statement) => {
+          if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
+            let blockContinues = true;
+            for (const nested of statement.body) {
+              if (!isNode(nested)) continue;
+              if (!blockContinues) {
+                deferred.add(nested);
+              } else if (nested.type === "ThrowStatement" || nested.type === "ReturnStatement") {
+                blockContinues = false;
+              } else if (!statementCompletes(nested)) {
+                blockContinues = false;
+              }
+            }
+            return blockContinues;
+          }
           if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
             return true;
           }
