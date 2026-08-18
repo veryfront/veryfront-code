@@ -263,18 +263,25 @@ jobs:
             echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
           fi
       - name: Install Chromium
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           readonly install_attempts=2
-          readonly install_timeout_minutes=5
+          readonly install_timeout_minutes=7
           readonly install_kill_grace_seconds=15
           readonly apt_lock_attempts=12
           readonly apt_lock_sleep_seconds=5
           readonly retry_backoff_seconds=20
+          readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
+
+          # Playwright shells out to apt-get itself, so a lock held by the
+          # runner image's own apt activity used to surface inside the install
+          # as an instant "Could not get lock" failure. A global lock timeout
+          # makes every apt invocation wait for the holder instead.
+          echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
 
           wait_for_apt_locks() {
             for _ in $(seq 1 "${apt_lock_attempts}"); do
-              if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+              if ! sudo fuser ${apt_lock_files} >/dev/null 2>&1; then
                 return 0
               fi
               sleep "${apt_lock_sleep_seconds}"
@@ -282,10 +289,22 @@ jobs:
             return 1
           }
 
+          # `timeout` signals only the wrapper process, so a timed-out attempt
+          # orphans the sudo apt-get underneath it. That orphan keeps holding
+          # the dpkg locks and starved every later attempt on this VM. Reap
+          # the lock holders and repair any half-configured packages before
+          # trying again.
+          reap_apt_lock_holders() {
+            sudo fuser -k -TERM ${apt_lock_files} >/dev/null 2>&1 || true
+            sleep 5
+            sudo fuser -k -KILL ${apt_lock_files} >/dev/null 2>&1 || true
+            sudo dpkg --configure -a >/dev/null 2>&1 || true
+          }
+
           for attempt in $(seq 1 "${install_attempts}"); do
             if ! wait_for_apt_locks; then
-              echo "::error::Timed out waiting for apt/dpkg locks"
-              exit 1
+              echo "::warning::apt/dpkg locks still held; reaping the holders"
+              reap_apt_lock_holders
             fi
             timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
               deno run -A npm:playwright install --with-deps chromium && exit 0
@@ -295,6 +314,7 @@ jobs:
               exit "$status"
             fi
 
+            reap_apt_lock_holders
             sleep "${retry_backoff_seconds}"
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
@@ -355,18 +375,25 @@ jobs:
             echo "::warning::No Ubuntu archive apt source detected; leaving apt sources untouched"
           fi
       - name: Install Chromium
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           readonly install_attempts=2
-          readonly install_timeout_minutes=5
+          readonly install_timeout_minutes=7
           readonly install_kill_grace_seconds=15
           readonly apt_lock_attempts=12
           readonly apt_lock_sleep_seconds=5
           readonly retry_backoff_seconds=20
+          readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
+
+          # Playwright shells out to apt-get itself, so a lock held by the
+          # runner image's own apt activity used to surface inside the install
+          # as an instant "Could not get lock" failure. A global lock timeout
+          # makes every apt invocation wait for the holder instead.
+          echo 'DPkg::Lock::Timeout "300";' | sudo tee /etc/apt/apt.conf.d/99vf-lock-timeout >/dev/null
 
           wait_for_apt_locks() {
             for _ in $(seq 1 "${apt_lock_attempts}"); do
-              if ! sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock >/dev/null 2>&1; then
+              if ! sudo fuser ${apt_lock_files} >/dev/null 2>&1; then
                 return 0
               fi
               sleep "${apt_lock_sleep_seconds}"
@@ -374,10 +401,22 @@ jobs:
             return 1
           }
 
+          # `timeout` signals only the wrapper process, so a timed-out attempt
+          # orphans the sudo apt-get underneath it. That orphan keeps holding
+          # the dpkg locks and starved every later attempt on this VM. Reap
+          # the lock holders and repair any half-configured packages before
+          # trying again.
+          reap_apt_lock_holders() {
+            sudo fuser -k -TERM ${apt_lock_files} >/dev/null 2>&1 || true
+            sleep 5
+            sudo fuser -k -KILL ${apt_lock_files} >/dev/null 2>&1 || true
+            sudo dpkg --configure -a >/dev/null 2>&1 || true
+          }
+
           for attempt in $(seq 1 "${install_attempts}"); do
             if ! wait_for_apt_locks; then
-              echo "::error::Timed out waiting for apt/dpkg locks"
-              exit 1
+              echo "::warning::apt/dpkg locks still held; reaping the holders"
+              reap_apt_lock_holders
             fi
             timeout --signal=TERM --kill-after="${install_kill_grace_seconds}s" "${install_timeout_minutes}m" \
               deno run -A npm:playwright install --with-deps chromium && exit 0
@@ -387,6 +426,7 @@ jobs:
               exit "$status"
             fi
 
+            reap_apt_lock_holders
             sleep "${retry_backoff_seconds}"
           done
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
