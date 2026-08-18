@@ -2628,6 +2628,40 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "explicit-derived-field.tsx");
     });
 
+    it("does not treat a called class literal as constructed", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = (class { field = KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/called-class-literal.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "called-class-literal.tsx");
+    });
+
+    it("does not treat a constructed arrow literal as invoked", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new (() => KEY)();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/constructed-arrow-literal.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "constructed-arrow-literal.tsx");
+    });
+
     it("keeps an uncalled inline superclass method deferred", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,

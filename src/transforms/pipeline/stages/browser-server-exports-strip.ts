@@ -1898,7 +1898,8 @@ function evaluationIsInert(
  */
 function deferredExecutionNodes(root: Node): Set<Node> {
   const deferred = new Set<Node>();
-  const invokedFunctions = new Set<Node>();
+  const executedNodes = new Set<Node>();
+  const constructedClasses = new Set<Node>();
 
   const isInstanceField = (node: Node): boolean =>
     (node.type === "ClassProperty" || node.type === "ClassPrivateProperty" ||
@@ -1964,14 +1965,13 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 
   const walk = (
     node: Node,
-    invoked: Node | null,
     constructedClassBody: ConstructedClassBodyMode = null,
   ): void => {
     const isFunction = node.type === "FunctionDeclaration" ||
       node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression" ||
       node.type === "ObjectMethod" || node.type === "ClassMethod" ||
       node.type === "ClassPrivateMethod";
-    const executesNow = node === invoked || invokedFunctions.has(node);
+    const executesNow = executedNodes.has(node) || constructedClasses.has(node);
 
     if (
       (isFunction &&
@@ -1981,8 +1981,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       deferred.add(node);
     }
 
-    const constructsInlineClass =
-      (node.type === "ClassDeclaration" || node.type === "ClassExpression") && executesNow;
+    const constructsInlineClass = node.type === "ClassExpression" &&
+      constructedClasses.has(node);
     if (
       constructsInlineClass && !hasExplicitConstructor(node) &&
       isNode(node.superClass)
@@ -1990,10 +1990,26 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       const superClass = unwrap(node.superClass);
       // An implicit derived constructor synchronously constructs its inline
       // base. Explicit constructors may return another object without `super()`.
-      if (superClass.type === "ClassExpression") invokedFunctions.add(superClass);
+      if (superClass.type === "ClassExpression") constructedClasses.add(superClass);
     }
     const nextInvoked = invokedChild(node);
-    if (nextInvoked) invokedFunctions.add(nextInvoked);
+    if (nextInvoked) {
+      if (node.type === "NewExpression") {
+        if (nextInvoked.type === "ClassExpression") {
+          constructedClasses.add(nextInvoked);
+        } else if (
+          nextInvoked.type === "FunctionExpression" &&
+          nextInvoked.async !== true && nextInvoked.generator !== true
+        ) {
+          executedNodes.add(nextInvoked);
+        }
+      } else if (
+        nextInvoked.type === "FunctionExpression" ||
+        nextInvoked.type === "ArrowFunctionExpression"
+      ) {
+        executedNodes.add(nextInvoked);
+      }
+    }
     for (const child of children(node)) {
       const entersConstructedClassBody = constructsInlineClass && child.type === "ClassBody"
         ? isNode(node.superClass) && hasExplicitConstructor(node) ? "constructor-only" : "all"
@@ -2002,12 +2018,13 @@ function deferredExecutionNodes(root: Node): Set<Node> {
           (isConstructor(child) ||
             (constructedClassBody === "all" && isInstanceField(child)))
         ? child
-        : nextInvoked;
-      walk(child, invokedMember, entersConstructedClassBody);
+        : null;
+      if (invokedMember) executedNodes.add(invokedMember);
+      walk(child, entersConstructedClassBody);
     }
   };
 
-  walk(root, null);
+  walk(root);
   return deferred;
 }
 
