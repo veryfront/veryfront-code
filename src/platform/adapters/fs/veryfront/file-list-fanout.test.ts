@@ -810,4 +810,41 @@ describe("file list fan-out (issue inbox#32)", () => {
     );
     assertEquals(searched > 0, true, "the API fallback must not be disabled unconditionally");
   });
+  it("still recovers a branch miss when the index is not authoritative", async () => {
+    // The fan-out gate disables snapshot recovery while the index can answer.
+    // Raised in review: nothing pinned that recovery still works when it
+    // cannot — i.e. that the gate narrows the path rather than closing it.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter, counts } = createDraftAdapter(files, true, true);
+
+    const before = counts.listFiles;
+    assertEquals(await adapter.resolveFile("app/added-later"), null);
+    assertEquals(
+      counts.listFiles > before,
+      true,
+      "a recoverable snapshot must still refresh when the index cannot answer",
+    );
+  });
+
+  it("lets index authority expire so a missed poke cannot wedge recovery shut", async () => {
+    // INDEX_AUTHORITY_LIMIT_MS is the only thing bounding a MISSED poke: a poke
+    // that never arrives would otherwise leave the gate closed forever against
+    // a listing that predates the edit.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter } = createDraftAdapter(files, true, true);
+    await adapter.resolveFile("app/page");
+
+    const statOps = (adapter as unknown as {
+      statOps: { isIndexAuthoritative(): boolean; indexBuiltAt: number };
+    }).statOps;
+    assertEquals(statOps.isIndexAuthoritative(), true, "fresh index answers authoritatively");
+
+    // Age the index past the window rather than sleeping through it.
+    statOps.indexBuiltAt = Date.now() - (5 * 60 * 1000 + 1);
+    assertEquals(
+      statOps.isIndexAuthoritative(),
+      false,
+      "authority must lapse so recovery turns back on without a poke",
+    );
+  });
 });

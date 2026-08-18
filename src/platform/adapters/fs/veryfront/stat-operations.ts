@@ -25,14 +25,6 @@ const NOT_FOUND_SENTINEL = "__NOT_FOUND__";
 const API_SEARCH_CIRCUIT_BREAKER_THRESHOLD = 5;
 const API_SEARCH_CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
 
-/**
- * How long a built index may keep answering "absent" on its own authority.
- * Every invalidation path clears the index, so this only bounds the damage of
- * a poke that never arrived -- the same safety net FileListIndex applies to
- * the read path.
- */
-const INDEX_AUTHORITY_LIMIT_MS = 5 * 60 * 1000;
-
 function isFileNotFoundError(error: unknown): boolean {
   if (error instanceof VeryfrontError && error.slug === "file-not-found") {
     return true;
@@ -46,7 +38,6 @@ export class StatOperations extends VeryfrontOperationsBase {
   private fileIndex: Map<string, ProjectFile> | null = null;
   private directoryIndex: Set<string> | null = null;
   private buildingIndex: Promise<void> | null = null;
-  private indexBuiltAt = 0;
 
   private indexBuildLockResolver: (() => void) | null = null;
   private indexBuildLockPromise: Promise<void> | null = null;
@@ -108,13 +99,8 @@ export class StatOperations extends VeryfrontOperationsBase {
     }
 
     // File not in index - try API pattern search as fallback for project files
-    // Skip for framework paths (node_modules, _veryfront, etc.) and whenever
-    // the index is the authoritative listing for this snapshot: it has already
-    // answered, and asking again costs one file-listing request per probe.
-    if (
-      !this.isIndexAuthoritative() && !isFrameworkSourcePath(normalizedPath) &&
-      this.apiSearchCircuitBreaker.canSearch()
-    ) {
+    // Skip for framework paths (node_modules, _veryfront, etc.)
+    if (!isFrameworkSourcePath(normalizedPath) && this.apiSearchCircuitBreaker.canSearch()) {
       const hasKnownExt = EXTENSION_PRIORITY.some((ext) => normalizedPath.endsWith(ext));
       if (hasKnownExt) {
         logger.debug("stat file not in index, trying API search", {
@@ -250,7 +236,6 @@ export class StatOperations extends VeryfrontOperationsBase {
     this.fileIndex = fileIdx;
     this.directoryIndex = dirIdx;
     this.pathMapping = pathMap;
-    this.indexBuiltAt = Date.now();
 
     const indexMs = Math.round(performance.now() - indexStart);
     const totalMs = Math.round(performance.now() - buildStart);
@@ -268,33 +253,6 @@ export class StatOperations extends VeryfrontOperationsBase {
     this.fileIndex = null;
     this.directoryIndex = null;
     this.pathMapping.clear();
-    this.indexBuiltAt = 0;
-  }
-
-  /**
-   * Whether the built index is the complete file listing for the snapshot
-   * being rendered, and may therefore answer "this path does not exist"
-   * without asking the API.
-   *
-   * The index is built from `loadAllProjectFiles`, the same listing that
-   * serves every positive answer this render gives. A path missing from it is
-   * missing from the snapshot, so re-asking the API for that exact path can
-   * only re-derive the answer the index already holds -- which is what turned
-   * one preview render into dozens of file-listing requests.
-   *
-   * This authority covers exact-path lookups only. `resolveFile`'s pattern
-   * search still runs on a miss: it is the documented safety net for a listing
-   * that came back incomplete, and it searches spellings the index was never
-   * asked about.
-   *
-   * The authority lasts exactly as long as the index: every invalidation path
-   * (`clearMemoryCaches`, snapshot replacement, token or branch change,
-   * `dispose`) calls `clearIndex`, so an edit can never be answered from a
-   * pre-edit listing.
-   */
-  isIndexAuthoritative(): boolean {
-    if (!this.fileIndex || !this.directoryIndex) return false;
-    return Date.now() - this.indexBuiltAt < INDEX_AUTHORITY_LIMIT_MS;
   }
 
   getOriginalApiPath(normalizedPath: string): string {

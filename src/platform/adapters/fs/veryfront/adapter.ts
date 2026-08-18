@@ -677,10 +677,16 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private shouldRecoverBranchMiss(path: string, error: unknown): boolean {
     if (this.contentContext?.sourceType !== "branch") return false;
     if (!isNotFoundLikeError(error)) return false;
-    // The listing this render already fetched says the path is absent. A
-    // snapshot refresh would fetch that same listing again, so a page that
-    // probes N candidate spellings would pay N listing requests to be told
-    // the same thing. Pokes clear the index, so a real edit still recovers.
+    // The index was built from a listing already fetched for this snapshot, and
+    // it says the path is absent. Recovering here re-derives that answer per
+    // probe, so a page trying N candidate spellings pays N recoveries to be
+    // told the same thing N times — which is the fan-out this fixes.
+    //
+    // Two things bound the staleness this trades for. A poke clears the index
+    // (see the invalidation path below), so an edit that reaches us re-enables
+    // recovery immediately. And `isIndexAuthoritative` is time-boxed by
+    // INDEX_AUTHORITY_LIMIT_MS, so an edit whose poke we MISS costs at most
+    // that window before recovery turns back on by itself.
     if (this.statOps.isIndexAuthoritative()) return false;
 
     const recoveryKey = this.getBranchMissRecoveryKey(path);
