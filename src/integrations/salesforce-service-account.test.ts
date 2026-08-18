@@ -180,7 +180,7 @@ describe("Salesforce service-account integration source", () => {
       throw new Error("invalid input must not access the network");
     });
     const source = createSalesforceServiceAccountToolSourceWithTransport({
-      allowedTools: ["salesforce__get_case"],
+      allowedTools: ["salesforce__get_case", "salesforce__update_case"],
       createOriginBoundFetch: transport.createOriginBoundFetch,
     });
 
@@ -188,6 +188,15 @@ describe("Salesforce service-account integration source", () => {
       () => source.executeTool("salesforce__get_case", { caseId: { nested: true } }),
       TypeError,
       'Salesforce tool input "caseId" must be a string',
+    );
+    await assertRejects(
+      () =>
+        source.executeTool("salesforce__update_case", {
+          caseId: "500000000000001",
+          Reason: null,
+        }),
+      TypeError,
+      'Salesforce tool input "Reason" must be a string',
     );
     assertEquals(transport.captures, []);
   });
@@ -481,11 +490,39 @@ describe("Salesforce service-account integration source", () => {
     });
 
     assertEquals(result, {
-      error: "salesforce_auth_failed",
+      error: "salesforce_api_error",
       integration: "salesforce",
-      message: "Salesforce service account authentication failed.",
+      message: "Salesforce API request failed.",
     });
     assertEquals(JSON.stringify(result).includes(clientSecret), false);
+  });
+
+  it("preserves token-endpoint availability failures as API errors", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(({ request }) => {
+      assert(request.url.endsWith("/services/oauth2/token"));
+      return Response.json({ message: "temporarily unavailable" }, { status: 503 });
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    const result = await source.executeTool("salesforce__get_case", {
+      caseId: "500000000000001",
+    });
+
+    assertEquals(result, {
+      error: "salesforce_api_error",
+      integration: "salesforce",
+      status: 503,
+      message: "Salesforce API request failed.",
+    });
+    assertEquals(transport.captures.length, 1);
   });
 
   it("propagates caller cancellation without converting it into an auth error", async () => {

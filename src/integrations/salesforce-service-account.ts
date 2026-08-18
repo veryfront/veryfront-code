@@ -63,6 +63,16 @@ interface SalesforceTokenCache extends SalesforceToken, SalesforceCredentials {
   expiresAt: number;
 }
 
+class SalesforceTokenFailure extends Error {
+  constructor(
+    readonly kind: "auth" | "api",
+    readonly status?: number,
+  ) {
+    super("Salesforce token request failed");
+    this.name = "SalesforceTokenFailure";
+  }
+}
+
 interface SalesforceEndpointResult {
   status: number;
   result: unknown;
@@ -271,6 +281,13 @@ function apiFailureResult(status?: number): unknown {
   };
 }
 
+function tokenFailureResult(cause: unknown): unknown {
+  if (cause instanceof SalesforceTokenFailure && cause.kind === "auth") {
+    return authFailureResult();
+  }
+  return apiFailureResult(cause instanceof SalesforceTokenFailure ? cause.status : undefined);
+}
+
 function readCredential(name: SalesforceServiceAccountEnvVar): string | undefined {
   const value = getHostEnv(name);
   if (
@@ -429,7 +446,11 @@ async function requestSalesforceToken(
     );
     if (!response.ok) {
       void response.body?.cancel().catch(() => undefined);
-      throw new Error("Salesforce token endpoint rejected the request");
+      const isCredentialRejection = response.status === 400 || response.status === 401;
+      throw new SalesforceTokenFailure(
+        isCredentialRejection ? "auth" : "api",
+        isCredentialRejection ? undefined : response.status,
+      );
     }
     const data = parseJsonRecord(
       await readBoundedResponse(response, TOKEN_RESPONSE_LIMIT_BYTES, requestScope.signal),
@@ -442,7 +463,7 @@ async function requestSalesforceToken(
       accessToken.length > MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH ||
       !instanceOrigin
     ) {
-      throw new Error("Salesforce token endpoint returned an invalid response");
+      throw new SalesforceTokenFailure("auth");
     }
     return { accessToken, instanceOrigin };
   } finally {
@@ -464,7 +485,7 @@ function resolveEndpointValue(
   if (!definition.required && typeof value === "string" && value.trim().length === 0) {
     return definition.default;
   }
-  return value ?? definition.default;
+  return value === undefined ? definition.default : value;
 }
 
 function validateEndpointInputs(
@@ -485,7 +506,7 @@ function validateEndpointInputs(
     validateEndpointInputType(key, definition, value);
   }
   for (const [key, definition] of Object.entries(endpoint.body ?? {})) {
-    const value = args[key] ?? definition.default;
+    const value = args[key] === undefined ? definition.default : args[key];
     if (
       definition.required === true &&
       definition.default === undefined &&
@@ -506,7 +527,7 @@ function validateEndpointInputType(
   definition: SalesforceEndpointInput,
   value: unknown,
 ): void {
-  if (value === undefined || value === null) return;
+  if (value === undefined) return;
   const valid = definition.type === "string"
     ? typeof value === "string"
     : definition.type === "number"
@@ -580,7 +601,7 @@ function buildSalesforceRequest(
     }
     const bodyObject: Record<string, unknown> = {};
     for (const [key, definition] of Object.entries(endpoint.body)) {
-      const value = args[key] ?? definition.default;
+      const value = args[key] === undefined ? definition.default : args[key];
       if (value !== undefined) bodyObject[key] = value;
     }
     body = JSON.stringify(bodyObject);
@@ -719,9 +740,9 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
       let token: SalesforceToken;
       try {
         token = await getToken(credentialResolution.credentials, context);
-      } catch {
+      } catch (cause) {
         context?.abortSignal?.throwIfAborted();
-        return authFailureResult();
+        return tokenFailureResult(cause);
       }
 
       let result: SalesforceEndpointResult;
@@ -742,9 +763,9 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
         tokenCache = undefined;
         try {
           token = await getToken(credentialResolution.credentials, context);
-        } catch {
+        } catch (cause) {
           context?.abortSignal?.throwIfAborted();
-          return authFailureResult();
+          return tokenFailureResult(cause);
         }
         try {
           result = await executeSalesforceEndpoint(
