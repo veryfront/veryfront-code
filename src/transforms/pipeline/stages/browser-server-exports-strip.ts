@@ -2305,6 +2305,19 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           ? { known: true, value: !staticValueIsTruthy(argument.value) }
           : { known: false };
       }
+      if (expression.operator === "+" || expression.operator === "-") {
+        const argument = staticPrimitiveValue(expression.argument, initializedNames);
+        if (!argument.known) return { known: false };
+        if (typeof argument.value === "number") {
+          return {
+            known: true,
+            value: expression.operator === "+" ? argument.value : -argument.value,
+          };
+        }
+        if (expression.operator === "-" && typeof argument.value === "bigint") {
+          return { known: true, value: -argument.value };
+        }
+      }
     }
     if (expression.type === "BigIntLiteral" && typeof expression.value === "string") {
       try {
@@ -2327,11 +2340,120 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     value !== false && value !== 0 && value !== 0n && value !== "" && value !== null &&
     value !== undefined;
 
+  const deferObjectPropertyEvaluation = (property: Node): void => {
+    if (property.computed === true && isNode(property.key)) deferred.add(property.key);
+    if (property.type === "ObjectProperty" && isNode(property.value)) {
+      deferred.add(property.value);
+    } else if (property.type === "SpreadElement" && isNode(property.argument)) {
+      deferred.add(property.argument);
+    }
+  };
+
   const deferOrderedExpressionTail = (
     node: Node,
     initializedNames: ReadonlySet<string>,
   ): void => {
     const expression = unwrap(node);
+    if (
+      expression.type === "AssignmentExpression" && expression.operator === "=" &&
+      isNode(expression.left) && isNode(expression.right) &&
+      (expression.left.type === "MemberExpression" ||
+        expression.left.type === "OptionalMemberExpression") &&
+      isNode(expression.left.object)
+    ) {
+      const object = unwrap(expression.left.object);
+      const objectCompletes = isInertExpression(
+        expression.left.object,
+        noNameHelpers,
+        initializedNames,
+      ) || (object.type === "Identifier" && nodeName(object) === "globalThis");
+      const propertyCompletes = expression.left.computed !== true ||
+        (isNode(expression.left.property) &&
+          isInertExpression(expression.left.property, noNameHelpers, initializedNames));
+      if (objectCompletes && propertyCompletes) return;
+      deferOrderedExpressionTail(expression.left, initializedNames);
+      deferred.add(expression.right);
+      return;
+    }
+    if (expression.type === "ObjectExpression" && Array.isArray(expression.properties)) {
+      const properties = expression.properties;
+      const deferPropertiesAfter = (index: number): void => {
+        for (const later of properties.slice(index + 1)) {
+          if (isNode(later)) deferObjectPropertyEvaluation(later);
+        }
+      };
+      for (let index = 0; index < properties.length; index++) {
+        const property = properties[index];
+        if (!isNode(property)) {
+          deferPropertiesAfter(index);
+          return;
+        }
+        if (property.type === "SpreadElement") {
+          if (isNode(property.argument)) {
+            deferOrderedExpressionTail(property.argument, initializedNames);
+          }
+          deferPropertiesAfter(index);
+          return;
+        }
+        if (
+          property.computed === true && isNode(property.key) &&
+          !computedPropertyKeyCompletes(property)
+        ) {
+          deferOrderedExpressionTail(property.key, initializedNames);
+          if (property.type === "ObjectProperty" && isNode(property.value)) {
+            deferred.add(property.value);
+          }
+          deferPropertiesAfter(index);
+          return;
+        }
+        if (
+          property.type === "ObjectProperty" && isNode(property.value) &&
+          !isInertExpression(property.value, noNameHelpers, initializedNames)
+        ) {
+          deferOrderedExpressionTail(property.value, initializedNames);
+          deferPropertiesAfter(index);
+          return;
+        }
+      }
+      return;
+    }
+    if (expression.type === "TemplateLiteral" && Array.isArray(expression.expressions)) {
+      for (let index = 0; index < expression.expressions.length; index++) {
+        const substitution = expression.expressions[index];
+        if (!isNode(substitution)) continue;
+        if (staticPrimitiveValue(substitution, initializedNames).known) continue;
+        deferOrderedExpressionTail(substitution, initializedNames);
+        for (const later of expression.expressions.slice(index + 1)) {
+          if (isNode(later)) deferred.add(later);
+        }
+        return;
+      }
+      return;
+    }
+    if (
+      expression.type === "TaggedTemplateExpression" && isNode(expression.tag) &&
+      isNode(expression.quasi) && Array.isArray(expression.quasi.expressions)
+    ) {
+      const substitutions = expression.quasi.expressions;
+      if (!isInertExpression(expression.tag, noNameHelpers, initializedNames)) {
+        deferOrderedExpressionTail(expression.tag, initializedNames);
+        for (const substitution of substitutions) {
+          if (isNode(substitution)) deferred.add(substitution);
+        }
+        return;
+      }
+      for (let index = 0; index < substitutions.length; index++) {
+        const substitution = substitutions[index];
+        if (!isNode(substitution)) continue;
+        if (isInertExpression(substitution, noNameHelpers, initializedNames)) continue;
+        deferOrderedExpressionTail(substitution, initializedNames);
+        for (const later of substitutions.slice(index + 1)) {
+          if (isNode(later)) deferred.add(later);
+        }
+        return;
+      }
+      return;
+    }
     if (
       (expression.type === "MemberExpression" ||
         expression.type === "OptionalMemberExpression") &&
@@ -2399,12 +2521,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       expression.type === "LogicalExpression" && isNode(expression.left) &&
       isNode(expression.right)
     ) {
-      if (!isInertExpression(expression.left, noNameHelpers, initializedNames)) {
+      const left = staticPrimitiveValue(expression.left, initializedNames);
+      if (
+        !left.known &&
+        !isInertExpression(expression.left, noNameHelpers, initializedNames)
+      ) {
         deferOrderedExpressionTail(expression.left, initializedNames);
         deferred.add(expression.right);
         return;
       }
-      const left = staticPrimitiveValue(expression.left, initializedNames);
       if (!left.known) return;
       const evaluatesRight = expression.operator === "&&"
         ? staticValueIsTruthy(left.value)
@@ -2419,13 +2544,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       expression.type === "ConditionalExpression" && isNode(expression.test) &&
       isNode(expression.consequent) && isNode(expression.alternate)
     ) {
-      if (!isInertExpression(expression.test, noNameHelpers, initializedNames)) {
+      const test = staticPrimitiveValue(expression.test, initializedNames);
+      if (
+        !test.known &&
+        !isInertExpression(expression.test, noNameHelpers, initializedNames)
+      ) {
         deferOrderedExpressionTail(expression.test, initializedNames);
         deferred.add(expression.consequent);
         deferred.add(expression.alternate);
         return;
       }
-      const test = staticPrimitiveValue(expression.test, initializedNames);
       if (!test.known) return;
       const selected = staticValueIsTruthy(test.value)
         ? expression.consequent
@@ -2488,6 +2616,77 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           deferOrderedExpressionTail(expression, initializedNames);
         }
         return completes;
+      }
+      if (statement.type === "WhileStatement") {
+        const test = isNode(statement.test) ? statement.test : undefined;
+        const body = isNode(statement.body) ? statement.body : undefined;
+        if (!test) return false;
+        const value = staticPrimitiveValue(test, initializedNames);
+        if (value.known && !staticValueIsTruthy(value.value)) {
+          if (body) deferred.add(body);
+          return true;
+        }
+        if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
+          deferOrderedExpressionTail(test, initializedNames);
+          if (body) deferred.add(body);
+        }
+        return false;
+      }
+      if (statement.type === "DoWhileStatement") {
+        const body = isNode(statement.body) ? statement.body : undefined;
+        const test = isNode(statement.test) ? statement.test : undefined;
+        if (body && !statementCompletes(body)) {
+          if (test) deferred.add(test);
+          return false;
+        }
+        if (!test) return false;
+        const value = staticPrimitiveValue(test, initializedNames);
+        if (value.known) return !staticValueIsTruthy(value.value);
+        if (!isInertExpression(test, noNameHelpers, initializedNames)) {
+          deferOrderedExpressionTail(test, initializedNames);
+        }
+        return false;
+      }
+      if (statement.type === "ForStatement") {
+        const init = isNode(statement.init) ? statement.init : undefined;
+        const test = isNode(statement.test) ? statement.test : undefined;
+        const update = isNode(statement.update) ? statement.update : undefined;
+        const body = isNode(statement.body) ? statement.body : undefined;
+        let initCompletes = true;
+        if (init?.type === "VariableDeclaration") {
+          initCompletes = statementCompletes(init);
+        } else if (init && !isInertExpression(init, noNameHelpers, initializedNames)) {
+          deferOrderedExpressionTail(init, initializedNames);
+          initCompletes = false;
+        }
+        if (!initCompletes) {
+          if (test) deferred.add(test);
+          if (update) deferred.add(update);
+          if (body) deferred.add(body);
+          return false;
+        }
+        if (!test) return false;
+        const value = staticPrimitiveValue(test, initializedNames);
+        if (value.known && !staticValueIsTruthy(value.value)) {
+          if (update) deferred.add(update);
+          if (body) deferred.add(body);
+          return true;
+        }
+        if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
+          deferOrderedExpressionTail(test, initializedNames);
+          if (update) deferred.add(update);
+          if (body) deferred.add(body);
+        }
+        return false;
+      }
+      if (statement.type === "ForInStatement" || statement.type === "ForOfStatement") {
+        const right = isNode(statement.right) ? statement.right : undefined;
+        const body = isNode(statement.body) ? statement.body : undefined;
+        if (right && !isInertExpression(right, noNameHelpers, initializedNames)) {
+          deferOrderedExpressionTail(right, initializedNames);
+          if (body) deferred.add(body);
+        }
+        return false;
       }
       if (statement.type === "IfStatement") {
         const test = isNode(statement.test) ? statement.test : undefined;
@@ -2714,7 +2913,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       if (isNode(parameter)) deferred.add(parameter);
     }
     if (isNode(target.body)) deferred.add(target.body);
-    return true;
+    return false;
   };
 
   const invokedInlineObjectFunction = (callee: Node): Node | null => {
@@ -2728,19 +2927,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     const selectedName = staticMemberName(callee);
     if (selectedName === null) return null;
 
-    const deferPropertyEvaluation = (property: Node): void => {
-      if (property.computed === true && isNode(property.key)) deferred.add(property.key);
-      if (property.type === "ObjectProperty" && isNode(property.value)) {
-        deferred.add(property.value);
-      } else if (property.type === "SpreadElement" && isNode(property.argument)) {
-        deferred.add(property.argument);
-      }
-    };
-
     const properties = object.properties;
     const deferPropertiesAfter = (index: number): void => {
       for (const later of properties.slice(index + 1)) {
-        if (isNode(later)) deferPropertyEvaluation(later);
+        if (isNode(later)) deferObjectPropertyEvaluation(later);
       }
     };
 
@@ -2897,12 +3087,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           }
         } else if (invocationArgumentsComplete(node, initializedAtConstruction)) {
           if (nextInvoked.type === "ClassExpression") {
-            constructedClasses.add(nextInvoked);
             const constructor = explicitConstructor(nextInvoked);
-            if (constructor) {
-              markCalledFunction(constructor, node, activeScopes);
+            const parametersComplete = constructor
+              ? markCalledFunction(constructor, node, activeScopes)
+              : true;
+            if (parametersComplete) {
+              constructedClasses.add(nextInvoked);
               if (
-                constructsInstanceFields(nextInvoked) &&
+                constructor && constructsInstanceFields(nextInvoked) &&
                 !instanceInitializationCompletes(nextInvoked) && isNode(constructor.body)
               ) deferred.add(constructor.body);
             }
