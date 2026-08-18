@@ -2146,7 +2146,12 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       // last property with the selected name so an inert value or accessor
       // that overwrites a method does not make the earlier body look invoked.
       if (!creationCompletes) return null;
-      if (propertyName === selectedName) selected = target;
+      if (propertyName === selectedName) {
+        const completesSelectedAccessor = property.type === "ObjectMethod" &&
+          property.kind === "set" && selected?.type === "ObjectMethod" &&
+          selected.kind === "get";
+        if (!completesSelectedAccessor) selected = target;
+      }
     }
     return selected;
   };

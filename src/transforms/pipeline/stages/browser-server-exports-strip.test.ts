@@ -2596,6 +2596,21 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("keeps a selected getter when a later setter completes the accessor", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ get run() { globalThis.registered = KEY; return () => {}; }, set run(value) {} }).run();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/root-object-accessor-pair.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("keeps a secret read by a function returned from a selected getter", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2641,6 +2656,23 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-object-setter.tsx");
+    });
+
+    it("does not preserve a method overwritten by a later setter", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ run() { globalThis.registered = KEY; }, set run(value) {} }).run();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-object-method-setter.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-object-method-setter.tsx");
     });
 
     it("does not invoke an object method past an unresolved sibling initializer", async () => {
