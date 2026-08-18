@@ -2793,7 +2793,18 @@ function invokedFunctionParameterBindings(
       return;
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
-      addPatternOwnerFlows(target, value.right, declaration, order, controlUncertain, scope);
+      const nonDirectAssignment = value.operator !== "=";
+      if (nonDirectAssignment && isNode(value.left)) {
+        addPatternOwnerFlows(target, value.left, declaration, order, true, scope);
+      }
+      addPatternOwnerFlows(
+        target,
+        value.right,
+        declaration,
+        order,
+        controlUncertain || nonDirectAssignment,
+        scope,
+      );
       return;
     }
     if (value.type === "AwaitExpression" && isNode(value.argument)) {
@@ -2828,9 +2839,11 @@ function invokedFunctionParameterBindings(
     scope: Node | null,
   ): void => {
     const order = visitOrder++;
+    const nodeControlUncertain = controlUncertain ||
+      (node.type === "AssignmentExpression" && node.operator !== "=");
     nodeOrders.set(node, order);
     ownerExecutionScopes.set(node, scope);
-    if (controlUncertain) controlUncertainNodes.add(node);
+    if (nodeControlUncertain) controlUncertainNodes.add(node);
 
     if (
       (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
@@ -2844,7 +2857,7 @@ function invokedFunctionParameterBindings(
         bindings.declaration(node.id),
         node,
         flowOrder,
-        controlUncertain,
+        nodeControlUncertain,
         scope,
       );
     } else if (node.type === "VariableDeclarator" && isNode(node.id) && isNode(node.init)) {
@@ -2853,11 +2866,11 @@ function invokedFunctionParameterBindings(
           bindings.declaration(node.id),
           node.init,
           order,
-          controlUncertain,
+          nodeControlUncertain,
           scope,
         );
       } else if (node.id.type === "ArrayPattern") {
-        addPatternOwnerFlows(node.id, node.init, true, order, controlUncertain, scope);
+        addPatternOwnerFlows(node.id, node.init, true, order, nodeControlUncertain, scope);
       }
     } else if (
       node.type === "AssignmentExpression" && isNode(node.left) && isNode(node.right)
@@ -2867,11 +2880,11 @@ function invokedFunctionParameterBindings(
           bindings.reference(node.left),
           node.right,
           order,
-          controlUncertain,
+          nodeControlUncertain,
           scope,
         );
       } else if (node.left.type === "ArrayPattern" || node.left.type === "ArrayExpression") {
-        addPatternOwnerFlows(node.left, node.right, false, order, controlUncertain, scope);
+        addPatternOwnerFlows(node.left, node.right, false, order, nodeControlUncertain, scope);
       } else if (
         (node.left.type === "MemberExpression" ||
           node.left.type === "OptionalMemberExpression") && isNode(node.left.object)
@@ -2883,7 +2896,7 @@ function invokedFunctionParameterBindings(
             owner: node.left.object,
             value: node.right,
             order,
-            controlUncertain,
+            controlUncertain: nodeControlUncertain,
             scope,
           });
           memberValueFlows.set(key, flows);
@@ -2891,7 +2904,7 @@ function invokedFunctionParameterBindings(
       }
     }
 
-    const childControlUncertain = controlUncertain ||
+    const childControlUncertain = nodeControlUncertain ||
       controlUncertainFlowParentTypes.has(node.type);
     const childScope = ownerExecutionScopeTypes.has(node.type) ? node : scope;
     for (const child of children(node)) {
@@ -2969,7 +2982,12 @@ function invokedFunctionParameterBindings(
       );
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
-      return ownerIdentities(value.right, atOrder, allPossible, scope, seenBindings);
+      if (value.operator === "=") {
+        return ownerIdentities(value.right, atOrder, allPossible, scope, seenBindings);
+      }
+      return [value.left, value.right].filter(isNode).flatMap((candidate) =>
+        ownerIdentities(candidate, atOrder, true, scope, new Set(seenBindings))
+      );
     }
     if (value.type === "AwaitExpression" && isNode(value.argument)) {
       return ownerIdentities(value.argument, atOrder, allPossible, scope, seenBindings);
@@ -3007,7 +3025,10 @@ function invokedFunctionParameterBindings(
       );
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
-      return concreteValues(value.right, seenBindings);
+      if (value.operator === "=") return concreteValues(value.right, seenBindings);
+      return [value.left, value.right].filter(isNode).flatMap((candidate) =>
+        concreteValues(candidate, new Set(seenBindings))
+      );
     }
     if (value.type === "AwaitExpression" && isNode(value.argument)) {
       return concreteValues(value.argument, seenBindings);

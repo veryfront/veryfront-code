@@ -1821,6 +1821,47 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    for (
+      const [label, invocation] of [
+        [
+          "a short-circuiting owner assignment",
+          [
+            `owner ||= { make: safeFactory };`,
+            `owner.make()(Object);`,
+          ].join("\n"),
+        ],
+        [
+          "a short-circuiting owner assignment expression",
+          `(owner ||= { make: safeFactory }).make()(Object);`,
+        ],
+      ] as const
+    ) {
+      it(`keeps metadata after ${label}`, async () => {
+        const code = [
+          `const mutatingFactory = () => function (intrinsic) {`,
+          `  intrinsic.defineProperty = (target) => target;`,
+          `};`,
+          `const safeFactory = () => function (_intrinsic) {};`,
+          `let owner = { make: mutatingFactory };`,
+          invocation,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
     it("still strips metadata after a direct owner rebind", async () => {
       const code = [
         `const mutatingFactory = () => function (intrinsic) {`,
@@ -1899,6 +1940,13 @@ describe("browser-server-exports-strip", () => {
             `const other = {};`,
             `const alias = globalThis.useSafeFactory ? owner : other;`,
             `alias.make = safeFactory;`,
+          ].join("\n"),
+        ],
+        [
+          "a short-circuiting member assignment",
+          [
+            `const owner = { make: mutatingFactory };`,
+            `owner.make ||= safeFactory;`,
           ].join("\n"),
         ],
       ] as const
