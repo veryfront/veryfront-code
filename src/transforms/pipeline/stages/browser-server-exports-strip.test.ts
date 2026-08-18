@@ -2608,6 +2608,26 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "explicit-derived-constructor.tsx");
     });
 
+    it("does not assume fields run before an explicit derived constructor returns", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends class {} {`,
+        `  field = KEY;`,
+        `  constructor() { return {}; }`,
+        `};`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/explicit-derived-field.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "explicit-derived-field.tsx");
+    });
+
     it("keeps an uncalled inline superclass method deferred", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,

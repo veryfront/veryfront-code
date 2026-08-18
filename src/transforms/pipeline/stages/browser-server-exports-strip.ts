@@ -1960,10 +1960,12 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     return null;
   };
 
+  type ConstructedClassBodyMode = "all" | "constructor-only" | null;
+
   const walk = (
     node: Node,
     invoked: Node | null,
-    constructedClassBody = false,
+    constructedClassBody: ConstructedClassBodyMode = null,
   ): void => {
     const isFunction = node.type === "FunctionDeclaration" ||
       node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression" ||
@@ -1993,9 +1995,12 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     const nextInvoked = invokedChild(node);
     if (nextInvoked) invokedFunctions.add(nextInvoked);
     for (const child of children(node)) {
-      const entersConstructedClassBody = constructsInlineClass && child.type === "ClassBody";
-      const invokedMember = constructedClassBody &&
-          (isConstructor(child) || isInstanceField(child))
+      const entersConstructedClassBody = constructsInlineClass && child.type === "ClassBody"
+        ? isNode(node.superClass) && hasExplicitConstructor(node) ? "constructor-only" : "all"
+        : null;
+      const invokedMember = constructedClassBody !== null &&
+          (isConstructor(child) ||
+            (constructedClassBody === "all" && isInstanceField(child)))
         ? child
         : nextInvoked;
       walk(child, invokedMember, entersConstructedClassBody);
