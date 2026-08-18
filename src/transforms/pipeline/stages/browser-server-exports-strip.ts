@@ -1909,9 +1909,27 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     (node.type === "ClassMethod" || node.type === "ClassPrivateMethod") &&
     node.kind === "constructor";
 
-  const hasExplicitConstructor = (node: Node): boolean =>
-    isNode(node.body) && Array.isArray(node.body.body) &&
-    node.body.body.some((member) => isNode(member) && isConstructor(member));
+  const explicitConstructor = (node: Node): Node | undefined =>
+    isNode(node.body) && Array.isArray(node.body.body)
+      ? node.body.body.find((member) => isNode(member) && isConstructor(member))
+      : undefined;
+
+  const constructorBeginsWithSuper = (node: Node): boolean => {
+    const constructor = explicitConstructor(node);
+    if (!constructor || !isNode(constructor.body) || !Array.isArray(constructor.body.body)) {
+      return false;
+    }
+    const first = constructor.body.body[0];
+    if (!isNode(first) || first.type !== "ExpressionStatement" || !isNode(first.expression)) {
+      return false;
+    }
+    const expression = first.expression;
+    return expression.type === "CallExpression" && isNode(expression.callee) &&
+      expression.callee.type === "Super";
+  };
+
+  const constructsInstanceFields = (node: Node): boolean =>
+    !isNode(node.superClass) || !explicitConstructor(node) || constructorBeginsWithSuper(node);
 
   const unwrap = (node: Node): Node => {
     let current = node;
@@ -1984,7 +2002,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     const constructsInlineClass = node.type === "ClassExpression" &&
       constructedClasses.has(node);
     if (
-      constructsInlineClass && !hasExplicitConstructor(node) &&
+      constructsInlineClass && constructsInstanceFields(node) &&
       isNode(node.superClass)
     ) {
       const superClass = unwrap(node.superClass);
@@ -2012,7 +2030,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     }
     for (const child of children(node)) {
       const entersConstructedClassBody = constructsInlineClass && child.type === "ClassBody"
-        ? isNode(node.superClass) && hasExplicitConstructor(node) ? "constructor-only" : "all"
+        ? constructsInstanceFields(node) ? "all" : "constructor-only"
         : null;
       const invokedMember = constructedClassBody !== null &&
           (isConstructor(child) ||
@@ -2240,10 +2258,7 @@ function dropUnreachableModuleScopeBindings(
   // The reads in a body that only runs when something calls it are edges of the
   // declaration's own binding, so they keep the secret alive exactly as long as
   // the browser can still reach that binding.
-  const deferred = new Set<Node>();
-  for (const site of sites) {
-    for (const node of deferredExecutionNodes(site.node)) deferred.add(node);
-  }
+  const deferred = deferredExecutionNodes({ type: "Program", body });
 
   const roots = freeReferencedIdentifiers({ type: "Program", body }, elided, deferred);
   for (const site of sites) {

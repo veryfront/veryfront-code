@@ -2518,6 +2518,39 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "pages/leak.tsx");
     });
 
+    it("fails closed for a deferred callback in a root-only statement", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import { memo } from "./memo.ts";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `memo(() => KEY);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-callback.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-callback.tsx");
+    });
+
+    it("keeps a secret read by a root-only IIFE", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(function () { globalThis.registered = KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/root-iife.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("fails the build when a called generator defers the last secret read", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2626,6 +2659,25 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "explicit-derived-field.tsx");
+    });
+
+    it("keeps fields run by an explicit derived constructor that begins with super", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends class {} {`,
+        `  field = KEY;`,
+        `  constructor() { super(); }`,
+        `};`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/explicit-super.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "super();");
+      assertStringIncludes(result, 'throw new Error("server-only")');
     });
 
     it("does not treat a called class literal as constructed", async () => {
