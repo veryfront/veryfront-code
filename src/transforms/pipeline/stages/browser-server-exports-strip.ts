@@ -170,10 +170,23 @@ const RUNTIME_TS_NODE_TYPES = new Set<string>([
  * server-only import that binding came from; a walker that skips a runtime
  * TypeScript node reports live code as dead.
  */
+/** Whether a node carries decorators, which emit a runtime call even when the
+ * declaration they annotate is ambient. */
+function nodeHasDecorators(node: Node): boolean {
+  const decorators = node.decorators;
+  return Array.isArray(decorators) && decorators.length > 0;
+}
+
 function isErasedTypeNode(node: Node): boolean {
   // `declare const`, `declare class`, `declare namespace`, `declare enum` and
   // `declare prop: T` are all ambient: they emit nothing.
-  if (node.declare === true) return true;
+  //
+  // Decorators are the exception. Both tsc and esbuild emit a runtime
+  // `__decorate` call for `@audit declare id: string`, so the decorator
+  // expression is a real read even though the property it annotates is not.
+  // Erasing it here deletes the import the decorator needs and the emitted
+  // call then throws a ReferenceError at module evaluation.
+  if (node.declare === true) return !nodeHasDecorators(node);
   // `import { type Cfg }`, `export { type Cfg }`, `export type { Cfg }`.
   if (node.importKind === "type" || node.exportKind === "type") return true;
   if (!node.type.startsWith("TS")) return false;

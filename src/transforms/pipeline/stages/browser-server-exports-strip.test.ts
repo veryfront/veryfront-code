@@ -1362,6 +1362,52 @@ export const v = live();`,
         );
       });
 
+      it("keeps a decorator on a declared property, which still emits a runtime call", async () => {
+        // `@audit declare id: string` is ambient in the type system, but tsc and
+        // esbuild both emit a `__decorate` call for it, so the decorator is a
+        // real read. Erasing it deleted the import the call needs and produced a
+        // ReferenceError at browser module evaluation.
+        const code = [
+          'import { audit } from "./audit.ts";',
+          'import { getEnv } from "veryfront";',
+          'const KEY = getEnv("SECRET");',
+          "export async function getServerData() { return { props: { k: KEY } }; }",
+          "class Model {",
+          "  @audit declare id: string;",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        // The NAMED binding must survive: the emitted `__decorate` call reads
+        // `audit` by name. Asserting only on the specifier would pass even when
+        // the import is demoted to a bare side-effect import, which is the bug.
+        assertStringIncludes(result, "{ audit }");
+        assertNotIncludes(result, 'getEnv("SECRET")');
+      });
+
+      it("still erases an undecorated declared property", async () => {
+        const code = [
+          'import { audit } from "./audit.ts";',
+          'import { getEnv } from "veryfront";',
+          'const KEY = getEnv("SECRET");',
+          "export async function getServerData() { return { props: { k: KEY } }; }",
+          "class Model {",
+          "  declare id: string;",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        // The binding goes; the module specifier is demoted to a side-effect
+        // import by dropUnusedImportBindings, which is pre-existing behaviour
+        // and not what this case is about.
+        assertNotIncludes(result, "{ audit }");
+        assertNotIncludes(result, 'getEnv("SECRET")');
+      });
+
       it("ignores an ambient namespace but not its runtime sibling", async () => {
         await assertWalkers(
           `import { AMBIENT_ONLY, RUNTIME_ONLY } from "./server.ts";
