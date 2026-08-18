@@ -225,6 +225,7 @@ export class LayoutOrchestrator {
                   moduleServerOrigin,
                   this.config.config.build?.serverExternalPackages,
                   signal,
+                  this.config.mode,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {

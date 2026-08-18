@@ -112,6 +112,8 @@ export class RendererLifecycle {
       undefined,
       this.projectId,
       this.contentSourceId,
+      undefined,
+      mode,
     );
 
     const renderCacheConfig = config.cache?.render ?? {};

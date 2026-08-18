@@ -109,6 +109,7 @@ export class ComponentRegistry {
   private contentSourceId?: string;
   private componentSourceGeneration = 0;
   private componentSourceLoader: ComponentSourceLoader;
+  private renderMode: "development" | "production";
 
   constructor(
     virtualModules?: VirtualModuleSystem,
@@ -119,6 +120,7 @@ export class ComponentRegistry {
     projectId?: string,
     contentSourceId?: string,
     componentSourceLoader: ComponentSourceLoader = loadComponentFromSource,
+    renderMode: "development" | "production" = "production",
   ) {
     this.virtualModules = virtualModules ?? new VirtualModuleSystem();
     this.serverPort = serverPort;
@@ -128,6 +130,7 @@ export class ComponentRegistry {
     this.projectId = projectId;
     this.contentSourceId = contentSourceId;
     this.componentSourceLoader = componentSourceLoader;
+    this.renderMode = renderMode;
   }
 
   async loadFromDirectory(dir: string, deferLoading = false): Promise<void> {
@@ -406,7 +409,7 @@ export class ComponentRegistry {
   ): LoadComponentOptions {
     return {
       projectId: this.projectId ?? projectRoot,
-      dev: true,
+      dev: this.renderMode === "development",
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,

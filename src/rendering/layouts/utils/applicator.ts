@@ -37,6 +37,7 @@ export function applyLayoutsESM(
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
   signal?: AbortSignal,
+  mode?: "development" | "production",
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -118,6 +119,7 @@ export function applyLayoutsESM(
                 moduleServerOrigin,
                 config?.build?.serverExternalPackages,
                 signal,
+                mode,
               ),
             spanAttrs,
           );
@@ -189,6 +191,7 @@ export async function applyLayoutsFunctionBody(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   signal?: AbortSignal,
+  mode?: "development" | "production",
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   let element = pageElement;
@@ -239,6 +242,7 @@ export async function applyLayoutsFunctionBody(
         moduleServerOrigin,
         config?.build?.serverExternalPackages,
         signal,
+        mode,
       );
 
       const child = ensureValidChild(element, React);

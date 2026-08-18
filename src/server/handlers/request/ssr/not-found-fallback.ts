@@ -76,7 +76,7 @@ export async function tryNotFoundFallback(
       dirs,
       "notFound",
       ctx.projectDir,
-      "production",
+      ctx.isLocalProject ? "development" : "production",
       ctx.adapter,
       ctx.projectId,
       contentSourceId,

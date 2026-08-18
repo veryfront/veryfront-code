@@ -299,6 +299,7 @@ export class LayoutApplicator {
             this.config,
             this.isLocalProject,
             this.signal,
+            this.mode,
           );
         }
 
@@ -321,6 +322,7 @@ export class LayoutApplicator {
           this.requestUrl?.origin,
           this.config,
           this.signal,
+          this.mode,
         );
       },
       {

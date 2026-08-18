@@ -267,8 +267,10 @@ export async function loadTSXComponent(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  mode: "development" | "production" = "production",
 ): Promise<BundledReact.ComponentType> {
   throwIfAborted(signal);
+  const dev = mode === "development";
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
     dependencyPinningSource ?? projectDir,
@@ -290,6 +292,9 @@ export async function loadTSXComponent(
   if (serverExternalPackagesIdentity) {
     cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
   }
+  // The transform output differs by mode, so the two modes must not share an
+  // entry. Production keeps the historical key shape.
+  if (dev) cacheKey += ":dev";
 
   throwIfAborted(signal);
   const cached = cache.get(cacheKey);
@@ -308,7 +313,7 @@ export async function loadTSXComponent(
         projectDir,
         adapter,
         {
-          dev: true,
+          dev,
           projectId,
           projectSlug,
           ssr: true,
@@ -472,6 +477,7 @@ export async function applyTSXLayout(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  mode?: "development" | "production",
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -502,6 +508,7 @@ export async function applyTSXLayout(
       moduleServerOrigin,
       serverExternalPackages,
       signal,
+      mode,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {

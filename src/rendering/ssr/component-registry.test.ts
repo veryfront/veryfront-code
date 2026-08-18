@@ -80,28 +80,6 @@ function resolveProjectRoot(dir: string): string {
   return dir.replace(/[/\\]components$/, "");
 }
 
-function getLoaderOptions(
-  projectRoot: string,
-  projectId?: string,
-  moduleServerUrl?: string,
-  vendorBundleHash?: string,
-  contentSourceId?: string,
-): {
-  projectId: string;
-  dev: true;
-  moduleServerUrl?: string;
-  vendorBundleHash?: string;
-  contentSourceId?: string;
-} {
-  return {
-    projectId: projectId ?? projectRoot,
-    dev: true,
-    moduleServerUrl,
-    vendorBundleHash,
-    contentSourceId,
-  };
-}
-
 describe("ComponentRegistry logic", () => {
   describe("createErrorFallbackComponent", () => {
     it("should create a fallback with component name and error", () => {
@@ -243,39 +221,6 @@ describe("ComponentRegistry logic", () => {
 
     it("should handle nested components directories", () => {
       assertEquals(resolveProjectRoot("/project/src/components"), "/project/src");
-    });
-  });
-
-  describe("getLoaderOptions", () => {
-    it("should use projectId when provided", () => {
-      const opts = getLoaderOptions("/project", "proj-uuid-123");
-      assertEquals(opts.projectId, "proj-uuid-123");
-      assertEquals(opts.dev, true);
-    });
-
-    it("should fall back to projectRoot when no projectId", () => {
-      const opts = getLoaderOptions("/project");
-      assertEquals(opts.projectId, "/project");
-    });
-
-    it("should include optional fields when provided", () => {
-      const opts = getLoaderOptions(
-        "/project",
-        "proj-123",
-        "http://localhost:3000",
-        "abc123",
-        "branch:main",
-      );
-      assertEquals(opts.moduleServerUrl, "http://localhost:3000");
-      assertEquals(opts.vendorBundleHash, "abc123");
-      assertEquals(opts.contentSourceId, "branch:main");
-    });
-
-    it("should leave optional fields undefined when not provided", () => {
-      const opts = getLoaderOptions("/project");
-      assertEquals(opts.moduleServerUrl, undefined);
-      assertEquals(opts.vendorBundleHash, undefined);
-      assertEquals(opts.contentSourceId, undefined);
     });
   });
 
