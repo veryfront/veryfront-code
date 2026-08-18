@@ -1228,6 +1228,7 @@ function freeReferencedIdentifiers(
     }
 
     if (node.type === "StaticBlock") {
+      if (deferred.has(node)) return;
       const scope: LexicalScope = { kind: "var", names: new Set() };
       bindDirectDeclarations(scope, node);
       bindNestedVarDeclarations(scope, node);
@@ -1972,7 +1973,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
   const inertCompletionExpression = (node: Node | undefined): boolean =>
     isInertExpression(node, noNameHelpers, noInitializedNames);
 
-  function classDefinitionCompletes(node: Node): boolean {
+  function classDefinitionPrefixCompletes(node: Node): boolean {
     if (hasDecorators(node)) return false;
     if (isNode(node.superClass)) {
       const superClass = unwrap(node.superClass);
@@ -1981,25 +1982,45 @@ function deferredExecutionNodes(root: Node): Set<Node> {
         (superClass.type !== "ClassExpression" || !classDefinitionCompletes(superClass))
       ) return false;
     }
-
-    return classMembers(node).every((member) => {
-      if (
-        hasDecorators(member) || hasParameterDecorators(member) ||
-        member.computed === true
-      ) return false;
-      if (member.type === "StaticBlock") {
-        return Array.isArray(member.body) && member.body.length === 0;
-      }
-      if (
-        member.static === true &&
-        (member.type === "ClassProperty" || member.type === "ClassPrivateProperty" ||
-          member.type === "ClassAccessorProperty")
-      ) {
-        return inertCompletionExpression(isNode(member.value) ? member.value : undefined);
-      }
-      return true;
-    });
+    return true;
   }
+
+  const classMemberDefinitionCompletes = (member: Node): boolean => {
+    if (
+      hasDecorators(member) || hasParameterDecorators(member) ||
+      member.computed === true
+    ) return false;
+    if (member.type === "StaticBlock") {
+      return Array.isArray(member.body) && member.body.length === 0;
+    }
+    if (
+      member.static === true &&
+      (member.type === "ClassProperty" || member.type === "ClassPrivateProperty" ||
+        member.type === "ClassAccessorProperty")
+    ) {
+      return inertCompletionExpression(isNode(member.value) ? member.value : undefined);
+    }
+    return true;
+  };
+
+  function classDefinitionCompletes(node: Node): boolean {
+    return classDefinitionPrefixCompletes(node) &&
+      classMembers(node).every(classMemberDefinitionCompletes);
+  }
+
+  const isStaticInitializationElement = (member: Node): boolean =>
+    member.type === "StaticBlock" ||
+    (member.static === true &&
+      (member.type === "ClassProperty" || member.type === "ClassPrivateProperty" ||
+        member.type === "ClassAccessorProperty"));
+
+  const markDeferredStaticElements = (node: Node): void => {
+    let continues = classDefinitionPrefixCompletes(node);
+    for (const member of classMembers(node)) {
+      if (!continues && isStaticInitializationElement(member)) deferred.add(member);
+      if (continues && !classMemberDefinitionCompletes(member)) continues = false;
+    }
+  };
 
   const instanceInitializationCompletes = (node: Node): boolean =>
     classMembers(node).every((member) =>
@@ -2128,6 +2149,9 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     node: Node,
     constructedClassBody: ConstructedClassBodyMode = null,
   ): void => {
+    if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+      markDeferredStaticElements(node);
+    }
     const isFunction = node.type === "FunctionDeclaration" ||
       node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression" ||
       node.type === "ObjectMethod" || node.type === "ClassMethod" ||

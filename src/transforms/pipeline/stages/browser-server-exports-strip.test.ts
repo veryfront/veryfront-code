@@ -2651,6 +2651,41 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "throwing-inline-class-definition.tsx");
     });
 
+    it("does not run static elements after static initialization throws", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class {`,
+        `  static { throw new Error("stop"); }`,
+        `  static value = KEY;`,
+        `};`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-static-prefix.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-static-prefix.tsx");
+    });
+
+    it("keeps a static field after harmless static initialization", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { static first = 1; static value = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/harmless-static-prefix.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "static value = KEY");
+    });
+
     it("keeps an uncalled inline class method deferred", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
