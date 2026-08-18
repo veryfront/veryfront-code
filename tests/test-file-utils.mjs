@@ -28,7 +28,7 @@ import { readdirSync, statSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 
 const TEST_FILE_RE = /\.test\.[cm]?[jt]sx?$/i;
-const GLOB_CHARS_RE = /[\*\?\[]/;
+const GLOB_CHARS_RE = /[\*\?\[{]/;
 
 function toPosixPath(path) {
   return path.split(sep).join("/");
@@ -139,11 +139,62 @@ function walk(dir, onFile) {
   }
 }
 
+/**
+ * Expand `{a,b}` alternation into one pattern per branch.
+ *
+ * Expands the outermost group and recurses, so nested groups resolve without a
+ * parser. An unbalanced `{` is left literal, which is what `rg` does.
+ */
+function expandBraces(pattern) {
+  const open = pattern.indexOf("{");
+  if (open === -1) return [pattern];
+  let depth = 0;
+  for (let i = open; i < pattern.length; i += 1) {
+    if (pattern[i] === "{") depth += 1;
+    else if (pattern[i] === "}") {
+      depth -= 1;
+      if (depth !== 0) continue;
+      const head = pattern.slice(0, open);
+      const tail = pattern.slice(i + 1);
+      const branches = [];
+      let nested = 0;
+      let current = "";
+      for (const char of pattern.slice(open + 1, i)) {
+        if (char === "{") nested += 1;
+        if (char === "}") nested -= 1;
+        if (char === "," && nested === 0) {
+          branches.push(current);
+          current = "";
+          continue;
+        }
+        current += char;
+      }
+      branches.push(current);
+      return branches.flatMap((branch) => expandBraces(`${head}${branch}${tail}`));
+    }
+  }
+  return [pattern];
+}
+
+/** True when `target` exists, without distinguishing why it does not. */
+function pathExists(target) {
+  try {
+    statSync(target);
+    return true;
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    return false;
+  }
+}
+
 function getBaseDir(pattern, cwd) {
   const globIndex = pattern.search(GLOB_CHARS_RE);
   if (globIndex === -1) {
     return resolve(cwd, pattern);
   }
+  // A slash-free glob matches by basename at any depth, so its search root is
+  // `cwd` rather than the segment before the first glob character.
+  if (!pattern.includes("/")) return resolve(cwd, ".");
   const prefix = pattern.slice(0, globIndex);
   const base = prefix.endsWith("/") || prefix === "" ? prefix : dirname(prefix);
   return resolve(cwd, base || ".");
@@ -198,7 +249,13 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
   for (const pattern of patterns) {
     if (!pattern) continue;
     const absolute = resolve(cwd, pattern);
-    if (!hasGlob(pattern)) {
+    // An existing path wins over a glob reading of the same string. `[id]` is
+    // both a valid character class and a legal directory name, and this repo
+    // has such directories (src/discovery/__fixtures__/.../[userId]/). Treating
+    // the string as a class made those unreachable: the class can never match a
+    // directory literally named `[id]`. `rg` resolves the same ambiguity the
+    // same way — an explicit path argument is honoured as a path.
+    if (!hasGlob(pattern) || pathExists(absolute)) {
       // Only the base lookup is guarded. Wrapping the traversal too would
       // swallow an `ENOENT` raised *inside* `walk` — a descendant removed
       // between `readdirSync` calls — and silently drop the directory's whole
@@ -241,10 +298,23 @@ export function listTestFiles(patterns, cwd = process.cwd()) {
       if (!isMissingPathError(error)) throw error;
       continue;
     }
-    const matcher = globToRegex(toPosixPath(pattern));
+    // `rg` matches a slash-free glob against the BASENAME at any depth, so
+    // `*.test.ts` finds every test in the tree rather than only those sitting
+    // beside `cwd`. A pattern containing a separator stays anchored.
+    const posix = toPosixPath(pattern);
+    const matchers = expandBraces(posix).map((expanded) => ({
+      regex: globToRegex(expanded),
+      basenameOnly: !expanded.includes("/"),
+    }));
     walk(baseDir, (file) => {
       const rel = toPosixPath(file.startsWith(cwd) ? file.slice(cwd.length + 1) : file);
-      if (matcher.test(rel)) files.add(file);
+      const base = rel.slice(rel.lastIndexOf("/") + 1);
+      for (const { regex, basenameOnly } of matchers) {
+        if (regex.test(basenameOnly ? base : rel)) {
+          files.add(file);
+          return;
+        }
+      }
     });
   }
   return Array.from(files);
