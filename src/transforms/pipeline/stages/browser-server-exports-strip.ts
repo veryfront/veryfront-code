@@ -1288,6 +1288,7 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
 function retainLeadingComments(before: Node[], after: Node[]): Node[] {
   const kept = new Set<Node>(after);
   let orphaned: unknown[] = [];
+  let lastKept: Node | undefined;
 
   for (const statement of before) {
     if (!kept.has(statement)) {
@@ -1295,6 +1296,7 @@ function retainLeadingComments(before: Node[], after: Node[]): Node[] {
       if (Array.isArray(comments)) orphaned = [...orphaned, ...comments];
       continue;
     }
+    lastKept = statement;
     if (orphaned.length === 0) continue;
     const existing = Array.isArray(statement.leadingComments) ? statement.leadingComments : [];
     statement.leadingComments = [
@@ -1302,6 +1304,17 @@ function retainLeadingComments(before: Node[], after: Node[]): Node[] {
       ...existing.filter((comment) => !orphaned.includes(comment)),
     ];
     orphaned = [];
+  }
+
+  // Comments after the last surviving statement have nowhere to lead, so they
+  // trail it instead. Without this a legal banner between two removed tail
+  // declarations is dropped.
+  if (orphaned.length > 0 && lastKept !== undefined) {
+    const existing = Array.isArray(lastKept.trailingComments) ? lastKept.trailingComments : [];
+    lastKept.trailingComments = [
+      ...existing.filter((comment) => !orphaned.includes(comment)),
+      ...orphaned,
+    ];
   }
 
   return after;

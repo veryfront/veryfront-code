@@ -1274,6 +1274,22 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result.code, "preact/jsx-runtime");
     });
 
+    it("keeps a legal banner between two removed trailing declarations", async () => {
+      // Nothing survives after the banner, so it has no statement left to lead.
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `export async function getServerData() { return { props: { s: SECRET, r: RAW } }; }`,
+        `const RAW = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
+        `/*! package license */`,
+        `const SECRET = RAW + "x";`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(source, "pages/test.tsx");
+
+      assertNotIncludes(result, "SERVER_ONLY_HOOK_SOURCE");
+      assertStringIncludes(result, "/*! package license */");
+    });
+
     it("does not run for the ssr target", () => {
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "ssr")), false);
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "browser")), true);
