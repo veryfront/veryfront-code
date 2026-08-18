@@ -17,7 +17,10 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ComponentRegistry } from "../ssr/component-registry.ts";
-import type { RenderEnvironment, RenderModes } from "../context/render-context.ts";
+import type {
+  RenderEnvironment,
+  RenderModes,
+} from "#veryfront/rendering/context/render-context.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
 
@@ -146,6 +149,7 @@ export class LayoutOrchestrator {
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
     signal?: AbortSignal,
+    environment: RenderEnvironment = this.config.environment,
   ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
@@ -228,7 +232,7 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
-                  this.renderModes,
+                  { ...this.renderModes, environment },
                   reactVersion,
                   undefined,
                   dependencyPinningCacheKey,
@@ -370,6 +374,7 @@ export class LayoutOrchestrator {
       "layout.applyLayoutsAndWrappers",
       async () => {
         throwIfAborted(signal);
+        const renderEnvironment = environment ?? this.config.environment;
         const reactVersion = await this.getReactVersion(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -384,6 +389,7 @@ export class LayoutOrchestrator {
               dependencyPinningSource,
               requestUrl?.origin,
               this.config.config.build?.serverExternalPackages,
+              renderEnvironment,
             ),
           )
           : this.config.componentRegistry;
@@ -403,7 +409,7 @@ export class LayoutOrchestrator {
           layoutCache: this.config.layoutCache,
           mergedComponents,
           mode: this.config.mode,
-          environment: environment ?? this.config.environment,
+          environment: renderEnvironment,
           moduleServerUrl: this.config.moduleServerUrl,
           requestUrl,
           params,

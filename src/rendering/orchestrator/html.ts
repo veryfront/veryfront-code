@@ -24,6 +24,7 @@ import { injectElementSelectors } from "#veryfront/studio/element-selector-injec
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
@@ -54,6 +55,13 @@ import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
+
+export function resolveRenderEnvironment(
+  requestEnvironment?: RenderEnvironment,
+  configuredEnvironment?: RenderEnvironment,
+): RenderEnvironment {
+  return requestEnvironment ?? configuredEnvironment ?? "production";
+}
 
 function hasCollectedHeadEntries(
   head: HTMLGenerationContext["collectedHead"],
@@ -661,18 +669,19 @@ export class HTMLGenerator {
         dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
+      const environment = resolveRenderEnvironment(
+        context.options?.environment,
+        this.config.environment,
+      );
       const contentSourceId = computeContentSourceId(
         this.config.isLocalProject === true,
-        context.options?.environment ?? "preview",
+        environment,
         null,
         context.options?.releaseId,
       );
-      // Preview instrumentation follows the server-resolved request
-      // environment and falls back to "production", so a caller that reports no
-      // environment never gets it. This intentionally does not feed the cache
-      // key above: the SSR module cache key already separates preview from
-      // production, so the two cannot share an entry.
-      const environment = context.options?.environment ?? this.config.environment ?? "production";
+      // Use one resolved environment for both source identity and loading. An
+      // unset environment falls back to production and cannot enable preview
+      // instrumentation.
       const loaded = await loadReservedWithPath(
         dirs,
         "error",

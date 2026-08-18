@@ -6,18 +6,22 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import type { LayoutItem } from "#veryfront/types";
-import type { LayoutComponentCache } from "./layouts/utils/component-loader.ts";
-import { LayoutApplicator } from "./layouts/layout-applicator.ts";
-import { LayoutOrchestrator } from "./orchestrator/layout.ts";
-import type { LayoutCollector, LayoutCompiler } from "./layouts/index.ts";
-import { createComponentRegistry, createPageRenderer } from "./factories/service-factories.ts";
+import type { LayoutComponentCache } from "#veryfront/rendering/layouts/utils/component-loader.ts";
+import { LayoutApplicator } from "#veryfront/rendering/layouts/layout-applicator.ts";
+import { LayoutOrchestrator } from "#veryfront/rendering/orchestrator/layout.ts";
+import type { LayoutCollector, LayoutCompiler } from "#veryfront/rendering/layouts/index.ts";
+import {
+  createComponentRegistry,
+  createPageRenderer,
+} from "#veryfront/rendering/factories/service-factories.ts";
 import { VirtualModuleSystem } from "./virtual-module-system.ts";
-import type { ComponentRegistry } from "./ssr/component-registry.ts";
+import type { ComponentRegistry } from "#veryfront/rendering/ssr/component-registry.ts";
 import type { PageRenderer } from "./page-renderer.ts";
-import type { RenderContext, RenderModes } from "./context/render-context.ts";
-import { HTMLGenerator } from "./orchestrator/html.ts";
-import { RendererLifecycle } from "./orchestrator/lifecycle.ts";
-import { ConfigurationManager } from "./orchestrator/config.ts";
+import type { RenderContext, RenderModes } from "#veryfront/rendering/context/render-context.ts";
+import { HTMLGenerator } from "#veryfront/rendering/orchestrator/html.ts";
+import { RendererLifecycle } from "#veryfront/rendering/orchestrator/lifecycle.ts";
+import { ConfigurationManager } from "#veryfront/rendering/orchestrator/config.ts";
+import { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 
 /**
  * The mode pair is only useful if every link between the render context and the
@@ -190,16 +194,24 @@ describe("render mode threading", () => {
         adapter: sourceAdapter(),
         config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
         mode: HOSTED_PREVIEW.compileMode,
-        environment: HOSTED_PREVIEW.environment,
+        environment: "production",
         layoutCollector: {} as LayoutCollector,
         layoutCompiler: {} as LayoutCompiler,
         layoutCache: cache,
         componentRegistry: {},
       });
 
-      await orchestrator.preloadLayoutModules([
-        { kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem,
-      ]);
+      await orchestrator.preloadLayoutModules(
+        [
+          { kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem,
+        ],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "preview",
+      );
 
       assertEquals(keys.length > 0, true, "expected the preload to consult the cache");
       // A preload keyed as production would leave the apply phase to recompile,
@@ -225,6 +237,25 @@ describe("render mode threading", () => {
 
       const modes = (orchestrator as unknown as { renderModes: RenderModes }).renderModes;
       assertEquals(modes, HOSTED_PREVIEW);
+    });
+  });
+
+  describe("orchestrator/ssr.ts", () => {
+    it("uses the constructor environment only as a per-render fallback", () => {
+      const renderer = new VeryfrontRenderer({
+        projectDir: "/project",
+        mode: "production",
+        environment: "preview",
+        adapter: createMockAdapter(),
+      });
+      const mergeRenderOptions = (renderer as unknown as {
+        mergeRenderOptions(options?: { environment?: "preview" | "production" }): {
+          environment?: "preview" | "production";
+        };
+      }).mergeRenderOptions.bind(renderer);
+
+      assertEquals(mergeRenderOptions().environment, "preview");
+      assertEquals(mergeRenderOptions({ environment: "production" }).environment, "production");
     });
   });
 

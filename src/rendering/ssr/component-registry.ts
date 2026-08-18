@@ -11,7 +11,10 @@ import {
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
-import type { RenderModes } from "../context/render-context.ts";
+import type {
+  RenderEnvironment,
+  RenderModes,
+} from "#veryfront/rendering/context/render-context.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 
@@ -215,6 +218,7 @@ export class ComponentRegistry {
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
     serverExternalPackages?: readonly string[],
+    environment: RenderEnvironment = this.renderModes.environment,
   ): Promise<string> {
     const dependencySnapshot = await resolveDependencyPinningSnapshot(
       (dependencyPinningSource ?? this.projectDir) || undefined,
@@ -224,6 +228,7 @@ export class ComponentRegistry {
     let snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
       ? `${dependencySnapshot.cacheKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
       : dependencySnapshot.cacheKey;
+    if (environment === "preview") snapshotKey += ":environment-preview";
     const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
       serverExternalPackages,
     );
@@ -254,6 +259,7 @@ export class ComponentRegistry {
       dependencyPinningSource,
       moduleServerOrigin,
       serverExternalPackages,
+      environment,
     ).finally(() => {
       if (this.dependencySnapshotLoads.get(loadKey) === load) {
         this.dependencySnapshotLoads.delete(loadKey);
@@ -272,6 +278,7 @@ export class ComponentRegistry {
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
     serverExternalPackages?: readonly string[],
+    environment: RenderEnvironment = this.renderModes.environment,
   ): Promise<void> {
     const adapter = this.adapter;
     if (!adapter) {
@@ -298,6 +305,7 @@ export class ComponentRegistry {
             dependencyPinningSource,
             moduleServerOrigin,
             serverExternalPackages,
+            environment,
           ),
         );
 
@@ -407,11 +415,12 @@ export class ComponentRegistry {
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
     serverExternalPackages?: readonly string[],
+    environment: RenderEnvironment = this.renderModes.environment,
   ): LoadComponentOptions {
     return {
       projectId: this.projectId ?? projectRoot,
       dev: this.renderModes.compileMode === "development",
-      mode: this.renderModes.environment,
+      mode: environment,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,

@@ -15,7 +15,7 @@ import type { RenderResult } from "./orchestrator/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
-import type { RenderEnvironment } from "./context/render-context.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 
 interface PageRenderOptions {
   params?: Record<string, string | string[]>;
@@ -115,6 +115,7 @@ export class PageRenderer {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
+    environment: RenderEnvironment = this.environment,
   ): Promise<MDXComponents> {
     const snapshotKey = await this.componentRegistry.prepareDependencySnapshot(
       dependencyPinningCacheKey,
@@ -122,6 +123,7 @@ export class PageRenderer {
       dependencyPinningSource,
       moduleServerOrigin,
       this.config.build?.serverExternalPackages,
+      environment,
     );
     return {
       ...createDefaultMDXComponents(),
@@ -284,6 +286,7 @@ export class PageRenderer {
                 options?.dependencyPinningDependencies,
                 options?.dependencyPinningSource,
                 options?.url?.origin,
+                options?.environment ?? this.environment,
               ),
               this.compileMDX,
               this.adapter,

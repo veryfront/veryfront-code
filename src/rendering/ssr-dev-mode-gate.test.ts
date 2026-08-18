@@ -5,10 +5,13 @@ import type * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
-import { createLayoutComponentCache, loadTSXComponent } from "./layouts/utils/component-loader.ts";
+import {
+  createLayoutComponentCache,
+  loadTSXComponent,
+} from "#veryfront/rendering/layouts/utils/component-loader.ts";
 import { loadReservedWithPath } from "./app-reserved.ts";
-import { ComponentRegistry } from "./ssr/component-registry.ts";
-import type { RenderModes } from "./context/render-context.ts";
+import { ComponentRegistry } from "#veryfront/rendering/ssr/component-registry.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import type { VirtualModuleSystem } from "./virtual-module-system.ts";
 
 /**

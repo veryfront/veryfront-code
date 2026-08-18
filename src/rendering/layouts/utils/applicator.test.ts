@@ -2,7 +2,7 @@ import * as React from "react";
 import * as ReactDOMServer from "react-dom/server";
 import "#veryfront/schemas/_test-setup.ts";
 // Node position injection needs the babel CodeParser contract registered.
-import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
+import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { renderToStringAdapter } from "#veryfront/react";

@@ -20,7 +20,7 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
-import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
+import { HTMLGenerator, type HTMLGeneratorConfig, resolveRenderEnvironment } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import {
   deserializeManagedHeadPayload,
@@ -81,6 +81,11 @@ describe("HTMLGenerator helpers", () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     clearReleaseAssetManifestCache();
     clearCSSCache();
+  });
+
+  it("uses the configured production environment when a request omits it", () => {
+    assertEquals(resolveRenderEnvironment(undefined, "production"), "production");
+    assertEquals(resolveRenderEnvironment("preview", "production"), "preview");
   });
 
   describe("buildHeadElements", () => {

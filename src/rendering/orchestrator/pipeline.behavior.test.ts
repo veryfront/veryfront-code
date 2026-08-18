@@ -472,6 +472,28 @@ describe("RenderPipeline behavior", () => {
     assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
   });
 
+  it("isolates preview HTML from the production render cache", () => {
+    const pipeline = createPipeline("/project/pages/index.mdx");
+    const buildCacheKey = (pipeline as unknown as {
+      buildCacheKey(
+        slug: string,
+        options: RenderOptions | undefined,
+        dependencyPinningCacheKey: string,
+      ): string | null;
+    }).buildCacheKey.bind(pipeline);
+
+    assertEquals(buildCacheKey("", { environment: "production" }, "off"), "index");
+    assertEquals(buildCacheKey("", undefined, "off"), "index");
+    assertEquals(
+      buildCacheKey("", { environment: "preview" }, "off"),
+      "index:environment-preview",
+    );
+    assertEquals(
+      buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off"),
+      "custom:environment-preview",
+    );
+  });
+
   it("bounds the complete API render key while preserving the flag-off override", () => {
     const cachePrefix = "project:preview:branch:v1";
     const pipeline = createPipeline("/project/pages/index.mdx", {

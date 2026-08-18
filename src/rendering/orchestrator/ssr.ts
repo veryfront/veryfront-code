@@ -176,6 +176,7 @@ export class VeryfrontRenderer {
       projectId: options?.projectId ?? this.projectId,
       projectSlug: options?.projectSlug ?? this.projectSlug,
       contentSourceId: options?.contentSourceId ?? this.contentSourceId,
+      environment: options?.environment ?? this.environment,
     };
   }
 

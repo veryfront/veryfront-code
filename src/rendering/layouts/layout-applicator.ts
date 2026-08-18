@@ -25,13 +25,17 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
+import type { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
 import {
   type DependencyPinningSourceInput,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 import { isDotPath } from "../orchestrator/path-helpers.ts";
-import type { RenderEnvironment, RenderModes } from "../context/render-context.ts";
+import type {
+  RenderEnvironment,
+  RenderModes,
+} from "#veryfront/rendering/context/render-context.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -69,6 +73,10 @@ export interface LayoutApplicationOptions {
   signal?: AbortSignal;
 }
 
+interface LayoutApplicatorDependencies {
+  loadComponentFromSource?: typeof loadComponentFromSource;
+}
+
 export class LayoutApplicator {
   private projectDir: string;
   private adapter: RuntimeAdapter;
@@ -92,13 +100,17 @@ export class LayoutApplicator {
   private readonly dependencyPinningSource?: DependencyPinningSourceInput;
   private readonly isLocalProject: boolean;
   private readonly signal?: AbortSignal;
+  private readonly componentSourceLoader?: typeof loadComponentFromSource;
   private reactVersionPromise: Promise<string> | null = null;
   private frameworkProviderModulesPromise?: Promise<{
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
     RouterProvider: BundledReact.ComponentType<Record<string, unknown>>;
   }>;
 
-  constructor(options: LayoutApplicationOptions) {
+  constructor(
+    options: LayoutApplicationOptions,
+    dependencies: LayoutApplicatorDependencies = {},
+  ) {
     this.projectDir = options.projectDir;
     this.projectId = options.projectId;
     this.projectSlug = options.projectSlug;
@@ -121,6 +133,12 @@ export class LayoutApplicator {
     this.dependencyPinningSource = options.dependencyPinningSource;
     this.isLocalProject = options.isLocalProject === true;
     this.signal = options.signal;
+    this.componentSourceLoader = dependencies.loadComponentFromSource;
+  }
+
+  private async getComponentSourceLoader(): Promise<typeof loadComponentFromSource> {
+    return this.componentSourceLoader ??
+      (await import("#veryfront/modules/react-loader/index.ts")).loadComponentFromSource;
   }
 
   private get renderModes(): RenderModes {
@@ -382,7 +400,7 @@ export class LayoutApplicator {
       projectSlug: this.projectSlug,
       contentSourceId: this.contentSourceId,
       dev: this.mode === "development",
-      mode: this.mode,
+      mode: this.environment,
       reactVersion: await this.getReactVersion(),
       dependencyPinningCacheKey: this.dependencyPinningCacheKey,
       dependencyPinningDependencies: this.dependencyPinningDependencies,
@@ -442,9 +460,7 @@ export class LayoutApplicator {
           if (isMdx) {
             App = await this.loadMdxAppComponent(appSource, appPath);
           } else {
-            const { loadComponentFromSource } = await import(
-              "#veryfront/modules/react-loader/index.ts"
-            );
+            const loadComponentFromSource = await this.getComponentSourceLoader();
             App = await loadComponentFromSource(
               appSource,
               appPath,
@@ -454,6 +470,7 @@ export class LayoutApplicator {
                 projectId: this.projectId ?? this.projectDir,
                 projectSlug: this.projectSlug,
                 dev: this.mode === "development",
+                mode: this.environment,
                 moduleServerUrl: this.config?.dev?.moduleServerUrl,
                 moduleServerOrigin: this.requestUrl?.origin,
                 contentSourceId: this.contentSourceId,
@@ -500,9 +517,7 @@ export class LayoutApplicator {
         target: "server",
       });
 
-      const { loadComponentFromSource } = await import(
-        "#veryfront/modules/react-loader/index.ts"
-      );
+      const loadComponentFromSource = await this.getComponentSourceLoader();
 
       return await loadComponentFromSource(
         compiled.compiledCode,
@@ -513,6 +528,7 @@ export class LayoutApplicator {
           projectId: this.projectId ?? this.projectDir,
           projectSlug: this.projectSlug,
           dev: this.mode === "development",
+          mode: this.environment,
           moduleServerUrl: this.config?.dev?.moduleServerUrl,
           moduleServerOrigin: this.requestUrl?.origin,
           contentSourceId: this.contentSourceId,

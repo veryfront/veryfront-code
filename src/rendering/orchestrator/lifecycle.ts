@@ -22,7 +22,7 @@ import type { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MdxBundle } from "#veryfront/types";
 import { CompilerService } from "./compiler-service.ts";
-import type { RenderEnvironment } from "../context/render-context.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 
 const logger = rendererLogger.component("lifecycle");
 
