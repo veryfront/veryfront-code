@@ -2584,7 +2584,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     return null;
   };
 
-  type ConstructedClassBodyMode = "all" | "constructor-only" | null;
+  type ConstructedClassBodyMode = "all" | "constructor-only" | "fields-only" | null;
 
   const walk = (
     node: Node,
@@ -2636,6 +2636,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         } else if (invocationArgumentsComplete(node, initializedAtConstruction)) {
           if (nextInvoked.type === "ClassExpression") {
             constructedClasses.add(nextInvoked);
+            const constructor = explicitConstructor(nextInvoked);
+            if (constructor) {
+              markCalledFunction(constructor, node, activeScopes);
+              if (
+                constructsInstanceFields(nextInvoked) &&
+                !instanceInitializationCompletes(nextInvoked) && isNode(constructor.body)
+              ) deferred.add(constructor.body);
+            }
           } else if (
             nextInvoked.type === "FunctionExpression" && nextInvoked.async !== true &&
             nextInvoked.generator !== true
@@ -2670,16 +2678,20 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       }
     }
     let phaseScope = introducedScope;
+    let instanceFieldsContinue = constructedClassBody === "all" ||
+      constructedClassBody === "fields-only";
     const parameters = isFunction && Array.isArray(node.params) ? node.params.filter(isNode) : [];
     for (const child of children(node)) {
       const scopesAtChild = phaseScope ? [phaseScope, ...localScopes] : localScopes;
       const entersConstructedClassBody = completesInlineClassDefinition &&
           child.type === "ClassBody"
-        ? constructsInstanceFields(node) ? "all" : "constructor-only"
+        ? constructsInstanceFields(node)
+          ? instanceInitializationCompletes(node) ? "all" : "fields-only"
+          : "constructor-only"
         : null;
       const invokedMember = constructedClassBody !== null &&
-          (isConstructor(child) ||
-            (constructedClassBody === "all" && isInstanceField(child)))
+          ((isConstructor(child) && constructedClassBody !== "fields-only") ||
+            (instanceFieldsContinue && isInstanceField(child)))
         ? child
         : null;
       if (invokedMember) executedNodes.add(invokedMember);
@@ -2697,6 +2709,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           new Set(patternBoundNames(child)),
         );
       }
+      if (
+        instanceFieldsContinue && isInstanceField(child) &&
+        !inertCompletionExpression(isNode(child.value) ? child.value : undefined)
+      ) instanceFieldsContinue = false;
     }
   };
 

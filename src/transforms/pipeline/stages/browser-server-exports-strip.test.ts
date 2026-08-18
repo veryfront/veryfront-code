@@ -3262,6 +3262,40 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "inline-class-argument.tsx");
     });
 
+    it("does not run instance fields after an earlier initializer aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { first = missing; second = KEY; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-field-order.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-field-order.tsx");
+    });
+
+    it("does not evaluate a constructor default skipped by a defined argument", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { constructor(value = KEY) {} }(1);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-constructor-default.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-constructor-default.tsx");
+    });
+
     it("does not run direct instance fields when class definition throws", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
