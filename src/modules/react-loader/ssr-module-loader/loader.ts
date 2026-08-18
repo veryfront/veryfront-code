@@ -191,12 +191,58 @@ function getMdxEsmCacheVariant(
   );
 }
 
+type SettledOperation<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: unknown };
+
+function startSettledOperation<T>(operation: () => Promise<T>): Promise<SettledOperation<T>> {
+  try {
+    return operation().then(
+      (value) => ({ ok: true, value }),
+      (error: unknown) => ({ ok: false, error }),
+    );
+  } catch (error) {
+    return Promise.resolve({ ok: false, error });
+  }
+}
+
+/**
+ * Start compilation before walking dependencies, then join both results.
+ *
+ * The compiler rejection is handled immediately so dependency resolution can
+ * retain its historical error precedence without risking an unhandled promise.
+ */
+async function runTransformAndDependencies<T, D>(
+  transform: () => Promise<T>,
+  dependencies: () => Promise<D>,
+): Promise<{ transformed: T; dependencies: D }> {
+  const transformResult = startSettledOperation(transform);
+
+  let resolvedDependencies: D;
+  try {
+    resolvedDependencies = await dependencies();
+  } catch (dependencyError) {
+    // Drain the compiler before rejecting the leader. This releases its
+    // capacity slot before another request can start a replacement transform.
+    await transformResult;
+    throw dependencyError;
+  }
+
+  const settledTransform = await transformResult;
+  if (!settledTransform.ok) throw settledTransform.error;
+  return {
+    transformed: settledTransform.value,
+    dependencies: resolvedDependencies,
+  };
+}
+
 /** Internal test seam for the singleflight timeout lifecycle. */
 export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
   getMdxEsmCacheVariant,
   publishTransformCacheIfCurrent,
   registerInProgressTransformObservers,
+  runTransformAndDependencies,
   scheduleStaleInProgressTransformEviction,
   shouldRetryRejectedInProgressTransform,
   waitForInProgressTransform,
@@ -904,45 +950,40 @@ export class SSRModuleLoader {
           }
         }
 
-        // Process recursive imports FIRST, without holding a project slot.
-        // Each recursive child acquires its own slot for its own transform only.
-        // This prevents hierarchical deadlock where parent holds a slot while
-        // children also need slots (10 batch x 2 depth = 21 slots, but limit is 17).
+        const projectId = this.options.projectId;
+        const transformOpts: TransformOptions = {
+          projectId,
+          dev: this.options.dev,
+          ssr: true,
+          apiBaseUrl: this.options.apiBaseUrl,
+          moduleServerOrigin: this.options.moduleServerOrigin,
+          reactVersion: this.options.reactVersion,
+          serverExternalPackages: this.options.serverExternalPackages,
+          dependencyHashCache,
+          dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+          dependencyPinningSource: this.options.dependencyPinningSource,
+        };
         const localFs = createFileSystem();
 
-        const localImportPaths = await this.depValidator.processLocalImports(
-          parseResult.imports,
-          filePath,
-          depth,
-          localFs,
-          dependencyHashCache,
-          sharedSignal,
-        );
-
-        const crossProjectPaths = await this.depValidator.processCrossProjectImports(
-          parseResult.crossProjectImports,
-          filePath,
-          sharedSignal,
-        );
-
-        // Hold project slots only around the actual transform and file write.
-        const entry = await this.withTransformCapacity(filePath, "build", async () => {
-          const projectId = this.options.projectId;
-          const transformOpts: TransformOptions = {
-            projectId,
-            dev: this.options.dev,
-            ssr: true,
-            apiBaseUrl: this.options.apiBaseUrl,
-            moduleServerOrigin: this.options.moduleServerOrigin,
-            reactVersion: this.options.reactVersion,
-            serverExternalPackages: this.options.serverExternalPackages,
+        const resolveDependencies = async () => {
+          const localImportPaths = await this.depValidator.processLocalImports(
+            parseResult.imports,
+            filePath,
+            depth,
+            localFs,
             dependencyHashCache,
-            dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
-            dependencyPinningDependencies: this.options.dependencyPinningDependencies,
-            dependencyPinningSource: this.options.dependencyPinningSource,
-          };
-
-          let transformed = await withSpan(
+            sharedSignal,
+          );
+          const crossProjectPaths = await this.depValidator.processCrossProjectImports(
+            parseResult.crossProjectImports,
+            filePath,
+            sharedSignal,
+          );
+          return { localImportPaths, crossProjectPaths };
+        };
+        const compile = async (): Promise<string> => {
+          const transformed = await withSpan(
             SpanNames.SSR_TRANSFORM_SINGLE,
             () =>
               transformToESM(
@@ -955,6 +996,15 @@ export class SSRModuleLoader {
             { "ssr.file": filePath.split("/").pop() || filePath },
           );
           throwIfAborted(sharedSignal);
+          return transformed;
+        };
+        const finishTransform = async (
+          compiled: string,
+          dependencies: Awaited<ReturnType<typeof resolveDependencies>>,
+        ): Promise<ModuleCacheEntry> => {
+          throwIfAborted(sharedSignal);
+          const { localImportPaths, crossProjectPaths } = dependencies;
+          let transformed = compiled;
 
           for (const [specifier, tempPath] of crossProjectPaths.entries()) {
             transformed = await rewriteCrossProjectImport(transformed, specifier, tempPath);
@@ -1059,7 +1109,33 @@ export class SSRModuleLoader {
           // A revoked leader must not update shared caches, but its immutable
           // output is still valid for requests that joined this singleflight.
           return entry;
-        }, sharedSignal);
+        };
+
+        let entry: ModuleCacheEntry;
+        if (this.options.dev) {
+          // Dev cold starts overlap compilation with dependency traversal. The
+          // first capacity slot ends with compilation, before the helper waits
+          // for children, and post-processing reacquires a slot separately.
+          const prepared = await runTransformAndDependencies(
+            () => this.withTransformCapacity(filePath, "build", compile, sharedSignal),
+            resolveDependencies,
+          );
+          entry = await this.withTransformCapacity(
+            filePath,
+            "build",
+            () => finishTransform(prepared.transformed, prepared.dependencies),
+            sharedSignal,
+          );
+        } else {
+          // Preserve production ordering and its single capacity window.
+          const dependencies = await resolveDependencies();
+          entry = await this.withTransformCapacity(
+            filePath,
+            "build",
+            async () => await finishTransform(await compile(), dependencies),
+            sharedSignal,
+          );
+        }
 
         markInProgressTransformSettled(transformPromise);
         resolveTransform(entry);

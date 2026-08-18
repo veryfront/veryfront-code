@@ -1278,6 +1278,58 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     );
   });
 
+  it("starts a module transform before recursive dependencies settle", async () => {
+    const events: string[] = [];
+    let finishTransform!: (value: string) => void;
+
+    const result = await __ssrModuleLoaderInternals.runTransformAndDependencies(
+      async () => {
+        events.push("transform:start");
+        return await new Promise<string>((resolve) => {
+          finishTransform = resolve;
+        });
+      },
+      async () => {
+        events.push("dependencies:start");
+        assertEquals(events, ["transform:start", "dependencies:start"]);
+        finishTransform("compiled");
+        return await Promise.resolve("resolved");
+      },
+    );
+
+    assertEquals(result, { transformed: "compiled", dependencies: "resolved" });
+  });
+
+  it("preserves dependency error precedence while draining a failed transform", async () => {
+    const transformError = new Error("transform failed");
+    const dependencyError = new Error("dependency failed");
+    let rejectTransform!: (error: Error) => void;
+    let resultSettled = false;
+
+    const result = __ssrModuleLoaderInternals.runTransformAndDependencies(
+      () =>
+        new Promise<never>((_resolve, reject) => {
+          rejectTransform = reject;
+        }),
+      () => Promise.reject(dependencyError),
+    );
+    void result.then(
+      () => resultSettled = true,
+      () => resultSettled = true,
+    );
+    const rejected = assertRejects(
+      () => result,
+      Error,
+      "dependency failed",
+    );
+
+    await Promise.resolve();
+    assertEquals(resultSettled, false);
+    rejectTransform(transformError);
+    const error = await rejected;
+    assertStrictEquals(error, dependencyError);
+  });
+
   it("bounds a caller wait without evicting the shared transform", async () => {
     using time = new FakeTime();
     const key = "test:shared-transform-wait";
