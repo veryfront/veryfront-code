@@ -1005,6 +1005,37 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
+    it("keeps a tainted initializer whose identifier read is still in the TDZ", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const dead = later && KEY;`,
+        `const later = true;`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "const dead = later && KEY");
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
+    it("keeps a tainted initializer whose identifier read may be unresolved", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const dead = missingGlobal && KEY;`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "const dead = missingGlobal && KEY");
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     it("drops a helper reached only from a hoisted var in an impure guard", async () => {
       const code = [
         `import { createHash } from "node:crypto";`,
