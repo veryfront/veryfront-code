@@ -273,7 +273,7 @@ export class LayoutOrchestrator {
                   projectId: this.config.projectId,
                   projectSlug: this.config.projectSlug,
                   contentSourceId: this.config.contentSourceId,
-                  modes: this.renderModes,
+                  modes: { ...this.renderModes, environment },
                   reactVersion,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
