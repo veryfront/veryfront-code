@@ -1561,6 +1561,7 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  */
 function compilerNameHelperBindings(body: Node[]): Set<string> {
   const localBindings = moduleScopeBindingNames(body);
+  for (const name of hoistedVarNames(body)) localBindings.add(name);
   for (const statement of body) {
     if (statement.type !== "ImportDeclaration") continue;
     for (const name of importedBindings(statement)) localBindings.add(name);
