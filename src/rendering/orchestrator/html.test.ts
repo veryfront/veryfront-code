@@ -20,7 +20,12 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
-import { HTMLGenerator, type HTMLGeneratorConfig, resolveRenderEnvironment } from "./html.ts";
+import {
+  HTMLGenerator,
+  type HTMLGeneratorConfig,
+  resolveErrorContentSourceEnvironment,
+  resolveRenderEnvironment,
+} from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import {
   deserializeManagedHeadPayload,
@@ -86,6 +91,21 @@ describe("HTMLGenerator helpers", () => {
   it("uses the configured production environment when a request omits it", () => {
     assertEquals(resolveRenderEnvironment(undefined, "production"), "production");
     assertEquals(resolveRenderEnvironment("preview", "production"), "preview");
+  });
+
+  it("uses a valid preview content identity for release-less hosted production errors", () => {
+    assertEquals(
+      resolveErrorContentSourceEnvironment(false, "production", undefined),
+      "preview",
+    );
+    assertEquals(
+      resolveErrorContentSourceEnvironment(false, "production", "release-1"),
+      "production",
+    );
+    assertEquals(
+      resolveErrorContentSourceEnvironment(true, "production", undefined),
+      "production",
+    );
   });
 
   describe("buildHeadElements", () => {

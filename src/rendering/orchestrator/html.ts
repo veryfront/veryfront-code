@@ -63,6 +63,17 @@ export function resolveRenderEnvironment(
   return requestEnvironment ?? configuredEnvironment ?? "production";
 }
 
+export function resolveErrorContentSourceEnvironment(
+  isLocalProject: boolean,
+  environment: RenderEnvironment,
+  releaseId?: string,
+): RenderEnvironment {
+  if (!isLocalProject && environment === "production" && !releaseId) {
+    return "preview";
+  }
+  return environment;
+}
+
 function hasCollectedHeadEntries(
   head: HTMLGenerationContext["collectedHead"],
 ): boolean {
@@ -673,9 +684,14 @@ export class HTMLGenerator {
         context.options?.environment,
         this.config.environment,
       );
-      const contentSourceId = computeContentSourceId(
+      const contentSourceEnvironment = resolveErrorContentSourceEnvironment(
         this.config.isLocalProject === true,
         environment,
+        context.options?.releaseId,
+      );
+      const contentSourceId = computeContentSourceId(
+        this.config.isLocalProject === true,
+        contentSourceEnvironment,
         null,
         context.options?.releaseId,
       );
