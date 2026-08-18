@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
   handleProxyRoutingInvalidationRequest,
@@ -237,5 +238,102 @@ describe("proxy routing invalidation ingress", () => {
     assertEquals(response.status, 413);
     assertEquals(cancelled, true);
     assertEquals(pulls < 10, true);
+  });
+  it("logs why a routing invalidation signature was rejected", async () => {
+    // A silent 401 is why this path stayed inert in production for a month:
+    // the proxy answered every invalidation with 401 and logged nothing, so
+    // neither the sender nor the pod logs named a cause.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const tampered = jws.slice(0, -4) + (jws.endsWith("AAAA") ? "BBBB" : "AAAA");
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": tampered },
+        body,
+      }),
+      {
+        publicKeyPem,
+        logger: {
+          warn: (message, extra) => warnings.push({ message, extra }),
+        },
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(warnings.length, 1);
+    const [warning] = warnings;
+    assertEquals(typeof warning?.extra?.reason, "string");
+    assertStringIncludes(String(warning?.extra?.reason), "signature verification failed");
+    assertEquals(warning?.extra?.projectId, "proj-1");
+    assertEquals(warning?.extra?.projectSlug, "demo-project");
+    // The rejected credential must never reach the log.
+    const serialized = JSON.stringify(warnings);
+    assertEquals(serialized.includes(tampered), false);
+    assertEquals(serialized.includes(tampered.split(".")[2] ?? ""), false);
+  });
+
+  it("logs the missing-signature rejection without inventing a verification reason", async () => {
+    const body = createBody();
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        body,
+      }),
+      {
+        publicKeyPem: "configured",
+        logger: {
+          warn: (message, extra) => warnings.push({ message, extra }),
+        },
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(String(warnings[0]?.extra?.reason), "missing");
+  });
+
+  it("reports a missing SchemaValidator as the reason a signature could not be checked", async () => {
+    // The production failure mode: the dedicated proxy binary never registered
+    // a SchemaValidator, so claim parsing threw before any signature check and
+    // the bare `catch` turned it into an unexplained 401.
+    const body = createBody();
+    const { jws } = await createDispatchSignature(body);
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const previous = tryResolve<unknown>("SchemaValidator");
+    unregister("SchemaValidator");
+    let response: Response;
+    try {
+      response = await handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          headers: { "x-veryfront-dispatch-jws": jws },
+          body,
+        }),
+        {
+          publicKeyPem: "configured",
+          logger: {
+            warn: (message, extra) => warnings.push({ message, extra }),
+          },
+          publisher: {
+            publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+          },
+        },
+      );
+    } finally {
+      if (previous !== undefined) register("SchemaValidator", previous);
+    }
+
+    assertEquals(response.status, 401);
+    assertEquals(warnings.length, 1);
+    assertEquals(typeof warnings[0]?.extra?.reason, "string");
   });
 });

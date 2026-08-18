@@ -16,6 +16,7 @@ const MAX_SIGNATURE_AGE_SECONDS = 60;
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
 const DEFAULT_REQUEST_BODY_TIMEOUT_MS = 5_000;
 const MAX_REQUEST_BODY_TIMEOUT_MS = 60_000;
+const MAX_LOGGED_REJECTION_REASON_CODE_UNITS = 200;
 
 export interface ProxyRoutingInvalidationRequest {
   readonly version: 1;
@@ -43,11 +44,69 @@ export interface ProxyRoutingInvalidationPublisher {
   ): Promise<ProxyRoutingInvalidationPublishResult>;
 }
 
+/**
+ * Warning sink for rejected invalidations.
+ *
+ * Structurally compatible with `proxyLogger`, which is what `src/proxy/main.ts`
+ * passes in.
+ */
+export interface ProxyRoutingInvalidationLogger {
+  warn(message: string, extra?: Record<string, unknown>): void;
+}
+
 interface ProxyRoutingInvalidationHandlerOptions {
   bodyReadTimeoutMs?: number;
   createEventId?: () => string;
+  logger?: ProxyRoutingInvalidationLogger;
   publicKeyPem?: string;
   publisher: ProxyRoutingInvalidationPublisher | null;
+}
+
+/**
+ * Describe why a dispatch signature was refused, without ever echoing the
+ * credential.
+ *
+ * Every message this can surface is minted by our own verification code
+ * ("Control-plane audience mismatch", "Control-plane signature expired",
+ * `Missing extension for contract "SchemaValidator"`, …) and names the check
+ * that failed rather than the material that failed it. The bound keeps a
+ * third-party error message from turning a proxy log line into an unbounded
+ * write.
+ */
+function describeSignatureRejection(error: unknown): string {
+  const message = error instanceof Error && typeof error.message === "string"
+    ? error.message
+    : "Unrecognized routing invalidation signature failure";
+  return message.length > MAX_LOGGED_REJECTION_REASON_CODE_UNITS
+    ? `${message.slice(0, MAX_LOGGED_REJECTION_REASON_CODE_UNITS)}…`
+    : message;
+}
+
+/**
+ * Report a refused invalidation.
+ *
+ * A 401 here means a deployment is still being routed to the previous release,
+ * so it has to be diagnosable from proxy logs alone: the response body is
+ * deliberately generic, and the sender only ever sees that generic body.
+ */
+function warnRejectedInvalidation(
+  logger: ProxyRoutingInvalidationLogger | undefined,
+  input: ProxyRoutingInvalidationRequest,
+  reason: string,
+): void {
+  if (!logger) return;
+  try {
+    logger.warn("Rejected proxy routing invalidation", {
+      reason,
+      projectId: input.projectId,
+      projectSlug: input.projectSlug,
+      deploymentId: input.deploymentId,
+      environmentId: input.environmentId,
+      releaseId: input.releaseId,
+    });
+  } catch {
+    // A logging sink must never upgrade a rejection into a 500.
+  }
 }
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
@@ -267,7 +326,14 @@ export async function handleProxyRoutingInvalidationRequest(
   if (!input) return jsonResponse(400, { error: "Invalid routing invalidation request" });
 
   const jws = req.headers.get(DISPATCH_JWS_HEADER);
-  if (!jws) return jsonResponse(401, { error: "Invalid routing invalidation signature" });
+  if (!jws) {
+    warnRejectedInvalidation(
+      options.logger,
+      input,
+      `Request is missing the ${DISPATCH_JWS_HEADER} dispatch signature`,
+    );
+    return jsonResponse(401, { error: "Invalid routing invalidation signature" });
+  }
 
   try {
     await verifyDispatchJws(jws, body, {
@@ -278,7 +344,8 @@ export async function handleProxyRoutingInvalidationRequest(
       maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
       publicKeyPem,
     });
-  } catch {
+  } catch (error) {
+    warnRejectedInvalidation(options.logger, input, describeSignatureRejection(error));
     return jsonResponse(401, { error: "Invalid routing invalidation signature" });
   }
 

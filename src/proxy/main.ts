@@ -738,6 +738,7 @@ async function router(req: Request): Promise<Response> {
       response = await handleWebSocketUpgrade(req, url);
     } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
       response = await handleProxyRoutingInvalidationRequest(req, {
+        logger: proxyLogger,
         publisher: routingInvalidationBus,
       });
     } else if (url.pathname === "/_proxy/stats") {
