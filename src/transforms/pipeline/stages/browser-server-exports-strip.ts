@@ -3176,6 +3176,7 @@ function invokedFunctionParameterBindings(
   const concreteValues = (
     entry: Node,
     seenBindings = new Set<LexicalBindingIdentity>(),
+    seenMemberFlows = new Set<MemberValueFlow>(),
   ): Node[] => {
     const value = unwrapTransparent(entry);
     if (value.type === "Identifier") {
@@ -3184,32 +3185,34 @@ function invokedFunctionParameterBindings(
       const nextSeen = new Set(seenBindings);
       nextSeen.add(binding);
       return (valueFlows.get(binding) ?? []).flatMap((source) =>
-        concreteValues(source, new Set(nextSeen))
+        concreteValues(source, new Set(nextSeen), new Set(seenMemberFlows))
       );
     }
     if (value.type === "SequenceExpression") {
       const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
       const last = expressions.at(-1);
-      return last ? concreteValues(last, seenBindings) : [];
+      return last ? concreteValues(last, seenBindings, seenMemberFlows) : [];
     }
     if (value.type === "ConditionalExpression") {
       return [value.consequent, value.alternate].filter(isNode).flatMap((branch) =>
-        concreteValues(branch, new Set(seenBindings))
+        concreteValues(branch, new Set(seenBindings), new Set(seenMemberFlows))
       );
     }
     if (value.type === "LogicalExpression") {
       return [value.left, value.right].filter(isNode).flatMap((branch) =>
-        concreteValues(branch, new Set(seenBindings))
+        concreteValues(branch, new Set(seenBindings), new Set(seenMemberFlows))
       );
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
-      if (value.operator === "=") return concreteValues(value.right, seenBindings);
+      if (value.operator === "=") {
+        return concreteValues(value.right, seenBindings, seenMemberFlows);
+      }
       return [value.left, value.right].filter(isNode).flatMap((candidate) =>
-        concreteValues(candidate, new Set(seenBindings))
+        concreteValues(candidate, new Set(seenBindings), new Set(seenMemberFlows))
       );
     }
     if (value.type === "AwaitExpression" && isNode(value.argument)) {
-      return concreteValues(value.argument, seenBindings);
+      return concreteValues(value.argument, seenBindings, seenMemberFlows);
     }
     if (
       (value.type === "MemberExpression" || value.type === "OptionalMemberExpression") &&
@@ -3270,7 +3273,57 @@ function invokedFunctionParameterBindings(
             return resolveStringValues(candidate.argument, seen);
           }
 
-          const concrete = concreteValues(candidate, new Set(seen));
+          if (
+            (candidate.type === "CallExpression" ||
+              candidate.type === "OptionalCallExpression") &&
+            isNode(candidate.callee)
+          ) {
+            const invocation = normalizeCall(candidate, globals);
+            const callee = invocation ? unwrapTransparent(invocation.callee) : null;
+            if (
+              callee?.type === "ArrowFunctionExpression" && isNode(callee.body) &&
+              callee.body.type !== "BlockStatement"
+            ) {
+              return resolveStringValues(callee.body, seen);
+            }
+            const concrete = concreteValues(
+              candidate,
+              new Set(seen),
+              new Set(seenMemberFlows),
+            );
+            return {
+              values: concrete
+                .map((resolved) => stringLiteralText(resolved))
+                .filter((resolved): resolved is string => resolved !== null),
+              // Calls with block bodies, aliased callees, or unresolved callee
+              // flows can return along a path concreteValues cannot enumerate.
+              complete: false,
+            };
+          }
+          if (
+            candidate.type === "MemberExpression" ||
+            candidate.type === "OptionalMemberExpression"
+          ) {
+            const concrete = concreteValues(
+              candidate,
+              new Set(seen),
+              new Set(seenMemberFlows),
+            );
+            return {
+              values: concrete
+                .map((resolved) => stringLiteralText(resolved))
+                .filter((resolved): resolved is string => resolved !== null),
+              // A member read can retain concrete values while an unresolved
+              // owner, key, or write flow contributes another runtime value.
+              complete: false,
+            };
+          }
+
+          const concrete = concreteValues(
+            candidate,
+            new Set(seen),
+            new Set(seenMemberFlows),
+          );
           const values = concrete
             .map((resolved) => stringLiteralText(resolved))
             .filter((resolved): resolved is string => resolved !== null);
@@ -3281,11 +3334,18 @@ function invokedFunctionParameterBindings(
         };
         const keyResolution = resolveStringValues(property, new Set(seenBindings));
         const resolvedKeys = new Set(keyResolution.values);
+        const members: Node[] = [];
         if (!keyResolution.complete) {
           for (const knownKey of memberValueFlows.keys()) resolvedKeys.add(knownKey);
           const seenKeyOwners = new Set<Node>();
           const collectKnownKeys = (entry: Node): void => {
-            for (const owner of concreteValues(entry, new Set(seenBindings))) {
+            for (
+              const owner of concreteValues(
+                entry,
+                new Set(seenBindings),
+                new Set(seenMemberFlows),
+              )
+            ) {
               if (seenKeyOwners.has(owner)) continue;
               seenKeyOwners.add(owner);
               if (owner.type === "ObjectExpression") {
@@ -3297,9 +3357,26 @@ function invokedFunctionParameterBindings(
                     continue;
                   }
                   const candidateKey = isNode(candidate.key) ? candidate.key : undefined;
-                  const name = candidate.computed === true
-                    ? stringLiteralText(candidateKey)
-                    : literalText(candidateKey);
+                  if (candidate.computed === true && candidateKey) {
+                    const candidateResolution = resolveStringValues(
+                      candidateKey,
+                      new Set(seenBindings),
+                    );
+                    for (const name of candidateResolution.values) resolvedKeys.add(name);
+                    if (!candidateResolution.complete) {
+                      if (candidate.type === "ObjectMethod") {
+                        members.push(candidate);
+                      } else if (candidate.type === "ObjectProperty" && isNode(candidate.value)) {
+                        members.push(...concreteValues(
+                          candidate.value,
+                          new Set(seenBindings),
+                          new Set(seenMemberFlows),
+                        ));
+                      }
+                    }
+                    continue;
+                  }
+                  const name = literalText(candidateKey);
                   if (name !== null) resolvedKeys.add(name);
                 }
                 continue;
@@ -3310,16 +3387,32 @@ function invokedFunctionParameterBindings(
                 : [];
               for (const candidate of classMembers) {
                 if (candidate.static !== true || !isNode(candidate.key)) continue;
-                const name = candidate.computed === true
-                  ? stringLiteralText(candidate.key)
-                  : literalText(candidate.key);
+                if (candidate.computed === true) {
+                  const candidateResolution = resolveStringValues(
+                    candidate.key,
+                    new Set(seenBindings),
+                  );
+                  for (const name of candidateResolution.values) resolvedKeys.add(name);
+                  if (!candidateResolution.complete) {
+                    if (candidate.type === "ClassMethod") {
+                      members.push(candidate);
+                    } else if (isNode(candidate.value)) {
+                      members.push(...concreteValues(
+                        candidate.value,
+                        new Set(seenBindings),
+                        new Set(seenMemberFlows),
+                      ));
+                    }
+                  }
+                  continue;
+                }
+                const name = literalText(candidate.key);
                 if (name !== null) resolvedKeys.add(name);
               }
             }
           };
           collectKnownKeys(value.object);
         }
-        const members: Node[] = [];
         for (const resolvedKey of resolvedKeys) {
           const resolvedMember: Node = {
             ...value,
@@ -3333,7 +3426,11 @@ function invokedFunctionParameterBindings(
             ownerExecutionScopes.get(value) ?? null,
           );
           if (repeatedControlNodes.has(value)) repeatedControlNodes.add(resolvedMember);
-          members.push(...concreteValues(resolvedMember, new Set(seenBindings)));
+          members.push(...concreteValues(
+            resolvedMember,
+            new Set(seenBindings),
+            new Set(seenMemberFlows),
+          ));
         }
         return members;
       }
@@ -3349,7 +3446,11 @@ function invokedFunctionParameterBindings(
             candidate.type !== "MemberExpression" &&
             candidate.type !== "OptionalMemberExpression"
           ) return [owner];
-          const resolved = concreteValues(candidate, new Set(seenBindings));
+          const resolved = concreteValues(
+            candidate,
+            new Set(seenBindings),
+            new Set(seenMemberFlows),
+          );
           // Keep an unresolved syntax identity so an analysis gap cannot make
           // distinct writes look like certain writes to the same owner.
           return resolved.length > 0 ? resolved : [owner];
@@ -3383,7 +3484,8 @@ function invokedFunctionParameterBindings(
             ),
           ),
         }))
-        .sort((left, right) => left.flow.order - right.flow.order);
+        .sort((left, right) => left.flow.order - right.flow.order)
+        .filter(({ flow }) => !seenMemberFlows.has(flow));
       const activeMemberFlows = new Set<MemberValueFlow>();
       const overriddenOwners = new Set<OwnerIdentity>();
       for (const readOwner of readOwners) {
@@ -3410,7 +3512,13 @@ function invokedFunctionParameterBindings(
         if (lastCertain >= 0) overriddenOwners.add(readOwner);
       }
       for (const flow of activeMemberFlows) {
-        members.push(...concreteValues(flow.value, new Set(seenBindings)));
+        const nextSeenMemberFlows = new Set(seenMemberFlows);
+        nextSeenMemberFlows.add(flow);
+        members.push(...concreteValues(
+          flow.value,
+          new Set(seenBindings),
+          nextSeenMemberFlows,
+        ));
       }
 
       const seenOwners = new Set<Node>();
@@ -3428,7 +3536,13 @@ function invokedFunctionParameterBindings(
           if (!isNode(property)) continue;
           if (property.type === "SpreadElement") {
             if (!isNode(property.argument)) continue;
-            for (const spread of concreteValues(property.argument, new Set(seenBindings))) {
+            for (
+              const spread of concreteValues(
+                property.argument,
+                new Set(seenBindings),
+                new Set(seenMemberFlows),
+              )
+            ) {
               if (spread.type === "ObjectExpression") {
                 candidates.push(...collectObjectMember(spread));
               }
@@ -3443,7 +3557,11 @@ function invokedFunctionParameterBindings(
           if (property.type === "ObjectMethod") {
             candidates.push(property);
           } else if (property.type === "ObjectProperty" && isNode(property.value)) {
-            candidates.push(...concreteValues(property.value, new Set(seenBindings)));
+            candidates.push(...concreteValues(
+              property.value,
+              new Set(seenBindings),
+              new Set(seenMemberFlows),
+            ));
           }
           return candidates;
         }
@@ -3471,7 +3589,11 @@ function invokedFunctionParameterBindings(
           if (property.type === "ClassMethod") {
             members.push(property);
           } else if (isNode(property.value)) {
-            members.push(...concreteValues(property.value, new Set(seenBindings)));
+            members.push(...concreteValues(
+              property.value,
+              new Set(seenBindings),
+              new Set(seenMemberFlows),
+            ));
           }
           break;
         }
@@ -3487,13 +3609,19 @@ function invokedFunctionParameterBindings(
         (binder.type === "MemberExpression" || binder.type === "OptionalMemberExpression") &&
         memberKey(binder) === "bind" && isNode(binder.object)
       ) {
-        return concreteValues(binder.object, seenBindings);
+        return concreteValues(binder.object, seenBindings, seenMemberFlows);
       }
 
       const invocation = normalizeCall(value, globals);
       if (!invocation) return [];
       const returned: Node[] = [];
-      for (const callee of concreteValues(invocation.callee, new Set(seenBindings))) {
+      for (
+        const callee of concreteValues(
+          invocation.callee,
+          new Set(seenBindings),
+          new Set(seenMemberFlows),
+        )
+      ) {
         if (
           callee.type !== "FunctionDeclaration" && callee.type !== "FunctionExpression" &&
           callee.type !== "ArrowFunctionExpression" && callee.type !== "ObjectMethod" &&
@@ -3503,13 +3631,21 @@ function invokedFunctionParameterBindings(
         // iterator, neither synchronously hands the caller a callable value.
         if (callee.async === true || callee.generator === true || !isNode(callee.body)) continue;
         if (callee.body.type !== "BlockStatement") {
-          returned.push(...concreteValues(callee.body, new Set(seenBindings)));
+          returned.push(...concreteValues(
+            callee.body,
+            new Set(seenBindings),
+            new Set(seenMemberFlows),
+          ));
           continue;
         }
         walk(callee.body, (node) => {
           if (node !== callee.body && startsVarScope(node)) return false;
           if (node.type === "ReturnStatement" && isNode(node.argument)) {
-            returned.push(...concreteValues(node.argument, new Set(seenBindings)));
+            returned.push(...concreteValues(
+              node.argument,
+              new Set(seenBindings),
+              new Set(seenMemberFlows),
+            ));
           }
           return true;
         });
