@@ -2660,6 +2660,27 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("keeps a getter-returned body called with an initialized nested binding", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => {`,
+        `  const value = 1;`,
+        `  ({ get run() { return (arg) => { globalThis.registered = KEY; }; } }).run(value);`,
+        `})();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-object-getter-nested-identifier.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("keeps a getter-returned body after an inert default initializes", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2670,6 +2691,26 @@ describe("browser-server-exports-strip", () => {
       ].join("\n");
 
       const result = await stripServerOnlyExports(code, "pages/root-object-getter-default.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("initializes a named returned function before its parameter defaults", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ get run() {`,
+        `  return function inner(value = inner) { globalThis.registered = KEY; };`,
+        `} }).run();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-object-getter-named-function.tsx",
+      );
 
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
       assertStringIncludes(result, "globalThis.registered = KEY");
@@ -2743,6 +2784,28 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-object-getter-call-tdz.tsx");
+    });
+
+    it("does not bypass a nested self-TDZ with an outer module binding", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const value = 1;`,
+        `(() => {`,
+        `  const value = ({ get run() {`,
+        `    return (arg) => { globalThis.registered = KEY; };`,
+        `  } }).run(value);`,
+        `})();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-object-getter-nested-tdz.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-object-getter-nested-tdz.tsx");
     });
 
     it("does not run a getter-returned body when a call argument can throw", async () => {

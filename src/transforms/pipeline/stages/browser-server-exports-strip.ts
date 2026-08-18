@@ -1906,6 +1906,132 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   const executedNodes = new Set<Node>();
   const constructedClasses = new Set<Node>();
 
+  type ExecutionBindingInitialization = "instantiation" | "evaluation" | "unknown";
+  type ExecutionScope = Map<
+    string,
+    Array<{ initialization: ExecutionBindingInitialization; node: Node }>
+  >;
+
+  const addExecutionBinding = (
+    scope: ExecutionScope,
+    value: unknown,
+    initialization: ExecutionBindingInitialization,
+    declaration: Node,
+  ): void => {
+    if (!isNode(value)) return;
+    for (const name of patternBoundNames(value)) {
+      const bindings = scope.get(name) ?? [];
+      bindings.push({ initialization, node: declaration });
+      scope.set(name, bindings);
+    }
+  };
+
+  const addDirectExecutionBindings = (scope: ExecutionScope, statements: unknown[]): void => {
+    for (const statement of statements) {
+      if (!isNode(statement)) continue;
+      const declaration = statement.type === "ExportNamedDeclaration" ||
+          statement.type === "ExportDefaultDeclaration"
+        ? statement.declaration
+        : statement;
+      if (!isNode(declaration)) continue;
+      if (declaration.type === "FunctionDeclaration") {
+        addExecutionBinding(scope, declaration.id, "instantiation", declaration);
+      } else if (
+        declaration.type === "ClassDeclaration" || declaration.type === "TSEnumDeclaration" ||
+        isRuntimeTsModuleDeclaration(declaration) ||
+        isRuntimeTsImportEqualsDeclaration(declaration)
+      ) {
+        addExecutionBinding(scope, declaration.id, "evaluation", declaration);
+      } else if (declaration.type === "VariableDeclaration" && declaration.kind !== "var") {
+        for (const declarator of declaratorsOf(declaration)) {
+          addExecutionBinding(scope, declarator.id, "evaluation", declarator);
+        }
+      }
+    }
+  };
+
+  const addFunctionVarBindings = (scope: ExecutionScope, root: Node): void => {
+    const collect = (node: Node): void => {
+      for (const child of children(node)) {
+        if (
+          child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
+          child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||
+          child.type === "ClassMethod" || child.type === "ClassPrivateMethod" ||
+          child.type === "ClassDeclaration" || child.type === "ClassExpression" ||
+          child.type === "StaticBlock" || child.type === "TSModuleDeclaration"
+        ) continue;
+        if (child.type === "VariableDeclaration" && child.kind === "var") {
+          for (const declarator of declaratorsOf(child)) {
+            addExecutionBinding(scope, declarator.id, "instantiation", declarator);
+          }
+        }
+        collect(child);
+      }
+    };
+    collect(root);
+  };
+
+  const executionScopeFor = (node: Node): ExecutionScope | null => {
+    const scope: ExecutionScope = new Map();
+    if (
+      node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
+      node.type === "ArrowFunctionExpression" || node.type === "ObjectMethod" ||
+      node.type === "ClassMethod" || node.type === "ClassPrivateMethod"
+    ) {
+      addExecutionBinding(scope, node.id, "instantiation", node);
+      for (const parameter of Array.isArray(node.params) ? node.params : []) {
+        addExecutionBinding(scope, parameter, "unknown", node);
+      }
+      if (isNode(node.body)) addFunctionVarBindings(scope, node.body);
+      return scope;
+    }
+    if (node.type === "BlockStatement") {
+      addDirectExecutionBindings(scope, Array.isArray(node.body) ? node.body : []);
+      return scope;
+    }
+    if (node.type === "CatchClause") {
+      addExecutionBinding(scope, node.param, "instantiation", node);
+      return scope;
+    }
+    if (
+      (node.type === "ForStatement" || node.type === "ForInStatement" ||
+        node.type === "ForOfStatement")
+    ) {
+      const declaration = node.init ?? node.left;
+      if (
+        isNode(declaration) && declaration.type === "VariableDeclaration" &&
+        declaration.kind !== "var"
+      ) {
+        for (const declarator of declaratorsOf(declaration)) {
+          addExecutionBinding(scope, declarator.id, "evaluation", declarator);
+        }
+      }
+      return scope;
+    }
+    return null;
+  };
+
+  const initializedNamesAtCall = (
+    node: Node,
+    scopes: ExecutionScope[],
+  ): Set<string> => {
+    const initialized = initializedNamesBefore(node, sites);
+    const callStart = nodeStart(node);
+    for (const scope of [...scopes].reverse()) {
+      for (const [name, bindings] of scope) {
+        initialized.delete(name);
+        const localIsInitialized = bindings.some((binding) => {
+          if (binding.initialization === "instantiation") return true;
+          const bindingEnd = nodeEnd(binding.node);
+          return binding.initialization === "evaluation" && callStart !== null &&
+            bindingEnd !== null && bindingEnd < callStart;
+        });
+        if (localIsInitialized) initialized.add(name);
+      }
+    }
+    return initialized;
+  };
+
   const isInstanceField = (node: Node): boolean =>
     (node.type === "ClassProperty" || node.type === "ClassPrivateProperty" ||
       node.type === "ClassAccessorProperty") && node.static !== true;
@@ -2149,6 +2275,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     const initializedForDefault = new Set(
       [...initializedNames].filter((name) => !parameterNames.has(name)),
     );
+    if (node.type === "FunctionExpression") {
+      const ownName = nodeName(node.id);
+      if (ownName) initializedForDefault.add(ownName);
+    }
 
     for (let index = 0; index < node.params.length; index++) {
       const parameter = node.params[index];
@@ -2280,7 +2410,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   const walk = (
     node: Node,
     constructedClassBody: ConstructedClassBodyMode = null,
+    localScopes: ExecutionScope[] = [],
   ): void => {
+    const introducedScope = node.type === "Program" ? null : executionScopeFor(node);
+    const activeScopes = introducedScope ? [introducedScope, ...localScopes] : localScopes;
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
       markDeferredStaticElements(node);
     }
@@ -2329,7 +2462,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       ) {
         executedNodes.add(nextInvoked);
         const getterResult = returnedInlineGetterFunction(nextInvoked);
-        const initializedAtCall = initializedNamesBefore(node, sites);
+        const initializedAtCall = initializedNamesAtCall(node, activeScopes);
         if (
           getterResult && callArgumentsComplete(node, initializedAtCall) &&
           parameterInitializationCompletes(getterResult, node, initializedAtCall)
@@ -2347,7 +2480,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         ? child
         : null;
       if (invokedMember) executedNodes.add(invokedMember);
-      walk(child, entersConstructedClassBody);
+      walk(child, entersConstructedClassBody, activeScopes);
     }
   };
 
