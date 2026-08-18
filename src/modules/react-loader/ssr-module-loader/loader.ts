@@ -108,6 +108,10 @@ const inProgressTransformObservers = new WeakMap<
   Promise<ModuleCacheEntry>,
   InProgressTransformObserverState
 >();
+const retainedInProgressTransformLeaders = new WeakMap<
+  Promise<ModuleCacheEntry>,
+  Promise<ModuleCacheEntry>
+>();
 
 function signalAbortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
@@ -134,6 +138,12 @@ function registerInProgressTransformObservers(
 function markInProgressTransformSettled(transformPromise: Promise<ModuleCacheEntry>): void {
   const state = inProgressTransformObservers.get(transformPromise);
   if (state) state.settled = true;
+}
+
+function inProgressTransformObserverCount(
+  transformPromise: Promise<ModuleCacheEntry>,
+): number {
+  return inProgressTransformObservers.get(transformPromise)?.observerCount ?? 0;
 }
 
 function shouldRetryRejectedInProgressTransform(rejectedLeaderCount: number): boolean {
@@ -191,12 +201,21 @@ function retainInProgressTransformUntilSettled(
   const retained = transformSettlement.then<ModuleCacheEntry>(() => {
     throw retainedError;
   });
+  retainedInProgressTransformLeaders.set(retained, leader);
   globalInProgress.set(key, retained);
   void retained.then(
     () => deleteInProgressTransformIfCurrent(key, retained),
     () => deleteInProgressTransformIfCurrent(key, retained),
   );
   return retained;
+}
+
+function hasRetainedReservationForLeader(
+  key: string,
+  leader: Promise<ModuleCacheEntry>,
+): boolean {
+  const retained = globalInProgress.get(key);
+  return retained !== undefined && retainedInProgressTransformLeaders.get(retained) === leader;
 }
 
 function getMdxEsmCacheVariant(
@@ -264,6 +283,7 @@ async function runTransformAndDependencies<T, D>(
 export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
   getMdxEsmCacheVariant,
+  inProgressTransformObserverCount,
   publishTransformCacheIfCurrent,
   registerInProgressTransformObservers,
   retainInProgressTransformUntilSettled,
@@ -887,6 +907,11 @@ export class SSRModuleLoader {
           // Detach this caller without deleting the shared leader. The leader
           // owns a separate last-resort eviction timer, so healthy slow work is
           // not multiplied into competing retries.
+          throw error;
+        }
+        // Callers already joined to this failed leader receive its dependency
+        // error now. The replacement only reserves capacity for new callers.
+        if (hasRetainedReservationForLeader(inProgressKey, existingTransform)) {
           throw error;
         }
 
