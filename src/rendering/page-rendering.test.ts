@@ -208,6 +208,7 @@ describe("rendering/page-rendering", () => {
     const renderer = new PageRenderer({
       projectDir: "/project",
       mode: "development",
+      environment: "preview",
       config: { react: { version: "19.1.1" } },
       adapter: { fs: {} } as unknown as RuntimeAdapter,
       componentRegistry: {
