@@ -48,6 +48,7 @@ const URLHostnameGet = ObjectGetOwnPropertyDescriptor(
   IntrinsicURL.prototype,
   "hostname",
 )!.get!;
+const URLOriginGet = ObjectGetOwnPropertyDescriptor(IntrinsicURL.prototype, "origin")!.get!;
 const URLPathnameGet = ObjectGetOwnPropertyDescriptor(
   IntrinsicURL.prototype,
   "pathname",
@@ -73,6 +74,10 @@ const queryTextEncoder = new TextEncoder();
 
 function getURLHostname(url: URL): string {
   return ReflectApply(URLHostnameGet, url, []);
+}
+
+function getURLOrigin(url: URL): string {
+  return ReflectApply(URLOriginGet, url, []);
 }
 
 function getURLPathname(url: URL): string {
@@ -554,6 +559,30 @@ export function isCanonicalReactEsmUrl(rawUrl: string): boolean {
 }
 
 /**
+ * Build a bounded redirect destination for HTTP module diagnostics.
+ *
+ * Arbitrary paths can contain credentials, so neutral redirects expose only
+ * their origin. The known interactive sign-in route is reduced to its
+ * canonical first segment before it is retained.
+ */
+export function sanitizeHttpModuleRedirectDestination(
+  rawUrl: string,
+): { url: string; isAuthentication: boolean } {
+  try {
+    const parsed = new IntrinsicURL(rawUrl);
+    const origin = getURLOrigin(parsed);
+    const pathname = getURLPathname(parsed);
+    const isAuthentication = pathname === "/sign-in" || stringStartsWith(pathname, "/sign-in/");
+    return {
+      url: isAuthentication ? `${origin}/sign-in` : origin,
+      isAuthentication,
+    };
+  } catch (_) {
+    return { url: "[invalid-url]", isAuthentication: false };
+  }
+}
+
+/**
  * Diagnostic for an HTTP module fetch that answered with HTML.
  *
  * A followed redirect takes precedence because the final HTML belongs to the
@@ -565,7 +594,7 @@ export function isCanonicalReactEsmUrl(rawUrl: string): boolean {
  */
 export function describeHtmlModuleResponse(
   rawUrl: string,
-  redirect?: { status: number; url: string },
+  redirect?: { status: number; url: string; isAuthentication: boolean },
 ): string {
   let hostname = "";
   let pathname = "";
@@ -579,9 +608,12 @@ export function describeHtmlModuleResponse(
 
   const received = `Received HTML instead of JavaScript from ${rawUrl}.`;
   if (redirect) {
+    const instruction = redirect.isAuthentication
+      ? "Verify that the module endpoint is accessible without interactive authentication."
+      : "Verify that the redirect destination serves a JavaScript module.";
     return `${received} The upstream redirected the module request with HTTP ${redirect.status} ` +
       `to ${redirect.url} before returning HTML. ` +
-      "Verify that the module endpoint is accessible without interactive authentication.";
+      instruction;
   }
   if (hostname === "esm.sh") {
     return `${received} The package may not exist or failed to build on esm.sh.`;

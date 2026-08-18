@@ -62,6 +62,7 @@ import {
   isHttpUrl,
   normalizeHttpUrl,
   prepareHttpCacheRequestOptions,
+  sanitizeHttpModuleRedirectDestination,
   type SetLike,
 } from "./http-cache-helpers.ts";
 import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-validator.ts";
@@ -180,7 +181,7 @@ async function publishHttpBundleGeneration<T>(
 interface HttpModuleFetchResult {
   code: string;
   contentType: string;
-  redirect?: { status: number; url: string };
+  redirect?: { status: number; url: string; isAuthentication: boolean };
 }
 
 function terminalHttpModuleFetchError(
@@ -241,9 +242,10 @@ async function fetchHttpModuleAttempt(
       redirect: "follow",
     }, {
       onRedirect(hop) {
+        const destination = sanitizeHttpModuleRedirectDestination(hop.toUrl.href);
         redirect = {
           status: hop.status,
-          url: sanitizeUrlForSpan(hop.toUrl.href),
+          ...destination,
         };
       },
     });

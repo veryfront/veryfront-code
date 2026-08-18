@@ -1555,7 +1555,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
 
   it("reports an authentication redirect before an HTTP module returns HTML", async () => {
     const moduleUrl = "https://93.184.216.34/@/components/ResponsiveImage";
-    const signInUrl = "https://93.184.216.35/sign-in?access_token=super-secret";
+    const signInUrl = "https://93.184.216.35/sign-in/ONE_TIME_CODE?access_token=super-secret";
     const fetchedUrls: string[] = [];
     const mockFetch = ((input: RequestInfo | URL) => {
       const url = input instanceof Request
@@ -1592,6 +1592,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(fetchedUrls, [moduleUrl, signInUrl]);
       assertInstanceOf(error, Error);
       assert(!error.message.includes("super-secret"));
+      assert(!error.message.includes("ONE_TIME_CODE"));
       assertEquals(
         error.message,
         `Received HTML instead of JavaScript from ${moduleUrl}. ` +
@@ -1600,6 +1601,74 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
           "Verify that the module endpoint is accessible without interactive authentication.",
       );
     });
+  });
+
+  it("redacts redirect paths and reserves authentication wording for sign-in", async () => {
+    const moduleUrl = "https://93.184.216.34/components/RedirectedModule";
+    const cases = [
+      {
+        name: "moved module",
+        status: 301,
+        redirectUrl: "https://93.184.216.35/moved/module.js",
+        secrets: [] as string[],
+      },
+      {
+        name: "path credential",
+        status: 302,
+        redirectUrl: "https://93.184.216.35/magic/ONE_TIME_CODE?access_token=query-secret",
+        secrets: ["ONE_TIME_CODE", "query-secret"],
+      },
+    ];
+
+    for (const testCase of cases) {
+      const mockFetch = ((input: RequestInfo | URL) => {
+        const url = input instanceof Request
+          ? input.url
+          : input instanceof URL
+          ? input.href
+          : String(input);
+        if (url === moduleUrl) {
+          return Promise.resolve(
+            new Response(null, {
+              status: testCase.status,
+              headers: { location: testCase.redirectUrl },
+            }),
+          );
+        }
+        if (url === testCase.redirectUrl) {
+          return Promise.resolve(
+            new Response("<!doctype html><title>Not a module</title>", {
+              headers: { "content-type": "text/html;charset=utf-8" },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch to ${url}`);
+      }) as typeof fetch;
+
+      await withIsolatedHttpCache(
+        `vf-esm-neutral-redirect-${testCase.name}-`,
+        mockFetch,
+        async (tempDir) => {
+          const error = await assertRejects(
+            () => cacheModuleToLocal(moduleUrl, tempDir),
+            Error,
+          );
+
+          assertInstanceOf(error, Error);
+          for (const secret of testCase.secrets) {
+            assert(!error.message.includes(secret));
+          }
+          assert(!error.message.includes("interactive authentication"));
+          assertEquals(
+            error.message,
+            `Received HTML instead of JavaScript from ${moduleUrl}. ` +
+              `The upstream redirected the module request with HTTP ${testCase.status} to ` +
+              "https://93.184.216.35 before returning HTML. " +
+              "Verify that the redirect destination serves a JavaScript module.",
+          );
+        },
+      );
+    }
   });
 
   it("bounds transient failure attempts and cancels every response body", async () => {
