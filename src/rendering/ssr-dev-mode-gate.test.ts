@@ -201,6 +201,76 @@ describe("SSR dev-mode gate", () => {
       assertEquals(observed.length, 1);
       assertEquals(observed[0]?.dev, true);
     });
+
+    it("passes the registry identity fields through to the loader", async () => {
+      const observed: LoadComponentOptions[] = [];
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/Button.tsx",
+        "export default function Button() { return null; }",
+      );
+      const virtualModules = {
+        registerModule: () => Promise.resolve(),
+      } as unknown as VirtualModuleSystem;
+
+      const registry = new ComponentRegistry(
+        virtualModules,
+        3001,
+        adapter,
+        "http://localhost:3000",
+        "vendor-hash",
+        "proj-uuid-123",
+        "branch:main",
+        (_source, _filePath, _projectDir, _adapter, options) => {
+          observed.push(options ?? {});
+          return Promise.resolve(stubComponent());
+        },
+        "production",
+      );
+
+      await registry.loadFromDirectory("/project/components", true);
+      await registry.prepareDependencySnapshot();
+
+      assertEquals(observed[0]?.projectId, "proj-uuid-123");
+      assertEquals(observed[0]?.moduleServerUrl, "http://localhost:3000");
+      assertEquals(observed[0]?.vendorBundleHash, "vendor-hash");
+      assertEquals(observed[0]?.contentSourceId, "branch:main");
+    });
+
+    it("falls back to the project root when the registry has no projectId", async () => {
+      const observed: LoadComponentOptions[] = [];
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/Button.tsx",
+        "export default function Button() { return null; }",
+      );
+      const virtualModules = {
+        registerModule: () => Promise.resolve(),
+      } as unknown as VirtualModuleSystem;
+
+      const registry = new ComponentRegistry(
+        virtualModules,
+        3001,
+        adapter,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        (_source, _filePath, _projectDir, _adapter, options) => {
+          observed.push(options ?? {});
+          return Promise.resolve(stubComponent());
+        },
+        "production",
+      );
+
+      await registry.loadFromDirectory("/project/components", true);
+      await registry.prepareDependencySnapshot();
+
+      assertEquals(observed[0]?.projectId, "/project");
+      assertEquals(observed[0]?.moduleServerUrl, undefined);
+      assertEquals(observed[0]?.vendorBundleHash, undefined);
+      assertEquals(observed[0]?.contentSourceId, undefined);
+    });
   });
 
   describe("reserved app component loading", () => {
