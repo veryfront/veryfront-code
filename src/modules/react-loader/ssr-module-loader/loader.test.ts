@@ -34,7 +34,15 @@ import { buildSSRModuleCacheKey, isKeyForProject } from "../../../cache/keys.ts"
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  deleteEnv,
+  getEnv,
+  makeTempDir,
+  mkdir,
+  remove,
+  setEnv,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
@@ -1867,8 +1875,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
   });
 
   it("applies the per-project transform cap in production and bypasses it in dev", async () => {
-    const previousLimit = Deno.env.get("SSR_TRANSFORM_PER_PROJECT_LIMIT");
-    Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+    const previousLimit = getEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+    setEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
     clearSSRModuleCache();
 
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cap-gate-" });
@@ -1924,9 +1932,9 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     } finally {
       if (held) releaseTransformSlot(projectId);
       if (previousLimit === undefined) {
-        Deno.env.delete("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+        deleteEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
       } else {
-        Deno.env.set("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+        setEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
       }
       clearSSRModuleCache();
       await remove(projectDir, { recursive: true });
