@@ -220,6 +220,10 @@ function nodeName(value: unknown): string | null {
   return typeof name === "string" ? name : null;
 }
 
+function nodeStart(node: Node): number | null {
+  return typeof node.start === "number" ? node.start : null;
+}
+
 /**
  * The name an export clause publishes. Usually an identifier, but ES2022 also
  * allows a string literal (`export { loadIt as "getServerData" }`), which the
@@ -506,6 +510,8 @@ interface BindingSite {
   exported: boolean;
   /** Whether a `var` site was hoisted out of nested control flow. */
   nested: boolean;
+  /** Whether the binding exists initialized before module evaluation starts. */
+  initialization: "instantiation" | "evaluation";
   /** Takes the site out of the tree, or `null` when the form has no safe cut. */
   remove: (() => void) | null;
 }
@@ -579,6 +585,7 @@ function moduleScopeBindingSites(
         node: declarator,
         exported,
         nested,
+        initialization: declaration.kind === "var" ? "instantiation" : "evaluation",
         remove: detach === null ? null : () => {
           declaration.declarations = declaratorsOf(declaration).filter((candidate) =>
             candidate !== declarator
@@ -610,6 +617,9 @@ function moduleScopeBindingSites(
           node: statement,
           exported,
           nested: false,
+          initialization: declaration.type === "FunctionDeclaration"
+            ? "instantiation"
+            : "evaluation",
           remove: exported ? null : () => removeStatement(statement),
         });
       }
@@ -626,6 +636,7 @@ function moduleScopeBindingSites(
           node: statement,
           exported,
           nested: false,
+          initialization: "evaluation",
           remove: exported ? null : () => removeStatement(statement),
         });
       }
@@ -1726,7 +1737,11 @@ function isNameRegistrationBlock(node: Node, helpers: ReadonlySet<string>): bool
  * `extends Base` reads `Base.prototype`, which can invoke a Proxy trap, so a
  * heritage clause is never treated as inert here.
  */
-function isInertClass(node: Node, helpers: ReadonlySet<string>): boolean {
+function isInertClass(
+  node: Node,
+  helpers: ReadonlySet<string>,
+  initializedNames: ReadonlySet<string>,
+): boolean {
   if (hasDecorators(node) || isNode(node.superClass)) return false;
 
   const members = isNode(node.body) && Array.isArray(node.body.body) ? node.body.body : [];
@@ -1737,18 +1752,27 @@ function isInertClass(node: Node, helpers: ReadonlySet<string>): boolean {
     }
     if (member.type === "StaticBlock") return isNameRegistrationBlock(member, helpers);
     if (member.static !== true) return true;
-    return isInertExpression(isNode(member.value) ? member.value : undefined, helpers);
+    return isInertExpression(
+      isNode(member.value) ? member.value : undefined,
+      helpers,
+      initializedNames,
+    );
   });
 }
 
 /** Expressions whose evaluation cannot run user code. A whitelist, by design. */
-function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>): boolean {
+function isInertExpression(
+  node: Node | undefined,
+  helpers: ReadonlySet<string>,
+  initializedNames: ReadonlySet<string>,
+): boolean {
   if (!node) return true;
 
   const inner = (value: unknown): Node | undefined => isNode(value) ? value : undefined;
 
   switch (node.type) {
     case "Identifier":
+      return initializedNames.has(nodeName(node) ?? "");
     case "ThisExpression":
     case "StringLiteral":
     case "NumericLiteral":
@@ -1761,10 +1785,10 @@ function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>)
     case "ArrowFunctionExpression":
       return true;
     case "ClassExpression":
-      return isInertClass(node, helpers);
+      return isInertClass(node, helpers, initializedNames);
     case "CallExpression":
       return isNameRegistrationCall(node, helpers) &&
-        isInertExpression(inner((node.arguments as unknown[])[0]), helpers);
+        isInertExpression(inner((node.arguments as unknown[])[0]), helpers, initializedNames);
     // Interpolation coerces its values to strings, which calls `toString`.
     case "TemplateLiteral":
       return !Array.isArray(node.expressions) || node.expressions.length === 0;
@@ -1772,33 +1796,34 @@ function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>)
     // `-x` and `+x` do, and `delete` mutates.
     case "UnaryExpression":
       return (node.operator === "typeof" || node.operator === "void" ||
-        node.operator === "!") && isInertExpression(inner(node.argument), helpers);
+        node.operator === "!") &&
+        isInertExpression(inner(node.argument), helpers, initializedNames);
     // Testing a value for truthiness and yielding one of two operands calls
     // nothing, however the choice is spelled.
     case "ConditionalExpression":
-      return isInertExpression(inner(node.test), helpers) &&
-        isInertExpression(inner(node.consequent), helpers) &&
-        isInertExpression(inner(node.alternate), helpers);
+      return isInertExpression(inner(node.test), helpers, initializedNames) &&
+        isInertExpression(inner(node.consequent), helpers, initializedNames) &&
+        isInertExpression(inner(node.alternate), helpers, initializedNames);
     case "LogicalExpression":
-      return isInertExpression(inner(node.left), helpers) &&
-        isInertExpression(inner(node.right), helpers);
+      return isInertExpression(inner(node.left), helpers, initializedNames) &&
+        isInertExpression(inner(node.right), helpers, initializedNames);
     // Only the two comparisons that never coerce. `==` and the relational and
     // arithmetic operators all reach `valueOf`/`toString`, `instanceof` calls
     // `Symbol.hasInstance` and `in` traps on a proxy.
     case "BinaryExpression":
       return (node.operator === "===" || node.operator === "!==") &&
-        isInertExpression(inner(node.left), helpers) &&
-        isInertExpression(inner(node.right), helpers);
+        isInertExpression(inner(node.left), helpers, initializedNames) &&
+        isInertExpression(inner(node.right), helpers, initializedNames);
     // `(a, b)` evaluates each operand in turn and yields the last.
     case "SequenceExpression":
       return (Array.isArray(node.expressions) ? node.expressions : []).every((expression) =>
-        isNode(expression) && isInertExpression(expression, helpers)
+        isNode(expression) && isInertExpression(expression, helpers, initializedNames)
       );
     case "ArrayExpression":
       return (Array.isArray(node.elements) ? node.elements : []).every((element) =>
         element === null || element === undefined ||
         (isNode(element) && element.type !== "SpreadElement" &&
-          isInertExpression(element, helpers))
+          isInertExpression(element, helpers, initializedNames))
       );
     case "ObjectExpression":
       return (Array.isArray(node.properties) ? node.properties : []).every((property) => {
@@ -1807,7 +1832,7 @@ function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>)
         if (!isNode(property) || property.computed === true) return false;
         if (property.type === "ObjectMethod") return true;
         return property.type === "ObjectProperty" &&
-          isInertExpression(inner(property.value), helpers);
+          isInertExpression(inner(property.value), helpers, initializedNames);
       });
     case "TSAsExpression":
     case "TSSatisfiesExpression":
@@ -1815,7 +1840,7 @@ function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>)
     case "TSTypeAssertion":
     case "TSInstantiationExpression":
     case "ParenthesizedExpression":
-      return isInertExpression(inner(node.expression), helpers);
+      return isInertExpression(inner(node.expression), helpers, initializedNames);
     default:
       return false;
   }
@@ -1835,16 +1860,24 @@ function isInertExpression(node: Node | undefined, helpers: ReadonlySet<string>)
  *
  * Anything not proven inert counts as a side effect, which keeps its reads.
  */
-function evaluationIsInert(node: Node, helpers: ReadonlySet<string>): boolean {
+function evaluationIsInert(
+  node: Node,
+  helpers: ReadonlySet<string>,
+  initializedNames: ReadonlySet<string>,
+): boolean {
   if (node.type === "FunctionDeclaration") return true;
-  if (node.type === "ClassDeclaration") return isInertClass(node, helpers);
+  if (node.type === "ClassDeclaration") return isInertClass(node, helpers, initializedNames);
   // A runtime enum, namespace or import-equals evaluates a body at module load.
   if (node.type !== "VariableDeclarator") return false;
 
   // A destructuring pattern reads properties off the initialiser, which runs
   // getters and throws on `null`, so only a plain identifier binding is inert.
   if (!isNode(node.id) || node.id.type !== "Identifier") return false;
-  return isInertExpression(isNode(node.init) ? node.init : undefined, helpers);
+  return isInertExpression(
+    isNode(node.init) ? node.init : undefined,
+    helpers,
+    initializedNames,
+  );
 }
 
 /**
@@ -1973,13 +2006,31 @@ type ElisionReason =
   /** The declaration runs nothing at module load. */
   | "does-not-run";
 
+/** Names whose reads cannot fail before this site starts evaluating. */
+function initializedNamesAt(site: BindingSite, sites: BindingSite[]): Set<string> {
+  const initialized = new Set<string>();
+  const siteStart = nodeStart(site.node);
+
+  for (const candidate of sites) {
+    const candidateStart = nodeStart(candidate.node);
+    const initializedAtInstantiation = candidate.initialization === "instantiation";
+    const evaluatedEarlier = siteStart !== null && candidateStart !== null &&
+      candidateStart < siteStart;
+    if (!initializedAtInstantiation && !evaluatedEarlier) continue;
+    for (const name of candidate.names) initialized.add(name);
+  }
+
+  return initialized;
+}
+
 function elisionReason(
   site: BindingSite,
   hookClosure: ReadonlySet<string>,
   helpers: ReadonlySet<string>,
+  initializedNames: ReadonlySet<string>,
 ): ElisionReason | null {
   if (site.names.some((name) => hookClosure.has(name))) return "closure-member";
-  if (evaluationIsInert(site.node, helpers)) return "does-not-run";
+  if (evaluationIsInert(site.node, helpers, initializedNames)) return "does-not-run";
   if (site.nested && [...site.references].every((name) => hookClosure.has(name))) {
     return "closure-only-evaluation";
   }
@@ -2108,7 +2159,12 @@ function dropUnreachableModuleScopeBindings(
   const reasons = new Map<BindingSite, ElisionReason>();
   for (const site of sites) {
     if (site.exported) continue;
-    const reason = elisionReason(site, hookClosure, nameHelpers);
+    const reason = elisionReason(
+      site,
+      hookClosure,
+      nameHelpers,
+      initializedNamesAt(site, sites),
+    );
     if (reason !== null) reasons.set(site, reason);
   }
   const elidable = sites.filter((site) => reasons.has(site));
