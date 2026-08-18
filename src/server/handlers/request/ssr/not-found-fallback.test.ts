@@ -212,7 +212,7 @@ describe(
           await mkdir(segDir, { recursive: true });
           await writeTextFile(
             join(segDir, "not-found.tsx"),
-            `export default function NotFound(){ return <p>Missing Hosted</p>; }`,
+            `export default function NotFound(){ return <p id="hosted-not-found">Missing Hosted</p>; }`,
           );
 
           const ctx = makeCtx({
@@ -227,7 +227,10 @@ describe(
           assertExists(result);
           assertEquals(result.status, 404);
           const html = await result.text();
-          assertStringIncludes(html, "Missing Hosted");
+          // The id attribute only survives a real SSR render: the
+          // extractNotFoundText fallback rebuilds the text as a bare <p>, so
+          // this pins the assertion below to the render path.
+          assertStringIncludes(html, '<p id="hosted-not-found">Missing Hosted</p>');
           assertEquals(html.includes("data-node-file"), false);
         });
       });
