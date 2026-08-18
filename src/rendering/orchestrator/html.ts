@@ -695,9 +695,10 @@ export class HTMLGenerator {
         null,
         context.options?.releaseId,
       );
-      // Use one resolved environment for both source identity and loading. An
-      // unset environment falls back to production and cannot enable preview
-      // instrumentation.
+      // The loader always receives the resolved request environment. A
+      // release-less hosted production render keeps the legacy preview content
+      // identity only so content-source validation cannot hide its error
+      // boundary; it does not enable preview instrumentation.
       const loaded = await loadReservedWithPath(
         dirs,
         "error",
