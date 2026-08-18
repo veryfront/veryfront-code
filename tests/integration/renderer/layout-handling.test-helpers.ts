@@ -50,18 +50,6 @@ export const PRODUCTION_MODES: RenderModes = {
   environment: "production",
 };
 
-/** Local development: dev compile, preview instrumentation. */
-export const DEVELOPMENT_MODES: RenderModes = {
-  compileMode: "development",
-  environment: "preview",
-};
-
-/** Hosted preview: production compile, preview instrumentation. */
-export const PREVIEW_MODES: RenderModes = {
-  compileMode: "production",
-  environment: "preview",
-};
-
 export function createLayoutCache(): LRUCache<string, unknown> {
   return new LRUCache<string, unknown>({ maxEntries: 10 });
 }
