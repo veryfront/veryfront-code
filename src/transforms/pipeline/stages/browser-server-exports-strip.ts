@@ -2663,8 +2663,12 @@ function invokedFunctionParameterBindings(
     controlUncertain: boolean;
     scope: Node | null;
   }
+  interface ComputedMemberValueFlow extends MemberValueFlow {
+    key: Node;
+  }
   const ownerValueFlows = new Map<LexicalBindingIdentity, OwnerValueFlow[]>();
   const memberValueFlows = new Map<string, MemberValueFlow[]>();
+  const computedMemberValueFlows: ComputedMemberValueFlow[] = [];
   const nodeOrders = new Map<Node, number>();
   const repeatedControlNodes = new Set<Node>();
   const ownerExecutionScopes = new Map<Node, Node | null>();
@@ -3071,6 +3075,18 @@ function invokedFunctionParameterBindings(
             scope,
           });
           memberValueFlows.set(key, flows);
+        } else {
+          const property = isNode(node.left.property) ? node.left.property : undefined;
+          if (property) {
+            computedMemberValueFlows.push({
+              owner: node.left.object,
+              key: property,
+              value: node.right,
+              order,
+              controlUncertain: nodeControlUncertain,
+              scope,
+            });
+          }
         }
       }
     }
@@ -3173,6 +3189,157 @@ function invokedFunctionParameterBindings(
     return [value];
   };
 
+  function resolveStringValues(
+    entry: Node,
+    seenBindings = new Set<LexicalBindingIdentity>(),
+    seenMemberFlows = new Set<MemberValueFlow>(),
+  ): { values: string[]; complete: boolean } {
+    const candidate = unwrapTransparent(entry);
+    const merge = (entries: Node[]): { values: string[]; complete: boolean } => {
+      if (entries.length === 0) return { values: [], complete: false };
+      const resolutions = entries.map((next) =>
+        resolveStringValues(
+          next,
+          new Set(seenBindings),
+          new Set(seenMemberFlows),
+        )
+      );
+      return {
+        values: resolutions.flatMap((resolution) => resolution.values),
+        complete: resolutions.every((resolution) => resolution.complete),
+      };
+    };
+
+    if (candidate.type === "Identifier") {
+      const binding = bindings.reference(candidate);
+      if (!binding || seenBindings.has(binding)) return { values: [], complete: false };
+      const sources = valueFlows.get(binding) ?? [];
+      const nextSeen = new Set(seenBindings);
+      nextSeen.add(binding);
+      if (sources.length === 0) return { values: [], complete: false };
+      const resolutions = sources.map((source) =>
+        resolveStringValues(source, new Set(nextSeen), new Set(seenMemberFlows))
+      );
+      return {
+        values: resolutions.flatMap((resolution) => resolution.values),
+        complete: resolutions.every((resolution) => resolution.complete),
+      };
+    }
+    if (candidate.type === "SequenceExpression") {
+      const expressions = Array.isArray(candidate.expressions)
+        ? candidate.expressions.filter(isNode)
+        : [];
+      const last = expressions.at(-1);
+      return last
+        ? resolveStringValues(last, seenBindings, seenMemberFlows)
+        : { values: [], complete: false };
+    }
+    if (candidate.type === "ConditionalExpression") {
+      return merge([candidate.consequent, candidate.alternate].filter(isNode));
+    }
+    if (candidate.type === "LogicalExpression") {
+      return merge([candidate.left, candidate.right].filter(isNode));
+    }
+    if (candidate.type === "AssignmentExpression" && isNode(candidate.right)) {
+      return candidate.operator === "="
+        ? resolveStringValues(candidate.right, seenBindings, seenMemberFlows)
+        : merge([candidate.left, candidate.right].filter(isNode));
+    }
+    if (candidate.type === "AwaitExpression" && isNode(candidate.argument)) {
+      return resolveStringValues(candidate.argument, seenBindings, seenMemberFlows);
+    }
+
+    if (
+      (candidate.type === "CallExpression" ||
+        candidate.type === "OptionalCallExpression") &&
+      isNode(candidate.callee)
+    ) {
+      const invocation = normalizeCall(candidate, globals);
+      const callee = invocation ? unwrapTransparent(invocation.callee) : null;
+      if (
+        callee?.type === "ArrowFunctionExpression" && isNode(callee.body) &&
+        callee.body.type !== "BlockStatement"
+      ) {
+        return resolveStringValues(callee.body, seenBindings, seenMemberFlows);
+      }
+      const concrete = concreteValues(
+        candidate,
+        new Set(seenBindings),
+        new Set(seenMemberFlows),
+      );
+      return {
+        values: concrete
+          .map((resolved) => stringLiteralText(resolved))
+          .filter((resolved): resolved is string => resolved !== null),
+        // Calls with block bodies, aliased callees, or unresolved callee flows
+        // can return along a path concreteValues cannot enumerate.
+        complete: false,
+      };
+    }
+    if (
+      candidate.type === "MemberExpression" ||
+      candidate.type === "OptionalMemberExpression"
+    ) {
+      const concrete = concreteValues(
+        candidate,
+        new Set(seenBindings),
+        new Set(seenMemberFlows),
+      );
+      return {
+        values: concrete
+          .map((resolved) => stringLiteralText(resolved))
+          .filter((resolved): resolved is string => resolved !== null),
+        // A member read can retain concrete values while an unresolved owner,
+        // key, or write flow contributes another runtime value.
+        complete: false,
+      };
+    }
+
+    const concrete = concreteValues(
+      candidate,
+      new Set(seenBindings),
+      new Set(seenMemberFlows),
+    );
+    const values = concrete
+      .map((resolved) => stringLiteralText(resolved))
+      .filter((resolved): resolved is string => resolved !== null);
+    return {
+      values,
+      complete: concrete.length > 0 && values.length === concrete.length,
+    };
+  }
+
+  function synchronousReturnValues(
+    callable: Node,
+    seenBindings: Set<LexicalBindingIdentity>,
+    seenMemberFlows: Set<MemberValueFlow>,
+  ): Node[] {
+    if (
+      callable.async === true || callable.generator === true ||
+      !isNode(callable.body)
+    ) return [];
+    if (callable.body.type !== "BlockStatement") {
+      return concreteValues(
+        callable.body,
+        new Set(seenBindings),
+        new Set(seenMemberFlows),
+      );
+    }
+    const returned: Node[] = [];
+    walk(callable.body, (node) => {
+      if (node !== callable.body && startsVarScope(node)) return false;
+      if (node.type === "ReturnStatement" && isNode(node.argument)) {
+        returned.push(...concreteValues(
+          node.argument,
+          new Set(seenBindings),
+          new Set(seenMemberFlows),
+        ));
+      }
+      return true;
+    });
+    return returned;
+  }
+
   const concreteValues = (
     entry: Node,
     seenBindings = new Set<LexicalBindingIdentity>(),
@@ -3222,120 +3389,66 @@ function invokedFunctionParameterBindings(
       if (key === null) {
         const property = isNode(value.property) ? value.property : undefined;
         if (!property) return [];
-        const resolveStringValues = (
-          entry: Node,
-          seen = new Set<LexicalBindingIdentity>(),
-        ): { values: string[]; complete: boolean } => {
-          const candidate = unwrapTransparent(entry);
-          const merge = (entries: Node[]): { values: string[]; complete: boolean } => {
-            if (entries.length === 0) return { values: [], complete: false };
-            const resolutions = entries.map((next) => resolveStringValues(next, new Set(seen)));
-            return {
-              values: resolutions.flatMap((resolution) => resolution.values),
-              complete: resolutions.every((resolution) => resolution.complete),
-            };
-          };
-
-          if (candidate.type === "Identifier") {
-            const binding = bindings.reference(candidate);
-            if (!binding || seen.has(binding)) return { values: [], complete: false };
-            const sources = valueFlows.get(binding) ?? [];
-            const nextSeen = new Set(seen);
-            nextSeen.add(binding);
-            if (sources.length === 0) return { values: [], complete: false };
-            const resolutions = sources.map((source) =>
-              resolveStringValues(source, new Set(nextSeen))
-            );
-            return {
-              values: resolutions.flatMap((resolution) => resolution.values),
-              complete: resolutions.every((resolution) => resolution.complete),
-            };
-          }
-          if (candidate.type === "SequenceExpression") {
-            const expressions = Array.isArray(candidate.expressions)
-              ? candidate.expressions.filter(isNode)
-              : [];
-            const last = expressions.at(-1);
-            return last ? resolveStringValues(last, seen) : { values: [], complete: false };
-          }
-          if (candidate.type === "ConditionalExpression") {
-            return merge([candidate.consequent, candidate.alternate].filter(isNode));
-          }
-          if (candidate.type === "LogicalExpression") {
-            return merge([candidate.left, candidate.right].filter(isNode));
-          }
-          if (candidate.type === "AssignmentExpression" && isNode(candidate.right)) {
-            return candidate.operator === "="
-              ? resolveStringValues(candidate.right, seen)
-              : merge([candidate.left, candidate.right].filter(isNode));
-          }
-          if (candidate.type === "AwaitExpression" && isNode(candidate.argument)) {
-            return resolveStringValues(candidate.argument, seen);
-          }
-
-          if (
-            (candidate.type === "CallExpression" ||
-              candidate.type === "OptionalCallExpression") &&
-            isNode(candidate.callee)
-          ) {
-            const invocation = normalizeCall(candidate, globals);
-            const callee = invocation ? unwrapTransparent(invocation.callee) : null;
-            if (
-              callee?.type === "ArrowFunctionExpression" && isNode(callee.body) &&
-              callee.body.type !== "BlockStatement"
-            ) {
-              return resolveStringValues(callee.body, seen);
-            }
-            const concrete = concreteValues(
-              candidate,
-              new Set(seen),
-              new Set(seenMemberFlows),
-            );
-            return {
-              values: concrete
-                .map((resolved) => stringLiteralText(resolved))
-                .filter((resolved): resolved is string => resolved !== null),
-              // Calls with block bodies, aliased callees, or unresolved callee
-              // flows can return along a path concreteValues cannot enumerate.
-              complete: false,
-            };
-          }
-          if (
-            candidate.type === "MemberExpression" ||
-            candidate.type === "OptionalMemberExpression"
-          ) {
-            const concrete = concreteValues(
-              candidate,
-              new Set(seen),
-              new Set(seenMemberFlows),
-            );
-            return {
-              values: concrete
-                .map((resolved) => stringLiteralText(resolved))
-                .filter((resolved): resolved is string => resolved !== null),
-              // A member read can retain concrete values while an unresolved
-              // owner, key, or write flow contributes another runtime value.
-              complete: false,
-            };
-          }
-
-          const concrete = concreteValues(
-            candidate,
-            new Set(seen),
-            new Set(seenMemberFlows),
-          );
-          const values = concrete
-            .map((resolved) => stringLiteralText(resolved))
-            .filter((resolved): resolved is string => resolved !== null);
-          return {
-            values,
-            complete: concrete.length > 0 && values.length === concrete.length,
-          };
-        };
-        const keyResolution = resolveStringValues(property, new Set(seenBindings));
+        const keyResolution = resolveStringValues(
+          property,
+          new Set(seenBindings),
+          new Set(seenMemberFlows),
+        );
         const resolvedKeys = new Set(keyResolution.values);
         const members: Node[] = [];
         if (!keyResolution.complete) {
+          const readOrder = nodeOrders.get(value) ?? Number.POSITIVE_INFINITY;
+          const readScope = ownerExecutionScopes.get(value) ?? null;
+          const readAllPossible = repeatedControlNodes.has(value);
+          for (const flow of computedMemberValueFlows) {
+            const flowKeyResolution = resolveStringValues(
+              flow.key,
+              new Set(seenBindings),
+              new Set(seenMemberFlows),
+            );
+            for (const name of flowKeyResolution.values) resolvedKeys.add(name);
+            if (
+              flowKeyResolution.complete ||
+              seenMemberFlows.has(flow) ||
+              (!readAllPossible && flow.order > readOrder &&
+                !flow.controlUncertain && flow.scope === readScope)
+            ) continue;
+            const resolveOwnerIdentities = (owners: OwnerIdentity[]): OwnerIdentity[] =>
+              owners.flatMap((owner): OwnerIdentity[] => {
+                if (!isNode(owner)) return [owner];
+                const candidate = unwrapTransparent(owner);
+                if (
+                  candidate.type !== "MemberExpression" &&
+                  candidate.type !== "OptionalMemberExpression"
+                ) return [owner];
+                const resolved = concreteValues(
+                  candidate,
+                  new Set(seenBindings),
+                  new Set(seenMemberFlows),
+                );
+                return resolved.length > 0 ? resolved : [owner];
+              });
+            const readOwners = new Set(resolveOwnerIdentities(ownerIdentities(
+              value.object,
+              readOrder,
+              readAllPossible,
+              readScope,
+            )));
+            const flowOwners = new Set(resolveOwnerIdentities(ownerIdentities(
+              flow.owner,
+              flow.order,
+              flow.controlUncertain,
+              flow.scope,
+            )));
+            if (![...readOwners].some((owner) => flowOwners.has(owner))) continue;
+            const nextSeenMemberFlows = new Set(seenMemberFlows);
+            nextSeenMemberFlows.add(flow);
+            members.push(...concreteValues(
+              flow.value,
+              new Set(seenBindings),
+              nextSeenMemberFlows,
+            ));
+          }
           for (const knownKey of memberValueFlows.keys()) resolvedKeys.add(knownKey);
           const seenKeyOwners = new Set<Node>();
           const collectKnownKeys = (entry: Node): void => {
@@ -3365,7 +3478,15 @@ function invokedFunctionParameterBindings(
                     for (const name of candidateResolution.values) resolvedKeys.add(name);
                     if (!candidateResolution.complete) {
                       if (candidate.type === "ObjectMethod") {
-                        members.push(candidate);
+                        if (candidate.kind === "get") {
+                          members.push(...synchronousReturnValues(
+                            candidate,
+                            new Set(seenBindings),
+                            new Set(seenMemberFlows),
+                          ));
+                        } else {
+                          members.push(candidate);
+                        }
                       } else if (candidate.type === "ObjectProperty" && isNode(candidate.value)) {
                         members.push(...concreteValues(
                           candidate.value,
@@ -3395,7 +3516,15 @@ function invokedFunctionParameterBindings(
                   for (const name of candidateResolution.values) resolvedKeys.add(name);
                   if (!candidateResolution.complete) {
                     if (candidate.type === "ClassMethod") {
-                      members.push(candidate);
+                      if (candidate.kind === "get") {
+                        members.push(...synchronousReturnValues(
+                          candidate,
+                          new Set(seenBindings),
+                          new Set(seenMemberFlows),
+                        ));
+                      } else {
+                        members.push(candidate);
+                      }
                     } else if (isNode(candidate.value)) {
                       members.push(...concreteValues(
                         candidate.value,
@@ -3466,7 +3595,17 @@ function invokedFunctionParameterBindings(
         ),
       );
 
-      const resolvedMemberFlows = (memberValueFlows.get(key) ?? [])
+      const resolvedMemberFlows = [
+        ...(memberValueFlows.get(key) ?? []),
+        ...computedMemberValueFlows.filter((flow) => {
+          const resolution = resolveStringValues(
+            flow.key,
+            new Set(seenBindings),
+            new Set(seenMemberFlows),
+          );
+          return !resolution.complete || resolution.values.includes(key);
+        }),
+      ]
         .filter((flow) =>
           readAllPossible || flow.order <= readOrder || flow.controlUncertain ||
           flow.scope !== readScope
@@ -3550,12 +3689,27 @@ function invokedFunctionParameterBindings(
             continue;
           }
           const propertyKey = isNode(property.key) ? property.key : undefined;
-          const name = property.computed === true
-            ? stringLiteralText(propertyKey)
-            : literalText(propertyKey);
-          if (name !== key) continue;
+          const matches = property.computed === true && propertyKey
+            ? (() => {
+              const resolution = resolveStringValues(
+                propertyKey,
+                new Set(seenBindings),
+                new Set(seenMemberFlows),
+              );
+              return !resolution.complete || resolution.values.includes(key);
+            })()
+            : literalText(propertyKey) === key;
+          if (!matches) continue;
           if (property.type === "ObjectMethod") {
-            candidates.push(property);
+            if (property.kind === "get") {
+              candidates.push(...synchronousReturnValues(
+                property,
+                new Set(seenBindings),
+                new Set(seenMemberFlows),
+              ));
+            } else {
+              candidates.push(property);
+            }
           } else if (property.type === "ObjectProperty" && isNode(property.value)) {
             candidates.push(...concreteValues(
               property.value,
@@ -3582,12 +3736,27 @@ function invokedFunctionParameterBindings(
           const property = classMembers[index];
           if (!property) continue;
           if (property.static !== true || !isNode(property.key)) continue;
-          const name = property.computed === true
-            ? stringLiteralText(property.key)
-            : literalText(property.key);
-          if (name !== key) continue;
+          const matches = property.computed === true
+            ? (() => {
+              const resolution = resolveStringValues(
+                property.key,
+                new Set(seenBindings),
+                new Set(seenMemberFlows),
+              );
+              return !resolution.complete || resolution.values.includes(key);
+            })()
+            : literalText(property.key) === key;
+          if (!matches) continue;
           if (property.type === "ClassMethod") {
-            members.push(property);
+            if (property.kind === "get") {
+              members.push(...synchronousReturnValues(
+                property,
+                new Set(seenBindings),
+                new Set(seenMemberFlows),
+              ));
+            } else {
+              members.push(property);
+            }
           } else if (isNode(property.value)) {
             members.push(...concreteValues(
               property.value,
@@ -3629,26 +3798,11 @@ function invokedFunctionParameterBindings(
         ) continue;
         // Async factories return a promise and generator factories return an
         // iterator, neither synchronously hands the caller a callable value.
-        if (callee.async === true || callee.generator === true || !isNode(callee.body)) continue;
-        if (callee.body.type !== "BlockStatement") {
-          returned.push(...concreteValues(
-            callee.body,
-            new Set(seenBindings),
-            new Set(seenMemberFlows),
-          ));
-          continue;
-        }
-        walk(callee.body, (node) => {
-          if (node !== callee.body && startsVarScope(node)) return false;
-          if (node.type === "ReturnStatement" && isNode(node.argument)) {
-            returned.push(...concreteValues(
-              node.argument,
-              new Set(seenBindings),
-              new Set(seenMemberFlows),
-            ));
-          }
-          return true;
-        });
+        returned.push(...synchronousReturnValues(
+          callee,
+          new Set(seenBindings),
+          new Set(seenMemberFlows),
+        ));
       }
       return returned;
     }
