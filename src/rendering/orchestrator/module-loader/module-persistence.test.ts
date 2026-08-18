@@ -4,7 +4,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import {
+  getModulePathCache,
+  saveModulePathCache,
+} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   buildMdxEsmPathCacheKey,
   MDX_MODULE_DEV_COMPILE_VARIANT,
@@ -136,6 +139,17 @@ describe("module-loader/module-persistence", () => {
         reactVersion: "19.1.1",
         dev: false,
       });
+
+      // persistTransformedModule publishes the index write without awaiting it.
+      await saveModulePathCache(tmpDir);
+      assertEquals(
+        await Deno.readTextFile(developmentPath),
+        "export const compiledFor = 'development';",
+      );
+      assertEquals(
+        await Deno.readTextFile(productionPath),
+        "export const compiledFor = 'production';",
+      );
 
       const pathCache = await getModulePathCache(tmpDir);
       const developmentKey = buildMdxEsmPathCacheKey(

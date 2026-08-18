@@ -368,6 +368,9 @@ describe("module-loader/transformModuleWithDeps", () => {
             moduleCache: new Map(),
           });
 
+          // The transform publishes the index write without awaiting it.
+          await saveModulePathCache(cacheDir);
+
           const pathCache = await getModulePathCache(cacheDir);
           const developmentKey = buildMdxEsmPathCacheKey(
             "_vf_modules/app/page.js",
@@ -449,6 +452,7 @@ describe("module-loader/transformModuleWithDeps", () => {
             diskConfig.adapter,
             { ...diskConfig, mode: "development", moduleCache: new Map() },
           );
+          await saveModulePathCache(cacheDir);
 
           assertEquals(resolvedForProduction, productionArtifact);
           assertEquals(resolvedForDevelopment, developmentArtifact);
