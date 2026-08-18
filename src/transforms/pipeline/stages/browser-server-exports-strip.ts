@@ -1395,7 +1395,10 @@ function freeReferencedIdentifiers(
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
       if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
       const classScope: LexicalScope = { kind: "block", names: new Set() };
-      bindPatternNames(classScope, node.id);
+      // A named class expression owns a private name binding. A class
+      // declaration uses its enclosing lexical binding both outside and
+      // inside the class body.
+      if (node.type === "ClassExpression") bindPatternNames(classScope, node.id);
       const classScopes = [classScope, ...scopes];
       const body = node.body;
       // A class decorator is evaluated outside the class, so it does not see
@@ -2657,7 +2660,8 @@ function invokedFunctionParameterBindings(
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
       if (
-        node.type === "FunctionDeclaration" && isNode(node.id)
+        (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
+        isNode(node.id)
       ) {
         addValueFlow(bindings.declaration(node.id), node);
       } else if (
@@ -2785,16 +2789,70 @@ function invokedFunctionParameterBindings(
       if (runGenerator === "all" || target.body.type !== "BlockStatement") {
         walk(target.body, collectDelegatedYield);
       } else {
-        // One `next()` stops at the first direct, non-delegated yield. Do not
-        // advance a later delegated iterator that this call cannot reach.
+        const staticTruthiness = (value: Node | undefined): boolean | null => {
+          if (!value) return null;
+          const expression = unwrapTransparent(value);
+          if (expression.type === "BooleanLiteral" && typeof expression.value === "boolean") {
+            return expression.value;
+          }
+          if (expression.type === "NullLiteral") return false;
+          if (expression.type === "NumericLiteral" && typeof expression.value === "number") {
+            return expression.value !== 0 && !Number.isNaN(expression.value);
+          }
+          if (expression.type === "StringLiteral" && typeof expression.value === "string") {
+            return expression.value.length > 0;
+          }
+          return null;
+        };
+        const collectBeforeSuspension = (statement: Node): boolean => {
+          if (statement.type === "BlockStatement") {
+            for (const child of Array.isArray(statement.body) ? statement.body : []) {
+              if (isNode(child) && collectBeforeSuspension(child)) return true;
+            }
+            return false;
+          }
+          if (statement.type === "ExpressionStatement" && isNode(statement.expression)) {
+            const expression = unwrapTransparent(statement.expression);
+            if (expression.type === "YieldExpression") {
+              if (expression.delegate === true && isNode(expression.argument)) {
+                collectAdvanced(
+                  expression.argument,
+                  new Set<LexicalBindingIdentity>(),
+                  "once",
+                );
+              }
+              return expression.delegate !== true;
+            }
+          }
+          if (statement.type === "IfStatement") {
+            const test = isNode(statement.test) ? statement.test : undefined;
+            if (test) walk(test, collectDelegatedYield);
+            const truthiness = staticTruthiness(test);
+            const consequent = isNode(statement.consequent) ? statement.consequent : undefined;
+            const alternate = isNode(statement.alternate) ? statement.alternate : undefined;
+            if (truthiness === true) {
+              return consequent ? collectBeforeSuspension(consequent) : false;
+            }
+            if (truthiness === false) {
+              return alternate ? collectBeforeSuspension(alternate) : false;
+            }
+            const consequentSuspends = consequent ? collectBeforeSuspension(consequent) : false;
+            const alternateSuspends = alternate ? collectBeforeSuspension(alternate) : false;
+            return consequentSuspends && alternateSuspends;
+          }
+          if (statement.type === "LabeledStatement" && isNode(statement.body)) {
+            return collectBeforeSuspension(statement.body);
+          }
+          walk(statement, collectDelegatedYield);
+          return false;
+        };
+
+        // One `next()` stops at the first suspension that every reachable path
+        // takes. Do not advance a later delegated iterator that this call
+        // cannot reach, including a yield nested in a statically selected arm.
         for (const statement of Array.isArray(target.body.body) ? target.body.body : []) {
           if (!isNode(statement)) continue;
-          const expression = statement.type === "ExpressionStatement" &&
-              isNode(statement.expression)
-            ? unwrapTransparent(statement.expression)
-            : undefined;
-          if (expression?.type === "YieldExpression" && expression.delegate !== true) break;
-          walk(statement, collectDelegatedYield);
+          if (collectBeforeSuspension(statement)) break;
         }
       }
     }
@@ -2969,6 +3027,7 @@ function hasReflectionRoute(
   bindings: LexicalBindingIndex,
 ): boolean {
   const flows = new Map<LexicalBindingIdentity, Node[]>();
+  const destructured: Array<{ pattern: Node; value: Node; declaration: boolean }> = [];
   const addFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
     if (!target) return;
     const values = flows.get(target) ?? [];
@@ -2979,18 +3038,78 @@ function hasReflectionRoute(
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
-      if (
-        node.type === "VariableDeclarator" && isNode(node.id) &&
-        node.id.type === "Identifier" && isNode(node.init)
-      ) {
-        addFlow(bindings.declaration(node.id), node.init);
+      if (node.type === "VariableDeclarator" && isNode(node.id) && isNode(node.init)) {
+        if (node.id.type === "Identifier") {
+          addFlow(bindings.declaration(node.id), node.init);
+        } else if (node.id.type === "ObjectPattern") {
+          destructured.push({ pattern: node.id, value: node.init, declaration: true });
+        }
       } else if (
-        node.type === "AssignmentExpression" && isNode(node.left) &&
-        node.left.type === "Identifier" && isNode(node.right)
+        node.type === "AssignmentExpression" && isNode(node.left) && isNode(node.right)
       ) {
-        addFlow(bindings.reference(node.left), node.right);
+        if (node.left.type === "Identifier") {
+          addFlow(bindings.reference(node.left), node.right);
+        } else if (node.left.type === "ObjectPattern") {
+          destructured.push({ pattern: node.left, value: node.right, declaration: false });
+        }
       }
     });
+  }
+
+  const carriesGlobalObject = (
+    entry: Node,
+    seen = new Set<LexicalBindingIdentity>(),
+  ): boolean => {
+    const value = unwrapTransparent(entry);
+    if (isUnshadowedGlobalObject(value, globals)) return true;
+    if (value.type === "Identifier") {
+      const binding = bindings.reference(value);
+      if (!binding || seen.has(binding)) return false;
+      const nextSeen = new Set(seen);
+      nextSeen.add(binding);
+      return (flows.get(binding) ?? []).some((source) =>
+        carriesGlobalObject(source, new Set(nextSeen))
+      );
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return !!last && carriesGlobalObject(last, seen);
+    }
+    if (value.type === "ConditionalExpression") {
+      return (isNode(value.consequent) && carriesGlobalObject(value.consequent, new Set(seen))) ||
+        (isNode(value.alternate) && carriesGlobalObject(value.alternate, new Set(seen)));
+    }
+    if (value.type === "LogicalExpression") {
+      return (isNode(value.left) && carriesGlobalObject(value.left, new Set(seen))) ||
+        (isNode(value.right) && carriesGlobalObject(value.right, new Set(seen)));
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return carriesGlobalObject(value.right, seen);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return carriesGlobalObject(value.argument, seen);
+    }
+    return false;
+  };
+
+  const destructuredCodeRoutes = new Set<LexicalBindingIdentity>();
+  for (const { pattern, value, declaration } of destructured) {
+    if (!carriesGlobalObject(value)) continue;
+    for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
+      if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.value)) {
+        continue;
+      }
+      const key = isNode(property.key) ? property.key : undefined;
+      const name = property.computed === true ? stringLiteralText(key) : literalText(key);
+      if (name !== null && !CODE_FROM_STRING_NAMES.has(name)) continue;
+      for (const identifier of patternBindingIdentifiers(property.value)) {
+        const binding = declaration
+          ? bindings.declaration(identifier)
+          : bindings.reference(identifier);
+        if (binding) destructuredCodeRoutes.add(binding);
+      }
+    }
   }
 
   const isRoute = (
@@ -3008,6 +3127,7 @@ function hasReflectionRoute(
     if (value.type === "Identifier") {
       const binding = bindings.reference(value);
       if (!binding || seen.has(binding)) return false;
+      if (destructuredCodeRoutes.has(binding)) return true;
       seen.add(binding);
       return (flows.get(binding) ?? []).some((source) => isRoute(source, seen));
     }

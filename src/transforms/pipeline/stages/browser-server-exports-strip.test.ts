@@ -2282,6 +2282,13 @@ describe("browser-server-exports-strip", () => {
           "global-object Function constructor",
           `window.Function("Object.defineProperty = (target) => target")();`,
         ],
+        [
+          "destructured global-object eval",
+          [
+            `const { eval: run } = globalThis;`,
+            `run("Object.defineProperty = (target) => target");`,
+          ].join("\n"),
+        ],
       ]
     ) {
       it(`does not treat a module reaching the intrinsic through ${label} as compiler metadata`, async () => {
@@ -2485,6 +2492,17 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "a named class-declaration constructor mutation",
+          [
+            `class Mutator {`,
+            `  constructor(intrinsic) {`,
+            `    intrinsic.defineProperty = recordAndReturn;`,
+            `  }`,
+            `}`,
+            `new Mutator(Object);`,
+          ].join("\n"),
+        ],
+        [
           "a spread-consumed generator mutation",
           [
             `[...(function* (intrinsic) {`,
@@ -2639,6 +2657,38 @@ describe("browser-server-exports-strip", () => {
         `}`,
         `const iterator = (function* (outer) {`,
         `  yield 1;`,
+        `  yield* (function* (intrinsic) {`,
+        `    intrinsic.defineProperty = recordAndReturn;`,
+        `  })(outer);`,
+        `})(Object);`,
+        `iterator.next();`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertNotIncludes(result, "SECRET_KEY");
+    });
+
+    it("still strips compiler metadata when one next call stops at a nested yield", async () => {
+      const code = [
+        `function recordAndReturn(target) {`,
+        `  globalThis.nameRegistrations = (globalThis.nameRegistrations ?? 0) + 1;`,
+        `  return target;`,
+        `}`,
+        `const iterator = (function* (outer) {`,
+        `  if (true) yield 1;`,
         `  yield* (function* (intrinsic) {`,
         `    intrinsic.defineProperty = recordAndReturn;`,
         `  })(outer);`,
