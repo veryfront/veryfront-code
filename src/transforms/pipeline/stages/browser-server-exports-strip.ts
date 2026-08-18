@@ -1964,9 +1964,48 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     return constructor.body.body.length === 1 && constructorBeginsWithSimpleSuper(node);
   };
 
-  const hasInstanceFields = (node: Node): boolean =>
-    isNode(node.body) && Array.isArray(node.body.body) &&
-    node.body.body.some((member) => isNode(member) && isInstanceField(member));
+  const classMembers = (node: Node): Node[] =>
+    isNode(node.body) && Array.isArray(node.body.body) ? node.body.body.filter(isNode) : [];
+
+  const noNameHelpers: ReadonlySet<string> = new Set<string>();
+  const noInitializedNames: ReadonlySet<string> = new Set<string>();
+  const inertCompletionExpression = (node: Node | undefined): boolean =>
+    isInertExpression(node, noNameHelpers, noInitializedNames);
+
+  function classDefinitionCompletes(node: Node): boolean {
+    if (hasDecorators(node)) return false;
+    if (isNode(node.superClass)) {
+      const superClass = unwrap(node.superClass);
+      if (
+        superClass.type !== "FunctionExpression" &&
+        (superClass.type !== "ClassExpression" || !classDefinitionCompletes(superClass))
+      ) return false;
+    }
+
+    return classMembers(node).every((member) => {
+      if (
+        hasDecorators(member) || hasParameterDecorators(member) ||
+        member.computed === true
+      ) return false;
+      if (member.type === "StaticBlock") {
+        return Array.isArray(member.body) && member.body.length === 0;
+      }
+      if (
+        member.static === true &&
+        (member.type === "ClassProperty" || member.type === "ClassPrivateProperty" ||
+          member.type === "ClassAccessorProperty")
+      ) {
+        return inertCompletionExpression(isNode(member.value) ? member.value : undefined);
+      }
+      return true;
+    });
+  }
+
+  const instanceInitializationCompletes = (node: Node): boolean =>
+    classMembers(node).every((member) =>
+      !isInstanceField(member) ||
+      inertCompletionExpression(isNode(member.value) ? member.value : undefined)
+    );
 
   function superclassConstructionCompletes(node: Node): boolean {
     if (!isNode(node.superClass)) return true;
@@ -1982,8 +2021,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
   }
 
   function constructionCompletes(node: Node): boolean {
-    return constructsInstanceFields(node) && !hasInstanceFields(node) &&
-      explicitConstructorCompletes(node);
+    return classDefinitionCompletes(node) && constructsInstanceFields(node) &&
+      instanceInitializationCompletes(node) && explicitConstructorCompletes(node);
   }
 
   const staticMemberName = (member: Node): string | null => {

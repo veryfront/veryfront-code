@@ -2739,6 +2739,53 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "throwing-superclass-field.tsx");
     });
 
+    it("does not assume inline superclass static initialization completes", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends class { static value = missing; } { field = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-superclass-static.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-superclass-static.tsx");
+    });
+
+    it("keeps a field initialized after a harmless superclass field", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends class { base = 1; } { field = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/harmless-superclass-field.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, 'throw new Error("server-only")');
+    });
+
+    it("keeps a field initialized after harmless superclass static initialization", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends class { static value = 1; } { field = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/harmless-superclass-static.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, 'throw new Error("server-only")');
+    });
+
     it("keeps a field initialized after an empty function superclass returns", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
