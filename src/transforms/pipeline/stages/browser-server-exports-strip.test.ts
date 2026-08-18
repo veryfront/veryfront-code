@@ -1500,6 +1500,16 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "an assigned method-factory-returned function mutation",
+          [
+            `const factory = {};`,
+            `factory.make = () => function (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `};`,
+            `factory.make()(Object);`,
+          ].join("\n"),
+        ],
+        [
           "an intrinsic mutation invoked through call",
           `Object.defineProperty.call(null, Object, "defineProperty", { value: recordAndReturn });`,
         ],
@@ -1554,6 +1564,35 @@ describe("browser-server-exports-strip", () => {
         assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
       });
     }
+
+    it("still strips metadata through the effective last object method", async () => {
+      const code = [
+        `const factory = {`,
+        `  make() {`,
+        `    return function (intrinsic) {`,
+        `      intrinsic.defineProperty = (target) => target;`,
+        `    };`,
+        `  },`,
+        `  make() { return function (_intrinsic) {}; },`,
+        `};`,
+        `factory.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
 
     it("still strips metadata past a write through a shadowing alias parameter", async () => {
       const code = [
@@ -2326,6 +2365,15 @@ describe("browser-server-exports-strip", () => {
           "defaulted array-destructured global-object eval",
           [
             `const [run = globalThis.eval] = [];`,
+            `run("Object.defineProperty = (target) => target");`,
+          ].join("\n"),
+        ],
+        [
+          "defaulted array destructuring from an initially undefined binding",
+          [
+            `let value;`,
+            `const [run = globalThis.eval] = [value];`,
+            `value = () => {};`,
             `run("Object.defineProperty = (target) => target");`,
           ].join("\n"),
         ],

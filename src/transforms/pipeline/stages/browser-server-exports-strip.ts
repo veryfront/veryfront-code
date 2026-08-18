@@ -2650,11 +2650,24 @@ function invokedFunctionParameterBindings(
   // Keep concrete value flows so a call through a local function name and an
   // iterator advanced through a later alias resolve to the same body.
   const valueFlows = new Map<LexicalBindingIdentity, Node[]>();
+  const memberValueFlows = new Map<LexicalBindingIdentity, Map<string, Node[]>>();
   const addValueFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
     if (!target) return;
     const values = valueFlows.get(target) ?? [];
     values.push(value);
     valueFlows.set(target, values);
+  };
+  const addMemberValueFlow = (
+    target: LexicalBindingIdentity | null,
+    key: string | null,
+    value: Node,
+  ): void => {
+    if (!target || key === null) return;
+    const byKey = memberValueFlows.get(target) ?? new Map<string, Node[]>();
+    const values = byKey.get(key) ?? [];
+    values.push(value);
+    byKey.set(key, values);
+    memberValueFlows.set(target, byKey);
   };
 
   for (const statement of body) {
@@ -2671,10 +2684,19 @@ function invokedFunctionParameterBindings(
       ) {
         addValueFlow(bindings.declaration(node.id), node.init);
       } else if (
-        node.type === "AssignmentExpression" && isNode(node.left) &&
-        node.left.type === "Identifier" && isNode(node.right)
+        node.type === "AssignmentExpression" && isNode(node.left) && isNode(node.right)
       ) {
-        addValueFlow(bindings.reference(node.left), node.right);
+        if (node.left.type === "Identifier") {
+          addValueFlow(bindings.reference(node.left), node.right);
+        } else if (
+          (node.left.type === "MemberExpression" ||
+            node.left.type === "OptionalMemberExpression") && isNode(node.left.object)
+        ) {
+          const owner = unwrapTransparent(node.left.object);
+          if (owner.type === "Identifier") {
+            addMemberValueFlow(bindings.reference(owner), memberKey(node.left), node.right);
+          }
+        }
       }
     });
   }
@@ -2721,28 +2743,65 @@ function invokedFunctionParameterBindings(
       const key = memberKey(value);
       if (key === null) return [];
       const members: Node[] = [];
+      const ownerReference = unwrapTransparent(value.object);
+      if (ownerReference.type === "Identifier") {
+        const ownerBinding = bindings.reference(ownerReference);
+        for (
+          const source of ownerBinding ? memberValueFlows.get(ownerBinding)?.get(key) ?? [] : []
+        ) {
+          members.push(...concreteValues(source, new Set(seenBindings)));
+        }
+      }
+
+      const seenOwners = new Set<Node>();
+      const collectObjectMember = (owner: Node): Node[] => {
+        if (seenOwners.has(owner)) return [];
+        seenOwners.add(owner);
+        const candidates: Node[] = [];
+        const properties = Array.isArray(owner.properties) ? owner.properties : [];
+        // Object literal definitions are applied from left to right. Search
+        // backwards so a final explicit property replaces earlier duplicates,
+        // while a later spread keeps both its known value and the earlier
+        // fallback as possible runtime values.
+        for (let index = properties.length - 1; index >= 0; index--) {
+          const property = properties[index];
+          if (!isNode(property)) continue;
+          if (property.type === "SpreadElement") {
+            if (!isNode(property.argument)) continue;
+            for (const spread of concreteValues(property.argument, new Set(seenBindings))) {
+              if (spread.type === "ObjectExpression") {
+                candidates.push(...collectObjectMember(spread));
+              }
+            }
+            continue;
+          }
+          const propertyKey = isNode(property.key) ? property.key : undefined;
+          const name = property.computed === true
+            ? stringLiteralText(propertyKey)
+            : literalText(propertyKey);
+          if (name !== key) continue;
+          if (property.type === "ObjectMethod") {
+            candidates.push(property);
+          } else if (property.type === "ObjectProperty" && isNode(property.value)) {
+            candidates.push(...concreteValues(property.value, new Set(seenBindings)));
+          }
+          return candidates;
+        }
+        return candidates;
+      };
+
       for (const owner of concreteValues(value.object, new Set(seenBindings))) {
         if (owner.type === "ObjectExpression") {
-          for (const property of Array.isArray(owner.properties) ? owner.properties : []) {
-            if (!isNode(property) || property.type === "SpreadElement") continue;
-            const propertyKey = isNode(property.key) ? property.key : undefined;
-            const name = property.computed === true
-              ? stringLiteralText(propertyKey)
-              : literalText(propertyKey);
-            if (name !== key) continue;
-            if (property.type === "ObjectMethod") {
-              members.push(property);
-            } else if (property.type === "ObjectProperty" && isNode(property.value)) {
-              members.push(...concreteValues(property.value, new Set(seenBindings)));
-            }
-          }
+          members.push(...collectObjectMember(owner));
           continue;
         }
         if (owner.type !== "ClassDeclaration" && owner.type !== "ClassExpression") continue;
         const classMembers = isNode(owner.body) && Array.isArray(owner.body.body)
           ? owner.body.body.filter(isNode)
           : [];
-        for (const property of classMembers) {
+        for (let index = classMembers.length - 1; index >= 0; index--) {
+          const property = classMembers[index];
+          if (!property) continue;
           if (property.static !== true || !isNode(property.key)) continue;
           const name = property.computed === true
             ? stringLiteralText(property.key)
@@ -2753,6 +2812,7 @@ function invokedFunctionParameterBindings(
           } else if (isNode(property.value)) {
             members.push(...concreteValues(property.value, new Set(seenBindings)));
           }
+          break;
         }
       }
       return members;
@@ -3164,6 +3224,7 @@ function hasReflectionRoute(
   bindings: LexicalBindingIndex,
 ): boolean {
   const flows = new Map<LexicalBindingIdentity, Node[]>();
+  const uninitialized = new Set<LexicalBindingIdentity>();
   const destructured: Array<{ pattern: Node; value: Node; declaration: boolean }> = [];
   const addFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
     if (!target) return;
@@ -3175,10 +3236,15 @@ function hasReflectionRoute(
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
-      if (node.type === "VariableDeclarator" && isNode(node.id) && isNode(node.init)) {
+      if (node.type === "VariableDeclarator" && isNode(node.id)) {
         if (node.id.type === "Identifier") {
-          addFlow(bindings.declaration(node.id), node.init);
-        } else if (node.id.type === "ObjectPattern" || node.id.type === "ArrayPattern") {
+          const binding = bindings.declaration(node.id);
+          if (isNode(node.init)) addFlow(binding, node.init);
+          else if (binding) uninitialized.add(binding);
+        } else if (
+          isNode(node.init) &&
+          (node.id.type === "ObjectPattern" || node.id.type === "ArrayPattern")
+        ) {
           destructured.push({ pattern: node.id, value: node.init, declaration: true });
         }
       } else if (
@@ -3341,6 +3407,7 @@ function hasReflectionRoute(
     if (value.type === "Identifier") {
       const binding = bindings.reference(value);
       if (!binding || seen.has(binding)) return false;
+      if (uninitialized.has(binding)) return false;
       const sources = flows.get(binding) ?? [];
       if (sources.length === 0) return false;
       const nextSeen = new Set(seen);
