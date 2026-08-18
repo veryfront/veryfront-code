@@ -189,6 +189,7 @@ describe(
           const ctx = makeCtx({
             projectDir: context.projectDir,
             adapter,
+            isLocalProject: true,
           });
           const req = new Request("http://localhost/a/b/missing");
           const builder = new ResponseBuilder();
@@ -200,6 +201,34 @@ describe(
           assertStringIncludes(html, "Missing B");
           assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
           assertEquals(html.includes("Root Missing"), false);
+        });
+      });
+
+      it("renders the reserved not-found component without dev instrumentation on a hosted project", async () => {
+        const adapter = await getAdapter();
+
+        await withTestContext("not-found-fallback-hosted", async (context) => {
+          const segDir = join(context.projectDir, "app", "a", "b");
+          await mkdir(segDir, { recursive: true });
+          await writeTextFile(
+            join(segDir, "not-found.tsx"),
+            `export default function NotFound(){ return <p>Missing Hosted</p>; }`,
+          );
+
+          const ctx = makeCtx({
+            projectDir: context.projectDir,
+            adapter,
+            isLocalProject: false,
+          });
+          const req = new Request("http://localhost/a/b/missing");
+          const builder = new ResponseBuilder();
+
+          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
+          assertExists(result);
+          assertEquals(result.status, 404);
+          const html = await result.text();
+          assertStringIncludes(html, "Missing Hosted");
+          assertEquals(html.includes("data-node-file"), false);
         });
       });
 

@@ -86,16 +86,17 @@ function getLoaderOptions(
   moduleServerUrl?: string,
   vendorBundleHash?: string,
   contentSourceId?: string,
+  renderMode: "development" | "production" = "production",
 ): {
   projectId: string;
-  dev: true;
+  dev: boolean;
   moduleServerUrl?: string;
   vendorBundleHash?: string;
   contentSourceId?: string;
 } {
   return {
     projectId: projectId ?? projectRoot,
-    dev: true,
+    dev: renderMode === "development",
     moduleServerUrl,
     vendorBundleHash,
     contentSourceId,
@@ -250,7 +251,15 @@ describe("ComponentRegistry logic", () => {
     it("should use projectId when provided", () => {
       const opts = getLoaderOptions("/project", "proj-uuid-123");
       assertEquals(opts.projectId, "proj-uuid-123");
-      assertEquals(opts.dev, true);
+      assertEquals(opts.dev, false);
+    });
+
+    it("should derive dev from the render mode", () => {
+      assertEquals(getLoaderOptions("/project", "p", undefined, undefined, undefined).dev, false);
+      assertEquals(
+        getLoaderOptions("/project", "p", undefined, undefined, undefined, "development").dev,
+        true,
+      );
     });
 
     it("should fall back to projectRoot when no projectId", () => {
