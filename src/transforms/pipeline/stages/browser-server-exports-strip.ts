@@ -1570,14 +1570,21 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  * `Object.defineProperty(target, "name", …)` semantics rather than by its
  * minified binding name.
  */
-function compilerNameHelperBindings(body: Node[]): Set<string> {
+interface CompilerNameHelperAnalysis {
+  bindings: Set<string>;
+  unsafeReason?: string;
+  unsafeKind?: "object" | "helper-binding";
+}
+
+function analyzeCompilerNameHelpers(body: Node[]): CompilerNameHelperAnalysis {
   const localBindings = moduleScopeBindingNames(body);
+  const assigned = assignedNames(body);
   for (const name of hoistedVarNames(body)) localBindings.add(name);
   for (const statement of body) {
     if (statement.type !== "ImportDeclaration") continue;
     for (const name of importedBindings(statement)) localBindings.add(name);
   }
-  if (localBindings.has("Object") || assignedNames(body).has("Object")) return new Set();
+  const objectBindingIsUnsafe = localBindings.has("Object") || assigned.has("Object");
 
   const initializers = new Map<string, Node>();
   for (const statement of body) {
@@ -1595,6 +1602,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   }
 
   const helpers = new Set<string>();
+  const usedDefinePropertyBindings = new Set<string>();
   for (const [name, init] of initializers) {
     if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
     const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
@@ -1606,8 +1614,9 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     const call = returnedCall(init);
     if (!call) continue;
     const callee = isNode(call.callee) ? call.callee : undefined;
-    const callsDefineProperty = callee?.type === "Identifier" &&
-      definePropertyBindings.has(nodeName(callee) ?? "");
+    const calleeName = callee?.type === "Identifier" ? nodeName(callee) : null;
+    const callsDefineProperty = calleeName !== null &&
+      definePropertyBindings.has(calleeName ?? "");
     if (!callsDefineProperty) continue;
 
     const args = Array.isArray(call.arguments) ? call.arguments.filter(isNode) : [];
@@ -1616,10 +1625,33 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
       stringLiteralText(args[1]) === "name" && isNameDescriptor(args[2], valueParam)
     ) {
       helpers.add(name);
+      usedDefinePropertyBindings.add(calleeName!);
     }
   }
 
-  return helpers;
+  if (objectBindingIsUnsafe && helpers.size > 0) {
+    return {
+      bindings: new Set(),
+      unsafeReason:
+        "`Object.defineProperty` cannot be treated as inert because `Object` is declared, " +
+        "imported, hoisted, or assigned in the module",
+      unsafeKind: "object",
+    };
+  }
+
+  const reassignedHelperBinding = [...usedDefinePropertyBindings, ...helpers].find((name) =>
+    assigned.has(name)
+  );
+  if (reassignedHelperBinding) {
+    return {
+      bindings: new Set(),
+      unsafeReason: `\`${reassignedHelperBinding}\` is reassigned after it is recognized as ` +
+        "compiler-generated name helper state",
+      unsafeKind: "helper-binding",
+    };
+  }
+
+  return { bindings: helpers };
 }
 
 interface CompilerNameRegistration {
@@ -2179,7 +2211,16 @@ function dropUnreachableModuleScopeBindings(
   removeStatement: (statement: Node) => void,
   removedNames: Set<string>,
 ): Blocker[] {
-  const nameHelpers = compilerNameHelperBindings(body);
+  const nameHelperAnalysis = analyzeCompilerNameHelpers(body);
+  if (nameHelperAnalysis.unsafeReason) {
+    return [{
+      reason: nameHelperAnalysis.unsafeReason,
+      remedy: nameHelperAnalysis.unsafeKind === "helper-binding"
+        ? REMEDY.preserveNameHelperBindings
+        : REMEDY.preserveGlobalObject,
+    }];
+  }
+  const nameHelpers = nameHelperAnalysis.bindings;
   const reasons = new Map<BindingSite, ElisionReason>();
   for (const site of sites) {
     if (site.exported) continue;
@@ -2394,6 +2435,13 @@ const REMEDY = {
   rewriteTheDeclaration:
     "Declare the value once, at the top level, so the stripped hook's state can " +
     "be removed from the client build.",
+  /** A compiler-generated name helper no longer calls the global built-in. */
+  preserveGlobalObject: "Keep `Object` as the unshadowed, unassigned global in modules that use " +
+    "compiler-generated name registrations.",
+  /** A compiler-generated name helper or its built-in alias is reassigned. */
+  preserveNameHelperBindings:
+    "Do not reassign compiler-generated name helper bindings in modules with " +
+    "server-only exports.",
   /** Nothing about the module is wrong. */
   none: "",
 } as const;
