@@ -1,5 +1,5 @@
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
-import { isVersionedProdHydrationModulePath } from "./hydration-script-builder/prod-path.ts";
+import { isProdHydrationModulePath } from "./hydration-script-builder/prod-path.ts";
 
 function findTagEnd(html: string, start: number): number {
   let activeQuote: '"' | "'" | null = null;
@@ -140,7 +140,7 @@ function acceptsAmbientNonce(tag: string, tagName: "script" | "style"): boolean 
 function isFrameworkOwnedExternalScript(tag: string): boolean {
   const src = findAttribute(tag, "src")?.value;
   return src === "/_veryfront/rsc/client.js" ||
-    (typeof src === "string" && isVersionedProdHydrationModulePath(src));
+    (typeof src === "string" && isProdHydrationModulePath(src));
 }
 
 function replaceExactAuthorizedNonce(

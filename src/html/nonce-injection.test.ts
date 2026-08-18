@@ -68,6 +68,7 @@ describe("html/nonce-injection", () => {
     const html = addNonceToHtmlTags(
       '<script src="/_veryfront/rsc/client.js"></script>' +
         '<script src="/_veryfront/hydration-runtime.1234abcd.js"></script>' +
+        '<script src="/_veryfront/hydration-runtime.js"></script>' +
         '<script src="/_veryfront/rsc/client.js?variant=app"></script>' +
         '<script src="https://app.example/_veryfront/rsc/client.js"></script>',
       "nonce-123",
@@ -77,6 +78,7 @@ describe("html/nonce-injection", () => {
       html,
       '<script src="/_veryfront/rsc/client.js" nonce="nonce-123"></script>' +
         '<script src="/_veryfront/hydration-runtime.1234abcd.js" nonce="nonce-123"></script>' +
+        '<script src="/_veryfront/hydration-runtime.js" nonce="nonce-123"></script>' +
         '<script src="/_veryfront/rsc/client.js?variant=app"></script>' +
         '<script src="https://app.example/_veryfront/rsc/client.js"></script>',
     );
