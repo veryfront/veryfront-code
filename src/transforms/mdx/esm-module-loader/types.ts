@@ -84,6 +84,12 @@ export interface ModuleFetcherContext {
   inFlightModules?: Map<string, Promise<string | null>>;
   /** Unique normalized modules admitted to this request-scoped graph. */
   moduleGraph?: Set<string>;
+  /**
+   * Compile fetched modules in development mode. Defaults to false so a caller
+   * that cannot name a render mode gets production output, and it is part of
+   * every module cache identity because it changes the emitted code.
+   */
+  dev?: boolean;
   /** React version for transforms (from project config) */
   reactVersion?: string;
   /** Bare npm package roots that the runtime resolves without bundling. */

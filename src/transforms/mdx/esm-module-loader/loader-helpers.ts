@@ -196,6 +196,11 @@ export async function processVfModuleImports(
     {
       contentSourceId: context.contentSourceId,
       isLocalProject: context.isLocalProject,
+      // The compiled-MDX entry path carries no render mode yet, so it keeps the
+      // development compile mode it has always used. The flag is part of the
+      // module cache identity, so these artifacts stay isolated from the
+      // production-compiled ones the SSR module loader fetches.
+      dev: true,
       reactVersion: context.reactVersion,
       serverExternalPackages: context.serverExternalPackages,
       moduleServerOrigin: context.moduleServerOrigin,

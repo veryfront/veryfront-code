@@ -27,6 +27,12 @@ interface ResolveVfModuleImportsOptions {
   contentSourceId: string;
   adapter: RuntimeAdapter;
   projectDir: string;
+  /**
+   * Compile mode of the render that resolves these imports. Production renders
+   * must pass false: development output is unminified, not tree-shaken and
+   * carries an inline sourcemap that discloses the project source.
+   */
+  dev: boolean;
   reactVersion?: string;
   moduleServerOrigin?: string;
   dependencyPinningCacheKey?: string;
@@ -85,6 +91,7 @@ export async function resolveVfModuleImports(
     options.projectId,
     {
       contentSourceId: options.contentSourceId,
+      dev: options.dev,
       reactVersion: options.reactVersion,
       moduleServerOrigin: options.moduleServerOrigin,
       dependencyPinningCacheKey: options.dependencyPinningCacheKey,

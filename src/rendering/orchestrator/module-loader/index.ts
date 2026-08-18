@@ -364,6 +364,7 @@ async function transformModuleWithDepsUnmemoized(
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     moduleServerOrigin: config.moduleServerOrigin,
     serverExternalPackages: config.serverExternalPackages,
+    dev: config.mode === "development",
   });
   if (cachedPath) {
     const cycleManifestState = await inspectCycleManifestCache(
@@ -593,6 +594,7 @@ async function transformModuleWithDepsUnmemoized(
     moduleServerOrigin: config.moduleServerOrigin,
     dependencyPinningCacheKey: config.dependencyPinningCacheKey,
     serverExternalPackages: config.serverExternalPackages,
+    dev: config.mode === "development",
     unresolvedSpecifiers: [...moduleUnresolvedSpecifiers],
     cycleArtifactPath: useCycleArtifact ? cycleManifest.reserveArtifactPath(filePath) : undefined,
     deferCachePublication: (publication) => {
@@ -941,6 +943,7 @@ export async function loadModule(
           config.dependencyPinningCacheKey,
           config.moduleServerOrigin,
           config.serverExternalPackages,
+          config.mode === "development",
         ),
       );
 
