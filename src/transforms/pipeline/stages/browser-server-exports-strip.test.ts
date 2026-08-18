@@ -2688,6 +2688,21 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "throwing-static-key.tsx");
     });
 
+    it("keeps a static initializer behind a harmless computed key", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { static ["value"] = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/harmless-static-key.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, `["value"] = KEY`);
+    });
+
     it("keeps a static field after harmless static initialization", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,

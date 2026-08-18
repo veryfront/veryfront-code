@@ -1985,9 +1985,20 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     return true;
   }
 
+  const computedPropertyKeyCompletes = (member: Node): boolean => {
+    if (member.computed !== true) return true;
+    if (!isNode(member.key)) return false;
+    const key = unwrap(member.key);
+    return key.type === "StringLiteral" || key.type === "NumericLiteral" ||
+      key.type === "BooleanLiteral" || key.type === "NullLiteral" ||
+      key.type === "BigIntLiteral" || key.type === "DecimalLiteral" ||
+      (key.type === "TemplateLiteral" &&
+        (!Array.isArray(key.expressions) || key.expressions.length === 0));
+  };
+
   const classMemberPrefixCompletes = (member: Node): boolean =>
     !hasDecorators(member) && !hasParameterDecorators(member) &&
-    member.computed !== true;
+    computedPropertyKeyCompletes(member);
 
   const classMemberDefinitionCompletes = (member: Node): boolean => {
     if (!classMemberPrefixCompletes(member)) return false;
