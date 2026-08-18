@@ -1928,9 +1928,6 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       expression.callee.type === "Super";
   };
 
-  const constructsInstanceFields = (node: Node): boolean =>
-    !isNode(node.superClass) || !explicitConstructor(node) || constructorBeginsWithSuper(node);
-
   const unwrap = (node: Node): Node => {
     let current = node;
     while (
@@ -1942,6 +1939,19 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     }
     return current;
   };
+
+  const superClassIsConstructable = (node: Node): boolean => {
+    if (!isNode(node.superClass)) return true;
+    const superClass = unwrap(node.superClass);
+    return superClass.type === "ClassExpression" ||
+      (superClass.type === "FunctionExpression" &&
+        superClass.async !== true && superClass.generator !== true);
+  };
+
+  const constructsInstanceFields = (node: Node): boolean =>
+    !isNode(node.superClass) ||
+    (superClassIsConstructable(node) &&
+      (!explicitConstructor(node) || constructorBeginsWithSuper(node)));
 
   const invokedChild = (node: Node): Node | null => {
     if (node.type === "CallExpression" && isNode(node.callee)) {

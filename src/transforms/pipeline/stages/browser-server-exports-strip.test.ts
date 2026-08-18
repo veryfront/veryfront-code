@@ -2680,6 +2680,30 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, 'throw new Error("server-only")');
     });
 
+    for (
+      const [description, heritage] of [
+        ["null", "null"],
+        ["an arrow", "(() => {})"],
+      ] as const
+    ) {
+      it(`does not assume ${description} superclass can initialize fields`, async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `const instance = new class extends ${heritage} { field = KEY; };`,
+          `export async function getServerData() { return { props: { k: KEY } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const error = await assertRejects(() =>
+          stripServerOnlyExports(code, "pages/nonconstructable-superclass.tsx")
+        );
+
+        assertStringIncludes((error as Error).message, "KEY");
+        assertStringIncludes((error as Error).message, "nonconstructable-superclass.tsx");
+      });
+    }
+
     it("does not treat a called class literal as constructed", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
