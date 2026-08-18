@@ -266,9 +266,9 @@ jobs:
         timeout-minutes: 20
         run: |
           readonly install_attempts=2
-          readonly install_timeout_minutes=8
+          readonly install_timeout_minutes=7
           readonly install_kill_grace_seconds=15
-          readonly apt_lock_attempts=24
+          readonly apt_lock_attempts=12
           readonly apt_lock_sleep_seconds=5
           readonly retry_backoff_seconds=20
           readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
@@ -378,9 +378,9 @@ jobs:
         timeout-minutes: 20
         run: |
           readonly install_attempts=2
-          readonly install_timeout_minutes=8
+          readonly install_timeout_minutes=7
           readonly install_kill_grace_seconds=15
-          readonly apt_lock_attempts=24
+          readonly apt_lock_attempts=12
           readonly apt_lock_sleep_seconds=5
           readonly retry_backoff_seconds=20
           readonly apt_lock_files="/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock /var/lib/apt/lists/lock"
