@@ -2868,7 +2868,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         deferred.add(expression.alternate);
         return;
       }
-      if (!test.known) return;
+      if (!test.known) {
+        deferOrderedExpressionTail(expression.consequent, initializedNames);
+        deferOrderedExpressionTail(expression.alternate, initializedNames);
+        return;
+      }
       const selected = staticValueIsTruthy(test.value)
         ? expression.consequent
         : expression.alternate;
@@ -2905,8 +2909,24 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   function deferStatementListTail(
     statements: unknown[],
     initializedNames: ReadonlySet<string>,
-  ): "normal" | "throw" | "return" | "break" | "continue" | "unknown" {
-    type Completion = "normal" | "throw" | "return" | "break" | "continue" | "unknown";
+  ):
+    | "normal"
+    | "throw"
+    | "return"
+    | "break"
+    | "continue"
+    | `break:${string}`
+    | `continue:${string}`
+    | "unknown" {
+    type Completion =
+      | "normal"
+      | "throw"
+      | "return"
+      | "break"
+      | "continue"
+      | `break:${string}`
+      | `continue:${string}`
+      | "unknown";
     const statementCompletion = (statement: Node): Completion => {
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
@@ -2929,8 +2949,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         return "return";
       }
-      if (statement.type === "BreakStatement") return "break";
-      if (statement.type === "ContinueStatement") return "continue";
+      if (statement.type === "BreakStatement") {
+        const label = nodeName(statement.label);
+        return label ? `break:${label}` : "break";
+      }
+      if (statement.type === "ContinueStatement") {
+        const label = nodeName(statement.label);
+        return label ? `continue:${label}` : "continue";
+      }
       if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
         return "normal";
       }
@@ -3095,6 +3121,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             earlierDefaultIndex = index;
             defaultReachableByPriorMatch = possibleEarlierEntry;
             possibleEarlierEntry = true;
+            if (!discriminantValue.known && Array.isArray(caseNode.consequent)) {
+              deferStatementListTail(caseNode.consequent, initializedNames);
+            }
             continue;
           }
           const test = caseNode.test;
@@ -3139,6 +3168,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (testValue.known || isInertExpression(test, noNameHelpers, initializedNames)) {
             possibleEarlierEntry = true;
             possibleCaseMatch = true;
+            if (!discriminantValue.known && Array.isArray(caseNode.consequent)) {
+              deferStatementListTail(caseNode.consequent, initializedNames);
+            }
             continue;
           }
           deferOrderedExpressionTail(test, initializedNames);
@@ -3200,7 +3232,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         return completion;
       }
       if (statement.type === "LabeledStatement" && isNode(statement.body)) {
-        return statementCompletion(statement.body);
+        const completion = statementCompletion(statement.body);
+        const label = nodeName(statement.label);
+        if (label && completion === `break:${label}`) return "normal";
+        if (label && completion === `continue:${label}`) return "unknown";
+        return completion;
       }
       if (statement.type === "IfStatement") {
         const test = isNode(statement.test) ? statement.test : undefined;
@@ -3569,6 +3605,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   ): void => {
     const introducedScope = node.type === "Program" ? null : executionScopeFor(node);
     const activeScopes = introducedScope ? [introducedScope, ...localScopes] : localScopes;
+    if (
+      node.type === "ExpressionStatement" && isNode(node.expression) &&
+      unwrap(node.expression).type === "AssignmentExpression"
+    ) {
+      deferOrderedExpressionTail(
+        node.expression,
+        initializedNamesAtCall(node, activeScopes),
+      );
+    }
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
       markDeferredStaticElements(node);
     }

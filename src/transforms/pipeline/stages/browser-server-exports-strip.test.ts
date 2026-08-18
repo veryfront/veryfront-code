@@ -3084,7 +3084,7 @@ describe("browser-server-exports-strip", () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const KEY = getEnv("SECRET_KEY");`,
-        `(() => { outer: { while (true) { break outer; } use(KEY); } })();`,
+        `(() => { outer: { while (true) { break outer; } globalThis.registered = KEY; } })();`,
         `export async function getServerData() { return { props: { k: KEY } }; }`,
         `export default function Page() { return null; }`,
       ].join("\n");
@@ -3113,6 +3113,27 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-iife-if-branches.tsx");
+    });
+
+    it("analyzes possible switch consequents for an inert nonconstant discriminant", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { switch (cond) { case 1: missing; globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-switch-possible-consequent.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes(
+        (error as Error).message,
+        "root-iife-switch-possible-consequent.tsx",
+      );
     });
 
     it("does not evaluate a try-block tail after its prefix aborts", async () => {
@@ -4094,6 +4115,24 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-iife-assignment-rhs.tsx");
+    });
+
+    it("analyzes both ternary branches for an inert nonconstant test", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `globalThis.value = cond ? (missing, KEY) : 0;`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-ternary-branches.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-ternary-branches.tsx");
     });
 
     it("does not evaluate a compound assignment value after its member target aborts", async () => {
