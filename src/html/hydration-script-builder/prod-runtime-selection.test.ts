@@ -133,18 +133,32 @@ describe("resolveProdHydrationModulePath", () => {
     );
   });
 
-  it("fails closed when a release has no baked content-addressed runtime", async () => {
-    const error = await assertRejects(
-      () =>
-        resolveProdHydrationModulePath({
-          fs: releaseFileSystem(["hydration-runtime.js", "router.js"]),
-          projectDir: "/project",
-          releaseId: "release-incomplete",
-        }),
-      Error,
+  it("falls back to the serving runtime when a release has no baked content-addressed runtime", async () => {
+    assertEquals(
+      await resolveProdHydrationModulePath({
+        fs: releaseFileSystem(["hydration-runtime.js", "router.js"]),
+        projectDir: "/project",
+        releaseId: "release-legacy",
+      }),
+      getProdHydrationModulePath(),
+      "legacy releases without a versioned runtime must keep rendering on the serving runtime",
     );
+  });
 
-    assertEquals((error as { slug?: unknown }).slug, "render-error");
+  it("falls back to the serving runtime when a hosted release has no build output at all", async () => {
+    // The hosted API-backed fs lists nonexistent directories as empty instead
+    // of throwing (directory-operations.ts), and hosted release file trees
+    // carry no dist/ output. This is the exact production incident of
+    // 2026-08-18: every hosted release render must not fail closed here.
+    assertEquals(
+      await resolveProdHydrationModulePath({
+        fs: releaseFileSystem([]),
+        projectDir: "/project",
+        releaseId: "1cc57479-6864-4af1-ae6a-b49815028f63",
+      }),
+      getProdHydrationModulePath(),
+      "hosted releases without dist output must keep rendering on the serving runtime",
+    );
   });
 
   it("fails closed when an immutable release directory is missing", async () => {
