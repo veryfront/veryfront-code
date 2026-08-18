@@ -62,6 +62,7 @@ import {
   isHttpUrl,
   normalizeHttpUrl,
   prepareHttpCacheRequestOptions,
+  sanitizeHttpModuleRedirectDestination,
   type SetLike,
 } from "./http-cache-helpers.ts";
 import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-validator.ts";
@@ -180,6 +181,7 @@ async function publishHttpBundleGeneration<T>(
 interface HttpModuleFetchResult {
   code: string;
   contentType: string;
+  redirect?: { status: number; url: string; isAuthentication: boolean };
 }
 
 function terminalHttpModuleFetchError(
@@ -230,6 +232,7 @@ async function fetchHttpModuleAttempt(
   attempt: number,
 ): Promise<HttpModuleFetchResult> {
   let response: Response | undefined;
+  let redirect: HttpModuleFetchResult["redirect"];
 
   try {
     const startedAt = performance.now();
@@ -237,6 +240,14 @@ async function fetchHttpModuleAttempt(
       headers: { "user-agent": "Mozilla/5.0 Veryfront/1.0" },
       signal,
       redirect: "follow",
+    }, {
+      onRedirect(hop) {
+        const destination = sanitizeHttpModuleRedirectDestination(hop.toUrl.href);
+        redirect = {
+          status: hop.status,
+          ...destination,
+        };
+      },
     });
 
     const duration = Math.round(performance.now() - startedAt);
@@ -262,6 +273,7 @@ async function fetchHttpModuleAttempt(
         signal,
       ),
       contentType: response.headers.get("content-type") ?? "",
+      redirect,
     };
   } catch (error) {
     if (
@@ -593,10 +605,12 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         {
           url: safeUrl,
           contentType,
+          redirectStatus: fetchedModule.redirect?.status,
+          redirectUrl: fetchedModule.redirect?.url,
         },
       );
       throw BUNDLE_ERROR.create({
-        detail: describeHtmlModuleResponse(safeUrl),
+        detail: describeHtmlModuleResponse(safeUrl, fetchedModule.redirect),
       });
     }
 
