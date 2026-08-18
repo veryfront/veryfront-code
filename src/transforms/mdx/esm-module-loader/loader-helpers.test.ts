@@ -9,7 +9,8 @@ import {
 import type { ESMLoaderContext } from "./types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { clearModulePathCache, getModulePathCache } from "./cache/index.ts";
 import { MDX_MODULE_DEV_COMPILE_VARIANT } from "./module-fetcher/cache-keys.ts";
 
@@ -90,13 +91,13 @@ import { bar } from "/_vf_modules/components/Button.js";
     async function collectPathCacheKeys(
       mode: ESMLoaderContext["mode"],
     ): Promise<string[]> {
-      const projectDir = await Deno.makeTempDir({ prefix: "vf-mdx-entry-mode-project-" });
-      const esmCacheDir = await Deno.makeTempDir({ prefix: "vf-mdx-entry-mode-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-entry-mode-project-" });
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-entry-mode-cache-" });
       const code = `import { label } from "/_vf_modules/lib/label.js";\nexport default label;`;
 
       try {
-        await Deno.mkdir(join(projectDir, "lib"), { recursive: true });
-        await Deno.writeTextFile(
+        await mkdir(join(projectDir, "lib"), { recursive: true });
+        await writeTextFile(
           join(projectDir, "lib/label.js"),
           `export const label = "compiled";`,
         );
@@ -108,7 +109,7 @@ import { bar } from "/_vf_modules/components/Button.js";
           {
             moduleCache: new LRUCache({ maxEntries: 10 }),
             esmCacheDir,
-            adapter: denoAdapter,
+            adapter: await getLocalAdapter(),
             projectId: "mdx-entry-mode",
             projectDir,
             projectSlug: "mdx-entry-mode",
@@ -123,8 +124,8 @@ import { bar } from "/_vf_modules/components/Button.js";
         return [...(await getModulePathCache(esmCacheDir)).keys()];
       } finally {
         clearModulePathCache();
-        await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-        await Deno.remove(esmCacheDir, { recursive: true }).catch(() => undefined);
+        await remove(projectDir, { recursive: true }).catch(() => undefined);
+        await remove(esmCacheDir, { recursive: true }).catch(() => undefined);
       }
     }
 

@@ -3,6 +3,13 @@ import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import {
+  makeTempDir,
+  mkdir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
@@ -21,8 +28,8 @@ import {
 
 describe("module-loader/module-persistence", () => {
   it("writes transformed code, registers MDX path-cache, and updates module cache", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "app/page.tsx");
     const transformedCode = "export const page = 1;";
@@ -30,8 +37,8 @@ describe("module-loader/module-persistence", () => {
     const cacheKey = "project:preview:page";
 
     try {
-      await Deno.mkdir(dirname(filePath), { recursive: true });
-      await Deno.writeTextFile(filePath, "export const page = 1;");
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeTextFile(filePath, "export const page = 1;");
 
       const unresolvedSpecifiers = ["./missing", "./nested-missing"];
 
@@ -52,7 +59,7 @@ describe("module-loader/module-persistence", () => {
         `${transformedCode}\0${JSON.stringify(unresolvedSpecifiers)}`,
       ).slice(0, 8);
       assertEquals(result, join(tmpDir, `app/page.${expectedHash}.js`));
-      assertEquals(await Deno.readTextFile(result), transformedCode);
+      assertEquals(await readTextFile(result), transformedCode);
       assertEquals(moduleCache.get(cacheKey), result);
       assertEquals(
         await readPersistedUnresolvedSpecifiers(result, localAdapter),
@@ -63,14 +70,14 @@ describe("module-loader/module-persistence", () => {
       const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
       assertEquals(pathCache.get(mdxCacheKey), result);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("defers memory and path-cache publication until the graph commits", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "app/page.ts");
     const moduleCache = new Map<string, string>();
@@ -102,14 +109,14 @@ describe("module-loader/module-persistence", () => {
       assertEquals(moduleCache.get("deferred"), result);
       assertEquals(pathCache.get(mdxCacheKey), result);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("registers the artifact under the compile mode it was transformed with", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "app/page.ts");
     const moduleCache = new Map<string, string>();
@@ -143,11 +150,11 @@ describe("module-loader/module-persistence", () => {
       // persistTransformedModule publishes the index write without awaiting it.
       await saveModulePathCache(tmpDir);
       assertEquals(
-        await Deno.readTextFile(developmentPath),
+        await readTextFile(developmentPath),
         "export const compiledFor = 'development';",
       );
       assertEquals(
-        await Deno.readTextFile(productionPath),
+        await readTextFile(productionPath),
         "export const compiledFor = 'production';",
       );
 
@@ -165,14 +172,14 @@ describe("module-loader/module-persistence", () => {
       assertEquals(pathCache.get(developmentKey), developmentPath);
       assertEquals(pathCache.get(productionKey), productionPath);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("isolates artifacts across dependency snapshots", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "app/page.ts");
     const moduleCache = new Map<string, string>();
@@ -202,17 +209,17 @@ describe("module-loader/module-persistence", () => {
       });
 
       assertNotEquals(dirname(snapshotAPath), dirname(snapshotBPath));
-      assertEquals(await Deno.readTextFile(snapshotAPath), `export const snapshot = "A";`);
-      assertEquals(await Deno.readTextFile(snapshotBPath), `export const snapshot = "B";`);
+      assertEquals(await readTextFile(snapshotAPath), `export const snapshot = "A";`);
+      assertEquals(await readTextFile(snapshotBPath), `export const snapshot = "B";`);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("writes JavaScript at its authored path", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "app/page.js");
     const transformedCode = "export const page = 1;";
@@ -228,16 +235,16 @@ describe("module-loader/module-persistence", () => {
       });
 
       assertEquals(result, join(tmpDir, "app/page.js"));
-      assertEquals(await Deno.readTextFile(result), transformedCode);
+      assertEquals(await readTextFile(result), transformedCode);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("keeps cycle artifacts outside the authored source namespace", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const cycleCode = `export const owner = "cycle";`;
 
@@ -266,14 +273,14 @@ describe("module-loader/module-persistence", () => {
       });
 
       assertNotEquals(authoredPath, cyclePath);
-      assertEquals(await Deno.readTextFile(cyclePath), cycleCode);
+      assertEquals(await readTextFile(cyclePath), cycleCode);
       assertEquals(
         authoredPath,
         join(tmpDir, "lib", basename(cyclePath)),
       );
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
@@ -335,14 +342,14 @@ describe("module-loader/module-persistence", () => {
   });
 
   it("recreates the output directory when it disappears after being cached", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "lib/uses-crypto.ts");
     const moduleCache = new Map<string, string>();
 
     try {
-      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await mkdir(dirname(filePath), { recursive: true });
 
       const first = await persistTransformedModule({
         filePath,
@@ -353,11 +360,11 @@ describe("module-loader/module-persistence", () => {
         moduleCache,
         cacheKey: "first",
       });
-      assertEquals(await Deno.readTextFile(first), "export const a = 1;");
+      assertEquals(await readTextFile(first), "export const a = 1;");
 
       // Something outside the loader wipes the cache dir (manual `rm -rf .cache`,
       // a cache sweep, a container restart). The mkdir memo still claims it exists.
-      await Deno.remove(join(tmpDir, "lib"), { recursive: true });
+      await remove(join(tmpDir, "lib"), { recursive: true });
 
       const second = await persistTransformedModule({
         filePath,
@@ -368,16 +375,16 @@ describe("module-loader/module-persistence", () => {
         moduleCache,
         cacheKey: "second",
       });
-      assertEquals(await Deno.readTextFile(second), "export const a = 2;");
+      assertEquals(await readTextFile(second), "export const a = 2;");
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("does not cache a failed mkdir as a created directory", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "lib/transient.ts");
     const moduleCache = new Map<string, string>();
@@ -397,7 +404,7 @@ describe("module-loader/module-persistence", () => {
     Object.defineProperty(stubAdapter, "fs", { value: stubFs });
 
     try {
-      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await mkdir(dirname(filePath), { recursive: true });
 
       await persistTransformedModule({
         filePath,
@@ -418,16 +425,16 @@ describe("module-loader/module-persistence", () => {
         moduleCache,
         cacheKey: "transient-retry",
       });
-      assertEquals(await Deno.readTextFile(result), "export const b = 2;");
+      assertEquals(await readTextFile(result), "export const b = 2;");
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("retries the mkdir on a later write when an earlier mkdir failed", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "lib/transient.ts");
     const moduleCache = new Map<string, string>();
@@ -445,8 +452,8 @@ describe("module-loader/module-persistence", () => {
     Object.defineProperty(stubAdapter, "fs", { value: stubFs });
 
     try {
-      await Deno.mkdir(dirname(filePath), { recursive: true });
-      await Deno.mkdir(join(tmpDir, "lib"), { recursive: true });
+      await mkdir(dirname(filePath), { recursive: true });
+      await mkdir(join(tmpDir, "lib"), { recursive: true });
 
       const persist = (transformedCode: string, cacheKey: string) =>
         persistTransformedModule({
@@ -467,14 +474,14 @@ describe("module-loader/module-persistence", () => {
       // persist has to attempt the mkdir again rather than trust a poisoned memo.
       assertEquals(mkdirCalls > before, true);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("rethrows a non-race write error without retrying the write", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "lib/denied.ts");
     const moduleCache = new Map<string, string>();
@@ -492,7 +499,7 @@ describe("module-loader/module-persistence", () => {
     Object.defineProperty(stubAdapter, "fs", { value: stubFs });
 
     try {
-      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await mkdir(dirname(filePath), { recursive: true });
 
       let rejected = false;
       await persistTransformedModule({
@@ -510,14 +517,14 @@ describe("module-loader/module-persistence", () => {
       assertEquals(rejected, true);
       assertEquals(writeCalls, 1);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 
   it("keeps the artifact available without caching when unresolved-import evidence cannot be written", async () => {
-    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
-    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const filePath = join(projectDir, "lib/evidence.ts");
     const moduleCache = new Map<string, string>();
@@ -534,7 +541,7 @@ describe("module-loader/module-persistence", () => {
     Object.defineProperty(stubAdapter, "fs", { value: stubFs });
 
     try {
-      await Deno.mkdir(dirname(filePath), { recursive: true });
+      await mkdir(dirname(filePath), { recursive: true });
 
       const result = await persistTransformedModule({
         filePath,
@@ -549,7 +556,7 @@ describe("module-loader/module-persistence", () => {
         unresolvedSpecifiers: ["./missing"],
       });
 
-      assertEquals(await Deno.readTextFile(result), transformedCode);
+      assertEquals(await readTextFile(result), transformedCode);
       assertEquals(moduleCache.has("evidence"), false);
       assertEquals(await readPersistedUnresolvedSpecifiers(result, stubAdapter), []);
 
@@ -557,8 +564,8 @@ describe("module-loader/module-persistence", () => {
       const mdxCacheKey = buildMdxEsmPathCacheKey("_vf_modules/lib/evidence.js", "19.1.1");
       assertEquals(pathCache.has(mdxCacheKey), false);
     } finally {
-      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
-      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
   });
 });

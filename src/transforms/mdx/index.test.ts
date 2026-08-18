@@ -6,7 +6,7 @@ import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/de
 import { join } from "#veryfront/compat/path/index.ts";
 import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { clearMDXRendererCache, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
-import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import {
   clearModulePathCache,
   getModulePathCache,
@@ -113,7 +113,7 @@ describe("MDXRenderer.loadModuleESM render mode", () => {
           const mod = await mdxRenderer.loadModuleESM(
             `import { label } from "/_vf_modules/lib/label.js";\nexport default label;`,
             {
-              adapter: denoAdapter,
+              adapter: await getLocalAdapter(),
               projectId,
               projectDir,
               projectSlug: "mdx-mode",
