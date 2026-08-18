@@ -3080,12 +3080,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         let possibleEarlierEntry = false;
         let earlierDefault: Node | null = null;
+        let earlierDefaultIndex = -1;
         let defaultReachableByPriorMatch = false;
+        let possibleCaseMatch = false;
         for (let index = 0; index < cases.length; index++) {
           const caseNode = cases[index];
           if (!isNode(caseNode)) continue;
           if (!isNode(caseNode.test)) {
             earlierDefault = caseNode;
+            earlierDefaultIndex = index;
             defaultReachableByPriorMatch = possibleEarlierEntry;
             possibleEarlierEntry = true;
             continue;
@@ -3131,6 +3134,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           }
           if (testValue.known || isInertExpression(test, noNameHelpers, initializedNames)) {
             possibleEarlierEntry = true;
+            possibleCaseMatch = true;
             continue;
           }
           deferOrderedExpressionTail(test, initializedNames);
@@ -3151,6 +3155,21 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             }
           }
           return "unknown";
+        }
+        if (
+          discriminantValue.known && earlierDefault && earlierDefaultIndex >= 0 &&
+          !possibleCaseMatch
+        ) {
+          const selectedStatements = cases.slice(earlierDefaultIndex).flatMap((selectedCase) =>
+            isNode(selectedCase) && Array.isArray(selectedCase.consequent)
+              ? selectedCase.consequent.filter(isNode)
+              : []
+          );
+          const selectedCompletion = deferStatementListTail(
+            selectedStatements,
+            initializedNames,
+          );
+          return selectedCompletion === "break" ? "normal" : selectedCompletion;
         }
         return "unknown";
       }

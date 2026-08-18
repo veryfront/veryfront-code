@@ -3028,6 +3028,26 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-switch-default.tsx");
     });
 
+    it("analyzes the default consequent when no case matches", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { switch (1) { default: missing; use(KEY); case 0: break; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-switch-selected-default.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes(
+        (error as Error).message,
+        "root-iife-switch-selected-default.tsx",
+      );
+    });
+
     it("does not evaluate a try-block tail after its prefix aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
