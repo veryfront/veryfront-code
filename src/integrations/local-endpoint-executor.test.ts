@@ -11,11 +11,41 @@ import type { IntegrationToolMeta } from "./schema.ts";
 import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
+  type LocalIntegrationEndpointTransportRequest,
 } from "./local-endpoint-executor.ts";
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
 const SECRET = "LOCAL_ENDPOINT_SECRET_MUST_NOT_LEAK";
+const defineProperty = Object.defineProperty;
+const deleteProperty = Reflect.deleteProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+function appendRestorer(restorers: Array<() => void>, restorer: () => void): void {
+  defineProperty(restorers, restorers.length, {
+    configurable: true,
+    enumerable: true,
+    value: restorer,
+    writable: true,
+  });
+}
+
+function replaceProperty(
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+): () => void {
+  const descriptor = getOwnPropertyDescriptor(target, key);
+  defineProperty(target, key, {
+    configurable: true,
+    value,
+    writable: true,
+  });
+  return () => {
+    if (descriptor) defineProperty(target, key, descriptor);
+    else deleteProperty(target, key);
+  };
+}
 
 function endpoint(value: IntegrationEndpoint): IntegrationEndpoint {
   return value;
@@ -159,6 +189,85 @@ describe("local integration endpoint executor", () => {
     assertEquals(result, { ok: true });
   });
 
+  it("constructs admitted requests without ambient collection traversal", async () => {
+    const restorers: Array<() => void> = [];
+    let poisonCalls = 0;
+    const poison = (): never => {
+      poisonCalls += 1;
+      throw new Error("ambient endpoint primordial used");
+    };
+    let request: LocalIntegrationEndpointTransportRequest | undefined;
+    let failure: unknown;
+
+    try {
+      appendRestorer(restorers, replaceProperty(Array, "isArray", poison));
+      appendRestorer(restorers, replaceProperty(Array.prototype, Symbol.iterator, poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "AbortController", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "clearTimeout", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "encodeURIComponent", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "Headers", poison));
+      appendRestorer(restorers, replaceProperty(JSON, "parse", poison));
+      appendRestorer(restorers, replaceProperty(JSON, "stringify", poison));
+      appendRestorer(restorers, replaceProperty(Number, "isFinite", poison));
+      appendRestorer(restorers, replaceProperty(Number, "isSafeInteger", poison));
+      appendRestorer(restorers, replaceProperty(Object, "create", poison));
+      appendRestorer(restorers, replaceProperty(Object, "defineProperty", poison));
+      appendRestorer(restorers, replaceProperty(Object, "freeze", poison));
+      appendRestorer(restorers, replaceProperty(Object, "keys", poison));
+      appendRestorer(restorers, replaceProperty(Reflect, "getOwnPropertyDescriptor", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "charCodeAt", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "includes", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "replaceAll", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "slice", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "setTimeout", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "String", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "URL", poison));
+
+      try {
+        await executeLocalIntegrationEndpoint({
+          endpoint: endpoint({
+            method: "POST",
+            url: "https://api.example.test/items",
+            params: {
+              limit: {
+                type: "number",
+                in: "query",
+                description: "Page size",
+                required: true,
+              },
+            },
+            body: {
+              label: {
+                type: "string",
+                description: "Label",
+                required: true,
+              },
+            },
+          }),
+          args: { limit: 2, label: "two" },
+          authHeaders: { Authorization: `Bearer ${SECRET}` },
+          allowedOrigin: "https://api.example.test",
+          transport: (nextRequest) => {
+            request = nextRequest;
+            throw new Error("stop after request construction");
+          },
+        });
+      } catch (error) {
+        failure = error;
+      }
+    } finally {
+      for (let index = restorers.length - 1; index >= 0; index--) restorers[index]?.();
+    }
+
+    assertEquals(poisonCalls, 0);
+    assertInstanceOf(failure, VeryfrontError);
+    assertEquals(failure.slug, "local-integration-request-failed");
+    assert(request);
+    assertEquals(request.url.href, "https://api.example.test/items?limit=2");
+    assertEquals(request.init.body, '{"label":"two"}');
+    assertEquals(new Headers(request.init.headers).get("authorization"), `Bearer ${SECRET}`);
+  });
+
   it("rejects invalid arguments before any transport call", async () => {
     const requiredEndpoint = endpoint({
       method: "GET",
@@ -228,6 +337,43 @@ describe("local integration endpoint executor", () => {
       },
     });
     assert(authorized);
+  });
+
+  it("cleans up rejected provider bodies through captured stream primordials", async () => {
+    const response = new Response("provider failure", { status: 500 });
+    const restorers: Array<() => void> = [];
+    let poisonCalls = 0;
+    const poison = (): never => {
+      poisonCalls += 1;
+      throw new Error("ambient cleanup primordial used");
+    };
+    let failure: unknown;
+
+    try {
+      appendRestorer(restorers, replaceProperty(Promise.prototype, "catch", poison));
+      appendRestorer(restorers, replaceProperty(ReadableStream.prototype, "cancel", poison));
+      try {
+        await executeLocalIntegrationEndpoint({
+          endpoint: endpoint({
+            method: "GET",
+            url: "https://api.example.test/items",
+          }),
+          args: {},
+          authHeaders: {},
+          allowedOrigin: "https://api.example.test",
+          transport: () => Promise.resolve(response),
+        });
+      } catch (error) {
+        failure = error;
+      }
+    } finally {
+      for (let index = restorers.length - 1; index >= 0; index--) restorers[index]?.();
+    }
+
+    assertEquals(poisonCalls, 0);
+    assertInstanceOf(failure, VeryfrontError);
+    assertEquals(failure.slug, "local-integration-request-failed");
+    assertEquals(response.bodyUsed, true);
   });
 
   it("bounds responses and never exposes provider bodies, URLs, headers, or causes", async () => {

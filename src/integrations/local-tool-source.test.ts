@@ -19,6 +19,48 @@ import { _createLocalIntegrationToolSourceForTesting } from "./local-tool-source
 
 const TEST_CREDENTIAL = "LOCAL_INTEGRATION_SECRET_MUST_NOT_LEAK";
 const testCredentialProvider = () => TEST_CREDENTIAL;
+const defineProperty = Object.defineProperty;
+const deleteProperty = Reflect.deleteProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+function replaceProperty(
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+): () => void {
+  const descriptor = getOwnPropertyDescriptor(target, key);
+  defineProperty(target, key, {
+    configurable: true,
+    value,
+    writable: true,
+  });
+  return () => {
+    if (descriptor) defineProperty(target, key, descriptor);
+    else deleteProperty(target, key);
+  };
+}
+
+function appendRestorer(restorers: Array<() => void>, restorer: () => void): void {
+  defineProperty(restorers, restorers.length, {
+    configurable: true,
+    enumerable: true,
+    value: restorer,
+    writable: true,
+  });
+}
+
+function replaceDescriptor(
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+): () => void {
+  const previous = getOwnPropertyDescriptor(target, key);
+  defineProperty(target, key, descriptor);
+  return () => {
+    if (previous) defineProperty(target, key, previous);
+    else deleteProperty(target, key);
+  };
+}
 
 function headerValue(request: RequestInit, name: string): string | null {
   return new Headers(request.headers).get(name);
@@ -29,6 +71,7 @@ async function assertConfigurationError(
   expectedDetail: string,
 ): Promise<void> {
   const error = await assertRejects(createPromise, VeryfrontError);
+  assertInstanceOf(error, VeryfrontError);
   assertEquals(error.slug, "local-integration-config-invalid");
   assert(error.message.includes(expectedDetail), error.message);
   assertEquals(error.message.includes(TEST_CREDENTIAL), false);
@@ -89,6 +132,71 @@ describe("createLocalIntegrationToolSource", () => {
     ]);
   });
 
+  it("retains admission semantics after project code mutates ambient primordials", async () => {
+    _setEnvironmentConfigForTesting({ veryfrontMode: "production", proxyMode: false });
+    const restorers: Array<() => void> = [];
+    let poisonCalls = 0;
+    const poison = (): never => {
+      poisonCalls += 1;
+      throw new Error("ambient primordial used");
+    };
+    let source: ReturnType<typeof createLocalIntegrationToolSource> | undefined;
+    let definitions: readonly { name: string }[] | undefined;
+
+    try {
+      appendRestorer(restorers, replaceProperty(Array, "isArray", () => poison()));
+      appendRestorer(restorers, replaceProperty(Array.prototype, "map", poison));
+      appendRestorer(restorers, replaceProperty(Array.prototype, "push", poison));
+      appendRestorer(restorers, replaceProperty(Map.prototype, "get", poison));
+      appendRestorer(restorers, replaceProperty(Map.prototype, "has", poison));
+      appendRestorer(restorers, replaceProperty(Map.prototype, "set", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "Map", poison));
+      appendRestorer(restorers, replaceProperty(Object, "create", poison));
+      appendRestorer(restorers, replaceProperty(Object, "defineProperty", poison));
+      appendRestorer(restorers, replaceProperty(Object, "entries", poison));
+      appendRestorer(restorers, replaceProperty(Object, "freeze", poison));
+      appendRestorer(restorers, replaceProperty(Object, "getOwnPropertyDescriptor", poison));
+      appendRestorer(restorers, replaceProperty(Object, "values", poison));
+      appendRestorer(
+        restorers,
+        replaceProperty(Reflect, "getOwnPropertyDescriptor", poison),
+      );
+      appendRestorer(restorers, replaceProperty(Set.prototype, "add", poison));
+      appendRestorer(restorers, replaceProperty(Set.prototype, "has", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "Set", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "charCodeAt", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "includes", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "indexOf", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "lastIndexOf", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "replace", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "slice", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "startsWith", poison));
+      appendRestorer(restorers, replaceProperty(globalThis, "URL", poison));
+      appendRestorer(
+        restorers,
+        replaceDescriptor(Array.prototype, "0", {
+          configurable: true,
+          set: poison,
+        }),
+      );
+
+      source = createLocalIntegrationToolSource({
+        tools: ["vercel__list_projects"],
+        credentialProvider: testCredentialProvider,
+      });
+      definitions = await source.listTools();
+    } finally {
+      for (let index = restorers.length - 1; index >= 0; index--) restorers[index]?.();
+    }
+
+    assertEquals(poisonCalls, 0);
+    assert(source);
+    assert(Object.isFrozen(source));
+    assertEquals(definitions?.map((definition) => definition.name), [
+      "vercel__list_projects",
+    ]);
+  });
+
   it("validates configured credential names before exposing tools", async () => {
     const calls: string[] = [];
     const source = createLocalIntegrationToolSource({
@@ -101,6 +209,7 @@ describe("createLocalIntegrationToolSource", () => {
 
     const error = await assertRejects(() => source.listTools(), VeryfrontError);
     assertEquals(calls, ["SENDCLOUD_PUBLIC_KEY", "SENDCLOUD_SECRET_KEY"]);
+    assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "local-integration-credentials-missing");
     assertEquals(error.message.includes("SENDCLOUD_SECRET_KEY"), true);
     assertEquals(error.message.includes("public-key"), false);

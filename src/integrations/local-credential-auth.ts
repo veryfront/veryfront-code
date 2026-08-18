@@ -14,10 +14,18 @@ import { MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH } from "./limits.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
+const arrayJoin = Array.prototype.join;
 const encodeUriComponent = encodeURIComponent;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectEntries = Object.entries;
+const objectValues = Object.values;
+const stringCharCodeAt = String.prototype.charCodeAt;
 const stringEndsWith = String.prototype.endsWith;
+const stringIncludes = String.prototype.includes;
+const stringFromCharCode = String.fromCharCode;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
 const textEncoder = new TextEncoder();
@@ -110,6 +118,23 @@ function stringEndsWithValue(value: string, suffix: string): boolean {
   return apply(stringEndsWith, value, [suffix]);
 }
 
+function stringIncludesValue(value: string, search: string): boolean {
+  return apply(stringIncludes, value, [search]);
+}
+
+function append<T>(values: T[], value: T): void {
+  objectDefineProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function join(values: readonly string[], separator: string): string {
+  return apply(arrayJoin, values, [separator]) as string;
+}
+
 function urlValue(getter: ((this: URL) => string) | undefined, url: URL): string {
   if (!getter) localIntegrationConfigurationError("URL parsing is unavailable in this runtime");
   return apply(getter, url, []);
@@ -139,8 +164,8 @@ function assertFixedHttpsUrl(value: string, label: string): string {
 function normalizedConnectorPrefix(name: string): string {
   let prefix = "";
   for (let index = 0; index < name.length; index++) {
-    const code = name.charCodeAt(index);
-    if (code >= 97 && code <= 122) prefix += String.fromCharCode(code - 32);
+    const code = apply(stringCharCodeAt, name, [index]) as number;
+    if (code >= 97 && code <= 122) prefix += stringFromCharCode(code - 32);
     else if (code >= 65 && code <= 90 || code >= 48 && code <= 57) prefix += name[index];
     else prefix += "_";
   }
@@ -189,7 +214,11 @@ export function createLocalCredentialAuthPlan(
       );
     }
     const additionalHeaders = freeze({ ...auth.additionalHeaders });
-    const required = [auth.keyName, ...Object.values(additionalHeaders)];
+    const required = [auth.keyName];
+    const additionalNames = objectValues(additionalHeaders);
+    for (let index = 0; index < additionalNames.length; index++) {
+      append(required, additionalNames[index]!);
+    }
     return freeze({
       kind: "api-key",
       connectorName: connector.name,
@@ -218,7 +247,7 @@ export function createLocalCredentialAuthPlan(
   }
 
   if (auth.type === "oauth2" && auth.grantType === "client_credentials") {
-    if (!auth.tokenUrl || auth.tokenUrl.includes("{{")) {
+    if (!auth.tokenUrl || stringIncludesValue(auth.tokenUrl, "{{")) {
       localIntegrationConfigurationError(
         `Local integration "${connector.name}" requires a fixed token URL`,
       );
@@ -233,7 +262,7 @@ export function createLocalCredentialAuthPlan(
       connectorName: connector.name,
       clientIdName,
       clientSecretName,
-      scopes: freeze([...(auth.scopes ?? [])]),
+      scopes: freeze(copyStrings(auth.scopes ?? [])),
       tokenAuthMethod: requestBodyAuth ? "request-body" : "basic",
       tokenUrl: assertFixedHttpsUrl(
         auth.tokenUrl,
@@ -246,6 +275,12 @@ export function createLocalCredentialAuthPlan(
   localIntegrationConfigurationError(
     `Local integration "${connector.name}" uses unsupported authorization-code credentials`,
   );
+}
+
+function copyStrings(values: readonly string[]): string[] {
+  const copied: string[] = [];
+  for (let index = 0; index < values.length; index++) append(copied, values[index]!);
+  return copied;
 }
 
 function base64(value: string): string {
@@ -295,12 +330,12 @@ async function readCredentials(
   plan: LocalCredentialAuthPlan,
   provider: LocalIntegrationCredentialProvider,
 ): Promise<Record<string, string>> {
-  const values: Record<string, string> = Object.create(null);
+  const values: Record<string, string> = objectCreate(null);
   const missing: string[] = [];
   for (let index = 0; index < plan.requiredEnvironmentVariables.length; index++) {
     const name = plan.requiredEnvironmentVariables[index]!;
     const value = await readCredential(provider, plan.connectorName, name);
-    if (value === undefined) missing.push(name);
+    if (value === undefined) append(missing, name);
     else values[name] = value;
   }
   if (
@@ -308,12 +343,23 @@ async function readCredentials(
     plan.passwordFallback !== undefined
   ) {
     values[plan.passwordName] = plan.passwordFallback;
-    const missingIndex = missing.indexOf(plan.passwordName);
-    if (missingIndex >= 0) missing.splice(missingIndex, 1);
+    for (let index = 0; index < missing.length; index++) {
+      if (missing[index] !== plan.passwordName) continue;
+      for (let next = index + 1; next < missing.length; next++) {
+        objectDefineProperty(missing, next - 1, {
+          configurable: true,
+          enumerable: true,
+          value: missing[next],
+          writable: true,
+        });
+      }
+      missing.length -= 1;
+      break;
+    }
   }
   if (missing.length > 0) {
     throw LOCAL_INTEGRATION_CREDENTIALS_MISSING.create({
-      detail: `Set local integration credential variables: ${missing.join(", ")}`,
+      detail: `Set local integration credential variables: ${join(missing, ", ")}`,
     });
   }
   return values;
@@ -390,9 +436,11 @@ export async function resolveLocalCredentialAuth(
 
   if (plan.kind === "api-key") {
     const key = values[plan.keyName]!;
-    const headers: Record<string, string> = Object.create(null);
+    const headers: Record<string, string> = objectCreate(null);
     headers[plan.headerName] = plan.headerPrefix ? `${plan.headerPrefix} ${key}` : key;
-    for (const [headerName, environmentName] of Object.entries(plan.additionalHeaders)) {
+    const additionalEntries = objectEntries(plan.additionalHeaders);
+    for (let index = 0; index < additionalEntries.length; index++) {
+      const [headerName, environmentName] = additionalEntries[index]!;
       headers[headerName] = values[environmentName]!;
     }
     return freeze({ kind: "headers", connectorName: plan.connectorName, headers: freeze(headers) });
@@ -411,14 +459,14 @@ export async function resolveLocalCredentialAuth(
     const clientId = values[plan.clientIdName]!;
     const clientSecret = values[plan.clientSecretName]!;
     const body = [formEntry("grant_type", "client_credentials")];
-    if (plan.scopes.length > 0) body.push(formEntry("scope", plan.scopes.join(" ")));
+    if (plan.scopes.length > 0) append(body, formEntry("scope", join(plan.scopes, " ")));
     const headers: Record<string, string> = {
       Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded",
     };
     if (plan.tokenAuthMethod === "request-body") {
-      body.push(formEntry("client_id", clientId));
-      body.push(formEntry("client_secret", clientSecret));
+      append(body, formEntry("client_id", clientId));
+      append(body, formEntry("client_secret", clientSecret));
     } else {
       headers.Authorization = `Basic ${base64(`${clientId}:${clientSecret}`)}`;
     }
@@ -428,7 +476,7 @@ export async function resolveLocalCredentialAuth(
       mode: "client-credentials",
       url: plan.tokenUrl,
       headers: freeze(headers),
-      body: body.join("&"),
+      body: join(body, "&"),
     });
   }
 
@@ -442,11 +490,11 @@ export async function resolveLocalCredentialAuth(
       Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded",
     }),
-    body: [
+    body: join([
       formEntry("grant_type", "client_credentials"),
       formEntry("client_id", values[plan.clientIdName]!),
       formEntry("client_secret", values[plan.clientSecretName]!),
-    ].join("&"),
+    ], "&"),
   });
 }
 

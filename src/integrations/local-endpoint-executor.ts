@@ -18,6 +18,10 @@ type IntegrationEndpointBodyField = NonNullable<IntegrationEndpoint["body"]>[str
 
 const abortControllerAbort = AbortController.prototype.abort;
 const AbortControllerConstructor = AbortController;
+const abortControllerSignal = Object.getOwnPropertyDescriptor(
+  AbortController.prototype,
+  "signal",
+)?.get;
 const abortSignalAborted = Object.getOwnPropertyDescriptor(
   AbortSignal.prototype,
   "aborted",
@@ -45,9 +49,11 @@ const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
 const objectKeys = Object.keys;
 const removeEventListener = EventTarget.prototype.removeEventListener;
+const readableStreamCancel = ReadableStream.prototype.cancel;
 const responseBody = Object.getOwnPropertyDescriptor(Response.prototype, "body")?.get;
 const responseHeaders = Object.getOwnPropertyDescriptor(Response.prototype, "headers")?.get;
 const responseStatus = Object.getOwnPropertyDescriptor(Response.prototype, "status")?.get;
+const promiseCatch = Promise.prototype.catch;
 const setTimeoutIntrinsic = setTimeout;
 const StringConstructor = String;
 const stringCharCodeAt = String.prototype.charCodeAt;
@@ -69,6 +75,7 @@ const typedArrayByteLength = Object.getOwnPropertyDescriptor(
 if (
   typeof abortSignalAborted !== "function" ||
   typeof abortSignalReason !== "function" ||
+  typeof abortControllerSignal !== "function" ||
   typeof responseBody !== "function" ||
   typeof responseHeaders !== "function" ||
   typeof responseStatus !== "function" ||
@@ -154,6 +161,11 @@ function signalValue<T>(
 ): T {
   if (!getter) requestFailed();
   return apply(getter, signal, []);
+}
+
+function controllerSignalValue(controller: AbortController): AbortSignal {
+  if (!abortControllerSignal) requestFailed();
+  return apply(abortControllerSignal, controller, []) as AbortSignal;
 }
 
 function responseStatusValue(response: Response): number {
@@ -283,7 +295,9 @@ function assertKnownArguments(
 ): void {
   const paramNames = objectKeys(endpoint.params ?? {});
   const bodyNames = objectKeys(endpoint.body ?? {});
-  for (const name of objectKeys(args)) {
+  const argumentNames = objectKeys(args);
+  for (let argumentIndex = 0; argumentIndex < argumentNames.length; argumentIndex++) {
+    const name = argumentNames[argumentIndex]!;
     let known = false;
     for (let index = 0; index < paramNames.length; index++) {
       if (paramNames[index] === name) known = true;
@@ -316,7 +330,9 @@ function buildRequest(
   let endpointUrl = endpoint.url;
   const headers = new HeadersConstructor();
 
-  for (const name of objectKeys(endpoint.params ?? {})) {
+  const parameterNames = objectKeys(endpoint.params ?? {});
+  for (let index = 0; index < parameterNames.length; index++) {
+    const name = parameterNames[index]!;
     const field = endpoint.params?.[name];
     if (!field) continue;
     const resolved = fieldValue(args, name, field);
@@ -348,14 +364,17 @@ function buildRequest(
 
   if (!urlSearchParams) requestFailed();
   const searchParams = apply(urlSearchParams, url, []) as URLSearchParams;
-  for (const name of objectKeys(endpoint.params ?? {})) {
+  for (let index = 0; index < parameterNames.length; index++) {
+    const name = parameterNames[index]!;
     const field = endpoint.params?.[name];
     if (!field || field.in !== "query") continue;
     const resolved = fieldValue(args, name, field);
     if (resolved.present) appendQueryValue(searchParams, name, resolved.value, field);
   }
 
-  for (const name of objectKeys(authHeaders)) {
+  const authHeaderNames = objectKeys(authHeaders);
+  for (let index = 0; index < authHeaderNames.length; index++) {
+    const name = authHeaderNames[index]!;
     const value = ownValue(authHeaders, name);
     if (!value.present || typeof value.value !== "string") {
       requestInvalid("Local integration authorization headers are invalid");
@@ -430,7 +449,7 @@ function createRequestSignal(
   }, timeoutMs);
 
   return freeze({
-    signal: controller.signal,
+    signal: controllerSignalValue(controller),
     release(): void {
       clearTimeoutIntrinsic(timeoutId);
       if (signal) apply(removeEventListener, signal, ["abort", abort]);
@@ -517,7 +536,11 @@ async function executeTransportRequest(
   const status = responseStatusValue(response);
   if (status < 200 || status >= 300) {
     try {
-      void responseBodyValue(response)?.cancel().catch(() => undefined);
+      const body = responseBodyValue(response);
+      if (body) {
+        const cancellation = apply(readableStreamCancel, body, []) as Promise<void>;
+        void apply(promiseCatch, cancellation, [() => undefined]);
+      }
     } catch {
       // Response cleanup is best effort and must not expose provider errors.
     }
@@ -589,7 +612,9 @@ export async function executeLocalIntegrationJsonRequest(
       requestInvalid("Local integration request origin does not match its admitted origin");
     }
     const headers = new HeadersConstructor();
-    for (const name of objectKeys(options.headers)) {
+    const headerNames = objectKeys(options.headers);
+    for (let index = 0; index < headerNames.length; index++) {
+      const name = headerNames[index]!;
       const value = ownValue(options.headers, name);
       if (!value.present || typeof value.value !== "string") {
         requestInvalid("Local integration authorization headers are invalid");

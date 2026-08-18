@@ -22,6 +22,31 @@ import { MAX_LOCAL_INTEGRATION_TOOLS } from "./limits.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 import type { IntegrationConfig, IntegrationToolMeta } from "./schema.ts";
 
+const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
+const freeze = Object.freeze;
+const getOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+const MapConstructor = Map;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+const mapSet = Map.prototype.set;
+const objectDefineProperty = Object.defineProperty;
+const objectEntries = Object.entries;
+const objectValues = Object.values;
+const SetConstructor = Set;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
+const stringIncludes = String.prototype.includes;
+const stringReplace = String.prototype.replace;
+const stringStartsWith = String.prototype.startsWith;
+const URLConstructor = URL;
+const urlHash = Object.getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
+const urlHostname = Object.getOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
+const urlOrigin = Object.getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
+const urlPassword = Object.getOwnPropertyDescriptor(URL.prototype, "password")?.get;
+const urlProtocol = Object.getOwnPropertyDescriptor(URL.prototype, "protocol")?.get;
+const urlUsername = Object.getOwnPropertyDescriptor(URL.prototype, "username")?.get;
+
 /** Resolve one local integration credential by its canonical environment-variable name. */
 export type LocalIntegrationCredentialProvider = (
   environmentVariableName: string,
@@ -46,6 +71,32 @@ interface AdmittedLocalIntegrationTool {
   readonly definition: ToolDefinition;
 }
 
+function append<T>(values: T[], value: T): void {
+  objectDefineProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+function stringBoolean(
+  operation: (this: string, search: string) => boolean,
+  value: string,
+  search: string,
+): boolean {
+  return apply(operation, value, [search]);
+}
+
+function urlValue(getter: ((this: URL) => string) | undefined, url: URL): string {
+  if (!getter) configurationError("URL parsing is unavailable in this runtime");
+  return apply(getter, url, []);
+}
+
+function mapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
+  return apply(mapGet, map, [key]) as V | undefined;
+}
+
 function configurationError(detail: string): never {
   return localIntegrationConfigurationError(detail);
 }
@@ -54,7 +105,7 @@ function readOwnDataProperty(
   value: LocalIntegrationToolSourceOptions | readonly unknown[],
   key: PropertyKey,
 ): { present: boolean; value: unknown } {
-  const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+  const descriptor = getOwnPropertyDescriptor(value, key);
   if (!descriptor) return { present: false, value: undefined };
   if (!("value" in descriptor)) {
     configurationError(`Local integration option "${String(key)}" must be a data property`);
@@ -66,12 +117,12 @@ function snapshotOptions(options: LocalIntegrationToolSourceOptions): {
   tools: readonly string[];
   credentialProvider: LocalIntegrationCredentialProvider | undefined;
 } {
-  if (typeof options !== "object" || options === null || Array.isArray(options)) {
+  if (typeof options !== "object" || options === null || arrayIsArray(options)) {
     configurationError("Local integration options must be an object");
   }
 
   const toolsValue = readOwnDataProperty(options, "tools").value;
-  if (!Array.isArray(toolsValue)) {
+  if (!arrayIsArray(toolsValue)) {
     configurationError("Local integration tools must be an array of canonical tool IDs");
   }
   if (toolsValue.length === 0) {
@@ -89,7 +140,7 @@ function snapshotOptions(options: LocalIntegrationToolSourceOptions): {
     if (!item.present || typeof item.value !== "string") {
       configurationError("Local integration tools must contain only canonical string IDs");
     }
-    tools.push(item.value);
+    append(tools, item.value);
   }
 
   const providerValue = readOwnDataProperty(options, "credentialProvider");
@@ -101,7 +152,7 @@ function snapshotOptions(options: LocalIntegrationToolSourceOptions): {
   }
 
   return {
-    tools: Object.freeze(tools),
+    tools: freeze(tools),
     credentialProvider: providerValue.value as LocalIntegrationCredentialProvider | undefined,
   };
 }
@@ -128,7 +179,7 @@ function catalogTool(
       if (typeof tool?.name !== "string" || typeof tool.description !== "string") {
         configurationError(`Local integration tool "${canonicalToolId}" has invalid metadata`);
       }
-      return Object.freeze({
+      return freeze({
         ...tool,
         id: canonicalToolId,
         name: tool.name,
@@ -142,17 +193,20 @@ function catalogTool(
 function assertHttpsCatalogUrl(value: string, label: string): string {
   let parsed: URL;
   try {
-    parsed = new URL(value);
+    parsed = new URLConstructor(value);
   } catch {
     configurationError(`${label} must be a fixed HTTPS URL`);
   }
   if (
-    parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" ||
-    value.includes("{{") || parsed.hostname.includes("{") || parsed.hostname.includes("}")
+    urlValue(urlProtocol, parsed) !== "https:" || urlValue(urlUsername, parsed) !== "" ||
+    urlValue(urlPassword, parsed) !== "" || urlValue(urlHash, parsed) !== "" ||
+    stringBoolean(stringIncludes, value, "{{") ||
+    stringBoolean(stringIncludes, urlValue(urlHostname, parsed), "{") ||
+    stringBoolean(stringIncludes, urlValue(urlHostname, parsed), "}")
   ) {
     configurationError(`${label} must be a fixed HTTPS URL without credentials`);
   }
-  return parsed.origin;
+  return urlValue(urlOrigin, parsed);
 }
 
 function assertSupportedAuth(
@@ -163,7 +217,10 @@ function assertSupportedAuth(
   if (connector.name === "salesforce") return;
 
   if (auth.type === "api-key") {
-    if (auth.queryParamName || endpoint.url.includes("{{auth.token}}")) {
+    if (
+      auth.queryParamName ||
+      stringBoolean(stringIncludes, endpoint.url, "{{auth.token}}")
+    ) {
       configurationError(
         `Local integration "${connector.name}" uses query or URL credentials, ` +
           "which are unsupported",
@@ -209,14 +266,16 @@ function assertSupportedEndpoint(
   if (endpoint.bodyMode === "form-data" || endpoint.bodyMode === "raw") {
     configurationError(`Local integration tool "${toolId}" uses an unsupported body mode`);
   }
-  for (const field of Object.values(endpoint.body ?? {})) {
+  const bodyFields = objectValues(endpoint.body ?? {});
+  for (let index = 0; index < bodyFields.length; index++) {
+    const field = bodyFields[index]!;
     if (field.encoding || field.partFilenameField) {
       configurationError(`Local integration tool "${toolId}" uses an unsupported encoded body`);
     }
   }
 
   if (connector.name === "salesforce") {
-    if (!endpoint.url.startsWith("{{oauth.raw.instance_url}}/")) {
+    if (!stringBoolean(stringStartsWith, endpoint.url, "{{oauth.raw.instance_url}}/")) {
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
     }
     return undefined;
@@ -260,25 +319,29 @@ function toolDefinition(
   const properties: Record<string, JsonSchema> = {};
   const required: string[] = [];
 
-  for (const [name, parameter] of Object.entries(endpoint.params ?? {})) {
+  const parameterEntries = objectEntries(endpoint.params ?? {});
+  for (let index = 0; index < parameterEntries.length; index++) {
+    const [name, parameter] = parameterEntries[index]!;
     properties[name] = inputPropertySchema(parameter);
-    if (parameter.required) required.push(name);
+    if (parameter.required) append(required, name);
   }
-  for (const [name, field] of Object.entries(endpoint.body ?? {})) {
+  const bodyEntries = objectEntries(endpoint.body ?? {});
+  for (let index = 0; index < bodyEntries.length; index++) {
+    const [name, field] = bodyEntries[index]!;
     if (properties[name]) {
       configurationError(`Local integration tool "${tool.id}" declares duplicate input "${name}"`);
     }
     properties[name] = inputPropertySchema(field);
-    if (field.required) required.push(name);
+    if (field.required) append(required, name);
   }
 
-  return Object.freeze({
+  return freeze({
     name: tool.id,
     description: tool.description,
-    parameters: Object.freeze({
+    parameters: freeze({
       type: "object",
-      properties: Object.freeze(properties),
-      required: Object.freeze(required),
+      properties: freeze(properties),
+      required: freeze(required),
       additionalProperties: false,
     }) as JsonSchema,
   });
@@ -308,7 +371,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     canonicalToolId,
   );
   assertSupportedAuth(connector, tool.endpoint);
-  return Object.freeze({
+  return freeze({
     authPlan: createLocalCredentialAuthPlan(connector),
     connector,
     endpoint: tool.endpoint,
@@ -332,28 +395,34 @@ function createLocalIntegrationToolSourceInternal(
   transport?: LocalIntegrationEndpointTransport,
 ): RemoteToolSource {
   const snapshot = snapshotOptions(options);
-  const admitted = new Map<string, AdmittedLocalIntegrationTool>();
+  const admitted = new MapConstructor<string, AdmittedLocalIntegrationTool>();
   const credentialProvider = snapshot.credentialProvider ?? getEnv;
 
-  for (const toolId of snapshot.tools) {
-    if (admitted.has(toolId)) {
+  for (let index = 0; index < snapshot.tools.length; index++) {
+    const toolId = snapshot.tools[index]!;
+    if (apply(mapHas, admitted, [toolId])) {
       configurationError(`Local integration tool "${toolId}" is a duplicate grant`);
     }
-    admitted.set(toolId, admitTool(toolId));
+    apply(mapSet, admitted, [toolId, admitTool(toolId)]);
   }
 
-  return Object.freeze({
+  return freeze({
     id: "veryfront-local-integrations",
     async listTools(): Promise<ToolDefinition[]> {
       assertLocalRuntime();
-      const validatedConnectors = new Set<string>();
-      for (const toolId of snapshot.tools) {
-        const tool = admitted.get(toolId)!;
-        if (validatedConnectors.has(tool.connector.name)) continue;
+      const validatedConnectors = new SetConstructor<string>();
+      for (let index = 0; index < snapshot.tools.length; index++) {
+        const toolId = snapshot.tools[index]!;
+        const tool = mapValue(admitted, toolId)!;
+        if (apply(setHas, validatedConnectors, [tool.connector.name])) continue;
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider);
-        validatedConnectors.add(tool.connector.name);
+        apply(setAdd, validatedConnectors, [tool.connector.name]);
       }
-      return snapshot.tools.map((toolId) => admitted.get(toolId)!.definition);
+      const definitions: ToolDefinition[] = [];
+      for (let index = 0; index < snapshot.tools.length; index++) {
+        append(definitions, mapValue(admitted, snapshot.tools[index]!)!.definition);
+      }
+      return definitions;
     },
     async executeTool(
       toolName: string,
@@ -361,7 +430,7 @@ function createLocalIntegrationToolSourceInternal(
       context?: ToolExecutionContext,
     ): Promise<unknown> {
       assertLocalRuntime();
-      const tool = admitted.get(toolName);
+      const tool = mapValue(admitted, toolName);
       if (!tool) {
         configurationError(`Local integration tool "${toolName}" is not granted by this source`);
       }
@@ -376,12 +445,12 @@ function createLocalIntegrationToolSourceInternal(
         if (!auth.instanceOrigin) {
           configurationError("Local Salesforce execution requires a validated instance origin");
         }
-        endpoint = Object.freeze({
+        endpoint = freeze({
           ...endpoint,
-          url: endpoint.url.replace(
+          url: apply(stringReplace, endpoint.url, [
             "{{oauth.raw.instance_url}}",
             auth.instanceOrigin,
-          ),
+          ]) as string,
         });
         allowedOrigin = auth.instanceOrigin;
       }

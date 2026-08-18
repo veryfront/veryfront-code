@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors } from "./_data.ts";
 import {
@@ -10,6 +15,48 @@ import {
 import type { LocalIntegrationCredentialProvider } from "./local-tool-source.ts";
 
 const SECRET = "LOCAL_PROVIDER_SECRET_MUST_NOT_LEAK";
+const defineProperty = Object.defineProperty;
+const deleteProperty = Reflect.deleteProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+function appendRestorer(restorers: Array<() => void>, restorer: () => void): void {
+  defineProperty(restorers, restorers.length, {
+    configurable: true,
+    enumerable: true,
+    value: restorer,
+    writable: true,
+  });
+}
+
+function replaceProperty(
+  target: object,
+  key: PropertyKey,
+  value: unknown,
+): () => void {
+  const descriptor = getOwnPropertyDescriptor(target, key);
+  defineProperty(target, key, {
+    configurable: true,
+    value,
+    writable: true,
+  });
+  return () => {
+    if (descriptor) defineProperty(target, key, descriptor);
+    else deleteProperty(target, key);
+  };
+}
+
+function replaceDescriptor(
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+): () => void {
+  const previous = getOwnPropertyDescriptor(target, key);
+  defineProperty(target, key, descriptor);
+  return () => {
+    if (previous) defineProperty(target, key, previous);
+    else deleteProperty(target, key);
+  };
+}
 
 function connector(name: string) {
   const value = connectors.find((candidate) => candidate.name === name);
@@ -86,7 +133,7 @@ describe("local integration credential auth", () => {
       }),
     );
 
-    assertEquals(resolved.kind, "token-request");
+    assert(resolved.kind === "token-request");
     assertEquals(resolved.mode, "client-credentials");
     assertEquals(resolved.url, "https://api-m.paypal.com/v1/oauth2/token");
     assertEquals(resolved.headers, {
@@ -114,7 +161,7 @@ describe("local integration credential auth", () => {
       }),
     );
 
-    assertEquals(resolved.kind, "token-request");
+    assert(resolved.kind === "token-request");
     assertEquals(resolved.mode, "salesforce-service-account");
     assertEquals(resolved.url, "https://acme.my.salesforce.com/services/oauth2/token");
     assertEquals(resolved.headers, {
@@ -125,6 +172,72 @@ describe("local integration credential auth", () => {
       resolved.body,
       `grant_type=client_credentials&client_id=salesforce-client&client_secret=${SECRET}`,
     );
+  });
+
+  it("keeps credential resolution independent from ambient collection primordials", async () => {
+    const paypalConnector = connector("paypal");
+    const salesforceConnector = connector("salesforce");
+    const restorers: Array<() => void> = [];
+    let poisonCalls = 0;
+    const poison = (): never => {
+      poisonCalls += 1;
+      throw new Error("ambient credential primordial used");
+    };
+    let paypal: Awaited<ReturnType<typeof resolveLocalCredentialAuth>> | undefined;
+    let salesforce: Awaited<ReturnType<typeof resolveLocalCredentialAuth>> | undefined;
+
+    try {
+      appendRestorer(restorers, replaceProperty(Array, "isArray", poison));
+      appendRestorer(restorers, replaceProperty(Array.prototype, "indexOf", poison));
+      appendRestorer(restorers, replaceProperty(Array.prototype, "join", poison));
+      appendRestorer(restorers, replaceProperty(Array.prototype, "push", poison));
+      appendRestorer(restorers, replaceProperty(Array.prototype, "splice", poison));
+      appendRestorer(restorers, replaceProperty(Object, "create", poison));
+      appendRestorer(restorers, replaceProperty(Object, "entries", poison));
+      appendRestorer(restorers, replaceProperty(Object, "freeze", poison));
+      appendRestorer(restorers, replaceProperty(Object, "values", poison));
+      appendRestorer(restorers, replaceProperty(String, "fromCharCode", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "charCodeAt", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "endsWith", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "includes", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "toLowerCase", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "trim", poison));
+      appendRestorer(
+        restorers,
+        replaceDescriptor(Array.prototype, "0", {
+          configurable: true,
+          set: poison,
+        }),
+      );
+
+      paypal = await resolveLocalCredentialAuth(
+        createLocalCredentialAuthPlan(paypalConnector),
+        providerFrom({
+          PAYPAL_CLIENT_ID: "paypal-client",
+          PAYPAL_CLIENT_SECRET: SECRET,
+        }),
+      );
+      salesforce = await resolveLocalCredentialAuth(
+        createLocalCredentialAuthPlan(salesforceConnector),
+        providerFrom({
+          SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID: "salesforce-client",
+          SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET: SECRET,
+          SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL: "https://acme.my.salesforce.com",
+        }),
+      );
+    } finally {
+      for (let index = restorers.length - 1; index >= 0; index--) restorers[index]?.();
+    }
+
+    assertEquals(poisonCalls, 0);
+    assert(paypal);
+    assert(paypal.kind === "token-request");
+    assert(Object.isFrozen(paypal));
+    assertEquals(paypal.body, "grant_type=client_credentials");
+    assert(salesforce);
+    assert(salesforce.kind === "token-request");
+    assert(Object.isFrozen(salesforce));
+    assertEquals(salesforce.url, "https://acme.my.salesforce.com/services/oauth2/token");
   });
 
   it("reports only missing variable names and calls a provider with names only", async () => {
@@ -140,6 +253,7 @@ describe("local integration credential auth", () => {
     );
 
     assertEquals(calls, ["SENDCLOUD_PUBLIC_KEY", "SENDCLOUD_SECRET_KEY"]);
+    assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "local-integration-credentials-missing");
     assert(error.message.includes("SENDCLOUD_SECRET_KEY"));
     assertEquals(error.message.includes("public-key"), false);
@@ -153,6 +267,7 @@ describe("local integration credential auth", () => {
         () => resolveLocalCredentialAuth(plan, () => value),
         VeryfrontError,
       );
+      assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "local-integration-credentials-missing");
       if (value.length > 16_384) {
         assertEquals(error.message.includes(value), false);
@@ -166,6 +281,7 @@ describe("local integration credential auth", () => {
         }),
       VeryfrontError,
     );
+    assertInstanceOf(providerError, VeryfrontError);
     assertEquals(providerError.slug, "local-integration-credential-unavailable");
     assertEquals(providerError.message.includes(SECRET), false);
     assertEquals(providerError.cause, undefined);
@@ -192,6 +308,7 @@ describe("local integration credential auth", () => {
           ),
         VeryfrontError,
       );
+      assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "local-integration-config-invalid");
       assertEquals(error.message.includes(SECRET), false);
     }
@@ -203,6 +320,7 @@ describe("local integration credential auth", () => {
         async () => createLocalCredentialAuthPlan(connector(name)),
         VeryfrontError,
       );
+      assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "local-integration-config-invalid");
     }
   });
