@@ -3220,10 +3220,23 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             }
             possibleEarlierEntry = fallthroughCompletion === "normal";
           }
-          for (const later of cases.slice(index + 1)) {
+          const laterCases = cases.slice(index + 1);
+          for (const later of laterCases) {
             if (!isNode(later)) continue;
             if (isNode(later.test)) deferred.add(later.test);
-            if (!possibleEarlierEntry) {
+          }
+          if (possibleEarlierEntry) {
+            const laterStatements = laterCases.flatMap((later) =>
+              isNode(later) && Array.isArray(later.consequent)
+                ? later.consequent.filter(isNode)
+                : []
+            );
+            mergeCompletedEntry(
+              deferStatementListTail(laterStatements, initializedNames),
+            );
+          } else {
+            for (const later of laterCases) {
+              if (!isNode(later)) continue;
               for (const consequent of Array.isArray(later.consequent) ? later.consequent : []) {
                 if (isNode(consequent)) deferred.add(consequent);
               }
