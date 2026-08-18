@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotStrictEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DirEntry, FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getProdHydrationModulePath } from "./prod-scripts.ts";
+import { getProdHydrationModulePath, PROD_HYDRATION_MODULE_PATH } from "./prod-scripts.ts";
 import {
   hasImmutableReleaseHydrationRuntime,
   resolveProdHydrationModulePath,
@@ -133,18 +133,36 @@ describe("resolveProdHydrationModulePath", () => {
     );
   });
 
-  it("fails closed when a release has no baked content-addressed runtime", async () => {
-    const error = await assertRejects(
-      () =>
-        resolveProdHydrationModulePath({
-          fs: releaseFileSystem(["hydration-runtime.js", "router.js"]),
-          projectDir: "/project",
-          releaseId: "release-incomplete",
-        }),
-      Error,
+  it("falls back to the rollout-stable serving runtime when a release has no baked content-addressed runtime", async () => {
+    assertEquals(
+      await resolveProdHydrationModulePath({
+        fs: releaseFileSystem(["hydration-runtime.js", "router.js"]),
+        projectDir: "/project",
+        releaseId: "release-legacy",
+      }),
+      PROD_HYDRATION_MODULE_PATH,
+      "legacy releases without a versioned runtime must keep rendering on the serving runtime",
     );
+  });
 
-    assertEquals((error as { slug?: unknown }).slug, "render-error");
+  it("falls back to the serving runtime when a hosted release has no build output at all", async () => {
+    // The hosted API-backed fs lists nonexistent directories as empty instead
+    // of throwing (directory-operations.ts), and hosted release file trees
+    // carry no dist/ output. This is the exact production incident of
+    // 2026-08-18: every hosted release render must not fail closed here.
+    assertEquals(
+      await resolveProdHydrationModulePath({
+        fs: releaseFileSystem([]),
+        projectDir: "/project",
+        releaseId: "1cc57479-6864-4af1-ae6a-b49815028f63",
+      }),
+      PROD_HYDRATION_MODULE_PATH,
+      "hosted releases without dist output must keep rendering on the serving runtime",
+    );
+    // The unversioned path stays valid across a rolling deploy: every pod
+    // serves its own bytes there, while a pod-specific content-addressed URL
+    // 404s on peer pods that generated a different hash.
+    assertEquals(PROD_HYDRATION_MODULE_PATH === getProdHydrationModulePath(), false);
   });
 
   it("fails closed when an immutable release directory is missing", async () => {
