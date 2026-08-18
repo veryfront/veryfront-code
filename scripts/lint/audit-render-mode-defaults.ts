@@ -41,7 +41,10 @@ const RULES: Rule[] = [
   },
   {
     name: "dev-default",
-    pattern: /\b(?:dev|isLocal|isLocalProject)\s*=\s*true\b/,
+    // The optional `: alias` arm catches `const { dev: renderDev = true } = x`,
+    // which is a destructuring default wearing a different local name.
+    pattern:
+      /\b(?:dev|isLocal|isLocalProject)\b(?:\s*:\s*[$\w]+)?\s*=\s*true\b/,
     guidance: "default this flag to false and let callers opt into development",
   },
   {
@@ -59,9 +62,16 @@ const RULES: Rule[] = [
 /**
  * Strip comments so documentation examples cannot trigger a match. String
  * literals are kept, because two of the rules match on `"development"`.
+ *
+ * A block comment is blanked rather than deleted so that the line and column
+ * layout survives. Deleting it would shift every line number after a
+ * multi-line comment and make the reported location wrong.
  */
 export function stripComments(text: string): string {
-  const withoutBlocks = text.replace(/\/\*[\s\S]*?\*\//g, "");
+  const withoutBlocks = text.replace(
+    /\/\*[\s\S]*?\*\//g,
+    (comment) => comment.replace(/[^\r\n]/g, " "),
+  );
   return withoutBlocks.replace(/(^|[^:])\/\/[^\n]*/g, "$1");
 }
 
@@ -107,20 +117,24 @@ async function walk(
   dir: string,
   onFile: (path: string) => Promise<void>,
 ): Promise<void> {
-  let entries: AsyncIterable<Deno.DirEntry>;
   try {
-    entries = Deno.readDir(dir);
-  } catch (_) {
-    return; // expected: a scan root may not exist in every checkout
-  }
-  for await (const entry of entries) {
-    if (entry.name === "node_modules") continue;
-    const full = `${dir}/${entry.name}`;
-    if (entry.isDirectory) {
-      await walk(full, onFile);
-    } else if (entry.isFile && isScannedFile(full)) {
-      await onFile(full);
+    // `Deno.readDir` is lazy, so a failure surfaces here rather than at the
+    // call. The iteration has to be inside the guard.
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.name === "node_modules") continue;
+      const full = `${dir}/${entry.name}`;
+      if (entry.isDirectory) {
+        await walk(full, onFile);
+      } else if (entry.isFile && isScannedFile(full)) {
+        await onFile(full);
+      }
     }
+  } catch (error) {
+    // A scan root can be absent in a partial checkout. Nothing else may be
+    // swallowed: a check that cannot read the tree must fail loudly, not
+    // report "no violations" for files it never opened.
+    if (error instanceof Deno.errors.NotFound) return;
+    throw error;
   }
 }
 

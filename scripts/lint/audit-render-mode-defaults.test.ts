@@ -1,5 +1,5 @@
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findFailOpenDefaults,
   isScannedFile,
@@ -21,6 +21,14 @@ describe("findFailOpenDefaults", () => {
 
   it("flags a destructuring or parameter default of true", () => {
     assertEquals(rules("        dev = true,"), ["1:dev-default"]);
+  });
+
+  it("flags an aliased destructuring default", () => {
+    const source = [
+      "const { dev: renderDev = true } = options;",
+      "const { isLocalProject: local = true } = options;",
+    ].join("\n");
+    assertEquals(rules(source), ["1:dev-default", "2:dev-default"]);
   });
 
   it("flags a render mode defaulting to development", () => {
@@ -64,6 +72,17 @@ describe("findFailOpenDefaults", () => {
     assertEquals(rules(source), []);
   });
 
+  it("keeps line numbers correct after a multi-line block comment", () => {
+    const source = [
+      "/*", // 1
+      " * a comment", // 2
+      " * spanning lines", // 3
+      " */", // 4
+      "const dev = options?.dev ?? true;", // 5
+    ].join("\n");
+    assertEquals(findFailOpenDefaults(source)[0]?.line, 5);
+  });
+
   it("reports one violation per line and a 1-based line number", () => {
     const source = ["const a = 1;", "", "const dev = options?.dev ?? true;"]
       .join("\n");
@@ -78,6 +97,12 @@ describe("stripComments", () => {
       stripComments('const m = "development"; // note').trim(),
       'const m = "development";',
     );
+  });
+
+  it("blanks a block comment without removing its line breaks", () => {
+    const stripped = stripComments("/*\n * x\n */\ncode;");
+    assertEquals(stripped.split("\n").length, 4);
+    assertEquals(stripped.split("\n")[3], "code;");
   });
 });
 
