@@ -3210,6 +3210,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             ) {
               if (isNode(consequent)) deferred.add(consequent);
             }
+          } else if (Array.isArray(caseNode.consequent)) {
+            const fallthroughCompletion = deferStatementListTail(
+              caseNode.consequent,
+              initializedNames,
+            );
+            if (fallthroughCompletion !== "normal") {
+              mergeCompletedEntry(fallthroughCompletion);
+            }
+            possibleEarlierEntry = fallthroughCompletion === "normal";
           }
           for (const later of cases.slice(index + 1)) {
             if (!isNode(later)) continue;
