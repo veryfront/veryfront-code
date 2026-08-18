@@ -2355,6 +2355,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   ): void => {
     const expression = unwrap(node);
     if (
+      (expression.type === "SpreadElement" || expression.type === "AwaitExpression" ||
+        expression.type === "UnaryExpression" || expression.type === "UpdateExpression") &&
+      isNode(expression.argument)
+    ) {
+      deferOrderedExpressionTail(expression.argument, initializedNames);
+      return;
+    }
+    if (
       expression.type === "AssignmentExpression" && expression.operator === "=" &&
       isNode(expression.left) && isNode(expression.right) &&
       (expression.left.type === "MemberExpression" ||
@@ -2687,6 +2695,35 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (body) deferred.add(body);
         }
         return false;
+      }
+      if (statement.type === "SwitchStatement") {
+        const discriminant = isNode(statement.discriminant) ? statement.discriminant : undefined;
+        if (
+          discriminant &&
+          !staticPrimitiveValue(discriminant, initializedNames).known &&
+          !isInertExpression(discriminant, noNameHelpers, initializedNames)
+        ) {
+          deferOrderedExpressionTail(discriminant, initializedNames);
+          for (const caseNode of Array.isArray(statement.cases) ? statement.cases : []) {
+            if (!isNode(caseNode)) continue;
+            if (isNode(caseNode.test)) deferred.add(caseNode.test);
+            for (
+              const consequent of Array.isArray(caseNode.consequent) ? caseNode.consequent : []
+            ) {
+              if (isNode(consequent)) deferred.add(consequent);
+            }
+          }
+        }
+        return false;
+      }
+      if (statement.type === "TryStatement") {
+        const block = isNode(statement.block) ? statement.block : undefined;
+        const handler = isNode(statement.handler) ? statement.handler : undefined;
+        const finalizer = isNode(statement.finalizer) ? statement.finalizer : undefined;
+        const blockCompletes = block ? statementCompletes(block) : true;
+        if (blockCompletes && handler) deferred.add(handler);
+        const finalizerCompletes = finalizer ? statementCompletes(finalizer) : true;
+        return blockCompletes && finalizerCompletes;
       }
       if (statement.type === "IfStatement") {
         const test = isNode(statement.test) ? statement.test : undefined;
