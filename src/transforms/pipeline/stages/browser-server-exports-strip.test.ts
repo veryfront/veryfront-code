@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../plugins/__tests__/code-parser-setup.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
@@ -223,6 +224,8 @@ describe("browser-server-exports-strip", () => {
 
       const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
 
+      assertEquals(error instanceof VeryfrontError, true);
+      assertEquals((error as VeryfrontError).slug, "server-export-strip-failed");
       assertStringIncludes((error as Error).message, "pages/x.tsx");
     });
 
@@ -1474,6 +1477,16 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "an invoked factory-returned function mutation",
+          [
+            `(function () {`,
+            `  return function (intrinsic) {`,
+            `    intrinsic.defineProperty = recordAndReturn;`,
+            `  };`,
+            `})()(Object);`,
+          ].join("\n"),
+        ],
+        [
           "an intrinsic mutation invoked through call",
           `Object.defineProperty.call(null, Object, "defineProperty", { value: recordAndReturn });`,
         ],
@@ -2289,6 +2302,13 @@ describe("browser-server-exports-strip", () => {
             `run("Object.defineProperty = (target) => target");`,
           ].join("\n"),
         ],
+        [
+          "array-destructured global-object eval",
+          [
+            `const [run] = [globalThis.eval];`,
+            `run("Object.defineProperty = (target) => target");`,
+          ].join("\n"),
+        ],
       ]
     ) {
       it(`does not treat a module reaching the intrinsic through ${label} as compiler metadata`, async () => {
@@ -2499,6 +2519,18 @@ describe("browser-server-exports-strip", () => {
             `    intrinsic.defineProperty = recordAndReturn;`,
             `  }`,
             `}`,
+            `new Mutator(Object);`,
+          ].join("\n"),
+        ],
+        [
+          "an inherited implicit-constructor mutation",
+          [
+            `class Base {`,
+            `  constructor(intrinsic) {`,
+            `    intrinsic.defineProperty = recordAndReturn;`,
+            `  }`,
+            `}`,
+            `class Mutator extends Base {}`,
             `new Mutator(Object);`,
           ].join("\n"),
         ],

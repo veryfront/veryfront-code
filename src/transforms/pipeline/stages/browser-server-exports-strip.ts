@@ -151,6 +151,7 @@
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
+import { SERVER_EXPORT_STRIP_FAILED } from "#veryfront/errors";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import {
@@ -2678,6 +2679,81 @@ function invokedFunctionParameterBindings(
     });
   }
 
+  const concreteValues = (
+    entry: Node,
+    seenBindings = new Set<LexicalBindingIdentity>(),
+  ): Node[] => {
+    const value = unwrapTransparent(entry);
+    if (value.type === "Identifier") {
+      const binding = bindings.reference(value);
+      if (!binding || seenBindings.has(binding)) return [];
+      const nextSeen = new Set(seenBindings);
+      nextSeen.add(binding);
+      return (valueFlows.get(binding) ?? []).flatMap((source) =>
+        concreteValues(source, new Set(nextSeen))
+      );
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return last ? concreteValues(last, seenBindings) : [];
+    }
+    if (value.type === "ConditionalExpression") {
+      return [value.consequent, value.alternate].filter(isNode).flatMap((branch) =>
+        concreteValues(branch, new Set(seenBindings))
+      );
+    }
+    if (value.type === "LogicalExpression") {
+      return [value.left, value.right].filter(isNode).flatMap((branch) =>
+        concreteValues(branch, new Set(seenBindings))
+      );
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return concreteValues(value.right, seenBindings);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return concreteValues(value.argument, seenBindings);
+    }
+    if (
+      (value.type === "CallExpression" || value.type === "OptionalCallExpression") &&
+      isNode(value.callee)
+    ) {
+      const binder = unwrapTransparent(value.callee);
+      if (
+        (binder.type === "MemberExpression" || binder.type === "OptionalMemberExpression") &&
+        memberKey(binder) === "bind" && isNode(binder.object)
+      ) {
+        return concreteValues(binder.object, seenBindings);
+      }
+
+      const invocation = normalizeCall(value, globals);
+      if (!invocation) return [];
+      const returned: Node[] = [];
+      for (const callee of concreteValues(invocation.callee, new Set(seenBindings))) {
+        if (
+          callee.type !== "FunctionDeclaration" && callee.type !== "FunctionExpression" &&
+          callee.type !== "ArrowFunctionExpression"
+        ) continue;
+        // Async factories return a promise and generator factories return an
+        // iterator, neither synchronously hands the caller a callable value.
+        if (callee.async === true || callee.generator === true || !isNode(callee.body)) continue;
+        if (callee.body.type !== "BlockStatement") {
+          returned.push(...concreteValues(callee.body, new Set(seenBindings)));
+          continue;
+        }
+        walk(callee.body, (node) => {
+          if (node !== callee.body && startsVarScope(node)) return false;
+          if (node.type === "ReturnStatement" && isNode(node.argument)) {
+            returned.push(...concreteValues(node.argument, new Set(seenBindings)));
+          }
+          return true;
+        });
+      }
+      return returned;
+    }
+    return [value];
+  };
+
   const collect = (
     callee: unknown,
     runGenerator: false | "once" | "all",
@@ -2737,6 +2813,10 @@ function invokedFunctionParameterBindings(
         collect(binder.object, runGenerator, seenBindings);
         return;
       }
+      for (const returned of concreteValues(target, new Set(seenBindings))) {
+        collect(returned, runGenerator, new Set(seenBindings));
+      }
+      return;
     }
     if (target.type === "ClassDeclaration" || target.type === "ClassExpression") {
       const members = isNode(target.body) && Array.isArray(target.body.body)
@@ -2751,6 +2831,12 @@ function invokedFunctionParameterBindings(
           const binding = bindings.declaration(identifier);
           if (binding) invoked.add(binding);
         }
+      }
+      // A derived constructor invokes its superclass constructor. Following
+      // the heritage value also covers the implicit constructor that forwards
+      // every argument to `super`, which has no local parameter AST to mark.
+      if (isNode(target.superClass)) {
+        collect(target.superClass, false, new Set(seenBindings));
       }
       return;
     }
@@ -3041,7 +3127,7 @@ function hasReflectionRoute(
       if (node.type === "VariableDeclarator" && isNode(node.id) && isNode(node.init)) {
         if (node.id.type === "Identifier") {
           addFlow(bindings.declaration(node.id), node.init);
-        } else if (node.id.type === "ObjectPattern") {
+        } else if (node.id.type === "ObjectPattern" || node.id.type === "ArrayPattern") {
           destructured.push({ pattern: node.id, value: node.init, declaration: true });
         }
       } else if (
@@ -3049,7 +3135,7 @@ function hasReflectionRoute(
       ) {
         if (node.left.type === "Identifier") {
           addFlow(bindings.reference(node.left), node.right);
-        } else if (node.left.type === "ObjectPattern") {
+        } else if (node.left.type === "ObjectPattern" || node.left.type === "ArrayPattern") {
           destructured.push({ pattern: node.left, value: node.right, declaration: false });
         }
       }
@@ -3094,24 +3180,6 @@ function hasReflectionRoute(
   };
 
   const destructuredCodeRoutes = new Set<LexicalBindingIdentity>();
-  for (const { pattern, value, declaration } of destructured) {
-    if (!carriesGlobalObject(value)) continue;
-    for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
-      if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.value)) {
-        continue;
-      }
-      const key = isNode(property.key) ? property.key : undefined;
-      const name = property.computed === true ? stringLiteralText(key) : literalText(key);
-      if (name !== null && !CODE_FROM_STRING_NAMES.has(name)) continue;
-      for (const identifier of patternBindingIdentifiers(property.value)) {
-        const binding = declaration
-          ? bindings.declaration(identifier)
-          : bindings.reference(identifier);
-        if (binding) destructuredCodeRoutes.add(binding);
-      }
-    }
-  }
-
   const isRoute = (
     entry: Node | undefined,
     seen = new Set<LexicalBindingIdentity>(),
@@ -3170,6 +3238,83 @@ function hasReflectionRoute(
     }
     return false;
   };
+
+  const arrayValues = (
+    entry: Node,
+    seen = new Set<LexicalBindingIdentity>(),
+  ): Array<Array<Node | undefined>> => {
+    const value = unwrapTransparent(entry);
+    if (value.type === "ArrayExpression") {
+      return [
+        Array.isArray(value.elements)
+          ? value.elements.map((element) => isNode(element) ? element : undefined)
+          : [],
+      ];
+    }
+    if (value.type === "Identifier") {
+      const binding = bindings.reference(value);
+      if (!binding || seen.has(binding)) return [];
+      const nextSeen = new Set(seen);
+      nextSeen.add(binding);
+      return (flows.get(binding) ?? []).flatMap((source) => arrayValues(source, new Set(nextSeen)));
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return last ? arrayValues(last, seen) : [];
+    }
+    if (value.type === "ConditionalExpression") {
+      return [value.consequent, value.alternate].filter(isNode).flatMap((branch) =>
+        arrayValues(branch, new Set(seen))
+      );
+    }
+    if (value.type === "LogicalExpression") {
+      return [value.left, value.right].filter(isNode).flatMap((branch) =>
+        arrayValues(branch, new Set(seen))
+      );
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return arrayValues(value.right, seen);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return arrayValues(value.argument, seen);
+    }
+    return [];
+  };
+
+  for (const { pattern, value, declaration } of destructured) {
+    if (pattern.type === "ObjectPattern") {
+      if (!carriesGlobalObject(value)) continue;
+      for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
+        if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.value)) {
+          continue;
+        }
+        const key = isNode(property.key) ? property.key : undefined;
+        const name = property.computed === true ? stringLiteralText(key) : literalText(key);
+        if (name !== null && !CODE_FROM_STRING_NAMES.has(name)) continue;
+        for (const identifier of patternBindingIdentifiers(property.value)) {
+          const binding = declaration
+            ? bindings.declaration(identifier)
+            : bindings.reference(identifier);
+          if (binding) destructuredCodeRoutes.add(binding);
+        }
+      }
+      continue;
+    }
+
+    const elements = Array.isArray(pattern.elements) ? pattern.elements : [];
+    for (const values of arrayValues(value)) {
+      for (const [index, element] of elements.entries()) {
+        if (!isNode(element) || !isRoute(values[index])) continue;
+        for (const identifier of patternBindingIdentifiers(element)) {
+          const binding = declaration
+            ? bindings.declaration(identifier)
+            : bindings.reference(identifier);
+          if (binding) destructuredCodeRoutes.add(binding);
+        }
+      }
+    }
+  }
 
   for (const target of propertyWriteTargets(body)) {
     const member = unwrapTransparent(target);
@@ -4233,21 +4378,14 @@ interface Blocker {
  * Emitting the module anyway would put the loader, its imports and anything it
  * closes over into the browser bundle, so the build stops instead.
  */
-class ServerExportStripError extends Error {
-  /** Catalog slug, so the failure resolves to its entry and its docs page. */
-  readonly slug = "server-export-strip-failed";
-
-  constructor(
-    filePath: string | undefined,
-    reason: string,
-    remedy: string = REMEDY.declareDirectly,
-  ) {
-    super(
-      `Cannot remove the server-only export from ${filePath ?? "this module"} ` +
-        `before it is sent to the browser: ${reason}.` + (remedy ? ` ${remedy}` : ""),
-    );
-    this.name = "ServerExportStripError";
-  }
+function createServerExportStripError(
+  filePath: string | undefined,
+  reason: string,
+  remedy: string = REMEDY.declareDirectly,
+) {
+  const message = `Cannot remove the server-only export from ${filePath ?? "this module"} ` +
+    `before it is sent to the browser: ${reason}.` + (remedy ? ` ${remedy}` : "");
+  return SERVER_EXPORT_STRIP_FAILED.create({ message, detail: message });
 }
 
 /**
@@ -4268,7 +4406,7 @@ export async function stripServerOnlyExports(
 
   const parser = tryResolve<CodeParser>("CodeParser");
   if (!parser) {
-    throw new ServerExportStripError(
+    throw createServerExportStripError(
       filePath,
       "no CodeParser extension is registered",
       REMEDY.none,
@@ -4287,7 +4425,7 @@ export async function stripServerOnlyExports(
     ast = await parser.parse({ code, filePath: filePath ?? "module.tsx" });
     body = bodyOf(ast);
   } catch (error) {
-    throw new ServerExportStripError(
+    throw createServerExportStripError(
       filePath,
       error instanceof Error ? error.message : String(error),
       REMEDY.none,
@@ -4296,7 +4434,7 @@ export async function stripServerOnlyExports(
 
   const { locals, unhandled } = exportedHookBindings(body);
   if (unhandled.length > 0) {
-    throw new ServerExportStripError(filePath, `it is exported as \`${unhandled[0]}\``);
+    throw createServerExportStripError(filePath, `it is exported as \`${unhandled[0]}\``);
   }
   if (locals.size === 0) return code;
 
@@ -4309,7 +4447,7 @@ export async function stripServerOnlyExports(
   const assigned = assignedNames(body);
   const reassigned = [...locals].filter((name) => assigned.has(name));
   if (reassigned.length > 0) {
-    throw new ServerExportStripError(
+    throw createServerExportStripError(
       filePath,
       `\`${reassigned[0]}\` is reassigned after its declaration, so the assigned ` +
         `server loader would ship to the browser and overwrite the stripped stub`,
@@ -4325,7 +4463,7 @@ export async function stripServerOnlyExports(
   const hoisted = hoistedVarNames(body);
   const redeclared = [...locals].filter((name) => hoisted.has(name));
   if (redeclared.length > 0) {
-    throw new ServerExportStripError(
+    throw createServerExportStripError(
       filePath,
       `\`${redeclared[0]}\` is redeclared by a hoisted \`var\` below the module's ` +
         `top level, so the hoisted server loader would ship to the browser and ` +
@@ -4345,7 +4483,7 @@ export async function stripServerOnlyExports(
   const emptied = emptyServerOnlyHooks(body, locals, stubs);
   const missed = [...locals].filter((name) => !emptied.has(name));
   if (missed.length > 0) {
-    throw new ServerExportStripError(
+    throw createServerExportStripError(
       filePath,
       `\`${missed[0]}\` is exported but its declaration is not a function or ` +
         `variable this pass can stub`,
@@ -4383,7 +4521,7 @@ export async function stripServerOnlyExports(
     removedNames,
   );
   if (firstBlocked) {
-    throw new ServerExportStripError(filePath, firstBlocked.reason, firstBlocked.remedy);
+    throw createServerExportStripError(filePath, firstBlocked.reason, firstBlocked.remedy);
   }
 
   const pruned = body.filter((statement) => !removableStatements.has(statement));
@@ -4408,7 +4546,7 @@ export async function stripServerOnlyExports(
       });
       emittedBody = bodyOf(emitted);
     } catch (error) {
-      throw new ServerExportStripError(
+      throw createServerExportStripError(
         filePath,
         `the stripped output no longer parses: ${
           error instanceof Error ? error.message : String(error)
@@ -4428,7 +4566,7 @@ export async function stripServerOnlyExports(
     }
     const leaked = [...removedNames].filter((name) => residual.has(name));
     if (leaked.length > 0) {
-      throw new ServerExportStripError(
+      throw createServerExportStripError(
         filePath,
         `the server-only binding \`${leaked[0]}\` still appears in the stripped output`,
         REMEDY.none,
