@@ -286,11 +286,15 @@ describe("guide content contracts", () => {
   });
 
   it("documents account-free local integration credentials without weakening grants", async () => {
-    const integrations = await Deno.readTextFile("docs/guides/integrations.md");
-    const salesforce = await Deno.readTextFile(
-      "docs/guides/integrations/salesforce.md",
+    const integrations = await Deno.readTextFile(
+      new URL("docs/guides/integrations.md", repoRoot),
     );
-    const selfHosting = await Deno.readTextFile("docs/guides/self-hosting.md");
+    const salesforce = await Deno.readTextFile(
+      new URL("docs/guides/integrations/salesforce.md", repoRoot),
+    );
+    const selfHosting = await Deno.readTextFile(
+      new URL("docs/guides/self-hosting.md", repoRoot),
+    );
     const docs = [integrations, salesforce, selfHosting].join("\n");
 
     assertStringIncludes(docs, "createLocalIntegrationToolSource");
