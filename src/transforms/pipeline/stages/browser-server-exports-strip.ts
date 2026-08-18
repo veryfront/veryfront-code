@@ -2906,10 +2906,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     }
   };
 
-  function deferStatementListTail(
-    statements: unknown[],
-    initializedNames: ReadonlySet<string>,
-  ):
+  type Completion =
     | "normal"
     | "throw"
     | "return"
@@ -2917,16 +2914,12 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     | "continue"
     | `break:${string}`
     | `continue:${string}`
-    | "unknown" {
-    type Completion =
-      | "normal"
-      | "throw"
-      | "return"
-      | "break"
-      | "continue"
-      | `break:${string}`
-      | `continue:${string}`
-      | "unknown";
+    | "unknown";
+
+  function deferStatementListTail(
+    statements: unknown[],
+    initializedNames: ReadonlySet<string>,
+  ): Completion {
     const statementCompletion = (statement: Node): Completion => {
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
@@ -3112,7 +3105,19 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         let earlierDefault: Node | null = null;
         let earlierDefaultIndex = -1;
         let defaultReachableByPriorMatch = false;
+        let earlierDefaultCompletion: Completion | null = null;
         let possibleCaseMatch = false;
+        let possibleCompletedEntry: Completion | null = null;
+        const mergeCompletedEntry = (completion: Completion): void => {
+          const normalized = completion === "break" ? "normal" : completion;
+          if (possibleCompletedEntry === null) {
+            possibleCompletedEntry = normalized;
+          } else if (possibleCompletedEntry === "normal" || normalized === "normal") {
+            possibleCompletedEntry = "normal";
+          } else if (possibleCompletedEntry !== normalized) {
+            possibleCompletedEntry = "unknown";
+          }
+        };
         for (let index = 0; index < cases.length; index++) {
           const caseNode = cases[index];
           if (!isNode(caseNode)) continue;
@@ -3121,8 +3126,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             earlierDefaultIndex = index;
             defaultReachableByPriorMatch = possibleEarlierEntry;
             possibleEarlierEntry = true;
-            if (!discriminantValue.known && Array.isArray(caseNode.consequent)) {
-              deferStatementListTail(caseNode.consequent, initializedNames);
+            if (Array.isArray(caseNode.consequent)) {
+              const defaultCompletion = deferStatementListTail(
+                caseNode.consequent,
+                initializedNames,
+              );
+              earlierDefaultCompletion = defaultCompletion;
+              if (defaultReachableByPriorMatch && defaultCompletion !== "normal") {
+                mergeCompletedEntry(defaultCompletion);
+              }
+              possibleEarlierEntry = defaultCompletion === "normal";
             }
             continue;
           }
@@ -3153,7 +3166,8 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
               selectedStatements,
               initializedNames,
             );
-            return selectedCompletion === "break" ? "normal" : selectedCompletion;
+            mergeCompletedEntry(selectedCompletion);
+            return possibleCompletedEntry ?? "unknown";
           }
           if (discriminantValue.known && testValue.known) {
             if (!possibleEarlierEntry) {
@@ -3162,6 +3176,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
               ) {
                 if (isNode(consequent)) deferred.add(consequent);
               }
+            } else if (Array.isArray(caseNode.consequent)) {
+              const mismatchCompletion = deferStatementListTail(
+                caseNode.consequent,
+                initializedNames,
+              );
+              if (mismatchCompletion !== "normal") {
+                mergeCompletedEntry(mismatchCompletion);
+              }
+              possibleEarlierEntry = mismatchCompletion === "normal";
             }
             continue;
           }
@@ -3173,7 +3196,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
                 caseNode.consequent,
                 initializedNames,
               );
-              possibleEarlierEntry = caseCompletion === "normal" || caseCompletion === "unknown";
+              if (caseCompletion !== "normal") {
+                mergeCompletedEntry(caseCompletion);
+              }
+              possibleEarlierEntry = caseCompletion === "normal";
             }
             continue;
           }
@@ -3194,7 +3220,8 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
               }
             }
           }
-          return "unknown";
+          mergeCompletedEntry("unknown");
+          return possibleCompletedEntry ?? "unknown";
         }
         if (
           discriminantValue.known && earlierDefault && earlierDefaultIndex >= 0 &&
@@ -3214,7 +3241,17 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         if (discriminantValue.known && !possibleCaseMatch && !earlierDefault) {
           return "normal";
         }
-        return "unknown";
+        if (possibleCaseMatch) {
+          if (earlierDefault) {
+            if (earlierDefaultCompletion && earlierDefaultCompletion !== "normal") {
+              mergeCompletedEntry(earlierDefaultCompletion);
+            }
+          } else {
+            mergeCompletedEntry("normal");
+          }
+          if (possibleEarlierEntry) mergeCompletedEntry("normal");
+        }
+        return possibleCompletedEntry ?? "unknown";
       }
       if (statement.type === "TryStatement") {
         const block = isNode(statement.block) ? statement.block : undefined;
