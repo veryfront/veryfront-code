@@ -2671,6 +2671,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "throwing-static-prefix.tsx");
     });
 
+    it("does not run a static initializer when its computed key throws", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { static [missing] = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-static-key.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-static-key.tsx");
+    });
+
     it("keeps a static field after harmless static initialization", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,

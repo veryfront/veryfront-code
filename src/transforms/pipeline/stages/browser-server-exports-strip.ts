@@ -1985,11 +1985,12 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     return true;
   }
 
+  const classMemberPrefixCompletes = (member: Node): boolean =>
+    !hasDecorators(member) && !hasParameterDecorators(member) &&
+    member.computed !== true;
+
   const classMemberDefinitionCompletes = (member: Node): boolean => {
-    if (
-      hasDecorators(member) || hasParameterDecorators(member) ||
-      member.computed === true
-    ) return false;
+    if (!classMemberPrefixCompletes(member)) return false;
     if (member.type === "StaticBlock") {
       return Array.isArray(member.body) && member.body.length === 0;
     }
@@ -2017,7 +2018,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
   const markDeferredStaticElements = (node: Node): void => {
     let continues = classDefinitionPrefixCompletes(node);
     for (const member of classMembers(node)) {
-      if (!continues && isStaticInitializationElement(member)) deferred.add(member);
+      if (
+        (!continues || !classMemberPrefixCompletes(member)) &&
+        isStaticInitializationElement(member)
+      ) deferred.add(member);
       if (continues && !classMemberDefinitionCompletes(member)) continues = false;
     }
   };
