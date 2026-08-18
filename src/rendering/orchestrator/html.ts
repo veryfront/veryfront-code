@@ -262,8 +262,18 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const committedHead = resolveCommittedHeadFromHTML(context.html, context.collectedHead);
-    const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
+    const environment = context.options?.environment ?? this.config.environment;
+    const resolvedContext = environment === undefined ? context : {
+      ...context,
+      options: { ...context.options, environment },
+    };
+    const committedHead = resolveCommittedHeadFromHTML(
+      resolvedContext.html,
+      resolvedContext.collectedHead,
+    );
+    const effectiveContext = committedHead
+      ? { ...resolvedContext, collectedHead: committedHead }
+      : resolvedContext;
     let html: string;
     if (isFullHTMLDocument(effectiveContext.html)) {
       html = await this.handleFullHTMLDocument(effectiveContext);
@@ -296,8 +306,10 @@ export class HTMLGenerator {
     }
 
     const committedHead = resolveCommittedHeadFromHTML(reactContent, context.collectedHead);
+    const environment = context.options?.environment ?? this.config.environment;
     const fullContext = {
       ...context,
+      ...(environment === undefined ? {} : { options: { ...context.options, environment } }),
       html: reactContent,
       ...(committedHead ? { collectedHead: committedHead } : {}),
     } as HTMLGenerationContext;

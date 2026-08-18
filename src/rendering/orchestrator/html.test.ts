@@ -608,6 +608,18 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
+    it("uses configured preview rendering for full HTML when the request omits it", async () => {
+      const generator = createHTMLGenerator({
+        environment: "preview",
+        readFile: async () => `'use client';`,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext());
+
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+    });
+
     it("injects production project stylesheet links into full HTML documents", async () => {
       const mockAdapter = createMockAdapter(async (path: string) => {
         if (path.endsWith("/app/page.tsx")) return `'use client';`;
@@ -1293,6 +1305,25 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('data-theme="dark"'), true);
       assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
+    it("uses configured preview rendering for streams when the request omits it", async () => {
+      const generator = createHTMLGenerator({
+        environment: "preview",
+        readFile: async () => `'use client';`,
+      });
+      const stream = createSingleChunkStream(
+        "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
+      );
+
+      const responseStream = await generator.generateHTMLStream(
+        stream,
+        createHTMLContext(),
+      );
+      const html = await new Response(responseStream).text();
+
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
     it("keeps production project stylesheet links for streamed full-document pages", async () => {
