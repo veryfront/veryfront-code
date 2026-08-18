@@ -2920,7 +2920,13 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     statements: unknown[],
     initializedNames: ReadonlySet<string>,
   ): Completion {
-    const statementCompletion = (statement: Node): Completion => {
+    const statementCompletion = (
+      statement: Node,
+      loopLabel: string | null = null,
+    ): Completion => {
+      const continuesCurrentLoop = (completion: Completion): boolean =>
+        completion === "continue" ||
+        (loopLabel !== null && completion === `continue:${loopLabel}`);
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
       }
@@ -2972,7 +2978,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
           return bodyCompletion === "break"
             ? "normal"
-            : bodyCompletion === "normal" || bodyCompletion === "continue"
+            : bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
             ? "unknown"
             : bodyCompletion;
         }
@@ -2985,7 +2991,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
           return bodyCompletion === "break"
             ? "normal"
-            : bodyCompletion === "normal" || bodyCompletion === "continue"
+            : bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
             ? "unknown"
             : bodyCompletion;
         }
@@ -3000,7 +3006,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const test = isNode(statement.test) ? statement.test : undefined;
         const bodyCompletion = body ? statementCompletion(body) : "normal";
         if (bodyCompletion === "break") return "normal";
-        if (bodyCompletion !== "normal" && bodyCompletion !== "continue") {
+        if (bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion)) {
           if (test) deferred.add(test);
           return bodyCompletion;
         }
@@ -3037,9 +3043,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             return "normal";
           }
           if (
-            bodyCompletion !== "normal" && bodyCompletion !== "continue" && update
+            bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion) && update
           ) deferred.add(update);
-          return bodyCompletion === "normal" || bodyCompletion === "continue"
+          return bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
             ? "unknown"
             : bodyCompletion;
         }
@@ -3056,9 +3062,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             return "normal";
           }
           if (
-            bodyCompletion !== "normal" && bodyCompletion !== "continue" && update
+            bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion) && update
           ) deferred.add(update);
-          return bodyCompletion === "normal" || bodyCompletion === "continue"
+          return bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
             ? "unknown"
             : bodyCompletion;
         }
@@ -3284,7 +3290,12 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (completion !== "throw" && completion !== "unknown") {
             deferred.add(handler);
           } else if (isNode(handler.body)) {
-            const handlerCompletion = statementCompletion(handler.body);
+            const parameter = isNode(handler.param) ? handler.param : null;
+            const parameterCompletes = parameter === null || parameter.type === "Identifier";
+            if (!parameterCompletes) deferred.add(handler.body);
+            const handlerCompletion: Completion = parameterCompletes
+              ? statementCompletion(handler.body)
+              : "unknown";
             if (completion === "throw") completion = handlerCompletion;
           }
         }
@@ -3295,8 +3306,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         return completion;
       }
       if (statement.type === "LabeledStatement" && isNode(statement.body)) {
-        const completion = statementCompletion(statement.body);
         const label = nodeName(statement.label);
+        const bodyIsLoop = statement.body.type === "WhileStatement" ||
+          statement.body.type === "DoWhileStatement" || statement.body.type === "ForStatement" ||
+          statement.body.type === "ForInStatement" || statement.body.type === "ForOfStatement";
+        const completion = statementCompletion(
+          statement.body,
+          label && bodyIsLoop ? label : null,
+        );
         if (label && completion === `break:${label}`) return "normal";
         if (label && completion === `continue:${label}`) return "unknown";
         return completion;

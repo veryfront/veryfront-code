@@ -3357,6 +3357,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-switch-break-catch.tsx");
     });
 
+    it("does not enter a catch body after parameter initialization aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { try { throw null; } catch ({ x }) { globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-catch-pattern.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-catch-pattern.tsx");
+    });
+
     it("does not enter a catch after a return from the try block", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3399,6 +3416,24 @@ describe("browser-server-exports-strip", () => {
       ].join("\n");
 
       const result = await stripServerOnlyExports(code, "pages/root-iife-return-throw.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("continues after a labeled do-while continue reaches a false test", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { outer: do { continue outer; } while (false); globalThis.registered = KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-labeled-do-while-continue.tsx",
+      );
 
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
       assertStringIncludes(result, "globalThis.registered = KEY");
