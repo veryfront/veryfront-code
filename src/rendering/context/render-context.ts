@@ -98,10 +98,15 @@ export function createRenderContext(
 
   const releaseKey = getReleaseKey(isLocal, environment, branch, ctx.releaseId);
   const readyManifest = getReadyManifestForRender(ctx.releaseId);
+  // isLocal, not environment, decides the compile mode, so it has to reach the
+  // cache prefix: a local development server and a hosted preview server agree
+  // on every other prefix field.
+  const mode: RenderContext["mode"] = isLocal ? "development" : "production";
   const cachePrefix = buildRenderCachePrefix(
     projectId,
     environment,
     releaseKey,
+    mode,
     readyManifest?.manifestVersion,
   );
 
@@ -110,7 +115,7 @@ export function createRenderContext(
     projectSlug,
     projectDir: ctx.projectDir,
     config: ctx.config,
-    mode: isLocal ? "development" : "production",
+    mode,
     isLocalProject: isLocal,
     allowHostProjectCodeExecution: isLocal ||
       ctx.allowHostProjectCodeExecution === true,

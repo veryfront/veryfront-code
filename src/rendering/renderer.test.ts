@@ -153,7 +153,7 @@ function makeRenderContext(): RenderContext {
     config: {} as RenderContext["config"],
     mode: "production",
     adapter: {} as RenderContext["adapter"],
-    cachePrefix: buildRenderCachePrefix("proj-1", "production", "rel-1"),
+    cachePrefix: buildRenderCachePrefix("proj-1", "production", "rel-1", "production"),
     environment: "production",
     contentSourceId: "release-rel-1",
     releaseId: "rel-1",
@@ -691,7 +691,7 @@ describe("Renderer release asset cache isolation", () => {
     );
 
     const store = createInMemoryStore();
-    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production", 1);
     store.data.set(`${manifestPrefix}:page:/cached`, {
       result: {
         html: "<html>manifest cache hit</html>",
@@ -762,8 +762,8 @@ describe("Renderer release asset cache isolation", () => {
       releaseId: "rel-1",
     });
 
-    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", 1);
-    const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
+    const manifestPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production", 1);
+    const jitPrefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production");
     assertEquals(result.html, "<html>fresh manifest render</html>");
     assertEquals(store.data.has(`${manifestPrefix}:page:/fresh`), true);
     assertEquals(store.data.has(`${jitPrefix}:page:/fresh`), false);
@@ -868,7 +868,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
       adapter: { fs: { exists: async () => true } },
     } as unknown as RenderContext;
     const cacheKey = `${ctx.cachePrefix}:page:/stale-at-capacity`;
@@ -1323,7 +1323,7 @@ describe("Renderer release asset cache isolation", () => {
     });
     await waitForProductionPrewarm(renderer);
 
-    const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1");
+    const prefix = buildRenderCachePrefix("proj-1", "production", "rel-1", "production");
     assertEquals(result.html, "<html>/</html>");
     assertEquals(renderedSlugs.includes("/blog"), true);
     assertEquals(renderedSlugs.includes("/about"), true);
@@ -1488,7 +1488,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -1558,7 +1558,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -1720,7 +1720,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
@@ -1961,7 +1961,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
@@ -2040,7 +2040,7 @@ describe("Renderer release asset cache isolation", () => {
       ...makeRenderContext(),
       projectId,
       projectSlug: projectId,
-      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1"),
+      cachePrefix: buildRenderCachePrefix(projectId, "production", "rel-1", "production"),
     };
     const store = createInMemoryStore();
     const renderer = new Renderer({ cache: { store } });
@@ -2289,7 +2289,7 @@ describe("Renderer dependency pin cache isolation", () => {
       releaseId: undefined,
       branch: "feature",
       proxyToken: "request-scoped-token",
-      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "feature"),
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "feature", "production"),
     } as RenderContext;
 
     try {
@@ -2381,7 +2381,7 @@ describe("Renderer dependency pin cache isolation", () => {
       environment: "preview",
       contentSourceId: "preview-main",
       releaseId: undefined,
-      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "main"),
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "main", "production"),
     } as RenderContext;
 
     try {

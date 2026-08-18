@@ -578,6 +578,49 @@ describe("rendering/layouts/utils/component-loader", () => {
     }
   });
 
+  it("threads the render mode into MDX layout module loading", async () => {
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    const observedModes: unknown[] = [];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observedModes.push((options as MDXLoadModuleOptions | undefined)?.mode);
+      return Promise.resolve({ default: () => null });
+    };
+
+    const loadWithMode = (mode?: "development" | "production") =>
+      loadMDXLayout(
+        { compiledCode: "export default function Layout() { return null; }" } as MdxBundle,
+        "/project",
+        { fs: {} } as unknown as RuntimeAdapter,
+        "mode-project",
+        "project-slug",
+        "release-1",
+        { imports: {} },
+        "19.1.1",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        mode,
+      );
+
+    try {
+      // A layout's own `/_vf_modules/*` imports must compile for the same mode
+      // as the page that wraps them, and for production when none is named.
+      await loadWithMode("production");
+      await loadWithMode("development");
+      await loadWithMode(undefined);
+
+      assertEquals(observedModes, ["production", "development", undefined]);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
   it("preloads the MDX import map under the exact request context", async () => {
     clearImportMapCache();
     const originalLoadModuleESM = mdxRenderer.loadModuleESM;

@@ -7,6 +7,7 @@ import {
   getModuleCacheKey,
   resolveCachedModulePath,
 } from "./module-cache-lookup.ts";
+import { MDX_MODULE_DEV_COMPILE_VARIANT } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 
 async function withCachedFile<T>(
   content: string,
@@ -115,6 +116,68 @@ describe("module-loader/module-cache-lookup", () => {
       ),
       true,
     );
+  });
+
+  it("carries the compile mode into the artifact cache variant", () => {
+    const base = [
+      "/project/app/page.tsx",
+      "project-id",
+      "/project",
+      "source-id",
+      "19.0.0",
+    ] as const;
+
+    // The in-memory key and the on-disk artifact variant have to agree on the
+    // compile mode, or a lookup promotes an artifact compiled the other way.
+    assertEquals(
+      getModuleCacheKey(...base, "development").includes(MDX_MODULE_DEV_COMPILE_VARIANT),
+      true,
+    );
+    assertEquals(
+      getModuleCacheKey(...base, "production").includes(MDX_MODULE_DEV_COMPILE_VARIANT),
+      false,
+    );
+    assertEquals(
+      buildModuleTransformCacheVariant(undefined, undefined, undefined, true),
+      MDX_MODULE_DEV_COMPILE_VARIANT,
+    );
+    assertEquals(
+      buildModuleTransformCacheVariant(undefined, undefined, undefined, false),
+      undefined,
+    );
+  });
+
+  it("looks up MDX-ESM artifacts under the compile mode it may reuse", async () => {
+    const observedVariants: Array<string | undefined> = [];
+    const lookupWithDev = async (dev: boolean) => {
+      await resolveCachedModulePath({
+        cacheKey: `cache-key-${dev}`,
+        filePath: "/project/app/page.tsx",
+        projectDir: "/project",
+        projectId: "project-id",
+        contentSourceId: "source-id",
+        reactVersion: "19.1.0",
+        dev,
+        moduleCache: new Map<string, string>(),
+        lookupMdxCache: (
+          _path,
+          _cacheDir,
+          _projectDir,
+          _unused,
+          _options,
+          _react,
+          cacheVariant,
+        ) => {
+          observedVariants.push(cacheVariant);
+          return Promise.resolve({ status: "miss" });
+        },
+      });
+    };
+
+    await lookupWithDev(true);
+    await lookupWithDev(false);
+
+    assertEquals(observedVariants, [MDX_MODULE_DEV_COMPILE_VARIANT, undefined]);
   });
 
   it("returns a valid in-memory cached module path", async () => {

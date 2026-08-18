@@ -4,13 +4,16 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/cache-keys
  */
 
-import { buildMdxEsmPathCacheKey, buildMdxEsmTransformCacheKey } from "../cache-format.ts";
+import {
+  buildMdxEsmPathCacheKey,
+  buildMdxEsmTransformCacheKey,
+  MDX_MODULE_DEV_COMPILE_VARIANT,
+} from "../cache-format.ts";
 import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 
-/** Variant segment that isolates development-compiled module artifacts. */
-export const MDX_MODULE_DEV_COMPILE_VARIANT = "on:compile-dev";
+export { MDX_MODULE_DEV_COMPILE_VARIANT };
 
 /**
  * Build the cache-variant segment shared by every MDX module cache key.
