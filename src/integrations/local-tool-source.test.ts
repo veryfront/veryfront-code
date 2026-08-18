@@ -4,12 +4,25 @@ import {
   _setEnvironmentConfigForTesting,
 } from "#veryfront/config/environment-config.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { loadRemoteToolsFromSource } from "#veryfront/tool";
+import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { createLocalIntegrationToolSource } from "./index.ts";
+import type { LocalIntegrationEndpointTransport } from "./local-endpoint-executor.ts";
+import { _createLocalIntegrationToolSourceForTesting } from "./local-tool-source.ts";
 
 const TEST_CREDENTIAL = "LOCAL_INTEGRATION_SECRET_MUST_NOT_LEAK";
 const testCredentialProvider = () => TEST_CREDENTIAL;
+
+function headerValue(request: RequestInit, name: string): string | null {
+  return new Headers(request.headers).get(name);
+}
 
 async function assertConfigurationError(
   createPromise: () => Promise<unknown>,
@@ -100,6 +113,7 @@ describe("createLocalIntegrationToolSource", () => {
       { tool: "aws__list-s3-buckets", detail: "endpoint" },
       { tool: "github__list_issues", detail: "GraphQL" },
       { tool: "gmail__list_emails", detail: "enrichment" },
+      { tool: "algolia__list_indices", detail: "fixed HTTPS URL" },
       { tool: "alphavantage__quote", detail: "query" },
       { tool: "slack__list_channels", detail: "authorization-code" },
     ] as const;
@@ -151,5 +165,237 @@ describe("createLocalIntegrationToolSource", () => {
       () => source.executeTool("vercel__get_project", { idOrName: "demo" }),
       "not granted",
     );
+  });
+
+  it("executes admitted API-key and Basic tools with project-owned credentials", async () => {
+    const directRequests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      directRequests.push(request.url.href);
+      if (request.url.hostname === "api.vercel.com") {
+        assertEquals(headerValue(request.init, "authorization"), `Bearer ${TEST_CREDENTIAL}`);
+        return Promise.resolve(Response.json({ projects: [{ id: "project-1" }] }));
+      }
+      assertEquals(request.url.hostname, "panel.sendcloud.sc");
+      assertEquals(
+        headerValue(request.init, "authorization"),
+        `Basic ${btoa(`public-key:${TEST_CREDENTIAL}`)}`,
+      );
+      return Promise.resolve(Response.json({ data: [{ id: "shipment-1" }] }));
+    };
+
+    const vercel = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["vercel__list_projects"],
+        credentialProvider: testCredentialProvider,
+      },
+      transport,
+    );
+    const sendcloud = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["sendcloud__list_shipments"],
+        credentialProvider: (name) =>
+          name === "SENDCLOUD_PUBLIC_KEY" ? "public-key" : TEST_CREDENTIAL,
+      },
+      transport,
+    );
+
+    assertEquals(await vercel.executeTool("vercel__list_projects", {}), {
+      projects: [{ id: "project-1" }],
+    });
+    assertEquals(await sendcloud.executeTool("sendcloud__list_shipments", {}), [
+      { id: "shipment-1" },
+    ]);
+    assertEquals(directRequests, [
+      "https://api.vercel.com/v10/projects?limit=20",
+      "https://panel.sendcloud.sc/api/v3/shipments?page_size=40",
+    ]);
+  });
+
+  it("mints client credentials before executing a fixed-origin provider tool", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      if (request.url.pathname === "/v1/oauth2/token") {
+        assertEquals(request.init.method, "POST");
+        assertEquals(
+          headerValue(request.init, "authorization"),
+          `Basic ${btoa(`paypal-client:${TEST_CREDENTIAL}`)}`,
+        );
+        assertEquals(request.init.body, "grant_type=client_credentials");
+        return Promise.resolve(Response.json({
+          access_token: "paypal-access-token",
+          token_type: "Bearer",
+        }));
+      }
+      assertEquals(headerValue(request.init, "authorization"), "Bearer paypal-access-token");
+      return Promise.resolve(Response.json({ balances: [{ currency_code: "USD" }] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["paypal__list_balances"],
+        credentialProvider: (name) =>
+          name === "PAYPAL_CLIENT_ID" ? "paypal-client" : TEST_CREDENTIAL,
+      },
+      transport,
+    );
+
+    assertEquals(await source.executeTool("paypal__list_balances", {}), {
+      balances: [{ currency_code: "USD" }],
+    });
+    assertEquals(requests, [
+      "https://api-m.paypal.com/v1/oauth2/token",
+      "https://api-m.paypal.com/v1/reporting/balances",
+    ]);
+  });
+
+  it("uses only a validated Salesforce instance origin from service-account tokens", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      if (request.url.pathname === "/services/oauth2/token") {
+        assertEquals(request.url.origin, "https://acme.my.salesforce.com");
+        assertEquals(
+          request.init.body,
+          [
+            "grant_type=client_credentials",
+            "client_id=salesforce-client",
+            `client_secret=${TEST_CREDENTIAL}`,
+          ].join("&"),
+        );
+        return Promise.resolve(Response.json({
+          access_token: "salesforce-access-token",
+          instance_url: "https://customer.my.salesforce.com",
+          token_type: "Bearer",
+        }));
+      }
+      assertEquals(request.url.origin, "https://customer.my.salesforce.com");
+      assertEquals(
+        headerValue(request.init, "authorization"),
+        "Bearer salesforce-access-token",
+      );
+      return Promise.resolve(Response.json({ records: [{ Id: "contact-1" }] }));
+    };
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["salesforce__find_customer"],
+        credentialProvider: (name) => {
+          if (name === "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID") return "salesforce-client";
+          if (name === "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL") {
+            return "https://acme.my.salesforce.com";
+          }
+          return TEST_CREDENTIAL;
+        },
+      },
+      transport,
+    );
+
+    assertEquals(await source.executeTool("salesforce__find_customer", {}), [
+      { Id: "contact-1" },
+    ]);
+    assertEquals(requests.length, 2);
+    assert(
+      requests[1]?.startsWith(
+        "https://customer.my.salesforce.com/services/data/v61.0/query?q=SELECT+Id",
+      ),
+    );
+  });
+
+  it("rejects malformed Salesforce token payloads before endpoint execution", async () => {
+    const invalidPayloads = [
+      {},
+      { access_token: TEST_CREDENTIAL },
+      {
+        access_token: TEST_CREDENTIAL,
+        instance_url: "https://example.com",
+        token_type: "Bearer",
+      },
+      {
+        access_token: TEST_CREDENTIAL,
+        instance_url: "http://acme.my.salesforce.com",
+        token_type: "Bearer",
+      },
+      {
+        access_token: TEST_CREDENTIAL,
+        instance_url: "https://127.0.0.1",
+        token_type: "Bearer",
+      },
+      {
+        access_token: TEST_CREDENTIAL,
+        instance_url: "https://acme.my.salesforce.com/private",
+        token_type: "Bearer",
+      },
+      {
+        access_token: TEST_CREDENTIAL,
+        instance_url: "https://user@acme.my.salesforce.com",
+        token_type: "Bearer",
+      },
+      {
+        access_token: TEST_CREDENTIAL,
+        instance_url: "https://acme.my.salesforce.com:8443",
+        token_type: "Bearer",
+      },
+    ];
+
+    for (const payload of invalidPayloads) {
+      let calls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["salesforce__find_customer"],
+          credentialProvider: (name) =>
+            name === "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL"
+              ? "https://acme.my.salesforce.com"
+              : TEST_CREDENTIAL,
+        },
+        () => {
+          calls += 1;
+          return Promise.resolve(Response.json(payload));
+        },
+      );
+
+      const error = await assertRejects(
+        () => source.executeTool("salesforce__find_customer", {}),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-response-invalid");
+      assertEquals(error.message.includes(TEST_CREDENTIAL), false);
+      assertEquals(error.cause, undefined);
+      assertEquals(calls, 1);
+    }
+  });
+
+  it("keeps source integration policy narrowing over materialized local tools", async () => {
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["vercel__list_projects"],
+        credentialProvider: testCredentialProvider,
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ projects: [] }));
+      },
+    );
+    const tools = await loadRemoteToolsFromSource(source);
+
+    await assertRejects(
+      () =>
+        executeConfiguredTool(
+          "vercel__list_projects",
+          {},
+          tools,
+          undefined,
+          ["vercel__list_projects"],
+          undefined,
+          {
+            schemaVersion: 1,
+            mode: "allowlist",
+            integrations: { vercel: { allowedToolIds: ["get_project"] } },
+          },
+        ),
+      Error,
+      'Tool "vercel__list_projects" is not allowed by the source integration policy',
+    );
+    assertEquals(transportCalls, 0);
   });
 });

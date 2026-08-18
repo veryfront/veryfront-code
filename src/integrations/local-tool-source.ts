@@ -10,8 +10,13 @@ import { connectors } from "./_data.ts";
 import {
   createLocalCredentialAuthPlan,
   type LocalCredentialAuthPlan,
+  mintLocalCredentialAuth,
   resolveLocalCredentialAuth,
 } from "./local-credential-auth.ts";
+import {
+  executeLocalIntegrationEndpoint,
+  type LocalIntegrationEndpointTransport,
+} from "./local-endpoint-executor.ts";
 import { localIntegrationConfigurationError } from "./local-integration-errors.ts";
 import { MAX_LOCAL_INTEGRATION_TOOLS } from "./limits.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
@@ -36,6 +41,7 @@ interface AdmittedLocalIntegrationTool {
   readonly authPlan: LocalCredentialAuthPlan;
   readonly connector: IntegrationConfig;
   readonly endpoint: IntegrationEndpoint;
+  readonly endpointOrigin?: string;
   readonly tool: IntegrationToolMeta & { id: string };
   readonly definition: ToolDefinition;
 }
@@ -133,7 +139,7 @@ function catalogTool(
   return undefined;
 }
 
-function assertHttpsCatalogUrl(value: string, label: string): void {
+function assertHttpsCatalogUrl(value: string, label: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -142,10 +148,11 @@ function assertHttpsCatalogUrl(value: string, label: string): void {
   }
   if (
     parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" ||
-    value.includes("{{")
+    value.includes("{{") || parsed.hostname.includes("{") || parsed.hostname.includes("}")
   ) {
     configurationError(`${label} must be a fixed HTTPS URL without credentials`);
   }
+  return parsed.origin;
 }
 
 function assertSupportedAuth(
@@ -192,7 +199,7 @@ function assertSupportedEndpoint(
   connector: IntegrationConfig,
   endpoint: IntegrationEndpoint,
   toolId: string,
-): void {
+): string | undefined {
   if (endpoint.type === "graphql") {
     configurationError(`Local integration tool "${toolId}" uses unsupported GraphQL execution`);
   }
@@ -212,8 +219,12 @@ function assertSupportedEndpoint(
     if (!endpoint.url.startsWith("{{oauth.raw.instance_url}}/")) {
       configurationError(`Local Salesforce tool "${toolId}" has an unsupported endpoint template`);
     }
+    return undefined;
   } else {
-    assertHttpsCatalogUrl(endpoint.url, `Local integration tool "${toolId}" endpoint`);
+    return assertHttpsCatalogUrl(
+      endpoint.url,
+      `Local integration tool "${toolId}" endpoint`,
+    );
   }
 }
 
@@ -291,12 +302,17 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" has no executable endpoint`);
   }
 
-  assertSupportedEndpoint(connector, tool.endpoint, canonicalToolId);
+  const endpointOrigin = assertSupportedEndpoint(
+    connector,
+    tool.endpoint,
+    canonicalToolId,
+  );
   assertSupportedAuth(connector, tool.endpoint);
   return Object.freeze({
     authPlan: createLocalCredentialAuthPlan(connector),
     connector,
     endpoint: tool.endpoint,
+    endpointOrigin,
     tool,
     definition: toolDefinition(tool, tool.endpoint),
   });
@@ -311,9 +327,9 @@ function assertLocalRuntime(): void {
   }
 }
 
-/** Create an explicitly granted, catalog-backed local integration tool source. */
-export function createLocalIntegrationToolSource(
+function createLocalIntegrationToolSourceInternal(
   options: LocalIntegrationToolSourceOptions,
+  transport?: LocalIntegrationEndpointTransport,
 ): RemoteToolSource {
   const snapshot = snapshotOptions(options);
   const admitted = new Map<string, AdmittedLocalIntegrationTool>();
@@ -341,14 +357,60 @@ export function createLocalIntegrationToolSource(
     },
     async executeTool(
       toolName: string,
-      _args: Record<string, unknown>,
-      _context?: ToolExecutionContext,
+      args: Record<string, unknown>,
+      context?: ToolExecutionContext,
     ): Promise<unknown> {
       assertLocalRuntime();
-      if (!admitted.has(toolName)) {
+      const tool = admitted.get(toolName);
+      if (!tool) {
         configurationError(`Local integration tool "${toolName}" is not granted by this source`);
       }
-      configurationError(`Local integration tool "${toolName}" execution is not implemented`);
+      const auth = await mintLocalCredentialAuth(
+        await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
+        context?.abortSignal,
+        transport,
+      );
+      let endpoint = tool.endpoint;
+      let allowedOrigin = tool.endpointOrigin;
+      if (tool.connector.name === "salesforce") {
+        if (!auth.instanceOrigin) {
+          configurationError("Local Salesforce execution requires a validated instance origin");
+        }
+        endpoint = Object.freeze({
+          ...endpoint,
+          url: endpoint.url.replace(
+            "{{oauth.raw.instance_url}}",
+            auth.instanceOrigin,
+          ),
+        });
+        allowedOrigin = auth.instanceOrigin;
+      }
+      if (!allowedOrigin) {
+        configurationError(`Local integration tool "${toolName}" has no admitted origin`);
+      }
+      return await executeLocalIntegrationEndpoint({
+        endpoint,
+        args,
+        authHeaders: auth.headers,
+        allowedOrigin,
+        signal: context?.abortSignal,
+        transport,
+      });
     },
   });
+}
+
+/** Create an explicitly granted, catalog-backed local integration tool source. */
+export function createLocalIntegrationToolSource(
+  options: LocalIntegrationToolSourceOptions,
+): RemoteToolSource {
+  return createLocalIntegrationToolSourceInternal(options);
+}
+
+/** @internal Test-only transport seam; not exported from the public integrations module. */
+export function _createLocalIntegrationToolSourceForTesting(
+  options: LocalIntegrationToolSourceOptions,
+  transport: LocalIntegrationEndpointTransport,
+): RemoteToolSource {
+  return createLocalIntegrationToolSourceInternal(options, transport);
 }

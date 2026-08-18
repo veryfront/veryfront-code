@@ -3,11 +3,17 @@ import type { IntegrationConfig } from "./schema.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
   LOCAL_INTEGRATION_CREDENTIALS_MISSING,
+  LOCAL_INTEGRATION_RESPONSE_INVALID,
   localIntegrationConfigurationError,
 } from "./local-integration-errors.ts";
+import {
+  executeLocalIntegrationJsonRequest,
+  type LocalIntegrationEndpointTransport,
+} from "./local-endpoint-executor.ts";
 import { MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH } from "./limits.ts";
 
 const apply = Reflect.apply;
+const arrayIsArray = Array.isArray;
 const encodeUriComponent = encodeURIComponent;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -19,6 +25,7 @@ const textEncoderEncode = TextEncoder.prototype.encode;
 const URLConstructor = URL;
 const urlHash = getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
 const urlHostname = getOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
+const urlOrigin = getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
 const urlPassword = getOwnPropertyDescriptor(URL.prototype, "password")?.get;
 const urlPathname = getOwnPropertyDescriptor(URL.prototype, "pathname")?.get;
 const urlPort = getOwnPropertyDescriptor(URL.prototype, "port")?.get;
@@ -86,6 +93,11 @@ export interface ResolvedLocalTokenRequest {
 export type ResolvedLocalCredentialAuth =
   | ResolvedLocalHeaderAuth
   | ResolvedLocalTokenRequest;
+
+export interface ResolvedLocalExecutionAuth {
+  readonly headers: Readonly<Record<string, string>>;
+  readonly instanceOrigin?: string;
+}
 
 function stringCall(
   operation: (this: string, ...args: never[]) => string,
@@ -307,8 +319,13 @@ async function readCredentials(
   return values;
 }
 
-function normalizeSalesforceLoginUrl(value: string): string {
-  const parsed = parseUrl(value, "Salesforce service-account login URL");
+function parseSalesforceOrigin(value: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URLConstructor(value);
+  } catch {
+    return undefined;
+  }
   const protocol = urlValue(urlProtocol, parsed);
   const hostname = stringCall(stringToLowerCase, urlValue(urlHostname, parsed));
   const pathname = urlValue(urlPathname, parsed);
@@ -320,11 +337,48 @@ function normalizeSalesforceLoginUrl(value: string): string {
     (!stringEndsWithValue(hostname, ".my.salesforce.com") &&
       !stringEndsWithValue(hostname, ".my-salesforce.com"))
   ) {
+    return undefined;
+  }
+  return `https://${hostname}`;
+}
+
+function normalizeSalesforceLoginUrl(value: string): string {
+  const origin = parseSalesforceOrigin(value);
+  if (!origin) {
     localIntegrationConfigurationError(
       "Salesforce service-account login URL must be an HTTPS Salesforce My Domain origin",
     );
   }
-  return `https://${hostname}`;
+  return origin;
+}
+
+function tokenResponseInvalid(): never {
+  throw LOCAL_INTEGRATION_RESPONSE_INVALID.create();
+}
+
+function tokenResponseString(
+  value: Record<string, unknown>,
+  key: string,
+): string {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
+    tokenResponseInvalid();
+  }
+  const result = descriptor.value;
+  if (
+    stringCall(stringTrim, result).length === 0 ||
+    result.length > MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH
+  ) {
+    tokenResponseInvalid();
+  }
+  return result;
+}
+
+function tokenResponseRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || arrayIsArray(value)) {
+    tokenResponseInvalid();
+  }
+  return value as Record<string, unknown>;
 }
 
 /** Resolve short-lived secret values for a previously validated auth plan. */
@@ -393,5 +447,43 @@ export async function resolveLocalCredentialAuth(
       formEntry("client_id", values[plan.clientIdName]!),
       formEntry("client_secret", values[plan.clientSecretName]!),
     ].join("&"),
+  });
+}
+
+/** Mint a short-lived bearer credential from a previously resolved local auth request. */
+export async function mintLocalCredentialAuth(
+  resolved: ResolvedLocalCredentialAuth,
+  signal?: AbortSignal,
+  transport?: LocalIntegrationEndpointTransport,
+): Promise<ResolvedLocalExecutionAuth> {
+  if (resolved.kind === "headers") {
+    return freeze({ headers: resolved.headers });
+  }
+
+  const tokenUrl = parseUrl(resolved.url, "Local integration token URL");
+  const tokenOrigin = urlValue(urlOrigin, tokenUrl);
+  const response = tokenResponseRecord(
+    await executeLocalIntegrationJsonRequest({
+      url: resolved.url,
+      method: "POST",
+      headers: resolved.headers,
+      body: resolved.body,
+      allowedOrigin: tokenOrigin,
+      signal,
+      transport,
+    }),
+  );
+  const accessToken = tokenResponseString(response, "access_token");
+  const tokenType = stringCall(stringToLowerCase, tokenResponseString(response, "token_type"));
+  if (tokenType !== "bearer") tokenResponseInvalid();
+
+  const headers = freeze({ Authorization: `Bearer ${accessToken}` });
+  if (resolved.mode === "client-credentials") return freeze({ headers });
+
+  return freeze({
+    headers,
+    instanceOrigin: parseSalesforceOrigin(
+      tokenResponseString(response, "instance_url"),
+    ) ?? tokenResponseInvalid(),
   });
 }

@@ -103,6 +103,17 @@ export interface ExecuteLocalIntegrationEndpointOptions {
   readonly transport?: LocalIntegrationEndpointTransport;
 }
 
+export interface ExecuteLocalIntegrationJsonRequestOptions {
+  readonly url: string;
+  readonly method: "POST";
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+  readonly allowedOrigin: string;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  readonly transport?: LocalIntegrationEndpointTransport;
+}
+
 interface RequestSignalLease {
   readonly signal: AbortSignal;
   release(): void;
@@ -492,6 +503,29 @@ async function readResponseJson(response: Response, signal: AbortSignal): Promis
   return snapshot.value;
 }
 
+async function executeTransportRequest(
+  request: LocalIntegrationEndpointTransportRequest,
+  transport: LocalIntegrationEndpointTransport,
+  signal: AbortSignal,
+): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await transport(request);
+  } catch {
+    requestFailed();
+  }
+  const status = responseStatusValue(response);
+  if (status < 200 || status >= 300) {
+    try {
+      void responseBodyValue(response)?.cancel().catch(() => undefined);
+    } catch {
+      // Response cleanup is best effort and must not expose provider errors.
+    }
+    requestFailed();
+  }
+  return await readResponseJson(response, signal);
+}
+
 function transformResponse(value: unknown, transform: string | undefined): unknown {
   if (transform === undefined || transform === "") return value;
   let current = value;
@@ -525,23 +559,59 @@ export async function executeLocalIntegrationEndpoint(
       options.allowedOrigin,
       signalLease.signal,
     );
-    let response: Response;
-    try {
-      response = await (options.transport ?? guardedTransport)(request);
-    } catch {
-      requestFailed();
-    }
-    const status = responseStatusValue(response);
-    if (status < 200 || status >= 300) {
-      try {
-        void responseBodyValue(response)?.cancel().catch(() => undefined);
-      } catch {
-        // Response cleanup is best effort and must not expose provider errors.
-      }
-      requestFailed();
-    }
-    const value = await readResponseJson(response, signalLease.signal);
+    const value = await executeTransportRequest(
+      request,
+      options.transport ?? guardedTransport,
+      signalLease.signal,
+    );
     return transformResponse(value, options.endpoint.response?.transform);
+  } finally {
+    signalLease.release();
+  }
+}
+
+/** Execute one fixed-origin JSON request, including OAuth token requests. */
+export async function executeLocalIntegrationJsonRequest(
+  options: ExecuteLocalIntegrationJsonRequestOptions,
+): Promise<unknown> {
+  const signalLease = createRequestSignal(
+    options.signal,
+    options.timeoutMs ?? INTEGRATION_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    let url: URL;
+    try {
+      url = new URLConstructor(options.url);
+    } catch {
+      requestInvalid("Local integration request URL is invalid");
+    }
+    if (urlValue(urlOrigin, url) !== options.allowedOrigin) {
+      requestInvalid("Local integration request origin does not match its admitted origin");
+    }
+    const headers = new HeadersConstructor();
+    for (const name of objectKeys(options.headers)) {
+      const value = ownValue(options.headers, name);
+      if (!value.present || typeof value.value !== "string") {
+        requestInvalid("Local integration authorization headers are invalid");
+      }
+      setHeader(headers, name, value.value);
+    }
+    const request = freeze({
+      url,
+      allowedOrigin: options.allowedOrigin,
+      init: freeze({
+        method: options.method,
+        headers,
+        body: options.body,
+        redirect: "error" as const,
+        signal: signalLease.signal,
+      }),
+    });
+    return await executeTransportRequest(
+      request,
+      options.transport ?? guardedTransport,
+      signalLease.signal,
+    );
   } finally {
     signalLease.release();
   }
