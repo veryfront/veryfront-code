@@ -553,7 +553,9 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       if (
         child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
         child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||
-        child.type === "ClassMethod"
+        child.type === "ClassMethod" || child.type === "ClassDeclaration" ||
+        child.type === "ClassExpression" || child.type === "StaticBlock" ||
+        child.type === "TSModuleDeclaration"
       ) {
         continue;
       }
@@ -738,6 +740,19 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       return;
     }
 
+    if (node.type === "StaticBlock") {
+      // A static block is its own var and lexical scope. Without this, a local
+      // declaration can bind the surrounding program scope and hide a later
+      // read of an imported binding with the same name.
+      const staticScope: LexicalScope = { kind: "function", names: new Set() };
+      bindDirectDeclarations(staticScope, node);
+      bindNestedVarDeclarations(staticScope, node);
+      for (const statement of Array.isArray(node.body) ? node.body : []) {
+        if (isNode(statement)) visit(statement, [staticScope, ...scopes]);
+      }
+      return;
+    }
+
     if (node.type === "VariableDeclaration") {
       visitVariableDeclaration(node, scopes);
       return;
@@ -781,7 +796,12 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
     if (node.type === "TSModuleDeclaration") {
       bindPatternNames(scopes[0] ?? rootScope, node.id);
-      if (isNode(node.body)) visit(node.body, scopes);
+      // Every emitted namespace IIFE introduces its own binding scope. For a
+      // dotted declaration such as `namespace A.B`, B belongs to A's scope,
+      // not to the surrounding module.
+      const namespaceScope: LexicalScope = { kind: "function", names: new Set() };
+      bindPatternNames(namespaceScope, node.id);
+      if (isNode(node.body)) visit(node.body, [namespaceScope, ...scopes]);
       return;
     }
 

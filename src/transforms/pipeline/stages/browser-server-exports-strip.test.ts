@@ -1649,6 +1649,35 @@ export function hook() {
         assertStringIncludes(result, "Level.Low");
       });
 
+      it("keeps an import read after a static block shadows its name", async () => {
+        const code = [
+          `import { token } from "../lib/client.ts";`,
+          `function local() { return "cache"; }`,
+          `export class Cache { static { const token = local(); } }`,
+          `export function getServerData() { return { props: { token } }; }`,
+          `export default function Page() { return token; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, `{ token }`);
+        assertStringIncludes(result, `return token`);
+      });
+
+      it("keeps an import that matches a nested namespace segment", async () => {
+        const code = [
+          `import { B } from "../lib/client.ts";`,
+          `export namespace A.B { export const value = 1; }`,
+          `export function getServerData() { return { props: { b: B } }; }`,
+          `export default function Page() { return B; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, `{ B }`);
+        assertStringIncludes(result, `return B`);
+      });
+
       it("keeps a declaration whose name matches a hook-local enum member", async () => {
         const code = [
           `import { boot } from "../lib/analytics.ts";`,
