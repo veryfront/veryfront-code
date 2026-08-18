@@ -2908,6 +2908,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-switch-case.tsx");
     });
 
+    it("does not evaluate case tests after a static switch match", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { switch (0) { case 0: break; case KEY: break; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-switch-match.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-switch-match.tsx");
+    });
+
     it("does not evaluate a try-block tail after its prefix aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2952,6 +2969,21 @@ describe("browser-server-exports-strip", () => {
       ].join("\n");
 
       const result = await stripServerOnlyExports(code, "pages/root-iife-caught-throw.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("enters a catch when evaluating a return operand throws", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { try { return missing; } catch { globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/root-iife-return-throw.tsx");
 
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
       assertStringIncludes(result, "globalThis.registered = KEY");
@@ -3768,6 +3800,23 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "inline-class-field-jsx.tsx");
+    });
+
+    it("does not evaluate JSX attributes after tag resolution aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { first = <missing.Component value={KEY} />; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-field-jsx-tag.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-field-jsx-tag.tsx");
     });
 
     it("does not evaluate a binary right operand after its left side aborts", async () => {

@@ -2368,6 +2368,30 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     ) {
       const attributes = expression.openingElement.attributes;
       const children = Array.isArray(expression.children) ? expression.children : [];
+      const tag = isNode(expression.openingElement.name)
+        ? expression.openingElement.name
+        : undefined;
+      let tagRoot = tag;
+      while (tagRoot?.type === "JSXMemberExpression" && isNode(tagRoot.object)) {
+        tagRoot = tagRoot.object;
+      }
+      const tagName = tagRoot?.type === "JSXIdentifier" ? nodeName(tagRoot) : null;
+      const directTagName = tag?.type === "JSXIdentifier" ? nodeName(tag) ?? "" : "";
+      const directTagFirst = directTagName.charCodeAt(0);
+      const directTagIsIntrinsic = directTagFirst >= 97 && directTagFirst <= 122 ||
+        directTagName.includes("-");
+      const tagCompletes = tag?.type === "JSXIdentifier" && directTagIsIntrinsic ||
+        tagRoot?.type === "JSXNamespacedName" || tagName === "this" ||
+        (tagName !== null && initializedNames.has(tagName));
+      if (!tagCompletes) {
+        for (const attribute of attributes) {
+          if (isNode(attribute)) deferred.add(attribute);
+        }
+        for (const child of children) {
+          if (isNode(child)) deferred.add(child);
+        }
+        return;
+      }
       const evaluatedJsxNode = (value: unknown): Node | null => {
         if (!isNode(value)) return null;
         if (value.type === "JSXSpreadAttribute" && isNode(value.argument)) {
@@ -2651,11 +2675,23 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
       }
-      if (statement.type === "ThrowStatement" || statement.type === "ReturnStatement") {
+      if (statement.type === "ThrowStatement") {
         if (isNode(statement.argument)) {
           deferOrderedExpressionTail(statement.argument, initializedNames);
         }
-        return statement.type === "ThrowStatement" ? "throw" : "return";
+        return "throw";
+      }
+      if (statement.type === "ReturnStatement") {
+        if (!isNode(statement.argument)) return "return";
+        const argumentCompletes = staticPrimitiveValue(
+          statement.argument,
+          initializedNames,
+        ).known || isInertExpression(statement.argument, noNameHelpers, initializedNames);
+        if (!argumentCompletes) {
+          deferOrderedExpressionTail(statement.argument, initializedNames);
+          return "unknown";
+        }
+        return "return";
       }
       if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
         return "normal";
@@ -2746,6 +2782,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       }
       if (statement.type === "SwitchStatement") {
         const discriminant = isNode(statement.discriminant) ? statement.discriminant : undefined;
+        const discriminantValue = discriminant
+          ? staticPrimitiveValue(discriminant, initializedNames)
+          : { known: false as const };
         const cases = Array.isArray(statement.cases) ? statement.cases : [];
         const deferCaseEvaluation = (caseNode: Node): void => {
           if (isNode(caseNode.test)) deferred.add(caseNode.test);
@@ -2755,7 +2794,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         };
         if (
           discriminant &&
-          !staticPrimitiveValue(discriminant, initializedNames).known &&
+          !discriminantValue.known &&
           !isInertExpression(discriminant, noNameHelpers, initializedNames)
         ) {
           deferOrderedExpressionTail(discriminant, initializedNames);
@@ -2768,8 +2807,18 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           const caseNode = cases[index];
           if (!isNode(caseNode) || !isNode(caseNode.test)) continue;
           const test = caseNode.test;
+          const testValue = staticPrimitiveValue(test, initializedNames);
           if (
-            staticPrimitiveValue(test, initializedNames).known ||
+            discriminantValue.known && testValue.known &&
+            discriminantValue.value === testValue.value
+          ) {
+            for (const later of cases.slice(index + 1)) {
+              if (isNode(later) && isNode(later.test)) deferred.add(later.test);
+            }
+            return "unknown";
+          }
+          if (
+            testValue.known ||
             isInertExpression(test, noNameHelpers, initializedNames)
           ) continue;
           deferOrderedExpressionTail(test, initializedNames);
