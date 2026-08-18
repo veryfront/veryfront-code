@@ -2416,7 +2416,12 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     );
     if (boundary === null) return true;
     const targetParameters = Array.isArray(target.params) ? target.params : [];
-    for (let index = boundary + 1; index < targetParameters.length; index++) {
+    const boundaryParameter = targetParameters[boundary];
+    const firstDeferredParameter = isNode(boundaryParameter) &&
+        boundaryParameter.type === "AssignmentPattern"
+      ? boundary + 1
+      : boundary;
+    for (let index = firstDeferredParameter; index < targetParameters.length; index++) {
       const parameter = targetParameters[index];
       if (isNode(parameter)) deferred.add(parameter);
     }
@@ -2435,11 +2440,34 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     const selectedName = staticMemberName(callee);
     if (selectedName === null) return null;
 
+    const deferPropertyEvaluation = (property: Node): void => {
+      if (property.computed === true && isNode(property.key)) deferred.add(property.key);
+      if (property.type === "ObjectProperty" && isNode(property.value)) {
+        deferred.add(property.value);
+      } else if (property.type === "SpreadElement" && isNode(property.argument)) {
+        deferred.add(property.argument);
+      }
+    };
+
+    const properties = object.properties;
+    const deferPropertiesAfter = (index: number): void => {
+      for (const later of properties.slice(index + 1)) {
+        if (isNode(later)) deferPropertyEvaluation(later);
+      }
+    };
+
     let selected: Node | null = null;
-    for (const property of object.properties) {
-      if (!isNode(property)) return null;
+    for (let index = 0; index < properties.length; index++) {
+      const property = properties[index];
+      if (!isNode(property)) {
+        deferPropertiesAfter(index);
+        return null;
+      }
       const propertyName = staticObjectPropertyName(property);
-      if (propertyName === null) return null;
+      if (propertyName === null) {
+        deferPropertiesAfter(index);
+        return null;
+      }
 
       let target: Node | null = null;
       if (
@@ -2463,7 +2491,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       // Creation must finish before member access and invocation. Track the
       // last property with the selected name so an inert value or accessor
       // that overwrites a method does not make the earlier body look invoked.
-      if (!creationCompletes) return null;
+      if (!creationCompletes) {
+        deferPropertiesAfter(index);
+        return null;
+      }
       if (propertyName === selectedName) {
         const completesSelectedAccessor = property.type === "ObjectMethod" &&
           property.kind === "set" && selected?.type === "ObjectMethod" &&
@@ -2584,7 +2615,13 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           // Member access runs the getter before call arguments are evaluated.
           executedNodes.add(nextInvoked);
           const getterResult = returnedInlineGetterFunction(nextInvoked);
-          if (getterResult) markCalledFunction(getterResult, node, activeScopes);
+          if (getterResult) {
+            markCalledFunction(getterResult, node, activeScopes);
+          } else {
+            for (const argument of evaluatedInvocationArguments(node) ?? []) {
+              if (isNode(argument)) deferred.add(argument);
+            }
+          }
         } else {
           markCalledFunction(nextInvoked, node, activeScopes);
         }
