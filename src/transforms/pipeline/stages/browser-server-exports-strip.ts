@@ -1526,11 +1526,27 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
   let hasValue = false;
   let configurable = false;
   for (const property of Array.isArray(node.properties) ? node.properties : []) {
-    if (!isNode(property) || property.type !== "ObjectProperty") continue;
+    if (
+      !isNode(property) || property.type !== "ObjectProperty" ||
+      property.computed === true
+    ) {
+      return false;
+    }
     const key = literalText(isNode(property.key) ? property.key : undefined);
     const value = isNode(property.value) ? property.value : undefined;
-    if (key === "value" && nodeName(value) === valueParam) hasValue = true;
-    if (key === "configurable" && isTrueExpression(value)) configurable = true;
+    if (key === "value") {
+      if (hasValue || nodeName(value) !== valueParam) return false;
+      hasValue = true;
+      continue;
+    }
+    if (key === "configurable") {
+      if (configurable || !isTrueExpression(value)) return false;
+      configurable = true;
+      continue;
+    }
+    // A compiler helper has exactly these two inert fields. An additional
+    // descriptor value can execute arbitrary module code when the helper runs.
+    return false;
   }
 
   return hasValue && configurable;
@@ -1544,6 +1560,13 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  * minified binding name.
  */
 function compilerNameHelperBindings(body: Node[]): Set<string> {
+  const localBindings = moduleScopeBindingNames(body);
+  for (const statement of body) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const name of importedBindings(statement)) localBindings.add(name);
+  }
+  if (localBindings.has("Object")) return new Set();
+
   const initializers = new Map<string, Node>();
   for (const statement of body) {
     if (statement.type !== "VariableDeclaration") continue;
@@ -1571,8 +1594,8 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     const call = returnedCall(init);
     if (!call) continue;
     const callee = isNode(call.callee) ? call.callee : undefined;
-    const callsDefineProperty = isObjectDefineProperty(callee) ||
-      (callee?.type === "Identifier" && definePropertyBindings.has(nodeName(callee) ?? ""));
+    const callsDefineProperty = callee?.type === "Identifier" &&
+      definePropertyBindings.has(nodeName(callee) ?? "");
     if (!callsDefineProperty) continue;
 
     const args = Array.isArray(call.arguments) ? call.arguments.filter(isNode) : [];

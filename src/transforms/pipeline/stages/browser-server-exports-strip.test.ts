@@ -1093,6 +1093,45 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `setName(Page, "Page")`);
     });
 
+    it("fails closed on name-like helpers with descriptor side effects", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function bootClient() { globalThis.clientStarted = true; return true; }`,
+        `var defineName = Object.defineProperty;`,
+        `var setName = (target, value) => defineName(target, "name", {`,
+        `  value, configurable: true, writable: bootClient(),`,
+        `});`,
+        `const dead = setName(() => KEY, "dead");`,
+        `function loadServer() { return KEY; }`,
+        `function Page() { return null; }`,
+        `export { Page as default, loadServer as getServerData };`,
+      ].join("\n");
+
+      await assertRejects(() => stripServerOnlyExports(code, "pages/name-helper.tsx"));
+    });
+
+    it("fails closed when the name helper reads a module-local Object", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function bootClient() { globalThis.clientStarted = true; }`,
+        `const Object = {`,
+        `  defineProperty(target, key, descriptor) { bootClient(); return target; },`,
+        `};`,
+        `var defineName = Object.defineProperty;`,
+        `var setName = (target, value) => defineName(target, "name", {`,
+        `  value, configurable: true,`,
+        `});`,
+        `const dead = setName(() => KEY, "dead");`,
+        `function loadServer() { return KEY; }`,
+        `function Page() { return null; }`,
+        `export { Page as default, loadServer as getServerData };`,
+      ].join("\n");
+
+      await assertRejects(() => stripServerOnlyExports(code, "pages/direct-name-helper.tsx"));
+    });
+
     // A chain fully feeds the hook: dropping one dead binding frees the next.
     it("drops a chain of module-scope bindings that only fed a stripped hook", async () => {
       const code = [
