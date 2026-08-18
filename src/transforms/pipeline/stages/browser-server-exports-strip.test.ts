@@ -2207,6 +2207,11 @@ describe("browser-server-exports-strip", () => {
         ["a spread of the global", `const snapshot = { ...window };`],
         ["the global passed to a callee", `report(globalThis);`],
         ["the intrinsic passed as a callback", `const kinds = [].map(Object);`],
+        ["an ordinary constructor comparison", `const plain = value?.constructor === Object;`],
+        ["constructor-name logging", `const errorName = error.constructor.name;`],
+        ["an ordinary __proto__ read", `const prototype = value.__proto__;`],
+        ["an instanceof Function check", `const callable = value instanceof Function;`],
+        ["a typeof eval check", `const evalType = typeof eval;`],
       ]
     ) {
       it(`still strips compiler metadata past ${label}`, async () => {
@@ -2252,6 +2257,22 @@ describe("browser-server-exports-strip", () => {
           `"".constructor.constructor(` +
           `"globalThis.Object.defineProperty = arguments[0]"` +
           `)(recordAndReturn);`,
+        ],
+        [
+          "an aliased Function constructor",
+          [
+            `const compile = Function;`,
+            `compile("globalThis.Object.defineProperty = arguments[0]")(`,
+            `  recordAndReturn,`,
+            `);`,
+          ].join("\n"),
+        ],
+        [
+          "aliased eval",
+          [
+            `const run = eval;`,
+            `run("globalThis.Object.defineProperty = (target) => target");`,
+          ].join("\n"),
         ],
       ]
     ) {
@@ -2377,6 +2398,24 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "a call-wrapped stored generator advancement",
+          [
+            `const iterator = (function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object);`,
+            `iterator.next.call(iterator);`,
+          ].join("\n"),
+        ],
+        [
+          "a Reflect.apply-wrapped stored generator advancement",
+          [
+            `const iterator = (function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object);`,
+            `Reflect.apply(iterator.next, iterator, []);`,
+          ].join("\n"),
+        ],
+        [
           "a transitively stored and advanced generator mutation",
           [
             `const iterator = (function* (intrinsic) {`,
@@ -2404,6 +2443,37 @@ describe("browser-server-exports-strip", () => {
             `}`,
             `const iterator = mutateIntrinsic(Object);`,
             `iterator.next();`,
+          ].join("\n"),
+        ],
+        [
+          "a delegated generator mutation",
+          [
+            `(function* (outer) {`,
+            `  yield* (function* (intrinsic) {`,
+            `    intrinsic.defineProperty = recordAndReturn;`,
+            `  })(outer);`,
+            `})(Object).next();`,
+          ].join("\n"),
+        ],
+        [
+          "a direct class-constructor mutation",
+          [
+            `new (class {`,
+            `  constructor(intrinsic) {`,
+            `    intrinsic.defineProperty = recordAndReturn;`,
+            `  }`,
+            `})(Object);`,
+          ].join("\n"),
+        ],
+        [
+          "an aliased class-constructor mutation",
+          [
+            `const Mutator = class {`,
+            `  constructor(intrinsic) {`,
+            `    intrinsic.defineProperty = recordAndReturn;`,
+            `  }`,
+            `};`,
+            `new Mutator(Object);`,
           ].join("\n"),
         ],
         [
@@ -2507,6 +2577,14 @@ describe("browser-server-exports-strip", () => {
           "an awaited Object-alias-destructured intrinsic mutator",
           [
             `const intrinsic = await Object;`,
+            `const { defineProperty: mutate } = intrinsic;`,
+            `mutate(Object, "defineProperty", { value: recordAndReturn });`,
+          ].join("\n"),
+        ],
+        [
+          "a global-destructured intrinsic container mutator",
+          [
+            `const { Object: intrinsic } = globalThis;`,
             `const { defineProperty: mutate } = intrinsic;`,
             `mutate(Object, "defineProperty", { value: recordAndReturn });`,
           ].join("\n"),

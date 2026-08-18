@@ -2016,7 +2016,80 @@ function intrinsicDefinePropertyAliases(
     });
   }
 
+  const addPatternPropertyBindings = (
+    pattern: Node,
+    propertyNames: ReadonlySet<string>,
+    declaration: boolean,
+    targets: Set<LexicalBindingIdentity>,
+  ): void => {
+    if (pattern.type !== "ObjectPattern") return;
+    for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
+      if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.value)) {
+        continue;
+      }
+      const key = isNode(property.key) ? property.key : undefined;
+      const name = property.computed === true ? stringLiteralText(key) : literalText(key);
+      if (name !== null && !propertyNames.has(name)) continue;
+      for (const identifier of patternBindingIdentifiers(property.value)) {
+        const target = declaration
+          ? bindings.declaration(identifier)
+          : bindings.reference(identifier);
+        if (target) targets.add(target);
+      }
+    }
+  };
+
+  const globalContainers = new Set<LexicalBindingIdentity>();
+  const carriesGlobalContainer = (node: Node): boolean => {
+    const value = unwrapTransparent(node);
+    if (isUnshadowedGlobalObject(value, globals)) return true;
+    if (value.type === "Identifier") {
+      const source = bindings.reference(value);
+      return source !== null && globalContainers.has(source);
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return !!last && carriesGlobalContainer(last);
+    }
+    if (value.type === "ConditionalExpression") {
+      return (isNode(value.consequent) && carriesGlobalContainer(value.consequent)) ||
+        (isNode(value.alternate) && carriesGlobalContainer(value.alternate));
+    }
+    if (value.type === "LogicalExpression") {
+      return (isNode(value.left) && carriesGlobalContainer(value.left)) ||
+        (isNode(value.right) && carriesGlobalContainer(value.right));
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return carriesGlobalContainer(value.right);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return carriesGlobalContainer(value.argument);
+    }
+    return false;
+  };
+
+  let globalsChanged = true;
+  while (globalsChanged) {
+    globalsChanged = false;
+    for (const { target, value } of flows) {
+      if (globalContainers.has(target) || !carriesGlobalContainer(value)) continue;
+      globalContainers.add(target);
+      globalsChanged = true;
+    }
+  }
+
   const intrinsicContainers = new Set<LexicalBindingIdentity>();
+  for (const { pattern, value, declaration } of destructured) {
+    if (carriesGlobalContainer(value)) {
+      addPatternPropertyBindings(
+        pattern,
+        new Set(["Object", "Reflect"]),
+        declaration,
+        intrinsicContainers,
+      );
+    }
+  }
   const isGlobalReflectSlot = (node: Node): boolean => {
     const value = unwrapTransparent(node);
     if (value.type !== "MemberExpression" && value.type !== "OptionalMemberExpression") {
@@ -2661,6 +2734,22 @@ function invokedFunctionParameterBindings(
         return;
       }
     }
+    if (target.type === "ClassDeclaration" || target.type === "ClassExpression") {
+      const members = isNode(target.body) && Array.isArray(target.body.body)
+        ? target.body.body.filter(isNode)
+        : [];
+      const constructor = members.find((member) =>
+        member.type === "ClassMethod" && member.kind === "constructor"
+      );
+      for (const param of Array.isArray(constructor?.params) ? constructor.params : []) {
+        if (!isNode(param)) continue;
+        for (const identifier of patternBindingIdentifiers(param)) {
+          const binding = bindings.declaration(identifier);
+          if (binding) invoked.add(binding);
+        }
+      }
+      return;
+    }
     if (
       target.type !== "FunctionDeclaration" && target.type !== "FunctionExpression" &&
       target.type !== "ArrowFunctionExpression"
@@ -2675,6 +2764,21 @@ function invokedFunctionParameterBindings(
         if (binding) invoked.add(binding);
       }
     }
+    if (target.generator === true && runGenerator && isNode(target.body)) {
+      walk(target.body, (node) => {
+        if (
+          node.type === "FunctionDeclaration" || node.type === "FunctionExpression" ||
+          node.type === "ArrowFunctionExpression"
+        ) return false;
+        if (
+          node.type === "YieldExpression" && node.delegate === true &&
+          isNode(node.argument)
+        ) {
+          collectAdvanced(node.argument);
+        }
+        return true;
+      });
+    }
   };
 
   const collectInvocation = (value: Node, runGenerator: boolean): void => {
@@ -2683,10 +2787,10 @@ function invokedFunctionParameterBindings(
     if (invocation) collect(invocation.callee, runGenerator);
   };
 
-  const collectAdvanced = (
+  function collectAdvanced(
     value: Node,
     seenBindings = new Set<LexicalBindingIdentity>(),
-  ): void => {
+  ): void {
     const advanced = unwrapTransparent(value);
     if (advanced.type === "Identifier") {
       const binding = bindings.reference(advanced);
@@ -2720,7 +2824,7 @@ function invokedFunctionParameterBindings(
       return;
     }
     collectInvocation(advanced, true);
-  };
+  }
 
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
@@ -2734,7 +2838,7 @@ function invokedFunctionParameterBindings(
         // covers standard consumers such as Array.from and iterable
         // constructors without pretending unknown callees leave it untouched.
         for (const argument of normalized?.args ?? []) collectAdvanced(argument);
-        const callee = isNode(node.callee) ? unwrapTransparent(node.callee) : undefined;
+        const callee = normalized?.callee;
         if (
           callee &&
           (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
@@ -2815,37 +2919,126 @@ function writesGuardedKeyThroughUnprovenBase(
   return false;
 }
 
-/** Member names that hand a module a constructor or a prototype it did not name. */
+/** Member names that can hand a module a constructor or a prototype it did not name. */
 const REFLECTION_KEYS = new Set(["constructor", "__proto__"]);
 
 /** Global functions that turn a string into code running in this realm. */
 const CODE_FROM_STRING_NAMES = new Set(["eval", "Function"]);
 
 /**
- * Whether the module carries a route to the intrinsic that never names it.
+ * Whether the module invokes a route to the intrinsic that never names it.
  *
  * `({}).constructor` is `Object`, `Object.getPrototypeOf({}).constructor` is
  * `Object`, and `"".constructor.constructor` is `Function`, which compiles a
- * string into code that can reach anything at all. None of these read `Object`
- * as a value, so no amount of tracking reads finds them, and enumerating the
- * expressions that produce a constructor has no end. The recognised set simply
- * does not admit a module carrying one.
+ * string into code that can reach anything at all. An ordinary read such as
+ * `error.constructor.name`, `value instanceof Function`, or `typeof eval` does
+ * none of those things and must not pin a hook-only server chain. Concrete
+ * binding flow distinguishes a constructor invoked later from same-spelled
+ * local shadows and ordinary inspection reads.
  */
-function hasReflectionRoute(body: Node[], globals: ReadonlySet<Node>): boolean {
+function hasReflectionRoute(
+  body: Node[],
+  globals: ReadonlySet<Node>,
+  bindings: LexicalBindingIndex,
+): boolean {
+  const flows = new Map<LexicalBindingIdentity, Node[]>();
+  const addFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
+    if (!target) return;
+    const values = flows.get(target) ?? [];
+    values.push(value);
+    flows.set(target, values);
+  };
+
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (
+        node.type === "VariableDeclarator" && isNode(node.id) &&
+        node.id.type === "Identifier" && isNode(node.init)
+      ) {
+        addFlow(bindings.declaration(node.id), node.init);
+      } else if (
+        node.type === "AssignmentExpression" && isNode(node.left) &&
+        node.left.type === "Identifier" && isNode(node.right)
+      ) {
+        addFlow(bindings.reference(node.left), node.right);
+      }
+    });
+  }
+
+  const isRoute = (
+    entry: Node | undefined,
+    seen = new Set<LexicalBindingIdentity>(),
+  ): boolean => {
+    if (!entry) return false;
+    const value = unwrapTransparent(entry);
+    if (
+      value.type === "Identifier" && globals.has(value) &&
+      CODE_FROM_STRING_NAMES.has(nodeName(value) ?? "")
+    ) {
+      return true;
+    }
+    if (value.type === "Identifier") {
+      const binding = bindings.reference(value);
+      if (!binding || seen.has(binding)) return false;
+      seen.add(binding);
+      return (flows.get(binding) ?? []).some((source) => isRoute(source, seen));
+    }
+    if (value.type === "MemberExpression" || value.type === "OptionalMemberExpression") {
+      const key = memberKey(value);
+      return key !== null && REFLECTION_KEYS.has(key);
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      return isRoute(expressions.at(-1), seen);
+    }
+    if (value.type === "ConditionalExpression") {
+      return isRoute(isNode(value.consequent) ? value.consequent : undefined, seen) ||
+        isRoute(isNode(value.alternate) ? value.alternate : undefined, seen);
+    }
+    if (value.type === "LogicalExpression") {
+      return isRoute(isNode(value.left) ? value.left : undefined, seen) ||
+        isRoute(isNode(value.right) ? value.right : undefined, seen);
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return isRoute(value.right, seen);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return isRoute(value.argument, seen);
+    }
+    if (
+      (value.type === "CallExpression" || value.type === "OptionalCallExpression") &&
+      isNode(value.callee)
+    ) {
+      const callee = unwrapTransparent(value.callee);
+      if (
+        (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
+        memberKey(callee) === "bind" && isNode(callee.object)
+      ) {
+        return isRoute(callee.object, seen);
+      }
+    }
+    return false;
+  };
+
   let found = false;
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
       if (found) return false;
-      if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
-        const key = memberKey(node);
-        if (key !== null && REFLECTION_KEYS.has(key)) found = true;
+      if (node.type === "CallExpression" || node.type === "OptionalCallExpression") {
+        const invocation = normalizeCall(node, globals);
+        found = isRoute(invocation?.callee) ||
+          (invocation?.args ?? []).some((argument) => isRoute(argument));
       }
-      if (
-        node.type === "Identifier" && globals.has(node) &&
-        CODE_FROM_STRING_NAMES.has(nodeName(node) ?? "")
-      ) {
-        found = true;
+      if (node.type === "NewExpression") {
+        found = isRoute(isNode(node.callee) ? node.callee : undefined) ||
+          (Array.isArray(node.arguments) ? node.arguments : []).some((argument) =>
+            isNode(argument) && isRoute(argument)
+          );
+      }
+      if (node.type === "TaggedTemplateExpression") {
+        found = isRoute(isNode(node.tag) ? node.tag : undefined);
       }
       return !found;
     });
@@ -3005,9 +3198,9 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  *
  * 1. `Object` resolves to the global intrinsic: no module binding, import,
  *    hoisted `var`, or assignment to the global claims the name.
- * 2. The module carries no reflection route to a constructor or a prototype,
- *    and no route from a string to code (`.constructor`, `__proto__`, `eval`,
- *    `Function`).
+ * 2. The module invokes no reflection route to a constructor or prototype and
+ *    no route from a string to code (`.constructor`, `__proto__`, `eval`,
+ *    `Function`). Ordinary inspection reads do not count as invocation.
  * 3. No property write reaches `defineProperty`, `defineProperties`, or
  *    `Object` through a base this stage cannot bound to a value the module
  *    itself made. A parameter of a non-generator function the module
@@ -3038,10 +3231,10 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  * ## Which direction it errs in
  *
  * Toward keeping code. Failing to recognise compiler metadata retains a helper
- * and its chain, which costs bundle size. Wrongly recognising it would delete
- * a call the module observes. Neither direction can leak a server value: the
- * removal of server exports and their dependency chains does not depend on
- * this recognition, and the pass verifies the removed names separately.
+ * and can retain the hook-only server chain it names. The removed-name verifier
+ * does not backstop that direction because no name was selected for removal.
+ * Wrongly recognising metadata can instead delete a call the module observes,
+ * so the accepted reflection and mutation routes remain deliberately narrow.
  */
 /**
  * Bindings for esbuild's `keepNames` helper. Release modules are compiled
@@ -3070,7 +3263,7 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     writesObjectDefineProperty(body, globals, bindings) ||
     writesGuardedKeyThroughUnprovenBase(body, globals, bindings) ||
     mergesGuardedKeyOntoIntrinsic(body, globals) ||
-    hasReflectionRoute(body, globals) ||
+    hasReflectionRoute(body, globals, bindings) ||
     intrinsicEscapesToWritableSlot(body, "Object", globals, bindings) ||
     intrinsicEscapesToWritableSlot(body, "global", globals, bindings);
   if (objectIsModuleLocal) return new Set<string>();
