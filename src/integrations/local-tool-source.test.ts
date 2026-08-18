@@ -76,6 +76,23 @@ describe("createLocalIntegrationToolSource", () => {
     ]);
   });
 
+  it("validates configured credential names before exposing tools", async () => {
+    const calls: string[] = [];
+    const source = createLocalIntegrationToolSource({
+      tools: ["sendcloud__list_shipments"],
+      credentialProvider: (name) => {
+        calls.push(name);
+        return name === "SENDCLOUD_PUBLIC_KEY" ? "public-key" : undefined;
+      },
+    });
+
+    const error = await assertRejects(() => source.listTools(), VeryfrontError);
+    assertEquals(calls, ["SENDCLOUD_PUBLIC_KEY", "SENDCLOUD_SECRET_KEY"]);
+    assertEquals(error.slug, "local-integration-credentials-missing");
+    assertEquals(error.message.includes("SENDCLOUD_SECRET_KEY"), true);
+    assertEquals(error.message.includes("public-key"), false);
+  });
+
   it("fails closed for malformed, unknown, duplicate, and unsupported tools", async () => {
     const fixtures = [
       { tool: "vercel", detail: "canonical" },

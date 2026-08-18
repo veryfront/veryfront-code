@@ -1,23 +1,21 @@
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { defineError } from "#veryfront/errors";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import type {
   RemoteToolSource,
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool/types.ts";
 import { connectors } from "./_data.ts";
+import {
+  createLocalCredentialAuthPlan,
+  type LocalCredentialAuthPlan,
+  resolveLocalCredentialAuth,
+} from "./local-credential-auth.ts";
+import { localIntegrationConfigurationError } from "./local-integration-errors.ts";
 import { MAX_LOCAL_INTEGRATION_TOOLS } from "./limits.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 import type { IntegrationConfig, IntegrationToolMeta } from "./schema.ts";
-
-const LOCAL_INTEGRATION_CONFIG_INVALID = defineError({
-  slug: "local-integration-config-invalid",
-  category: "CONFIG",
-  status: 400,
-  title: "Invalid local integration configuration",
-  suggestion: "Use exact catalog tool IDs and supported local credential and endpoint contracts",
-});
 
 /** Resolve one local integration credential by its canonical environment-variable name. */
 export type LocalIntegrationCredentialProvider = (
@@ -35,6 +33,7 @@ export interface LocalIntegrationToolSourceOptions {
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
 interface AdmittedLocalIntegrationTool {
+  readonly authPlan: LocalCredentialAuthPlan;
   readonly connector: IntegrationConfig;
   readonly endpoint: IntegrationEndpoint;
   readonly tool: IntegrationToolMeta & { id: string };
@@ -42,7 +41,7 @@ interface AdmittedLocalIntegrationTool {
 }
 
 function configurationError(detail: string): never {
-  throw LOCAL_INTEGRATION_CONFIG_INVALID.create({ detail });
+  return localIntegrationConfigurationError(detail);
 }
 
 function readOwnDataProperty(
@@ -294,6 +293,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
   assertSupportedEndpoint(connector, tool.endpoint, canonicalToolId);
   assertSupportedAuth(connector, tool.endpoint);
   return Object.freeze({
+    authPlan: createLocalCredentialAuthPlan(connector),
     connector,
     endpoint: tool.endpoint,
     tool,
@@ -316,6 +316,7 @@ export function createLocalIntegrationToolSource(
 ): RemoteToolSource {
   const snapshot = snapshotOptions(options);
   const admitted = new Map<string, AdmittedLocalIntegrationTool>();
+  const credentialProvider = snapshot.credentialProvider ?? getEnv;
 
   for (const toolId of snapshot.tools) {
     if (admitted.has(toolId)) {
@@ -328,6 +329,13 @@ export function createLocalIntegrationToolSource(
     id: "veryfront-local-integrations",
     async listTools(): Promise<ToolDefinition[]> {
       assertLocalRuntime();
+      const validatedConnectors = new Set<string>();
+      for (const toolId of snapshot.tools) {
+        const tool = admitted.get(toolId)!;
+        if (validatedConnectors.has(tool.connector.name)) continue;
+        await resolveLocalCredentialAuth(tool.authPlan, credentialProvider);
+        validatedConnectors.add(tool.connector.name);
+      }
       return snapshot.tools.map((toolId) => admitted.get(toolId)!.definition);
     },
     async executeTool(
