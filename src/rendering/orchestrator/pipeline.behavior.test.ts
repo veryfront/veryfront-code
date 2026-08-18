@@ -468,8 +468,8 @@ describe("RenderPipeline behavior", () => {
 
     await pipeline.renderPage("", { delivery: "string" });
 
-    assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
-    assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+    assertEquals(checks, [{ slug: "", cacheKey: "index:environment-production" }]);
+    assertEquals(persists, [{ slug: "", cacheKey: "index:environment-production" }]);
   });
 
   it("isolates preview HTML from the production render cache", () => {
@@ -482,19 +482,22 @@ describe("RenderPipeline behavior", () => {
       ): string | null;
     }).buildCacheKey.bind(pipeline);
 
-    assertEquals(buildCacheKey("", { environment: "production" }, "off"), "index");
-    assertEquals(buildCacheKey("", undefined, "off"), "index");
+    assertEquals(
+      buildCacheKey("", { environment: "production" }, "off"),
+      "index:environment-production",
+    );
+    assertEquals(buildCacheKey("", undefined, "off"), "index:environment-production");
     assertEquals(
       buildCacheKey("", { environment: "preview" }, "off"),
       "index:environment-preview",
     );
     assertEquals(
       buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off"),
-      "environment-preview:custom",
+      "custom:environment-preview",
     );
     assertEquals(
       buildCacheKey("", { cacheKey: "custom", environment: "production" }, "off"),
-      "environment-production:custom",
+      "custom:environment-production",
     );
     assert(
       buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off") !==
@@ -504,6 +507,11 @@ describe("RenderPipeline behavior", () => {
           "off",
         ),
       "preview and production custom cache identities must not collide",
+    );
+    assert(
+      buildCacheKey("foo", { environment: "preview" }, "off") !==
+        buildCacheKey("foo:environment-preview", { environment: "production" }, "off"),
+      "preview and production route cache identities must not collide",
     );
   });
 
@@ -537,7 +545,7 @@ describe("RenderPipeline behavior", () => {
     assert(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey));
     assertEquals(
       buildCacheKey("/", options, "off"),
-      `environment-production:${legacyKey}`,
+      `${legacyKey}:environment-production`,
     );
   });
 

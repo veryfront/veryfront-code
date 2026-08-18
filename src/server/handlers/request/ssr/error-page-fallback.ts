@@ -303,10 +303,11 @@ async function loadErrorComponent(
     )).loadComponentFromSource;
 
   const isLocal = !!ctx.isLocalProject;
+  const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview";
   const contentSourceId = ctx.enriched?.contentSourceId ??
     computeContentSourceId(
       isLocal,
-      ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview",
+      environment,
       ctx.requestContext?.branch ?? null,
       ctx.releaseId,
     );
@@ -326,6 +327,7 @@ async function loadErrorComponent(
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       dependencyPinningDependencies: dependencySnapshot.dependencies,
       dependencyPinningSource,
+      mode: environment,
     },
   );
 

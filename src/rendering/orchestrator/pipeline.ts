@@ -1469,9 +1469,9 @@ export class RenderPipeline {
       ...(this.config.renderCacheKeyComposition ?? {}),
       colorScheme: options?.colorScheme,
     };
+    const environment = options?.environment === "preview" ? "preview" : "production";
     if (options?.cacheKey) {
-      const environment = options.environment === "preview" ? "preview" : "production";
-      const cacheKey = `environment-${environment}:${options.cacheKey}`;
+      const cacheKey = `${options.cacheKey}:environment-${environment}`;
       return buildDependencyPinnedRenderCacheKey(
         cacheKey,
         dependencyPinningCacheKey,
@@ -1484,8 +1484,9 @@ export class RenderPipeline {
       if (requestHasCacheSensitiveState(req)) return null;
     }
 
-    let baseKey = buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
-    if (options?.environment === "preview") baseKey += ":environment-preview";
+    const baseKey = `${
+      buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions)
+    }:environment-${environment}`;
     return buildDependencyPinnedRenderCacheKey(
       baseKey,
       dependencyPinningCacheKey,
