@@ -1,8 +1,10 @@
 /**
  * Local Salesforce service-account integration tools.
  *
- * This source is opt-in per agent through `remoteTools`. It never registers
- * tools globally and never sends Salesforce credentials to Veryfront APIs.
+ * This source is opt-in. Materialize its tools with
+ * `loadRemoteToolsFromSource` and pass the result through an agent's `tools`
+ * field. It never registers globally or sends Salesforce credentials to
+ * Veryfront APIs.
  */
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
@@ -645,9 +647,9 @@ async function executeSalesforceEndpoint(
 /**
  * Create a local Salesforce service-account tool source.
  *
- * Add the returned source to an agent's `remoteTools` and list the same exact
- * tool names in the agent's `tools` map. The source reads credentials lazily
- * from the host environment when a tool executes.
+ * Materialize the returned source with `loadRemoteToolsFromSource` and pass
+ * the result through an agent's `tools` field. The source reads credentials
+ * lazily from the host environment when a tool executes.
  */
 export function createSalesforceServiceAccountToolSource(
   options: SalesforceServiceAccountToolSourceOptions,

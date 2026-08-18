@@ -216,8 +216,11 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "Remote integration tools");
     assertStringIncludes(guide, "Salesforce service account");
     assertStringIncludes(guide, "createSalesforceServiceAccountToolSource");
+    assertStringIncludes(guide, "loadRemoteToolsFromSource");
     assertStringIncludes(guide, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID");
+    assertStringIncludes(guide, "tools: salesforceTools");
     assertStringIncludes(guide, "Credentials stay in the host process");
+    assertEquals(guide.includes("remoteTools:"), false);
     assertEquals(
       guide.includes(
         "Managed Salesforce and other remote tools have no standalone credential path",

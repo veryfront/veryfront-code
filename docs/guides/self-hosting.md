@@ -49,41 +49,36 @@ SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL=https://<MY_DOMAIN>.my.salesforce.com
 The login URL must be the target org's My Domain HTTPS origin. Generic
 `login.salesforce.com` and `test.salesforce.com` endpoints are rejected.
 
-Create one source module and enumerate the exact tools that the application
-can use:
+Create one materialized tool map for each agent boundary and enumerate the
+exact tools that agent can use:
 
-```ts title="lib/salesforce-source.ts"
+```ts title="lib/case-ingest-salesforce-tools.ts"
 import { createSalesforceServiceAccountToolSource } from "veryfront/integrations";
+import { loadRemoteToolsFromSource } from "veryfront/tool";
 
-export const salesforceSource = createSalesforceServiceAccountToolSource({
+const salesforceSource = createSalesforceServiceAccountToolSource({
   allowedTools: [
     "salesforce__get_case",
     "salesforce__list_case_activity",
     "salesforce__list_cases",
-    "salesforce__add_case_comment",
-    "salesforce__update_case",
   ],
 });
+
+export const salesforceTools = await loadRemoteToolsFromSource(salesforceSource);
 ```
 
-Attach the source to each agent that uses those tools and keep the agent tool
-list narrower than or equal to the source allowlist:
+Pass the materialized tools through the agent's public `tools` field:
 
 ```ts title="agents/case-ingest.ts"
 import { agent } from "veryfront/agent";
-import { salesforceSource } from "../lib/salesforce-source.ts";
+import { salesforceTools } from "../lib/case-ingest-salesforce-tools.ts";
 
 export default agent({
   id: "case-ingest",
   name: "Case ingest",
   model: "openai/gpt-5",
   system: "Read and normalize Salesforce cases.",
-  tools: {
-    "salesforce__get_case": true,
-    "salesforce__list_case_activity": true,
-    "salesforce__list_cases": true,
-  },
-  remoteTools: [salesforceSource],
+  tools: salesforceTools,
 });
 ```
 

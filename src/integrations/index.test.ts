@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
+import type { AgentConfig } from "#veryfront/agent";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { connectors, icons } from "./_data.ts";
 import {
   EXPERIMENTAL_INTEGRATIONS_ENV,
@@ -90,5 +92,13 @@ describe("integrations/index", () => {
     assertEquals((await source.listTools()).map((tool) => tool.name), [
       "salesforce__get_case",
     ]);
+
+    const tools = await loadRemoteToolsFromSource(source);
+    const config: AgentConfig = {
+      system: "Read Salesforce cases.",
+      tools,
+    };
+    assertStrictEquals(config.tools, tools);
+    assertEquals(Object.keys(tools), ["salesforce__get_case"]);
   });
 });
