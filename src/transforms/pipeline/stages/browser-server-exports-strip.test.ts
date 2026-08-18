@@ -2843,6 +2843,40 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-while-false.tsx");
     });
 
+    it("analyzes a while body when its test is statically true", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { while (true) { missing; globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-while-true.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-while-true.tsx");
+    });
+
+    it("analyzes the first body iteration of an unconditional for loop", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { for (;;) { missing; globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-for-true.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-for-true.tsx");
+    });
+
     it("does not evaluate a do-while test after its body aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2926,6 +2960,23 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-iife-switch-match.tsx");
+    });
+
+    it("does not evaluate consequents of statically unmatched switch cases", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { switch (1) { case 0: use(KEY); break; case 1: break; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-switch-mismatch.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-switch-mismatch.tsx");
     });
 
     it("does not evaluate a try-block tail after its prefix aborts", async () => {
@@ -3822,6 +3873,24 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "inline-class-field-jsx-tag.tsx");
     });
 
+    it("does not evaluate JSX attributes after an initialized member tag lookup aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const Components = { get Broken() { throw 0; } };`,
+        `(() => { <Components.Broken value={KEY} />; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-jsx-member-tag.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-jsx-member-tag.tsx");
+    });
+
     it("does not evaluate a binary right operand after its left side aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3854,6 +3923,26 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "inline-class-field-assignment.tsx");
+    });
+
+    it("does not evaluate a compound assignment value after its member target aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { first = missing.value += KEY; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-field-compound-assignment.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes(
+        (error as Error).message,
+        "inline-class-field-compound-assignment.tsx",
+      );
     });
 
     it("does not evaluate object properties after an earlier value aborts", async () => {

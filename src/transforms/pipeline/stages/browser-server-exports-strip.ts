@@ -2609,7 +2609,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         directTagName.includes("-");
       const tagCompletes = tag?.type === "JSXIdentifier" && directTagIsIntrinsic ||
         tagRoot?.type === "JSXNamespacedName" || tagName === "this" ||
-        (tagName !== null && initializedNames.has(tagName));
+        (tag?.type === "JSXIdentifier" && tagName !== null && initializedNames.has(tagName));
       if (!tagCompletes) {
         for (const attribute of attributes) {
           if (isNode(attribute)) deferred.add(attribute);
@@ -2660,8 +2660,8 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       return;
     }
     if (
-      expression.type === "AssignmentExpression" && expression.operator === "=" &&
-      isNode(expression.left) && isNode(expression.right) &&
+      expression.type === "AssignmentExpression" && isNode(expression.left) &&
+      isNode(expression.right) &&
       (expression.left.type === "MemberExpression" ||
         expression.left.type === "OptionalMemberExpression") &&
       isNode(expression.left.object)
@@ -2675,8 +2675,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       const propertyCompletes = expression.left.computed !== true ||
         (isNode(expression.left.property) &&
           isInertExpression(expression.left.property, noNameHelpers, initializedNames));
-      if (objectCompletes && propertyCompletes) return;
-      deferOrderedExpressionTail(expression.left, initializedNames);
+      if (expression.operator === "=" && objectCompletes && propertyCompletes) return;
+      if (!objectCompletes || !propertyCompletes) {
+        deferOrderedExpressionTail(expression.left, initializedNames);
+      }
       deferred.add(expression.right);
       return;
     }
@@ -2938,11 +2940,18 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       if (statement.type === "WhileStatement") {
         const test = isNode(statement.test) ? statement.test : undefined;
         const body = isNode(statement.body) ? statement.body : undefined;
-        if (!test) return "unknown";
+        if (!test) {
+          const bodyCompletion = body ? statementCompletion(body) : "normal";
+          return bodyCompletion === "normal" ? "unknown" : bodyCompletion;
+        }
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known && !staticValueIsTruthy(value.value)) {
           if (body) deferred.add(body);
           return "normal";
+        }
+        if (value.known && staticValueIsTruthy(value.value)) {
+          const bodyCompletion = body ? statementCompletion(body) : "normal";
+          return bodyCompletion === "normal" ? "unknown" : bodyCompletion;
         }
         if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
@@ -2984,12 +2993,21 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (body) deferred.add(body);
           return initCompletion;
         }
-        if (!test) return "unknown";
+        if (!test) {
+          const bodyCompletion = body ? statementCompletion(body) : "normal";
+          if (bodyCompletion !== "normal" && update) deferred.add(update);
+          return bodyCompletion === "normal" ? "unknown" : bodyCompletion;
+        }
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known && !staticValueIsTruthy(value.value)) {
           if (update) deferred.add(update);
           if (body) deferred.add(body);
           return "normal";
+        }
+        if (value.known && staticValueIsTruthy(value.value)) {
+          const bodyCompletion = body ? statementCompletion(body) : "normal";
+          if (bodyCompletion !== "normal" && update) deferred.add(update);
+          return bodyCompletion === "normal" ? "unknown" : bodyCompletion;
         }
         if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
@@ -3030,9 +3048,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           }
           return "unknown";
         }
+        let possibleEarlierEntry = false;
         for (let index = 0; index < cases.length; index++) {
           const caseNode = cases[index];
-          if (!isNode(caseNode) || !isNode(caseNode.test)) continue;
+          if (!isNode(caseNode)) continue;
+          if (!isNode(caseNode.test)) {
+            possibleEarlierEntry = true;
+            continue;
+          }
           const test = caseNode.test;
           const testValue = staticPrimitiveValue(test, initializedNames);
           if (
@@ -3044,16 +3067,36 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             }
             return "unknown";
           }
-          if (
-            testValue.known ||
-            isInertExpression(test, noNameHelpers, initializedNames)
-          ) continue;
+          if (discriminantValue.known && testValue.known) {
+            if (!possibleEarlierEntry) {
+              for (
+                const consequent of Array.isArray(caseNode.consequent) ? caseNode.consequent : []
+              ) {
+                if (isNode(consequent)) deferred.add(consequent);
+              }
+            }
+            continue;
+          }
+          if (testValue.known || isInertExpression(test, noNameHelpers, initializedNames)) {
+            possibleEarlierEntry = true;
+            continue;
+          }
           deferOrderedExpressionTail(test, initializedNames);
-          for (const consequent of Array.isArray(caseNode.consequent) ? caseNode.consequent : []) {
-            if (isNode(consequent)) deferred.add(consequent);
+          if (!possibleEarlierEntry) {
+            for (
+              const consequent of Array.isArray(caseNode.consequent) ? caseNode.consequent : []
+            ) {
+              if (isNode(consequent)) deferred.add(consequent);
+            }
           }
           for (const later of cases.slice(index + 1)) {
-            if (isNode(later)) deferCaseEvaluation(later);
+            if (!isNode(later)) continue;
+            if (isNode(later.test)) deferred.add(later.test);
+            if (!possibleEarlierEntry) {
+              for (const consequent of Array.isArray(later.consequent) ? later.consequent : []) {
+                if (isNode(consequent)) deferred.add(consequent);
+              }
+            }
           }
           return "unknown";
         }
