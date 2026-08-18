@@ -67,6 +67,22 @@ export const CONFIG_VALIDATION_FAILED = defineError({
   suggestion: "Check configuration values against requirements",
 });
 
+export const LOCAL_INTEGRATION_CONFIG_INVALID = defineError({
+  slug: "local-integration-config-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid local integration configuration",
+  suggestion: "Use exact catalog tool IDs and supported local credential and endpoint contracts",
+});
+
+export const LOCAL_INTEGRATION_CREDENTIALS_MISSING = defineError({
+  slug: "local-integration-credentials-missing",
+  category: "CONFIG",
+  status: 400,
+  title: "Local integration credentials are missing",
+  suggestion: "Set the named environment variables or configure a credential provider",
+});
+
 /** Webhook definition validation failures (required fields, target, eventFilter) */
 export const WEBHOOK_CONFIG_INVALID = defineError({
   slug: "webhook-config-invalid",
@@ -120,6 +136,8 @@ export const CONFIG_REGISTRY = {
   "import-map-invalid": IMPORT_MAP_INVALID,
   "cors-config-invalid": CORS_CONFIG_INVALID,
   "config-validation-failed": CONFIG_VALIDATION_FAILED,
+  "local-integration-config-invalid": LOCAL_INTEGRATION_CONFIG_INVALID,
+  "local-integration-credentials-missing": LOCAL_INTEGRATION_CREDENTIALS_MISSING,
   "webhook-config-invalid": WEBHOOK_CONFIG_INVALID,
   "schedule-config-invalid": SCHEDULE_CONFIG_INVALID,
   "trigger-config-invalid": TRIGGER_CONFIG_INVALID,

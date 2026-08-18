@@ -47,6 +47,7 @@ on a backing API or cloud bootstrap.
 | Runs client                                                           | Requires backing API/service layer                | Exposed as SDK/API surface for task, workflow, and agent execution.                   |
 | Sandbox                                                               | Requires backing API/service layer                | Depends on authenticated sandbox session APIs.                                        |
 | Remote integration tools                                              | Requires backing API/service layer                | Tool definitions and execution are fetched per request from the configured API layer. |
+| Local catalog integration tools                                       | Open-core with provider credentials/runtime setup | Exact-grant local sources execute supported HTTPS REST endpoints directly.            |
 | Control-plane agent routing                                           | Requires Veryfront Cloud bootstrap                | EdDSA-signed request validation for hosted agent orchestration.                       |
 
 ## Extension contract matrix

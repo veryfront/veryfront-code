@@ -62,7 +62,7 @@ import {
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
-import { loadRemoteToolsFromSource } from "../../src/tool/index.ts";
+import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { parseDeployArgs } from "../../cli/commands/deploy/command.ts";
 import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
 import { parsePullArgs } from "../../cli/commands/pull/command.ts";

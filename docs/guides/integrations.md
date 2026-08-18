@@ -21,8 +21,8 @@ inventory records credential readiness independently of all three.
 
 ## Run account-free local integration tools
 
-Use the catalog-backed local source when a local or self-hosted project needs to
-call supported REST integrations without a Veryfront account or project token:
+Use the catalog-backed local source to call supported REST integrations from a
+local or self-hosted project without a Veryfront account or project token:
 
 ```ts
 import { agent } from "veryfront/agent";

@@ -28,6 +28,9 @@ export const MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS = 1_000;
 /** Maximum exact catalog tool grants admitted into one local integration source. */
 export const MAX_LOCAL_INTEGRATION_TOOLS = 256;
 
+/** Maximum canonical environment-variable name accepted from local catalog metadata. */
+export const MAX_LOCAL_INTEGRATION_CREDENTIAL_NAME_LENGTH = 128;
+
 /** Maximum caller or environment credential length admitted into an HTTP header. */
 export const MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH = 16_384;
 

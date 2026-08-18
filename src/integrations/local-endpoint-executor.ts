@@ -1,3 +1,4 @@
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
@@ -84,7 +85,9 @@ if (
   typeof urlOrigin !== "function" ||
   typeof urlSearchParams !== "function"
 ) {
-  throw new TypeError("Local integration HTTP primitives are unavailable");
+  throw INITIALIZATION_ERROR.create({
+    detail: "Local integration HTTP primitives are unavailable",
+  });
 }
 
 /** A fully constructed request admitted to the local integration transport. */
@@ -320,6 +323,34 @@ function assertKnownArguments(
     }
     if (!known) requestInvalid(`Local integration argument "${name}" is not declared`);
   }
+}
+
+/** @internal Snapshot and validate tool arguments before any credential or network work. */
+export function snapshotLocalIntegrationEndpointArguments(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const snapshot = snapshotArguments(args);
+  assertKnownArguments(snapshot, endpoint);
+
+  const paramNames = objectKeys(endpoint.params ?? {});
+  for (let index = 0; index < paramNames.length; index++) {
+    const name = paramNames[index]!;
+    const field = endpoint.params?.[name];
+    if (!field) continue;
+    const resolved = fieldValue(snapshot, name, field);
+    if (resolved.present && (field.in === "path" || field.in === "header")) {
+      scalarString(resolved.value);
+    }
+  }
+
+  const bodyNames = objectKeys(endpoint.body ?? {});
+  for (let index = 0; index < bodyNames.length; index++) {
+    const name = bodyNames[index]!;
+    const field = endpoint.body?.[name];
+    if (field) fieldValue(snapshot, name, field);
+  }
+  return snapshot;
 }
 
 function serializeJson(value: unknown): string {
@@ -565,6 +596,7 @@ async function executeTransportRequest(
     }
     requestFailed(identity, status);
   }
+  if (status === 204) return freeze({ status, value: null });
   return freeze({
     status,
     value: await readResponseJson(response, signal, identity, status),
@@ -596,7 +628,7 @@ function transformResponse(
 export async function executeLocalIntegrationEndpoint(
   options: ExecuteLocalIntegrationEndpointOptions,
 ): Promise<unknown> {
-  const args = snapshotArguments(options.args);
+  const args = snapshotLocalIntegrationEndpointArguments(options.endpoint, options.args);
   const signalLease = createRequestSignal(
     options.signal,
     options.timeoutMs ?? INTEGRATION_REQUEST_TIMEOUT_MS,

@@ -17,6 +17,7 @@ import {
 import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
+  snapshotLocalIntegrationEndpointArguments,
 } from "./local-endpoint-executor.ts";
 import { localIntegrationConfigurationError } from "./local-integration-errors.ts";
 import { MAX_LOCAL_INTEGRATION_TOOLS } from "./limits.ts";
@@ -516,6 +517,7 @@ function createLocalIntegrationToolSourceInternal(
       if (!tool) {
         configurationError(`Local integration tool "${toolName}" is not granted by this source`);
       }
+      const validatedArgs = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
         toolName,
@@ -544,7 +546,7 @@ function createLocalIntegrationToolSourceInternal(
         connectorName: tool.connector.name,
         toolId: toolName,
         endpoint,
-        args,
+        args: validatedArgs,
         authHeaders: auth.headers,
         allowedOrigin,
         signal: context?.abortSignal,

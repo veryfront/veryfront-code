@@ -155,6 +155,21 @@ describe("local integration endpoint executor", () => {
     },
   );
 
+  it("returns null for a successful response with no representation", async () => {
+    const result = await executeLocalIntegrationEndpoint({
+      endpoint: endpoint({
+        method: "POST",
+        url: "https://api.example.test/items/item-1/pause",
+      }),
+      args: {},
+      authHeaders: {},
+      allowedOrigin: "https://api.example.test",
+      transport: () => Promise.resolve(new Response(null, { status: 204 })),
+    });
+
+    assertEquals(result, null);
+  });
+
   it("supports passthrough JSON bodies and Microsoft Graph query formatting", async () => {
     let requestBody: BodyInit | null | undefined;
     let requestUrl = "";

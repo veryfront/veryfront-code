@@ -10,7 +10,10 @@ import {
   executeLocalIntegrationJsonRequest,
   type LocalIntegrationEndpointTransport,
 } from "./local-endpoint-executor.ts";
-import { MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH } from "./limits.ts";
+import {
+  MAX_LOCAL_INTEGRATION_CREDENTIAL_NAME_LENGTH,
+  MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
+} from "./limits.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -221,6 +224,33 @@ function declaredFallback(
   return undefined;
 }
 
+function assertCanonicalCredentialName(value: string, connectorName: string): string {
+  if (value.length === 0 || value.length > MAX_LOCAL_INTEGRATION_CREDENTIAL_NAME_LENGTH) {
+    localIntegrationConfigurationError(
+      `Local integration "${connectorName}" has an invalid credential name`,
+    );
+  }
+  for (let index = 0; index < value.length; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    const allowed = code === 95 || code >= 65 && code <= 90 || code >= 97 && code <= 122 ||
+      (index > 0 && code >= 48 && code <= 57);
+    if (!allowed) {
+      localIntegrationConfigurationError(
+        `Local integration "${connectorName}" has an invalid credential name`,
+      );
+    }
+  }
+  return value;
+}
+
+function canonicalCredentialNames(values: readonly string[], connectorName: string): string[] {
+  const canonical: string[] = [];
+  for (let index = 0; index < values.length; index++) {
+    append(canonical, assertCanonicalCredentialName(values[index]!, connectorName));
+  }
+  return canonical;
+}
+
 /** Build a serializable, value-free credential plan from trusted catalog metadata. */
 export function createLocalCredentialAuthPlan(
   connector: Pick<IntegrationConfig, "auth" | "envVars" | "name">,
@@ -253,15 +283,18 @@ export function createLocalCredentialAuthPlan(
       );
     }
     const additionalHeaders = freeze({ ...auth.additionalHeaders });
-    const required = [auth.keyName];
+    const required = [assertCanonicalCredentialName(auth.keyName, connector.name)];
     const additionalNames = objectValues(additionalHeaders);
     for (let index = 0; index < additionalNames.length; index++) {
-      append(required, additionalNames[index]!);
+      append(
+        required,
+        assertCanonicalCredentialName(additionalNames[index]!, connector.name),
+      );
     }
     return freeze({
       kind: "api-key",
       connectorName: connector.name,
-      keyName: auth.keyName,
+      keyName: required[0]!,
       headerName: auth.headerName ?? "Authorization",
       headerPrefix: auth.headerPrefix,
       additionalHeaders,
@@ -276,17 +309,22 @@ export function createLocalCredentialAuthPlan(
       );
     }
     const additionalHeaders = freeze({ ...auth.additionalHeaders });
-    const required = [auth.usernameKey, auth.passwordKey];
+    const usernameName = assertCanonicalCredentialName(auth.usernameKey, connector.name);
+    const passwordName = assertCanonicalCredentialName(auth.passwordKey, connector.name);
+    const required = [usernameName, passwordName];
     const additionalNames = objectValues(additionalHeaders);
     for (let index = 0; index < additionalNames.length; index++) {
-      append(required, additionalNames[index]!);
+      append(
+        required,
+        assertCanonicalCredentialName(additionalNames[index]!, connector.name),
+      );
     }
     return freeze({
       kind: "basic",
       connectorName: connector.name,
-      usernameName: auth.usernameKey,
-      passwordName: auth.passwordKey,
-      passwordFallback: declaredFallback(connector, auth.passwordKey),
+      usernameName,
+      passwordName,
+      passwordFallback: declaredFallback(connector, passwordName),
       additionalHeaders,
       requiredEnvironmentVariables: freeze(required),
     });
@@ -301,20 +339,30 @@ export function createLocalCredentialAuthPlan(
     const prefix = normalizedConnectorPrefix(connector.name);
     const clientIdName = `${prefix}_CLIENT_ID`;
     const clientSecretName = `${prefix}_CLIENT_SECRET`;
-    const requestBodyAuth = auth.tokenAuthMethod === "post" ||
-      auth.tokenAuthMethod === "request_body";
+    let tokenAuthMethod: LocalClientCredentialsAuthPlan["tokenAuthMethod"];
+    if (auth.tokenAuthMethod === "basic") tokenAuthMethod = "basic";
+    else if (auth.tokenAuthMethod === "request_body") tokenAuthMethod = "request-body";
+    else {
+      localIntegrationConfigurationError(
+        `Local integration "${connector.name}" uses an unsupported token authentication method`,
+      );
+    }
+    const required = canonicalCredentialNames(
+      [clientIdName, clientSecretName],
+      connector.name,
+    );
     return freeze({
       kind: "client-credentials",
       connectorName: connector.name,
       clientIdName,
       clientSecretName,
       scopes: freeze(copyStrings(auth.scopes ?? [])),
-      tokenAuthMethod: requestBodyAuth ? "request-body" : "basic",
+      tokenAuthMethod,
       tokenUrl: assertFixedHttpsUrl(
         auth.tokenUrl,
         `Local integration "${connector.name}" token URL`,
       ),
-      requiredEnvironmentVariables: freeze([clientIdName, clientSecretName]),
+      requiredEnvironmentVariables: freeze(required),
     });
   }
 

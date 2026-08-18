@@ -407,6 +407,34 @@ describe("createLocalIntegrationToolSource", () => {
     ]);
   });
 
+  it("rejects invalid tool arguments before resolving or minting credentials", async () => {
+    let credentialProviderCalls = 0;
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["paypal__list_balances"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ access_token: TEST_CREDENTIAL }));
+      },
+    );
+
+    const error = await assertRejects(
+      () => source.executeTool("paypal__list_balances", { unknown: true }),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
+    assertEquals(transportCalls, 0);
+  });
+
   it("uses only a validated Salesforce instance origin from service-account tokens", async () => {
     const requests: string[] = [];
     const transport: LocalIntegrationEndpointTransport = (request) => {

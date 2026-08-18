@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { connectors } from "./_data.ts";
@@ -13,6 +14,7 @@ import {
   resolveLocalCredentialAuth,
 } from "./local-credential-auth.ts";
 import type { LocalIntegrationCredentialProvider } from "./local-tool-source.ts";
+import type { IntegrationConfig } from "./schema.ts";
 
 const SECRET = "LOCAL_PROVIDER_SECRET_MUST_NOT_LEAK";
 const defineProperty = Object.defineProperty;
@@ -69,6 +71,42 @@ function providerFrom(values: Record<string, string>): LocalIntegrationCredentia
 }
 
 describe("local integration credential auth", () => {
+  it("rejects noncanonical credential names and unsupported token auth methods", () => {
+    const invalidCredential = {
+      name: "vercel",
+      auth: {
+        type: "api-key",
+        keyName: "not canonical?",
+      },
+      envVars: [],
+    } satisfies Pick<IntegrationConfig, "auth" | "envVars" | "name">;
+    const credentialError = assertThrows(
+      () => createLocalCredentialAuthPlan(invalidCredential),
+      VeryfrontError,
+    );
+    assertInstanceOf(credentialError, VeryfrontError);
+    assertEquals(credentialError.slug, "local-integration-config-invalid");
+
+    for (const tokenAuthMethod of ["none", "body", "client_secret_basic"]) {
+      const invalidOAuth = {
+        name: "paypal",
+        auth: {
+          type: "oauth2",
+          grantType: "client_credentials",
+          tokenAuthMethod,
+          tokenUrl: "https://oauth.example.test/token",
+        },
+        envVars: [],
+      } satisfies Pick<IntegrationConfig, "auth" | "envVars" | "name">;
+      const tokenMethodError = assertThrows(
+        () => createLocalCredentialAuthPlan(invalidOAuth),
+        VeryfrontError,
+      );
+      assertInstanceOf(tokenMethodError, VeryfrontError);
+      assertEquals(tokenMethodError.slug, "local-integration-config-invalid");
+    }
+  });
+
   it("resolves header API-key and additional-header plans", async () => {
     const vercelPlan = createLocalCredentialAuthPlan(connector("vercel"));
     assertEquals(vercelPlan.requiredEnvironmentVariables, ["VERCEL_TOKEN"]);
