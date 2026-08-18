@@ -3192,7 +3192,7 @@ function invokedFunctionParameterBindings(
   function resolveStringValues(
     entry: Node,
     seenBindings = new Set<LexicalBindingIdentity>(),
-    seenMemberFlows = new Set<MemberValueFlow>(),
+    seenMemberFlows = new Set<MemberValueFlow | Node>(),
   ): { values: string[]; complete: boolean } {
     const candidate = unwrapTransparent(entry);
     const merge = (entries: Node[]): { values: string[]; complete: boolean } => {
@@ -3312,17 +3312,20 @@ function invokedFunctionParameterBindings(
   function synchronousReturnValues(
     callable: Node,
     seenBindings: Set<LexicalBindingIdentity>,
-    seenMemberFlows: Set<MemberValueFlow>,
+    seenMemberFlows: Set<MemberValueFlow | Node>,
   ): Node[] {
     if (
+      seenMemberFlows.has(callable) ||
       callable.async === true || callable.generator === true ||
       !isNode(callable.body)
     ) return [];
+    const nextSeenMemberFlows = new Set(seenMemberFlows);
+    nextSeenMemberFlows.add(callable);
     if (callable.body.type !== "BlockStatement") {
       return concreteValues(
         callable.body,
         new Set(seenBindings),
-        new Set(seenMemberFlows),
+        new Set(nextSeenMemberFlows),
       );
     }
     const returned: Node[] = [];
@@ -3332,7 +3335,7 @@ function invokedFunctionParameterBindings(
         returned.push(...concreteValues(
           node.argument,
           new Set(seenBindings),
-          new Set(seenMemberFlows),
+          new Set(nextSeenMemberFlows),
         ));
       }
       return true;
@@ -3343,7 +3346,7 @@ function invokedFunctionParameterBindings(
   const concreteValues = (
     entry: Node,
     seenBindings = new Set<LexicalBindingIdentity>(),
-    seenMemberFlows = new Set<MemberValueFlow>(),
+    seenMemberFlows = new Set<MemberValueFlow | Node>(),
   ): Node[] => {
     const value = unwrapTransparent(entry);
     if (value.type === "Identifier") {
@@ -3401,15 +3404,17 @@ function invokedFunctionParameterBindings(
           const readScope = ownerExecutionScopes.get(value) ?? null;
           const readAllPossible = repeatedControlNodes.has(value);
           for (const flow of computedMemberValueFlows) {
+            if (seenMemberFlows.has(flow)) continue;
+            const nextSeenMemberFlows = new Set(seenMemberFlows);
+            nextSeenMemberFlows.add(flow);
             const flowKeyResolution = resolveStringValues(
               flow.key,
               new Set(seenBindings),
-              new Set(seenMemberFlows),
+              new Set(nextSeenMemberFlows),
             );
             for (const name of flowKeyResolution.values) resolvedKeys.add(name);
             if (
               flowKeyResolution.complete ||
-              seenMemberFlows.has(flow) ||
               (!readAllPossible && flow.order > readOrder &&
                 !flow.controlUncertain && flow.scope === readScope)
             ) continue;
@@ -3441,8 +3446,6 @@ function invokedFunctionParameterBindings(
               flow.scope,
             )));
             if (![...readOwners].some((owner) => flowOwners.has(owner))) continue;
-            const nextSeenMemberFlows = new Set(seenMemberFlows);
-            nextSeenMemberFlows.add(flow);
             members.push(...concreteValues(
               flow.value,
               new Set(seenBindings),
@@ -3598,10 +3601,13 @@ function invokedFunctionParameterBindings(
       const resolvedMemberFlows = [
         ...(memberValueFlows.get(key) ?? []),
         ...computedMemberValueFlows.filter((flow) => {
+          if (seenMemberFlows.has(flow)) return false;
+          const nextSeenMemberFlows = new Set(seenMemberFlows);
+          nextSeenMemberFlows.add(flow);
           const resolution = resolveStringValues(
             flow.key,
             new Set(seenBindings),
-            new Set(seenMemberFlows),
+            nextSeenMemberFlows,
           );
           return !resolution.complete || resolution.values.includes(key);
         }),
