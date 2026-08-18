@@ -3168,7 +3168,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (testValue.known || isInertExpression(test, noNameHelpers, initializedNames)) {
             possibleEarlierEntry = true;
             possibleCaseMatch = true;
-            if (!discriminantValue.known && Array.isArray(caseNode.consequent)) {
+            if (Array.isArray(caseNode.consequent)) {
               deferStatementListTail(caseNode.consequent, initializedNames);
             }
             continue;
