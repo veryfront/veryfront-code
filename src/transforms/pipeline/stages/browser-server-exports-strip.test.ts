@@ -1655,6 +1655,56 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
+    it("keeps metadata after a write to a hoisted function owner", async () => {
+      const code = [
+        `owner.make = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `function owner() {}`,
+        `owner.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
+    it("still strips metadata after a hoisted function owner is rebound", async () => {
+      const code = [
+        `owner.make = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `owner = { make: () => function (_intrinsic) {} };`,
+        `function owner() {}`,
+        `owner.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
     it("still strips metadata past a write through a shadowing alias parameter", async () => {
       const code = [
         `const intrinsic = Object;`,

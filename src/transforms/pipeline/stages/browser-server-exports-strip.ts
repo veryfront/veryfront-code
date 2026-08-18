@@ -2805,7 +2805,11 @@ function invokedFunctionParameterBindings(
       (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
       isNode(node.id)
     ) {
-      addOwnerValueFlow(bindings.declaration(node.id), node, order, uncertain);
+      // Function declarations are initialized when their scope is entered, so
+      // property writes before the declaration refer to the hoisted function.
+      // Classes retain their lexical occurrence because they have a TDZ.
+      const flowOrder = node.type === "FunctionDeclaration" ? Number.NEGATIVE_INFINITY : order;
+      addOwnerValueFlow(bindings.declaration(node.id), node, flowOrder, uncertain);
     } else if (node.type === "VariableDeclarator" && isNode(node.id) && isNode(node.init)) {
       if (node.id.type === "Identifier") {
         addOwnerValueFlow(bindings.declaration(node.id), node.init, order, uncertain);
@@ -2852,7 +2856,7 @@ function invokedFunctionParameterBindings(
   ): OwnerValueFlow[] => {
     const applicable = (ownerValueFlows.get(binding) ?? []).filter((flow) =>
       allPossible || flow.order <= atOrder
-    );
+    ).sort((left, right) => left.order - right.order);
     if (allPossible) return applicable;
     // A certain write supersedes every earlier owner. Branch and deferred
     // writes after it remain possible until another certain write occurs.
