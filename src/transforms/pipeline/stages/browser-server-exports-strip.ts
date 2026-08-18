@@ -1429,6 +1429,11 @@ export async function stripServerOnlyExports(
   // whole transitive graph. Any change to that ordering must either keep a
   // stage that erases unused imports after this one or restore the old
   // reduction to a bare side-effect import here.
+  //
+  // The other caller, `createSplitterPlugin` in
+  // `src/build/bundler/code-splitter/esbuild-plugin.ts`, meets the same
+  // requirement a different way: it strips inside an esbuild `onLoad` hook, so
+  // esbuild bundles and tree-shakes the stripped module afterwards.
   const pruned = retainLeadingComments(body, dropUnusedModuleScopeBindings(body, hookClosure));
   setBody(ast, retainLeadingComments(pruned, dropUnusedImportBindings(pruned, hookClosure)));
 
