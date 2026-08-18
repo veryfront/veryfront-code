@@ -1470,9 +1470,8 @@ export class RenderPipeline {
       colorScheme: options?.colorScheme,
     };
     if (options?.cacheKey) {
-      const cacheKey = options.environment === "preview"
-        ? `${options.cacheKey}:environment-preview`
-        : options.cacheKey;
+      const environment = options.environment === "preview" ? "preview" : "production";
+      const cacheKey = `environment-${environment}:${options.cacheKey}`;
       return buildDependencyPinnedRenderCacheKey(
         cacheKey,
         dependencyPinningCacheKey,

@@ -490,11 +490,24 @@ describe("RenderPipeline behavior", () => {
     );
     assertEquals(
       buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off"),
-      "custom:environment-preview",
+      "environment-preview:custom",
+    );
+    assertEquals(
+      buildCacheKey("", { cacheKey: "custom", environment: "production" }, "off"),
+      "environment-production:custom",
+    );
+    assert(
+      buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off") !==
+        buildCacheKey(
+          "",
+          { cacheKey: "custom:environment-preview", environment: "production" },
+          "off",
+        ),
+      "preview and production custom cache identities must not collide",
     );
   });
 
-  it("bounds the complete API render key while preserving the flag-off override", () => {
+  it("bounds the complete API render key for a flag-off override", () => {
     const cachePrefix = "project:preview:branch:v1";
     const pipeline = createPipeline("/project/pages/index.mdx", {
       renderCacheKeyComposition: {
@@ -522,7 +535,10 @@ describe("RenderPipeline behavior", () => {
     const completeKey = `render:${cachePrefix}:page:${cacheKey}:theme-dark`;
     assert(completeKey.length <= 512);
     assert(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey));
-    assertEquals(buildCacheKey("/", options, "off"), legacyKey);
+    assertEquals(
+      buildCacheKey("/", options, "off"),
+      `environment-production:${legacyKey}`,
+    );
   });
 
   it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {
