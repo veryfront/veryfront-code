@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { clearMDXRendererCache, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
@@ -99,8 +99,8 @@ describe("MDXRenderer.loadModuleESM render mode", () => {
     const contentSourceId = `release-${crypto.randomUUID()}`;
 
     try {
-      await Deno.mkdir(join(projectDir, "lib"), { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(join(projectDir, "lib"), { recursive: true });
+      await writeTextFile(
         join(projectDir, "lib/label.js"),
         `export const label = "compiled-by-mode";`,
       );
