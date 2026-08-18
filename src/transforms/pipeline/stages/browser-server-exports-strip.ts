@@ -2288,8 +2288,8 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         ? expression.expressions
         : expression.type === "ArrayExpression" && Array.isArray(expression.elements)
         ? expression.elements
-        : expression.type === "BinaryExpression" && isNode(expression.left) &&
-            isNode(expression.right)
+        : (expression.type === "BinaryExpression" || expression.type === "LogicalExpression") &&
+            isNode(expression.left) && isNode(expression.right)
         ? [expression.left, expression.right]
         : null;
     if (!ordered) return;
@@ -2475,6 +2475,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
               deferOrderedExpressionTail(expression, initializedAtCall);
             }
             return completes;
+          }
+          if (statement.type === "IfStatement") {
+            const test = isNode(statement.test) ? statement.test : undefined;
+            if (test && !isInertExpression(test, noNameHelpers, initializedAtCall)) {
+              deferOrderedExpressionTail(test, initializedAtCall);
+              if (isNode(statement.consequent)) deferred.add(statement.consequent);
+              if (isNode(statement.alternate)) deferred.add(statement.alternate);
+            }
+            return false;
           }
           if (statement.type !== "VariableDeclaration") return false;
           const declarators = declaratorsOf(statement);

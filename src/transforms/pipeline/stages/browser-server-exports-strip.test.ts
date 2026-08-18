@@ -2704,6 +2704,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-declarator-order.tsx");
     });
 
+    it("does not evaluate an if branch after its test aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { if (missing) globalThis.registered = KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-if-test.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-if-test.tsx");
+    });
+
     it("does not evaluate a nested pattern default after destructuring aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3413,6 +3430,23 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "inline-class-field-binary.tsx");
+    });
+
+    it("does not evaluate a logical right operand after its left side aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { first = missing && KEY; }();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-field-logical.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-field-logical.tsx");
     });
 
     it("does not evaluate a constructor default skipped by a defined argument", async () => {
