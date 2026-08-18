@@ -12,9 +12,10 @@ account for scheduled or project-owned automation.
 
 - A Salesforce administrator for the target org.
 - A Veryfront project with Salesforce tools declared in an agent.
-- The hosted Veryfront API, which supplies the Salesforce provider adapter. The
-  generic Veryfront runtime cannot scaffold or execute Salesforce OAuth routes.
-  An embedding host that supplies its own Salesforce adapter must declare
+- The hosted Veryfront API for per-user OAuth, or the local Salesforce service
+  account source for self-hosted execution. The generic runtime does not
+  scaffold Salesforce OAuth routes. An embedding host that supplies another
+  Salesforce adapter must declare
   `VERYFRONT_HOST_ADAPTER_INTEGRATIONS=salesforce` to expose the connector
   catalog. This does not enable generic Salesforce scaffolding.
 
@@ -78,6 +79,13 @@ All three variables are required. If any service-account variable is missing,
 Veryfront fails closed and does not fall back to a human OAuth connection for
 non-interactive runs. Rotate the consumer secret in Salesforce and update the
 project environment variable through the approved secret-management workflow.
+
+For a local or self-hosted project, attach
+`createSalesforceServiceAccountToolSource` from `veryfront/integrations` to the
+agents that use Salesforce tools. The source reads the same three variables
+from the host environment and calls Salesforce directly. See
+[Self-host Veryfront Code](../self-hosting.md#run-salesforce-integration-tools-locally)
+for a complete agent example.
 
 ## Verify it worked
 
