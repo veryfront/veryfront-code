@@ -1914,7 +1914,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       ? node.body.body.find((member) => isNode(member) && isConstructor(member))
       : undefined;
 
-  const constructorBeginsWithSuper = (node: Node): boolean => {
+  const constructorBeginsWithSimpleSuper = (node: Node): boolean => {
     const constructor = explicitConstructor(node);
     if (!constructor || !isNode(constructor.body) || !Array.isArray(constructor.body.body)) {
       return false;
@@ -1925,7 +1925,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     }
     const expression = first.expression;
     return expression.type === "CallExpression" && isNode(expression.callee) &&
-      expression.callee.type === "Super";
+      expression.callee.type === "Super" && Array.isArray(expression.arguments) &&
+      expression.arguments.length === 0;
   };
 
   const unwrap = (node: Node): Node => {
@@ -1942,21 +1943,48 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     return current;
   };
 
-  const constructionIsProven = (node: Node): boolean => {
-    if (!isNode(node.superClass)) return true;
-    const superClass = unwrap(node.superClass);
-    const constructable = (superClass.type === "ClassExpression" &&
-      constructionIsProven(superClass)) ||
-      (superClass.type === "FunctionExpression" &&
-        superClass.async !== true && superClass.generator !== true &&
-        Array.isArray(superClass.params) && superClass.params.length === 0 &&
-        isNode(superClass.body) && superClass.body.type === "BlockStatement" &&
-        Array.isArray(superClass.body.body) && superClass.body.body.length === 0);
-    return constructable &&
-      (!explicitConstructor(node) || constructorBeginsWithSuper(node));
+  const functionConstructionCompletes = (node: Node): boolean =>
+    node.type === "FunctionExpression" && node.async !== true && node.generator !== true &&
+    Array.isArray(node.params) && node.params.length === 0 &&
+    isNode(node.body) && node.body.type === "BlockStatement" &&
+    Array.isArray(node.body.body) && node.body.body.length === 0;
+
+  const invokesSuperclass = (node: Node): boolean =>
+    isNode(node.superClass) &&
+    (!explicitConstructor(node) || constructorBeginsWithSimpleSuper(node));
+
+  const explicitConstructorCompletes = (node: Node): boolean => {
+    const constructor = explicitConstructor(node);
+    if (!constructor) return true;
+    if (
+      !Array.isArray(constructor.params) || constructor.params.length !== 0 ||
+      !isNode(constructor.body) || !Array.isArray(constructor.body.body)
+    ) return false;
+    if (!isNode(node.superClass)) return constructor.body.body.length === 0;
+    return constructor.body.body.length === 1 && constructorBeginsWithSimpleSuper(node);
   };
 
-  const constructsInstanceFields = (node: Node): boolean => constructionIsProven(node);
+  const hasInstanceFields = (node: Node): boolean =>
+    isNode(node.body) && Array.isArray(node.body.body) &&
+    node.body.body.some((member) => isNode(member) && isInstanceField(member));
+
+  function superclassConstructionCompletes(node: Node): boolean {
+    if (!isNode(node.superClass)) return true;
+    const superClass = unwrap(node.superClass);
+    return superClass.type === "ClassExpression"
+      ? constructionCompletes(superClass)
+      : functionConstructionCompletes(superClass);
+  }
+
+  function constructsInstanceFields(node: Node): boolean {
+    return !isNode(node.superClass) ||
+      (invokesSuperclass(node) && superclassConstructionCompletes(node));
+  }
+
+  function constructionCompletes(node: Node): boolean {
+    return constructsInstanceFields(node) && !hasInstanceFields(node) &&
+      explicitConstructorCompletes(node);
+  }
 
   const staticMemberName = (member: Node): string | null => {
     if (!isNode(member.property)) return null;
@@ -1977,7 +2005,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 
   const invokedInlineObjectFunction = (callee: Node): Node | null => {
     if (
-      callee.type !== "MemberExpression" || !isNode(callee.object) ||
+      (callee.type !== "MemberExpression" && callee.type !== "OptionalMemberExpression") ||
+      !isNode(callee.object) ||
       !isNode(callee.property)
     ) return null;
     const object = unwrap(callee.object);
@@ -2041,7 +2070,11 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       if (objectFunction) return objectFunction;
       return callee;
     }
-    if (node.type === "OptionalCallExpression" || node.type === "NewExpression") {
+    if (node.type === "OptionalCallExpression" && isNode(node.callee)) {
+      const callee = unwrap(node.callee);
+      return invokedInlineObjectFunction(callee) ?? callee;
+    }
+    if (node.type === "NewExpression") {
       return isNode(node.callee) ? unwrap(node.callee) : null;
     }
     if (node.type === "TaggedTemplateExpression") {
@@ -2073,7 +2106,7 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     const constructsInlineClass = node.type === "ClassExpression" &&
       constructedClasses.has(node);
     if (
-      constructsInlineClass && constructsInstanceFields(node) &&
+      constructsInlineClass && invokesSuperclass(node) &&
       isNode(node.superClass)
     ) {
       const superClass = unwrap(node.superClass);

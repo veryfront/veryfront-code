@@ -2581,6 +2581,21 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("keeps a secret read by an optionally invoked inline object method", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ run() { globalThis.registered = KEY; } }).run?.();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/root-optional-method.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("fails the build when a called generator defers the last secret read", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2686,6 +2701,42 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "throwing-function-superclass.tsx");
+    });
+
+    it("does not assume a throwing inline class constructor completes", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends class {`,
+        `  constructor() { throw new Error("stop"); }`,
+        `} { field = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-class-superclass.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-class-superclass.tsx");
+    });
+
+    it("does not assume an inline superclass field initializer completes", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends class { base = missing; } { field = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-superclass-field.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-superclass-field.tsx");
     });
 
     it("keeps a field initialized after an empty function superclass returns", async () => {
