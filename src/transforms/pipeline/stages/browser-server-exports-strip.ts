@@ -1908,6 +1908,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     (node.type === "ClassMethod" || node.type === "ClassPrivateMethod") &&
     node.kind === "constructor";
 
+  const hasExplicitConstructor = (node: Node): boolean =>
+    isNode(node.body) && Array.isArray(node.body.body) &&
+    node.body.body.some((member) => isNode(member) && isConstructor(member));
+
   const unwrap = (node: Node): Node => {
     let current = node;
     while (
@@ -1977,10 +1981,13 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 
     const constructsInlineClass =
       (node.type === "ClassDeclaration" || node.type === "ClassExpression") && executesNow;
-    if (constructsInlineClass && isNode(node.superClass)) {
+    if (
+      constructsInlineClass && !hasExplicitConstructor(node) &&
+      isNode(node.superClass)
+    ) {
       const superClass = unwrap(node.superClass);
-      // A derived constructor synchronously constructs an inline base class,
-      // so its constructor and instance fields execute in the same evaluation.
+      // An implicit derived constructor synchronously constructs its inline
+      // base. Explicit constructors may return another object without `super()`.
       if (superClass.type === "ClassExpression") invokedFunctions.add(superClass);
     }
     const nextInvoked = invokedChild(node);
