@@ -2268,6 +2268,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       : null;
   };
 
+  const getterEvaluationCompletes = (getter: Node): boolean => {
+    if (
+      getter.type !== "ObjectMethod" || getter.kind !== "get" || !isNode(getter.body) ||
+      !Array.isArray(getter.body.body) || getter.body.body.length !== 1
+    ) return false;
+    const statement = getter.body.body[0];
+    return isNode(statement) && statement.type === "ReturnStatement" &&
+      (!isNode(statement.argument) || inertCompletionExpression(statement.argument));
+  };
+
   const evaluatedInvocationArguments = (node: Node): unknown[] | null => {
     if (
       node.type === "CallExpression" || node.type === "OptionalCallExpression" ||
@@ -2354,10 +2364,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
 
       const argument = invocationArguments[index];
       const defaultIsSkipped = isNode(argument) && isDefinitelyDefinedArgument(argument);
-      if (
-        !defaultIsSkipped &&
-        !isInertExpression(parameter.right, noNameHelpers, initializedForDefault)
-      ) return index;
+      if (defaultIsSkipped) {
+        deferred.add(parameter.right);
+      } else if (!isInertExpression(parameter.right, noNameHelpers, initializedForDefault)) {
+        return index;
+      }
       const name = nodeName(parameter.left);
       if (name) initializedForDefault.add(name);
     }
@@ -2414,7 +2425,23 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       invocationArguments,
       initializedAtCall,
     );
-    if (boundary === null) return true;
+    if (boundary === null) {
+      if (
+        isNode(target.body) && target.body.type === "BlockStatement" &&
+        Array.isArray(target.body.body)
+      ) {
+        const abruptIndex = target.body.body.findIndex((statement) =>
+          isNode(statement) &&
+          (statement.type === "ThrowStatement" || statement.type === "ReturnStatement")
+        );
+        if (abruptIndex >= 0) {
+          for (const statement of target.body.body.slice(abruptIndex + 1)) {
+            if (isNode(statement)) deferred.add(statement);
+          }
+        }
+      }
+      return true;
+    }
     const targetParameters = Array.isArray(target.params) ? target.params : [];
     const boundaryParameter = targetParameters[boundary];
     const firstDeferredParameter = isNode(boundaryParameter) &&
@@ -2465,6 +2492,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       }
       const propertyName = staticObjectPropertyName(property);
       if (propertyName === null) {
+        if (
+          property.computed === true && isNode(property.key) &&
+          !inertCompletionExpression(property.key)
+        ) {
+          if (property.type === "ObjectProperty" && isNode(property.value)) {
+            deferred.add(property.value);
+          } else if (property.type === "SpreadElement" && isNode(property.argument)) {
+            deferred.add(property.argument);
+          }
+        }
         deferPropertiesAfter(index);
         return null;
       }
@@ -2617,6 +2654,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           const getterResult = returnedInlineGetterFunction(nextInvoked);
           if (getterResult) {
             markCalledFunction(getterResult, node, activeScopes);
+          } else if (getterEvaluationCompletes(nextInvoked)) {
+            invocationArgumentsComplete(
+              node,
+              initializedNamesAtCall(node, activeScopes),
+            );
           } else {
             for (const argument of evaluatedInvocationArguments(node) ?? []) {
               if (isNode(argument)) deferred.add(argument);

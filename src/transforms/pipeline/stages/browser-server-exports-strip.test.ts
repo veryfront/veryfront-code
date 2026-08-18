@@ -2602,6 +2602,40 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-pattern-default.tsx");
     });
 
+    it("does not evaluate a default skipped by a defined argument", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `((value = KEY) => {})(1);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-skipped-default.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-skipped-default.tsx");
+    });
+
+    it("does not evaluate statements after an unconditional IIFE throw", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { throw new Error("stop"); globalThis.registered = KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-after-throw.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-after-throw.tsx");
+    });
+
     it("keeps a secret read by an inline tagged-template function", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2664,6 +2698,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-object-later-property.tsx");
     });
 
+    it("does not evaluate an object value after its computed key aborts", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ [missing]: KEY, run() {} }).run();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-object-computed-key.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-object-computed-key.tsx");
+    });
+
     it("keeps a secret read by a selected inline-object getter", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2694,6 +2745,24 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-object-getter-argument-order.tsx");
+    });
+
+    it("evaluates call arguments after a selected getter completes", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ get run() { return 1; } }).run(KEY);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-object-getter-completes.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, ").run(KEY)");
     });
 
     it("keeps a selected getter when a later setter completes the accessor", async () => {
