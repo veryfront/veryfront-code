@@ -424,6 +424,30 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
     if (isNode(property)) fixedNames.add(property);
   };
 
+  const markEnumLocalReferences = (node: Node): void => {
+    if (node.type !== "TSEnumDeclaration") return;
+    const container = isNode(node.body) ? node.body : node;
+    const members = Array.isArray(container.members) ? container.members : [];
+    const localNames = new Set<string>();
+    const enumName = nodeName(node.id);
+    if (enumName) localNames.add(enumName);
+    for (const member of members) {
+      if (!isNode(member)) continue;
+      const memberId = isNode(member.id) ? member.id : undefined;
+      const memberName = nodeName(memberId) ?? stringLiteralText(memberId);
+      if (memberName) localNames.add(memberName);
+    }
+    for (const member of members) {
+      if (!isNode(member) || !isNode(member.initializer)) continue;
+      walk(member.initializer, (candidate) => {
+        if (
+          candidate.type === "Identifier" &&
+          localNames.has(nodeName(candidate) ?? "")
+        ) fixedNames.add(candidate);
+      });
+    }
+  };
+
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
 
@@ -434,6 +458,7 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
       // came from.
       if (isErasedTypeNode(node)) return false;
 
+      markEnumLocalReferences(node);
       markFixedName(node);
 
       if (node.type === "Identifier" || node.type === "JSXIdentifier") {
@@ -801,7 +826,12 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       // not to the surrounding module.
       const namespaceScope: LexicalScope = { kind: "function", names: new Set() };
       bindPatternNames(namespaceScope, node.id);
-      if (isNode(node.body)) visit(node.body, [namespaceScope, ...scopes]);
+      if (isNode(node.body)) {
+        if (node.body.type === "TSModuleBlock") {
+          bindNestedVarDeclarations(namespaceScope, node.body);
+        }
+        visit(node.body, [namespaceScope, ...scopes]);
+      }
       return;
     }
 

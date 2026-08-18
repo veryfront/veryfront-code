@@ -1678,6 +1678,39 @@ export function hook() {
         assertStringIncludes(result, `return B`);
       });
 
+      it("drops a hook-only binding shadowed by a surviving enum member", async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const Read = getEnv("SECRET_KEY");`,
+          `export enum Access { Read = 1, Both = Read }`,
+          `export function getServerData() { return { props: { r: Read } }; }`,
+          `export default function Page() { return Access.Both; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "SECRET_KEY");
+        assertNotIncludes(result, "const Read =");
+        assertStringIncludes(result, "Both = Read");
+      });
+
+      it("keeps a module binding shadowed by a hoisted namespace var", async () => {
+        const code = [
+          `import { boot } from "../lib/analytics.ts";`,
+          `const token = boot();`,
+          `export function getServerData() {`,
+          `  namespace N { consume(token); if (false) { var token = 1; } }`,
+          `  return { props: {} };`,
+          `}`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, "const token = boot()");
+        assertStringIncludes(result, "analytics.ts");
+      });
+
       it("keeps a declaration whose name matches a hook-local enum member", async () => {
         const code = [
           `import { boot } from "../lib/analytics.ts";`,
