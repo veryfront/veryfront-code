@@ -2723,6 +2723,46 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "pages/leak.tsx");
     });
 
+    for (
+      const [description, member] of [
+        ["constructor", `constructor() { globalThis.constructed = KEY; }`],
+        ["instance field", `field = KEY;`],
+      ] as const
+    ) {
+      it(`keeps a secret read by an inline class ${description}`, async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `const instance = new class { ${member} };`,
+          `export async function getServerData() { return { props: { k: KEY } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "pages/inline-class.tsx");
+
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        assertStringIncludes(result, "new class");
+        assertStringIncludes(result, 'throw new Error("server-only")');
+      });
+    }
+
+    it("keeps an uncalled inline class method deferred", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { method() { return KEY; } };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-method.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "pages/inline-class-method.tsx");
+    });
+
     // Contrast pin: the same shape is ordinary client code the moment the
     // browser can reach the declaration, and then the secret it closes over is
     // shared state this pass must leave alone.

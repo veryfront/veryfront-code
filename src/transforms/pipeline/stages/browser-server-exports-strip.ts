@@ -2048,6 +2048,14 @@ function deferredExecutionNodes(root: Node): Set<Node> {
   const deferred = new Set<Node>();
   const invokedFunctions = new Set<Node>();
 
+  const isInstanceField = (node: Node): boolean =>
+    (node.type === "ClassProperty" || node.type === "ClassPrivateProperty" ||
+      node.type === "ClassAccessorProperty") && node.static !== true;
+
+  const isConstructor = (node: Node): boolean =>
+    (node.type === "ClassMethod" || node.type === "ClassPrivateMethod") &&
+    node.kind === "constructor";
+
   const unwrap = (node: Node): Node => {
     let current = node;
     while (
@@ -2096,26 +2104,37 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     return null;
   };
 
-  const walk = (node: Node, invoked: Node | null): void => {
+  const walk = (
+    node: Node,
+    invoked: Node | null,
+    constructedClassBody = false,
+  ): void => {
     const isFunction = node.type === "FunctionDeclaration" ||
       node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression" ||
       node.type === "ObjectMethod" || node.type === "ClassMethod" ||
       node.type === "ClassPrivateMethod";
-    const isInstanceField = (node.type === "ClassProperty" ||
-      node.type === "ClassPrivateProperty" || node.type === "ClassAccessorProperty") &&
-      node.static !== true;
+    const executesNow = node === invoked || invokedFunctions.has(node);
 
     if (
       (isFunction &&
-        (node.generator === true || (node !== invoked && !invokedFunctions.has(node)))) ||
-      isInstanceField
+        (node.generator === true || !executesNow)) ||
+      (isInstanceField(node) && !executesNow)
     ) {
       deferred.add(node);
     }
 
+    const constructsInlineClass =
+      (node.type === "ClassDeclaration" || node.type === "ClassExpression") && executesNow;
     const nextInvoked = invokedChild(node);
     if (nextInvoked) invokedFunctions.add(nextInvoked);
-    for (const child of children(node)) walk(child, nextInvoked);
+    for (const child of children(node)) {
+      const entersConstructedClassBody = constructsInlineClass && child.type === "ClassBody";
+      const invokedMember = constructedClassBody &&
+          (isConstructor(child) || isInstanceField(child))
+        ? child
+        : nextInvoked;
+      walk(child, invokedMember, entersConstructedClassBody);
+    }
   };
 
   walk(root, null);
