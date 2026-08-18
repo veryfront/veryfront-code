@@ -16,7 +16,7 @@ export function loadComponentsUnified(
   components: ComponentSource[],
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ): Promise<ComponentMap> {
   return withSpan(
     "modules.loadComponentsUnified",
@@ -54,7 +54,7 @@ export function loadComponentsUnified(
 
 async function resolveUnifiedTransformOptions(
   projectDir: string,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ): Promise<TransformOptions> {
   const dependencyPinningSource = options?.dependencyPinningSource ?? projectDir;
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
@@ -64,7 +64,7 @@ async function resolveUnifiedTransformOptions(
   );
   return {
     projectId: options?.projectId ?? projectDir,
-    dev: options?.dev ?? true,
+    dev: options.dev,
     moduleServerUrl: options?.moduleServerUrl,
     moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
       ? options?.moduleServerOrigin

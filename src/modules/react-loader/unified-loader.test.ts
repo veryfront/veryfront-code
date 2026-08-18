@@ -17,6 +17,7 @@ describe("loadComponentsUnified dependency snapshots", () => {
       "/project",
       {
         projectId: "project-id",
+        dev: false,
         moduleServerOrigin: "https://preview.example",
         dependencyPinningCacheKey,
         dependencyPinningDependencies: callerDependencies,
@@ -58,10 +59,22 @@ describe("loadComponentsUnified dependency snapshots", () => {
 
   it("does not vary flag-off transform options by request origin", async () => {
     const options = await _resolveUnifiedTransformOptionsForTest("/project", {
+      dev: false,
       moduleServerOrigin: "https://preview.example",
       dependencyPinningCacheKey: "off",
     });
 
     assertEquals(options.moduleServerOrigin, undefined);
+  });
+
+  it("threads the caller's render mode into the transform options", async () => {
+    for (const dev of [true, false]) {
+      const options = await _resolveUnifiedTransformOptionsForTest("/project", {
+        dev,
+        dependencyPinningCacheKey: "off",
+      });
+
+      assertEquals(options.dev, dev);
+    }
   });
 });

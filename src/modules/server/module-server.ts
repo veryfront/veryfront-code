@@ -329,7 +329,8 @@ export interface ModuleServerOptions {
   projectDir: string;
   /** Runtime adapter */
   adapter: RuntimeAdapter;
-  /** Development mode */
+  /** Development mode. Defaults to `false`: an omitted flag must not serve
+   * unminified modules or leak raw transform errors to a browser. */
   dev?: boolean;
   /** Project UUID for multi-project mode (from domain lookup) */
   projectUUID?: string;
@@ -396,7 +397,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         projectId,
         projectDir,
         adapter,
-        dev = true,
+        dev = false,
         projectUUID,
         allowedImportDirs,
         reactVersion: explicitReactVersion,

@@ -34,7 +34,7 @@ type ComponentSourceLoader = (
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ) => Promise<React.ComponentType<Record<string, unknown>>>;
 
 function createErrorFallbackComponent(
