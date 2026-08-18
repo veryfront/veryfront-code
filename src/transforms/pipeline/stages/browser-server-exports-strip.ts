@@ -3219,12 +3219,69 @@ function invokedFunctionParameterBindings(
       if (key === null) {
         const property = isNode(value.property) ? value.property : undefined;
         if (!property) return [];
-        const resolvedKeys = new Set(
-          concreteValues(property, new Set(seenBindings))
-            .map((candidate) => stringLiteralText(candidate))
-            .filter((candidate): candidate is string => candidate !== null),
-        );
-        if (resolvedKeys.size === 0) {
+        const resolveStringValues = (
+          entry: Node,
+          seen = new Set<LexicalBindingIdentity>(),
+        ): { values: string[]; complete: boolean } => {
+          const candidate = unwrapTransparent(entry);
+          const merge = (entries: Node[]): { values: string[]; complete: boolean } => {
+            if (entries.length === 0) return { values: [], complete: false };
+            const resolutions = entries.map((next) => resolveStringValues(next, new Set(seen)));
+            return {
+              values: resolutions.flatMap((resolution) => resolution.values),
+              complete: resolutions.every((resolution) => resolution.complete),
+            };
+          };
+
+          if (candidate.type === "Identifier") {
+            const binding = bindings.reference(candidate);
+            if (!binding || seen.has(binding)) return { values: [], complete: false };
+            const sources = valueFlows.get(binding) ?? [];
+            const nextSeen = new Set(seen);
+            nextSeen.add(binding);
+            if (sources.length === 0) return { values: [], complete: false };
+            const resolutions = sources.map((source) =>
+              resolveStringValues(source, new Set(nextSeen))
+            );
+            return {
+              values: resolutions.flatMap((resolution) => resolution.values),
+              complete: resolutions.every((resolution) => resolution.complete),
+            };
+          }
+          if (candidate.type === "SequenceExpression") {
+            const expressions = Array.isArray(candidate.expressions)
+              ? candidate.expressions.filter(isNode)
+              : [];
+            const last = expressions.at(-1);
+            return last ? resolveStringValues(last, seen) : { values: [], complete: false };
+          }
+          if (candidate.type === "ConditionalExpression") {
+            return merge([candidate.consequent, candidate.alternate].filter(isNode));
+          }
+          if (candidate.type === "LogicalExpression") {
+            return merge([candidate.left, candidate.right].filter(isNode));
+          }
+          if (candidate.type === "AssignmentExpression" && isNode(candidate.right)) {
+            return candidate.operator === "="
+              ? resolveStringValues(candidate.right, seen)
+              : merge([candidate.left, candidate.right].filter(isNode));
+          }
+          if (candidate.type === "AwaitExpression" && isNode(candidate.argument)) {
+            return resolveStringValues(candidate.argument, seen);
+          }
+
+          const concrete = concreteValues(candidate, new Set(seen));
+          const values = concrete
+            .map((resolved) => stringLiteralText(resolved))
+            .filter((resolved): resolved is string => resolved !== null);
+          return {
+            values,
+            complete: concrete.length > 0 && values.length === concrete.length,
+          };
+        };
+        const keyResolution = resolveStringValues(property, new Set(seenBindings));
+        const resolvedKeys = new Set(keyResolution.values);
+        if (!keyResolution.complete) {
           for (const knownKey of memberValueFlows.keys()) resolvedKeys.add(knownKey);
           const seenKeyOwners = new Set<Node>();
           const collectKnownKeys = (entry: Node): void => {

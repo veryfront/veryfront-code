@@ -2161,6 +2161,32 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("keeps metadata when a computed key has known and runtime-selected flows", async () => {
+      const code = [
+        `const mutatingFactory = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `const safeFactory = () => function (_intrinsic) {};`,
+        `const owner = { safe: safeFactory, make: mutatingFactory };`,
+        `const key = globalThis.useSafe ? "safe" : globalThis.factoryKey;`,
+        `owner[key]()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
     it("keeps metadata after a write through a computed object-destructured owner", async () => {
       const code = [
         `const mutatingFactory = () => function (intrinsic) {`,
