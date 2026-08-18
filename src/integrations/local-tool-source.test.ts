@@ -13,6 +13,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "./feature-flags.ts";
@@ -183,71 +184,81 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(apiKey, TEST_CREDENTIAL);
   });
 
-  it("retains admission semantics after project code mutates ambient primordials", async () => {
-    _setEnvironmentConfigForTesting({ veryfrontMode: "production", proxyMode: false });
-    const restorers: Array<() => void> = [];
-    let poisonCalls = 0;
-    const poison = (): never => {
-      poisonCalls += 1;
-      throw new Error("ambient primordial used");
-    };
-    let source: ReturnType<typeof createLocalIntegrationToolSource> | undefined;
-    let definitions: readonly { name: string }[] | undefined;
+  // Deno-only: Node's test runner emits harness diagnostics through
+  // Array.prototype.push while the poison window is open across the awaits
+  // below, so the poison crashes the runner itself rather than proving
+  // anything about the implementation. The intrinsic-safety proof is
+  // runtime-independent; every other test in this file still runs on Node
+  // and Bun.
+  const denoOnlyIt = isDeno ? it : it.skip;
+  denoOnlyIt(
+    "retains admission semantics after project code mutates ambient primordials",
+    async () => {
+      _setEnvironmentConfigForTesting({ veryfrontMode: "production", proxyMode: false });
+      const restorers: Array<() => void> = [];
+      let poisonCalls = 0;
+      const poison = (): never => {
+        poisonCalls += 1;
+        throw new Error("ambient primordial used");
+      };
+      let source: ReturnType<typeof createLocalIntegrationToolSource> | undefined;
+      let definitions: readonly { name: string }[] | undefined;
 
-    try {
-      appendRestorer(restorers, replaceProperty(Array, "isArray", () => poison()));
-      appendRestorer(restorers, replaceProperty(Array.prototype, "map", poison));
-      appendRestorer(restorers, replaceProperty(Array.prototype, "push", poison));
-      appendRestorer(restorers, replaceProperty(Map.prototype, "get", poison));
-      appendRestorer(restorers, replaceProperty(Map.prototype, "has", poison));
-      appendRestorer(restorers, replaceProperty(Map.prototype, "set", poison));
-      appendRestorer(restorers, replaceProperty(globalThis, "Map", poison));
-      appendRestorer(restorers, replaceProperty(Object, "create", poison));
-      appendRestorer(restorers, replaceProperty(Object, "defineProperty", poison));
-      appendRestorer(restorers, replaceProperty(Object, "entries", poison));
-      appendRestorer(restorers, replaceProperty(Object, "freeze", poison));
-      appendRestorer(restorers, replaceProperty(Object, "getOwnPropertyDescriptor", poison));
-      appendRestorer(restorers, replaceProperty(Object, "values", poison));
-      appendRestorer(
-        restorers,
-        replaceProperty(Reflect, "getOwnPropertyDescriptor", poison),
-      );
-      appendRestorer(restorers, replaceProperty(Set.prototype, "add", poison));
-      appendRestorer(restorers, replaceProperty(Set.prototype, "has", poison));
-      appendRestorer(restorers, replaceProperty(globalThis, "Set", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "charCodeAt", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "includes", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "indexOf", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "lastIndexOf", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "replace", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "replaceAll", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "slice", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "startsWith", poison));
-      appendRestorer(restorers, replaceProperty(globalThis, "URL", poison));
-      appendRestorer(
-        restorers,
-        replaceDescriptor(Array.prototype, "0", {
-          configurable: true,
-          set: poison,
-        }),
-      );
+      try {
+        appendRestorer(restorers, replaceProperty(Array, "isArray", () => poison()));
+        appendRestorer(restorers, replaceProperty(Array.prototype, "map", poison));
+        appendRestorer(restorers, replaceProperty(Array.prototype, "push", poison));
+        appendRestorer(restorers, replaceProperty(Map.prototype, "get", poison));
+        appendRestorer(restorers, replaceProperty(Map.prototype, "has", poison));
+        appendRestorer(restorers, replaceProperty(Map.prototype, "set", poison));
+        appendRestorer(restorers, replaceProperty(globalThis, "Map", poison));
+        appendRestorer(restorers, replaceProperty(Object, "create", poison));
+        appendRestorer(restorers, replaceProperty(Object, "defineProperty", poison));
+        appendRestorer(restorers, replaceProperty(Object, "entries", poison));
+        appendRestorer(restorers, replaceProperty(Object, "freeze", poison));
+        appendRestorer(restorers, replaceProperty(Object, "getOwnPropertyDescriptor", poison));
+        appendRestorer(restorers, replaceProperty(Object, "values", poison));
+        appendRestorer(
+          restorers,
+          replaceProperty(Reflect, "getOwnPropertyDescriptor", poison),
+        );
+        appendRestorer(restorers, replaceProperty(Set.prototype, "add", poison));
+        appendRestorer(restorers, replaceProperty(Set.prototype, "has", poison));
+        appendRestorer(restorers, replaceProperty(globalThis, "Set", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "charCodeAt", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "includes", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "indexOf", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "lastIndexOf", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "replace", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "replaceAll", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "slice", poison));
+        appendRestorer(restorers, replaceProperty(String.prototype, "startsWith", poison));
+        appendRestorer(restorers, replaceProperty(globalThis, "URL", poison));
+        appendRestorer(
+          restorers,
+          replaceDescriptor(Array.prototype, "0", {
+            configurable: true,
+            set: poison,
+          }),
+        );
 
-      source = createLocalIntegrationToolSource({
-        tools: ["vercel__list_projects"],
-        credentialProvider: testCredentialProvider,
-      });
-      definitions = await source.listTools();
-    } finally {
-      for (let index = restorers.length - 1; index >= 0; index--) restorers[index]?.();
-    }
+        source = createLocalIntegrationToolSource({
+          tools: ["vercel__list_projects"],
+          credentialProvider: testCredentialProvider,
+        });
+        definitions = await source.listTools();
+      } finally {
+        for (let index = restorers.length - 1; index >= 0; index--) restorers[index]?.();
+      }
 
-    assertEquals(poisonCalls, 0);
-    assert(source);
-    assert(Object.isFrozen(source));
-    assertEquals(definitions?.map((definition) => definition.name), [
-      "vercel__list_projects",
-    ]);
-  });
+      assertEquals(poisonCalls, 0);
+      assert(source);
+      assert(Object.isFrozen(source));
+      assertEquals(definitions?.map((definition) => definition.name), [
+        "vercel__list_projects",
+      ]);
+    },
+  );
 
   it("validates configured credential names before exposing tools", async () => {
     const calls: string[] = [];
