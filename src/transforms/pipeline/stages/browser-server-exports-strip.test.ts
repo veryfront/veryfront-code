@@ -21,6 +21,23 @@ function assertNotIncludes(haystack: string, needle: string): void {
   assertEquals(haystack.includes(needle), false, `expected not to find ${needle} in:\n${haystack}`);
 }
 
+/**
+ * A module that defeats the intrinsic proof, so the `setName(loadSecret, …)`
+ * registration cannot be classified as compiler metadata. Deleting it could
+ * delete a call the module observes, and emitting the module ships the secret
+ * and the server import behind it to the browser. Stopping the build is the
+ * only outcome that is neither, so that is what the pass must do.
+ */
+async function assertUnprovableRegistrationRejected(code: string): Promise<void> {
+  const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+  assertEquals((error as VeryfrontError).slug, "server-export-strip-failed");
+  assertStringIncludes(
+    (error as Error).message,
+    "compiler name registration this pass cannot verify",
+  );
+}
+
 /** Identifier occurrences, so "kept the import" and "kept the binding" differ. */
 function occurrences(haystack: string, name: string): number {
   return haystack.match(new RegExp(`\\b${name}\\b`, "g"))?.length ?? 0;
@@ -1119,11 +1136,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "globalThis.nameRegistrations");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a dynamic Object property as compiler metadata", async () => {
@@ -1284,11 +1297,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "Object.defineProperty = recordAndReturn");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a redefined Object.defineProperty as compiler metadata", async () => {
@@ -1309,11 +1318,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `Object.defineProperty(Object, "defineProperty"`);
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a multiply initialized name helper as compiler metadata", async () => {
@@ -1385,11 +1390,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "Object = {");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a helper with a local Object name as compiler metadata", async () => {
@@ -1436,11 +1437,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "intrinsic.defineProperty = recordAndReturn");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     for (
@@ -1597,10 +1594,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -1678,10 +1672,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("still strips metadata after a hoisted function owner is rebound", async () => {
@@ -1791,10 +1782,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata when a conditional rebind may leave a mutating owner", async () => {
@@ -1820,10 +1808,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     for (
@@ -1860,10 +1845,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -1975,10 +1957,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2016,10 +1995,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2071,10 +2047,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     for (
@@ -2110,10 +2083,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2136,10 +2106,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata through a runtime-selected local factory call", async () => {
@@ -2160,10 +2127,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata when a computed key has known and runtime-selected flows", async () => {
@@ -2186,10 +2150,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata when a computed-key factory has an unresolved return flow", async () => {
@@ -2212,10 +2173,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata through an unresolved computed object member", async () => {
@@ -2237,10 +2195,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata when a member value flow refers to itself", async () => {
@@ -2262,10 +2217,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     for (
@@ -2301,10 +2253,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2334,10 +2283,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2421,10 +2367,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata when a nested computed write resolves its owner", async () => {
@@ -2449,10 +2392,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("bounds unresolved computed write key traversal", async () => {
@@ -2480,12 +2420,10 @@ describe("browser-server-exports-strip", () => {
       ].join("\n");
 
       const started = performance.now();
-      const result = await stripServerOnlyExports(code);
+      await assertUnprovableRegistrationRejected(code);
       const elapsed = performance.now() - started;
 
       assert(elapsed < 1_500, `expected bounded traversal, got ${elapsed.toFixed(1)} ms`);
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
     for (
@@ -2526,10 +2464,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2581,10 +2516,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2631,10 +2563,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata after a write through a runtime-selected destructured owner", async () => {
@@ -2658,10 +2587,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("keeps metadata after a nested write through an object-rest owner", async () => {
@@ -2685,10 +2611,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("still strips metadata after a safe write through an object-destructured owner", async () => {
@@ -2769,10 +2692,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("still strips metadata past a write through a shadowing alias parameter", async () => {
@@ -2850,11 +2770,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `const intrinsic = ${globalObject}`);
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2884,11 +2800,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `const intrinsic = ${globalObject}`);
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -2911,11 +2823,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "const scope = window");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     // `typeof window` yields a string, never a reference the module can use to
@@ -3008,11 +2916,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `const intrinsic = ${globalObject}`);
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -3059,11 +2963,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `Reflect.defineProperty(Object, "defineProperty"`);
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a globalThis-rooted intrinsic write as compiler metadata", async () => {
@@ -3084,11 +2984,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "globalThis.Object.defineProperty = recordAndReturn");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a replaced globalThis.Object as compiler metadata", async () => {
@@ -3109,11 +3005,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "globalThis.Object = {");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a defineProperty replacement of globalThis.Object as compiler metadata", async () => {
@@ -3137,11 +3029,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `Object.defineProperty(globalThis, "Object"`);
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a Reflect replacement of globalThis.Object as compiler metadata", async () => {
@@ -3165,11 +3053,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `Reflect.defineProperty(globalThis, "Object"`);
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat an aliased global object as compiler metadata", async () => {
@@ -3191,11 +3075,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "scope.Object = ");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat a computed intrinsic write as compiler metadata", async () => {
@@ -3216,11 +3096,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "Object[globalThis.patchedName] = recordAndReturn");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("still strips compiler metadata after an unrelated defineProperty write", async () => {
@@ -3373,11 +3249,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `const intrinsic = ${globalObject}`);
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -3403,11 +3275,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code, "pages/ns.ts");
-
-        assertStringIncludes(result, "Patch.intrinsic.defineProperty = recordAndReturn");
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -3430,11 +3298,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code, "pages/ns.ts");
-
-      assertStringIncludes(result, "Patch.intrinsic.defineProperty = recordAndReturn");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     // A read that only hands the intrinsic to a callee, spreads it, or binds a
@@ -3578,10 +3442,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -3923,10 +3784,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -4041,10 +3899,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -4082,10 +3937,7 @@ describe("browser-server-exports-strip", () => {
           `export default function Page() { return null; }`,
         ].join("\n");
 
-        const result = await stripServerOnlyExports(code);
-
-        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        await assertUnprovableRegistrationRejected(code);
       });
     }
 
@@ -4131,10 +3983,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat named descriptors installed on the intrinsic as compiler metadata", async () => {
@@ -4156,11 +4005,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "Object.defineProperties(Object, descriptors)");
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     it("does not treat an eval of a replacement as compiler metadata", async () => {
@@ -4177,10 +4022,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
-      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      await assertUnprovableRegistrationRejected(code);
     });
 
     // A `function` declaration and a `var` cannot share a name in a module:
@@ -6276,6 +6118,155 @@ describe("browser-server-exports-strip", () => {
       );
 
       assertStringIncludes((error as Error).message, "Declare the hook directly");
+    });
+  });
+  // A `__name(fn, "fn")` registration esbuild emits is build metadata, not a
+  // browser read of `fn`. Recognising it is what lets the pass see a hook-only
+  // declaration as dead. When module code makes that proof impossible, the
+  // registration counts as a live browser read instead, and the hook's
+  // declaration, its server import and its secret all stay in the artifact.
+  // Silent retention is the one outcome a security stage must never produce, so
+  // the build stops instead.
+  describe("unprovable compiler name registrations", () => {
+    /** The esbuild `keepNames` shape, with one varying line of client code. */
+    function keepNamesModule(clientLine: string): string {
+      return [
+        `import { getEnv } from "veryfront";`,
+        `import { db } from "../lib/server/db.ts";`,
+        `var __defProp = Object.defineProperty;`,
+        `var __name = (target, value) => __defProp(target, "name", { value, configurable: true });`,
+        `const API_KEY = getEnv("ORDERS_SECRET");`,
+        `async function loadUser(id) { return db.query(id, API_KEY); }`,
+        `__name(loadUser, "loadUser");`,
+        `export async function getServerData(ctx) {`,
+        `  return { props: { user: await loadUser(ctx.id) } };`,
+        `}`,
+        clientLine,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+    }
+
+    /**
+     * The security property, stated so neither outcome can be mistaken for the
+     * other: the server chain is gone, or the build failed. Never retained.
+     */
+    async function assertStrippedOrRejected(clientLine: string): Promise<void> {
+      let output: string;
+      try {
+        output = await stripServerOnlyExports(keepNamesModule(clientLine), "pages/orders.tsx");
+      } catch (error) {
+        assertEquals((error as VeryfrontError).slug, "server-export-strip-failed");
+        return;
+      }
+      assertNotIncludes(output, "../lib/server/db.ts");
+      assertNotIncludes(output, `getEnv("ORDERS_SECRET")`);
+    }
+
+    // Ordinary client code that reads `.constructor`, `__proto__`, `eval` or
+    // `Function`. Each of these once put the server import and the secret in the
+    // browser artifact.
+    const ordinaryClientLines: Array<[string, string]> = [
+      ["typeof", `const isPlain = (v) => typeof v === "object";`],
+      ["optional constructor compare", `const isPlain = (v) => v?.constructor === Object;`],
+      ["constructor name read", `const label = (e) => e.constructor.name;`],
+      ["proto read", `const proto = (v) => v.__proto__;`],
+      ["instanceof Function", `const isFn = (v) => v instanceof Function;`],
+      ["typeof eval", `const hasEval = typeof eval;`],
+    ];
+
+    for (const [label, clientLine] of ordinaryClientLines) {
+      it(`never retains the server chain for ${label}`, async () => {
+        await assertStrippedOrRejected(clientLine);
+      });
+    }
+
+    // Shapes that do defeat the proof. The registration stays unrecognised, so
+    // the pass cannot see `loadUser` as dead and must not emit the module.
+    const unprovableClientLines: Array<[string, string]> = [
+      ["a module-scope binding named `Object`", `const Object = globalThis.Object;`],
+      ["an assignment to the global `Object`", `globalThis.Object = Object;`],
+    ];
+
+    for (const [label, clientLine] of unprovableClientLines) {
+      it(`fails the build for ${label}`, async () => {
+        const error = await assertRejects(() =>
+          stripServerOnlyExports(keepNamesModule(clientLine), "pages/orders.tsx")
+        );
+
+        assertEquals((error as VeryfrontError).slug, "server-export-strip-failed");
+        const { message } = error as Error;
+        assertStringIncludes(message, "pages/orders.tsx");
+        // The server-only binding that would have been removed, so the author
+        // knows which chain the unprovable registration is holding on to.
+        assertStringIncludes(message, "API_KEY");
+      });
+    }
+
+    // The error has to be actionable: which construct blocked the proof, and
+    // what to do about it.
+    it("names the blocking construct and how to avoid it", async () => {
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(
+          keepNamesModule(`const Object = globalThis.Object;`),
+          "pages/orders.tsx",
+        )
+      );
+      const { message } = error as Error;
+
+      assertStringIncludes(message, "declares a module-scope binding named `Object`");
+      assertStringIncludes(
+        message,
+        "Move the code that reaches or rewrites the `Object` intrinsic",
+      );
+      assertStringIncludes(message, "does not export a server data hook");
+      // The hook is declared directly here, so the generic advice would be noise.
+      assertNotIncludes(message, "Declare the hook directly");
+    });
+
+    // The failure is scoped to the registration that would have been removed.
+    // Defeating the proof is not by itself an error: without a hook-only
+    // registration there is nothing being retained, so the module builds
+    // exactly as it did before.
+    it("builds a module that defeats the proof with no hook-only registration", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `var __defProp = Object.defineProperty;`,
+        `var __name = (target, value) => __defProp(target, "name", { value, configurable: true });`,
+        `function Widget() { return null; }`,
+        `__name(Widget, "Widget");`,
+        `const Object2 = globalThis.Object;`,
+        `const Object = Object2;`,
+        `export async function getServerData() { return { props: { k: getEnv("K") } }; }`,
+        `export default Widget;`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/orders.tsx");
+
+      // The client declaration and its registration are untouched.
+      assertStringIncludes(result, "function Widget()");
+      assertStringIncludes(result, `__name(Widget, "Widget")`);
+      // The hook is still emptied, which is the pass's actual job.
+      assertNotIncludes(result, `getEnv("K")`);
+    });
+
+    // A registration whose target the browser still reads is not hook-only, so
+    // nothing is being retained and the build must not fail.
+    it("builds when an unprovable registration targets a browser-read binding", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `var __defProp = Object.defineProperty;`,
+        `var __name = (target, value) => __defProp(target, "name", { value, configurable: true });`,
+        `function format(v) { return String(v); }`,
+        `__name(format, "format");`,
+        `const Object = globalThis.Object;`,
+        `export async function getServerData() { return { props: { k: getEnv("K") } }; }`,
+        `export default function Page() { return format(1); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/orders.tsx");
+
+      assertStringIncludes(result, "function format(v)");
+      assertNotIncludes(result, `getEnv("K")`);
     });
   });
 });

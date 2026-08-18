@@ -123,10 +123,14 @@ title: My Post
       "Replace a class or an alias export of the hook with an exported async function",
       "Declare any value the hook reads once, at module scope, not inside a loop head",
       "Keep a browser-needed value in a client-referenced module before importing it into the hook",
+      "Move code that rewrites or reaches the `Object` intrinsic into a module with no server data hook",
     ],
     tips: [
       "The error message names the export and the declaration form that blocked the removal",
       "A hook declared directly is stripped from the client bundle with everything only it read",
+      "A module that rewrites `Object.defineProperty`, or reaches it through `.constructor`, " +
+      "`__proto__`, `eval` or `Function`, stops the build from proving which name registrations " +
+      "the compiler emitted, so a server-only binding one of them names cannot be removed",
     ],
     example: `// Not supported: no local declaration to empty
 import { loadIt } from "./loader.ts";

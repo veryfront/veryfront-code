@@ -4734,13 +4734,31 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  * so the accepted reflection and mutation routes remain deliberately narrow.
  */
 /**
+ * What `compilerNameHelperBindings` could prove about a module.
+ *
+ * `helpers` drives the pass. `candidates` is the same analysis with the
+ * intrinsic-tampering proof set aside, and exists only so a blocked recognition
+ * can report which registration it could not classify: without it the caller
+ * cannot tell "this module emits no name registrations" from "this module emits
+ * one that cannot be proven", and those two need opposite outcomes.
+ */
+interface NameHelperRecognition {
+  /** Bindings proven to register a name the way the compiler does. */
+  helpers: Set<string>;
+  /** The same bindings before the intrinsic proof, for reporting only. */
+  candidates: Set<string>;
+  /** The construct that made the proof impossible, or null when there is none. */
+  blockedBy: string | null;
+}
+
+/**
  * Bindings for esbuild's `keepNames` helper. Release modules are compiled
  * before the browser transform, so their declarations are followed by calls
  * like `__name(loadPage, "loadPage")`. Recognise the helper by its exact
  * `Object.defineProperty(target, "name", …)` semantics rather than by its
  * minified binding name.
  */
-function compilerNameHelperBindings(body: Node[]): Set<string> {
+function compilerNameHelperBindings(body: Node[]): NameHelperRecognition {
   // The helper esbuild emits calls the global intrinsic. A runtime module
   // binding named `Object` changes those semantics completely, so fail closed
   // and treat every apparent registration as ordinary user code.
@@ -4754,16 +4772,42 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
   const hoisted = hoistedVarNames(body);
   const globals = unshadowedGlobalIdentifierNodes(body);
   const bindings = indexLexicalBindings(body);
-  const objectIsModuleLocal = moduleScopeBindingNames(body).has("Object") ||
-    hoisted.has("Object") || importsRuntimeObject ||
-    assignsUnshadowedGlobal(body, "Object", globals) ||
-    writesObjectDefineProperty(body, globals, bindings) ||
-    writesGuardedKeyThroughUnprovenBase(body, globals, bindings) ||
-    mergesGuardedKeyOntoIntrinsic(body, globals) ||
-    hasReflectionRoute(body, globals, bindings) ||
-    intrinsicEscapesToWritableSlot(body, "Object", globals, bindings) ||
-    intrinsicEscapesToWritableSlot(body, "global", globals, bindings);
-  if (objectIsModuleLocal) return new Set<string>();
+  // Each route is paired with the phrase that names it to the author. The tests
+  // run lazily, so this keeps the short-circuit the disjunction had.
+  const intrinsicRoutes: Array<[string, () => boolean]> = [
+    [
+      "declares a module-scope binding named `Object`",
+      () => moduleScopeBindingNames(body).has("Object"),
+    ],
+    ["hoists a `var` named `Object`", () => hoisted.has("Object")],
+    ["imports a binding named `Object`", () => importsRuntimeObject],
+    ["assigns to the global `Object`", () => assignsUnshadowedGlobal(body, "Object", globals)],
+    [
+      "writes to `Object.defineProperty`",
+      () => writesObjectDefineProperty(body, globals, bindings),
+    ],
+    [
+      "writes a guarded key through a base this pass cannot resolve",
+      () => writesGuardedKeyThroughUnprovenBase(body, globals, bindings),
+    ],
+    [
+      "merges a guarded key onto the `Object` intrinsic",
+      () => mergesGuardedKeyOntoIntrinsic(body, globals),
+    ],
+    [
+      "reaches an intrinsic through `.constructor`, `__proto__`, `eval` or `Function`",
+      () => hasReflectionRoute(body, globals, bindings),
+    ],
+    [
+      "lets the `Object` intrinsic escape into a writable slot",
+      () => intrinsicEscapesToWritableSlot(body, "Object", globals, bindings),
+    ],
+    [
+      "lets the `global` intrinsic escape into a writable slot",
+      () => intrinsicEscapesToWritableSlot(body, "global", globals, bindings),
+    ],
+  ];
+  const blockedBy = intrinsicRoutes.find(([, reaches]) => reaches())?.[0] ?? null;
 
   // A `var` may be declared more than once, and only the initialiser that ran
   // last is visible here. Classifying a binding from it would apply that shape
@@ -4838,7 +4882,14 @@ function compilerNameHelperBindings(body: Node[]): Set<string> {
     }
   }
 
-  return helpers;
+  // A blocked proof yields no usable helpers, so the pass keeps treating every
+  // apparent registration as ordinary user code. What changes is that the
+  // caller can now see that a registration was there to classify.
+  return {
+    helpers: blockedBy === null ? helpers : new Set<string>(),
+    candidates: helpers,
+    blockedBy,
+  };
 }
 
 interface CompilerNameRegistration {
@@ -5339,29 +5390,29 @@ function separateExportLocalNames(body: Node[]): Set<string> {
  * out of the tree, and one that only a deferred body of a surviving
  * declaration reads, where there is nothing to cut and nothing safe to keep.
  */
-function dropUnreachableModuleScopeBindings(
+/**
+ * The elidable sites nothing in the browser reaches once `registrations` are
+ * treated as compiler metadata, narrowed to the ones still holding the hooks'
+ * closure.
+ *
+ * Which registrations count is the caller's decision, and it is asked twice:
+ * once with the registrations the pass proved, to decide what to remove, and
+ * once with the ones it only recognised by shape, to find out what an
+ * unprovable registration is keeping alive.
+ */
+function removableClosureSites(
   body: Node[],
   sites: BindingSite[],
+  elidable: BindingSite[],
+  reasons: ReadonlyMap<BindingSite, ElisionReason>,
   hookClosure: ReadonlySet<string>,
-  removeStatement: (statement: Node) => void,
-  removedNames: Set<string>,
-): Blocker[] {
-  const nameHelpers = compilerNameHelperBindings(body);
-  const reasons = new Map<BindingSite, ElisionReason>();
-  for (const site of sites) {
-    if (site.exported) continue;
-    const reason = elisionReason(site, hookClosure, nameHelpers);
-    if (reason !== null) reasons.set(site, reason);
-  }
-  const elidable = sites.filter((site) => reasons.has(site));
-  if (elidable.length === 0) return [];
-
+  registrations: CompilerNameRegistration[],
+): BindingSite[] {
   // Esbuild's generated name-registration call is metadata for the declaration
   // it names, not an independent browser consumer of it, so its *target* is
   // elided from the roots and the call is removed together with the
   // declaration. The call itself still reads the helper that performs it, which
   // stays alive for as long as any registration survives.
-  const registrations = compilerNameRegistrations(body, nameHelpers);
   const elidableNames = new Set(elidable.flatMap((site) => site.names));
   const elided = new Set<Node>(elidable.map((site) => site.node));
   for (const registration of registrations) {
@@ -5391,18 +5442,73 @@ function dropUnreachableModuleScopeBindings(
   const reachable = reachableNames(roots, sites);
   const dead = elidable.filter((site) => site.names.every((name) => !reachable.has(name)));
   const tainted = serverTaintedSites(dead, hookClosure);
-  const removable = dead.filter((site) => {
+  return dead.filter((site) => {
     if (!tainted.has(site)) return false;
     if (reasons.get(site) !== "closure-only-evaluation") return true;
     // This site's initialiser still runs, eliding it from the roots only
     // stopped it vouching for what it calls. Cutting it out is justified only
     // when everything it evaluates is going away. If even one called binding
     // survives for browser code, deleting the whole initializer can delete an
-    // observable client-side call; the blocked-path check below then fails
+    // observable client-side call; the caller's blocked-path check then fails
     // closed for any dead binding the surviving initializer still reads.
     return site.references.size > 0 &&
       [...site.references].every((name) => !reachable.has(name));
   });
+}
+
+function dropUnreachableModuleScopeBindings(
+  body: Node[],
+  sites: BindingSite[],
+  hookClosure: ReadonlySet<string>,
+  removeStatement: (statement: Node) => void,
+  removedNames: Set<string>,
+): Blocker[] {
+  const recognition = compilerNameHelperBindings(body);
+  const reasons = new Map<BindingSite, ElisionReason>();
+  for (const site of sites) {
+    if (site.exported) continue;
+    const reason = elisionReason(site, hookClosure, recognition.helpers);
+    if (reason !== null) reasons.set(site, reason);
+  }
+  const elidable = sites.filter((site) => reasons.has(site));
+  if (elidable.length === 0) return [];
+
+  const registrations = compilerNameRegistrations(body, recognition.helpers);
+  const removable = removableClosureSites(
+    body,
+    sites,
+    elidable,
+    reasons,
+    hookClosure,
+    registrations,
+  );
+
+  // A registration the pass could not classify keeps its target alive: the call
+  // is a module-scope read of the binding it names, so the declaration, the
+  // server import behind it and the secret it initialises all stay in the
+  // browser artifact. `removedNames` cannot catch that, because nothing was
+  // selected for removal. So ask what the same module would drop if the
+  // registration were metadata: anything that appears only there is a
+  // server-only binding this pass is retaining, and the build has to stop.
+  if (recognition.blockedBy !== null) {
+    const retained = removableClosureSites(
+      body,
+      sites,
+      elidable,
+      reasons,
+      hookClosure,
+      compilerNameRegistrations(body, recognition.candidates),
+    ).filter((site) => !removable.includes(site));
+    const [held] = retained.flatMap((site) => site.names);
+    if (held) {
+      return [{
+        reason: `\`${held}\` is a server-only binding kept alive by a compiler name ` +
+          `registration this pass cannot verify, because the module ${recognition.blockedBy}`,
+        remedy: REMEDY.separateTheIntrinsicUse,
+      }];
+    }
+  }
+
   if (removable.length === 0) return [];
 
   // A name written down in more than one place is only safe to drop when every
@@ -5552,6 +5658,11 @@ const REMEDY = {
   /** The hook is fine; a value it shares with client code is the problem. */
   separateTheValue: "Move the shared value into a module the hook imports, or read it from code " +
     "the browser reaches so it is intentionally part of the client bundle.",
+  /** Module code stops the pass proving a name registration is compiler metadata. */
+  separateTheIntrinsicUse:
+    "Move the code that reaches or rewrites the `Object` intrinsic into a module that " +
+    "does not export a server data hook, so the client build can prove the name " +
+    "registration is compiler metadata and remove the server-only binding.",
   /** The declaration form itself is what blocks the removal. */
   rewriteTheDeclaration:
     "Declare the value once, at the top level, so the stripped hook's state can " +

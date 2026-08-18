@@ -94,6 +94,44 @@ for (var KEY of getEnv("SECRET_KEY")) {}
 const KEY = getEnv("SECRET_KEY");
 ```
 
+### Modules that rewrite the Object intrinsic
+
+Compiled input carries name registrations such as `__name(loadUser, "loadUser")`.
+Veryfront reads them as build metadata, which is what lets it see that
+`loadUser` is read only by a stripped hook and remove it along with the server
+import and the secret behind it.
+
+A module that rewrites `Object.defineProperty`, or reaches it through
+`.constructor`, `__proto__`, `eval`, or `Function`, makes that reading
+unprovable. Veryfront must not delete a call the module can observe, and it must
+not emit a module that still holds a server-only binding, so the build fails
+with `server-export-strip-failed`.
+
+```tsx
+// Not supported: the module rebinds Object, so the name registration
+// cannot be proven to be compiler metadata
+const Object = globalThis.Object;
+
+export async function getServerData() {
+  return { props: { user: await loadUser() } };
+}
+```
+
+Move the code that reaches or rewrites the intrinsic into a module that exports
+no server data hook, then import what you need from it:
+
+```tsx
+import { isPlainObject } from "../lib/is-plain-object.ts";
+
+export async function getServerData() {
+  return { props: { user: await loadUser() } };
+}
+```
+
+Ordinary client code that reads `.constructor` or `__proto__` on a value, such
+as an `isPlainObject` helper or `error.constructor.name` logging, does not
+trigger this failure.
+
 The `props` you return are passed to the page component. To read the same props
 data from a layout or nested component without prop-drilling, use
 `usePageContext().data` (see
