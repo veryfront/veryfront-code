@@ -587,7 +587,14 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
   const bindNestedVarDeclarations = (scope: LexicalScope, node: Node): void => {
     for (const child of children(node)) {
-      if (bindHoistedRuntimeTsDeclaration(scope, child)) continue;
+      // Only `var` hoists. An enum, a namespace or an import-equals nested in a
+      // block is block scoped (TypeScript emits `let` there), so binding it
+      // into the enclosing function scope makes an unrelated outer read look
+      // shadowed. `bindDirectDeclarations` already binds these at whichever
+      // scope actually contains them, so they need no hoisting pass.
+      if (
+        child.type === "TSEnumDeclaration" || child.type === "TSImportEqualsDeclaration"
+      ) continue;
       if (
         child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
         child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||

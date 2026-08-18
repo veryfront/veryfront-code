@@ -1451,6 +1451,46 @@ export enum Level { Low = compute(SEED) }`,
         assertStringIncludes(result, "./boot.ts");
       });
 
+      it("does not hoist a block-scoped enum into the enclosing function scope", async () => {
+        // An enum nested in a block is block scoped: TypeScript emits `let` there.
+        // Hoisting it into the function scope made the outer `consume(Alias)` read
+        // look shadowed, so import liveness reduced the named import to a bare
+        // side-effect import and left `client` with an unresolved binding.
+        const code = [
+          'import { Alias, secret } from "./lib.ts";',
+          "export async function getServerData() { return { props: { s: secret } }; }",
+          "export function client() {",
+          "  consume(Alias);",
+          "  if (false) { enum Alias { X } }",
+          "}",
+          "declare function consume(v: unknown): void;",
+          "export default function Page() { client(); return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertStringIncludes(result, "import { Alias");
+      });
+
+      it("still reduces an import a same-scope enum genuinely shadows", async () => {
+        // Paired with the case above: asserting only that the import survives
+        // would also pass if the pass stopped reducing imports altogether.
+        const code = [
+          'import { Alias, secret } from "./lib.ts";',
+          "export async function getServerData() { return { props: { s: secret } }; }",
+          "export function client() {",
+          "  enum Alias { X }",
+          "  consume(Alias);",
+          "}",
+          "declare function consume(v: unknown): void;",
+          "export default function Page() { client(); return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertNotIncludes(result, "import { Alias");
+      });
+
       it("still strips a module binding an enum initialiser genuinely reads", async () => {
         // No member is named `Read` here, so `Read` really is a module-scope
         // read owned only by the hook and must still be removed.
