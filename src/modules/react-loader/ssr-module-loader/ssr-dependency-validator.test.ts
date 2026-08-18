@@ -8,11 +8,39 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
-import { SSRDependencyValidator } from "./ssr-dependency-validator.ts";
+import {
+  cachedCodeUsesResolvedDependencies,
+  SSRDependencyValidator,
+} from "./ssr-dependency-validator.ts";
 
 describe("SSRDependencyValidator", () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  it("rejects a cached parent that imports an outdated dependency output", async () => {
+    const resolvedDependencies = {
+      localImportPaths: new Map([
+        ["./message.ts", "/cache/message.v2.js"],
+        ["/project/message.ts", "/cache/message.v2.js"],
+      ]),
+      crossProjectPaths: new Map<string, string>(),
+    };
+
+    assertEquals(
+      await cachedCodeUsesResolvedDependencies(
+        'import { message } from "file:///cache/message.v1.js";',
+        resolvedDependencies,
+      ),
+      false,
+    );
+    assertEquals(
+      await cachedCodeUsesResolvedDependencies(
+        'import { message } from "file:///cache/message.v2.js";',
+        resolvedDependencies,
+      ),
+      true,
+    );
   });
 
   it("preserves terminal HTTP fetch failures from local dependencies", async () => {

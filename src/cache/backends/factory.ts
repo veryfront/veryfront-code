@@ -2,6 +2,7 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { type Span, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getEnv, getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isDevelopment } from "#veryfront/platform/environment.ts";
 import type { CacheBackend } from "../types.ts";
 import {
   type CodeCacheGateway,
@@ -42,6 +43,52 @@ export function isApiCacheAvailable(): boolean {
 
 export function isDiskCacheConfigured(): boolean {
   return getEnv("VF_CACHE_BACKEND") === "disk" || !!getEnv("VF_DISK_CACHE_DIR");
+}
+
+/**
+ * Whether a local dev server must keep compiled code on disk.
+ *
+ * A local dev server has no hosted API cache and no Redis, so its code caches
+ * live in memory and every restart recompiles the whole import tree. The disk
+ * backend keeps that work under the project cache directory, so a restart
+ * stays warm with no setup.
+ *
+ * This never changes a hosted or production runtime: the API and Redis
+ * backends are resolved first, an explicit `VF_CACHE_BACKEND` always wins, and
+ * anything other than a development environment keeps its current backend.
+ */
+export function isLocalDevDiskCacheEnabled(): boolean {
+  if (getEnv("VF_CACHE_BACKEND") || isDiskCacheConfigured()) return false;
+  return isDevelopment() && !isApiCacheAvailable() && !isRedisConfigured();
+}
+
+/**
+ * Whether this runtime has a cache that outlives the process.
+ *
+ * Servers use this to decide whether to run the distributed-cache
+ * initializers at startup. Without initialization the SSR module cache stays
+ * disabled and the loader skips both reads and writes, so a gate that only
+ * checks the explicit disk configuration leaves the local dev cache inert.
+ */
+export function isPersistentLocalCacheEnabled(): boolean {
+  return isDiskCacheConfigured() || isLocalDevDiskCacheEnabled();
+}
+
+/**
+ * Backend preference for caches that hold compiled code.
+ *
+ * Returns `undefined` outside local dev so the normal API, Redis, disk, memory
+ * resolution order applies unchanged.
+ */
+export function localDevCodeCacheBackend(): CacheBackendConfig["preferredBackend"] {
+  const configured = getEnv("VF_CACHE_BACKEND");
+  if (
+    configured === "api" || configured === "redis" || configured === "disk" ||
+    configured === "memory"
+  ) {
+    return configured;
+  }
+  return isLocalDevDiskCacheEnabled() ? "disk" : undefined;
 }
 
 export function createCacheBackend(config: CacheBackendConfig = {}): Promise<CacheBackend> {
@@ -100,56 +147,75 @@ export function isDistributedBackend(backend: CacheBackend): boolean {
 }
 
 const DISTRIBUTED_CACHE_RETRY_MS = 30_000;
+const MAX_DISTRIBUTED_CACHE_SCOPES = 128;
+
+interface DistributedCacheAccessorState {
+  backend: CacheBackend | null | undefined;
+  lastFailureTime: number;
+  inflight: Promise<CacheBackend | null> | null;
+}
 
 export function createDistributedCacheAccessor(
   factory: () => Promise<CacheBackend>,
   name: string,
+  getScopeKey?: () => string,
 ): () => Promise<CacheBackend | null> {
-  let backend: CacheBackend | null | undefined;
-  let lastFailureTime = 0;
-
-  let inflight: Promise<CacheBackend | null> | null = null;
+  const states = new Map<string, DistributedCacheAccessorState>();
 
   return () => {
-    if (backend !== undefined) {
+    const scopeKey = getScopeKey?.() ?? "";
+    let state = states.get(scopeKey);
+    if (!state) {
+      if (states.size >= MAX_DISTRIBUTED_CACHE_SCOPES) {
+        const leastRecentlyUsedScope = states.keys().next().value as string | undefined;
+        if (leastRecentlyUsedScope !== undefined) states.delete(leastRecentlyUsedScope);
+      }
+      state = { backend: undefined, lastFailureTime: 0, inflight: null };
+      states.set(scopeKey, state);
+    } else if (getScopeKey) {
+      states.delete(scopeKey);
+      states.set(scopeKey, state);
+    }
+
+    if (state.backend !== undefined) {
       if (
-        backend === null && lastFailureTime > 0 &&
-        Date.now() - lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
+        state.backend === null && state.lastFailureTime > 0 &&
+        Date.now() - state.lastFailureTime >= DISTRIBUTED_CACHE_RETRY_MS
       ) {
-        backend = undefined;
+        state.backend = undefined;
         logger.debug(`[${name}] Retrying distributed cache initialization after failure`);
       }
 
-      if (backend !== undefined) return Promise.resolve(backend);
+      if (state.backend !== undefined) return Promise.resolve(state.backend);
     }
 
-    if (!inflight) {
-      inflight = (async () => {
+    if (!state.inflight) {
+      state.inflight = (async () => {
         try {
           const b = await factory();
           if (!isDistributedBackend(b)) {
-            backend = null;
-            lastFailureTime = 0;
+            state.backend = null;
+            state.lastFailureTime = 0;
             logger.debug(`[${name}] No distributed cache available (memory only)`);
             return null;
           }
 
-          backend = b;
-          lastFailureTime = 0;
+          state.backend = b;
+          state.lastFailureTime = 0;
           logger.debug(`[${name}] Distributed cache initialized`, { type: b.type });
           return b;
         } catch (error) {
           logger.debug(`[${name}] Failed to initialize distributed cache`, { error });
-          backend = null;
-          lastFailureTime = Date.now();
+          state.backend = null;
+          state.lastFailureTime = Date.now();
           return null;
         }
       })().finally(() => {
-        inflight = null;
+        state.inflight = null;
       });
     }
 
-    return inflight;
+    return state.inflight;
   };
 }
 
@@ -161,7 +227,12 @@ export const CacheBackends = {
   userKv: () => createCacheBackend({ keyPrefix: "kv", preferredBackend: "api" }),
   httpModule: () =>
     createCacheBackend({ keyPrefix: "http-module", circuitBreakerName: "api-cache-http" }),
-  ssrModule: () => createCacheBackend({ keyPrefix: "ssr-module" }),
+  // Holds compiled TSX/JSX modules, so it opts into local dev disk persistence.
+  ssrModule: () =>
+    createCacheBackend({
+      keyPrefix: "ssr-module",
+      preferredBackend: localDevCodeCacheBackend(),
+    }),
   projectCSS: () => createCacheBackend({ keyPrefix: "project-css" }),
 
   /**
@@ -193,8 +264,9 @@ export const CacheBackends = {
 export function createDistributedCodeCacheAccessor(
   factory: () => Promise<CacheBackend>,
   name: string,
+  getScopeKey?: () => string,
 ): () => Promise<TokenizingCacheGateway | null> {
-  const baseAccessor = createDistributedCacheAccessor(factory, name);
+  const baseAccessor = createDistributedCacheAccessor(factory, name, getScopeKey);
 
   return async () => {
     const backend = await baseAccessor();

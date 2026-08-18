@@ -1,9 +1,11 @@
 /** Redis caching for cross-pod SSR module sharing */
 
 import { rendererLogger } from "#veryfront/utils";
-import { getSSRModuleRedisTTL } from "../constants.ts";
+import { getSSRModuleRedisTTL, LOCAL_DEV_SSR_MODULE_TTL_SEC } from "../constants.ts";
 import { CacheBackends, createDistributedCodeCacheAccessor } from "#veryfront/cache/backend.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { isDevelopment } from "#veryfront/platform/environment.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const SSR_MODULE_CACHE_PREFIX = "ssr-module";
@@ -19,6 +21,7 @@ const SHA256_KEY_PREFIX = "sha256:";
 const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   () => CacheBackends.ssrModule(),
   "SSR-MODULE-LOADER",
+  getCacheBaseDir,
 );
 
 let distributedCacheEnabled = false;
@@ -79,7 +82,13 @@ export async function setInRedis(
   const gateway = await getDistributedCodeCache();
   if (!gateway) return;
 
-  const ttl = options?.ttlSeconds ?? getSSRModuleRedisTTL(options?.isProduction ?? true);
+  // The preview TTL is tuned for a shared branch cache and expires long before
+  // a developer returns to the project, so an on-disk local dev cache would go
+  // cold anyway. Keep those entries for a working day instead.
+  const ttl = options?.ttlSeconds ??
+    (isDevelopment() && gateway.type === "disk"
+      ? LOCAL_DEV_SSR_MODULE_TTL_SEC
+      : getSSRModuleRedisTTL(options?.isProduction ?? true));
 
   try {
     // Use setCode() for automatic tokenization

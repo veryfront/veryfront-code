@@ -9,6 +9,7 @@
 
 import type { CrossProjectImport, MissingImport } from "#veryfront/transforms/esm/import-parser.ts";
 import { parseLocalImports } from "#veryfront/transforms/esm/import-parser.ts";
+import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { registerCSSImport } from "../css-import-collector.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED, createError, toError, VeryfrontError } from "#veryfront/errors";
@@ -22,6 +23,37 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
+
+export interface ResolvedCachedDependencies {
+  localImportPaths: Map<string, string>;
+  crossProjectPaths: Map<string, string>;
+}
+
+/**
+ * Whether cached transformed code points at every dependency output produced
+ * from the current source tree.
+ *
+ * Dependency module paths include their transformed-content hash. A parent
+ * whose source is unchanged can therefore retain an old child path across a
+ * dev-server restart even though that old file still exists. Validate actual
+ * import specifiers, not arbitrary strings or file existence, before reusing
+ * the parent.
+ */
+export async function cachedCodeUsesResolvedDependencies(
+  code: string,
+  dependencies: ResolvedCachedDependencies,
+): Promise<boolean> {
+  const expectedPaths = new Set([
+    ...dependencies.localImportPaths.values(),
+    ...dependencies.crossProjectPaths.values(),
+  ]);
+  if (expectedPaths.size === 0) return true;
+
+  const cachedSpecifiers = new Set(
+    (await parseImports(code)).map((entry) => entry.n).filter((entry): entry is string => !!entry),
+  );
+  return [...expectedPaths].every((path) => cachedSpecifiers.has(`file://${path}`));
+}
 
 function isTerminalHttpModuleFetchFailure(error: unknown): error is VeryfrontError {
   if (!(error instanceof VeryfrontError) || error.slug !== BUILD_FAILED.slug) return false;
@@ -116,9 +148,11 @@ export class SSRDependencyValidator {
     filePath: string,
     depth: number = 0,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<ResolvedCachedDependencies> {
     throwIfAborted(signal);
-    if (depth > MAX_TRANSFORM_DEPTH) return;
+    if (depth > MAX_TRANSFORM_DEPTH) {
+      return { localImportPaths: new Map(), crossProjectPaths: new Map() };
+    }
 
     const parseResult = await parseLocalImports(
       code,
@@ -137,7 +171,7 @@ export class SSRDependencyValidator {
     }
 
     const localFs = createFileSystem();
-    await this.processLocalImports(
+    const localImportPaths = await this.processLocalImports(
       parseResult.imports,
       filePath,
       depth,
@@ -146,8 +180,13 @@ export class SSRDependencyValidator {
       signal,
     );
 
-    await this.processCrossProjectImports(parseResult.crossProjectImports, filePath, signal);
+    const crossProjectPaths = await this.processCrossProjectImports(
+      parseResult.crossProjectImports,
+      filePath,
+      signal,
+    );
     throwIfAborted(signal);
+    return { localImportPaths, crossProjectPaths };
   }
 
   /**

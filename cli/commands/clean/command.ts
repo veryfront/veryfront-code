@@ -1,8 +1,9 @@
 import { join } from "veryfront/platform/path";
 import { getConfig } from "veryfront/config";
-import { runtime } from "veryfront/platform";
+import { getEnv, runtime } from "veryfront/platform";
 import { cliLogger } from "#cli/utils";
 import { DEFAULT_CACHE_DIR } from "veryfront/utils/constants/server";
+import { getProjectCacheDir } from "veryfront/utils/cache-dir";
 import { CacheCoordinator, type CacheStore } from "veryfront/rendering";
 import {
   FilesystemCacheStore,
@@ -85,6 +86,33 @@ async function cleanDirectory(path: string): Promise<void> {
   }
 }
 
+function getFrameworkCacheDirectories(projectDir: string): string[] {
+  const frameworkRoots = new Set([
+    getProjectCacheDir(projectDir),
+    getEnv("VERYFRONT_CACHE_DIR"),
+    getEnv("VF_CACHE_DIR"),
+  ].filter((root): root is string => !!root));
+  const directories = new Set<string>();
+
+  for (const root of frameworkRoots) {
+    for (
+      const namespace of [
+        "veryfront-mdx-esm",
+        "veryfront-http-bundle",
+        "veryfront-files",
+        "veryfront-modules",
+        "veryfront-cycle-manifests",
+      ]
+    ) {
+      directories.add(join(root, namespace));
+    }
+  }
+
+  const diskRoot = getEnv("VF_DISK_CACHE_DIR");
+  if (diskRoot) directories.add(join(diskRoot, "veryfront-files"));
+  return [...directories];
+}
+
 async function cleanCacheStore(projectDir: string): Promise<void> {
   try {
     const adapter = await runtime.get();
@@ -106,6 +134,11 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
     }
 
     await cleanDirectory(join(projectDir, cacheDir));
+    // The framework cache root is separate from the render cache store and
+    // holds the compiled modules a dev server keeps across restarts, so a
+    // cache clean that leaves them in place is not a clean. Remove only
+    // Veryfront-owned directories because other tools can share `.cache`.
+    await Promise.all(getFrameworkCacheDirectories(projectDir).map(cleanDirectory));
   } catch (error) {
     cliLogger.error("Failed to clean cache store:", error);
     throw error;

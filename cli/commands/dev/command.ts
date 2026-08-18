@@ -10,6 +10,7 @@ import { getConfig } from "veryfront/config";
 import { getEnvironmentConfig } from "veryfront/config";
 import { startDevServer } from "veryfront/server";
 import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
+import { isPersistentLocalCacheEnabled } from "veryfront/cache";
 import { validateProviderConfig } from "veryfront/discovery";
 import { brand, devShortcuts, dim, error as errorColor, formatDuration, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
@@ -132,7 +133,7 @@ export async function startDevServerOnFreePort<T>(
 }
 
 /**
- * Clears the shared on-disk ESM caches, but only if `requestedPort` is free.
+ * Clears the shared on-disk ESM caches, but only if they are safe to remove.
  *
  * The caches live under the project's `.cache` directory, which every dev
  * server rooted at that project shares. A taken dev port is the signal that one
@@ -141,16 +142,23 @@ export async function startDevServerOnFreePort<T>(
  * the second `veryfront dev` falls forward to a free port and starts on a cache
  * it did not just destroy.
  *
- * Returns whether the clear ran. Takes `clear` and `probe` as parameters so the
- * decision can be tested without booting a dev server, the same seam
- * `startDevServerOnFreePort` uses.
+ * The clear is also skipped when the project keeps a persistent local dev
+ * cache. That cache stores compiled modules that reference these files, so
+ * removing them makes every entry fail validation and turns each restart cold
+ * again. Run `veryfront clean --cache` to reset both.
+ *
+ * Returns whether the clear ran. Takes `clear`, `probe`, and `persists` as
+ * parameters so the decision can be tested without booting a dev server, the
+ * same seam `startDevServerOnFreePort` uses.
  */
 export async function clearLocalCachesIfPortFree(
   requestedPort: number,
   clear: () => Promise<void> = clearAllLocalCaches,
   probe: (port: number) => Promise<boolean> = isPortAvailable,
+  persists: () => boolean = isPersistentLocalCacheEnabled,
 ): Promise<boolean> {
   if (!await probe(requestedPort)) return false;
+  if (persists()) return false;
   await clear();
   return true;
 }

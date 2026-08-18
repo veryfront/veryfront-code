@@ -15,6 +15,8 @@ const MAX_CACHE_KEY_CODE_UNITS = 64 * 1024;
 const KEY_DIGEST_LOG_CHARS = 12;
 const MAX_CACHE_NAMESPACE_BYTES = 240;
 const MAX_DIRECTORY_SCAN_ENTRIES = 100_000;
+const EXPIRY_PRUNE_BATCH_SIZE = 256;
+const EXPIRY_PRUNE_WRITE_INTERVAL = 32;
 const DEFAULT_MAX_VALUE_BYTES = 64 * 1024 * 1024;
 const MAX_CONFIGURED_VALUE_BYTES = 512 * 1024 * 1024;
 const FRAME_HEADER_BYTES = 40;
@@ -314,6 +316,8 @@ export class DiskCacheBackend implements CacheBackend {
   private readonly maxValueBytes: number;
   private readonly maxFileBytes: number;
   private mutationTail: Promise<void> = Promise.resolve();
+  private writesUntilExpiryPrune = 1;
+  private expiryPruneOffset = 0;
 
   constructor(
     baseDir?: string,
@@ -448,6 +452,103 @@ export class DiskCacheBackend implements CacheBackend {
     }
   }
 
+  /**
+   * Remove a cache file, but only while it still holds the expired entry.
+   *
+   * Dev servers and build steps share a project cache, so another process can
+   * replace the pathname between the expiry check and the deletion. Deleting by
+   * pathname would then remove that fresh entry. The file is claimed with an
+   * atomic rename and revalidated on the claimed inode instead, and a claim
+   * that turns out to hold a fresh entry is linked back under its original
+   * name. Both the write-time sweep and the read-time cleanup go through this,
+   * so neither can delete a write that won the race.
+   */
+  private async removeExpiredEntryFile(filePath: string): Promise<void> {
+    const { link, rename, unlink } = await fsPromises;
+    const claimPath = `${filePath}.prune.${crypto.randomUUID()}`;
+    try {
+      await rename(filePath, claimPath);
+    } catch {
+      // Another process already replaced or removed the entry.
+      return;
+    }
+
+    let restoreClaim = true;
+    try {
+      const claimed = await this.readFramedFile(claimPath, undefined, undefined, false);
+      if (claimed.expiresAt !== undefined && Date.now() >= claimed.expiresAt) {
+        await unlink(claimPath);
+        restoreClaim = false;
+      }
+    } catch {
+      // An unreadable claim is restored rather than deleted: the pathname may
+      // now hold a fresh entry this process never validated.
+    }
+
+    if (!restoreClaim) return;
+    let discardClaim = false;
+    try {
+      await link(claimPath, filePath);
+      discardClaim = true;
+    } catch (error) {
+      // A newer writer already owns the pathname, so its entry wins.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") discardClaim = true;
+    }
+    if (discardClaim) await unlink(claimPath).catch(() => {});
+  }
+
+  /**
+   * Drop an entry a read found expired.
+   *
+   * Queued on the mutation tail so it cannot interleave with this instance's
+   * own writes, and so a caller can flush it by awaiting any later operation.
+   */
+  private expireEntry(key: string): Promise<void> {
+    return this.withMutation(async () => {
+      await this.removeExpiredEntryFile(await this.filePath(key));
+    });
+  }
+
+  private async pruneExpiredEntries(): Promise<void> {
+    const { opendir } = await fsPromises;
+    const directory = await opendir(this.dir);
+    let scanned = 0;
+    let eligible = 0;
+    let processed = 0;
+
+    for await (const entry of directory) {
+      scanned++;
+      if (scanned > MAX_DIRECTORY_SCAN_ENTRIES) break;
+      if (!entry.isFile() || !CACHE_FILE_PATTERN.test(entry.name)) continue;
+      if (eligible++ < this.expiryPruneOffset) continue;
+      if (processed >= EXPIRY_PRUNE_BATCH_SIZE) break;
+      processed++;
+
+      const filePath = join(this.dir, entry.name);
+      try {
+        const envelope = await this.readFramedFile(filePath, undefined, undefined, false);
+        if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
+          await this.removeExpiredEntryFile(filePath);
+        }
+      } catch {
+        // Cache files are disposable and may be replaced by another process.
+      }
+    }
+
+    this.expiryPruneOffset = processed < EXPIRY_PRUNE_BATCH_SIZE
+      ? 0
+      : this.expiryPruneOffset + processed;
+  }
+
+  private async maybePruneExpiredEntries(): Promise<void> {
+    if (this.writesUntilExpiryPrune > 0) {
+      this.writesUntilExpiryPrune--;
+      return;
+    }
+    this.writesUntilExpiryPrune = EXPIRY_PRUNE_WRITE_INTERVAL - 1;
+    await this.pruneExpiredEntries();
+  }
+
   async get(key: string): Promise<string | null> {
     try {
       await this.mutationTail;
@@ -465,7 +566,7 @@ export class DiskCacheBackend implements CacheBackend {
         return null;
       }
       if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
-        this.del(key).catch(async (cleanupError) => {
+        this.expireEntry(key).catch(async (cleanupError) => {
           logger.debug("[DiskCache] Expired entry cleanup failed", {
             keyDigest: await logKeyDigest(key),
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
@@ -493,7 +594,7 @@ export class DiskCacheBackend implements CacheBackend {
       const envelope = await this.readEnvelopeWithinValueLimit(key, admittedMaximum);
       if (!envelope || envelope.key !== key) return null;
       if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
-        void this.del(key);
+        void this.expireEntry(key);
         return null;
       }
       if (envelope.value === undefined) throw new InvalidDiskCacheFileError();
@@ -551,6 +652,8 @@ export class DiskCacheBackend implements CacheBackend {
       const { writeFile, rename, unlink } = await fsPromises;
       try {
         await writeFile(tmpPath, content, { flag: "wx", mode: 0o600 });
+        // This atomic replacement is also the commit point used by expiry
+        // pruning. The pruner claims and revalidates whichever entry wins it.
         await rename(tmpPath, filePath);
       } catch (error) {
         await unlink(tmpPath).catch((cleanupError) => {
@@ -560,6 +663,11 @@ export class DiskCacheBackend implements CacheBackend {
         });
         throw error;
       }
+      await this.maybePruneExpiredEntries().catch((error) => {
+        logger.debug("[DiskCache] Expired entry pruning failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     });
   }
 

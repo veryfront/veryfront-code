@@ -70,7 +70,7 @@ describe("veryfront dev cache guard", () => {
         try {
           const cleared = await runWithCacheDir(
             cache.cacheDir,
-            () => clearLocalCachesIfPortFree(port),
+            () => clearLocalCachesIfPortFree(port, undefined, undefined, () => false),
           );
 
           assertEquals(cleared, false, "a taken dev port must not clear the shared cache");
@@ -90,7 +90,7 @@ describe("veryfront dev cache guard", () => {
   );
 
   it(
-    "still clears the shared ESM cache when the dev port is free",
+    "still clears the shared ESM cache when the dev port is free and nothing persists it",
     { timeout: TEST_TIMEOUTS.INTEGRATION },
     async () => {
       await withTestContext("dev-cache-guard-port-free", async (context) => {
@@ -101,7 +101,7 @@ describe("veryfront dev cache guard", () => {
 
         const cleared = await runWithCacheDir(
           cache.cacheDir,
-          () => clearLocalCachesIfPortFree(port),
+          () => clearLocalCachesIfPortFree(port, undefined, undefined, () => false),
         );
 
         assertEquals(cleared, true, "a free dev port must still clear stale caches");
@@ -164,4 +164,69 @@ describe("veryfront dev cache guard", () => {
       });
     },
   );
+
+  it(
+    "keeps the shared ESM cache when the project persists it across restarts",
+    { timeout: TEST_TIMEOUTS.INTEGRATION },
+    async () => {
+      await withTestContext("dev-cache-guard-persistent", async (context) => {
+        const cache = await seedRunningServerCache(context.projectDir);
+        const { port, release } = await holdPort();
+        // Release immediately: the port is known-unused, not merely unprobed.
+        await release();
+
+        const cleared = await runWithCacheDir(
+          cache.cacheDir,
+          // A local dev server with no distributed cache configured. Its
+          // persisted entries point at these files, so wiping them makes every
+          // restart cold again.
+          () => clearLocalCachesIfPortFree(port, undefined, undefined, () => true),
+        );
+
+        assertEquals(cleared, false, "a persistent local dev cache must not be cleared");
+        assert(
+          await exists(cache.mdxEsmEntry),
+          "the persisted MDX-ESM cache entry must survive a dev-server restart",
+        );
+        assert(
+          await exists(cache.httpBundleEntry),
+          "the persisted HTTP bundle cache entry must survive a dev-server restart",
+        );
+      });
+    },
+  );
+
+  for (const configuration of ["backend", "directory"] as const) {
+    it(
+      `keeps dependencies for an explicitly configured disk ${configuration}`,
+      { timeout: TEST_TIMEOUTS.INTEGRATION },
+      async () => {
+        await withTestContext(`dev-cache-guard-explicit-${configuration}`, async (context) => {
+          context.setEnv(
+            configuration === "backend"
+              ? { VF_CACHE_BACKEND: "disk" }
+              : { VF_DISK_CACHE_DIR: join(context.projectDir, "disk-cache") },
+          );
+          const cache = await seedRunningServerCache(context.projectDir);
+          const { port, release } = await holdPort();
+          await release();
+
+          const cleared = await runWithCacheDir(
+            cache.cacheDir,
+            () => clearLocalCachesIfPortFree(port),
+          );
+
+          assertEquals(cleared, false, "an explicit disk cache must preserve its dependencies");
+          assert(
+            await exists(cache.mdxEsmEntry),
+            "the explicit disk cache's MDX-ESM dependency must survive a restart",
+          );
+          assert(
+            await exists(cache.httpBundleEntry),
+            "the explicit disk cache's HTTP bundle dependency must survive a restart",
+          );
+        });
+      },
+    );
+  }
 });
