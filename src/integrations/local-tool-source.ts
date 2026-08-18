@@ -45,7 +45,7 @@ function configurationError(detail: string): never {
 }
 
 function readOwnDataProperty(
-  value: object,
+  value: LocalIntegrationToolSourceOptions | readonly unknown[],
   key: PropertyKey,
 ): { present: boolean; value: unknown } {
   const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
@@ -158,7 +158,8 @@ function assertSupportedAuth(
   if (auth.type === "api-key") {
     if (auth.queryParamName || endpoint.url.includes("{{auth.token}}")) {
       configurationError(
-        `Local integration "${connector.name}" uses query or URL credentials, which are unsupported`,
+        `Local integration "${connector.name}" uses query or URL credentials, ` +
+          "which are unsupported",
       );
     }
     if (!auth.keyName) {
