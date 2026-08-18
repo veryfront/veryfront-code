@@ -3166,10 +3166,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             continue;
           }
           if (testValue.known || isInertExpression(test, noNameHelpers, initializedNames)) {
-            possibleEarlierEntry = true;
             possibleCaseMatch = true;
+            possibleEarlierEntry = true;
             if (Array.isArray(caseNode.consequent)) {
-              deferStatementListTail(caseNode.consequent, initializedNames);
+              const caseCompletion = deferStatementListTail(
+                caseNode.consequent,
+                initializedNames,
+              );
+              possibleEarlierEntry = caseCompletion === "normal" || caseCompletion === "unknown";
             }
             continue;
           }
