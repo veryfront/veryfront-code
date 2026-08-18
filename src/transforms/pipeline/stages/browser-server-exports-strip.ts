@@ -2288,6 +2288,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         ? expression.expressions
         : expression.type === "ArrayExpression" && Array.isArray(expression.elements)
         ? expression.elements
+        : expression.type === "BinaryExpression" && isNode(expression.left) &&
+            isNode(expression.right)
+        ? [expression.left, expression.right]
         : null;
     if (!ordered) return;
 
@@ -2393,6 +2396,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       if (defaultIsSkipped) {
         deferred.add(parameter.right);
       } else if (!isInertExpression(parameter.right, noNameHelpers, initializedForDefault)) {
+        deferOrderedExpressionTail(parameter.right, initializedForDefault);
         return index;
       }
       const name = nodeName(parameter.left);
