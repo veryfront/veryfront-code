@@ -974,6 +974,7 @@ export class RenderPipeline {
                         options?.dependencyPinningDependencies,
                         options?.dependencyPinningSource,
                         options?.abortSignal,
+                        options?.environment,
                       ),
                     {
                       "render.slug": slug,

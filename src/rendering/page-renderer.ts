@@ -40,6 +40,12 @@ interface PageRenderOptions {
   dependencyPinningSource?: DependencyPinningSourceInput;
   /** Internal signal for the render owner's total deadline. */
   abortSignal?: AbortSignal;
+  /**
+   * Request environment for this render. Takes precedence over the renderer's
+   * own, so a renderer instance reused across environments never carries one
+   * render's instrumentation into the next.
+   */
+  environment?: RenderEnvironment;
 }
 
 interface PageBundleResult {
@@ -55,7 +61,10 @@ export class PageRenderer {
   private readonly projectDir: string;
   /** Compile vocabulary: "development" | "production". */
   private readonly mode: string;
-  /** Request vocabulary: "preview" | "production". Drives studio instrumentation. */
+  /**
+   * Request vocabulary: "preview" | "production". Drives studio
+   * instrumentation. Only the fallback: a per-render environment wins.
+   */
   private readonly environment: RenderEnvironment;
   private readonly config: VeryfrontConfig;
   private readonly adapter: RuntimeAdapter;
@@ -241,7 +250,7 @@ export class PageRenderer {
                   projectId: options?.projectId,
                   studioEmbed: options?.studioEmbed,
                   mode: this.mode,
-                  environment: this.environment,
+                  environment: options?.environment ?? this.environment,
                   contentSourceId: options?.contentSourceId,
                   reactVersion,
                   dependencyPinningCacheKey: options?.dependencyPinningCacheKey,

@@ -359,6 +359,12 @@ export class LayoutOrchestrator {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     signal?: AbortSignal,
+    /**
+     * Request environment for this render. Takes precedence over the
+     * orchestrator's own, so a reused orchestrator never carries one render's
+     * instrumentation into the next.
+     */
+    environment?: RenderEnvironment,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
@@ -397,7 +403,7 @@ export class LayoutOrchestrator {
           layoutCache: this.config.layoutCache,
           mergedComponents,
           mode: this.config.mode,
-          environment: this.config.environment,
+          environment: environment ?? this.config.environment,
           moduleServerUrl: this.config.moduleServerUrl,
           requestUrl,
           params,
