@@ -1036,6 +1036,20 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("keeps a module initializer shadowed by a catch-pattern TDZ", async () => {
+      const code = [
+        `const KEY = bootClient();`,
+        `export async function getServerData() {`,
+        `  try { throw {}; } catch ({ KEY = KEY }) { return { props: {} }; }`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "const KEY = bootClient()");
+    });
+
     it("drops a helper reached only from a hoisted var in an impure guard", async () => {
       const code = [
         `import { createHash } from "node:crypto";`,

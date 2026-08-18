@@ -1267,8 +1267,8 @@ function freeReferencedIdentifiers(
     if (node.type === "CatchClause") {
       const scope: LexicalScope = { kind: "block", names: new Set() };
       if (isNode(node.param)) {
-        visitPatternRuntime(node.param, [scope, ...scopes]);
         bindPatternNames(scope, node.param);
+        visitPatternRuntime(node.param, [scope, ...scopes]);
       }
       if (isNode(node.body)) visit(node.body, [scope, ...scopes]);
       return;
