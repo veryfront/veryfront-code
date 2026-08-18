@@ -1158,6 +1158,13 @@ function freeReferencedIdentifiers(
 
   const visit = (node: Node, scopes: LexicalScope[]): void => {
     if (node.type === "ImportDeclaration" || elided.has(node)) return;
+    const handlesDeferredNode = node.type === "FunctionDeclaration" ||
+      node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression" ||
+      node.type === "ObjectMethod" || node.type === "ClassMethod" ||
+      node.type === "ClassPrivateMethod" || node.type === "ObjectProperty" ||
+      node.type === "ClassProperty" || node.type === "ClassPrivateProperty" ||
+      node.type === "ClassAccessorProperty" || node.type === "StaticBlock";
+    if (deferred.has(node) && !handlesDeferredNode) return;
     if (node.type === "TSEnumDeclaration") {
       visitTsEnum(node, scopes);
       return;
@@ -2261,14 +2268,33 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       : null;
   };
 
-  const callArgumentsComplete = (
+  const evaluatedInvocationArguments = (node: Node): unknown[] | null => {
+    if (
+      node.type === "CallExpression" || node.type === "OptionalCallExpression" ||
+      node.type === "NewExpression"
+    ) return Array.isArray(node.arguments) ? node.arguments : null;
+    if (node.type !== "TaggedTemplateExpression" || !isNode(node.quasi)) return null;
+    return Array.isArray(node.quasi.expressions) ? node.quasi.expressions : [];
+  };
+
+  const invocationArgumentsComplete = (
     node: Node,
     initializedNames: ReadonlySet<string>,
-  ): boolean =>
-    (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
-    Array.isArray(node.arguments) && node.arguments.every((argument) =>
-      isNode(argument) && isInertExpression(argument, noNameHelpers, initializedNames)
-    );
+  ): boolean => {
+    const argumentsToEvaluate = evaluatedInvocationArguments(node);
+    if (!argumentsToEvaluate) return false;
+    for (let index = 0; index < argumentsToEvaluate.length; index++) {
+      const argument = argumentsToEvaluate[index];
+      if (isNode(argument) && isInertExpression(argument, noNameHelpers, initializedNames)) {
+        continue;
+      }
+      for (const later of argumentsToEvaluate.slice(index + 1)) {
+        if (isNode(later)) deferred.add(later);
+      }
+      return false;
+    }
+    return true;
+  };
 
   const isDefinitelyDefinedArgument = (node: Node): boolean => {
     const argument = unwrap(node);
@@ -2339,6 +2365,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   };
 
   const invocationArgumentsFor = (invocation: Node, target: Node): unknown[] | null => {
+    if (invocation.type === "NewExpression") {
+      return Array.isArray(invocation.arguments) ? invocation.arguments : null;
+    }
+    if (invocation.type === "TaggedTemplateExpression") {
+      if (!isNode(invocation.quasi)) return null;
+      const substitutions = Array.isArray(invocation.quasi.expressions)
+        ? invocation.quasi.expressions
+        : [];
+      return [{ type: "ArrayExpression", elements: [] }, ...substitutions];
+    }
     if (
       (invocation.type !== "CallExpression" && invocation.type !== "OptionalCallExpression") ||
       !Array.isArray(invocation.arguments) || !isNode(invocation.callee)
@@ -2368,7 +2404,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
   ): boolean => {
     if (target.generator === true) return false;
     const initializedAtCall = initializedNamesAtCall(invocation, scopes);
-    if (!callArgumentsComplete(invocation, initializedAtCall)) return false;
+    if (!invocationArgumentsComplete(invocation, initializedAtCall)) return false;
     const invocationArguments = invocationArgumentsFor(invocation, target);
     if (!invocationArguments) return false;
 
@@ -2522,13 +2558,22 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     const nextInvoked = invokedChild(node);
     if (nextInvoked) {
       if (node.type === "NewExpression") {
-        if (nextInvoked.type === "ClassExpression") {
-          constructedClasses.add(nextInvoked);
-        } else if (
-          nextInvoked.type === "FunctionExpression" &&
-          nextInvoked.async !== true && nextInvoked.generator !== true
-        ) {
-          executedNodes.add(nextInvoked);
+        const initializedAtConstruction = initializedNamesAtCall(node, activeScopes);
+        const calleeCompletes = nextInvoked.type !== "ClassExpression" ||
+          classDefinitionCompletes(nextInvoked);
+        if (!calleeCompletes) {
+          for (const argument of Array.isArray(node.arguments) ? node.arguments : []) {
+            if (isNode(argument)) deferred.add(argument);
+          }
+        } else if (invocationArgumentsComplete(node, initializedAtConstruction)) {
+          if (nextInvoked.type === "ClassExpression") {
+            constructedClasses.add(nextInvoked);
+          } else if (
+            nextInvoked.type === "FunctionExpression" && nextInvoked.async !== true &&
+            nextInvoked.generator !== true
+          ) {
+            markCalledFunction(nextInvoked, node, activeScopes);
+          }
         }
       } else if (
         nextInvoked.type === "FunctionExpression" ||

@@ -2568,6 +2568,38 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-argument.tsx");
     });
 
+    it("does not evaluate arguments after a direct IIFE argument can throw", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `((first, second) => {})(missing, KEY);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-later-argument.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-later-argument.tsx");
+    });
+
+    it("keeps a secret read by an inline tagged-template function", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `((strings) => { globalThis.registered = KEY; })\`value\`;`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/root-tagged-function.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("keeps a secret read by an immediately invoked object method", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3092,6 +3124,23 @@ describe("browser-server-exports-strip", () => {
         assertStringIncludes(result, 'throw new Error("server-only")');
       });
     }
+
+    it("does not construct an inline class when an argument can throw", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { field = KEY; }(missing);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/inline-class-argument.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "inline-class-argument.tsx");
+    });
 
     it("does not run direct instance fields when class definition throws", async () => {
       const code = [
