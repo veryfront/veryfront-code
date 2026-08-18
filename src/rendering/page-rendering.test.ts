@@ -255,6 +255,10 @@ describe("rendering/page-rendering", () => {
       const renderer = new PageRenderer({
         projectDir: "/project",
         mode,
+        // Hosted preview: the request vocabulary says preview while the
+        // compile vocabulary says production, so the production case proves
+        // the compile half is what reaches the loader.
+        environment: "preview",
         config: { react: { version: "19.1.1" } },
         adapter: { fs: {} } as unknown as RuntimeAdapter,
         componentRegistry: {
