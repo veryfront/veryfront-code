@@ -150,9 +150,10 @@ boundary.
 ### OAuth2 client credentials
 
 Only connectors with `grantType: "client_credentials"` are eligible. Credential names derive from
-the existing connector vocabulary: `<NORMALIZED_NAME>_CLIENT_ID` and
-`<NORMALIZED_NAME>_CLIENT_SECRET`. The source supports fixed HTTPS token URLs and the catalog's
-Basic or request-body client-auth method. Authorization-code connectors remain unsupported.
+the connector's declared environment metadata. The source selects the single names ending in
+`_CLIENT_ID` and `_CLIENT_SECRET` and fails closed when either name is missing or ambiguous. It
+supports fixed HTTPS token URLs and the catalog's Basic or request-body client-auth method.
+Authorization-code connectors remain unsupported.
 
 ### Salesforce service account
 
