@@ -248,6 +248,45 @@ describe("guardedOutboundFetch", () => {
     assertEquals(redirects, []);
   });
 
+  it("cancels the destination response when a redirect observer fails", async () => {
+    let cancelledBodies = 0;
+    let fetchCalls = 0;
+    const boundary = createTestBoundary((input) => {
+      fetchCalls++;
+      if (String(input).endsWith("/start")) {
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://93.184.216.35/final" },
+          }),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelledBodies++;
+            },
+          }),
+        ),
+      );
+    });
+
+    await assertRejects(
+      () =>
+        boundary.guardedFetch("https://93.184.216.34/start", undefined, {
+          onRedirect() {
+            throw new Error("observer failed");
+          },
+        }),
+      Error,
+      "observer failed",
+    );
+
+    assertEquals(fetchCalls, 2);
+    assertEquals(cancelledBodies, 1);
+  });
+
   it("preserves Request input semantics for origin-bound provider transports", async () => {
     let captured: Request | undefined;
     const fetchImpl: typeof fetch = async (input, init) => {
