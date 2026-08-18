@@ -996,7 +996,7 @@ function freeReferencedIdentifiers(
   const visitVariableDeclaration = (node: Node, scopes: LexicalScope[]): void => {
     bindVariableDeclaration(node, scopes);
     for (const declarator of declaratorsOf(node)) {
-      if (elided.has(declarator)) continue;
+      if (elided.has(declarator) || deferred.has(declarator)) continue;
       if (isNode(declarator.id)) visitPatternRuntime(declarator.id, scopes);
       if (isNode(declarator.init)) visit(declarator.init, scopes);
     }
@@ -2278,6 +2278,31 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       (!isNode(statement.argument) || inertCompletionExpression(statement.argument));
   };
 
+  const deferOrderedExpressionTail = (
+    node: Node,
+    initializedNames: ReadonlySet<string>,
+  ): void => {
+    const expression = unwrap(node);
+    const ordered =
+      expression.type === "SequenceExpression" && Array.isArray(expression.expressions)
+        ? expression.expressions
+        : expression.type === "ArrayExpression" && Array.isArray(expression.elements)
+        ? expression.elements
+        : null;
+    if (!ordered) return;
+
+    for (let index = 0; index < ordered.length; index++) {
+      const current = ordered[index];
+      if (!isNode(current)) continue;
+      if (isInertExpression(current, noNameHelpers, initializedNames)) continue;
+      deferOrderedExpressionTail(current, initializedNames);
+      for (const later of ordered.slice(index + 1)) {
+        if (isNode(later)) deferred.add(later);
+      }
+      return;
+    }
+  };
+
   const evaluatedInvocationArguments = (node: Node): unknown[] | null => {
     if (
       node.type === "CallExpression" || node.type === "OptionalCallExpression" ||
@@ -2298,6 +2323,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       if (isNode(argument) && isInertExpression(argument, noNameHelpers, initializedNames)) {
         continue;
       }
+      if (isNode(argument)) deferOrderedExpressionTail(argument, initializedNames);
       for (const later of argumentsToEvaluate.slice(index + 1)) {
         if (isNode(later)) deferred.add(later);
       }
@@ -2435,21 +2461,36 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             return true;
           }
           if (statement.type === "ExpressionStatement") {
-            return isInertExpression(
-              isNode(statement.expression) ? statement.expression : undefined,
+            const expression = isNode(statement.expression) ? statement.expression : undefined;
+            const completes = isInertExpression(
+              expression,
               noNameHelpers,
               initializedAtCall,
             );
+            if (!completes && expression) {
+              deferOrderedExpressionTail(expression, initializedAtCall);
+            }
+            return completes;
           }
           if (statement.type !== "VariableDeclaration") return false;
-          return declaratorsOf(statement).every((declarator) =>
-            isNode(declarator.id) && declarator.id.type === "Identifier" &&
-            isInertExpression(
-              isNode(declarator.init) ? declarator.init : undefined,
-              noNameHelpers,
-              initializedAtCall,
-            )
-          );
+          const declarators = declaratorsOf(statement);
+          for (let index = 0; index < declarators.length; index++) {
+            const declarator = declarators[index];
+            if (!declarator) return false;
+            const completes = isNode(declarator.id) && declarator.id.type === "Identifier" &&
+              isInertExpression(
+                isNode(declarator.init) ? declarator.init : undefined,
+                noNameHelpers,
+                initializedAtCall,
+              );
+            if (completes) continue;
+            if (isNode(declarator.init)) {
+              deferOrderedExpressionTail(declarator.init, initializedAtCall);
+            }
+            for (const later of declarators.slice(index + 1)) deferred.add(later);
+            return false;
+          }
+          return true;
         };
         let continues = true;
         for (const statement of target.body.body) {
@@ -2716,18 +2757,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           : "constructor-only"
         : null;
       if (
-        instanceFieldsContinue && isInstanceField(child) && isNode(child.value) &&
-        child.value.type === "SequenceExpression" && Array.isArray(child.value.expressions)
+        instanceFieldsContinue && isInstanceField(child) && isNode(child.value)
       ) {
-        let sequenceContinues = true;
-        for (const expression of child.value.expressions) {
-          if (!isNode(expression)) continue;
-          if (!sequenceContinues) {
-            deferred.add(expression);
-          } else if (!inertCompletionExpression(expression)) {
-            sequenceContinues = false;
-          }
-        }
+        deferOrderedExpressionTail(child.value, noInitializedNames);
       }
       const invokedMember = constructedClassBody !== null &&
           ((isConstructor(child) && constructedClassBody !== "fields-only") ||
