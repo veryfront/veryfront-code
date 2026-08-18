@@ -667,11 +667,17 @@ export class HTMLGenerator {
         null,
         context.options?.releaseId,
       );
+      // Preview instrumentation follows the server-resolved request
+      // environment and falls back to "production", so a caller that reports no
+      // environment never gets it. This intentionally does not feed the cache
+      // key above: the SSR module cache key already separates preview from
+      // production, so the two cannot share an entry.
+      const environment = context.options?.environment ?? this.config.environment ?? "production";
       const loaded = await loadReservedWithPath(
         dirs,
         "error",
         this.config.projectDir,
-        this.config.mode,
+        { compileMode: this.config.mode, environment },
         this.config.adapter,
         context.options?.projectId,
         contentSourceId,

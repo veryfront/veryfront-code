@@ -17,6 +17,7 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ComponentRegistry } from "../ssr/component-registry.ts";
+import type { RenderEnvironment, RenderModes } from "../context/render-context.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
 
@@ -27,7 +28,13 @@ export interface LayoutOrchestratorConfig {
   contentSourceId: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
+  /** Compile vocabulary. Selects minification and tree shaking. */
   mode: "development" | "production";
+  /**
+   * Request vocabulary. Selects preview-only instrumentation. A hosted preview
+   * render is mode "production" with environment "preview".
+   */
+  environment: RenderEnvironment;
   moduleServerUrl?: string;
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
@@ -76,6 +83,10 @@ export class LayoutOrchestrator {
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
+  }
+
+  private get renderModes(): RenderModes {
+    return { compileMode: this.config.mode, environment: this.config.environment };
   }
 
   private getReactVersion(
@@ -217,6 +228,7 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
+                  this.renderModes,
                   reactVersion,
                   undefined,
                   dependencyPinningCacheKey,
@@ -225,7 +237,6 @@ export class LayoutOrchestrator {
                   moduleServerOrigin,
                   this.config.config.build?.serverExternalPackages,
                   signal,
-                  this.config.mode,
                 );
                 return { type: "tsx" as const, path: componentPath, success: true };
               } catch (error) {
@@ -386,6 +397,7 @@ export class LayoutOrchestrator {
           layoutCache: this.config.layoutCache,
           mergedComponents,
           mode: this.config.mode,
+          environment: this.config.environment,
           moduleServerUrl: this.config.moduleServerUrl,
           requestUrl,
           params,

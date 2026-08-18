@@ -31,6 +31,7 @@ import {
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 import { isDotPath } from "../orchestrator/path-helpers.ts";
+import type { RenderEnvironment, RenderModes } from "../context/render-context.ts";
 
 const logger = rendererLogger.component("layout-applicator");
 
@@ -44,7 +45,13 @@ export interface LayoutApplicationOptions {
   config: VeryfrontConfig;
   layoutCache: LayoutComponentCache;
   mergedComponents: MDXComponents;
+  /** Compile vocabulary. Selects minification and tree shaking. */
   mode: "development" | "production";
+  /**
+   * Request vocabulary. Selects preview-only instrumentation. A hosted preview
+   * render is mode "production" with environment "preview".
+   */
+  environment: RenderEnvironment;
   moduleServerUrl?: string;
   requestUrl?: URL;
   params?: Record<string, string | string[]>;
@@ -69,6 +76,7 @@ export class LayoutApplicator {
   private layoutCache: LayoutComponentCache;
   private mergedComponents: MDXComponents;
   private mode: "development" | "production";
+  private environment: RenderEnvironment;
   private requestUrl?: URL;
   private params?: Record<string, string | string[]>;
   private frontmatter?: Record<string, unknown>;
@@ -101,6 +109,7 @@ export class LayoutApplicator {
     this.layoutCache = options.layoutCache;
     this.mergedComponents = options.mergedComponents;
     this.mode = options.mode;
+    this.environment = options.environment;
     this.requestUrl = options.requestUrl;
     this.params = options.params;
     this.frontmatter = options.frontmatter;
@@ -112,6 +121,10 @@ export class LayoutApplicator {
     this.dependencyPinningSource = options.dependencyPinningSource;
     this.isLocalProject = options.isLocalProject === true;
     this.signal = options.signal;
+  }
+
+  private get renderModes(): RenderModes {
+    return { compileMode: this.mode, environment: this.environment };
   }
 
   private getReactVersion(): Promise<string> {
@@ -290,6 +303,7 @@ export class LayoutApplicator {
             this.projectId,
             this.projectSlug,
             this.contentSourceId,
+            this.renderModes,
             this.preloadedImportMap ?? undefined,
             reactVersion,
             this.dependencyPinningCacheKey,
@@ -299,7 +313,6 @@ export class LayoutApplicator {
             this.config,
             this.isLocalProject,
             this.signal,
-            this.mode,
           );
         }
 
@@ -315,6 +328,7 @@ export class LayoutApplicator {
           this.projectId,
           this.projectSlug,
           this.contentSourceId,
+          this.renderModes,
           reactVersion,
           this.dependencyPinningCacheKey,
           this.dependencyPinningDependencies,
@@ -322,7 +336,6 @@ export class LayoutApplicator {
           this.requestUrl?.origin,
           this.config,
           this.signal,
-          this.mode,
         );
       },
       {
@@ -541,7 +554,7 @@ export class LayoutApplicator {
               searchDirs,
               "loading",
               this.projectDir,
-              this.mode,
+              this.renderModes,
               this.adapter,
               this.projectId,
               this.contentSourceId,
@@ -557,7 +570,7 @@ export class LayoutApplicator {
               searchDirs,
               "error",
               this.projectDir,
-              this.mode,
+              this.renderModes,
               this.adapter,
               this.projectId,
               this.contentSourceId,

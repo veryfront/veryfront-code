@@ -169,45 +169,160 @@ describe(
       });
     });
 
-    it("renders the nearest app not-found.tsx for missing App Router pages", async () => {
-      await withTestContext("production-server-app-not-found", async (context: TestContext) => {
-        await removeAppDir(context.projectDir);
+    /**
+     * Studio Navigator resolves a selected element by reading `data-node-file`
+     * off the server-rendered HTML. React hydration keeps server-rendered
+     * attributes, so if SSR omits them the browser bundle cannot put them back.
+     *
+     * Hosted preview compiles as production, so the page and the layout can
+     * only differ by the request environment. Both runs below build the same
+     * project and change nothing but `defaultEnvironment`.
+     */
+    for (
+      const scenario of [
+        {
+          name: "production",
+          defaultEnvironment: "production" as const,
+          expectNodePositions: false,
+        },
+        {
+          name: "preview",
+          defaultEnvironment: "preview" as const,
+          expectNodePositions: true,
+        },
+      ]
+    ) {
+      it(`renders a page and its layout with ${scenario.name} node positions`, async () => {
+        await withTestContext(
+          `production-server-node-positions-${scenario.name}`,
+          async (context: TestContext) => {
+            await removeAppDir(context.projectDir);
 
-        const segDir = join(context.projectDir, "app", "a", "b");
-        await mkdir(segDir, { recursive: true });
-        await writeTextFile(
-          join(context.projectDir, "app", "not-found.tsx"),
-          `export default function RootNotFound(){ return <p>Root Missing</p>; }`,
+            const appDir = join(context.projectDir, "app");
+            await mkdir(appDir, { recursive: true });
+            await writeTextFile(
+              join(appDir, "layout.tsx"),
+              `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <div id="root-layout">{children}</div>;
+}
+`,
+            );
+            await writeTextFile(
+              join(appDir, "page.tsx"),
+              `export default function Page() {
+  return <section id="page-root">Hello from the page</section>;
+}
+`,
+            );
+
+            const port = await context.allocatePort();
+            const server = await startProductionServer({
+              projectDir: context.projectDir,
+              port,
+              bindAddress: "127.0.0.1",
+              defaultProjectSlug: context.projectId,
+              defaultProjectId: context.projectId,
+              defaultEnvironment: scenario.defaultEnvironment,
+            });
+            context.trackResource(server);
+            await server.ready;
+
+            try {
+              const res = await fetch(`http://127.0.0.1:${port}/`);
+              assertEquals(res.status, 200);
+              const html = await res.text();
+
+              // Pin the assertions to a real SSR render of both surfaces.
+              assertStringIncludes(html, 'id="page-root"');
+              assertStringIncludes(html, 'id="root-layout"');
+
+              assertEquals(
+                html.includes('data-node-file="app/page.tsx"'),
+                scenario.expectNodePositions,
+                `page node positions in ${scenario.name}`,
+              );
+              assertEquals(
+                html.includes('data-node-file="app/layout.tsx"'),
+                scenario.expectNodePositions,
+                `layout node positions in ${scenario.name}`,
+              );
+            } finally {
+              await server.stop();
+            }
+          },
         );
-        await writeTextFile(
-          join(segDir, "not-found.tsx"),
-          `export default function NotFound(){ return <p id="deep-not-found">Missing B</p>; }`,
-        );
-
-        const port = await context.allocatePort();
-        const server = await startProductionServer({
-          projectDir: context.projectDir,
-          port,
-          bindAddress: "127.0.0.1",
-          defaultProjectSlug: context.projectId,
-          defaultProjectId: context.projectId,
-        });
-        context.trackResource(server);
-        await server.ready;
-
-        try {
-          const res = await fetch(`http://127.0.0.1:${port}/a/b/missing`);
-          assertEquals(res.status, 404);
-          assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
-          const html = await res.text();
-          assertStringIncludes(html, '<p id="deep-not-found">Missing B</p>');
-          assertEquals(html.includes("data-node-file="), false);
-          assertEquals(html.includes("Root Missing"), false);
-        } finally {
-          await server.stop();
-        }
       });
-    });
+    }
+
+    // The reserved not-found component is loaded through the same call site as
+    // layouts and `components/` entries, so its instrumentation must follow the
+    // request environment, not the compile mode. Both environments compile as
+    // production here; only `defaultEnvironment` differs.
+    for (
+      const scenario of [
+        {
+          name: "production",
+          defaultEnvironment: "production" as const,
+          expectNodePositions: false,
+        },
+        {
+          name: "preview",
+          defaultEnvironment: "preview" as const,
+          expectNodePositions: true,
+        },
+      ]
+    ) {
+      it(`renders the nearest app not-found.tsx for missing App Router pages in ${scenario.name}`, async () => {
+        await withTestContext(
+          `production-server-app-not-found-${scenario.name}`,
+          async (context: TestContext) => {
+            await removeAppDir(context.projectDir);
+
+            const segDir = join(context.projectDir, "app", "a", "b");
+            await mkdir(segDir, { recursive: true });
+            await writeTextFile(
+              join(context.projectDir, "app", "not-found.tsx"),
+              `export default function RootNotFound(){ return <p>Root Missing</p>; }`,
+            );
+            await writeTextFile(
+              join(segDir, "not-found.tsx"),
+              `export default function NotFound(){ return <p id="deep-not-found">Missing B</p>; }`,
+            );
+
+            const port = await context.allocatePort();
+            const server = await startProductionServer({
+              projectDir: context.projectDir,
+              port,
+              bindAddress: "127.0.0.1",
+              defaultProjectSlug: context.projectId,
+              defaultProjectId: context.projectId,
+              defaultEnvironment: scenario.defaultEnvironment,
+            });
+            context.trackResource(server);
+            await server.ready;
+
+            try {
+              const res = await fetch(`http://127.0.0.1:${port}/a/b/missing`);
+              assertEquals(res.status, 404);
+              assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
+              const html = await res.text();
+              // The id attribute only survives a real SSR render:
+              // extractNotFoundText rebuilds the text as a bare <p>, so this
+              // pins the assertions below to the render path.
+              assertStringIncludes(html, 'id="deep-not-found"');
+              assertStringIncludes(html, "Missing B");
+              assertEquals(
+                html.includes('data-node-file="app/a/b/not-found.tsx"'),
+                scenario.expectNodePositions,
+              );
+              assertEquals(html.includes("Root Missing"), false);
+            } finally {
+              await server.stop();
+            }
+          },
+        );
+      });
+    }
 
     it("returns HTTP redirects from getServerData instead of rendering a 500 page", async () => {
       await withTestContext("production-server-ssr-redirects", async (context: TestContext) => {

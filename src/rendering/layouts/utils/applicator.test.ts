@@ -1,6 +1,8 @@
 import * as React from "react";
 import * as ReactDOMServer from "react-dom/server";
 import "#veryfront/schemas/_test-setup.ts";
+// Node position injection needs the babel CodeParser contract registered.
+import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { renderToStringAdapter } from "#veryfront/react";
@@ -26,6 +28,29 @@ function createMockAdapter(): RuntimeAdapter {
     env: { get: () => undefined },
   } as unknown as RuntimeAdapter;
 }
+
+const PRODUCTION_MODES = {
+  compileMode: "production",
+  environment: "production",
+} as const;
+
+/** Hosted preview: production compile, preview instrumentation. */
+const PREVIEW_MODES = {
+  compileMode: "production",
+  environment: "preview",
+} as const;
+
+/** Local development: dev compile, preview instrumentation. */
+const DEVELOPMENT_MODES = {
+  compileMode: "development",
+  environment: "preview",
+} as const;
+
+const LAYOUT_SOURCE =
+  `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <div id="tsx-layout">{children}</div>;
+}
+`;
 
 describe(
   "rendering/layouts/utils/applicator",
@@ -54,6 +79,7 @@ describe(
           "project-id",
           "project-slug",
           "content-source-id",
+          PRODUCTION_MODES,
         );
 
         assertEquals(React.isValidElement(result), true);
@@ -79,6 +105,7 @@ describe(
           "project-id",
           "project-slug",
           "content-source-id",
+          PRODUCTION_MODES,
         );
 
         assertEquals(React.isValidElement(result), true);
@@ -105,10 +132,80 @@ describe(
           "project-id",
           "project-slug",
           "content-source-id",
+          PRODUCTION_MODES,
         );
 
         assertEquals(React.isValidElement(result), true);
       });
+    });
+
+    /**
+     * Both applicators compile the layout themselves, so the mode pair they
+     * forward decides whether the SSR output carries Studio Navigator node
+     * positions. Before veryfront/veryfront-issue-inbox#555 the parameter was
+     * optional, every caller resolved to production, and no case here compiled
+     * a TSX layout in development at all.
+     */
+    describe("TSX layouts under each render mode pair", () => {
+      for (
+        const scenario of [
+          { name: "hosted production", modes: PRODUCTION_MODES, expectNodePositions: false },
+          { name: "hosted preview", modes: PREVIEW_MODES, expectNodePositions: true },
+          { name: "local development", modes: DEVELOPMENT_MODES, expectNodePositions: true },
+        ]
+      ) {
+        it(`applyLayoutsFunctionBody renders ${scenario.name}`, async () => {
+          const adapter = createMockAdapter();
+          adapter.fs.readFile = () => Promise.resolve(LAYOUT_SOURCE);
+
+          const result = await applyLayoutsFunctionBody(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            undefined,
+            [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+            {},
+            createLayoutComponentCache(),
+            "/project",
+            adapter,
+            undefined,
+            `project-fb-${scenario.modes.compileMode}-${scenario.modes.environment}`,
+            "project-slug",
+            "content-source-id",
+            scenario.modes,
+          );
+
+          __injectReactDOMServerForTests(ReactDOMServer);
+          const html = await renderToStringAdapter(result);
+          assertEquals(html.includes('id="tsx-layout"'), true);
+          assertEquals(html.includes('id="page-body"'), true);
+          assertEquals(html.includes("data-node-file"), scenario.expectNodePositions);
+        });
+
+        it(`applyLayoutsESM renders ${scenario.name}`, async () => {
+          const adapter = createMockAdapter();
+          adapter.fs.readFile = () => Promise.resolve(LAYOUT_SOURCE);
+
+          const result = await applyLayoutsESM(
+            React.createElement("p", { id: "page-body" }, "Text"),
+            undefined,
+            [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+            "/project",
+            {},
+            createLayoutComponentCache(),
+            adapter,
+            undefined,
+            `project-esm-${scenario.modes.compileMode}-${scenario.modes.environment}`,
+            "project-slug",
+            "content-source-id",
+            scenario.modes,
+          );
+
+          __injectReactDOMServerForTests(ReactDOMServer);
+          const html = await renderToStringAdapter(result);
+          assertEquals(html.includes('id="tsx-layout"'), true);
+          assertEquals(html.includes('id="page-body"'), true);
+          assertEquals(html.includes("data-node-file"), scenario.expectNodePositions);
+        });
+      }
     });
 
     describe("applyLayoutsFunctionBody", () => {
@@ -131,6 +228,7 @@ describe(
           "project-id",
           "project-slug",
           "content-source-id",
+          PRODUCTION_MODES,
           "18.3.1",
         );
 
@@ -160,6 +258,7 @@ describe(
           "project-id",
           "project-slug",
           "content-source-id",
+          PRODUCTION_MODES,
         );
 
         __injectReactDOMServerForTests(ReactDOMServer);

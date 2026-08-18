@@ -8,18 +8,46 @@ import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types
 import { createLayoutComponentCache, loadTSXComponent } from "./layouts/utils/component-loader.ts";
 import { loadReservedWithPath } from "./app-reserved.ts";
 import { ComponentRegistry } from "./ssr/component-registry.ts";
+import type { RenderModes } from "./context/render-context.ts";
 import type { VirtualModuleSystem } from "./virtual-module-system.ts";
 
 /**
- * The render mode is known on every SSR path, but four component-loading call
- * sites used to hardcode `dev: true`. That made the hosted multi-tenant runtime
- * take dev-only branches inside SSRModuleLoader (per-project transform cap
- * bypassed, 30s acquire deadline, dev cold-start overlap, node position
- * injection). These tests pin `dev` to the render mode at every one of those
- * boundaries so the drift cannot come back unnoticed.
+ * Every SSR component-loading boundary carries two independent mode
+ * vocabularies, and both have already regressed once.
+ *
+ * `compileMode` ("development" | "production") drives `dev`. Four call sites
+ * once hardcoded `dev: true`, so the hosted runtime took dev-only branches
+ * inside SSRModuleLoader (per-project transform cap bypassed, 30s acquire
+ * deadline, dev cold-start overlap).
+ *
+ * `environment` ("preview" | "production") drives `mode`, which is what
+ * SSRModuleLoader reads to decide whether to inject Studio Navigator node
+ * positions. Hosted preview compiles as production, so fixing the first
+ * regression by threading only `compileMode` silently turned preview
+ * instrumentation off on layouts, `components/` entries and reserved app
+ * components.
+ *
+ * These tests pin both fields at every one of those boundaries.
  */
 
 const LAYOUT_SOURCE = "export default function Layout() { return null; }";
+
+const PRODUCTION_MODES: RenderModes = {
+  compileMode: "production",
+  environment: "production",
+};
+
+/** Hosted preview: production compile, preview instrumentation. */
+const HOSTED_PREVIEW_MODES: RenderModes = {
+  compileMode: "production",
+  environment: "preview",
+};
+
+/** Local development: dev compile, preview instrumentation. */
+const LOCAL_DEV_MODES: RenderModes = {
+  compileMode: "development",
+  environment: "preview",
+};
 
 function layoutAdapter(source: string): RuntimeAdapter {
   return {
@@ -34,18 +62,19 @@ function stubComponent(): React.ComponentType<Record<string, unknown>> {
   return Component;
 }
 
-function loadLayoutWithMode(
-  mode: "development" | "production",
+function loadLayoutWithModes(
+  modes: RenderModes,
   observed: LoadComponentOptions[],
 ): Promise<unknown> {
   return loadTSXComponent(
-    `/project/app/${mode}-layout.tsx`,
+    `/project/app/${modes.compileMode}-${modes.environment}-layout.tsx`,
     "/project",
     createLayoutComponentCache(),
     layoutAdapter(LAYOUT_SOURCE),
-    `project-${mode}`,
+    `project-${modes.compileMode}-${modes.environment}`,
     "project-slug",
     "release-1",
+    modes,
     "19.1.0",
     {
       loadComponentFromSource: (_source, _filePath, _projectDir, _adapter, options) => {
@@ -53,18 +82,11 @@ function loadLayoutWithMode(
         return Promise.resolve(stubComponent());
       },
     },
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    mode,
   );
 }
 
 function createRegistry(
-  mode: "development" | "production",
+  modes: RenderModes,
   observed: LoadComponentOptions[],
 ): { registry: ComponentRegistry; adapter: RuntimeAdapter } {
   const adapter = createMockAdapter();
@@ -82,29 +104,29 @@ function createRegistry(
     adapter,
     undefined,
     undefined,
-    `project-${mode}`,
+    `project-${modes.compileMode}-${modes.environment}`,
     "release-1",
     (_source, _filePath, _projectDir, _adapter, options) => {
       observed.push(options);
       return Promise.resolve(stubComponent());
     },
-    mode,
+    modes,
   );
 
   return { registry, adapter: adapter as unknown as RuntimeAdapter };
 }
 
-function loadReservedWithMode(
-  mode: "development" | "production",
+function loadReservedWithModes(
+  modes: RenderModes,
   observed: LoadComponentOptions[],
 ): Promise<unknown> {
   return loadReservedWithPath(
     ["/project/app"],
     "loading",
     "/project",
-    mode,
+    modes,
     layoutAdapter(LAYOUT_SOURCE),
-    `project-${mode}`,
+    `project-${modes.compileMode}-${modes.environment}`,
     "release-1",
     "19.1.0",
     undefined,
@@ -122,86 +144,103 @@ function loadReservedWithMode(
   );
 }
 
-describe("SSR dev-mode gate", () => {
-  describe("layout component loading", () => {
-    it("loads TSX layouts with dev false in production mode", async () => {
-      const observed: LoadComponentOptions[] = [];
-      await loadLayoutWithMode("production", observed);
+async function loadRegistryComponent(
+  modes: RenderModes,
+  observed: LoadComponentOptions[],
+): Promise<void> {
+  const { registry } = createRegistry(modes, observed);
+  await registry.loadFromDirectory("/project/components", true);
+  await registry.prepareDependencySnapshot();
+}
 
-      assertEquals(observed.length, 1);
-      assertEquals(observed[0]?.dev, false);
+/** The three loaders #3841 changed, driven through one shared assertion set. */
+const SURFACES: Array<{
+  name: string;
+  load: (modes: RenderModes, observed: LoadComponentOptions[]) => Promise<unknown>;
+}> = [
+  { name: "layout component loading", load: loadLayoutWithModes },
+  { name: "components/ registry loading", load: loadRegistryComponent },
+  { name: "reserved app component loading", load: loadReservedWithModes },
+];
+
+describe("SSR render mode gate", () => {
+  for (const surface of SURFACES) {
+    describe(surface.name, () => {
+      it("compiles as production and skips preview instrumentation in hosted production", async () => {
+        const observed: LoadComponentOptions[] = [];
+        await surface.load(PRODUCTION_MODES, observed);
+
+        assertEquals(observed.length, 1);
+        assertEquals(observed[0]?.dev, false);
+        assertEquals(observed[0]?.mode, "production");
+      });
+
+      it("compiles as production but keeps preview instrumentation in hosted preview", async () => {
+        const observed: LoadComponentOptions[] = [];
+        await surface.load(HOSTED_PREVIEW_MODES, observed);
+
+        assertEquals(observed.length, 1);
+        assertEquals(observed[0]?.dev, false);
+        assertEquals(observed[0]?.mode, "preview");
+      });
+
+      it("compiles as development and keeps preview instrumentation locally", async () => {
+        const observed: LoadComponentOptions[] = [];
+        await surface.load(LOCAL_DEV_MODES, observed);
+
+        assertEquals(observed.length, 1);
+        assertEquals(observed[0]?.dev, true);
+        assertEquals(observed[0]?.mode, "preview");
+      });
     });
+  }
 
-    it("loads TSX layouts with dev true in development mode", async () => {
-      const observed: LoadComponentOptions[] = [];
-      await loadLayoutWithMode("development", observed);
-
-      assertEquals(observed.length, 1);
-      assertEquals(observed[0]?.dev, true);
-    });
-
-    it("keeps the layout cache entries of the two modes apart", async () => {
+  describe("layout component cache isolation", () => {
+    it("keeps the cache entries of the three mode pairs apart", async () => {
       const observed: LoadComponentOptions[] = [];
       const cache = createLayoutComponentCache();
-      const args = [
-        "/project/app/layout.tsx",
-        "/project",
-        cache,
-        layoutAdapter(LAYOUT_SOURCE),
-        "project-shared",
-        "project-slug",
-        "release-1",
-        "19.1.0",
-        {
-          loadComponentFromSource: (
-            _source: string,
-            _filePath: string,
-            _projectDir: string,
-            _adapter: RuntimeAdapter,
-            options: LoadComponentOptions,
-          ) => {
-            observed.push(options);
-            return Promise.resolve(stubComponent());
-          },
+      const deps = {
+        loadComponentFromSource: (
+          _source: string,
+          _filePath: string,
+          _projectDir: string,
+          _adapter: RuntimeAdapter,
+          options: LoadComponentOptions,
+        ) => {
+          observed.push(options);
+          return Promise.resolve(stubComponent());
         },
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-      ] as const;
+      };
 
-      await loadTSXComponent(...args, "production");
-      await loadTSXComponent(...args, "development");
+      const load = (modes: RenderModes) =>
+        loadTSXComponent(
+          "/project/app/layout.tsx",
+          "/project",
+          cache,
+          layoutAdapter(LAYOUT_SOURCE),
+          "project-shared",
+          "project-slug",
+          "release-1",
+          modes,
+          "19.1.0",
+          deps,
+        );
 
-      assertEquals(observed.map((options) => options.dev), [false, true]);
+      await load(PRODUCTION_MODES);
+      await load(HOSTED_PREVIEW_MODES);
+      await load(LOCAL_DEV_MODES);
+
+      // Three distinct compiles, not one entry reused across mode pairs.
+      assertEquals(observed.length, 3);
+      assertEquals(observed.map((options) => options.dev), [false, false, true]);
+      assertEquals(
+        observed.map((options) => options.mode),
+        ["production", "preview", "preview"],
+      );
     });
   });
 
-  describe("components/ registry loading", () => {
-    it("loads registry components with dev false in production mode", async () => {
-      const observed: LoadComponentOptions[] = [];
-      const { registry } = createRegistry("production", observed);
-
-      await registry.loadFromDirectory("/project/components", true);
-      await registry.prepareDependencySnapshot();
-
-      assertEquals(observed.length, 1);
-      assertEquals(observed[0]?.dev, false);
-    });
-
-    it("loads registry components with dev true in development mode", async () => {
-      const observed: LoadComponentOptions[] = [];
-      const { registry } = createRegistry("development", observed);
-
-      await registry.loadFromDirectory("/project/components", true);
-      await registry.prepareDependencySnapshot();
-
-      assertEquals(observed.length, 1);
-      assertEquals(observed[0]?.dev, true);
-    });
-
+  describe("components/ registry identity", () => {
     it("passes the registry identity fields through to the loader", async () => {
       const observed: LoadComponentOptions[] = [];
       const adapter = createMockAdapter();
@@ -225,7 +264,7 @@ describe("SSR dev-mode gate", () => {
           observed.push(options);
           return Promise.resolve(stubComponent());
         },
-        "production",
+        PRODUCTION_MODES,
       );
 
       await registry.loadFromDirectory("/project/components", true);
@@ -260,7 +299,7 @@ describe("SSR dev-mode gate", () => {
           observed.push(options);
           return Promise.resolve(stubComponent());
         },
-        "production",
+        PRODUCTION_MODES,
       );
 
       await registry.loadFromDirectory("/project/components", true);
@@ -271,23 +310,38 @@ describe("SSR dev-mode gate", () => {
       assertEquals(observed[0]?.vendorBundleHash, undefined);
       assertEquals(observed[0]?.contentSourceId, undefined);
     });
-  });
 
-  describe("reserved app component loading", () => {
-    it("loads reserved components with dev false in production mode", async () => {
+    it("defaults to production when no render modes are supplied", async () => {
       const observed: LoadComponentOptions[] = [];
-      await loadReservedWithMode("production", observed);
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/Button.tsx",
+        "export default function Button() { return null; }",
+      );
+      const virtualModules = {
+        registerModule: () => Promise.resolve(),
+      } as unknown as VirtualModuleSystem;
 
-      assertEquals(observed.length, 1);
+      const registry = new ComponentRegistry(
+        virtualModules,
+        3001,
+        adapter,
+        undefined,
+        undefined,
+        "project-default",
+        "release-1",
+        (_source, _filePath, _projectDir, _adapter, options) => {
+          observed.push(options);
+          return Promise.resolve(stubComponent());
+        },
+      );
+
+      await registry.loadFromDirectory("/project/components", true);
+      await registry.prepareDependencySnapshot();
+
+      // An unknown environment must never turn preview instrumentation on.
       assertEquals(observed[0]?.dev, false);
-    });
-
-    it("loads reserved components with dev true in development mode", async () => {
-      const observed: LoadComponentOptions[] = [];
-      await loadReservedWithMode("development", observed);
-
-      assertEquals(observed.length, 1);
-      assertEquals(observed[0]?.dev, true);
+      assertEquals(observed[0]?.mode, "production");
     });
   });
 });

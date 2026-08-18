@@ -11,6 +11,7 @@ import {
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
+import type { RenderModes } from "../context/render-context.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 
@@ -109,7 +110,7 @@ export class ComponentRegistry {
   private contentSourceId?: string;
   private componentSourceGeneration = 0;
   private componentSourceLoader: ComponentSourceLoader;
-  private renderMode: "development" | "production";
+  private renderModes: RenderModes;
 
   constructor(
     virtualModules?: VirtualModuleSystem,
@@ -120,7 +121,7 @@ export class ComponentRegistry {
     projectId?: string,
     contentSourceId?: string,
     componentSourceLoader: ComponentSourceLoader = loadComponentFromSource,
-    renderMode: "development" | "production" = "production",
+    renderModes: RenderModes = { compileMode: "production", environment: "production" },
   ) {
     this.virtualModules = virtualModules ?? new VirtualModuleSystem();
     this.serverPort = serverPort;
@@ -130,7 +131,7 @@ export class ComponentRegistry {
     this.projectId = projectId;
     this.contentSourceId = contentSourceId;
     this.componentSourceLoader = componentSourceLoader;
-    this.renderMode = renderMode;
+    this.renderModes = renderModes;
   }
 
   async loadFromDirectory(dir: string, deferLoading = false): Promise<void> {
@@ -409,7 +410,8 @@ export class ComponentRegistry {
   ): LoadComponentOptions {
     return {
       projectId: this.projectId ?? projectRoot,
-      dev: this.renderMode === "development",
+      dev: this.renderModes.compileMode === "development",
+      mode: this.renderModes.environment,
       moduleServerUrl: this.moduleServerUrl,
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,

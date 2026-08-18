@@ -266,6 +266,7 @@ describe("LayoutApplicator helpers", () => {
       layoutCache: createLayoutComponentCache(),
       mergedComponents: {},
       mode: "production",
+      environment: "production",
     });
 
     await (applicator as unknown as {

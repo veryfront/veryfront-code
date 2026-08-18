@@ -1,4 +1,4 @@
-import type { RenderContext } from "../context/render-context.ts";
+import { type RenderContext, renderModesOf } from "../context/render-context.ts";
 import type { CompileMDXFunction } from "../orchestrator/compiler-service.ts";
 import { PageResolver } from "../page-resolution/index.ts";
 import { LayoutCollector } from "../layouts/layout-collector.ts";
@@ -57,7 +57,7 @@ export function createComponentRegistry(
     ctx.projectId, // Project ID for cache isolation
     ctx.contentSourceId,
     undefined, // componentSourceLoader
-    ctx.mode,
+    renderModesOf(ctx),
   );
 }
 
@@ -77,6 +77,7 @@ export function createPageRenderer(
   return new PageRenderer({
     projectDir: ctx.projectDir,
     mode: ctx.mode,
+    environment: ctx.environment,
     config: ctx.config,
     adapter: ctx.adapter,
     componentRegistry,

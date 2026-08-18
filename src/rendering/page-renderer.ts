@@ -15,6 +15,7 @@ import type { RenderResult } from "./orchestrator/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { RenderEnvironment } from "./context/render-context.ts";
 
 interface PageRenderOptions {
   params?: Record<string, string | string[]>;
@@ -52,7 +53,10 @@ interface PageBundleResult {
 
 export class PageRenderer {
   private readonly projectDir: string;
+  /** Compile vocabulary: "development" | "production". */
   private readonly mode: string;
+  /** Request vocabulary: "preview" | "production". Drives studio instrumentation. */
+  private readonly environment: RenderEnvironment;
   private readonly config: VeryfrontConfig;
   private readonly adapter: RuntimeAdapter;
   private readonly componentRegistry: ComponentRegistry;
@@ -67,7 +71,13 @@ export class PageRenderer {
 
   constructor(options: {
     projectDir: string;
+    /** Compile vocabulary: "development" | "production". */
     mode: string;
+    /**
+     * Request vocabulary: "preview" | "production". A hosted preview render is
+     * mode "production" with environment "preview", so the two are separate.
+     */
+    environment: RenderEnvironment;
     config: VeryfrontConfig;
     adapter: RuntimeAdapter;
     componentRegistry: ComponentRegistry;
@@ -82,6 +92,7 @@ export class PageRenderer {
   }) {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
+    this.environment = options.environment;
     this.config = options.config;
     this.adapter = options.adapter;
     this.componentRegistry = options.componentRegistry;
@@ -230,6 +241,7 @@ export class PageRenderer {
                   projectId: options?.projectId,
                   studioEmbed: options?.studioEmbed,
                   mode: this.mode,
+                  environment: this.environment,
                   contentSourceId: options?.contentSourceId,
                   reactVersion,
                   dependencyPinningCacheKey: options?.dependencyPinningCacheKey,

@@ -22,6 +22,7 @@ import type { ConfigurationManager } from "./config.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { MdxBundle } from "#veryfront/types";
 import { CompilerService } from "./compiler-service.ts";
+import type { RenderEnvironment } from "../context/render-context.ts";
 
 const logger = rendererLogger.component("lifecycle");
 
@@ -40,6 +41,12 @@ export interface LifecycleOptions {
   contentSourceId?: string;
   /** Server-trusted local-project identity. */
   isLocalProject?: boolean;
+  /**
+   * Request environment ("preview" | "production") for the services this
+   * lifecycle builds. Defaults to "production" so an unset value never turns
+   * on preview-only instrumentation.
+   */
+  environment?: RenderEnvironment;
   /** Injectable factory for testing — bypasses real service construction */
   servicesFactory?: (adapter: RuntimeAdapter) => RendererServices;
 }
@@ -65,6 +72,7 @@ export class RendererLifecycle {
   private projectId?: string;
   private contentSourceId?: string;
   private isLocalProject: boolean;
+  private environment: RenderEnvironment;
   private services?: RendererServices;
   private adapter!: RuntimeAdapter;
   private servicesFactory?: (adapter: RuntimeAdapter) => RendererServices;
@@ -76,6 +84,7 @@ export class RendererLifecycle {
     this.projectId = options.projectId;
     this.contentSourceId = options.contentSourceId;
     this.isLocalProject = options.isLocalProject === true;
+    this.environment = options.environment ?? "production";
     this.servicesFactory = options.servicesFactory;
   }
 
@@ -113,7 +122,7 @@ export class RendererLifecycle {
       this.projectId,
       this.contentSourceId,
       undefined,
-      mode,
+      { compileMode: mode, environment: this.environment },
     );
 
     const renderCacheConfig = config.cache?.render ?? {};
@@ -182,6 +191,7 @@ export class RendererLifecycle {
     const pageRenderer = new PageRenderer({
       projectDir,
       mode,
+      environment: this.environment,
       config,
       adapter: this.adapter,
       componentRegistry,
