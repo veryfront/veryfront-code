@@ -2106,6 +2106,20 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       : null;
   };
 
+  const hasSimpleParameterInitialization = (node: Node): boolean =>
+    Array.isArray(node.params) && node.params.every((parameter) =>
+      isNode(parameter) &&
+      (parameter.type === "Identifier" ||
+        (parameter.type === "RestElement" && isNode(parameter.argument) &&
+          parameter.argument.type === "Identifier"))
+    );
+
+  const callArgumentsComplete = (node: Node): boolean =>
+    (node.type === "CallExpression" || node.type === "OptionalCallExpression") &&
+    Array.isArray(node.arguments) && node.arguments.every((argument) =>
+      isNode(argument) && inertCompletionExpression(argument)
+    );
+
   const invokedInlineObjectFunction = (callee: Node): Node | null => {
     if (
       (callee.type !== "MemberExpression" && callee.type !== "OptionalMemberExpression") ||
@@ -2252,7 +2266,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       ) {
         executedNodes.add(nextInvoked);
         const getterResult = returnedInlineGetterFunction(nextInvoked);
-        if (getterResult) executedNodes.add(getterResult);
+        if (
+          getterResult && hasSimpleParameterInitialization(getterResult) &&
+          callArgumentsComplete(node)
+        ) executedNodes.add(getterResult);
       }
     }
     for (const child of children(node)) {
