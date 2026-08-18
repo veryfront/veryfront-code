@@ -1,7 +1,7 @@
 import { join, resolve } from "#veryfront/compat/path/index.ts";
 import { RENDER_ERROR } from "#veryfront/errors";
 import { getProdHydrationModulePath } from "./prod-scripts.ts";
-import { isVersionedProdHydrationModulePath } from "./prod-path.ts";
+import { isVersionedProdHydrationModulePath, PROD_HYDRATION_MODULE_PATH } from "./prod-path.ts";
 
 export interface ProdHydrationModuleSelectionOptions {
   fs: {
@@ -24,11 +24,13 @@ export function hasImmutableReleaseHydrationRuntime(
  *
  * Non-release renders use the serving runtime. Release renders discover the
  * single content-addressed runtime baked into that immutable release.
- * Releases without any versioned runtime fall back to the serving runtime:
- * hosted release file trees carry no build output at all (the API-backed fs
- * lists the absent dist directory as empty), so failing closed here takes
- * down every hosted release render. Only ambiguity — multiple versioned
- * runtimes — and uninspectable release artifacts fail closed.
+ * Releases without any versioned runtime fall back to the serving runtime at
+ * its unversioned rollout-stable path: hosted release file trees carry no
+ * build output at all (the API-backed fs lists the absent dist directory as
+ * empty), so failing closed here takes down every hosted release render, and
+ * a content-addressed fallback URL 404s on peer pods mid-rollout. Only
+ * ambiguity — multiple versioned runtimes — and uninspectable release
+ * artifacts fail closed.
  */
 export async function resolveProdHydrationModulePath(
   options: ProdHydrationModuleSelectionOptions,
@@ -66,5 +68,8 @@ export async function resolveProdHydrationModulePath(
     });
   }
 
-  return selectedPath ?? getProdHydrationModulePath();
+  // Every pod serves its own runtime bytes at the unversioned path, so this
+  // URL stays valid while mixed-version pods answer during a rolling deploy;
+  // the pod-specific content-addressed path would 404 on peers.
+  return selectedPath ?? PROD_HYDRATION_MODULE_PATH;
 }
