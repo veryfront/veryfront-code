@@ -28,6 +28,30 @@ describe("BabelParseOnlyParser", () => {
     assertEquals(decorated.type, "File");
   });
 
+  it("parses compiled JSX under a Markdown or MDX path", async () => {
+    // Markdown and MDX reach the parser as compiled JSX. Choosing the Babel
+    // plugins from the authored extension would leave JSX off and the markup
+    // would parse as a regular expression.
+    const compiled = "export default function MDXContent() { return <h1>Title</h1>; }";
+
+    const parsed = await Promise.all(
+      ["page.mdx", "page.md", "page.MDX"].map((filePath) =>
+        parser.parse({ code: compiled, filePath })
+      ),
+    );
+
+    assertEquals(parsed.map((ast) => ast.type), ["File", "File", "File"]);
+  });
+
+  it("keeps `<T>x` a type assertion for a `.ts` path", async () => {
+    const asserted = await parser.parse({
+      code: "const value = <string> input;",
+      filePath: "module.ts",
+    });
+
+    assertEquals(asserted.type, "File");
+  });
+
   it("preserves Babel syntax-error identity and location metadata", async () => {
     let thrown: unknown;
     try {

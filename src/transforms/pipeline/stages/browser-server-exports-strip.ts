@@ -214,6 +214,82 @@ function walk(node: Node, visit: (node: Node) => boolean | void): void {
   for (const child of children(node)) walk(child, visit);
 }
 
+/**
+ * TypeScript nodes that survive type erasure and emit runtime code.
+ *
+ * Everything else the TypeScript grammar adds is erased before the module
+ * runs, so an identifier read inside it is a type reference and must not keep a
+ * binding alive. Getting the split wrong is unsafe in both directions: treating
+ * a runtime node as erased deletes live code, and treating an erased node as
+ * runtime pins a server-only import into the browser artifact.
+ *
+ * The list is closed and enumerable, which is the point: it is a decidable
+ * question, unlike proving what a module does to an intrinsic. A TypeScript
+ * node type this pass does not know is erased by default. Any new TypeScript
+ * node type that emits runtime code must be added to this allowlist.
+ *
+ * The split is invisible while this stage runs after the compile stage, which
+ * erases every TypeScript node before this pass sees the module. It exists so
+ * the stage stays correct when it runs on authored source.
+ */
+const RUNTIME_TS_NODE_TYPES = new Set<string>([
+  // Value expressions wrapping a value expression plus an erased type operand.
+  "TSAsExpression",
+  "TSSatisfiesExpression",
+  "TSNonNullExpression",
+  "TSTypeAssertion",
+  "TSInstantiationExpression",
+  // `enum E { A = compute() }` emits an object and evaluates each initialiser.
+  "TSEnumDeclaration",
+  "TSEnumBody",
+  "TSEnumMember",
+  // `namespace N { … }` with a body emits an IIFE over a runtime object.
+  "TSModuleDeclaration",
+  "TSModuleBlock",
+  // `constructor(private dep = fallback())` emits an assignment in the body.
+  "TSParameterProperty",
+  // `import L = require("./l.ts")` and `import A = N.Sub` both emit a binding.
+  "TSImportEqualsDeclaration",
+  "TSExternalModuleReference",
+  "TSQualifiedName",
+  // `export = handler` emits an assignment to the module export.
+  "TSExportAssignment",
+]);
+
+/**
+ * Whether the compiler erases `node` and everything under it, so no identifier
+ * inside it is a runtime read.
+ *
+ * Both reference walkers ask this, and they must ask the same question. A
+ * walker that counts a type-position read as a runtime reference keeps the
+ * server-only import that binding came from; a walker that skips a runtime
+ * TypeScript node reports live code as dead.
+ */
+/** Whether a node carries decorators, which emit a runtime call even when the
+ * declaration they annotate is ambient. */
+function nodeHasDecorators(node: Node): boolean {
+  const decorators = node.decorators;
+  return Array.isArray(decorators) && decorators.length > 0;
+}
+
+function isErasedTypeNode(node: Node): boolean {
+  // `declare const`, `declare class`, `declare namespace`, `declare enum` and
+  // `declare prop: T` are all ambient: they emit nothing.
+  //
+  // Decorators are the exception. Both tsc and esbuild emit a runtime
+  // `__decorate` call for `@audit declare id: string`, so the decorator
+  // expression is a real read even though the property it annotates is not.
+  // Erasing it here deletes the import the decorator needs and the emitted
+  // call then throws a ReferenceError at module evaluation.
+  if (node.declare === true) return !nodeHasDecorators(node);
+  // `import { type Cfg }`, `export { type Cfg }`, `export type { Cfg }`.
+  if (node.importKind === "type" || node.exportKind === "type") return true;
+  if (!node.type.startsWith("TS")) return false;
+  if (!RUNTIME_TS_NODE_TYPES.has(node.type)) return true;
+  // An ambient `declare module "x";` has no body to run.
+  return node.type === "TSModuleDeclaration" && !isNode(node.body);
+}
+
 function nodeName(value: unknown): string | null {
   if (!isNode(value)) return null;
   const name = value.name;
@@ -489,6 +565,72 @@ function emptyServerOnlyHooks(
   }
 
   return emptied;
+}
+
+/**
+ * Identifiers the module reads, excluding imports, fixed property names, and
+ * TypeScript syntax erased before runtime.
+ */
+function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<string> {
+  const referenced = new Set<string>();
+  const fixedNames = new WeakSet<Node>();
+
+  const markFixedName = (node: Node): void => {
+    const property = node.type === "MemberExpression" || node.type === "OptionalMemberExpression"
+      ? node.property
+      : node.type === "ObjectProperty" || node.type === "ObjectMethod" ||
+          node.type === "ClassMethod" || node.type === "ClassProperty" ||
+          node.type === "ClassAccessorProperty"
+      ? node.key
+      : node.type === "TSEnumDeclaration" || node.type === "TSEnumMember"
+      ? node.id
+      : node.type === "TSQualifiedName"
+      ? node.right
+      : undefined;
+    if (node.computed === true) return;
+    if (isNode(property)) fixedNames.add(property);
+  };
+
+  const markEnumLocalReferences = (node: Node): void => {
+    if (node.type !== "TSEnumDeclaration") return;
+    const container = isNode(node.body) ? node.body : node;
+    const members = Array.isArray(container.members) ? container.members : [];
+    const localNames = new Set<string>();
+    const enumName = nodeName(node.id);
+    if (enumName) localNames.add(enumName);
+    for (const member of members) {
+      if (!isNode(member)) continue;
+      const memberId = isNode(member.id) ? member.id : undefined;
+      const memberName = nodeName(memberId) ?? stringLiteralText(memberId);
+      if (memberName) localNames.add(memberName);
+    }
+    for (const member of members) {
+      if (!isNode(member) || !isNode(member.initializer)) continue;
+      walk(member.initializer, (candidate) => {
+        if (
+          candidate.type === "Identifier" && localNames.has(nodeName(candidate) ?? "")
+        ) fixedNames.add(candidate);
+      });
+    }
+  };
+
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (node.type === "ImportDeclaration") return false;
+      if (isErasedTypeNode(node)) return false;
+      markEnumLocalReferences(node);
+      markFixedName(node);
+      if (node.type === "Identifier" || node.type === "JSXIdentifier") {
+        if (fixedNames.has(node) || excluded?.has(node)) return true;
+        const name = nodeName(node);
+        if (name) referenced.add(name);
+      }
+      return true;
+    });
+  }
+
+  return referenced;
 }
 
 /**
@@ -857,6 +999,14 @@ function freeReferencedIdentifiers(
 
   const bindNestedVarDeclarations = (scope: LexicalScope, node: Node): void => {
     for (const child of children(node)) {
+      // Only `var` hoists. An enum, a namespace or an import-equals nested in a
+      // block is block scoped (TypeScript emits `let` there), so binding it
+      // into the enclosing function scope makes an unrelated outer read look
+      // shadowed. `bindDirectDeclarations` already binds these at whichever
+      // scope actually contains them, so they need no hoisting pass.
+      if (
+        child.type === "TSEnumDeclaration" || child.type === "TSImportEqualsDeclaration"
+      ) continue;
       if (
         child.type === "FunctionDeclaration" || child.type === "FunctionExpression" ||
         child.type === "ArrowFunctionExpression" || child.type === "ObjectMethod" ||
@@ -872,7 +1022,6 @@ function freeReferencedIdentifiers(
           if (!elided.has(declarator)) bindPatternNames(scope, declarator.id);
         }
       }
-
       bindNestedVarDeclarations(scope, child);
     }
   };
@@ -1098,6 +1247,11 @@ function freeReferencedIdentifiers(
       return true;
     }
 
+    if (node.type === "TSExportAssignment") {
+      if (isNode(node.expression)) visit(node.expression, scopes);
+      return true;
+    }
+
     if (node.type.startsWith("TS")) return true;
     return false;
   };
@@ -1158,6 +1312,7 @@ function freeReferencedIdentifiers(
 
   const visit = (node: Node, scopes: LexicalScope[]): void => {
     if (node.type === "ImportDeclaration" || elided.has(node)) return;
+    if (isErasedTypeNode(node)) return;
     const handlesDeferredNode = node.type === "FunctionDeclaration" ||
       node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression" ||
       node.type === "ObjectMethod" || node.type === "ClassMethod" ||
@@ -1230,7 +1385,10 @@ function freeReferencedIdentifiers(
     }
     if (node.type === "JSXNamespacedName") return;
 
-    if (node.type === "Program" || node.type === "BlockStatement") {
+    if (
+      node.type === "Program" || node.type === "BlockStatement" ||
+      node.type === "TSModuleBlock"
+    ) {
       const scope: LexicalScope = { kind: "block", names: new Set() };
       bindDirectDeclarations(scope, node);
       for (const statement of Array.isArray(node.body) ? node.body : []) {
@@ -1260,6 +1418,62 @@ function freeReferencedIdentifiers(
       node.type === "ArrowFunctionExpression"
     ) {
       visitFunction(node, scopes);
+      return;
+    }
+
+    // A runtime TypeScript declaration binds its own name and, for an enum,
+    // names its members. Only the initialisers read anything, so descending
+    // blindly would report `enum Level { Low }` as a read of an unrelated
+    // module-scope `Low` and let the pass delete it.
+    if (node.type === "TSEnumDeclaration") {
+      bindPatternNames(scopes[0] ?? rootScope, node.id);
+      const container = isNode(node.body) ? node.body : node;
+      const members = Array.isArray(container.members) ? container.members : [];
+      // Member initialisers can name a preceding member without qualifying it,
+      // as in `enum Access { Read = 1, Both = Read }`. Those names resolve to
+      // the enum, not to module scope, so bind them in their own scope first:
+      // otherwise `Read` reads as free and the pass pulls an unrelated
+      // module-scope `Read` into the hook closure and deletes it.
+      const scope: LexicalScope = { kind: "block", names: new Set() };
+      for (const member of members) {
+        if (!isNode(member)) continue;
+        const memberId = isNode(member.id) ? member.id : undefined;
+        const memberName = nodeName(memberId) ?? stringLiteralText(memberId);
+        if (memberName) scope.names.add(memberName);
+      }
+      for (const member of members) {
+        if (isNode(member) && isNode(member.initializer)) {
+          visit(member.initializer, [scope, ...scopes]);
+        }
+      }
+      return;
+    }
+
+    if (node.type === "TSModuleDeclaration") {
+      bindPatternNames(scopes[0] ?? rootScope, node.id);
+      // Every emitted namespace IIFE introduces its own binding scope. For a
+      // dotted declaration such as `namespace A.B`, B belongs to A's scope,
+      // not to the surrounding module.
+      const namespaceScope: LexicalScope = { kind: "var", names: new Set() };
+      bindPatternNames(namespaceScope, node.id);
+      if (isNode(node.body)) {
+        if (node.body.type === "TSModuleBlock") {
+          bindNestedVarDeclarations(namespaceScope, node.body);
+        }
+        visit(node.body, [namespaceScope, ...scopes]);
+      }
+      return;
+    }
+
+    if (node.type === "TSImportEqualsDeclaration") {
+      bindPatternNames(scopes[0] ?? rootScope, node.id);
+      if (isNode(node.moduleReference)) visit(node.moduleReference, scopes);
+      return;
+    }
+
+    // `import Alias = NS.Sub`: only `NS` is a read, `Sub` is a fixed name.
+    if (node.type === "TSQualifiedName") {
+      if (isNode(node.left)) visit(node.left, scopes);
       return;
     }
 
@@ -1330,6 +1544,19 @@ function freeReferencedIdentifiers(
   bindDirectDeclarations(rootScope, root);
   visit(root, [rootScope]);
   return free;
+}
+
+/** Reference-walker answers exposed for TypeScript classification tests. */
+export function moduleReferenceWalkers(ast: ASTNode): {
+  referenced: Set<string>;
+  free: Set<string>;
+} {
+  const program = (ast as { program?: unknown }).program;
+  const root: Node = isNode(program) ? program : ast;
+  return {
+    referenced: referencedIdentifiers(bodyOf(ast)),
+    free: freeReferencedIdentifiers(root),
+  };
 }
 
 /**
@@ -3657,6 +3884,11 @@ function importedBindings(statement: Node): string[] {
 
   for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
     if (!isNode(specifier)) continue;
+    // `import { hashOf, type Cfg }`: `Cfg` is erased before the module runs, so
+    // it is not a binding that has to be kept alive. Counting it would stop
+    // `hashOf` alone from proving the import hook-only, and the statement would
+    // be reduced to a side-effect import instead of deleted.
+    if (specifier.importKind === "type") continue;
     const name = nodeName(specifier.local);
     if (name) bindings.push(name);
   }
