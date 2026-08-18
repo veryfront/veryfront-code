@@ -118,6 +118,27 @@ describe("local integration credential auth", () => {
     assertEquals(JSON.stringify(plan).includes(SECRET), false);
   });
 
+  it("adds catalog-declared headers to HTTP Basic requests", async () => {
+    const plan = createLocalCredentialAuthPlan(connector("billbee"));
+
+    assertEquals(plan.requiredEnvironmentVariables, [
+      "BILLBEE_USERNAME",
+      "BILLBEE_API_PASSWORD",
+      "BILLBEE_API_KEY",
+    ]);
+    const resolved = await resolveLocalCredentialAuth(
+      plan,
+      providerFrom({
+        BILLBEE_USERNAME: "ada@example.test",
+        BILLBEE_API_PASSWORD: SECRET,
+        BILLBEE_API_KEY: "billbee-application-key",
+      }),
+    );
+
+    assertEquals(resolved.kind, "headers");
+    assertEquals(resolved.headers["X-Billbee-Api-Key"], "billbee-application-key");
+  });
+
   it("builds a PayPal client-credentials token request", async () => {
     const plan = createLocalCredentialAuthPlan(connector("paypal"));
     assertEquals(plan.requiredEnvironmentVariables, [
@@ -258,6 +279,22 @@ describe("local integration credential auth", () => {
     assert(error.message.includes("SENDCLOUD_SECRET_KEY"));
     assertEquals(error.message.includes("public-key"), false);
     assertEquals(error.cause, undefined);
+  });
+
+  it("sorts missing credential variable names in configuration errors", async () => {
+    const plan = createLocalCredentialAuthPlan(connector("billbee"));
+
+    const error = await assertRejects(
+      () => resolveLocalCredentialAuth(plan, () => undefined),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-credentials-missing");
+    assert(
+      error.message.includes("BILLBEE_API_KEY, BILLBEE_API_PASSWORD, BILLBEE_USERNAME"),
+      error.message,
+    );
   });
 
   it("fails safely for invalid values, provider failures, and Salesforce login URLs", async () => {

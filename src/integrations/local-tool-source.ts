@@ -1,6 +1,7 @@
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process/env.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type {
   RemoteToolSource,
   ToolDefinition,
@@ -38,6 +39,7 @@ const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const stringIncludes = String.prototype.includes;
 const stringReplace = String.prototype.replace;
+const stringReplaceAll = String.prototype.replaceAll;
 const stringStartsWith = String.prototype.startsWith;
 const URLConstructor = URL;
 const urlHash = Object.getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
@@ -64,11 +66,18 @@ type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 
 interface AdmittedLocalIntegrationTool {
   readonly authPlan: LocalCredentialAuthPlan;
-  readonly connector: IntegrationConfig;
+  readonly connector: LocalCatalogConnector;
   readonly endpoint: IntegrationEndpoint;
   readonly endpointOrigin?: string;
   readonly tool: IntegrationToolMeta & { id: string };
   readonly definition: ToolDefinition;
+}
+
+type LocalCatalogConnector = Pick<IntegrationConfig, "auth" | "envVars" | "name">;
+
+interface LocalCatalogTool {
+  readonly connector: LocalCatalogConnector;
+  readonly tool: IntegrationToolMeta & { readonly id: string };
 }
 
 function append<T>(values: T[], value: T): void {
@@ -86,6 +95,40 @@ function stringBoolean(
   search: string,
 ): boolean {
   return apply(operation, value, [search]);
+}
+
+function removeCredentialNames(value: string, credentialNames: readonly string[]): string {
+  let sanitized = value;
+  for (let index = 0; index < credentialNames.length; index++) {
+    const name = credentialNames[index]!;
+    if (name.length === 0) {
+      configurationError("Local integration credential names must not be empty");
+    }
+    sanitized = apply(stringReplaceAll, sanitized, [name, "configured credential"]);
+  }
+  return sanitized;
+}
+
+function containsCredentialName(value: unknown, credentialNames: readonly string[]): boolean {
+  if (typeof value === "string") {
+    for (let index = 0; index < credentialNames.length; index++) {
+      if (stringBoolean(stringIncludes, value, credentialNames[index]!)) return true;
+    }
+    return false;
+  }
+  if (value === null || typeof value !== "object") return false;
+
+  const entries = objectEntries(value);
+  for (let index = 0; index < entries.length; index++) {
+    const [key, entryValue] = entries[index]!;
+    if (
+      containsCredentialName(key, credentialNames) ||
+      containsCredentialName(entryValue, credentialNames)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function urlValue(getter: ((this: URL) => string) | undefined, url: URL): string {
@@ -157,38 +200,60 @@ function snapshotOptions(options: LocalIntegrationToolSourceOptions): {
   };
 }
 
-function declaredConnector(name: string): IntegrationConfig | undefined {
-  for (let index = 0; index < connectors.length; index++) {
-    const connector = connectors[index];
-    if (connector?.name === name) return connector;
+function catalogSnapshot<T>(value: unknown, label: string): T {
+  const snapshot = snapshotBoundedJsonValue(value);
+  if (!snapshot.success) {
+    configurationError(`Local integration catalog ${label} is not data-only JSON`);
   }
-  return undefined;
+  return snapshot.value as T;
 }
 
-function catalogTool(
-  connector: IntegrationConfig,
-  canonicalToolId: string,
-): (IntegrationToolMeta & { id: string }) | undefined {
-  for (let index = 0; index < connector.tools.length; index++) {
-    const tool = connector.tools[index];
-    const catalogId = tool?.id ?? tool?.name;
-    if (
-      catalogId === canonicalToolId ||
-      (catalogId !== undefined && `${connector.name}__${catalogId}` === canonicalToolId)
-    ) {
+function captureLocalCatalog(): Map<string, LocalCatalogTool> {
+  const captured = new MapConstructor<string, LocalCatalogTool>();
+  for (let connectorIndex = 0; connectorIndex < connectors.length; connectorIndex++) {
+    const connector = connectors[connectorIndex];
+    if (!connector || typeof connector.name !== "string") continue;
+    const connectorSnapshot = freeze({
+      name: connector.name,
+      auth: catalogSnapshot<IntegrationConfig["auth"]>(
+        connector.auth,
+        `authentication for "${connector.name}"`,
+      ),
+      envVars: catalogSnapshot<IntegrationConfig["envVars"]>(
+        connector.envVars ?? [],
+        `environment variables for "${connector.name}"`,
+      ),
+    });
+
+    for (let toolIndex = 0; toolIndex < connector.tools.length; toolIndex++) {
+      const tool = connector.tools[toolIndex];
+      const catalogId = tool?.id ?? tool?.name;
+      if (typeof catalogId !== "string") continue;
+      const canonicalToolId = stringBoolean(stringIncludes, catalogId, "__")
+        ? catalogId
+        : `${connector.name}__${catalogId}`;
       if (typeof tool?.name !== "string" || typeof tool.description !== "string") {
         configurationError(`Local integration tool "${canonicalToolId}" has invalid metadata`);
       }
-      return freeze({
+      const toolSnapshot = catalogSnapshot<IntegrationToolMeta & { readonly id: string }>({
         ...tool,
         id: canonicalToolId,
         name: tool.name,
         description: tool.description,
-      });
+      }, `tool "${canonicalToolId}"`);
+      apply(mapSet, captured, [
+        canonicalToolId,
+        freeze({
+          connector: connectorSnapshot,
+          tool: toolSnapshot,
+        }),
+      ]);
     }
   }
-  return undefined;
+  return captured;
 }
+
+const localCatalog = captureLocalCatalog();
 
 function assertHttpsCatalogUrl(value: string, label: string): string {
   let parsed: URL;
@@ -210,7 +275,7 @@ function assertHttpsCatalogUrl(value: string, label: string): string {
 }
 
 function assertSupportedAuth(
-  connector: IntegrationConfig,
+  connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
 ): void {
   const auth = connector.auth;
@@ -253,7 +318,7 @@ function assertSupportedAuth(
 }
 
 function assertSupportedEndpoint(
-  connector: IntegrationConfig,
+  connector: LocalCatalogConnector,
   endpoint: IntegrationEndpoint,
   toolId: string,
 ): string | undefined {
@@ -294,6 +359,7 @@ function inputPropertySchema(
     default?: unknown;
     exposeDefault?: boolean;
   },
+  credentialNames: readonly string[],
 ): JsonSchema {
   if (
     field.type !== "string" && field.type !== "number" && field.type !== "boolean" &&
@@ -303,7 +369,7 @@ function inputPropertySchema(
   }
   const schema: Record<string, unknown> = {
     type: field.type === "string[]" ? "array" : field.type,
-    description: field.description,
+    description: removeCredentialNames(field.description, credentialNames),
   };
   if (field.type === "string[]") schema.items = { type: "string" };
   if (field.exposeDefault === true && field.default !== undefined) {
@@ -315,6 +381,7 @@ function inputPropertySchema(
 function toolDefinition(
   tool: IntegrationToolMeta & { id: string },
   endpoint: IntegrationEndpoint,
+  credentialNames: readonly string[],
 ): ToolDefinition {
   const properties: Record<string, JsonSchema> = {};
   const required: string[] = [];
@@ -322,7 +389,7 @@ function toolDefinition(
   const parameterEntries = objectEntries(endpoint.params ?? {});
   for (let index = 0; index < parameterEntries.length; index++) {
     const [name, parameter] = parameterEntries[index]!;
-    properties[name] = inputPropertySchema(parameter);
+    properties[name] = inputPropertySchema(parameter, credentialNames);
     if (parameter.required) append(required, name);
   }
   const bodyEntries = objectEntries(endpoint.body ?? {});
@@ -331,13 +398,13 @@ function toolDefinition(
     if (properties[name]) {
       configurationError(`Local integration tool "${tool.id}" declares duplicate input "${name}"`);
     }
-    properties[name] = inputPropertySchema(field);
+    properties[name] = inputPropertySchema(field, credentialNames);
     if (field.required) append(required, name);
   }
 
-  return freeze({
+  const definition = freeze({
     name: tool.id,
-    description: tool.description,
+    description: removeCredentialNames(tool.description, credentialNames),
     parameters: freeze({
       type: "object",
       properties: freeze(properties),
@@ -345,6 +412,12 @@ function toolDefinition(
       additionalProperties: false,
     }) as JsonSchema,
   });
+  if (containsCredentialName(definition, credentialNames)) {
+    configurationError(
+      `Local integration tool "${tool.id}" exposes a credential name outside descriptions`,
+    );
+  }
+  return definition;
 }
 
 function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
@@ -353,14 +426,18 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" must use a canonical ID`);
   }
 
-  const connector = declaredConnector(identity.integration);
-  if (!connector) {
-    configurationError(`Local integration tool "${canonicalToolId}" names an unknown connector`);
-  }
-  const tool = catalogTool(connector, canonicalToolId);
-  if (!tool) {
+  const catalogEntry = mapValue(localCatalog, canonicalToolId);
+  if (!catalogEntry) {
+    let knownConnector = false;
+    for (let index = 0; index < connectors.length; index++) {
+      if (connectors[index]?.name === identity.integration) knownConnector = true;
+    }
+    if (!knownConnector) {
+      configurationError(`Local integration tool "${canonicalToolId}" names an unknown connector`);
+    }
     configurationError(`Local integration tool "${canonicalToolId}" is unknown`);
   }
+  const { connector, tool } = catalogEntry;
   if (!tool.endpoint) {
     configurationError(`Local integration tool "${canonicalToolId}" has no executable endpoint`);
   }
@@ -371,13 +448,18 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     canonicalToolId,
   );
   assertSupportedAuth(connector, tool.endpoint);
+  const authPlan = createLocalCredentialAuthPlan(connector);
   return freeze({
-    authPlan: createLocalCredentialAuthPlan(connector),
+    authPlan,
     connector,
     endpoint: tool.endpoint,
     endpointOrigin,
     tool,
-    definition: toolDefinition(tool, tool.endpoint),
+    definition: toolDefinition(
+      tool,
+      tool.endpoint,
+      authPlan.requiredEnvironmentVariables,
+    ),
   });
 }
 
@@ -436,6 +518,7 @@ function createLocalIntegrationToolSourceInternal(
       }
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
+        toolName,
         context?.abortSignal,
         transport,
       );
@@ -458,6 +541,8 @@ function createLocalIntegrationToolSourceInternal(
         configurationError(`Local integration tool "${toolName}" has no admitted origin`);
       }
       return await executeLocalIntegrationEndpoint({
+        connectorName: tool.connector.name,
+        toolId: toolName,
         endpoint,
         args,
         authHeaders: auth.headers,

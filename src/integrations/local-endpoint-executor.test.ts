@@ -9,7 +9,8 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
 import {
-  executeLocalIntegrationEndpoint,
+  executeLocalIntegrationEndpoint as executeEndpoint,
+  type ExecuteLocalIntegrationEndpointOptions,
   type LocalIntegrationEndpointTransport,
   type LocalIntegrationEndpointTransportRequest,
 } from "./local-endpoint-executor.ts";
@@ -49,6 +50,18 @@ function replaceProperty(
 
 function endpoint(value: IntegrationEndpoint): IntegrationEndpoint {
   return value;
+}
+
+function executeLocalIntegrationEndpoint(
+  options:
+    & Omit<ExecuteLocalIntegrationEndpointOptions, "connectorName" | "toolId">
+    & Partial<Pick<ExecuteLocalIntegrationEndpointOptions, "connectorName" | "toolId">>,
+): Promise<unknown> {
+  return executeEndpoint({
+    ...options,
+    connectorName: options.connectorName ?? "example",
+    toolId: options.toolId ?? "example__test",
+  });
 }
 
 describe("local integration endpoint executor", () => {
@@ -378,18 +391,23 @@ describe("local integration endpoint executor", () => {
 
   it("bounds responses and never exposes provider bodies, URLs, headers, or causes", async () => {
     const fixtures = [
-      () => new Response(SECRET, { status: 500 }),
-      () => new Response(`{"secret":"${SECRET}"`, { status: 200 }),
-      () =>
-        new Response("{}", {
-          headers: { "content-length": String(4 * 1024 * 1024 + 1) },
-        }),
+      { response: () => new Response(SECRET, { status: 500 }), status: 500 },
+      { response: () => new Response(`{"secret":"${SECRET}"`, { status: 200 }), status: 200 },
+      {
+        response: () =>
+          new Response("{}", {
+            headers: { "content-length": String(4 * 1024 * 1024 + 1) },
+          }),
+        status: 200,
+      },
     ];
 
-    for (const response of fixtures) {
+    for (const fixture of fixtures) {
       const error = await assertRejects(
         () =>
           executeLocalIntegrationEndpoint({
+            connectorName: "example",
+            toolId: "example__list_items",
             endpoint: endpoint({
               method: "GET",
               url: `https://api.example.test/items?credential=${SECRET}`,
@@ -397,7 +415,7 @@ describe("local integration endpoint executor", () => {
             args: {},
             authHeaders: { Authorization: `Bearer ${SECRET}` },
             allowedOrigin: "https://api.example.test",
-            transport: () => Promise.resolve(response()),
+            transport: () => Promise.resolve(fixture.response()),
           }),
         VeryfrontError,
       );
@@ -406,7 +424,11 @@ describe("local integration endpoint executor", () => {
         error.slug === "local-integration-request-failed" ||
           error.slug === "local-integration-response-invalid",
       );
+      assert(error.message.includes('integration "example"'), error.message);
+      assert(error.message.includes('tool "example__list_items"'), error.message);
+      assert(error.message.includes(`HTTP status ${fixture.status}`), error.message);
       assertEquals(error.message.includes(SECRET), false);
+      assertEquals(error.message.includes("api.example.test"), false);
       assertEquals(error.cause, undefined);
     }
   });

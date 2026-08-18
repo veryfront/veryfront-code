@@ -18,16 +18,16 @@ environment. Self-hosting does not require a Veryfront account.
 
 Choose substitutes for managed capabilities before you deploy.
 
-| Capability                                 | Self-hosted support                     | Requirement                                                                   |
-| ------------------------------------------ | --------------------------------------- | ----------------------------------------------------------------------------- |
-| Pages, API routes, AG-UI, tools, and MCP   | Supported                               | Run the project with `veryfront serve`.                                       |
-| Direct provider inference                  | Supported                               | Set the selected provider key or configure an OpenAI-compatible endpoint.     |
-| Local agent delegation with `delegates`    | Supported                               | Delegates run in the application process.                                     |
-| Workflows                                  | Supported                               | Use the in-memory backend or configure Redis for shared durable state.        |
-| Source-controlled project knowledge        | Supported                               | Use the local project directory and the project knowledge tools.              |
-| Remote integration tools | Supported subset | Use a local source or managed backing API. |
-| Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                                 |
-| Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.               |
+| Capability                                 | Self-hosted support                     | Requirement                                                               |
+| ------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------- |
+| Pages, API routes, AG-UI, tools, and MCP   | Supported                               | Run the project with `veryfront serve`.                                   |
+| Direct provider inference                  | Supported                               | Set the selected provider key or configure an OpenAI-compatible endpoint. |
+| Local agent delegation with `delegates`    | Supported                               | Delegates run in the application process.                                 |
+| Workflows                                  | Supported                               | Use the in-memory backend or configure Redis for shared durable state.    |
+| Source-controlled project knowledge        | Supported                               | Use the local project directory and the project knowledge tools.          |
+| Remote integration tools                   | Supported subset                        | Use a local source or managed backing API.                                |
+| Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                             |
+| Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 
 For supported fixed REST tools, create a local source with the exact canonical
 tool IDs the application grants:

@@ -3,8 +3,8 @@ import type { IntegrationConfig } from "./schema.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
   LOCAL_INTEGRATION_CREDENTIALS_MISSING,
-  LOCAL_INTEGRATION_RESPONSE_INVALID,
   localIntegrationConfigurationError,
+  localIntegrationResponseInvalid,
 } from "./local-integration-errors.ts";
 import {
   executeLocalIntegrationJsonRequest,
@@ -59,6 +59,7 @@ interface LocalBasicAuthPlan extends LocalCredentialAuthPlanBase {
   readonly usernameName: string;
   readonly passwordName: string;
   readonly passwordFallback?: string;
+  readonly additionalHeaders: Readonly<Record<string, string>>;
 }
 
 interface LocalClientCredentialsAuthPlan extends LocalCredentialAuthPlanBase {
@@ -135,6 +136,41 @@ function join(values: readonly string[], separator: string): string {
   return apply(arrayJoin, values, [separator]) as string;
 }
 
+function compareStrings(left: string, right: string): number {
+  const length = left.length < right.length ? left.length : right.length;
+  for (let index = 0; index < length; index++) {
+    const leftCode = apply(stringCharCodeAt, left, [index]) as number;
+    const rightCode = apply(stringCharCodeAt, right, [index]) as number;
+    if (leftCode !== rightCode) return leftCode - rightCode;
+  }
+  return left.length - right.length;
+}
+
+function sortStrings(values: string[]): void {
+  for (let index = 1; index < values.length; index++) {
+    const value = values[index]!;
+    let insertionIndex = index;
+    while (
+      insertionIndex > 0 &&
+      compareStrings(values[insertionIndex - 1]!, value) > 0
+    ) {
+      objectDefineProperty(values, insertionIndex, {
+        configurable: true,
+        enumerable: true,
+        value: values[insertionIndex - 1],
+        writable: true,
+      });
+      insertionIndex -= 1;
+    }
+    objectDefineProperty(values, insertionIndex, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+}
+
 function urlValue(getter: ((this: URL) => string) | undefined, url: URL): string {
   if (!getter) localIntegrationConfigurationError("URL parsing is unavailable in this runtime");
   return apply(getter, url, []);
@@ -172,7 +208,10 @@ function normalizedConnectorPrefix(name: string): string {
   return prefix;
 }
 
-function declaredFallback(connector: IntegrationConfig, name: string): string | undefined {
+function declaredFallback(
+  connector: Pick<IntegrationConfig, "envVars">,
+  name: string,
+): string | undefined {
   for (let index = 0; index < (connector.envVars?.length ?? 0); index++) {
     const envVar = connector.envVars?.[index];
     if (envVar?.name !== name) continue;
@@ -184,7 +223,7 @@ function declaredFallback(connector: IntegrationConfig, name: string): string | 
 
 /** Build a serializable, value-free credential plan from trusted catalog metadata. */
 export function createLocalCredentialAuthPlan(
-  connector: IntegrationConfig,
+  connector: Pick<IntegrationConfig, "auth" | "envVars" | "name">,
 ): LocalCredentialAuthPlan {
   const auth = connector.auth;
   if (connector.name === "salesforce") {
@@ -236,13 +275,20 @@ export function createLocalCredentialAuthPlan(
         `Local integration "${connector.name}" is missing Basic credential names`,
       );
     }
+    const additionalHeaders = freeze({ ...auth.additionalHeaders });
+    const required = [auth.usernameKey, auth.passwordKey];
+    const additionalNames = objectValues(additionalHeaders);
+    for (let index = 0; index < additionalNames.length; index++) {
+      append(required, additionalNames[index]!);
+    }
     return freeze({
       kind: "basic",
       connectorName: connector.name,
       usernameName: auth.usernameKey,
       passwordName: auth.passwordKey,
       passwordFallback: declaredFallback(connector, auth.passwordKey),
-      requiredEnvironmentVariables: freeze([auth.usernameKey, auth.passwordKey]),
+      additionalHeaders,
+      requiredEnvironmentVariables: freeze(required),
     });
   }
 
@@ -358,6 +404,7 @@ async function readCredentials(
     }
   }
   if (missing.length > 0) {
+    sortStrings(missing);
     throw LOCAL_INTEGRATION_CREDENTIALS_MISSING.create({
       detail: `Set local integration credential variables: ${join(missing, ", ")}`,
     });
@@ -398,31 +445,43 @@ function normalizeSalesforceLoginUrl(value: string): string {
   return origin;
 }
 
-function tokenResponseInvalid(): never {
-  throw LOCAL_INTEGRATION_RESPONSE_INVALID.create();
+function tokenResponseInvalid(
+  connectorName: string,
+  toolId: string,
+  status: number,
+): never {
+  return localIntegrationResponseInvalid({ connectorName, toolId }, status);
 }
 
 function tokenResponseString(
   value: Record<string, unknown>,
   key: string,
+  connectorName: string,
+  toolId: string,
+  status: number,
 ): string {
   const descriptor = getOwnPropertyDescriptor(value, key);
   if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
-    tokenResponseInvalid();
+    tokenResponseInvalid(connectorName, toolId, status);
   }
   const result = descriptor.value;
   if (
     stringCall(stringTrim, result).length === 0 ||
     result.length > MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH
   ) {
-    tokenResponseInvalid();
+    tokenResponseInvalid(connectorName, toolId, status);
   }
   return result;
 }
 
-function tokenResponseRecord(value: unknown): Record<string, unknown> {
+function tokenResponseRecord(
+  value: unknown,
+  connectorName: string,
+  toolId: string,
+  status: number,
+): Record<string, unknown> {
   if (typeof value !== "object" || value === null || arrayIsArray(value)) {
-    tokenResponseInvalid();
+    tokenResponseInvalid(connectorName, toolId, status);
   }
   return value as Record<string, unknown>;
 }
@@ -448,10 +507,17 @@ export async function resolveLocalCredentialAuth(
 
   if (plan.kind === "basic") {
     const credential = `${values[plan.usernameName]!}:${values[plan.passwordName]!}`;
+    const headers: Record<string, string> = objectCreate(null);
+    headers.Authorization = `Basic ${base64(credential)}`;
+    const additionalEntries = objectEntries(plan.additionalHeaders);
+    for (let index = 0; index < additionalEntries.length; index++) {
+      const [headerName, environmentName] = additionalEntries[index]!;
+      headers[headerName] = values[environmentName]!;
+    }
     return freeze({
       kind: "headers",
       connectorName: plan.connectorName,
-      headers: freeze({ Authorization: `Basic ${base64(credential)}` }),
+      headers: freeze(headers),
     });
   }
 
@@ -501,6 +567,7 @@ export async function resolveLocalCredentialAuth(
 /** Mint a short-lived bearer credential from a previously resolved local auth request. */
 export async function mintLocalCredentialAuth(
   resolved: ResolvedLocalCredentialAuth,
+  toolId: string,
   signal?: AbortSignal,
   transport?: LocalIntegrationEndpointTransport,
 ): Promise<ResolvedLocalExecutionAuth> {
@@ -510,20 +577,43 @@ export async function mintLocalCredentialAuth(
 
   const tokenUrl = parseUrl(resolved.url, "Local integration token URL");
   const tokenOrigin = urlValue(urlOrigin, tokenUrl);
+  const tokenResult = await executeLocalIntegrationJsonRequest({
+    connectorName: resolved.connectorName,
+    toolId,
+    url: resolved.url,
+    method: "POST",
+    headers: resolved.headers,
+    body: resolved.body,
+    allowedOrigin: tokenOrigin,
+    signal,
+    transport,
+  });
   const response = tokenResponseRecord(
-    await executeLocalIntegrationJsonRequest({
-      url: resolved.url,
-      method: "POST",
-      headers: resolved.headers,
-      body: resolved.body,
-      allowedOrigin: tokenOrigin,
-      signal,
-      transport,
-    }),
+    tokenResult.value,
+    resolved.connectorName,
+    toolId,
+    tokenResult.status,
   );
-  const accessToken = tokenResponseString(response, "access_token");
-  const tokenType = stringCall(stringToLowerCase, tokenResponseString(response, "token_type"));
-  if (tokenType !== "bearer") tokenResponseInvalid();
+  const accessToken = tokenResponseString(
+    response,
+    "access_token",
+    resolved.connectorName,
+    toolId,
+    tokenResult.status,
+  );
+  const tokenType = stringCall(
+    stringToLowerCase,
+    tokenResponseString(
+      response,
+      "token_type",
+      resolved.connectorName,
+      toolId,
+      tokenResult.status,
+    ),
+  );
+  if (tokenType !== "bearer") {
+    tokenResponseInvalid(resolved.connectorName, toolId, tokenResult.status);
+  }
 
   const headers = freeze({ Authorization: `Bearer ${accessToken}` });
   if (resolved.mode === "client-credentials") return freeze({ headers });
@@ -531,7 +621,13 @@ export async function mintLocalCredentialAuth(
   return freeze({
     headers,
     instanceOrigin: parseSalesforceOrigin(
-      tokenResponseString(response, "instance_url"),
-    ) ?? tokenResponseInvalid(),
+      tokenResponseString(
+        response,
+        "instance_url",
+        resolved.connectorName,
+        toolId,
+        tokenResult.status,
+      ),
+    ) ?? tokenResponseInvalid(resolved.connectorName, toolId, tokenResult.status),
   });
 }
