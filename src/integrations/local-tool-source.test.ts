@@ -12,6 +12,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "./feature-flags.ts";
@@ -82,7 +83,7 @@ async function assertConfigurationError(
 describe("createLocalIntegrationToolSource", () => {
   afterEach(() => {
     _resetEnvironmentConfig();
-    Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV);
+    deleteEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
   });
 
   it("lists only explicitly granted catalog tools with credential-free metadata", async () => {
@@ -151,7 +152,7 @@ describe("createLocalIntegrationToolSource", () => {
 
   it("does not trust catalog metadata mutated through the public connector API", async () => {
     _setEnvironmentConfigForTesting({ veryfrontMode: "production", proxyMode: false });
-    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "anthropic");
+    setEnv(EXPERIMENTAL_INTEGRATIONS_ENV, "anthropic");
     const connector = getConnector("anthropic");
     const publicTool = connector?.tools.find((tool) => tool.id === "anthropic__list_workspaces");
     assert(publicTool?.endpoint);

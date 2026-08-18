@@ -263,7 +263,18 @@ function captureLocalCatalog(): Map<string, LocalCatalogTool> {
   return captured;
 }
 
-const localCatalog = captureLocalCatalog();
+/**
+ * Captured on first use rather than at module load: the integrations barrel
+ * statically re-exports this module, so an invalid catalog entry at module
+ * evaluation would prevent the whole barrel from importing even when no local
+ * source is ever created.
+ */
+let localCatalog: Map<string, LocalCatalogTool> | undefined;
+
+function getLocalCatalog(): Map<string, LocalCatalogTool> {
+  localCatalog ??= captureLocalCatalog();
+  return localCatalog;
+}
 
 function assertHttpsCatalogUrl(value: string, label: string): string {
   let parsed: URL;
@@ -436,7 +447,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
     configurationError(`Local integration tool "${canonicalToolId}" must use a canonical ID`);
   }
 
-  const catalogEntry = mapValue(localCatalog, canonicalToolId);
+  const catalogEntry = mapValue(getLocalCatalog(), canonicalToolId);
   if (!catalogEntry) {
     let knownConnector = false;
     for (let index = 0; index < connectors.length; index++) {

@@ -463,8 +463,19 @@ async function readCredential(
   }
   if (typeof value !== "string") return undefined;
   const trimmed = stringCall(stringTrim, value);
-  if (trimmed.length === 0 || value.length > MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH) {
+  if (
+    trimmed.length === 0 || trimmed.length !== value.length ||
+    value.length > MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH
+  ) {
     return undefined;
+  }
+  // A control character or edge whitespace in a header value makes fetch
+  // reject the request as an opaque runtime error instead of a clear
+  // credential error, so fail closed here where the offending credential is
+  // still known by name.
+  for (let index = 0; index < value.length; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    if (code < 0x20 || code === 0x7f) return undefined;
   }
   return value;
 }
@@ -478,8 +489,16 @@ async function readCredentials(
   for (let index = 0; index < plan.requiredEnvironmentVariables.length; index++) {
     const name = plan.requiredEnvironmentVariables[index]!;
     const value = await readCredential(provider, plan.connectorName, name);
-    if (value === undefined) append(missing, name);
-    else values[name] = value;
+    // RFC 7617 delimits the Basic user-id from the password with the first
+    // `:`, so a username containing one would silently shift part of itself
+    // into the password. Fail closed as a missing credential.
+    if (
+      value === undefined ||
+      (plan.kind === "basic" && name === plan.usernameName &&
+        stringIncludesValue(value, ":"))
+    ) {
+      append(missing, name);
+    } else values[name] = value;
   }
   if (
     plan.kind === "basic" && values[plan.passwordName] === undefined &&

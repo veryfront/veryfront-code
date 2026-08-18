@@ -25,7 +25,7 @@ Choose substitutes for managed capabilities before you deploy.
 | Local agent delegation with `delegates`    | Supported                               | Delegates run in the application process.                                 |
 | Workflows                                  | Supported                               | Use the in-memory backend or configure Redis for shared durable state.    |
 | Source-controlled project knowledge        | Supported                               | Use the local project directory and the project knowledge tools.          |
-| Remote integration tools                   | Supported subset                        | Use a local source or managed backing API.                                |
+| Integration tools                          | Supported subset                        | Use a local catalog source or a managed backing API.                      |
 | Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                             |
 | Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 

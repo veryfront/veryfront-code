@@ -329,7 +329,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "ship the whole project directory, not just `dist/`",
       "Dockerfile",
       "Check capability support",
-      "Remote integration tools",
+      "Integration tools",
       "createLocalIntegrationToolSource",
       "loadRemoteToolsFromSource",
       "Deploy to Kubernetes",

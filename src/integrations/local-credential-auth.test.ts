@@ -373,9 +373,38 @@ describe("local integration credential auth", () => {
     );
   });
 
+  it("rejects a Basic username containing a colon and keeps colons in passwords", async () => {
+    // RFC 7617 splits the credential at the first `:`, so a colon in the
+    // user-id would silently shift part of the username into the password.
+    const plan = createLocalCredentialAuthPlan(connector("sendcloud"));
+    const error = await assertRejects(
+      () =>
+        resolveLocalCredentialAuth(
+          plan,
+          providerFrom({
+            SENDCLOUD_PUBLIC_KEY: "user:name",
+            SENDCLOUD_SECRET_KEY: SECRET,
+          }),
+        ),
+      VeryfrontError,
+    );
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-credentials-missing");
+    assert(error.message.includes("SENDCLOUD_PUBLIC_KEY"), error.message);
+
+    const resolved = await resolveLocalCredentialAuth(
+      plan,
+      providerFrom({
+        SENDCLOUD_PUBLIC_KEY: "public-key",
+        SENDCLOUD_SECRET_KEY: "pass:word",
+      }),
+    );
+    assertEquals(resolved.kind, "headers");
+  });
+
   it("fails safely for invalid values, provider failures, and Salesforce login URLs", async () => {
     const plan = createLocalCredentialAuthPlan(connector("vercel"));
-    for (const value of ["", " ", "x".repeat(16_385)]) {
+    for (const value of ["", " ", " token", "token ", "token\n", "tok\ten", "x".repeat(16_385)]) {
       const error = await assertRejects(
         () => resolveLocalCredentialAuth(plan, () => value),
         VeryfrontError,
