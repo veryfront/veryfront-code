@@ -1132,8 +1132,13 @@ function freeReferencedIdentifiers(
   const visitFunction = (node: Node, scopes: LexicalScope[]): void => {
     const functionScope: LexicalScope = { kind: "var", names: new Set() };
     const isDeferred = deferred.has(node);
-    if (node.type === "FunctionDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
-    bindPatternNames(functionScope, node.id);
+    if (node.type === "FunctionDeclaration") {
+      bindPatternNames(scopes[0] ?? rootScope, node.id);
+    } else {
+      // Only a named function expression creates a binding inside its own
+      // body. A function declaration's name belongs to the enclosing scope.
+      bindPatternNames(functionScope, node.id);
+    }
 
     for (const param of Array.isArray(node.params) ? node.params : []) {
       if (isNode(param)) bindPatternNames(functionScope, param);
@@ -1965,18 +1970,10 @@ function intrinsicDefinePropertyAliases(
   bindings: LexicalBindingIndex,
 ): Set<LexicalBindingIdentity> {
   const flows: Array<{ target: LexicalBindingIdentity; value: Node }> = [];
+  const destructured: Array<{ pattern: Node; value: Node; declaration: boolean }> = [];
   const aliases = new Set<LexicalBindingIdentity>();
-  const collectDestructured = (
-    pattern: Node,
-    valueNode: Node,
-    declaration: boolean,
-  ): void => {
+  const collectDestructured = (pattern: Node, declaration: boolean): void => {
     if (pattern.type !== "ObjectPattern") return;
-    const value = unwrapTransparent(valueNode);
-    if (
-      !isUnshadowedGlobalIdentifier(value, "Object", globals) &&
-      !isGlobalObjectSlot(value, globals)
-    ) return;
 
     for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
       if (!isNode(property) || property.type !== "ObjectProperty" || !isNode(property.value)) {
@@ -2008,13 +2005,75 @@ function intrinsicDefinePropertyAliases(
         targetNode = isNode(node.left) ? unwrapTransparent(node.left) : undefined;
         value = isNode(node.right) ? node.right : undefined;
       }
-      if (targetNode && value) collectDestructured(targetNode, value, declaration);
+      if (targetNode && value && targetNode.type === "ObjectPattern") {
+        destructured.push({ pattern: targetNode, value, declaration });
+      }
       if (targetNode?.type !== "Identifier" || !value) return;
       const target = declaration
         ? bindings.declaration(targetNode)
         : bindings.reference(targetNode);
       if (target) flows.push({ target, value });
     });
+  }
+
+  const intrinsicContainers = new Set<LexicalBindingIdentity>();
+  const isGlobalReflectSlot = (node: Node): boolean => {
+    const value = unwrapTransparent(node);
+    if (value.type !== "MemberExpression" && value.type !== "OptionalMemberExpression") {
+      return false;
+    }
+    const object = isNode(value.object) ? value.object : undefined;
+    if (!isUnshadowedGlobalObject(object, globals)) return false;
+    const key = memberKey(value);
+    return key === null || key === "Reflect";
+  };
+  const carriesIntrinsicContainer = (node: Node): boolean => {
+    const value = unwrapTransparent(node);
+    if (
+      isUnshadowedGlobalIdentifier(value, "Object", globals) ||
+      isUnshadowedGlobalIdentifier(value, "Reflect", globals) ||
+      isGlobalObjectSlot(value, globals) || isGlobalReflectSlot(value)
+    ) {
+      return true;
+    }
+    if (value.type === "Identifier") {
+      const source = bindings.reference(value);
+      return source !== null && intrinsicContainers.has(source);
+    }
+    if (value.type === "SequenceExpression") {
+      const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
+      const last = expressions.at(-1);
+      return !!last && carriesIntrinsicContainer(last);
+    }
+    if (value.type === "ConditionalExpression") {
+      return (isNode(value.consequent) && carriesIntrinsicContainer(value.consequent)) ||
+        (isNode(value.alternate) && carriesIntrinsicContainer(value.alternate));
+    }
+    if (value.type === "LogicalExpression") {
+      const rightCarries = isNode(value.right) && carriesIntrinsicContainer(value.right);
+      if (value.operator === "&&") return rightCarries;
+      return rightCarries || (isNode(value.left) && carriesIntrinsicContainer(value.left));
+    }
+    if (value.type === "AssignmentExpression" && isNode(value.right)) {
+      return carriesIntrinsicContainer(value.right);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return carriesIntrinsicContainer(value.argument);
+    }
+    return false;
+  };
+
+  let containersChanged = true;
+  while (containersChanged) {
+    containersChanged = false;
+    for (const { target, value } of flows) {
+      if (intrinsicContainers.has(target) || !carriesIntrinsicContainer(value)) continue;
+      intrinsicContainers.add(target);
+      containersChanged = true;
+    }
+  }
+  for (const { pattern, value, declaration } of destructured) {
+    if (carriesIntrinsicContainer(value)) collectDestructured(pattern, declaration);
   }
 
   const carriesIntrinsic = (node: Node): boolean => {
@@ -2040,6 +2099,9 @@ function intrinsicDefinePropertyAliases(
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
       return carriesIntrinsic(value.right);
+    }
+    if (value.type === "AwaitExpression" && isNode(value.argument)) {
+      return carriesIntrinsic(value.argument);
     }
     if (
       (value.type === "CallExpression" || value.type === "OptionalCallExpression") &&
@@ -2508,7 +2570,42 @@ function invokedFunctionParameterBindings(
   bindings: LexicalBindingIndex,
 ): Set<LexicalBindingIdentity> {
   const invoked = new Set<LexicalBindingIdentity>();
-  const collect = (callee: unknown, runGenerator: boolean): void => {
+  // Keep concrete value flows so a call through a local function name and an
+  // iterator advanced through a later alias resolve to the same body.
+  const valueFlows = new Map<LexicalBindingIdentity, Node[]>();
+  const addValueFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
+    if (!target) return;
+    const values = valueFlows.get(target) ?? [];
+    values.push(value);
+    valueFlows.set(target, values);
+  };
+
+  for (const statement of body) {
+    if (statement.type === "ImportDeclaration") continue;
+    walk(statement, (node) => {
+      if (
+        node.type === "FunctionDeclaration" && isNode(node.id)
+      ) {
+        addValueFlow(bindings.declaration(node.id), node);
+      } else if (
+        node.type === "VariableDeclarator" && isNode(node.id) &&
+        node.id.type === "Identifier" && isNode(node.init)
+      ) {
+        addValueFlow(bindings.declaration(node.id), node.init);
+      } else if (
+        node.type === "AssignmentExpression" && isNode(node.left) &&
+        node.left.type === "Identifier" && isNode(node.right)
+      ) {
+        addValueFlow(bindings.reference(node.left), node.right);
+      }
+    });
+  }
+
+  const collect = (
+    callee: unknown,
+    runGenerator: boolean,
+    seenBindings = new Set<LexicalBindingIdentity>(),
+  ): void => {
     if (!isNode(callee)) return;
     let target = unwrapTransparent(callee);
     while (
@@ -2518,26 +2615,37 @@ function invokedFunctionParameterBindings(
     ) {
       target = unwrapTransparent(target.object);
     }
+    if (target.type === "Identifier") {
+      const binding = bindings.reference(target);
+      if (!binding || seenBindings.has(binding)) return;
+      seenBindings.add(binding);
+      for (const source of valueFlows.get(binding) ?? []) {
+        collect(source, runGenerator, seenBindings);
+      }
+      return;
+    }
     if (target.type === "SequenceExpression") {
       const expressions = Array.isArray(target.expressions)
         ? target.expressions.filter(isNode)
         : [];
       const last = expressions.at(-1);
-      if (last) collect(last, runGenerator);
+      if (last) collect(last, runGenerator, seenBindings);
       return;
     }
     if (target.type === "ConditionalExpression") {
-      if (isNode(target.consequent)) collect(target.consequent, runGenerator);
-      if (isNode(target.alternate)) collect(target.alternate, runGenerator);
+      if (isNode(target.consequent)) collect(target.consequent, runGenerator, seenBindings);
+      if (isNode(target.alternate)) collect(target.alternate, runGenerator, seenBindings);
       return;
     }
     if (target.type === "LogicalExpression") {
-      if (target.operator !== "&&" && isNode(target.left)) collect(target.left, runGenerator);
-      if (isNode(target.right)) collect(target.right, runGenerator);
+      if (target.operator !== "&&" && isNode(target.left)) {
+        collect(target.left, runGenerator, seenBindings);
+      }
+      if (isNode(target.right)) collect(target.right, runGenerator, seenBindings);
       return;
     }
     if (target.type === "AssignmentExpression" && isNode(target.right)) {
-      collect(target.right, runGenerator);
+      collect(target.right, runGenerator, seenBindings);
       return;
     }
     if (
@@ -2549,11 +2657,14 @@ function invokedFunctionParameterBindings(
         (binder.type === "MemberExpression" || binder.type === "OptionalMemberExpression") &&
         memberKey(binder) === "bind" && isNode(binder.object)
       ) {
-        collect(binder.object, runGenerator);
+        collect(binder.object, runGenerator, seenBindings);
         return;
       }
     }
-    if (target.type !== "FunctionExpression" && target.type !== "ArrowFunctionExpression") return;
+    if (
+      target.type !== "FunctionDeclaration" && target.type !== "FunctionExpression" &&
+      target.type !== "ArrowFunctionExpression"
+    ) return;
     // Invoking a generator only creates its iterator. Its body remains deferred
     // until `next()` advances that exact call result.
     if (target.generator === true && !runGenerator) return;
@@ -2572,6 +2683,45 @@ function invokedFunctionParameterBindings(
     if (invocation) collect(invocation.callee, runGenerator);
   };
 
+  const collectAdvanced = (
+    value: Node,
+    seenBindings = new Set<LexicalBindingIdentity>(),
+  ): void => {
+    const advanced = unwrapTransparent(value);
+    if (advanced.type === "Identifier") {
+      const binding = bindings.reference(advanced);
+      if (!binding || seenBindings.has(binding)) return;
+      seenBindings.add(binding);
+      for (const source of valueFlows.get(binding) ?? []) {
+        collectAdvanced(source, seenBindings);
+      }
+      return;
+    }
+    if (advanced.type === "SequenceExpression") {
+      const expressions = Array.isArray(advanced.expressions)
+        ? advanced.expressions.filter(isNode)
+        : [];
+      const last = expressions.at(-1);
+      if (last) collectAdvanced(last, seenBindings);
+      return;
+    }
+    if (advanced.type === "ConditionalExpression") {
+      if (isNode(advanced.consequent)) collectAdvanced(advanced.consequent, seenBindings);
+      if (isNode(advanced.alternate)) collectAdvanced(advanced.alternate, seenBindings);
+      return;
+    }
+    if (advanced.type === "LogicalExpression") {
+      if (isNode(advanced.left)) collectAdvanced(advanced.left, seenBindings);
+      if (isNode(advanced.right)) collectAdvanced(advanced.right, seenBindings);
+      return;
+    }
+    if (advanced.type === "AssignmentExpression" && isNode(advanced.right)) {
+      collectAdvanced(advanced.right, seenBindings);
+      return;
+    }
+    collectInvocation(advanced, true);
+  };
+
   for (const statement of body) {
     if (statement.type === "ImportDeclaration") continue;
     walk(statement, (node) => {
@@ -2579,41 +2729,44 @@ function invokedFunctionParameterBindings(
         node.type === "CallExpression" || node.type === "OptionalCallExpression"
       ) {
         collectInvocation(node, false);
+        const normalized = normalizeCall(node, globals);
+        // Any callee can synchronously consume an iterator argument. This also
+        // covers standard consumers such as Array.from and iterable
+        // constructors without pretending unknown callees leave it untouched.
+        for (const argument of normalized?.args ?? []) collectAdvanced(argument);
         const callee = isNode(node.callee) ? unwrapTransparent(node.callee) : undefined;
         if (
           callee &&
           (callee.type === "MemberExpression" || callee.type === "OptionalMemberExpression") &&
           memberKey(callee) === "next" && isNode(callee.object)
         ) {
-          const iterator = unwrapTransparent(callee.object);
-          if (
-            (iterator.type === "CallExpression" ||
-              iterator.type === "OptionalCallExpression") &&
-            isNode(iterator.callee)
-          ) {
-            collectInvocation(iterator, true);
-          }
+          collectAdvanced(callee.object);
         }
       }
-      if (node.type === "NewExpression") collect(node.callee, false);
+      if (node.type === "NewExpression") {
+        collect(node.callee, false);
+        for (const argument of Array.isArray(node.arguments) ? node.arguments : []) {
+          if (isNode(argument)) collectAdvanced(argument);
+        }
+      }
       if (node.type === "SpreadElement" && isNode(node.argument)) {
-        collectInvocation(node.argument, true);
+        collectAdvanced(node.argument);
       }
       if (node.type === "ForOfStatement" && isNode(node.right)) {
-        collectInvocation(node.right, true);
+        collectAdvanced(node.right);
       }
       if (
         node.type === "VariableDeclarator" && isNode(node.id) &&
         node.id.type === "ArrayPattern" && isNode(node.init)
       ) {
-        collectInvocation(node.init, true);
+        collectAdvanced(node.init);
       }
       if (
         node.type === "AssignmentExpression" && isNode(node.left) &&
         (node.left.type === "ArrayPattern" || node.left.type === "ArrayExpression") &&
         isNode(node.right)
       ) {
-        collectInvocation(node.right, true);
+        collectAdvanced(node.right);
       }
     });
   }

@@ -1465,6 +1465,15 @@ describe("browser-server-exports-strip", () => {
           `(function (intrinsic) { intrinsic.defineProperty = recordAndReturn; }).apply(null, [Object]);`,
         ],
         [
+          "a named-function intrinsic mutation",
+          [
+            `function mutateIntrinsic(intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `}`,
+            `mutateIntrinsic(Object);`,
+          ].join("\n"),
+        ],
+        [
           "an intrinsic mutation invoked through call",
           `Object.defineProperty.call(null, Object, "defineProperty", { value: recordAndReturn });`,
         ],
@@ -2359,6 +2368,45 @@ describe("browser-server-exports-strip", () => {
           ].join("\n"),
         ],
         [
+          "a stored and advanced generator mutation",
+          [
+            `const iterator = (function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object);`,
+            `iterator.next();`,
+          ].join("\n"),
+        ],
+        [
+          "a transitively stored and advanced generator mutation",
+          [
+            `const iterator = (function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object);`,
+            `const iteratorAlias = iterator;`,
+            `iteratorAlias.next();`,
+          ].join("\n"),
+        ],
+        [
+          "an assigned and advanced generator mutation",
+          [
+            `let iterator;`,
+            `iterator = (function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object);`,
+            `iterator.next();`,
+          ].join("\n"),
+        ],
+        [
+          "a named and advanced generator mutation",
+          [
+            `function* mutateIntrinsic(intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `}`,
+            `const iterator = mutateIntrinsic(Object);`,
+            `iterator.next();`,
+          ].join("\n"),
+        ],
+        [
           "a spread-consumed generator mutation",
           [
             `[...(function* (intrinsic) {`,
@@ -2382,6 +2430,22 @@ describe("browser-server-exports-strip", () => {
             `  yield 1;`,
             `})(Object);`,
             `void unused;`,
+          ].join("\n"),
+        ],
+        [
+          "an Array.from-consumed generator mutation",
+          [
+            `Array.from((function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object));`,
+          ].join("\n"),
+        ],
+        [
+          "a Set-consumed generator mutation",
+          [
+            `new Set((function* (intrinsic) {`,
+            `  intrinsic.defineProperty = recordAndReturn;`,
+            `})(Object));`,
           ].join("\n"),
         ],
         [
@@ -2421,6 +2485,29 @@ describe("browser-server-exports-strip", () => {
           "a destructured intrinsic mutator alias",
           [
             `const { defineProperty: mutate } = Object;`,
+            `mutate(Object, "defineProperty", { value: recordAndReturn });`,
+          ].join("\n"),
+        ],
+        [
+          "a Reflect-destructured intrinsic mutator alias",
+          [
+            `const { defineProperty: mutate } = Reflect;`,
+            `mutate(Object, "defineProperty", { value: recordAndReturn });`,
+          ].join("\n"),
+        ],
+        [
+          "an Object-alias-destructured intrinsic mutator",
+          [
+            `const intrinsic = Object;`,
+            `const { defineProperty: mutate } = intrinsic;`,
+            `mutate(Object, "defineProperty", { value: recordAndReturn });`,
+          ].join("\n"),
+        ],
+        [
+          "an awaited Object-alias-destructured intrinsic mutator",
+          [
+            `const intrinsic = await Object;`,
+            `const { defineProperty: mutate } = intrinsic;`,
             `mutate(Object, "defineProperty", { value: recordAndReturn });`,
           ].join("\n"),
         ],
