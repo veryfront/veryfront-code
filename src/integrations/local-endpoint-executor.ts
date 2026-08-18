@@ -7,12 +7,12 @@ import {
   type LocalIntegrationDiagnosticIdentity,
   localIntegrationRequestFailed,
   localIntegrationResponseInvalid,
-} from "./local-integration-errors.ts";
+} from "#veryfront/integrations/local-integration-errors.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
-} from "./limits.ts";
-import type { IntegrationToolMeta } from "./schema.ts";
+} from "#veryfront/integrations/limits.ts";
+import type { IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
 type IntegrationEndpointParam = NonNullable<IntegrationEndpoint["params"]>[string];
@@ -32,6 +32,7 @@ const abortSignalReason = Object.getOwnPropertyDescriptor(
   AbortSignal.prototype,
   "reason",
 )?.get;
+const abortSignalThrowIfAborted = AbortSignal.prototype.throwIfAborted;
 const addEventListener = EventTarget.prototype.addEventListener;
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -77,6 +78,7 @@ const typedArrayByteLength = Object.getOwnPropertyDescriptor(
 if (
   typeof abortSignalAborted !== "function" ||
   typeof abortSignalReason !== "function" ||
+  typeof abortSignalThrowIfAborted !== "function" ||
   typeof abortControllerSignal !== "function" ||
   typeof responseBody !== "function" ||
   typeof responseHeaders !== "function" ||
@@ -182,6 +184,10 @@ function signalValue<T>(
 function controllerSignalValue(controller: AbortController): AbortSignal {
   if (!abortControllerSignal) requestFailed();
   return apply(abortControllerSignal, controller, []) as AbortSignal;
+}
+
+function throwIfCallerAborted(signal: AbortSignal | undefined): void {
+  if (signal) apply(abortSignalThrowIfAborted, signal, []);
 }
 
 function responseStatusValue(response: Response): number {
@@ -535,13 +541,27 @@ function decodedByteLength(value: string): number {
   return apply(typedArrayByteLength, encoded, []) as number;
 }
 
+function cancelResponseBody(response: Response): void {
+  try {
+    const body = responseBodyValue(response);
+    if (!body) return;
+    const cancellation = apply(readableStreamCancel, body, []) as Promise<void>;
+    void apply(promiseCatch, cancellation, [() => undefined]);
+  } catch {
+    // Response cleanup is best effort and must not expose provider errors.
+  }
+}
+
 async function readResponseJson(
   response: Response,
   signal: AbortSignal,
   identity: LocalIntegrationDiagnosticIdentity,
   status: number,
 ): Promise<unknown> {
-  if (!contentLengthWithinLimit(response)) responseInvalid(identity, status);
+  if (!contentLengthWithinLimit(response)) {
+    cancelResponseBody(response);
+    responseInvalid(identity, status);
+  }
   let text: string;
   let truncated: boolean;
   try {
@@ -585,15 +605,7 @@ async function executeTransportRequest(
   }
   const status = responseStatusValue(response);
   if (status < 200 || status >= 300) {
-    try {
-      const body = responseBodyValue(response);
-      if (body) {
-        const cancellation = apply(readableStreamCancel, body, []) as Promise<void>;
-        void apply(promiseCatch, cancellation, [() => undefined]);
-      }
-    } catch {
-      // Response cleanup is best effort and must not expose provider errors.
-    }
+    cancelResponseBody(response);
     requestFailed(identity, status);
   }
   if (status === 204) return freeze({ status, value: null });
@@ -628,12 +640,14 @@ function transformResponse(
 export async function executeLocalIntegrationEndpoint(
   options: ExecuteLocalIntegrationEndpointOptions,
 ): Promise<unknown> {
+  throwIfCallerAborted(options.signal);
   const args = snapshotLocalIntegrationEndpointArguments(options.endpoint, options.args);
   const signalLease = createRequestSignal(
     options.signal,
     options.timeoutMs ?? INTEGRATION_REQUEST_TIMEOUT_MS,
   );
   try {
+    throwIfCallerAborted(options.signal);
     const request = buildRequest(
       options.endpoint,
       args,
@@ -647,12 +661,16 @@ export async function executeLocalIntegrationEndpoint(
       signalLease.signal,
       options,
     );
+    throwIfCallerAborted(options.signal);
     return transformResponse(
       result.value,
       options.endpoint.response?.transform,
       options,
       result.status,
     );
+  } catch (cause) {
+    throwIfCallerAborted(options.signal);
+    throw cause;
   } finally {
     signalLease.release();
   }
@@ -662,11 +680,13 @@ export async function executeLocalIntegrationEndpoint(
 export async function executeLocalIntegrationJsonRequest(
   options: ExecuteLocalIntegrationJsonRequestOptions,
 ): Promise<LocalIntegrationJsonResult> {
+  throwIfCallerAborted(options.signal);
   const signalLease = createRequestSignal(
     options.signal,
     options.timeoutMs ?? INTEGRATION_REQUEST_TIMEOUT_MS,
   );
   try {
+    throwIfCallerAborted(options.signal);
     let url: URL;
     try {
       url = new URLConstructor(options.url);
@@ -703,7 +723,11 @@ export async function executeLocalIntegrationJsonRequest(
       signalLease.signal,
       options,
     );
+    throwIfCallerAborted(options.signal);
     return result;
+  } catch (cause) {
+    throwIfCallerAborted(options.signal);
+    throw cause;
   } finally {
     signalLease.release();
   }

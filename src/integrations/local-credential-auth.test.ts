@@ -190,6 +190,31 @@ describe("local integration credential auth", () => {
     assertEquals(resolved.body, "grant_type=client_credentials");
   });
 
+  it("form-encodes OAuth Basic client credentials before encoding the header", async () => {
+    const plan = createLocalCredentialAuthPlan(connector("paypal"));
+    const clientId = "client id+with%reserved:characters";
+    const clientSecret = "secret value+with%reserved:characters";
+    const resolved = await resolveLocalCredentialAuth(
+      plan,
+      providerFrom({
+        PAYPAL_CLIENT_ID: clientId,
+        PAYPAL_CLIENT_SECRET: clientSecret,
+      }),
+    );
+
+    assert(resolved.kind === "token-request");
+    const encodedClientId = new URLSearchParams({ value: clientId }).toString().slice(
+      "value=".length,
+    );
+    const encodedClientSecret = new URLSearchParams({ value: clientSecret }).toString().slice(
+      "value=".length,
+    );
+    assertEquals(
+      resolved.headers.Authorization,
+      `Basic ${btoa(`${encodedClientId}:${encodedClientSecret}`)}`,
+    );
+  });
+
   it("uses catalog-declared client credential names when the connector prefix differs", () => {
     const plan = createLocalCredentialAuthPlan(connector("trusted-shops"));
 

@@ -9,6 +9,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
@@ -431,6 +432,39 @@ describe("createLocalIntegrationToolSource", () => {
 
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
+    assertEquals(transportCalls, 0);
+  });
+
+  it("rejects pre-aborted execution before resolving credentials", async () => {
+    let credentialProviderCalls = 0;
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["vercel__list_projects"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ projects: [] }));
+      },
+    );
+    const controller = new AbortController();
+    const reason = new DOMException("caller stopped", "AbortError");
+    controller.abort(reason);
+
+    const error = await assertRejects(() =>
+      source.executeTool(
+        "vercel__list_projects",
+        {},
+        { abortSignal: controller.signal },
+      )
+    );
+
+    assertStrictEquals(error, reason);
     assertEquals(credentialProviderCalls, 0);
     assertEquals(transportCalls, 0);
   });

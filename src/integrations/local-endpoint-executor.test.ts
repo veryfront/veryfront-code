@@ -5,6 +5,7 @@ import {
   assertEquals,
   assertInstanceOf,
   assertRejects,
+  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
@@ -449,8 +450,34 @@ describe("local integration endpoint executor", () => {
     }
   });
 
-  it("enforces its deadline and caller cancellation without leaking abort reasons", async () => {
+  it("cancels a response rejected by its declared size", async () => {
+    const response = new Response("{}", {
+      headers: { "content-length": String(4 * 1024 * 1024 + 1) },
+    });
+
+    const error = await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          endpoint: endpoint({
+            method: "GET",
+            url: "https://api.example.test/items",
+          }),
+          args: {},
+          authHeaders: {},
+          allowedOrigin: "https://api.example.test",
+          transport: () => Promise.resolve(response),
+        }),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-response-invalid");
+    assertEquals(response.bodyUsed, true);
+  });
+
+  it("enforces its deadline and propagates caller cancellation", async () => {
     const abortController = new AbortController();
+    const abortReason = new DOMException("caller stopped", "AbortError");
     const pending = executeLocalIntegrationEndpoint({
       endpoint: endpoint({
         method: "GET",
@@ -470,13 +497,32 @@ describe("local integration endpoint executor", () => {
           );
         }),
     });
-    abortController.abort(new Error(SECRET));
+    abortController.abort(abortReason);
 
-    const error = await assertRejects(() => pending, VeryfrontError);
-    assertInstanceOf(error, VeryfrontError);
-    assertEquals(error.slug, "local-integration-request-failed");
-    assertEquals(error.message.includes(SECRET), false);
-    assertEquals(error.cause, undefined);
+    assertStrictEquals(await assertRejects(() => pending), abortReason);
+
+    const preAbortedController = new AbortController();
+    const preAbortedReason = new DOMException("already stopped", "AbortError");
+    preAbortedController.abort(preAbortedReason);
+    let transportCalls = 0;
+    const preAbortedError = await assertRejects(() =>
+      executeLocalIntegrationEndpoint({
+        endpoint: endpoint({
+          method: "GET",
+          url: "https://api.example.test/slow",
+        }),
+        args: {},
+        authHeaders: {},
+        allowedOrigin: "https://api.example.test",
+        signal: preAbortedController.signal,
+        transport: () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({ unexpected: true }));
+        },
+      })
+    );
+    assertStrictEquals(preAbortedError, preAbortedReason);
+    assertEquals(transportCalls, 0);
 
     const timeoutError = await assertRejects(
       () =>

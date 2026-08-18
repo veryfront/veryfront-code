@@ -7,25 +7,26 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool/types.ts";
-import { connectors } from "./_data.ts";
+import { connectors } from "#veryfront/integrations/_data.ts";
 import {
   createLocalCredentialAuthPlan,
   type LocalCredentialAuthPlan,
   mintLocalCredentialAuth,
   resolveLocalCredentialAuth,
-} from "./local-credential-auth.ts";
+} from "#veryfront/integrations/local-credential-auth.ts";
 import {
   executeLocalIntegrationEndpoint,
   type LocalIntegrationEndpointTransport,
   snapshotLocalIntegrationEndpointArguments,
-} from "./local-endpoint-executor.ts";
-import { localIntegrationConfigurationError } from "./local-integration-errors.ts";
-import { MAX_LOCAL_INTEGRATION_TOOLS } from "./limits.ts";
-import { parseIntegrationToolIdentity } from "./source-policy.ts";
-import type { IntegrationConfig, IntegrationToolMeta } from "./schema.ts";
+} from "#veryfront/integrations/local-endpoint-executor.ts";
+import { localIntegrationConfigurationError } from "#veryfront/integrations/local-integration-errors.ts";
+import { MAX_LOCAL_INTEGRATION_TOOLS } from "#veryfront/integrations/limits.ts";
+import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
+import type { IntegrationConfig, IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
+const abortSignalThrowIfAborted = AbortSignal.prototype.throwIfAborted;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
 const MapConstructor = Map;
@@ -139,6 +140,14 @@ function urlValue(getter: ((this: URL) => string) | undefined, url: URL): string
 
 function mapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
   return apply(mapGet, map, [key]) as V | undefined;
+}
+
+function throwIfCallerAborted(signal: AbortSignal | undefined): void {
+  if (!signal) return;
+  if (typeof abortSignalThrowIfAborted !== "function") {
+    configurationError("AbortSignal cancellation is unavailable in this runtime");
+  }
+  apply(abortSignalThrowIfAborted, signal, []);
 }
 
 function configurationError(detail: string): never {
@@ -513,6 +522,7 @@ function createLocalIntegrationToolSourceInternal(
       context?: ToolExecutionContext,
     ): Promise<unknown> {
       assertLocalRuntime();
+      throwIfCallerAborted(context?.abortSignal);
       const tool = mapValue(admitted, toolName);
       if (!tool) {
         configurationError(`Local integration tool "${toolName}" is not granted by this source`);

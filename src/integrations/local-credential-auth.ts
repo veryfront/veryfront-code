@@ -1,19 +1,19 @@
-import type { LocalIntegrationCredentialProvider } from "./local-tool-source.ts";
-import type { IntegrationConfig } from "./schema.ts";
+import type { LocalIntegrationCredentialProvider } from "#veryfront/integrations/local-tool-source.ts";
+import type { IntegrationConfig } from "#veryfront/integrations/schema.ts";
 import {
   LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
   LOCAL_INTEGRATION_CREDENTIALS_MISSING,
   localIntegrationConfigurationError,
   localIntegrationResponseInvalid,
-} from "./local-integration-errors.ts";
+} from "#veryfront/integrations/local-integration-errors.ts";
 import {
   executeLocalIntegrationJsonRequest,
   type LocalIntegrationEndpointTransport,
-} from "./local-endpoint-executor.ts";
+} from "#veryfront/integrations/local-endpoint-executor.ts";
 import {
   MAX_LOCAL_INTEGRATION_CREDENTIAL_NAME_LENGTH,
   MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH,
-} from "./limits.ts";
+} from "#veryfront/integrations/limits.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -28,11 +28,14 @@ const objectValues = Object.values;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringEndsWith = String.prototype.endsWith;
 const stringIncludes = String.prototype.includes;
+const stringSlice = String.prototype.slice;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
 const textEncoder = new TextEncoder();
 const textEncoderEncode = TextEncoder.prototype.encode;
 const URLConstructor = URL;
+const URLSearchParamsConstructor = URLSearchParams;
+const urlSearchParamsToString = URLSearchParams.prototype.toString;
 const urlHash = getOwnPropertyDescriptor(URL.prototype, "hash")?.get;
 const urlHostname = getOwnPropertyDescriptor(URL.prototype, "hostname")?.get;
 const urlOrigin = getOwnPropertyDescriptor(URL.prototype, "origin")?.get;
@@ -439,6 +442,12 @@ function formEntry(name: string, value: string): string {
   return `${encodeUriComponent(name)}=${encodeUriComponent(value)}`;
 }
 
+function formComponent(value: string): string {
+  const params = new URLSearchParamsConstructor([["value", value]]);
+  const serialized = apply(urlSearchParamsToString, params, []) as string;
+  return apply(stringSlice, serialized, ["value=".length]) as string;
+}
+
 async function readCredential(
   provider: LocalIntegrationCredentialProvider,
   connectorName: string,
@@ -622,7 +631,11 @@ export async function resolveLocalCredentialAuth(
       append(body, formEntry("client_id", clientId));
       append(body, formEntry("client_secret", clientSecret));
     } else {
-      headers.Authorization = `Basic ${base64(`${clientId}:${clientSecret}`)}`;
+      headers.Authorization = `Basic ${
+        base64(
+          `${formComponent(clientId)}:${formComponent(clientSecret)}`,
+        )
+      }`;
     }
     const additionalEntries = objectEntries(plan.additionalParams);
     for (let index = 0; index < additionalEntries.length; index++) {
