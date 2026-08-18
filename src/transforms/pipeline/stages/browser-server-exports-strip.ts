@@ -3021,24 +3021,77 @@ function invokedFunctionParameterBindings(
       const members: Node[] = [];
       const readOrder = nodeOrders.get(value) ?? Number.POSITIVE_INFINITY;
       const readScope = ownerExecutionScopes.get(value) ?? null;
+      const readAllPossible = controlUncertainNodes.has(value);
+      const resolveOwnerIdentities = (owners: OwnerIdentity[]): OwnerIdentity[] =>
+        owners.flatMap((owner): OwnerIdentity[] => {
+          if (!isNode(owner)) return [owner];
+          const candidate = unwrapTransparent(owner);
+          if (
+            candidate.type !== "MemberExpression" &&
+            candidate.type !== "OptionalMemberExpression"
+          ) return [owner];
+          const resolved = concreteValues(candidate, new Set(seenBindings));
+          // Keep an unresolved syntax identity so an analysis gap cannot make
+          // distinct writes look like certain writes to the same owner.
+          return resolved.length > 0 ? resolved : [owner];
+        });
       const readOwners = new Set(
-        ownerIdentities(
-          value.object,
-          readOrder,
-          controlUncertainNodes.has(value),
-          readScope,
+        resolveOwnerIdentities(
+          ownerIdentities(
+            value.object,
+            readOrder,
+            readAllPossible,
+            readScope,
+          ),
         ),
       );
-      for (const flow of memberValueFlows.get(key) ?? []) {
-        const writeOwners = ownerIdentities(
-          flow.owner,
-          flow.order,
-          flow.controlUncertain,
-          flow.scope,
-        );
-        if (writeOwners.some((owner) => readOwners.has(owner))) {
-          members.push(...concreteValues(flow.value, new Set(seenBindings)));
+
+      const resolvedMemberFlows = (memberValueFlows.get(key) ?? [])
+        .filter((flow) =>
+          readAllPossible || flow.order <= readOrder || flow.controlUncertain ||
+          flow.scope !== readScope
+        )
+        .map((flow) => ({
+          flow,
+          owners: new Set(
+            resolveOwnerIdentities(
+              ownerIdentities(
+                flow.owner,
+                flow.order,
+                flow.controlUncertain,
+                flow.scope,
+              ),
+            ),
+          ),
+        }))
+        .sort((left, right) => left.flow.order - right.flow.order);
+      const activeMemberFlows = new Set<MemberValueFlow>();
+      const overriddenOwners = new Set<OwnerIdentity>();
+      for (const readOwner of readOwners) {
+        const applicable = resolvedMemberFlows.filter(({ owners }) => owners.has(readOwner));
+        let lastCertain = -1;
+        if (!readAllPossible) {
+          for (let index = applicable.length - 1; index >= 0; index--) {
+            const candidate = applicable[index];
+            if (
+              candidate && !candidate.flow.controlUncertain &&
+              candidate.flow.scope === readScope && candidate.owners.size === 1
+            ) {
+              lastCertain = index;
+              break;
+            }
+          }
         }
+        const active = lastCertain < 0
+          ? applicable
+          : applicable.slice(lastCertain).filter(({ flow, owners }, index) =>
+            index === 0 || flow.controlUncertain || flow.scope !== readScope || owners.size !== 1
+          );
+        for (const { flow } of active) activeMemberFlows.add(flow);
+        if (lastCertain >= 0) overriddenOwners.add(readOwner);
+      }
+      for (const flow of activeMemberFlows) {
+        members.push(...concreteValues(flow.value, new Set(seenBindings)));
       }
 
       const seenOwners = new Set<Node>();
@@ -3078,7 +3131,8 @@ function invokedFunctionParameterBindings(
         return candidates;
       };
 
-      for (const owner of concreteValues(value.object, new Set(seenBindings))) {
+      for (const owner of readOwners) {
+        if (!isNode(owner) || overriddenOwners.has(owner)) continue;
         if (owner.type === "ObjectExpression") {
           members.push(...collectObjectMember(owner));
           continue;

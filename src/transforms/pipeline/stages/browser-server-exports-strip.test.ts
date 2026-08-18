@@ -1821,6 +1821,182 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
 
+    it("still strips metadata after a direct owner rebind", async () => {
+      const code = [
+        `const mutatingFactory = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `const safeFactory = () => function (_intrinsic) {};`,
+        `let owner = { make: mutatingFactory };`,
+        `owner = { make: safeFactory };`,
+        `owner.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("still strips metadata after a direct member overwrite", async () => {
+      const code = [
+        `const mutatingFactory = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `const safeFactory = () => function (_intrinsic) {};`,
+        `const owner = {};`,
+        `owner.make = mutatingFactory;`,
+        `owner.make = safeFactory;`,
+        `owner.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    for (
+      const [label, ownerFlow] of [
+        [
+          "a conditional member overwrite",
+          [
+            `const owner = { make: mutatingFactory };`,
+            `if (globalThis.useSafeFactory) owner.make = safeFactory;`,
+          ].join("\n"),
+        ],
+        [
+          "a deferred member overwrite",
+          [
+            `const owner = { make: mutatingFactory };`,
+            `function rebindLater() { owner.make = safeFactory; }`,
+          ].join("\n"),
+        ],
+        [
+          "a member overwrite through an ambiguous alias",
+          [
+            `const owner = { make: mutatingFactory };`,
+            `const other = {};`,
+            `const alias = globalThis.useSafeFactory ? owner : other;`,
+            `alias.make = safeFactory;`,
+          ].join("\n"),
+        ],
+      ] as const
+    ) {
+      it(`keeps metadata after ${label}`, async () => {
+        const code = [
+          `const mutatingFactory = () => function (intrinsic) {`,
+          `  intrinsic.defineProperty = (target) => target;`,
+          `};`,
+          `const safeFactory = () => function (_intrinsic) {};`,
+          ownerFlow,
+          `owner.make()(Object);`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    for (
+      const [label, ownerFlow] of [
+        [
+          "a nested object member factory",
+          `const namespace = { factory: { make: mutatingFactory } };`,
+        ],
+        [
+          "a write to a nested object member factory",
+          [
+            `const namespace = { factory: { make: safeFactory } };`,
+            `namespace.factory.make = mutatingFactory;`,
+          ].join("\n"),
+        ],
+      ] as const
+    ) {
+      it(`keeps metadata through ${label}`, async () => {
+        const code = [
+          `const mutatingFactory = () => function (intrinsic) {`,
+          `  intrinsic.defineProperty = (target) => target;`,
+          `};`,
+          `const safeFactory = () => function (_intrinsic) {};`,
+          ownerFlow,
+          `namespace.factory.make()(Object);`,
+          `var setName = (target, value) => Object.defineProperty(`,
+          `  target, "name", { value, configurable: true },`,
+          `);`,
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `function loadSecret() { return KEY; }`,
+          `setName(loadSecret, "loadSecret");`,
+          `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code);
+
+        assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      });
+    }
+
+    it("still strips metadata after a nested member overwrite", async () => {
+      const code = [
+        `const mutatingFactory = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `const safeFactory = () => function (_intrinsic) {};`,
+        `const namespace = { factory: { make: mutatingFactory } };`,
+        `namespace.factory.make = safeFactory;`,
+        `namespace.factory.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertEquals(occurrences(result, "KEY"), 0);
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
     it("still strips metadata past a write through a shadowing alias parameter", async () => {
       const code = [
         `const intrinsic = Object;`,
