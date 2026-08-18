@@ -151,6 +151,103 @@ describe("guardedOutboundFetch", () => {
     ]);
   });
 
+  it("reports followed redirect hops to the host caller", async () => {
+    const redirects: Array<{ status: number; fromUrl: string; toUrl: string }> = [];
+    const fetchImpl: typeof fetch = (input) => {
+      const url = String(input);
+      if (url.endsWith("/start")) {
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://93.184.216.35/auth" },
+          }),
+        );
+      }
+      if (url.endsWith("/auth")) {
+        return Promise.resolve(
+          new Response(null, {
+            status: 307,
+            headers: { location: "https://93.184.216.36/sign-in" },
+          }),
+        );
+      }
+      return Promise.resolve(new Response("sign in"));
+    };
+    const boundary = createTestBoundary(fetchImpl);
+
+    const response = await boundary.guardedFetch(
+      "https://93.184.216.34/start",
+      undefined,
+      {
+        onRedirect({ status, fromUrl, toUrl }) {
+          redirects.push({
+            status,
+            fromUrl: fromUrl.href,
+            toUrl: toUrl.href,
+          });
+        },
+      },
+    );
+
+    assertEquals(await response.text(), "sign in");
+    assertEquals(redirects, [
+      {
+        status: 302,
+        fromUrl: "https://93.184.216.34/start",
+        toUrl: "https://93.184.216.35/auth",
+      },
+      {
+        status: 307,
+        fromUrl: "https://93.184.216.35/auth",
+        toUrl: "https://93.184.216.36/sign-in",
+      },
+    ]);
+  });
+
+  it("does not report a redirect that the egress guard blocks", async () => {
+    const redirects: string[] = [];
+    let fetchCalls = 0;
+
+    await assertRejects(
+      () =>
+        guardedEgressFetch("https://public.example/start", undefined, {
+          fetchImpl: () => {
+            fetchCalls++;
+            return Promise.resolve(
+              new Response(null, {
+                status: 302,
+                headers: { location: "https://private.example/sign-in" },
+              }),
+            );
+          },
+          pinnedFetch: (_url, _addresses, _init) => {
+            fetchCalls++;
+            return Promise.resolve(
+              new Response(null, {
+                status: 302,
+                headers: { location: "https://private.example/sign-in" },
+              }),
+            );
+          },
+          onRedirect({ toUrl }) {
+            redirects.push(toUrl.href);
+          },
+          options: {
+            resolveHost(hostname) {
+              return Promise.resolve([
+                hostname === "private.example" ? "10.0.0.8" : "93.184.216.34",
+              ]);
+            },
+          },
+        }),
+      WorkerEgressBlockedError,
+      "blocked for host: private.example",
+    );
+
+    assertEquals(fetchCalls, 1);
+    assertEquals(redirects, []);
+  });
+
   it("preserves Request input semantics for origin-bound provider transports", async () => {
     let captured: Request | undefined;
     const fetchImpl: typeof fetch = async (input, init) => {

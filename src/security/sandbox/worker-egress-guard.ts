@@ -1114,6 +1114,13 @@ export type WorkerEgressPinnedFetch = (
   init: RequestInit,
 ) => Promise<Response>;
 
+/** Redirect hop whose guarded destination request returned a response. */
+export interface WorkerEgressRedirect {
+  status: number;
+  fromUrl: URL;
+  toUrl: URL;
+}
+
 /** Dependencies for {@link guardedEgressFetch} (injectable for tests). */
 export interface GuardedEgressFetchDeps {
   /** Underlying fetch implementation (defaults to the global `fetch`). */
@@ -1130,6 +1137,8 @@ export interface GuardedEgressFetchDeps {
    * redirect destination before a connection is opened.
    */
   authorizeUrl?: (url: URL) => void | Promise<void>;
+  /** Observe each redirect after its guarded destination request succeeds. */
+  onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
   /** Captured runtime primitives used to establish the DNS-pinned tunnel. */
   runtime?: Partial<PinnedEgressRuntime>;
 }
@@ -1163,6 +1172,7 @@ export async function guardedEgressFetch(
   let resolvedRuntime: PinnedEgressRuntime | undefined;
   const getRuntime = () => resolvedRuntime ??= getPinnedEgressRuntime(deps.runtime);
   let didRedirect = false;
+  let pendingRedirect: WorkerEgressRedirect | undefined;
 
   const requestedRedirect: RequestRedirect = init?.redirect ??
     (input instanceof Request ? input.redirect : "follow");
@@ -1283,6 +1293,17 @@ export async function guardedEgressFetch(
       }
     }
 
+    if (pendingRedirect) {
+      const followedRedirect = pendingRedirect;
+      pendingRedirect = undefined;
+      try {
+        await deps.onRedirect?.(followedRedirect);
+      } catch (error) {
+        await response.body?.cancel().catch(() => undefined);
+        throw error;
+      }
+    }
+
     if (!REDIRECT_STATUSES.has(response.status)) {
       Object.defineProperties(response, {
         url: { configurable: true, enumerable: true, value: url },
@@ -1319,6 +1340,11 @@ export async function guardedEgressFetch(
         `Worker network egress blocked: redirect to non-http(s) scheme ${nextUrl.protocol}`,
       );
     }
+    pendingRedirect = {
+      status: response.status,
+      fromUrl: parsedUrl,
+      toUrl: nextUrl,
+    };
     // Cross-origin redirect: strip credential-bearing headers, matching the
     // platform fetch this guard replaces, so a redirect target cannot receive
     // the caller's Authorization/Cookie.

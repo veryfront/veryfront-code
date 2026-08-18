@@ -1553,6 +1553,55 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
+  it("reports an authentication redirect before an HTTP module returns HTML", async () => {
+    const moduleUrl = "https://93.184.216.34/@/components/ResponsiveImage";
+    const signInUrl = "https://93.184.216.35/sign-in?access_token=super-secret";
+    const fetchedUrls: string[] = [];
+    const mockFetch = ((input: RequestInfo | URL) => {
+      const url = input instanceof Request
+        ? input.url
+        : input instanceof URL
+        ? input.href
+        : String(input);
+      fetchedUrls.push(url);
+
+      if (url === moduleUrl) {
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: signInUrl },
+          }),
+        );
+      }
+      if (url === signInUrl) {
+        return Promise.resolve(
+          new Response("<!doctype html><title>Sign in</title>", {
+            headers: { "content-type": "text/html;charset=utf-8" },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch to ${url}`);
+    }) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-esm-auth-redirect-", mockFetch, async (tempDir) => {
+      const error = await assertRejects(
+        () => cacheModuleToLocal(moduleUrl, tempDir),
+        Error,
+      );
+
+      assertEquals(fetchedUrls, [moduleUrl, signInUrl]);
+      assertInstanceOf(error, Error);
+      assert(!error.message.includes("super-secret"));
+      assertEquals(
+        error.message,
+        `Received HTML instead of JavaScript from ${moduleUrl}. ` +
+          "The upstream redirected the module request with HTTP 302 to " +
+          "https://93.184.216.35/sign-in before returning HTML. " +
+          "Verify that the module endpoint is accessible without interactive authentication.",
+      );
+    });
+  });
+
   it("bounds transient failure attempts and cancels every response body", async () => {
     let fetchCount = 0;
     let cancelledBodies = 0;

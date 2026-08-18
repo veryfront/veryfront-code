@@ -13,6 +13,7 @@ import {
   WorkerEgressBlockedError,
   type WorkerEgressFetch,
   type WorkerEgressPinnedFetch,
+  type WorkerEgressRedirect,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 
 export const HOST_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS";
@@ -26,6 +27,8 @@ export class OutboundRequestBlockedError extends Error {
 export interface GuardedOutboundFetchOptions {
   /** Additional operator-owned URL policy, applied to every redirect hop. */
   authorizeUrl?: (url: URL) => void | Promise<void>;
+  /** Observe each redirect after its guarded destination request succeeds. */
+  onRedirect?: (redirect: WorkerEgressRedirect) => void | Promise<void>;
 }
 
 /** Host-owned transport primitives used after outbound policy validation. */
@@ -92,6 +95,7 @@ async function fetchWithHostTransport(
       }
       await options.authorizeUrl?.(url);
     },
+    onRedirect: options.onRedirect,
     options: {
       allowInternalEgress: allowInternalEgress ||
         isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),

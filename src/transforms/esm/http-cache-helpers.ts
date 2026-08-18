@@ -556,12 +556,17 @@ export function isCanonicalReactEsmUrl(rawUrl: string): boolean {
 /**
  * Diagnostic for an HTTP module fetch that answered with HTML.
  *
- * Only esm.sh gets the "package failed to build" explanation. For any other
- * host, direct the reader to verify that the import resolves to JavaScript.
- * A path starting with "/@/" is the "@/" project alias in absolute form, so it
- * gets a specific alias-resolution instruction.
+ * A followed redirect takes precedence because the final HTML belongs to the
+ * redirect destination, not the authored module URL. Otherwise, only esm.sh
+ * gets the "package failed to build" explanation. For any other host, direct
+ * the reader to verify that the import resolves to JavaScript. A path starting
+ * with "/@/" is the "@/" project alias in absolute form, so it gets a specific
+ * alias-resolution instruction.
  */
-export function describeHtmlModuleResponse(rawUrl: string): string {
+export function describeHtmlModuleResponse(
+  rawUrl: string,
+  redirect?: { status: number; url: string },
+): string {
   let hostname = "";
   let pathname = "";
   try {
@@ -573,6 +578,11 @@ export function describeHtmlModuleResponse(rawUrl: string): string {
   }
 
   const received = `Received HTML instead of JavaScript from ${rawUrl}.`;
+  if (redirect) {
+    return `${received} The upstream redirected the module request with HTTP ${redirect.status} ` +
+      `to ${redirect.url} before returning HTML. ` +
+      "Verify that the module endpoint is accessible without interactive authentication.";
+  }
   if (hostname === "esm.sh") {
     return `${received} The package may not exist or failed to build on esm.sh.`;
   }
