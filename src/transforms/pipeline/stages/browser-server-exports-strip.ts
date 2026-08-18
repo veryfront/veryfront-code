@@ -2666,7 +2666,7 @@ function invokedFunctionParameterBindings(
   const ownerValueFlows = new Map<LexicalBindingIdentity, OwnerValueFlow[]>();
   const memberValueFlows = new Map<string, MemberValueFlow[]>();
   const nodeOrders = new Map<Node, number>();
-  const controlUncertainNodes = new Set<Node>();
+  const repeatedControlNodes = new Set<Node>();
   const ownerExecutionScopes = new Map<Node, Node | null>();
   const addValueFlow = (target: LexicalBindingIdentity | null, value: Node): void => {
     if (!target) return;
@@ -2676,7 +2676,7 @@ function invokedFunctionParameterBindings(
     const values = value.type === "FunctionDeclaration"
       ? (valueFlows.get(target) ?? []).filter((entry) => entry.type !== "FunctionDeclaration")
       : valueFlows.get(target) ?? [];
-    values.push(value);
+    if (!values.includes(value)) values.push(value);
     valueFlows.set(target, values);
   };
   const addOwnerValueFlow = (
@@ -2739,6 +2739,13 @@ function invokedFunctionParameterBindings(
     "TryStatement",
     "CatchClause",
   ]);
+  const repeatedControlFlowParentTypes = new Set([
+    "WhileStatement",
+    "DoWhileStatement",
+    "ForStatement",
+    "ForInStatement",
+    "ForOfStatement",
+  ]);
   const addPatternOwnerFlows = (
     pattern: Node,
     source: Node,
@@ -2746,23 +2753,36 @@ function invokedFunctionParameterBindings(
     order: number,
     controlUncertain: boolean,
     scope: Node | null,
+    repeatedControl: boolean,
   ): void => {
     const target = unwrapTransparent(pattern);
     const value = unwrapTransparent(source);
     if (target.type === "Identifier") {
-      addOwnerValueFlow(
-        declaration ? bindings.declaration(target) : bindings.reference(target),
-        value,
-        order,
-        controlUncertain,
-        scope,
-      );
+      const binding = declaration ? bindings.declaration(target) : bindings.reference(target);
+      addOwnerValueFlow(binding, value, order, controlUncertain, scope);
+      addValueFlow(binding, value);
       return;
     }
     if (target.type === "AssignmentPattern" && isNode(target.left)) {
-      addPatternOwnerFlows(target.left, value, declaration, order, controlUncertain, scope);
+      addPatternOwnerFlows(
+        target.left,
+        value,
+        declaration,
+        order,
+        controlUncertain,
+        scope,
+        repeatedControl,
+      );
       if (isNode(target.right)) {
-        addPatternOwnerFlows(target.left, target.right, declaration, order, true, scope);
+        addPatternOwnerFlows(
+          target.left,
+          target.right,
+          declaration,
+          order,
+          true,
+          scope,
+          repeatedControl,
+        );
       }
       return;
     }
@@ -2770,32 +2790,80 @@ function invokedFunctionParameterBindings(
       const expressions = Array.isArray(value.expressions) ? value.expressions.filter(isNode) : [];
       const last = expressions.at(-1);
       if (last) {
-        addPatternOwnerFlows(target, last, declaration, order, controlUncertain, scope);
+        addPatternOwnerFlows(
+          target,
+          last,
+          declaration,
+          order,
+          controlUncertain,
+          scope,
+          repeatedControl,
+        );
       }
       return;
     }
     if (value.type === "ConditionalExpression") {
       if (isNode(value.consequent)) {
-        addPatternOwnerFlows(target, value.consequent, declaration, order, true, scope);
+        addPatternOwnerFlows(
+          target,
+          value.consequent,
+          declaration,
+          order,
+          true,
+          scope,
+          repeatedControl,
+        );
       }
       if (isNode(value.alternate)) {
-        addPatternOwnerFlows(target, value.alternate, declaration, order, true, scope);
+        addPatternOwnerFlows(
+          target,
+          value.alternate,
+          declaration,
+          order,
+          true,
+          scope,
+          repeatedControl,
+        );
       }
       return;
     }
     if (value.type === "LogicalExpression") {
       if (isNode(value.left)) {
-        addPatternOwnerFlows(target, value.left, declaration, order, true, scope);
+        addPatternOwnerFlows(
+          target,
+          value.left,
+          declaration,
+          order,
+          true,
+          scope,
+          repeatedControl,
+        );
       }
       if (isNode(value.right)) {
-        addPatternOwnerFlows(target, value.right, declaration, order, true, scope);
+        addPatternOwnerFlows(
+          target,
+          value.right,
+          declaration,
+          order,
+          true,
+          scope,
+          repeatedControl,
+        );
       }
       return;
     }
     if (value.type === "AssignmentExpression" && isNode(value.right)) {
       const nonDirectAssignment = value.operator !== "=";
       if (nonDirectAssignment && isNode(value.left)) {
-        addPatternOwnerFlows(target, value.left, declaration, order, true, scope);
+        addPatternOwnerFlows(
+          target,
+          value.left,
+          declaration,
+          order,
+          true,
+          scope,
+          repeatedControl,
+        );
       }
       addPatternOwnerFlows(
         target,
@@ -2804,11 +2872,83 @@ function invokedFunctionParameterBindings(
         order,
         controlUncertain || nonDirectAssignment,
         scope,
+        repeatedControl,
       );
       return;
     }
     if (value.type === "AwaitExpression" && isNode(value.argument)) {
-      addPatternOwnerFlows(target, value.argument, declaration, order, controlUncertain, scope);
+      addPatternOwnerFlows(
+        target,
+        value.argument,
+        declaration,
+        order,
+        controlUncertain,
+        scope,
+        repeatedControl,
+      );
+      return;
+    }
+    if (target.type === "ObjectPattern") {
+      const properties = Array.isArray(target.properties) ? target.properties : [];
+      for (const property of properties) {
+        if (!isNode(property)) continue;
+        if (property.type === "RestElement" && isNode(property.argument)) {
+          const freshRest: Node = { type: "ObjectExpression", properties: [] };
+          nodeOrders.set(freshRest, order);
+          ownerExecutionScopes.set(freshRest, scope);
+          if (repeatedControl) repeatedControlNodes.add(freshRest);
+          // Rest creates a new container whose nested property values still
+          // alias the source. Keep both identities so a direct rest write is
+          // not mistaken for a certain write to the source object.
+          addPatternOwnerFlows(
+            property.argument,
+            value,
+            declaration,
+            order,
+            controlUncertain,
+            scope,
+            repeatedControl,
+          );
+          addPatternOwnerFlows(
+            property.argument,
+            freshRest,
+            declaration,
+            order,
+            true,
+            scope,
+            repeatedControl,
+          );
+          continue;
+        }
+        if (property.type !== "ObjectProperty" || !isNode(property.value)) {
+          continue;
+        }
+        const key = isNode(property.key) ? property.key : undefined;
+        const name = property.computed === true ? stringLiteralText(key) : literalText(key);
+        if (!key || (property.computed !== true && name === null)) continue;
+        // Resolve the source member after collection, when occurrence-aware
+        // owner flows are complete. Stamp the synthetic read with the
+        // destructuring occurrence so a later source rebind cannot leak in.
+        const projection: Node = {
+          type: "MemberExpression",
+          object: value,
+          property: key,
+          computed: property.computed === true,
+          optional: false,
+        };
+        nodeOrders.set(projection, order);
+        ownerExecutionScopes.set(projection, scope);
+        if (repeatedControl) repeatedControlNodes.add(projection);
+        addPatternOwnerFlows(
+          property.value,
+          projection,
+          declaration,
+          order,
+          controlUncertain,
+          scope,
+          repeatedControl,
+        );
+      }
       return;
     }
     if (
@@ -2827,6 +2967,7 @@ function invokedFunctionParameterBindings(
           order,
           controlUncertain,
           scope,
+          repeatedControl,
         );
       }
     }
@@ -2836,6 +2977,7 @@ function invokedFunctionParameterBindings(
   const collectOwnerFlows = (
     node: Node,
     controlUncertain: boolean,
+    repeatedControl: boolean,
     scope: Node | null,
   ): void => {
     const order = visitOrder++;
@@ -2843,7 +2985,7 @@ function invokedFunctionParameterBindings(
       (node.type === "AssignmentExpression" && node.operator !== "=");
     nodeOrders.set(node, order);
     ownerExecutionScopes.set(node, scope);
-    if (nodeControlUncertain) controlUncertainNodes.add(node);
+    if (repeatedControl) repeatedControlNodes.add(node);
 
     if (
       (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
@@ -2870,7 +3012,25 @@ function invokedFunctionParameterBindings(
           scope,
         );
       } else if (node.id.type === "ArrayPattern") {
-        addPatternOwnerFlows(node.id, node.init, true, order, nodeControlUncertain, scope);
+        addPatternOwnerFlows(
+          node.id,
+          node.init,
+          true,
+          order,
+          nodeControlUncertain,
+          scope,
+          repeatedControl,
+        );
+      } else if (node.id.type === "ObjectPattern") {
+        addPatternOwnerFlows(
+          node.id,
+          node.init,
+          true,
+          order,
+          nodeControlUncertain,
+          scope,
+          repeatedControl,
+        );
       }
     } else if (
       node.type === "AssignmentExpression" && isNode(node.left) && isNode(node.right)
@@ -2883,8 +3043,19 @@ function invokedFunctionParameterBindings(
           nodeControlUncertain,
           scope,
         );
-      } else if (node.left.type === "ArrayPattern" || node.left.type === "ArrayExpression") {
-        addPatternOwnerFlows(node.left, node.right, false, order, nodeControlUncertain, scope);
+      } else if (
+        node.left.type === "ArrayPattern" || node.left.type === "ArrayExpression" ||
+        node.left.type === "ObjectPattern"
+      ) {
+        addPatternOwnerFlows(
+          node.left,
+          node.right,
+          false,
+          order,
+          nodeControlUncertain,
+          scope,
+          repeatedControl,
+        );
       } else if (
         (node.left.type === "MemberExpression" ||
           node.left.type === "OptionalMemberExpression") && isNode(node.left.object)
@@ -2904,15 +3075,22 @@ function invokedFunctionParameterBindings(
       }
     }
 
+    // Branches make their writes optional, but a straight-line write before a
+    // branch still dominates reads in that branch. Loops are different: a
+    // syntactically later write can feed a read on the next iteration.
     const childControlUncertain = nodeControlUncertain ||
       controlUncertainFlowParentTypes.has(node.type);
+    const childRepeatedControl = repeatedControl ||
+      repeatedControlFlowParentTypes.has(node.type);
     const childScope = ownerExecutionScopeTypes.has(node.type) ? node : scope;
     for (const child of children(node)) {
-      collectOwnerFlows(child, childControlUncertain, childScope);
+      collectOwnerFlows(child, childControlUncertain, childRepeatedControl, childScope);
     }
   };
   for (const statement of body) {
-    if (statement.type !== "ImportDeclaration") collectOwnerFlows(statement, false, null);
+    if (statement.type !== "ImportDeclaration") {
+      collectOwnerFlows(statement, false, false, null);
+    }
   }
 
   type OwnerIdentity = Node | LexicalBindingIdentity;
@@ -3038,11 +3216,74 @@ function invokedFunctionParameterBindings(
       isNode(value.object)
     ) {
       const key = memberKey(value);
-      if (key === null) return [];
+      if (key === null) {
+        const property = isNode(value.property) ? value.property : undefined;
+        if (!property) return [];
+        const resolvedKeys = new Set(
+          concreteValues(property, new Set(seenBindings))
+            .map((candidate) => stringLiteralText(candidate))
+            .filter((candidate): candidate is string => candidate !== null),
+        );
+        if (resolvedKeys.size === 0) {
+          for (const knownKey of memberValueFlows.keys()) resolvedKeys.add(knownKey);
+          const seenKeyOwners = new Set<Node>();
+          const collectKnownKeys = (entry: Node): void => {
+            for (const owner of concreteValues(entry, new Set(seenBindings))) {
+              if (seenKeyOwners.has(owner)) continue;
+              seenKeyOwners.add(owner);
+              if (owner.type === "ObjectExpression") {
+                const properties = Array.isArray(owner.properties) ? owner.properties : [];
+                for (const candidate of properties) {
+                  if (!isNode(candidate)) continue;
+                  if (candidate.type === "SpreadElement" && isNode(candidate.argument)) {
+                    collectKnownKeys(candidate.argument);
+                    continue;
+                  }
+                  const candidateKey = isNode(candidate.key) ? candidate.key : undefined;
+                  const name = candidate.computed === true
+                    ? stringLiteralText(candidateKey)
+                    : literalText(candidateKey);
+                  if (name !== null) resolvedKeys.add(name);
+                }
+                continue;
+              }
+              if (owner.type !== "ClassDeclaration" && owner.type !== "ClassExpression") continue;
+              const classMembers = isNode(owner.body) && Array.isArray(owner.body.body)
+                ? owner.body.body.filter(isNode)
+                : [];
+              for (const candidate of classMembers) {
+                if (candidate.static !== true || !isNode(candidate.key)) continue;
+                const name = candidate.computed === true
+                  ? stringLiteralText(candidate.key)
+                  : literalText(candidate.key);
+                if (name !== null) resolvedKeys.add(name);
+              }
+            }
+          };
+          collectKnownKeys(value.object);
+        }
+        const members: Node[] = [];
+        for (const resolvedKey of resolvedKeys) {
+          const resolvedMember: Node = {
+            ...value,
+            property: { type: "StringLiteral", value: resolvedKey },
+            computed: true,
+          };
+          const order = nodeOrders.get(value);
+          if (order !== undefined) nodeOrders.set(resolvedMember, order);
+          ownerExecutionScopes.set(
+            resolvedMember,
+            ownerExecutionScopes.get(value) ?? null,
+          );
+          if (repeatedControlNodes.has(value)) repeatedControlNodes.add(resolvedMember);
+          members.push(...concreteValues(resolvedMember, new Set(seenBindings)));
+        }
+        return members;
+      }
       const members: Node[] = [];
       const readOrder = nodeOrders.get(value) ?? Number.POSITIVE_INFINITY;
       const readScope = ownerExecutionScopes.get(value) ?? null;
-      const readAllPossible = controlUncertainNodes.has(value);
+      const readAllPossible = repeatedControlNodes.has(value);
       const resolveOwnerIdentities = (owners: OwnerIdentity[]): OwnerIdentity[] =>
         owners.flatMap((owner): OwnerIdentity[] => {
           if (!isNode(owner)) return [owner];
