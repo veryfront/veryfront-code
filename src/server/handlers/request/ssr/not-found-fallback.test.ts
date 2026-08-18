@@ -204,7 +204,7 @@ describe(
         });
       });
 
-      it("renders the reserved not-found component without dev instrumentation on a hosted project", async () => {
+      it("renders the reserved not-found component without instrumentation in hosted production", async () => {
         const adapter = await getAdapter();
 
         await withTestContext("not-found-fallback-hosted", async (context) => {
@@ -219,6 +219,10 @@ describe(
             projectDir: context.projectDir,
             adapter,
             isLocalProject: false,
+            resolvedEnvironment: "production",
+            // Hosted production is release-addressed: computeContentSourceId
+            // refuses a production content source without one.
+            releaseId: "release-not-found-1",
           });
           const req = new Request("http://localhost/a/b/missing");
           const builder = new ResponseBuilder();
@@ -232,6 +236,37 @@ describe(
           // this pins the assertion below to the render path.
           assertStringIncludes(html, '<p id="hosted-not-found">Missing Hosted</p>');
           assertEquals(html.includes("data-node-file"), false);
+        });
+      });
+
+      it("keeps node positions on the reserved not-found component in hosted preview", async () => {
+        const adapter = await getAdapter();
+
+        await withTestContext("not-found-fallback-hosted-preview", async (context) => {
+          const segDir = join(context.projectDir, "app", "a", "b");
+          await mkdir(segDir, { recursive: true });
+          await writeTextFile(
+            join(segDir, "not-found.tsx"),
+            `export default function NotFound(){ return <p id="preview-not-found">Missing Preview</p>; }`,
+          );
+
+          // Hosted preview compiles as production. Only the request
+          // environment separates it from the case above.
+          const ctx = makeCtx({
+            projectDir: context.projectDir,
+            adapter,
+            isLocalProject: false,
+            resolvedEnvironment: "preview",
+          });
+          const req = new Request("http://localhost/a/b/missing");
+          const builder = new ResponseBuilder();
+
+          const result = await tryNotFoundFallback(req, "a/b/missing", ctx, builder);
+          assertExists(result);
+          assertEquals(result.status, 404);
+          const html = await result.text();
+          assertStringIncludes(html, "Missing Preview");
+          assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
         });
       });
 

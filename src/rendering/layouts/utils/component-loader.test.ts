@@ -20,6 +20,11 @@ import {
   getCachedImportMap,
 } from "#veryfront/modules/import-map/preloader.ts";
 
+const PRODUCTION_MODES = {
+  compileMode: "production",
+  environment: "production",
+} as const;
+
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
 ): string {
@@ -341,6 +346,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         {
           loadComponentFromSource: (_source, _filePath, _projectDir, _adapter, options) => {
@@ -387,6 +393,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         {
           loadComponentFromSource: () => {
@@ -403,6 +410,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         {
           loadComponentFromSource: () => {
@@ -443,6 +451,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         deps,
       );
@@ -460,6 +469,7 @@ describe("rendering/layouts/utils/component-loader", () => {
           "project-1",
           "project-slug",
           "release-1",
+          PRODUCTION_MODES,
           "19.1.0",
           deps,
         ),
@@ -491,6 +501,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
       ] as const;
 
@@ -664,6 +675,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       "project-id",
       "project-slug",
       "preview-main",
+      PRODUCTION_MODES,
       "19.1.1",
       undefined,
       SNAPSHOT_A_PIN_KEY,
@@ -704,6 +716,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       "project-id",
       "project-slug",
       "preview-main",
+      PRODUCTION_MODES,
       "19.1.1",
     ] as const;
 
@@ -749,6 +762,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       "project-id",
       "project-slug",
       "preview-main",
+      PRODUCTION_MODES,
       "19.1.1",
       undefined,
       "off",

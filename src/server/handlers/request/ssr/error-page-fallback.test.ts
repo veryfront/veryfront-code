@@ -216,6 +216,50 @@ describe("server/handlers/request/ssr/error-page-fallback", () => {
       assertEquals(result, null);
     });
 
+    it("loads a hosted preview error page with the preview environment", async () => {
+      const adapter = createMockAdapter({
+        stat: (path: string) => {
+          if (path.endsWith("/pages")) {
+            return Promise.resolve({
+              isFile: false,
+              isDirectory: true,
+              size: 0,
+              mtime: null,
+            });
+          }
+          return Promise.reject(new Error("not found"));
+        },
+        readFile: () =>
+          Promise.resolve(
+            "export default function ErrorPage() { return null; }",
+          ),
+        resolveFile: (path: string) =>
+          Promise.resolve(path.endsWith("/404") ? "pages/404.tsx" : null),
+      });
+      let observed: { dev: boolean; mode?: string } | undefined;
+      __setComponentSourceLoaderForTests(
+        (_source, _filePath, _projectDir, _adapter, options) => {
+          observed = { dev: options.dev, mode: options.mode };
+          return Promise.reject(new Error("stop after observing loader options"));
+        },
+      );
+
+      const result = await tryErrorPageFallback(
+        new Request("http://localhost/missing"),
+        makeCtx({
+          adapter,
+          projectId: "error-fallback-hosted-preview",
+          isLocalProject: false,
+          resolvedEnvironment: "preview",
+        }),
+        new ResponseBuilder(),
+        { statusCode: 404, pathname: "/missing" },
+      );
+
+      assertEquals(result, null);
+      assertEquals(observed, { dev: false, mode: "preview" });
+    });
+
     it("renders with the React version configured for the project", async () => {
       const adapter = await getAdapter();
       const statPaths: string[] = [];

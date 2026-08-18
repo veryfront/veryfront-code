@@ -1981,21 +1981,48 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         dev: false,
       });
 
-      const startedAt = Date.now();
-      await assertRejects(
-        () => prodLoader.loadRawModule(filePath, source),
-        Error,
-        "at transform capacity",
-      );
-      const elapsed = Date.now() - startedAt;
+      // The deadline is a timer, so drive it with fake time instead of burning
+      // 5s of wall clock and asserting on a Date.now() delta. Ticking to one
+      // millisecond short of the production deadline and only then over it
+      // pins the exact value: a shorter deadline settles early, and the 30s dev
+      // deadline never settles at all.
+      using time = new FakeTime();
+      let settled = false;
+      const rejection = prodLoader.loadRawModule(filePath, source).then(
+        () => undefined,
+        (error: unknown) => error,
+      ).finally(() => {
+        settled = true;
+      });
 
-      assert(
-        elapsed >= TRANSFORM_ACQUIRE_TIMEOUT_MS - 500,
-        `production should wait for the 5s deadline, waited ${elapsed}ms`,
+      // Let the loader reach the capacity wait without advancing the clock.
+      for (let i = 0; i < 50 && !settled; i++) await time.tickAsync(0);
+      assertEquals(settled, false, "production must not fail before the deadline");
+
+      await time.tickAsync(TRANSFORM_ACQUIRE_TIMEOUT_MS - 1);
+      assertEquals(
+        settled,
+        false,
+        `production must wait the full ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline`,
       );
+
+      await time.tickAsync(1);
+      // Crossing the deadline fires the timer; the rejection still has to walk
+      // the promise chain. Flush it without advancing the clock, so the 30s dev
+      // deadline would still read as unsettled here.
+      for (let i = 0; i < 10 && !settled; i++) await time.tickAsync(0);
+      assertEquals(
+        settled,
+        true,
+        `production must reject at the ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline, not the ` +
+          `${TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS}ms dev deadline`,
+      );
+
+      const error = await rejection;
+      assert(error instanceof Error, `expected a rejection, got ${String(error)}`);
       assert(
-        elapsed < TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS / 2,
-        `production must not use the 30s dev deadline, waited ${elapsed}ms`,
+        (error as Error).message.includes("at transform capacity"),
+        `unexpected rejection: ${(error as Error).message}`,
       );
     } finally {
       if (held) releaseTransformSlot(projectId);

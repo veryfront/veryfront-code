@@ -37,6 +37,25 @@ class FakeDistributedCache implements CacheBackend {
 }
 
 describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, () => {
+  it("separates hosted preview and production transform cache identities", () => {
+    const baseOptions = {
+      projectDir: "/project",
+      projectId: "project-a",
+      contentSourceId: "shared-content-source",
+      adapter: denoAdapter,
+      dev: false,
+      reactVersion: "19.1.1",
+    };
+    const preview = new SSRCacheManager({ ...baseOptions, mode: "preview" });
+    const production = new SSRCacheManager({ ...baseOptions, mode: "production" });
+
+    assertNotEquals(preview.getConfigHash(), production.getConfigHash());
+    assertNotEquals(
+      preview.getCacheKey("/project/pages/index.tsx"),
+      production.getCacheKey("/project/pages/index.tsx"),
+    );
+  });
+
   it("separates SSR module cache identity by API base URL", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-ssr-cache-manager-" });
     const baseOptions = {

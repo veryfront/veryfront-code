@@ -61,9 +61,16 @@ export class SSRCacheManager {
       const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
         this.options.serverExternalPackages,
       );
-      this.cachedConfigHash = serverExternalPackagesIdentity
+      const withExternals = serverExternalPackagesIdentity
         ? `${baseConfigHash}:server-externals:${hashString(serverExternalPackagesIdentity)}`
         : baseConfigHash;
+      // Preview instruments the transform output with node positions on top of
+      // an otherwise identical production compile. `dev` is already in
+      // baseConfigHash; the request environment is not, so without this the two
+      // would share a cache entry whenever they share a contentSourceId.
+      this.cachedConfigHash = this.options.mode === "preview"
+        ? `${withExternals}:preview`
+        : withExternals;
     }
     return this.cachedConfigHash;
   }

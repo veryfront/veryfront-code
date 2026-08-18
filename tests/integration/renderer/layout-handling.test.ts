@@ -11,6 +11,7 @@ import {
   createLayoutCache,
   createMockCompileMDX,
   discoverLayoutsForTest,
+  PRODUCTION_MODES,
   withLayoutHandlingContext,
 } from "./layout-handling.test-helpers.ts";
 
@@ -512,6 +513,7 @@ describe("Layout Handling", () => {
         };
 
         const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           layoutBundle,
           cache,
         });
@@ -566,6 +568,7 @@ describe("Layout Handling", () => {
           ];
 
           const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
+            modes: PRODUCTION_MODES,
             nestedLayouts,
             cache,
           });
@@ -584,7 +587,10 @@ describe("Layout Handling", () => {
 
           const pageElement = React.createElement("div", {}, "Page");
 
-          const result = await applyLayoutsEsmForTest(context, adapter, pageElement, { cache });
+          const result = await applyLayoutsEsmForTest(context, adapter, pageElement, {
+            cache,
+            modes: PRODUCTION_MODES,
+          });
 
           assertEquals(result, pageElement);
         },
@@ -613,6 +619,7 @@ describe("Layout Handling", () => {
           };
 
           const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            modes: PRODUCTION_MODES,
             layoutBundle,
             cache,
           });
@@ -647,6 +654,7 @@ describe("Layout Handling", () => {
           ];
 
           const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            modes: PRODUCTION_MODES,
             nestedLayouts,
             cache,
           });
@@ -666,6 +674,7 @@ describe("Layout Handling", () => {
           const pageElement = React.createElement("div", {}, "Page");
 
           const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            modes: PRODUCTION_MODES,
             cache,
           });
 
@@ -709,6 +718,7 @@ describe("Layout Handling", () => {
         };
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           layoutBundle,
           cache,
         });
@@ -742,6 +752,7 @@ describe("Layout Handling", () => {
           };
 
           const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            modes: PRODUCTION_MODES,
             layoutBundle,
             cache,
           });
@@ -777,6 +788,7 @@ describe("Layout Handling", () => {
           };
 
           const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+            modes: PRODUCTION_MODES,
             layoutBundle,
             components: customComponents,
             cache,
@@ -827,6 +839,7 @@ describe("Layout Handling", () => {
         const cache = createLayoutCache();
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           nestedLayouts: layouts,
           cache,
         });
@@ -867,6 +880,7 @@ describe("Layout Handling", () => {
         const cache = createLayoutCache();
 
         const result = await applyLayoutsFunctionBodyForTest(context, adapter, pageElement, {
+          modes: PRODUCTION_MODES,
           nestedLayouts: layouts,
           cache,
         });

@@ -241,6 +241,57 @@ describe("LayoutApplicator helpers", () => {
     });
   });
 
+  it("loads a hosted-preview App component with the preview environment", async () => {
+    const appPath = "/project/components/app.tsx";
+    const adapter = {
+      fs: {
+        exists: (path: string) => Promise.resolve(path === appPath),
+        readFile: (path: string) =>
+          path === appPath
+            ? Promise.resolve(
+              `export default function App({ children }) {
+  return <section id="app-shell">{children}</section>;
+}`,
+            )
+            : Promise.reject(new Error("not found")),
+        readDir: async function* () {},
+        writeFile: () => Promise.resolve(),
+        mkdir: () => Promise.resolve(),
+      },
+      env: { get: () => undefined },
+    } as unknown as RuntimeAdapter;
+    const App = ({ children }: { children?: React.ReactNode }) =>
+      React.createElement("section", { id: "app-shell" }, children);
+    let observedEnvironment: string | undefined;
+    const applicator = new LayoutApplicator(
+      {
+        projectDir: "/project",
+        projectId: "project",
+        projectSlug: "project",
+        contentSourceId: "preview-main",
+        adapter,
+        config: { react: { version: "19.1.1" } },
+        layoutCache: createLayoutComponentCache(),
+        mergedComponents: {},
+        mode: "production",
+        environment: "preview",
+      },
+      {
+        loadComponentFromSource: (_source, _path, _projectDir, _adapter, options) => {
+          observedEnvironment = options?.mode;
+          return Promise.resolve(App);
+        },
+      },
+    );
+
+    const element = await (applicator as unknown as {
+      wrapWithAppComponent(element: React.ReactElement): Promise<React.ReactElement>;
+    }).wrapWithAppComponent(React.createElement("main", null, "Page"));
+
+    assertEquals(observedEnvironment, "preview");
+    assertEquals(element.type, App);
+  });
+
   it("searches configured App Router directories for reserved components", async () => {
     const reads: string[] = [];
     const adapter = {
@@ -266,6 +317,7 @@ describe("LayoutApplicator helpers", () => {
       layoutCache: createLayoutComponentCache(),
       mergedComponents: {},
       mode: "production",
+      environment: "production",
     });
 
     await (applicator as unknown as {
