@@ -209,9 +209,9 @@ function startSettledOperation<T>(operation: () => Promise<T>): Promise<SettledO
 /**
  * Start compilation before walking dependencies, then join both results.
  *
- * The compiler settlement is handled immediately, so dependency resolution
- * can retain its historical error precedence without draining a compiler that
- * cannot be aborted.
+ * Compiler settlement handlers are attached immediately, so dependency
+ * resolution can retain its historical error precedence without draining a
+ * compiler that cannot be aborted.
  */
 async function runTransformAndDependencies<T, D>(
   transform: () => Promise<T>,
