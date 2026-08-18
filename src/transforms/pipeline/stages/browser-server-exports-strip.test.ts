@@ -1430,6 +1430,45 @@ export enum Level { Low = compute(SEED) }`,
         );
       });
 
+      it("binds enum member names while walking their initialisers", async () => {
+        // `Both = Read` names a preceding MEMBER, not module scope. Without an
+        // enum-member scope the pass reported `Read` as free, pulled the
+        // unrelated `const Read = boot()` into the hook closure, and deleted it
+        // together with its side-effectful import.
+        const code = [
+          'import { boot } from "./boot.ts";',
+          "const Read = boot();",
+          "export async function getServerData() {",
+          "  enum Access { Read = 1, Both = Read }",
+          "  return { props: { a: Access.Both } };",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertStringIncludes(result, "const Read = boot()");
+        assertStringIncludes(result, "./boot.ts");
+      });
+
+      it("still strips a module binding an enum initialiser genuinely reads", async () => {
+        // No member is named `Read` here, so `Read` really is a module-scope
+        // read owned only by the hook and must still be removed.
+        const code = [
+          'import { boot } from "./boot.ts";',
+          "const Read = boot();",
+          "export async function getServerData() {",
+          "  enum Access { X = 1 }",
+          "  return { props: { a: Access.X, r: Read } };",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertNotIncludes(result, "const Read = boot()");
+      });
+
       it("keeps a runtime namespace body", async () => {
         await assertWalkers(
           `import { NSREF } from "./server.ts";

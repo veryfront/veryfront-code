@@ -755,8 +755,22 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     if (node.type === "TSEnumDeclaration") {
       bindPatternNames(scopes[0] ?? rootScope, node.id);
       const container = isNode(node.body) ? node.body : node;
-      for (const member of Array.isArray(container.members) ? container.members : []) {
-        if (isNode(member) && isNode(member.initializer)) visit(member.initializer, scopes);
+      const members = Array.isArray(container.members) ? container.members : [];
+      // Member initialisers can name a preceding member without qualifying it,
+      // as in `enum Access { Read = 1, Both = Read }`. Those names resolve to
+      // the enum, not to module scope, so bind them in their own scope first:
+      // otherwise `Read` reads as free and the pass pulls an unrelated
+      // module-scope `Read` into the hook closure and deletes it.
+      const scope: LexicalScope = { kind: "block", names: new Set() };
+      for (const member of members) {
+        if (!isNode(member)) continue;
+        const memberName = nodeName(member.id) ?? stringLiteralText(member.id);
+        if (memberName) scope.names.add(memberName);
+      }
+      for (const member of members) {
+        if (isNode(member) && isNode(member.initializer)) {
+          visit(member.initializer, [scope, ...scopes]);
+        }
       }
       return;
     }
