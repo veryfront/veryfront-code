@@ -415,7 +415,7 @@ describe(
         );
         await writeTextFile(
           join(segDir, "not-found.tsx"),
-          `export default function NotFound(){ return <p>Missing B</p>; }`,
+          `export default function NotFound(){ return <p id="deep-not-found">Missing B</p>; }`,
         );
 
         const port = await context.allocatePort();
@@ -426,7 +426,7 @@ describe(
         assertEquals(res.status, 404);
         assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
         const html = await res.text();
-        assertStringIncludes(html, "<p>Missing B</p>");
+        assertStringIncludes(html, '<p id="deep-not-found">Missing B</p>');
         assertEquals(html.includes("data-node-file="), false);
         assertEquals(html.includes("Root Missing"), false);
 
