@@ -677,6 +677,11 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private shouldRecoverBranchMiss(path: string, error: unknown): boolean {
     if (this.contentContext?.sourceType !== "branch") return false;
     if (!isNotFoundLikeError(error)) return false;
+    // The listing this render already fetched says the path is absent. A
+    // snapshot refresh would fetch that same listing again, so a page that
+    // probes N candidate spellings would pay N listing requests to be told
+    // the same thing. Pokes clear the index, so a real edit still recovers.
+    if (this.statOps.isIndexAuthoritative()) return false;
 
     const recoveryKey = this.getBranchMissRecoveryKey(path);
     return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
@@ -968,7 +973,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
         await this.cache.deleteAsync(cacheKey);
         return undefined;
       }
+      // The stat index and directory tree are built from the listing this
+      // poke just replaced. Left standing they keep answering with the
+      // pre-edit file set -- a file created by the edit reads as absent, and
+      // one deleted by it reads as present.
       this.readOps.clearFileListIndex();
+      this.statOps.clearIndex();
+      this.dirOps.clearTree();
       this.markSourceSnapshotChanged(files);
       // Retain after the version bump so the poked listing -- not the one it
       // replaced -- is what later reads see when the cache keeps nothing.
