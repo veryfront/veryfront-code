@@ -3281,7 +3281,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const finalizer = isNode(statement.finalizer) ? statement.finalizer : undefined;
         let completion: Completion = block ? statementCompletion(block) : "normal";
         if (handler) {
-          if (completion === "normal" || completion === "return") {
+          if (completion !== "throw" && completion !== "unknown") {
             deferred.add(handler);
           } else if (isNode(handler.body)) {
             const handlerCompletion = statementCompletion(handler.body);

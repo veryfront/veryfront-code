@@ -3340,6 +3340,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-try-prefix.tsx");
     });
 
+    it("does not enter a catch after a switch break", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { switch (1) { case 1: try { break; } catch { globalThis.registered = KEY; } } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-switch-break-catch.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-switch-break-catch.tsx");
+    });
+
     it("does not enter a catch after a return from the try block", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
