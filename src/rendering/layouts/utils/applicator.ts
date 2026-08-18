@@ -74,15 +74,16 @@ export function applyLayoutsESM(
             element = await withSpan(
               SpanNames.LAYOUT_APPLY_MDX,
               () =>
-                applyMDXLayout(
+                applyMDXLayout({
                   element,
-                  item.bundle!,
+                  bundle: item.bundle!,
                   projectDir,
                   mergedComponents,
                   adapter,
                   projectId,
                   projectSlug,
                   contentSourceId,
+                  modes,
                   preloadedImportMap,
                   reactVersion,
                   dependencyPinningCacheKey,
@@ -91,8 +92,7 @@ export function applyLayoutsESM(
                   moduleServerOrigin,
                   config,
                   isLocalProject,
-                  modes.compileMode,
-                ),
+                }),
               spanAttrs,
             );
             continue;
@@ -142,15 +142,16 @@ export function applyLayoutsESM(
       element = await withSpan(
         SpanNames.LAYOUT_APPLY_MDX,
         () =>
-          applyMDXLayout(
+          applyMDXLayout({
             element,
-            layoutBundle,
+            bundle: layoutBundle,
             projectDir,
             mergedComponents,
             adapter,
             projectId,
             projectSlug,
             contentSourceId,
+            modes,
             preloadedImportMap,
             reactVersion,
             dependencyPinningCacheKey,
@@ -159,8 +160,7 @@ export function applyLayoutsESM(
             moduleServerOrigin,
             config,
             isLocalProject,
-            modes.compileMode,
-          ),
+          }),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
       logger.debug("Named layoutBundle applied successfully");
