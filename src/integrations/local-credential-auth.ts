@@ -28,7 +28,6 @@ const objectValues = Object.values;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringEndsWith = String.prototype.endsWith;
 const stringIncludes = String.prototype.includes;
-const stringFromCharCode = String.fromCharCode;
 const stringToLowerCase = String.prototype.toLowerCase;
 const stringTrim = String.prototype.trim;
 const textEncoder = new TextEncoder();
@@ -67,6 +66,7 @@ interface LocalBasicAuthPlan extends LocalCredentialAuthPlanBase {
 
 interface LocalClientCredentialsAuthPlan extends LocalCredentialAuthPlanBase {
   readonly kind: "client-credentials";
+  readonly additionalParams: Readonly<Record<string, string>>;
   readonly clientIdName: string;
   readonly clientSecretName: string;
   readonly scopes: readonly string[];
@@ -200,17 +200,6 @@ function assertFixedHttpsUrl(value: string, label: string): string {
   return value;
 }
 
-function normalizedConnectorPrefix(name: string): string {
-  let prefix = "";
-  for (let index = 0; index < name.length; index++) {
-    const code = apply(stringCharCodeAt, name, [index]) as number;
-    if (code >= 97 && code <= 122) prefix += stringFromCharCode(code - 32);
-    else if (code >= 65 && code <= 90 || code >= 48 && code <= 57) prefix += name[index];
-    else prefix += "_";
-  }
-  return prefix;
-}
-
 function declaredFallback(
   connector: Pick<IntegrationConfig, "envVars">,
   name: string,
@@ -249,6 +238,56 @@ function canonicalCredentialNames(values: readonly string[], connectorName: stri
     append(canonical, assertCanonicalCredentialName(values[index]!, connectorName));
   }
   return canonical;
+}
+
+function declaredClientCredentialName(
+  connector: Pick<IntegrationConfig, "envVars" | "name">,
+  suffix: "_CLIENT_ID" | "_CLIENT_SECRET",
+): string {
+  let matched: string | undefined;
+  for (let index = 0; index < (connector.envVars?.length ?? 0); index++) {
+    const name = connector.envVars?.[index]?.name;
+    if (typeof name !== "string" || !stringEndsWithValue(name, suffix)) continue;
+    if (matched !== undefined) {
+      localIntegrationConfigurationError(
+        `Local integration "${connector.name}" declares multiple ${suffix} credentials`,
+      );
+    }
+    matched = assertCanonicalCredentialName(name, connector.name);
+  }
+  if (matched === undefined) {
+    localIntegrationConfigurationError(
+      `Local integration "${connector.name}" is missing its ${suffix} credential`,
+    );
+  }
+  return matched;
+}
+
+function copyTokenParams(
+  values: Readonly<Record<string, string>> | undefined,
+  connectorName: string,
+): Record<string, string> {
+  const copied: Record<string, string> = objectCreate(null);
+  const entries = objectEntries(values ?? {});
+  for (let index = 0; index < entries.length; index++) {
+    const [name, value] = entries[index]!;
+    if (
+      name.length === 0 || typeof value !== "string" ||
+      name === "grant_type" || name === "client_id" || name === "client_secret" ||
+      name === "scope"
+    ) {
+      localIntegrationConfigurationError(
+        `Local integration "${connectorName}" declares an invalid token parameter`,
+      );
+    }
+    objectDefineProperty(copied, name, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+  return copied;
 }
 
 /** Build a serializable, value-free credential plan from trusted catalog metadata. */
@@ -336,9 +375,9 @@ export function createLocalCredentialAuthPlan(
         `Local integration "${connector.name}" requires a fixed token URL`,
       );
     }
-    const prefix = normalizedConnectorPrefix(connector.name);
-    const clientIdName = `${prefix}_CLIENT_ID`;
-    const clientSecretName = `${prefix}_CLIENT_SECRET`;
+    const clientIdName = declaredClientCredentialName(connector, "_CLIENT_ID");
+    const clientSecretName = declaredClientCredentialName(connector, "_CLIENT_SECRET");
+    const additionalParams = freeze(copyTokenParams(auth.additionalParams, connector.name));
     let tokenAuthMethod: LocalClientCredentialsAuthPlan["tokenAuthMethod"];
     if (auth.tokenAuthMethod === "basic") tokenAuthMethod = "basic";
     else if (auth.tokenAuthMethod === "request_body") tokenAuthMethod = "request-body";
@@ -354,6 +393,7 @@ export function createLocalCredentialAuthPlan(
     return freeze({
       kind: "client-credentials",
       connectorName: connector.name,
+      additionalParams,
       clientIdName,
       clientSecretName,
       scopes: freeze(copyStrings(auth.scopes ?? [])),
@@ -583,6 +623,11 @@ export async function resolveLocalCredentialAuth(
       append(body, formEntry("client_secret", clientSecret));
     } else {
       headers.Authorization = `Basic ${base64(`${clientId}:${clientSecret}`)}`;
+    }
+    const additionalEntries = objectEntries(plan.additionalParams);
+    for (let index = 0; index < additionalEntries.length; index++) {
+      const [name, value] = additionalEntries[index]!;
+      append(body, formEntry(name, value));
     }
     return freeze({
       kind: "token-request",

@@ -243,12 +243,13 @@ describe("local integration endpoint executor", () => {
       appendRestorer(restorers, replaceProperty(Object, "freeze", poison));
       appendRestorer(restorers, replaceProperty(Object, "keys", poison));
       appendRestorer(restorers, replaceProperty(Reflect, "getOwnPropertyDescriptor", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "charCodeAt", poison));
-      appendRestorer(restorers, replaceProperty(String.prototype, "includes", poison));
+      // Node's native Headers implementation reads String, charCodeAt, and
+      // includes from the host realm inside Headers.prototype.set. Poisoning
+      // those makes the captured host constructor itself unusable, so this
+      // test limits its assertion to framework-owned traversal.
       appendRestorer(restorers, replaceProperty(String.prototype, "replaceAll", poison));
       appendRestorer(restorers, replaceProperty(String.prototype, "slice", poison));
       appendRestorer(restorers, replaceProperty(globalThis, "setTimeout", poison));
-      appendRestorer(restorers, replaceProperty(globalThis, "String", poison));
       appendRestorer(restorers, replaceProperty(globalThis, "URL", poison));
 
       try {

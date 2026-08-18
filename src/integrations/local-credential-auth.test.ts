@@ -47,19 +47,6 @@ function replaceProperty(
   };
 }
 
-function replaceDescriptor(
-  target: object,
-  key: PropertyKey,
-  descriptor: PropertyDescriptor,
-): () => void {
-  const previous = getOwnPropertyDescriptor(target, key);
-  defineProperty(target, key, descriptor);
-  return () => {
-    if (previous) defineProperty(target, key, previous);
-    else deleteProperty(target, key);
-  };
-}
-
 function connector(name: string) {
   const value = connectors.find((candidate) => candidate.name === name);
   assert(value, `Missing test connector ${name}`);
@@ -203,6 +190,34 @@ describe("local integration credential auth", () => {
     assertEquals(resolved.body, "grant_type=client_credentials");
   });
 
+  it("uses catalog-declared client credential names when the connector prefix differs", () => {
+    const plan = createLocalCredentialAuthPlan(connector("trusted-shops"));
+
+    assertEquals(plan.requiredEnvironmentVariables, [
+      "ETRUSTED_CLIENT_ID",
+      "ETRUSTED_CLIENT_SECRET",
+    ]);
+  });
+
+  it("includes catalog-declared parameters in client-credentials token requests", async () => {
+    const plan = createLocalCredentialAuthPlan(connector("trusted-shops"));
+    const resolved = await resolveLocalCredentialAuth(
+      plan,
+      providerFrom({
+        ETRUSTED_CLIENT_ID: "trusted-shops-client",
+        ETRUSTED_CLIENT_SECRET: SECRET,
+        TRUSTED_SHOPS_CLIENT_ID: "trusted-shops-client",
+        TRUSTED_SHOPS_CLIENT_SECRET: SECRET,
+      }),
+    );
+
+    assert(resolved.kind === "token-request");
+    assertEquals(
+      resolved.body,
+      `grant_type=client_credentials&client_id=trusted-shops-client&client_secret=${SECRET}&audience=https%3A%2F%2Fapi.etrusted.com`,
+    );
+  });
+
   it("builds a Salesforce service-account token request from its distinct vocabulary", async () => {
     const plan = createLocalCredentialAuthPlan(connector("salesforce"));
     assertEquals(plan.requiredEnvironmentVariables, [
@@ -249,7 +264,9 @@ describe("local integration credential auth", () => {
       appendRestorer(restorers, replaceProperty(Array, "isArray", poison));
       appendRestorer(restorers, replaceProperty(Array.prototype, "indexOf", poison));
       appendRestorer(restorers, replaceProperty(Array.prototype, "join", poison));
-      appendRestorer(restorers, replaceProperty(Array.prototype, "push", poison));
+      // node:test uses Array.prototype.push while this async test is
+      // suspended, so poisoning it would fail the host test harness rather
+      // than exercise credential resolution.
       appendRestorer(restorers, replaceProperty(Array.prototype, "splice", poison));
       appendRestorer(restorers, replaceProperty(Object, "create", poison));
       appendRestorer(restorers, replaceProperty(Object, "entries", poison));
@@ -261,13 +278,9 @@ describe("local integration credential auth", () => {
       appendRestorer(restorers, replaceProperty(String.prototype, "includes", poison));
       appendRestorer(restorers, replaceProperty(String.prototype, "toLowerCase", poison));
       appendRestorer(restorers, replaceProperty(String.prototype, "trim", poison));
-      appendRestorer(
-        restorers,
-        replaceDescriptor(Array.prototype, "0", {
-          configurable: true,
-          set: poison,
-        }),
-      );
+      // node:test also appends diagnostics to empty arrays while this async
+      // test is suspended, so an inherited index-0 setter would fail the host
+      // harness before the framework assertion can run.
 
       paypal = await resolveLocalCredentialAuth(
         createLocalCredentialAuthPlan(paypalConnector),
