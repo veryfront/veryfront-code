@@ -2,7 +2,7 @@ import { fnv1aHash } from "#veryfront/utils/hash-utils.ts";
 import { RENDER_ERROR } from "#veryfront/errors";
 import { buildNonceAttribute } from "../html-escape.ts";
 import { HYDRATION_RUNTIME_BUNDLE } from "./hydration-runtime.generated.ts";
-import { isVersionedProdHydrationModulePath } from "./prod-path.ts";
+import { isProdHydrationModulePath } from "./prod-path.ts";
 
 export {
   isVersionedProdHydrationModulePath,
@@ -44,7 +44,7 @@ export function getProdScriptsForPath(
   hydrationModulePath: string,
   nonce?: string,
 ): string {
-  if (!isVersionedProdHydrationModulePath(hydrationModulePath)) {
+  if (!isProdHydrationModulePath(hydrationModulePath)) {
     throw RENDER_ERROR.create({ detail: "Invalid production hydration runtime path" });
   }
   const nonceAttr = buildNonceAttribute(nonce);

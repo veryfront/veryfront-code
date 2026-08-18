@@ -119,6 +119,19 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
     assertEquals(result.response?.headers.get("expires"), "0");
   });
 
+  it("defers an immutable release's legacy runtime to its static artifact", async () => {
+    const registry = new RouteRegistry()
+      .register(new ProdHydrationModuleHandler())
+      .register(makeStaticHandler("export const releaseRuntime = true;"));
+    const response = await registry.execute(
+      new Request(`http://localhost${PROD_HYDRATION_MODULE_PATH}`),
+      makeCtx({ releaseId: "release-pre-versioned" }),
+    );
+
+    assertExists(response);
+    assertEquals(await response.text(), "export const releaseRuntime = true;");
+  });
+
   it("returns not modified with immutable caching when the versioned ETag matches", async () => {
     const handler = new ProdHydrationModuleHandler();
     const runtimePath = getProdHydrationModulePath();

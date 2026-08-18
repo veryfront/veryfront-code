@@ -38,6 +38,14 @@ import {
 } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  clearReleaseAssetManifestCache,
+  getReadyManifestForRenderAsync,
+  isReleaseAssetManifestEnabled,
+  registerManifestFetcherForRelease,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { PageRenderer } from "#veryfront/rendering/page-renderer.ts";
 
 const HTML = `<!doctype html>
@@ -304,6 +312,117 @@ describe(
         if (server) {
           await server.shutdown();
           await server.finished;
+        }
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("loads the serving runtime for a pre-contract release without build assets", async () => {
+      const releaseId = "release-pre-runtime-contract";
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-pre-runtime-release-browser-" });
+      const previousManifestFlag = getEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+      let unregisterManifest = () => {};
+      let server: ReturnType<typeof Deno.serve> | undefined;
+      let browser: Awaited<ReturnType<typeof launchChromium>> = null;
+
+      try {
+        setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+        clearReleaseAssetManifestCache();
+        unregisterManifest = registerManifestFetcherForRelease(
+          releaseId,
+          () =>
+            Promise.resolve({
+              state: "ready",
+              manifest_version: 1,
+              manifest: {
+                schemaVersion: 2,
+                projectId: "aged-release-project",
+                releaseId,
+                releaseVersion: 1,
+                manifestVersion: 1,
+                builderVersion: "0.1.1220",
+                sourceContentHash: "a".repeat(64),
+                createdAt: "2026-08-18T00:00:00.000Z",
+                assetBasePath: "/_vf/assets",
+                modules: {},
+                css: [],
+                routes: {},
+                dependencyMode: "source",
+                dependencies: {},
+              },
+            }),
+        );
+        assertEquals(isReleaseAssetManifestEnabled(), true);
+        assertEquals(
+          (await getReadyManifestForRenderAsync(releaseId))?.builderVersion,
+          "0.1.1220",
+        );
+        const pagePath = `${projectDir}/page.js`;
+        await Deno.writeTextFile(pagePath, `export default "<main>Pre-contract release</main>";`);
+
+        const adapter = { fs: createFileSystem() } as unknown as RuntimeAdapter;
+        const renderer = new PageRenderer({
+          projectDir,
+          mode: "production",
+          config: {},
+          adapter,
+          componentRegistry: {} as never,
+          compileMDX: () => Promise.reject(new Error("not used for script pages")),
+        });
+        const renderResult = await renderer.preparePageBundles(
+          { entity: { path: pagePath, frontmatter: {} } } as never,
+          "pre-contract-release",
+          undefined,
+          { releaseId },
+        );
+        const html = renderResult.scriptResult?.html;
+        if (!html) throw new Error("Expected the script page renderer to return HTML");
+
+        const servingRuntimePath = getProdHydrationModulePath();
+        assertStringIncludes(html, servingRuntimePath);
+
+        server = Deno.serve({
+          hostname: "127.0.0.1",
+          port: 0,
+          onListen() {},
+        }, (request) => {
+          const pathname = new URL(request.url).pathname;
+          if (pathname === "/") {
+            return new Response(html, {
+              headers: { "content-type": "text/html; charset=utf-8" },
+            });
+          }
+          if (pathname === servingRuntimePath) return javascript(AGED_RELEASE_HYDRATION_MODULE);
+          if (pathname.endsWith(".js")) return javascript("export default {};");
+          return new Response(null, { status: 204 });
+        });
+        browser = await launchChromium();
+        if (!browser) return;
+
+        const page = await browser.newPage();
+        const diagnostics = captureBrowserDiagnostics(page);
+        const { port } = server.addr as Deno.NetAddr;
+        const response = await page.goto(`http://127.0.0.1:${port}/`);
+
+        assertEquals(response?.status(), 200);
+        await waitForHydration(page, diagnostics);
+        assertEquals(
+          await page.evaluate(() => document.documentElement.dataset.hydrationArtifact),
+          "aged-release",
+        );
+        assertEquals(getBrowserDiagnosticMessages(diagnostics), []);
+      } finally {
+        await closeChromium(browser);
+        if (server) {
+          await server.shutdown();
+          await server.finished;
+        }
+        unregisterManifest();
+        clearReleaseAssetManifestCache();
+        if (previousManifestFlag === undefined) {
+          deleteEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+        } else {
+          setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, previousManifestFlag);
         }
         await Deno.remove(projectDir, { recursive: true });
       }

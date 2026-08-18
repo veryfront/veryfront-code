@@ -861,6 +861,7 @@ export class HTMLGenerator {
             projectDir: this.config.projectDir,
             buildOutDir: this.config.config?.build?.outDir,
             releaseId,
+            releaseBuilderVersion: context.options?.releaseAssetManifest?.builderVersion,
           }),
       )
       : undefined;

@@ -211,6 +211,29 @@ describe("server/services/static/static-file.service", () => {
       }
     });
 
+    it("revalidates a legacy hydration runtime from an immutable release", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const files = new Map<string, Uint8Array>([
+        [
+          "/project/dist/_veryfront/hydration-runtime.js",
+          new TextEncoder().encode("export const releaseRuntime = true;"),
+        ],
+      ]);
+      const service = new StaticFileService(createMockFsRepo(files));
+
+      const result = await service.resolveFile(
+        "/_veryfront/hydration-runtime.js",
+        makeOptions(),
+      );
+
+      assertExists(result);
+      assertEquals(result.cacheStrategy, "no-cache");
+    });
+
     it("returns medium for regular public file", async () => {
       __injectDepsForTests({
         manifestCache: new Map(),

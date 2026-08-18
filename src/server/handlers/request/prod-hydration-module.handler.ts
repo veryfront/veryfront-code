@@ -7,6 +7,7 @@ import {
   PROD_HYDRATION_MODULE_PATH,
   PROD_HYDRATION_MODULE_VERSIONED_PATH_PATTERN,
 } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+import { hasImmutableReleaseHydrationRuntime } from "#veryfront/html/hydration-script-builder/prod-runtime-selection.ts";
 import { computeStrongEtag, hasMatchingEtag } from "../utils/etag.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 
@@ -42,6 +43,16 @@ export class ProdHydrationModuleHandler extends BaseHandler {
 
     const pathname = new URL(req.url).pathname;
     const isVersioned = isVersionedProdHydrationModulePath(pathname);
+
+    // Legacy releases have no content-addressed runtime. Their HTML selects the
+    // release-baked legacy file, so StaticHandler must serve that file rather
+    // than this process's generated runtime.
+    if (
+      pathname === PROD_HYDRATION_MODULE_PATH &&
+      hasImmutableReleaseHydrationRuntime(ctx.releaseId)
+    ) {
+      return this.continue();
+    }
 
     // Serve only the current content address dynamically. Non-current hashes
     // may name valid release-baked assets, so StaticHandler owns their lookup

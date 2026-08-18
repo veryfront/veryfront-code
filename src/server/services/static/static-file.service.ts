@@ -30,6 +30,7 @@ import {
   CONTENT_TYPES,
   getContentType as getContentTypeFromExt,
 } from "../../handlers/utils/content-types.ts";
+import { PROD_HYDRATION_MODULE_PATH } from "#veryfront/html/hydration-script-builder/prod-path.ts";
 
 const logger = serverLogger.component("static-file-service");
 
@@ -307,6 +308,7 @@ export class StaticFileService {
     options: StaticFileOptions,
   ): CacheStrategy {
     if (options.isPreviewMode && !options.isLocalProject) return "no-cache";
+    if (requestPath === PROD_HYDRATION_MODULE_PATH) return "no-cache";
 
     const isVeryfrontAsset = requestPath.includes("/_veryfront/") ||
       requestPath.includes("/_vf/assets/");

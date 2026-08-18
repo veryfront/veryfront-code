@@ -108,6 +108,13 @@ describe("hydration-script-builder/prod-scripts", () => {
       assertEquals(result.includes(getProdHydrationModulePath()), false);
     });
 
+    it("should use an explicitly selected legacy release runtime path", () => {
+      const result = getProdScriptsForPath(PROD_HYDRATION_MODULE_PATH, "nonce-abc");
+
+      assertEquals(result.includes(`src="${PROD_HYDRATION_MODULE_PATH}"`), true);
+      assertEquals(result.includes(getProdHydrationModulePath()), false);
+    });
+
     it("should reject an invalid selected runtime path", () => {
       const error = assertThrows(
         () => getProdScriptsForPath('"><script>alert(1)</script>'),

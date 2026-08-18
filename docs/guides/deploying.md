@@ -52,14 +52,20 @@ the runtime from the currently serving Veryfront process.
 This pairing is a compatibility boundary. Keep the hydration runtime for as
 long as its immutable release can be deployed or served. Retire the release and
 its browser artifacts together; never delete only the hydration runtime or
-redirect its hashed URL to newer bytes. A release that is missing its single
-versioned runtime fails rendering instead of falling back to a potentially
-incompatible runtime.
+redirect its hashed URL to newer bytes.
+
+Releases created before versioned runtimes use their own
+`/_veryfront/hydration-runtime.js` asset. Veryfront revalidates that legacy
+asset from the release itself and never substitutes the currently serving
+runtime. For releases created before the runtime artifact contract, Veryfront
+uses the serving runtime only when the release has no hydration runtime at all.
+All contract-era releases must provide a baked runtime, otherwise rendering
+fails instead of falling back to potentially incompatible bytes.
 
 Veryfront's required browser regression job exercises the current server
-against an aged release artifact set. The build contract test also verifies
-that every promoted artifact set contains exactly one discoverable versioned
-hydration runtime, so an incompatible pairing blocks promotion in CI.
+against aged release artifact sets. The build contract test verifies that new
+production builds contain exactly one discoverable versioned hydration runtime,
+while runtime compatibility tests cover legacy-only releases.
 
 This policy follows [incident #264](https://github.com/veryfront/veryfront-issue-inbox/issues/264)
 and the immediate compatibility fix in

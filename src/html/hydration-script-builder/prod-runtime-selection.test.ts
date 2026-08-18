@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotStrictEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DirEntry, FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getProdHydrationModulePath } from "./prod-scripts.ts";
+import { getProdHydrationModulePath, PROD_HYDRATION_MODULE_PATH } from "./prod-scripts.ts";
 import {
   hasImmutableReleaseHydrationRuntime,
   resolveProdHydrationModulePath,
@@ -133,13 +133,82 @@ describe("resolveProdHydrationModulePath", () => {
     );
   });
 
-  it("fails closed when a release has no baked content-addressed runtime", async () => {
+  it("uses the legacy runtime baked into a pre-versioned release", async () => {
+    assertEquals(
+      await resolveProdHydrationModulePath({
+        fs: releaseFileSystem(["hydration-runtime.js", "router.js"]),
+        projectDir: "/project",
+        releaseId: "release-pre-versioned",
+      }),
+      PROD_HYDRATION_MODULE_PATH,
+    );
+  });
+
+  it("uses the serving runtime for a pre-contract release with no baked runtime", async () => {
+    assertEquals(
+      await resolveProdHydrationModulePath({
+        fs: releaseFileSystem(["router.js"]),
+        projectDir: "/project",
+        releaseId: "release-pre-contract",
+        releaseBuilderVersion: "0.1.1220",
+      }),
+      getProdHydrationModulePath(),
+    );
+  });
+
+  it("uses the serving runtime for a pre-contract release with no runtime directory", async () => {
+    const missingDirectory = Object.assign(new Error("missing runtime directory"), {
+      code: "ENOENT",
+    });
+
+    assertEquals(
+      await resolveProdHydrationModulePath({
+        fs: rejectingFileSystem(missingDirectory),
+        projectDir: "/project",
+        releaseId: "release-pre-contract-no-directory",
+        releaseBuilderVersion: "0.1.1220",
+      }),
+      getProdHydrationModulePath(),
+    );
+  });
+
+  it("fails closed when a contract-era release has no baked hydration runtime", async () => {
     const error = await assertRejects(
       () =>
         resolveProdHydrationModulePath({
-          fs: releaseFileSystem(["hydration-runtime.js", "router.js"]),
+          fs: releaseFileSystem(["router.js"]),
           projectDir: "/project",
           releaseId: "release-incomplete",
+          releaseBuilderVersion: "0.1.1244",
+        }),
+      Error,
+    );
+
+    assertEquals((error as { slug?: unknown }).slug, "render-error");
+  });
+
+  it("fails closed when a runtime-less release has unknown builder metadata", async () => {
+    const error = await assertRejects(
+      () =>
+        resolveProdHydrationModulePath({
+          fs: releaseFileSystem(["router.js"]),
+          projectDir: "/project",
+          releaseId: "release-unknown",
+        }),
+      Error,
+    );
+
+    assertEquals((error as { slug?: unknown }).slug, "render-error");
+  });
+
+  it("fails closed when a runtime-less release has malformed builder metadata", async () => {
+    const error = await assertRejects(
+      () =>
+        resolveProdHydrationModulePath({
+          fs: releaseFileSystem(["router.js"]),
+          projectDir: "/project",
+          releaseId: "release-malformed",
+          releaseBuilderVersion: "v0.1.1220",
         }),
       Error,
     );
