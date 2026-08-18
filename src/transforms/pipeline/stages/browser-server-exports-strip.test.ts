@@ -2681,6 +2681,46 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("keeps a getter-returned body called with an initialized function parameter", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `((value) => {`,
+        `  ({ get run() { return (arg) => { globalThis.registered = KEY; }; } }).run(value);`,
+        `})(1);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-object-getter-function-param.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("keeps a getter-returned body called from a for-of body", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `for (const value of [1]) {`,
+        `  ({ get run() { return (arg) => { globalThis.registered = KEY; }; } }).run(value);`,
+        `}`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-object-getter-for-body.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("keeps a getter-returned body after an inert default initializes", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2806,6 +2846,46 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes((error as Error).message, "KEY");
       assertStringIncludes((error as Error).message, "root-object-getter-nested-tdz.tsx");
+    });
+
+    it("does not bypass a named class TDZ during heritage evaluation", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const value = 1;`,
+        `const Derived = class value extends ({ get run() {`,
+        `  return (arg) => { globalThis.registered = KEY; };`,
+        `} }).run(value) {};`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-object-getter-class-tdz.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-object-getter-class-tdz.tsx");
+    });
+
+    it("keeps a for-of binding in the TDZ while evaluating its RHS", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const value = 1;`,
+        `for (const value of ({ get run() {`,
+        `  return (arg) => { globalThis.registered = KEY; return []; };`,
+        `} }).run(value)) {}`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-object-getter-for-rhs-tdz.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-object-getter-for-rhs-tdz.tsx");
     });
 
     it("does not run a getter-returned body when a call argument can throw", async () => {

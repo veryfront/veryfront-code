@@ -1993,6 +1993,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       addExecutionBinding(scope, node.param, "instantiation", node);
       return scope;
     }
+    if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+      addExecutionBinding(scope, node.id, "unknown", node);
+      return scope;
+    }
     if (
       (node.type === "ForStatement" || node.type === "ForInStatement" ||
         node.type === "ForOfStatement")
@@ -2002,8 +2006,13 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         isNode(declaration) && declaration.type === "VariableDeclaration" &&
         declaration.kind !== "var"
       ) {
+        const initializationNode =
+          (node.type === "ForInStatement" || node.type === "ForOfStatement") &&
+            isNode(node.right)
+            ? node.right
+            : declaration;
         for (const declarator of declaratorsOf(declaration)) {
-          addExecutionBinding(scope, declarator.id, "evaluation", declarator);
+          addExecutionBinding(scope, declarator.id, "evaluation", initializationNode);
         }
       }
       return scope;
@@ -2031,6 +2040,18 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     }
     return initialized;
   };
+
+  const withUnknownBindingsInitialized = (scope: ExecutionScope): ExecutionScope =>
+    new Map(
+      [...scope].map(([name, bindings]) => [
+        name,
+        bindings.map((binding) =>
+          binding.initialization === "unknown"
+            ? { ...binding, initialization: "instantiation" as const }
+            : binding
+        ),
+      ]),
+    );
 
   const isInstanceField = (node: Node): boolean =>
     (node.type === "ClassProperty" || node.type === "ClassPrivateProperty" ||
@@ -2480,7 +2501,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         ? child
         : null;
       if (invokedMember) executedNodes.add(invokedMember);
-      walk(child, entersConstructedClassBody, activeScopes);
+      const entersCompletedBindingPhase = introducedScope !== null &&
+        ((isFunction && child === node.body) ||
+          ((node.type === "ClassDeclaration" || node.type === "ClassExpression") &&
+            child.type === "ClassBody"));
+      const childScopes = entersCompletedBindingPhase
+        ? [withUnknownBindingsInitialized(introducedScope), ...localScopes]
+        : activeScopes;
+      walk(child, entersConstructedClassBody, childScopes);
     }
   };
 
