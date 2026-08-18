@@ -25,16 +25,16 @@
  *
  * - Only an exported declaration is emptied. A private helper called
  *   `getServerData` is ordinary client code.
- * - An import whose bindings all fall out of use because they were in the
- *   stripped hook's dependency closure is deleted. Reducing it to a side-effect
- *   import keeps the imported module in the browser graph, including any
- *   transitive server-only modules it reaches. Node built-ins and Veryfront
- *   framework imports are also deleted when unused, because their browser
- *   side-effect imports are known unsafe or unnecessary. Anything else is left
- *   exactly as authored: this pass takes out only the specifiers the stripped
- *   hooks owned, and never writes a side-effect import of its own. The compile
- *   stage runs after this one and erases whatever is genuinely unused. See the
- *   ordering note in `stripServerOnlyExports`.
+ * - An import the stripped hooks owned a binding of is deleted whole once no
+ *   binding it declares is read any more, `import srv = require("./x.js")`
+ *   included. Keeping any part of it, as a bare side-effect import or as the
+ *   specifiers the hooks did not own, keeps the imported module in the browser
+ *   graph along with every transitive server-only module it reaches. Node
+ *   built-ins and Veryfront framework imports are also deleted when unused,
+ *   because their browser side-effect imports are known unsafe or unnecessary.
+ *   An import the hooks own nothing of is left exactly as authored, and the
+ *   compile stage runs after this one and erases it when it is genuinely
+ *   unused. See the ordering note in `stripServerOnlyExports`.
  *
  * Hooks are matched on the name they are *exported* under, not the name they
  * are declared with, because that is what the runtime looks up: the data
@@ -480,9 +480,10 @@ interface ModuleScopeDecl {
 }
 
 /**
- * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
- * whose bindings we could safely drop if nothing references them. Exported
- * declarations are part of the module's contract and are never candidates.
+ * Non-exported top-level `const`/`let`/`var`/`function`/`class` and `import x =
+ * ...` declarations whose bindings we could safely drop if nothing references
+ * them. Exported declarations are part of the module's contract and are never
+ * candidates.
  * Destructuring declarations are skipped — a pattern can carry default-value
  * references, and a partial removal is not worth the risk.
  */
@@ -491,6 +492,20 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
 
   for (const statement of body) {
     if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
+      const id = statement.id;
+      const name = nodeName(id);
+      if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
+      continue;
+    }
+
+    // `import srv = require("./lib.js")` and `import srv = ns.member` each bind
+    // a value the compiler emits, so a hook-only one has to be pruned like any
+    // other module-scope declaration. This pass never met the node shape while
+    // it ran after compile: esbuild had already lowered it to `const srv =
+    // require("./lib.js")`. Left in place it reaches the browser, where the
+    // module stays in the graph and `require` is not even defined, so the page
+    // dies on a ReferenceError instead of rendering.
+    if (statement.type === "TSImportEqualsDeclaration" && !isErasedTypeNode(statement)) {
       const id = statement.id;
       const name = nodeName(id);
       if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
@@ -1234,29 +1249,14 @@ function importedBindings(statement: Node): string[] {
   return bindings;
 }
 
-/** Remove the specifiers whose bindings the stripped hooks owned. */
-function dropOwnedSpecifiers(statement: Node, hookClosure: Set<string>): void {
-  const specifiers = Array.isArray(statement.specifiers) ? statement.specifiers : [];
-  const kept = specifiers.filter((specifier) => {
-    if (!isNode(specifier)) return true;
-    if (specifier.importKind === "type") return true;
-    const name = nodeName(specifier.local);
-    return !name || !hookClosure.has(name);
-  });
-  // Emptying the list would produce the bare side-effect import this pass must
-  // never synthesise, so keep the statement as authored if nothing survives.
-  if (kept.length === 0 || kept.length === specifiers.length) return;
-  statement.specifiers = kept;
-}
-
 /**
- * Drop imports nothing references any more when their bindings are in the
- * stripped hook's dependency closure, or when their source is known unsafe or
- * unnecessary as a browser side-effect import. Keeping a hook-only import as a
- * bare side-effect import would keep its transitive graph in the browser
- * artifact, which is exactly what this stage strips. An import whose remaining
- * bindings the hooks never owned keeps every one of those bindings exactly as
- * authored, and a bare `import "./x.ts"` written by hand is never touched.
+ * Drop imports nothing references any more when the stripped hooks owned any of
+ * their bindings, or when their source is known unsafe or unnecessary as a
+ * browser side-effect import. Keeping a hook-only import in any form would keep
+ * its transitive graph in the browser artifact, which is exactly what this
+ * stage strips. An import whose bindings the hooks never owned keeps every one
+ * of those bindings exactly as authored, and a bare `import "./x.ts"` written
+ * by hand is never touched.
  */
 function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[] {
   // Import liveness must be scope-aware. A local enum member, namespace,
@@ -1271,27 +1271,38 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
     const bindings = importedBindings(statement);
     // Already a side-effect import: nothing to drop.
     if (bindings.length === 0) return true;
+    // A binding still read by surviving code keeps the statement, and keeps it
+    // with every specifier it was authored with.
     if (bindings.some((binding) => referenced.has(binding))) return true;
 
     const source = isNode(statement.source) ? statement.source.value : undefined;
     const isKnownDroppableSource = typeof source === "string" &&
       (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
     // Two reasons to delete the whole statement. A node: or veryfront source is
-    // unsafe or pointless as a browser side-effect import whatever used it. A
-    // project-relative source goes only when the stripped hook owned every
-    // binding, because that module is reached solely through server-only code
-    // and a bare side-effect import would keep its whole transitive graph in
-    // the browser artifact.
-    if (isKnownDroppableSource || bindings.every((binding) => hookClosure.has(binding))) {
+    // unsafe or pointless as a browser side-effect import whatever used it. Any
+    // other source goes once the stripped hooks owned a binding of it and no
+    // binding it declares is read any more: that module is reached solely
+    // through server-only code, so nothing of the statement may survive.
+    //
+    // Trimming it to the specifiers the hooks did not own is not enough, and
+    // the loader decides whether that is visible. This stage emits the same
+    // text whatever the extension is; the compile stage that runs after it
+    // erases an unused import only under the `ts` and `tsx` loaders, where a
+    // specifier may name a type. Under `js`, `jsx`, `md` and `mdx`
+    // (`getLoaderFromPath` in `src/transforms/esm/transform-utils.ts`) esbuild
+    // must preserve the module for its side effects, so it rewrites the
+    // remainder into exactly the bare `import "./x.js"` this stage must never
+    // ship. Deleting the statement is also what the pass did when it ran after
+    // compile, so the artifact matches the ordering this one replaced.
+    if (isKnownDroppableSource || bindings.some((binding) => hookClosure.has(binding))) {
       return false;
     }
 
-    // Anything else is an import this pass does not own. Take out only the
-    // specifiers the stripped hooks owned and leave the rest as authored. See
-    // the ordering note at the call site: demoting the statement to a bare
-    // `import "./x.ts"` would turn an import the compiler can erase into one it
-    // must preserve, which is how a server-only module leaks into the browser.
-    dropOwnedSpecifiers(statement, hookClosure);
+    // Anything else is an import this pass does not own a single binding of,
+    // so it is left exactly as authored, unused specifiers included. See the
+    // ordering note at the call site: rewriting the statement here would turn
+    // an import the compiler can erase into one it must preserve, which is how
+    // a server-only module leaks into the browser.
     return true;
   });
 }

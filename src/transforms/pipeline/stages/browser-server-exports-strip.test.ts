@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../plugins/__tests__/code-parser-setup.ts";
+import "../../mdx/compiler/__tests__/content-processor-setup.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
@@ -802,11 +803,13 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "a, b");
     });
 
-    // Mixed import: the pass owns `loadSecret` and nothing else. It takes that
-    // one specifier out and leaves `initClient` as authored. Emptying the
-    // specifier list instead would leave a bare side-effect import that the
-    // compiler must preserve, keeping the module in the browser artifact.
-    it("removes only the hook-owned specifier from a mixed import", async () => {
+    // Mixed import: the pass owns `loadSecret`, and once the hook is emptied
+    // nothing reads `initClient` either. The whole statement goes. Trimming it
+    // to `import { initClient } from "./client-setup.ts"` instead is only
+    // erasable under the `ts` and `tsx` loaders; under `js`, `jsx` and `mdx`
+    // the compile stage must keep the module for its side effects and rewrites
+    // the remainder into the bare import this stage may never ship.
+    it("deletes a mixed import whose surviving specifier nothing reads", async () => {
       const code = [
         `import { initClient, loadSecret } from "./client-setup.ts";`,
         `export async function getServerData() { return { props: { token: loadSecret() } }; }`,
@@ -815,8 +818,25 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import { initClient } from "./client-setup.ts"`);
+      assertNotIncludes(result, "client-setup.ts");
       assertEquals(occurrences(result, "loadSecret"), 0);
+      assertEquals(occurrences(result, "initClient"), 0);
+    });
+
+    it("keeps every specifier of a mixed import the browser still reads", async () => {
+      // The boundary of the rule above. `initClient` has a surviving reader, so
+      // the statement stays exactly as authored: the pass never edits an import
+      // the browser still needs.
+      const code = [
+        `import { initClient, loadSecret } from "./client-setup.ts";`,
+        `export async function getServerData() { return { props: { token: loadSecret() } }; }`,
+        `export default function Page() { return initClient(); }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, `import { initClient, loadSecret } from "./client-setup.ts"`);
+      assertStringIncludes(result, "return initClient()");
     });
 
     it("keeps a bare side-effect import untouched", async () => {
@@ -1299,6 +1319,159 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result.code, "lib/analytics");
       assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
     });
+
+    // The dialect axis. This stage emits the same text whatever the extension
+    // is, so what reaches the browser is decided by the loader the compile
+    // stage picks (`getLoaderFromPath` in
+    // `src/transforms/esm/transform-utils.ts`). Under `ts` and `tsx` esbuild
+    // may elide an unused import, because a specifier can name a type. Under
+    // `js`, `jsx`, `md` and `mdx` it must keep the module for its side effects,
+    // so it rewrites whatever this pass leaves behind into a bare
+    // `import "./x.js"`. A guard written on a single `.tsx` page therefore
+    // proves nothing about the other four.
+    const SERVER_LIB = "./lib/server-only-lib.js";
+
+    /**
+     * Whether the artifact still imports the server-only module, under the
+     * authored specifier or under the base64 filesystem URL the MDX path
+     * rewrites it to.
+     */
+    function importsServerLib(code: string): boolean {
+      if (code.includes("server-only-lib")) return true;
+      for (const match of code.matchAll(/\/_veryfront\/fs\/([A-Za-z0-9_-]+)\.js/g)) {
+        const base64 = (match[1] ?? "").replaceAll("-", "+").replaceAll("_", "/");
+        const decoded = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
+        if (decoded.includes("server-only-lib")) return true;
+      }
+      return false;
+    }
+
+    function assertNoServerLibImport(code: string, cell: string): void {
+      assertEquals(
+        importsServerLib(code),
+        false,
+        `${cell} still reaches the server-only module:\n${code}`,
+      );
+    }
+
+    const pageOf = (ext: string): string =>
+      ext === "tsx" || ext === "jsx"
+        ? `export default function Page() { return <span>ok</span>; }`
+        : `export default function Page() { return null; }`;
+
+    const importShapes = [
+      {
+        name: "mixed specifiers",
+        statement: `import { hashOf, unusedSibling } from "${SERVER_LIB}";`,
+        leftover: "unusedSibling",
+      },
+      {
+        name: "a default-import sibling",
+        statement: `import defaultLib, { hashOf } from "${SERVER_LIB}";`,
+        leftover: "defaultLib",
+      },
+    ] as const;
+
+    for (const ext of ["ts", "tsx", "js", "jsx"] as const) {
+      for (const shape of importShapes) {
+        for (const dev of [false, true] as const) {
+          const mode = dev ? "dev" : "prod";
+          const cell = `${ext}-${mode}-${shape.name}`;
+          it(`deletes an import with ${shape.name} on a .${ext} page in ${mode}`, async () => {
+            const source = [
+              shape.statement,
+              `export async function getServerData() { return { props: { h: hashOf(1) } }; }`,
+              pageOf(ext),
+            ].join("\n");
+
+            const result = await runPipeline(source, `/project/pages/probe.${ext}`, "/project", {
+              projectId: `pre-compile-dialect-${cell}`,
+              ssr: false,
+              dev,
+            });
+
+            assertNoServerLibImport(result.code, cell);
+            assertEquals(occurrences(result.code, shape.leftover), 0);
+            assertStringIncludes(result.code, "getServerData");
+          });
+        }
+      }
+    }
+
+    for (const shape of importShapes) {
+      for (const dev of [false, true] as const) {
+        const mode = dev ? "dev" : "prod";
+        const cell = `mdx-${mode}-${shape.name}`;
+        it(`deletes an import with ${shape.name} on a .mdx page in ${mode}`, async () => {
+          // MDX compiles to JSX, so it takes the `jsx` loader and the same
+          // side-effect rule. The specifier is rewritten to a base64 filesystem
+          // URL on the way out, which is why the assertion decodes it.
+          const source = [
+            shape.statement,
+            ``,
+            `export async function getServerData() { return { props: { h: hashOf(1) } }; }`,
+            ``,
+            `# heading`,
+          ].join("\n");
+
+          const result = await runPipeline(source, "/project/pages/probe.mdx", "/project", {
+            projectId: `pre-compile-dialect-${cell}`,
+            ssr: false,
+            dev,
+          });
+
+          assertNoServerLibImport(result.code, cell);
+          assertEquals(occurrences(result.code, shape.leftover), 0);
+          assertStringIncludes(result.code, "heading");
+        });
+      }
+    }
+
+    // `import x = require("./x.js")` and `import x = ns.member` are node shapes
+    // this pass never met while it ran after compile: esbuild had already
+    // lowered them to `const x = require("./x.js")`. Pre-compile they reach the
+    // browser untouched, where the server-only module stays in the graph and
+    // `require` is not defined, so the page dies on a ReferenceError instead of
+    // rendering.
+    const importEqualsShapes = [
+      {
+        name: "an import-equals require",
+        statements: [`import srv = require("${SERVER_LIB}");`],
+      },
+      {
+        name: "an import-equals namespace alias",
+        statements: [
+          `import * as lib from "${SERVER_LIB}";`,
+          `import srv = lib.helpers;`,
+        ],
+      },
+    ] as const;
+
+    for (const ext of ["ts", "tsx"] as const) {
+      for (const shape of importEqualsShapes) {
+        for (const dev of [false, true] as const) {
+          const mode = dev ? "dev" : "prod";
+          const cell = `${ext}-${mode}-${shape.name}`;
+          it(`deletes ${shape.name} on a .${ext} page in ${mode}`, async () => {
+            const source = [
+              ...shape.statements,
+              `export async function getServerData() { return { props: { h: srv.hashOf(1) } }; }`,
+              pageOf(ext),
+            ].join("\n");
+
+            const result = await runPipeline(source, `/project/pages/probe.${ext}`, "/project", {
+              projectId: `pre-compile-import-equals-${cell}`,
+              ssr: false,
+              dev,
+            });
+
+            assertNoServerLibImport(result.code, cell);
+            assertNotIncludes(result.code, "require(");
+            assertStringIncludes(result.code, "getServerData");
+          });
+        }
+      }
+    }
 
     it("keeps a jsx pragma that sits above a removed import", async () => {
       // Babel attaches the file's opening comments to its first statement, so
@@ -1788,10 +1961,11 @@ export function hook() {
 
         const result = await stripServerOnlyExports(code, "page.tsx");
 
-        // `secretOnly` is the only binding the hook owned, so it is the only one
-        // removed. `Low` was never read and was never the pass's to touch, so it
-        // stays as authored for the compiler to erase.
-        assertStringIncludes(result, `import { Low } from "../lib/server-only.ts"`);
+        // The hook owned `secretOnly` and `Level.Low` is an enum member access,
+        // not a read of the imported `Low`, so no binding of this import has a
+        // reader left and the statement goes whole. Counting `Level.Low` as a
+        // read would keep the statement and `secretOnly` with it.
+        assertNotIncludes(result, "server-only.ts");
         assertEquals(occurrences(result, "secretOnly"), 0);
         assertStringIncludes(result, "Level.Low");
       });
@@ -1871,7 +2045,10 @@ export function hook() {
 
         const result = await stripServerOnlyExports(code, "page.tsx");
 
-        assertStringIncludes(result, `import { Alias } from "../lib/server-only.ts"`);
+        // `Alias` inside `M` is the namespace-local alias, not the import, so
+        // the import has no reader left and the hook-owned statement goes
+        // whole. Reading it as a use of the import would keep `secretOnly`.
+        assertNotIncludes(result, "server-only.ts");
         assertEquals(occurrences(result, "secretOnly"), 0);
         assertStringIncludes(result, "import Alias = ClientNS");
       });
@@ -1905,7 +2082,8 @@ export function hook() {
 
         const result = await stripServerOnlyExports(code, "page.tsx");
 
-        assertStringIncludes(result, `import { Alias } from "../lib/server-only.ts"`);
+        // Same boundary with a namespace-local enum in place of the alias.
+        assertNotIncludes(result, "server-only.ts");
         assertEquals(occurrences(result, "secretOnly"), 0);
         assertStringIncludes(result, "enum Alias");
       });
