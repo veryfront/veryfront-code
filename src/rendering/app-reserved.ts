@@ -4,6 +4,7 @@ import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import type { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -89,7 +90,7 @@ export async function loadReservedWithPath(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
-  mode: "development" | "production",
+  modes: RenderModes,
   adapter: RuntimeAdapter,
   projectId?: string,
   contentSourceId?: string,
@@ -116,7 +117,8 @@ export async function loadReservedWithPath(
         const src = await adapter.fs.readFile(file);
         const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
           projectId: projectId ?? projectDir,
-          dev: mode === "development",
+          dev: modes.compileMode === "development",
+          mode: modes.environment,
           contentSourceId,
           reactVersion,
           serverExternalPackages,
@@ -143,7 +145,7 @@ export async function tryLoadReservedInDirs(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
-  mode: "development" | "production",
+  modes: RenderModes,
   adapter: RuntimeAdapter,
   projectId?: string,
   contentSourceId?: string,
@@ -160,7 +162,7 @@ export async function tryLoadReservedInDirs(
     dirs,
     which,
     projectDir,
-    mode,
+    modes,
     adapter,
     projectId,
     contentSourceId,

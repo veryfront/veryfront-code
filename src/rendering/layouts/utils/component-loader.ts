@@ -21,6 +21,7 @@ import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/keys.ts";
 import { LAYOUT_EXTENSIONS } from "#veryfront/rendering/layouts/types.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import {
   type DependencyPinningSourceInput,
   resolveDependencyPinningSnapshot,
@@ -259,6 +260,7 @@ export async function loadTSXComponent(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  modes: RenderModes,
   reactVersion?: string,
   deps: LoadTSXComponentDeps = { loadComponentFromSource },
   dependencyPinningCacheKey?: string,
@@ -267,10 +269,9 @@ export async function loadTSXComponent(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
-  mode: "development" | "production" = "production",
 ): Promise<BundledReact.ComponentType> {
   throwIfAborted(signal);
-  const dev = mode === "development";
+  const dev = modes.compileMode === "development";
   const source = await adapter.fs.readFile(componentPath);
   const dependencySnapshot = await resolveDependencyPinningSnapshot(
     dependencyPinningSource ?? projectDir,
@@ -293,8 +294,11 @@ export async function loadTSXComponent(
     cacheKey += `:server-externals:${hashString(serverExternalPackagesIdentity)}`;
   }
   // The transform output differs by mode, so the two modes must not share an
-  // entry. Production keeps the historical key shape.
+  // entry. Production keeps the historical key shape. Preview instruments the
+  // output with node positions on top of a production compile, so it needs its
+  // own entry too.
   if (dev) cacheKey += ":dev";
+  if (modes.environment === "preview") cacheKey += ":preview";
 
   throwIfAborted(signal);
   const cached = cache.get(cacheKey);
@@ -324,6 +328,7 @@ export async function loadTSXComponent(
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencyPinningSource ?? projectDir,
+          mode: modes.environment,
           signal: control.signal,
         },
       );
@@ -372,6 +377,8 @@ export function loadMDXLayout(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
+  /** Render mode for the layout's own `/_vf_modules/*` imports. */
+  mode?: "development" | "production",
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }> | undefined> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -402,6 +409,7 @@ export function loadMDXLayout(
         projectDir,
         projectSlug,
         contentSourceId,
+        mode,
         reactVersion,
         dependencyPinningCacheKey,
         dependencyPinningDependencies,
@@ -441,6 +449,7 @@ export async function preloadMDXLayoutModule(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
+  mode?: "development" | "production",
 ): Promise<void> {
   await loadMDXLayout(
     bundle,
@@ -457,6 +466,7 @@ export async function preloadMDXLayoutModule(
     moduleServerOrigin,
     config,
     isLocalProject,
+    mode,
   );
 }
 
@@ -470,6 +480,7 @@ export async function applyTSXLayout(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  modes: RenderModes,
   reactVersion?: string,
   dependencyPinningCacheKey?: string,
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
@@ -477,7 +488,6 @@ export async function applyTSXLayout(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
-  mode?: "development" | "production",
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -500,6 +510,7 @@ export async function applyTSXLayout(
       projectId,
       projectSlug,
       contentSourceId,
+      modes,
       reactVersion,
       undefined,
       dependencyPinningCacheKey,
@@ -508,7 +519,6 @@ export async function applyTSXLayout(
       moduleServerOrigin,
       serverExternalPackages,
       signal,
-      mode,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
@@ -551,6 +561,7 @@ export async function applyMDXLayout(
   moduleServerOrigin?: string,
   config?: VeryfrontConfig,
   isLocalProject?: boolean,
+  mode?: "development" | "production",
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
@@ -568,6 +579,7 @@ export async function applyMDXLayout(
     moduleServerOrigin,
     config,
     isLocalProject,
+    mode,
   );
 
   if (!LayoutFn) {

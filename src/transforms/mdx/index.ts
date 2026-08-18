@@ -31,6 +31,12 @@ export interface MDXLoadModuleOptions {
   projectDir?: string;
   projectSlug?: string;
   contentSourceId?: string;
+  /**
+   * Render mode for this load. It selects the compile mode of every
+   * `/_vf_modules/*` import the compiled entry pulls in. Absent means
+   * production.
+   */
+  mode?: "development" | "production";
   reactVersion?: string;
   serverExternalPackages?: readonly string[];
   dependencyPinningCacheKey?: string;
@@ -106,6 +112,7 @@ export class MDXRenderer {
       projectDir,
       projectSlug,
       contentSourceId,
+      mode,
       reactVersion,
       serverExternalPackages,
       dependencyPinningCacheKey,
@@ -128,6 +135,7 @@ export class MDXRenderer {
       projectDir,
       projectSlug,
       contentSourceId,
+      mode,
       reactVersion,
       serverExternalPackages,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,

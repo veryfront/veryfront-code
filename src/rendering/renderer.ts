@@ -430,6 +430,7 @@ export class Renderer {
         ctx.projectId,
         ctx.environment,
         releaseKey,
+        ctx.mode,
         releaseManifest.manifestVersion,
       ),
     };
@@ -1223,6 +1224,7 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      environment: ctx.environment,
       moduleServerUrl: ctx.moduleServerUrl,
       layoutCollector,
       layoutCompiler,
@@ -1236,6 +1238,7 @@ export class Renderer {
       adapter: ctx.adapter,
       config: ctx.config,
       mode: ctx.mode,
+      environment: ctx.environment,
       isLocalProject: ctx.isLocalProject === true,
     });
 

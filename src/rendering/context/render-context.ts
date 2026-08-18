@@ -13,6 +13,33 @@ import { getReadyManifestForRender } from "#veryfront/release-assets/manifest-ca
 
 export type RenderEnvironment = "preview" | "production";
 
+/**
+ * The two independent mode vocabularies a render carries.
+ *
+ * `compileMode` is the compile vocabulary. It selects minification, tree
+ * shaking, sourcemaps and the SSR transform budget. It is derived from whether
+ * the project runs on a local filesystem, so a hosted render is always
+ * `"production"`.
+ *
+ * `environment` is the request vocabulary. It selects preview-only
+ * instrumentation such as the Studio Navigator node positions. It comes from
+ * the already-validated request mode and is never derived from a Host header,
+ * a query parameter, or anything else a client controls.
+ *
+ * A hosted preview render is `{ compileMode: "production", environment:
+ * "preview" }`, so neither field can be derived from the other. Passing one
+ * where the other is expected is a bug: keep them in this pair.
+ */
+export interface RenderModes {
+  compileMode: "development" | "production";
+  environment: RenderEnvironment;
+}
+
+/** Read the render mode pair off a {@link RenderContext}. */
+export function renderModesOf(ctx: RenderContext): RenderModes {
+  return { compileMode: ctx.mode, environment: ctx.environment };
+}
+
 export interface RenderContext {
   projectId: string;
   projectSlug: string;
@@ -71,10 +98,15 @@ export function createRenderContext(
 
   const releaseKey = getReleaseKey(isLocal, environment, branch, ctx.releaseId);
   const readyManifest = getReadyManifestForRender(ctx.releaseId);
+  // isLocal, not environment, decides the compile mode, so it has to reach the
+  // cache prefix: a local development server and a hosted preview server agree
+  // on every other prefix field.
+  const mode: RenderContext["mode"] = isLocal ? "development" : "production";
   const cachePrefix = buildRenderCachePrefix(
     projectId,
     environment,
     releaseKey,
+    mode,
     readyManifest?.manifestVersion,
   );
 
@@ -83,7 +115,7 @@ export function createRenderContext(
     projectSlug,
     projectDir: ctx.projectDir,
     config: ctx.config,
-    mode: isLocal ? "development" : "production",
+    mode,
     isLocalProject: isLocal,
     allowHostProjectCodeExecution: isLocal ||
       ctx.allowHostProjectCodeExecution === true,

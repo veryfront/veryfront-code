@@ -7,6 +7,7 @@ import {
   discoverNestedLayouts,
 } from "#veryfront/rendering/layouts/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 
 type LayoutTestContext = {
   projectDir: string;
@@ -43,6 +44,12 @@ export async function withLayoutHandlingContext(
   });
 }
 
+/** Hosted production: production compile, no preview instrumentation. */
+export const PRODUCTION_MODES: RenderModes = {
+  compileMode: "production",
+  environment: "production",
+};
+
 export function createLayoutCache(): LRUCache<string, unknown> {
   return new LRUCache<string, unknown>({ maxEntries: 10 });
 }
@@ -70,7 +77,13 @@ export function applyLayoutsFunctionBodyForTest(
     nestedLayouts?: LayoutItem[];
     components?: MDXComponents;
     cache?: LRUCache<string, unknown>;
-  } = {},
+    /**
+     * Required on purpose. A default here would hide whichever mode the caller
+     * meant to exercise, which is how the dev TSX layout path lost its coverage
+     * (veryfront/veryfront-issue-inbox#555).
+     */
+    modes: RenderModes;
+  },
 ) {
   return applyLayoutsFunctionBody(
     pageElement,
@@ -84,6 +97,7 @@ export function applyLayoutsFunctionBodyForTest(
     context.projectId,
     context.projectId,
     "build-static",
+    options.modes,
   );
 }
 
@@ -96,7 +110,13 @@ export function applyLayoutsEsmForTest(
     nestedLayouts?: LayoutItem[];
     components?: MDXComponents;
     cache?: LRUCache<string, unknown>;
-  } = {},
+    /**
+     * Required on purpose. A default here would hide whichever mode the caller
+     * meant to exercise, which is how the dev TSX layout path lost its coverage
+     * (veryfront/veryfront-issue-inbox#555).
+     */
+    modes: RenderModes;
+  },
 ) {
   return applyLayoutsESM(
     pageElement,
@@ -110,5 +130,6 @@ export function applyLayoutsEsmForTest(
     context.projectId,
     context.projectId,
     "build-static",
+    options.modes,
   );
 }

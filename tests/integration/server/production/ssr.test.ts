@@ -169,14 +169,38 @@ describe(
       });
     });
 
-    it("renders the nearest app not-found.tsx for missing App Router pages", async () => {
-      await withTestContext("production-server-app-not-found", async (context: TestContext) => {
+    /**
+     * Studio Navigator resolves a selected element by reading `data-node-file`
+     * off the server-rendered HTML. React hydration keeps server-rendered
+     * attributes, so if SSR omits them the browser bundle cannot put them back.
+     *
+     * Hosted preview compiles as production. Both requests below use one
+     * production server and vary only the trusted Host-derived environment.
+     * Preview runs first so the production assertions also detect cache leaks.
+     */
+    it("renders page, layout, and not-found node positions by request environment", async () => {
+      await withTestContext("production-server-node-positions", async (context: TestContext) => {
         await removeAppDir(context.projectDir);
 
-        const segDir = join(context.projectDir, "app", "a", "b");
+        const appDir = join(context.projectDir, "app");
+        const segDir = join(appDir, "a", "b");
         await mkdir(segDir, { recursive: true });
         await writeTextFile(
-          join(context.projectDir, "app", "not-found.tsx"),
+          join(appDir, "layout.tsx"),
+          `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <div id="root-layout">{children}</div>;
+}
+`,
+        );
+        await writeTextFile(
+          join(appDir, "page.tsx"),
+          `export default function Page() {
+  return <section id="page-root">Hello from the page</section>;
+}
+`,
+        );
+        await writeTextFile(
+          join(appDir, "not-found.tsx"),
           `export default function RootNotFound(){ return <p>Root Missing</p>; }`,
         );
         await writeTextFile(
@@ -191,18 +215,51 @@ describe(
           bindAddress: "127.0.0.1",
           defaultProjectSlug: context.projectId,
           defaultProjectId: context.projectId,
+          defaultEnvironment: "production",
         });
         context.trackResource(server);
         await server.ready;
 
         try {
-          const res = await fetch(`http://127.0.0.1:${port}/a/b/missing`);
-          assertEquals(res.status, 404);
-          assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
-          const html = await res.text();
-          assertStringIncludes(html, '<p id="deep-not-found">Missing B</p>');
-          assertEquals(html.includes("data-node-file="), false);
-          assertEquals(html.includes("Root Missing"), false);
+          for (
+            const scenario of [
+              { name: "preview", expectNodePositions: true },
+              { name: "production", expectNodePositions: false },
+            ] as const
+          ) {
+            const host = `${context.projectId}.${scenario.name}.localhost:${port}`;
+            const pageResponse = await fetch(`http://${host}/`);
+            assertEquals(pageResponse.status, 200);
+            const pageHtml = await pageResponse.text();
+
+            assertStringIncludes(pageHtml, 'id="page-root"');
+            assertStringIncludes(pageHtml, 'id="root-layout"');
+            assertEquals(
+              pageHtml.includes('data-node-file="app/page.tsx"'),
+              scenario.expectNodePositions,
+              `page node positions in ${scenario.name}`,
+            );
+            assertEquals(
+              pageHtml.includes('data-node-file="app/layout.tsx"'),
+              scenario.expectNodePositions,
+              `layout node positions in ${scenario.name}`,
+            );
+
+            const notFoundResponse = await fetch(`http://${host}/a/b/missing`);
+            assertEquals(notFoundResponse.status, 404);
+            assertMatch(notFoundResponse.headers.get("content-type") ?? "", /text\/html/i);
+            const notFoundHtml = await notFoundResponse.text();
+            // The id attribute only survives a real SSR render:
+            // extractNotFoundText rebuilds the text as a bare <p>, so this
+            // pins the assertions below to the render path.
+            assertStringIncludes(notFoundHtml, 'id="deep-not-found"');
+            assertStringIncludes(notFoundHtml, "Missing B");
+            assertEquals(
+              notFoundHtml.includes('data-node-file="app/a/b/not-found.tsx"'),
+              scenario.expectNodePositions,
+            );
+            assertEquals(notFoundHtml.includes("Root Missing"), false);
+          }
         } finally {
           await server.stop();
         }

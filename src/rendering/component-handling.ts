@@ -13,6 +13,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getDependencyPinningCacheKey } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
@@ -112,8 +113,18 @@ export async function handleComponentPage(
     projectId?: string;
     /** Enable node position injection for Studio Navigator */
     studioEmbed?: boolean;
-    /** Request mode ("preview" | "production") for studio features */
+    /**
+     * Compile mode ("development" | "production"). Selects minification and
+     * tree shaking. Not the request mode: see `environment`.
+     */
     mode?: string;
+    /**
+     * Request environment ("preview" | "production"). Selects preview-only
+     * instrumentation such as Studio Navigator node positions. A hosted
+     * preview render is compile mode "production" with environment "preview",
+     * so this cannot be derived from `mode`.
+     */
+    environment?: RenderEnvironment;
     /** Content source ID for cache isolation (branch name or release ID) */
     contentSourceId?: string;
     /** React version for transforms (from project config) */
@@ -134,8 +145,8 @@ export async function handleComponentPage(
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
     // Node positions are injected by the SSR module loader (for all files
-    // including this entry point) when dev || mode === "preview" — no need
-    // to inject here to avoid double-injection which shifts positions.
+    // including this entry point) when dev || environment === "preview", so
+    // injecting here too would double-inject and shift positions.
     const fileContent = await adapter.fs.readFile(pageInfo.entity.path);
     const dependencyPinningCacheKey = options?.dependencyPinningCacheKey ??
       await getDependencyPinningCacheKey(projectDir);
@@ -177,7 +188,7 @@ export async function handleComponentPage(
         dependencyPinningCacheKey,
         dependencyPinningDependencies: options?.dependencyPinningDependencies,
         dependencyPinningSource: options?.dependencyPinningSource,
-        mode: options?.mode,
+        mode: options?.environment,
         signal: options?.signal,
       },
     );

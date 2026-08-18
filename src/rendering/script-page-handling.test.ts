@@ -135,6 +135,7 @@ async function renderWithPageRenderer(
   const renderer = new PageRenderer({
     projectDir: options.projectDir,
     mode: "production",
+    environment: "production",
     config,
     adapter,
     componentRegistry: {} as never,

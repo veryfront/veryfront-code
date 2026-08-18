@@ -331,5 +331,57 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
         await esbuild.stop();
       }
     });
+
+    it("threads the render mode into RSC MDX loading", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-mdx-mode-" });
+      await Deno.mkdir(`${projectDir}/app`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/app/page.mdx`, "# Mode RSC page");
+
+      const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+      const mutableRenderer = mdxRenderer as unknown as {
+        loadModuleESM: typeof mdxRenderer.loadModuleESM;
+      };
+      const observedModes: unknown[] = [];
+      mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+        observedModes.push((options as MDXLoadModuleOptions | undefined)?.mode);
+        return Promise.resolve({ default: () => null });
+      };
+
+      try {
+        const snapshot = await getDependencyPinningSnapshot(projectDir);
+        const loadWithMode = async (mode: "development" | "production") => {
+          const handler = new RenderHandler(
+            projectDir,
+            () => null,
+            mode,
+            "app",
+            {
+              adapter: denoAdapter,
+              projectId: "mode-project",
+              projectSlug: "mode-project",
+              contentSourceId: "release-1",
+            },
+          );
+          await (handler as unknown as {
+            loadComponent: (
+              pathname: string,
+              dependencySnapshot: typeof snapshot,
+              reactVersion?: string,
+              moduleServerOrigin?: string,
+            ) => Promise<unknown>;
+          }).loadComponent("/", snapshot, "19.1.1", "http://localhost");
+        };
+
+        await loadWithMode("production");
+        await loadWithMode("development");
+
+        assertEquals(observedModes, ["production", "development"]);
+      } finally {
+        mutableRenderer.loadModuleESM = originalLoadModuleESM;
+        await Deno.remove(projectDir, { recursive: true });
+        const esbuild = await import("veryfront/extensions/bundler");
+        await esbuild.stop();
+      }
+    });
   });
 });

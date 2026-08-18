@@ -268,6 +268,70 @@ describe("ComponentRegistry logic", () => {
   });
 
   describe("dependency snapshot isolation", () => {
+    it("isolates component maps by request environment", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/Button.tsx",
+        "export default function Button() { return null; }",
+      );
+      const seenEnvironments: string[] = [];
+      const registry = new ComponentRegistry(
+        { registerModule: () => Promise.resolve() } as unknown as VirtualModuleSystem,
+        3001,
+        adapter,
+        undefined,
+        undefined,
+        "project-id",
+        "branch:main",
+        (_source, _filePath, _projectDir, _adapter, options) => {
+          const environment = options?.mode ?? "missing";
+          seenEnvironments.push(environment);
+          const Component: React.ComponentType<Record<string, unknown>> = () => null;
+          Component.displayName = `Button(${environment})`;
+          return Promise.resolve(Component);
+        },
+        { compileMode: "production", environment: "production" },
+      );
+
+      await registry.loadFromDirectory("/project/components", true);
+      const productionKey = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "production",
+      );
+      const previewKey = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "preview",
+      );
+      const previewKeyAgain = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "preview",
+      );
+
+      assertEquals(productionKey === previewKey, false);
+      assertEquals(previewKeyAgain, previewKey);
+      assertEquals(
+        registry.getAllAsComponents(productionKey).Button?.displayName,
+        "Button(production)",
+      );
+      assertEquals(
+        registry.getAllAsComponents(previewKey).Button?.displayName,
+        "Button(preview)",
+      );
+      assertEquals(seenEnvironments, ["production", "preview"]);
+    });
+
     it("materializes distinct component maps for concurrent package snapshots", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
