@@ -71,6 +71,7 @@ import {
   type DependencyHashCache,
 } from "#veryfront/cache/dependency-graph.ts";
 import { getMdxModuleCacheVariant } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
+import { composeAbortSignals } from "#veryfront/extensions/abort-signal.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
@@ -178,6 +179,26 @@ function publishTransformCacheIfCurrent(input: {
   return true;
 }
 
+/** Keep a failed singleflight reserved until its abandoned transform settles. */
+function retainInProgressTransformUntilSettled(
+  key: string,
+  leader: Promise<ModuleCacheEntry>,
+  transformSettlement: Promise<void>,
+  error: unknown,
+): Promise<ModuleCacheEntry> | null {
+  if (globalInProgress.get(key) !== leader) return null;
+  const retainedError = error instanceof Error ? error : new Error(String(error));
+  const retained = transformSettlement.then<ModuleCacheEntry>(() => {
+    throw retainedError;
+  });
+  globalInProgress.set(key, retained);
+  void retained.then(
+    () => deleteInProgressTransformIfCurrent(key, retained),
+    () => deleteInProgressTransformIfCurrent(key, retained),
+  );
+  return retained;
+}
+
 function getMdxEsmCacheVariant(
   options: Pick<
     SSRModuleLoaderOptions,
@@ -216,6 +237,7 @@ function startSettledOperation<T>(operation: () => Promise<T>): Promise<SettledO
 async function runTransformAndDependencies<T, D>(
   transform: () => Promise<T>,
   dependencies: () => Promise<D>,
+  onDependencyFailure?: (error: unknown, transformSettlement: Promise<void>) => void,
 ): Promise<{ transformed: T; dependencies: D }> {
   const transformResult = startSettledOperation(transform);
 
@@ -223,6 +245,10 @@ async function runTransformAndDependencies<T, D>(
   try {
     resolvedDependencies = await dependencies();
   } catch (dependencyError) {
+    onDependencyFailure?.(
+      dependencyError,
+      transformResult.then(() => undefined),
+    );
     throw dependencyError;
   }
 
@@ -240,6 +266,7 @@ export const __ssrModuleLoaderInternals = {
   getMdxEsmCacheVariant,
   publishTransformCacheIfCurrent,
   registerInProgressTransformObservers,
+  retainInProgressTransformUntilSettled,
   runTransformAndDependencies,
   scheduleStaleInProgressTransformEviction,
   shouldRetryRejectedInProgressTransform,
@@ -980,7 +1007,7 @@ export class SSRModuleLoader {
           );
           return { localImportPaths, crossProjectPaths };
         };
-        const compile = async (): Promise<string> => {
+        const compile = async (signal: AbortSignal): Promise<string> => {
           const transformed = await withSpan(
             SpanNames.SSR_TRANSFORM_SINGLE,
             () =>
@@ -993,7 +1020,7 @@ export class SSRModuleLoader {
               ),
             { "ssr.file": filePath.split("/").pop() || filePath },
           );
-          throwIfAborted(sharedSignal);
+          throwIfAborted(signal);
           return transformed;
         };
         const finishTransform = async (
@@ -1114,9 +1141,29 @@ export class SSRModuleLoader {
           // Dev cold starts overlap compilation with dependency traversal. The
           // first capacity slot ends with compilation, before the helper waits
           // for children, and post-processing reacquires a slot separately.
+          const compileController = new AbortController();
+          const compileSignal = composeAbortSignals([
+            sharedSignal,
+            compileController.signal,
+          ]);
           const prepared = await runTransformAndDependencies(
-            () => this.withTransformCapacity(filePath, "build", compile, sharedSignal),
+            () =>
+              this.withTransformCapacity(
+                filePath,
+                "build",
+                () => compile(compileSignal),
+                compileSignal,
+              ),
             resolveDependencies,
+            (dependencyError, transformSettlement) => {
+              retainInProgressTransformUntilSettled(
+                inProgressKey,
+                transformPromise,
+                transformSettlement,
+                dependencyError,
+              );
+              compileController.abort(dependencyError);
+            },
           );
           entry = await this.withTransformCapacity(
             filePath,
@@ -1130,7 +1177,7 @@ export class SSRModuleLoader {
           entry = await this.withTransformCapacity(
             filePath,
             "build",
-            async () => await finishTransform(await compile(), dependencies),
+            async () => await finishTransform(await compile(sharedSignal), dependencies),
             sharedSignal,
           );
         }

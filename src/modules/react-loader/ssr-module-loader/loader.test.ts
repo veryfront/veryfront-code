@@ -1303,6 +1303,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
   it("returns a dependency error without draining a stalled transform", async () => {
     const dependencyError = new Error("dependency failed");
     let finishTransform!: () => void;
+    let failedTransformSettlement: Promise<void> | undefined;
+    let observedDependencyError: unknown;
     let resultSettled = false;
 
     const result = __ssrModuleLoaderInternals.runTransformAndDependencies(
@@ -1311,6 +1313,10 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
           finishTransform = resolve;
         }),
       () => Promise.reject(dependencyError),
+      (error, transformSettlement) => {
+        observedDependencyError = error;
+        failedTransformSettlement = transformSettlement;
+      },
     );
     void result.then(
       () => resultSettled = true,
@@ -1328,7 +1334,49 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       assertEquals(resultSettled, true);
       const error = await rejected;
       assertStrictEquals(error, dependencyError);
+      assertStrictEquals(observedDependencyError, dependencyError);
+      assert(failedTransformSettlement);
     } finally {
+      finishTransform();
+    }
+    await failedTransformSettlement;
+  });
+
+  it("retains a failed leader until its abandoned transform releases capacity", async () => {
+    const key = "test:retained-failed-transform";
+    const dependencyError = new Error("dependency failed");
+    const leader = new Promise<ModuleCacheEntry>(() => {});
+    let finishTransform!: () => void;
+    const transformSettlement = new Promise<void>((resolve) => {
+      finishTransform = resolve;
+    });
+    globalInProgress.set(key, leader);
+
+    const retained = __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+      key,
+      leader,
+      transformSettlement,
+      dependencyError,
+    );
+
+    try {
+      assert(retained);
+      assertStrictEquals(globalInProgress.get(key), retained);
+      let retainedSettled = false;
+      void retained.catch(() => retainedSettled = true);
+      await Promise.resolve();
+      assertEquals(retainedSettled, false);
+
+      finishTransform();
+      const error = await assertRejects(
+        () => retained,
+        Error,
+        "dependency failed",
+      );
+      assertStrictEquals(error, dependencyError);
+      assertEquals(globalInProgress.has(key), false);
+    } finally {
+      globalInProgress.delete(key);
       finishTransform();
     }
   });
