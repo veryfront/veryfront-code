@@ -64,7 +64,7 @@ async function resolveUnifiedTransformOptions(
   );
   return {
     projectId: options?.projectId ?? projectDir,
-    dev: options.dev,
+    dev: options?.dev ?? false,
     moduleServerUrl: options?.moduleServerUrl,
     moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
       ? options?.moduleServerOrigin
