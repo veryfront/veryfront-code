@@ -16,7 +16,10 @@ export class RSCRenderer {
   private reactVersion?: string;
 
   constructor(options: RSCRendererOptions) {
-    this.mode = options.mode ?? "development";
+    // Defaults to production. An omitted mode used to select development,
+    // which puts the whole rendered tree into the RSC payload (see
+    // `renderToPayload`) and selects the filesystem client module strategy.
+    this.mode = options.mode ?? "production";
     this.clientModuleStrategy = options.clientModuleStrategy ??
       (this.mode === "development" ? "fs" : "rsc-module");
     this.reactVersion = options.reactVersion;

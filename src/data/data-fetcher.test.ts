@@ -140,7 +140,7 @@ describe("DataFetcher", () => {
       });
     });
 
-    it("should default to development mode", async () => {
+    it("defaults an omitted mode to production", async () => {
       const fetcher = new DataFetcher();
       const pageModule: PageWithData<{ source: string }> = {
         default: () => null,
@@ -150,7 +150,7 @@ describe("DataFetcher", () => {
 
       const result = await fetcher.fetchData(pageModule, createContext());
 
-      assertEquals(getProps<{ source: string }>(result).source, "server");
+      assertEquals(getProps<{ source: string }>(result).source, "static");
     });
 
     it("should handle redirect from data function", async () => {

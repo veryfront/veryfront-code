@@ -36,6 +36,22 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
       assertEquals(renderer instanceof RSCRenderer, true);
     });
 
+    it("defaults an omitted mode to production", () => {
+      const renderer = new RSCRenderer({
+        clientManifest: new Map(),
+        projectDir: "/tmp/test-project",
+      });
+
+      assertEquals(
+        (renderer as unknown as { mode?: string }).mode,
+        "production",
+      );
+      assertEquals(
+        (renderer as unknown as { clientModuleStrategy?: string }).clientModuleStrategy,
+        "rsc-module",
+      );
+    });
+
     it("retains the configured React version for server rendering", () => {
       const renderer = new RSCRenderer({
         clientManifest: new Map(),
@@ -170,6 +186,9 @@ describe("rendering/rsc/server-renderer/rsc-renderer", {
           ],
         ]),
         projectDir: "/tmp/test-project",
+        // The tree assertions below describe the development payload. Say so:
+        // the payload carries `tree` only in development mode.
+        mode: "development",
       });
 
       const payload = await renderer.renderToPayload(Page);

@@ -49,7 +49,7 @@ function loadLayoutWithMode(
     "19.1.0",
     {
       loadComponentFromSource: (_source, _filePath, _projectDir, _adapter, options) => {
-        observed.push(options ?? {});
+        observed.push(options);
         return Promise.resolve(stubComponent());
       },
     },
@@ -85,7 +85,7 @@ function createRegistry(
     `project-${mode}`,
     "release-1",
     (_source, _filePath, _projectDir, _adapter, options) => {
-      observed.push(options ?? {});
+      observed.push(options);
       return Promise.resolve(stubComponent());
     },
     mode,
@@ -115,7 +115,7 @@ function loadReservedWithMode(
     undefined,
     {
       loadComponentFromSource: (_source, _filePath, _projectDir, _adapter, options) => {
-        observed.push(options ?? {});
+        observed.push(options);
         return Promise.resolve(stubComponent());
       },
     },
@@ -158,9 +158,9 @@ describe("SSR dev-mode gate", () => {
             _filePath: string,
             _projectDir: string,
             _adapter: RuntimeAdapter,
-            options?: LoadComponentOptions,
+            options: LoadComponentOptions,
           ) => {
-            observed.push(options ?? {});
+            observed.push(options);
             return Promise.resolve(stubComponent());
           },
         },
@@ -222,7 +222,7 @@ describe("SSR dev-mode gate", () => {
         "proj-uuid-123",
         "branch:main",
         (_source, _filePath, _projectDir, _adapter, options) => {
-          observed.push(options ?? {});
+          observed.push(options);
           return Promise.resolve(stubComponent());
         },
         "production",
@@ -257,7 +257,7 @@ describe("SSR dev-mode gate", () => {
         undefined,
         undefined,
         (_source, _filePath, _projectDir, _adapter, options) => {
-          observed.push(options ?? {});
+          observed.push(options);
           return Promise.resolve(stubComponent());
         },
         "production",

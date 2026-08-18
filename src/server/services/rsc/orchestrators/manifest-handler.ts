@@ -53,7 +53,10 @@ export class ManifestHandler {
   ) {
     this.cacheRepo = options?.cacheRepo;
     this.appDir = options?.appDir ?? "app";
-    this.isLocalProject = options?.isLocalProject ?? true;
+    // Defaults to remote. Local mode exposes `meta.sourcePath` instead of the
+    // graph-relative path and emits filesystem client module URLs, so an
+    // omitted flag must not hand a hosted project the local shape.
+    this.isLocalProject = options?.isLocalProject ?? false;
     this.fs = options?.fs;
     this.cacheKey = [
       "rsc-manifest",

@@ -25,7 +25,10 @@ function buildContext(
     projectDir,
     projectId: options.projectId,
     target,
-    dev: options.dev ?? true,
+    // Defaults to production. Every pipeline entry passes `dev` explicitly;
+    // an entry that forgets must degrade to production semantics, never to
+    // an unminified, untree-shaken development build on a hosted render.
+    dev: options.dev ?? false,
     contentHash,
     moduleServerUrl: options.moduleServerUrl,
     moduleServerOrigin: options.moduleServerOrigin,
