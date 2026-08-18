@@ -1013,12 +1013,13 @@ function freeReferencedIdentifiers(
     }
     for (const param of Array.isArray(node.params) ? node.params : []) {
       if (isNode(param)) {
-        if (isDeferred) visitPatternDecorators(param, scopes);
+        if (isDeferred || deferred.has(param)) visitPatternDecorators(param, scopes);
         else visitPatternRuntime(param, [functionScope, ...scopes], scopes);
       }
     }
 
     if (isDeferred) return;
+    if (isNode(node.body) && deferred.has(node.body)) return;
 
     bindDirectDeclarations(functionScope, isNode(node.body) ? node.body : node);
     if (isNode(node.body)) bindNestedVarDeclarations(functionScope, node.body);
@@ -2041,12 +2042,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     return initialized;
   };
 
-  const withUnknownBindingsInitialized = (scope: ExecutionScope): ExecutionScope =>
+  const withUnknownBindingsInitialized = (
+    scope: ExecutionScope,
+    names?: ReadonlySet<string>,
+  ): ExecutionScope =>
     new Map(
       [...scope].map(([name, bindings]) => [
         name,
         bindings.map((binding) =>
-          binding.initialization === "unknown"
+          binding.initialization === "unknown" && (!names || names.has(name))
             ? { ...binding, initialization: "instantiation" as const }
             : binding
         ),
@@ -2278,16 +2282,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         (!Array.isArray(argument.expressions) || argument.expressions.length === 0));
   };
 
-  const parameterInitializationCompletes = (
+  const parameterInitializationBoundary = (
     node: Node,
-    invocation: Node,
+    invocationArguments: unknown[],
     initializedNames: ReadonlySet<string>,
-  ): boolean => {
-    if (!Array.isArray(node.params) || !Array.isArray(invocation.arguments)) return false;
+  ): number | null => {
+    if (!Array.isArray(node.params)) return 0;
 
     const parameterNames = new Set<string>();
     for (const parameter of node.params) {
-      if (!isNode(parameter)) return false;
+      if (!isNode(parameter)) return 0;
       for (const binding of patternBindingIdentifiers(parameter)) {
         const name = nodeName(binding);
         if (name) parameterNames.add(name);
@@ -2303,7 +2307,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
 
     for (let index = 0; index < node.params.length; index++) {
       const parameter = node.params[index];
-      if (!isNode(parameter)) return false;
+      if (!isNode(parameter)) return index;
       if (parameter.type === "Identifier") {
         const name = nodeName(parameter);
         if (name) initializedForDefault.add(name);
@@ -2320,17 +2324,67 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       if (
         parameter.type !== "AssignmentPattern" || !isNode(parameter.left) ||
         parameter.left.type !== "Identifier" || !isNode(parameter.right)
-      ) return false;
+      ) return index;
 
-      const argument = invocation.arguments[index];
+      const argument = invocationArguments[index];
       const defaultIsSkipped = isNode(argument) && isDefinitelyDefinedArgument(argument);
       if (
         !defaultIsSkipped &&
         !isInertExpression(parameter.right, noNameHelpers, initializedForDefault)
-      ) return false;
+      ) return index;
       const name = nodeName(parameter.left);
       if (name) initializedForDefault.add(name);
     }
+    return null;
+  };
+
+  const invocationArgumentsFor = (invocation: Node, target: Node): unknown[] | null => {
+    if (
+      (invocation.type !== "CallExpression" && invocation.type !== "OptionalCallExpression") ||
+      !Array.isArray(invocation.arguments) || !isNode(invocation.callee)
+    ) return null;
+    const callee = unwrap(invocation.callee);
+    if (
+      callee.type !== "MemberExpression" && callee.type !== "OptionalMemberExpression" ||
+      !isNode(callee.object)
+    ) return invocation.arguments;
+    const receiver = unwrap(callee.object);
+    if (receiver !== target) return invocation.arguments;
+    const method = staticMemberName(callee);
+    if (method === "call") return invocation.arguments.slice(1);
+    if (method !== "apply") return invocation.arguments;
+
+    const applied = invocation.arguments[1];
+    if (!isNode(applied) || applied.type === "NullLiteral") return [];
+    return applied.type === "ArrayExpression" && Array.isArray(applied.elements)
+      ? applied.elements
+      : null;
+  };
+
+  const markCalledFunction = (
+    target: Node,
+    invocation: Node,
+    scopes: ExecutionScope[],
+  ): boolean => {
+    if (target.generator === true) return false;
+    const initializedAtCall = initializedNamesAtCall(invocation, scopes);
+    if (!callArgumentsComplete(invocation, initializedAtCall)) return false;
+    const invocationArguments = invocationArgumentsFor(invocation, target);
+    if (!invocationArguments) return false;
+
+    executedNodes.add(target);
+    const boundary = parameterInitializationBoundary(
+      target,
+      invocationArguments,
+      initializedAtCall,
+    );
+    if (boundary === null) return true;
+    const targetParameters = Array.isArray(target.params) ? target.params : [];
+    for (let index = boundary + 1; index < targetParameters.length; index++) {
+      const parameter = targetParameters[index];
+      if (isNode(parameter)) deferred.add(parameter);
+    }
+    if (isNode(target.body)) deferred.add(target.body);
     return true;
   };
 
@@ -2481,16 +2535,20 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         nextInvoked.type === "ArrowFunctionExpression" ||
         nextInvoked.type === "ObjectMethod"
       ) {
-        executedNodes.add(nextInvoked);
-        const getterResult = returnedInlineGetterFunction(nextInvoked);
-        const initializedAtCall = initializedNamesAtCall(node, activeScopes);
-        if (
-          getterResult && callArgumentsComplete(node, initializedAtCall) &&
-          parameterInitializationCompletes(getterResult, node, initializedAtCall)
-        ) executedNodes.add(getterResult);
+        if (nextInvoked.type === "ObjectMethod" && nextInvoked.kind === "get") {
+          // Member access runs the getter before call arguments are evaluated.
+          executedNodes.add(nextInvoked);
+          const getterResult = returnedInlineGetterFunction(nextInvoked);
+          if (getterResult) markCalledFunction(getterResult, node, activeScopes);
+        } else {
+          markCalledFunction(nextInvoked, node, activeScopes);
+        }
       }
     }
+    let phaseScope = introducedScope;
+    const parameters = isFunction && Array.isArray(node.params) ? node.params.filter(isNode) : [];
     for (const child of children(node)) {
+      const scopesAtChild = phaseScope ? [phaseScope, ...localScopes] : localScopes;
       const entersConstructedClassBody = completesInlineClassDefinition &&
           child.type === "ClassBody"
         ? constructsInstanceFields(node) ? "all" : "constructor-only"
@@ -2501,14 +2559,20 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         ? child
         : null;
       if (invokedMember) executedNodes.add(invokedMember);
-      const entersCompletedBindingPhase = introducedScope !== null &&
+      const entersCompletedBindingPhase = phaseScope !== null &&
         ((isFunction && child === node.body) ||
           ((node.type === "ClassDeclaration" || node.type === "ClassExpression") &&
             child.type === "ClassBody"));
-      const childScopes = entersCompletedBindingPhase
-        ? [withUnknownBindingsInitialized(introducedScope), ...localScopes]
-        : activeScopes;
+      const childScopes = entersCompletedBindingPhase && phaseScope
+        ? [withUnknownBindingsInitialized(phaseScope), ...localScopes]
+        : scopesAtChild;
       walk(child, entersConstructedClassBody, childScopes);
+      if (phaseScope && isFunction && parameters.includes(child)) {
+        phaseScope = withUnknownBindingsInitialized(
+          phaseScope,
+          new Set(patternBoundNames(child)),
+        );
+      }
     }
   };
 

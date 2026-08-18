@@ -2551,6 +2551,23 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("does not run a direct IIFE body when an argument can throw", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `((value) => { globalThis.registered = KEY; })(missing);`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-argument.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-argument.tsx");
+    });
+
     it("keeps a secret read by an immediately invoked object method", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2695,6 +2712,26 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(
         code,
         "pages/root-object-getter-function-param.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("initializes each parameter before evaluating the next default", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `((value = 1, ignored = ({ get run() {`,
+        `  return (arg) => { globalThis.registered = KEY; };`,
+        `} }).run(value)) => {})();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-object-getter-later-default.tsx",
       );
 
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
