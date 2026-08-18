@@ -764,7 +764,8 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       const scope: LexicalScope = { kind: "block", names: new Set() };
       for (const member of members) {
         if (!isNode(member)) continue;
-        const memberName = nodeName(member.id) ?? stringLiteralText(member.id);
+        const memberId = isNode(member.id) ? member.id : undefined;
+        const memberName = nodeName(memberId) ?? stringLiteralText(memberId);
         if (memberName) scope.names.add(memberName);
       }
       for (const member of members) {
