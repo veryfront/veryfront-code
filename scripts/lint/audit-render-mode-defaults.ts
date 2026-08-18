@@ -25,125 +25,107 @@
  * skipped: a fixture may legitimately default itself to development.
  */
 
+import { getLine, parseSource, walkAst } from "./style-conventions/ast.ts";
+import type { AstNodeLike } from "./style-conventions/types.ts";
+
 const SCAN_ROOT = "src";
 
-interface Rule {
-  name: string;
-  pattern: RegExp;
-  guidance: string;
+type RuleName =
+  | "dev-fallback"
+  | "dev-default"
+  | "mode-fallback"
+  | "mode-default";
+
+const DEV_NAMES = new Set(["dev", "isLocal", "isLocalProject"]);
+const DEV_GUIDANCE =
+  "default this flag to false and let callers opt into development";
+const MODE_GUIDANCE = 'default this mode to "production"';
+
+function asNode(value: unknown): AstNodeLike | undefined {
+  return typeof value === "object" && value !== null &&
+      typeof (value as AstNodeLike).type === "string"
+    ? value as AstNodeLike
+    : undefined;
 }
 
-const RULES: Rule[] = [
-  {
-    name: "dev-fallback",
-    pattern: /\b(?:dev|isLocal|isLocalProject)\b[^;\n]*\?\?\s*true\b/,
-    guidance: "default this flag to false and let callers opt into development",
-  },
-  {
-    name: "dev-default",
-    // The optional `: alias` arm catches `const { dev: renderDev = true } = x`,
-    // which is a destructuring default wearing a different local name.
-    pattern:
-      /\b(?:dev|isLocal|isLocalProject)\b(?:\s*:\s*[$\w]+)?\s*=\s*true\b/,
-    guidance: "default this flag to false and let callers opt into development",
-  },
-  {
-    name: "mode-fallback",
-    pattern: /\bmode\b[^;\n]*\?\?\s*"development"/,
-    guidance: 'default this mode to "production"',
-  },
-  {
-    name: "mode-default",
-    pattern: /\bmode\s*(?::[^=\n]*)?=\s*"development"/,
-    guidance: 'default this mode to "production"',
-  },
-];
+function referenceName(value: unknown): string | undefined {
+  const current = asNode(value);
+  if (!current) return undefined;
+  if (current.type === "Identifier") {
+    return typeof current.name === "string" ? current.name : undefined;
+  }
+  if (
+    current.type === "TSAsExpression" || current.type === "TSTypeAssertion" ||
+    current.type === "TSNonNullExpression" ||
+    current.type === "TSSatisfiesExpression" ||
+    current.type === "ParenthesizedExpression"
+  ) {
+    return referenceName(current.expression);
+  }
+  if (
+    current.type !== "MemberExpression" &&
+    current.type !== "OptionalMemberExpression"
+  ) {
+    return undefined;
+  }
+  const property = asNode(current.property);
+  if (!property) return undefined;
+  if (current.computed === true) {
+    return property.type === "StringLiteral" &&
+        typeof property.value === "string"
+      ? property.value
+      : undefined;
+  }
+  return property.type === "Identifier" && typeof property.name === "string"
+    ? property.name
+    : undefined;
+}
 
-/**
- * Blank out comments so documentation examples cannot trigger a match, while
- * keeping string literals intact (two of the rules match on `"development"`).
- *
- * This is a character scanner rather than a regex because a regex cannot tell
- * a real `/*` from one inside a string. Getting that wrong is not cosmetic
- * here: a single `"/*"` in a source file would make everything up to the next
- * `*` + `/` look like a comment, and a fail-open default inside that span
- * would sail through the check unseen.
- *
- * Comments are replaced with spaces rather than deleted so that line and
- * column positions survive and reported line numbers stay correct.
- */
-export function stripComments(text: string): string {
-  const out: string[] = [];
-  let index = 0;
-  let quote: string | null = null;
+function isTrue(value: unknown): boolean {
+  const current = asNode(value);
+  return current?.type === "BooleanLiteral" && current.value === true;
+}
 
-  const keep = (char: string) => out.push(char);
-  const blank = (char: string) =>
-    out.push(char === "\n" || char === "\r" ? char : " ");
+function isDevelopment(value: unknown): boolean {
+  const current = asNode(value);
+  return current?.type === "StringLiteral" && current.value === "development";
+}
 
-  while (index < text.length) {
-    const char = text[index] as string;
-    const next = text[index + 1];
+function defaultRule(
+  name: string | undefined,
+  value: unknown,
+): RuleName | undefined {
+  if (name && DEV_NAMES.has(name) && isTrue(value)) return "dev-default";
+  if (name === "mode" && isDevelopment(value)) return "mode-default";
+  return undefined;
+}
 
-    if (quote) {
-      keep(char);
-      // A backslash escapes the next character, including a closing quote.
-      if (char === "\\" && index + 1 < text.length) {
-        keep(text[index + 1] as string);
-        index += 2;
-        continue;
-      }
-      if (char === quote) quote = null;
-      index += 1;
-      continue;
+function ruleFor(node: AstNodeLike): RuleName | undefined {
+  if (node.type === "LogicalExpression" && node.operator === "??") {
+    const name = referenceName(node.left);
+    if (name && DEV_NAMES.has(name) && isTrue(node.right)) {
+      return "dev-fallback";
     }
-
-    if (char === '"' || char === "'" || char === "`") {
-      quote = char;
-      keep(char);
-      index += 1;
-      continue;
-    }
-
-    // Outside a string, consume an escaped character as a unit so that an
-    // escaped slash in a regex literal cannot open a comment.
-    if (char === "\\" && index + 1 < text.length) {
-      keep(char);
-      keep(text[index + 1] as string);
-      index += 2;
-      continue;
-    }
-
-    if (char === "/" && next === "/") {
-      while (index < text.length && text[index] !== "\n") {
-        blank(text[index] as string), index += 1;
-      }
-      continue;
-    }
-
-    if (char === "/" && next === "*") {
-      blank(char);
-      blank(next as string);
-      index += 2;
-      while (
-        index < text.length && !(text[index] === "*" && text[index + 1] === "/")
-      ) {
-        blank(text[index] as string);
-        index += 1;
-      }
-      if (index < text.length) {
-        blank("*");
-        blank("/");
-        index += 2;
-      }
-      continue;
-    }
-
-    keep(char);
-    index += 1;
+    if (name === "mode" && isDevelopment(node.right)) return "mode-fallback";
+    return undefined;
   }
 
-  return out.join("");
+  if (node.type === "AssignmentPattern") {
+    return defaultRule(referenceName(node.left), node.right);
+  }
+
+  if (node.type === "ObjectProperty") {
+    const assignment = asNode(node.value);
+    if (assignment?.type === "AssignmentPattern") {
+      return defaultRule(referenceName(node.key), assignment.right);
+    }
+    return undefined;
+  }
+
+  if (node.type === "ClassProperty" || node.type === "PropertyDefinition") {
+    return defaultRule(referenceName(node.key), node.value);
+  }
+  return undefined;
 }
 
 export interface FailOpenDefault {
@@ -154,20 +136,28 @@ export interface FailOpenDefault {
 }
 
 /** Returns every fail-open render-mode default in `source`. */
-export function findFailOpenDefaults(source: string): FailOpenDefault[] {
+export function findFailOpenDefaults(
+  source: string,
+  file = "source.ts",
+): FailOpenDefault[] {
   const hits: FailOpenDefault[] = [];
-  stripComments(source).split(/\r?\n/).forEach((line, index) => {
-    for (const rule of RULES) {
-      if (!rule.pattern.test(line)) continue;
-      hits.push({
-        line: index + 1,
-        rule: rule.name,
-        guidance: rule.guidance,
-        text: line.trim(),
-      });
-      break;
-    }
+  const lines = source.split(/\r?\n/);
+  const seen = new Set<string>();
+  walkAst(parseSource(file, source), (current) => {
+    const rule = ruleFor(current);
+    if (!rule) return;
+    const line = getLine(current);
+    const identity = `${line}:${rule}`;
+    if (seen.has(identity)) return;
+    seen.add(identity);
+    hits.push({
+      line,
+      rule,
+      guidance: rule.startsWith("dev-") ? DEV_GUIDANCE : MODE_GUIDANCE,
+      text: lines[line - 1]?.trim() ?? "",
+    });
   });
+  hits.sort((left, right) => left.line - right.line);
   return hits;
 }
 
@@ -214,7 +204,7 @@ async function main(): Promise<void> {
 
   await walk(SCAN_ROOT, async (path) => {
     const source = await Deno.readTextFile(path);
-    for (const hit of findFailOpenDefaults(source)) {
+    for (const hit of findFailOpenDefaults(source, path)) {
       violations.push(
         `${path}:${hit.line} [${hit.rule}] ${hit.text}\n    ${hit.guidance}`,
       );

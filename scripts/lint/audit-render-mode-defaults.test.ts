@@ -3,7 +3,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findFailOpenDefaults,
   isScannedFile,
-  stripComments,
 } from "./audit-render-mode-defaults.ts";
 
 function rules(source: string): string[] {
@@ -19,22 +18,41 @@ describe("findFailOpenDefaults", () => {
     assertEquals(rules(source), ["1:dev-fallback", "2:dev-fallback"]);
   });
 
-  it("flags a destructuring or parameter default of true", () => {
-    assertEquals(rules("        dev = true,"), ["1:dev-default"]);
+  it("flags a multiline nullish fallback", () => {
+    const source = [
+      "const dev = options?.dev ??",
+      "  true;",
+    ].join("\n");
+
+    assertEquals(rules(source), ["1:dev-fallback"]);
   });
 
-  it("flags an aliased destructuring default", () => {
+  it("flags a destructuring or parameter default of true", () => {
     const source = [
-      "const { dev: renderDev = true } = options;",
-      "const { isLocalProject: local = true } = options;",
+      "const { dev = true } = options;",
+      "function load(isLocalProject: boolean = true) {}",
     ].join("\n");
     assertEquals(rules(source), ["1:dev-default", "2:dev-default"]);
   });
 
+  it("flags aliased destructuring defaults", () => {
+    const source = [
+      "const { dev: renderDev = true } = options;",
+      'const { mode: renderMode = "development" } = options;',
+      "const { isLocalProject: local = true } = options;",
+    ].join("\n");
+
+    assertEquals(rules(source), [
+      "1:dev-default",
+      "2:mode-default",
+      "3:dev-default",
+    ]);
+  });
+
   it("flags a render mode defaulting to development", () => {
     const source = [
-      'this.mode = options.mode ?? "development";',
-      '    mode: "development" | "production" = "development",',
+      'class Loader { mode = options.mode ?? "development"; }',
+      'function render(mode: "development" | "production" = "development") {}',
     ].join("\n");
     assertEquals(rules(source), ["1:mode-fallback", "2:mode-default"]);
   });
@@ -42,9 +60,9 @@ describe("findFailOpenDefaults", () => {
   it("accepts production-safe defaults", () => {
     const source = [
       "const dev = options.dev ?? false;",
-      "        dev = false,",
-      'this.mode = options.mode ?? "production";',
-      '    mode: "development" | "production" = "production",',
+      "function load(dev = false) {}",
+      'class Loader { mode = options.mode ?? "production"; }',
+      'function render(mode: "development" | "production" = "production") {}',
       "this.isLocalProject = options?.isLocalProject ?? false;",
     ].join("\n");
     assertEquals(rules(source), []);
@@ -52,11 +70,23 @@ describe("findFailOpenDefaults", () => {
 
   it("accepts an explicit value at a call site", () => {
     const source = [
+      "const options = {",
       "  dev: true,",
       '  mode: "development",',
-      '  dev: mode === "development",',
+      '  nestedDev: mode === "development",',
       "  isLocalProject: !!ctx.isLocalProject,",
+      "};",
     ].join("\n");
+    assertEquals(rules(source), []);
+  });
+
+  it("accepts explicit assignments and declarations", () => {
+    const source = [
+      "let dev = false;",
+      "dev = true;",
+      'const mode = "development";',
+    ].join("\n");
+
     assertEquals(rules(source), []);
   });
 
@@ -72,42 +102,18 @@ describe("findFailOpenDefaults", () => {
     assertEquals(rules(source), []);
   });
 
-  it("keeps line numbers correct after a multi-line block comment", () => {
+  it("does not treat comment delimiters in strings as comments", () => {
     const source = [
-      "/*", // 1
-      " * a comment", // 2
-      " * spanning lines", // 3
-      " */", // 4
-      "const dev = options?.dev ?? true;", // 5
+      'const opening = "/*";',
+      "const dev = options.dev ?? true;",
+      'const closing = "*/";',
+      "/* real",
+      " * block comment",
+      " */",
+      'const mode = options.mode ?? "development";',
     ].join("\n");
-    assertEquals(findFailOpenDefaults(source)[0]?.line, 5);
-  });
 
-  it("does not treat a comment delimiter inside a string as a comment", () => {
-    const source = [
-      'const open = "/*";', // 1
-      'const shut = "*/";', // 2
-      "const dev = options?.dev ?? true;", // 3
-      'const slashes = "http://example.test";', // 4
-      "const dev2 = options?.dev ?? true;", // 5
-    ].join("\n");
-    assertEquals(rules(source), ["3:dev-fallback", "5:dev-fallback"]);
-  });
-
-  it("does not treat a comment delimiter inside a template literal as a comment", () => {
-    const source = [
-      "const t = `/* not a comment`;",
-      "const dev = options?.dev ?? true;",
-    ].join("\n");
-    assertEquals(rules(source), ["2:dev-fallback"]);
-  });
-
-  it("keeps scanning past an escaped quote inside a string", () => {
-    const source = [
-      'const s = "he said \\"/*\\" and left";',
-      "const dev = options?.dev ?? true;",
-    ].join("\n");
-    assertEquals(rules(source), ["2:dev-fallback"]);
+    assertEquals(rules(source), ["2:dev-fallback", "7:mode-fallback"]);
   });
 
   it("reports one violation per line and a 1-based line number", () => {
@@ -115,36 +121,6 @@ describe("findFailOpenDefaults", () => {
       .join("\n");
     assertEquals(findFailOpenDefaults(source).length, 1);
     assertEquals(findFailOpenDefaults(source)[0]?.line, 3);
-  });
-});
-
-describe("stripComments", () => {
-  it("keeps string literals so mode rules can still match", () => {
-    assertEquals(
-      stripComments('const m = "development"; // note').trim(),
-      'const m = "development";',
-    );
-  });
-
-  it("blanks a block comment without removing its line breaks", () => {
-    const stripped = stripComments("/*\n * x\n */\ncode;");
-    assertEquals(stripped.split("\n").length, 4);
-    assertEquals(stripped.split("\n")[3], "code;");
-  });
-
-  it("leaves code after a string that contains a comment delimiter", () => {
-    assertEquals(
-      stripComments('const a = "/*";\nconst b = 1;'),
-      'const a = "/*";\nconst b = 1;',
-    );
-  });
-
-  it("preserves column positions when blanking a line comment", () => {
-    const source = "const a = 1; // note";
-    const stripped = stripComments(source);
-
-    assertEquals(stripped.length, source.length);
-    assertEquals(stripped.trimEnd(), "const a = 1;");
   });
 });
 
