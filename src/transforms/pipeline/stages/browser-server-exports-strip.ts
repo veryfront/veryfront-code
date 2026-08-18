@@ -2063,21 +2063,47 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       instanceInitializationCompletes(node) && explicitConstructorCompletes(node);
   }
 
-  const staticMemberName = (member: Node): string | null => {
-    if (!isNode(member.property)) return null;
-    if (member.computed !== true) return nodeName(member.property);
-    return member.property.type === "StringLiteral" &&
-        typeof member.property.value === "string"
-      ? member.property.value
+  const staticLiteralPropertyName = (node: Node): string | null => {
+    const key = unwrap(node);
+    if (key.type === "NullLiteral") return "null";
+    if (
+      key.type !== "StringLiteral" && key.type !== "NumericLiteral" &&
+      key.type !== "BooleanLiteral" && key.type !== "BigIntLiteral" &&
+      key.type !== "DecimalLiteral"
+    ) return null;
+    return typeof key.value === "string" || typeof key.value === "number" ||
+        typeof key.value === "boolean" || typeof key.value === "bigint"
+      ? String(key.value)
       : null;
   };
 
+  const staticMemberName = (member: Node): string | null => {
+    if (!isNode(member.property)) return null;
+    return member.computed === true
+      ? staticLiteralPropertyName(member.property)
+      : nodeName(member.property) ?? staticLiteralPropertyName(member.property);
+  };
+
   const staticObjectPropertyName = (property: Node): string | null => {
-    if (property.computed === true || !isNode(property.key)) return null;
-    return nodeName(property.key) ??
-      (property.key.type === "StringLiteral" && typeof property.key.value === "string"
-        ? property.key.value
-        : null);
+    if (!isNode(property.key)) return null;
+    return property.computed === true
+      ? staticLiteralPropertyName(property.key)
+      : nodeName(property.key) ?? staticLiteralPropertyName(property.key);
+  };
+
+  const returnedInlineGetterFunction = (getter: Node): Node | null => {
+    if (
+      getter.type !== "ObjectMethod" || getter.kind !== "get" || !isNode(getter.body) ||
+      !Array.isArray(getter.body.body) || getter.body.body.length !== 1
+    ) return null;
+    const statement = getter.body.body[0];
+    if (!isNode(statement) || statement.type !== "ReturnStatement" || !isNode(statement.argument)) {
+      return null;
+    }
+    const result = unwrap(statement.argument);
+    return result.type === "FunctionExpression" || result.type === "ArrowFunctionExpression"
+      ? result
+      : null;
   };
 
   const invokedInlineObjectFunction = (callee: Node): Node | null => {
@@ -2098,7 +2124,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       if (propertyName === null) return null;
 
       let target: Node | null = null;
-      if (property.type === "ObjectMethod" && property.kind === "method") {
+      if (
+        property.type === "ObjectMethod" &&
+        (property.kind === "method" || property.kind === "get")
+      ) {
         target = property;
       } else if (
         property.type === "ObjectProperty" && propertyName !== "__proto__" &&
@@ -2217,6 +2246,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
         nextInvoked.type === "ObjectMethod"
       ) {
         executedNodes.add(nextInvoked);
+        const getterResult = returnedInlineGetterFunction(nextInvoked);
+        if (getterResult) executedNodes.add(getterResult);
       }
     }
     for (const child of children(node)) {
