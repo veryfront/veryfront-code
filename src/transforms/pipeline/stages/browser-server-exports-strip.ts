@@ -1035,6 +1035,10 @@ function freeReferencedIdentifiers(
     scopes: LexicalScope[],
     decoratorScopes: LexicalScope[] = scopes,
   ): void => {
+    if (deferred.has(pattern)) {
+      visitPatternDecorators(pattern, decoratorScopes);
+      return;
+    }
     // Babel hangs a parameter decorator off the pattern itself — a plain
     // `Identifier`, an `AssignmentPattern` or a destructuring pattern — and not
     // only off a `TSParameterProperty`. A decorator is ordinary runtime code
@@ -1078,6 +1082,7 @@ function freeReferencedIdentifiers(
     if (pattern.type === "ObjectPattern") {
       for (const property of Array.isArray(pattern.properties) ? pattern.properties : []) {
         if (!isNode(property)) continue;
+        if (deferred.has(property)) continue;
         if (property.type === "RestElement") {
           if (isNode(property.argument)) {
             visitPatternRuntime(property.argument, scopes, decoratorScopes);
@@ -2920,13 +2925,65 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     statements: unknown[],
     initializedNames: ReadonlySet<string>,
   ): Completion {
+    const directThrownArgument = (block: Node | undefined): Node | null => {
+      if (block?.type !== "BlockStatement" || !Array.isArray(block.body)) return null;
+      const body = block.body.filter(isNode);
+      const onlyStatement = body[0];
+      if (body.length !== 1 || !onlyStatement || onlyStatement.type !== "ThrowStatement") {
+        return null;
+      }
+      return isNode(onlyStatement.argument) ? onlyStatement.argument : null;
+    };
+    const definitelyNonNullish = (value: Node | null): boolean => {
+      if (!value) return false;
+      const primitive = staticPrimitiveValue(value, initializedNames);
+      if (primitive.known) return primitive.value !== null && primitive.value !== undefined;
+      const unwrapped = unwrap(value);
+      return unwrapped.type === "ObjectExpression" || unwrapped.type === "ArrayExpression" ||
+        unwrapped.type === "FunctionExpression" || unwrapped.type === "ArrowFunctionExpression" ||
+        unwrapped.type === "ClassExpression" || unwrapped.type === "RegExpLiteral";
+    };
+    const catchParameterCompletion = (
+      parameter: Node | null,
+      thrownArgument: Node | null,
+    ): Completion => {
+      if (!parameter || parameter.type === "Identifier") return "normal";
+      if (parameter.type !== "ObjectPattern" || !definitelyNonNullish(thrownArgument)) {
+        deferred.add(parameter);
+        return "unknown";
+      }
+      const properties = Array.isArray(parameter.properties) ? parameter.properties : [];
+      if (properties.length === 0) return "normal";
+      for (let index = 0; index < properties.length; index++) {
+        const property = properties[index];
+        if (!isNode(property)) continue;
+        const key = property.type === "ObjectProperty" && property.computed === true &&
+            isNode(property.key)
+          ? property.key
+          : null;
+        if (
+          key && !staticPrimitiveValue(key, initializedNames).known &&
+          !isInertExpression(key, noNameHelpers, initializedNames)
+        ) {
+          deferOrderedExpressionTail(key, initializedNames);
+          if (property.type === "ObjectProperty" && isNode(property.value)) {
+            deferred.add(property.value);
+          }
+        }
+        for (const later of properties.slice(index + 1)) {
+          if (isNode(later)) deferred.add(later);
+        }
+        return "unknown";
+      }
+      return "unknown";
+    };
     const statementCompletion = (
       statement: Node,
-      loopLabel: string | null = null,
+      loopLabels: readonly string[] = [],
     ): Completion => {
       const continuesCurrentLoop = (completion: Completion): boolean =>
         completion === "continue" ||
-        (loopLabel !== null && completion === `continue:${loopLabel}`);
+        loopLabels.some((label) => completion === `continue:${label}`);
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
       }
@@ -3024,6 +3081,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const update = isNode(statement.update) ? statement.update : undefined;
         const body = isNode(statement.body) ? statement.body : undefined;
         let initCompletion: Completion = "normal";
+        const analyzeUpdate = (): void => {
+          if (update && !isInertExpression(update, noNameHelpers, initializedNames)) {
+            deferOrderedExpressionTail(update, initializedNames);
+          }
+        };
         if (init?.type === "VariableDeclaration") {
           initCompletion = statementCompletion(init);
         } else if (init && !isInertExpression(init, noNameHelpers, initializedNames)) {
@@ -3045,6 +3107,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (
             bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion) && update
           ) deferred.add(update);
+          if (bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)) {
+            analyzeUpdate();
+          }
           return bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
             ? "unknown"
             : bodyCompletion;
@@ -3064,6 +3129,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (
             bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion) && update
           ) deferred.add(update);
+          if (bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)) {
+            analyzeUpdate();
+          }
           return bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
             ? "unknown"
             : bodyCompletion;
@@ -3291,11 +3359,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             deferred.add(handler);
           } else if (isNode(handler.body)) {
             const parameter = isNode(handler.param) ? handler.param : null;
-            const parameterCompletes = parameter === null || parameter.type === "Identifier";
-            if (!parameterCompletes) deferred.add(handler.body);
-            const handlerCompletion: Completion = parameterCompletes
+            const parameterCompletion = catchParameterCompletion(
+              parameter,
+              directThrownArgument(block),
+            );
+            if (parameterCompletion !== "normal") deferred.add(handler.body);
+            const handlerCompletion: Completion = parameterCompletion === "normal"
               ? statementCompletion(handler.body)
-              : "unknown";
+              : parameterCompletion;
             if (completion === "throw") completion = handlerCompletion;
           }
         }
@@ -3310,9 +3381,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const bodyIsLoop = statement.body.type === "WhileStatement" ||
           statement.body.type === "DoWhileStatement" || statement.body.type === "ForStatement" ||
           statement.body.type === "ForInStatement" || statement.body.type === "ForOfStatement";
+        const carriesLoopLabels = bodyIsLoop || statement.body.type === "LabeledStatement";
+        const nestedLoopLabels = label ? [...loopLabels, label] : loopLabels;
         const completion = statementCompletion(
           statement.body,
-          label && bodyIsLoop ? label : null,
+          carriesLoopLabels ? nestedLoopLabels : [],
         );
         if (label && completion === `break:${label}`) return "normal";
         if (label && completion === `continue:${label}`) return "unknown";
