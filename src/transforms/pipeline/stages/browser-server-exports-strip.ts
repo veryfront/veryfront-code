@@ -1948,7 +1948,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     const constructable = (superClass.type === "ClassExpression" &&
       constructionIsProven(superClass)) ||
       (superClass.type === "FunctionExpression" &&
-        superClass.async !== true && superClass.generator !== true);
+        superClass.async !== true && superClass.generator !== true &&
+        Array.isArray(superClass.params) && superClass.params.length === 0 &&
+        isNode(superClass.body) && superClass.body.type === "BlockStatement" &&
+        Array.isArray(superClass.body.body) && superClass.body.body.length === 0);
     return constructable &&
       (!explicitConstructor(node) || constructorBeginsWithSuper(node));
   };
@@ -1964,7 +1967,15 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       : null;
   };
 
-  const invokedInlineObjectMethod = (callee: Node): Node | null => {
+  const staticObjectPropertyName = (property: Node): string | null => {
+    if (property.computed === true || !isNode(property.key)) return null;
+    return nodeName(property.key) ??
+      (property.key.type === "StringLiteral" && typeof property.key.value === "string"
+        ? property.key.value
+        : null);
+  };
+
+  const invokedInlineObjectFunction = (callee: Node): Node | null => {
     if (
       callee.type !== "MemberExpression" || !isNode(callee.object) ||
       !isNode(callee.property)
@@ -1976,15 +1987,27 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 
     let selected: Node | null = null;
     for (const property of object.properties) {
-      // Plain method definitions are inert while the object is created. Keep
-      // the proof narrow so a spread, property initializer, getter, or
-      // computed key that can throw cannot make a later method look invoked.
-      if (
-        !isNode(property) || property.type !== "ObjectMethod" ||
-        property.kind !== "method" || property.computed === true ||
-        !isNode(property.key)
-      ) return null;
-      if (nodeName(property.key) === selectedName) selected = property;
+      if (!isNode(property)) return null;
+      const propertyName = staticObjectPropertyName(property);
+      if (propertyName === null) return null;
+
+      let target: Node | null = null;
+      if (property.type === "ObjectMethod" && property.kind === "method") {
+        target = property;
+      } else if (
+        property.type === "ObjectProperty" && propertyName !== "__proto__" &&
+        isNode(property.value)
+      ) {
+        const value = unwrap(property.value);
+        if (value.type === "FunctionExpression" || value.type === "ArrowFunctionExpression") {
+          target = value;
+        }
+      }
+      // Plain methods and function literals are inert while the object is
+      // created. Keep the proof narrow so a spread, ordinary initializer,
+      // accessor, or computed key cannot make a later function look invoked.
+      if (target === null) return null;
+      if (propertyName === selectedName) selected = target;
     }
     return selected;
   };
@@ -2014,8 +2037,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
           return target;
         }
       }
-      const objectMethod = invokedInlineObjectMethod(callee);
-      if (objectMethod) return objectMethod;
+      const objectFunction = invokedInlineObjectFunction(callee);
+      if (objectFunction) return objectFunction;
       return callee;
     }
     if (node.type === "OptionalCallExpression" || node.type === "NewExpression") {
