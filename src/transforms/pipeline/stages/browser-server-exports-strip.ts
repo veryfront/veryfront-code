@@ -2685,6 +2685,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       deferred.add(expression.right);
       return;
     }
+    if (expression.type === "AssignmentExpression" && isNode(expression.right)) {
+      deferOrderedExpressionTail(expression.right, initializedNames);
+      return;
+    }
     if (expression.type === "ObjectExpression" && Array.isArray(expression.properties)) {
       const properties = expression.properties;
       const deferPropertiesAfter = (index: number): void => {
@@ -3171,6 +3175,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           );
           return selectedCompletion === "break" ? "normal" : selectedCompletion;
         }
+        if (discriminantValue.known && !possibleCaseMatch && !earlierDefault) {
+          return "normal";
+        }
         return "unknown";
       }
       if (statement.type === "TryStatement") {
@@ -3214,6 +3221,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           deferOrderedExpressionTail(test, initializedNames);
           if (isNode(statement.consequent)) deferred.add(statement.consequent);
           if (isNode(statement.alternate)) deferred.add(statement.alternate);
+          return "unknown";
+        }
+        if (test) {
+          const consequentCompletion = isNode(statement.consequent)
+            ? statementCompletion(statement.consequent)
+            : "normal";
+          const alternateCompletion = isNode(statement.alternate)
+            ? statementCompletion(statement.alternate)
+            : "normal";
+          return consequentCompletion === alternateCompletion ? consequentCompletion : "unknown";
         }
         return "unknown";
       }
