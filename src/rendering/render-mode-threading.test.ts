@@ -241,21 +241,34 @@ describe("render mode threading", () => {
   });
 
   describe("orchestrator/ssr.ts", () => {
-    it("uses the constructor environment only as a per-render fallback", () => {
-      const renderer = new VeryfrontRenderer({
+    it("inherits configured preview without synthesizing production", () => {
+      const previewRenderer = new VeryfrontRenderer({
         projectDir: "/project",
         mode: "production",
         environment: "preview",
         adapter: createMockAdapter(),
       });
-      const mergeRenderOptions = (renderer as unknown as {
+      const productionRenderer = new VeryfrontRenderer({
+        projectDir: "/project",
+        mode: "production",
+        environment: "production",
+        adapter: createMockAdapter(),
+      });
+      const mergePreviewOptions = (previewRenderer as unknown as {
         mergeRenderOptions(options?: { environment?: "preview" | "production" }): {
           environment?: "preview" | "production";
         };
-      }).mergeRenderOptions.bind(renderer);
+      }).mergeRenderOptions.bind(previewRenderer);
+      const mergeProductionOptions = (productionRenderer as unknown as {
+        mergeRenderOptions(options?: { environment?: "preview" | "production" }): {
+          environment?: "preview" | "production";
+        };
+      }).mergeRenderOptions.bind(productionRenderer);
 
-      assertEquals(mergeRenderOptions().environment, "preview");
-      assertEquals(mergeRenderOptions({ environment: "production" }).environment, "production");
+      assertEquals(mergePreviewOptions().environment, "preview");
+      assertEquals(mergePreviewOptions({ environment: "production" }).environment, "production");
+      assertEquals(mergeProductionOptions().environment, undefined);
+      assertEquals(mergeProductionOptions({ environment: "preview" }).environment, "preview");
     });
   });
 

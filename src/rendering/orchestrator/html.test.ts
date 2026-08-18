@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../../html/styles-builder/__tests__/css-processor-setup.ts";
+import { registerTailwindExtension } from "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
@@ -9,6 +9,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { unregister } from "#veryfront/extensions/contracts.ts";
+import { CSSProcessorName } from "#veryfront/extensions/css/index.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
@@ -635,6 +637,23 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+    });
+
+    it("does not activate production CSS when a legacy request omits its environment", async () => {
+      unregister(CSSProcessorName);
+      try {
+        const generator = createHTMLGenerator({
+          environment: "production",
+          readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+        });
+
+        const html = await generator.generateFullHTML(createHTMLContext());
+
+        assertEquals(html.includes('id="vf-project-css"'), false);
+        assertEquals(html.includes("/_vf/css/"), false);
+      } finally {
+        await registerTailwindExtension();
+      }
     });
 
     it("injects production project stylesheet links into full HTML documents", async () => {

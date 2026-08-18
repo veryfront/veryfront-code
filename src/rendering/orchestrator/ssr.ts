@@ -176,7 +176,10 @@ export class VeryfrontRenderer {
       projectId: options?.projectId ?? this.projectId,
       projectSlug: options?.projectSlug ?? this.projectSlug,
       contentSourceId: options?.contentSourceId ?? this.contentSourceId,
-      environment: options?.environment ?? this.environment,
+      // Preview is a positive capability signal. Leave omitted production
+      // unset so legacy callers keep their production-safe behavior.
+      environment: options?.environment ??
+        (this.environment === "preview" ? "preview" : undefined),
     };
   }
 

@@ -285,7 +285,10 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const environment = context.options?.environment ?? this.config.environment;
+    // Configured preview must reach every HTML path. Omitted production keeps
+    // legacy behavior; an explicit production request still enables project CSS.
+    const environment = context.options?.environment ??
+      (this.config.environment === "preview" ? "preview" : undefined);
     const resolvedContext = environment === undefined ? context : {
       ...context,
       options: { ...context.options, environment },
@@ -329,7 +332,9 @@ export class HTMLGenerator {
     }
 
     const committedHead = resolveCommittedHeadFromHTML(reactContent, context.collectedHead);
-    const environment = context.options?.environment ?? this.config.environment;
+    // Match generateFullHTML: inherit only the positive preview signal.
+    const environment = context.options?.environment ??
+      (this.config.environment === "preview" ? "preview" : undefined);
     const fullContext = {
       ...context,
       ...(environment === undefined ? {} : { options: { ...context.options, environment } }),
