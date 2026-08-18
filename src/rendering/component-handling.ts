@@ -13,6 +13,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { getDependencyPinningCacheKey } from "#veryfront/transforms/esm/package-registry.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { buildServerExternalPackagesIdentity } from "#veryfront/config/server-external-packages.ts";
@@ -66,6 +67,7 @@ registerLRUCache("component-hydration-cache", componentHydrationCache);
 
 async function buildComponentHydrationCacheHash(
   source: string,
+  dev: boolean,
   moduleServerUrl?: string,
   reactVersion?: string,
   serverExternalPackages?: readonly string[],
@@ -80,11 +82,15 @@ async function buildComponentHydrationCacheHash(
   const serverExternalPackagesIdentity = buildServerExternalPackagesIdentity(
     serverExternalPackages,
   );
-  const cacheIdentity = JSON.stringify(
-    serverExternalPackagesIdentity
-      ? [...legacyCacheIdentity, serverExternalPackagesIdentity]
-      : legacyCacheIdentity,
-  );
+  const packageScopedIdentity = serverExternalPackagesIdentity
+    ? [...legacyCacheIdentity, serverExternalPackagesIdentity]
+    : legacyCacheIdentity;
+  // The compile mode decides minification, tree shaking and whether an inline
+  // sourcemap is emitted, so two modes must never share one hydration entry.
+  const cacheIdentity = JSON.stringify([
+    ...packageScopedIdentity,
+    dev ? "compile-dev" : "compile-production",
+  ]);
   return (await computeHash(cacheIdentity)).slice(0, 16);
 }
 
@@ -107,8 +113,18 @@ export async function handleComponentPage(
     projectId?: string;
     /** Enable node position injection for Studio Navigator */
     studioEmbed?: boolean;
-    /** Request mode ("preview" | "production") for studio features */
+    /**
+     * Compile mode ("development" | "production"). Selects minification and
+     * tree shaking. Not the request mode: see `environment`.
+     */
     mode?: string;
+    /**
+     * Request environment ("preview" | "production"). Selects preview-only
+     * instrumentation such as Studio Navigator node positions. A hosted
+     * preview render is compile mode "production" with environment "preview",
+     * so this cannot be derived from `mode`.
+     */
+    environment?: RenderEnvironment;
     /** Content source ID for cache isolation (branch name or release ID) */
     contentSourceId?: string;
     /** React version for transforms (from project config) */
@@ -129,11 +145,12 @@ export async function handleComponentPage(
     logger.debug(`Loading TSX/JSX file: ${pageInfo.entity.path}`);
 
     // Node positions are injected by the SSR module loader (for all files
-    // including this entry point) when dev || mode === "preview" — no need
-    // to inject here to avoid double-injection which shifts positions.
+    // including this entry point) when dev || environment === "preview", so
+    // injecting here too would double-inject and shift positions.
     const fileContent = await adapter.fs.readFile(pageInfo.entity.path);
     const dependencyPinningCacheKey = options?.dependencyPinningCacheKey ??
       await getDependencyPinningCacheKey(projectDir);
+    const dev = options?.mode === "development";
 
     const clientModuleCode = options?.cachedClientModule ??
       (await bundleComponentForClient(
@@ -150,10 +167,10 @@ export async function handleComponentPage(
         options?.dependencyPinningDependencies,
         options?.dependencyPinningSource,
         options?.serverExternalPackages,
+        dev,
       ));
 
     const { loadComponentFromSource } = await import("#veryfront/modules/react-loader/index.ts");
-    const dev = options?.mode === "development";
     const PageComponent = await loadComponentFromSource(
       fileContent,
       pageInfo.entity.path,
@@ -171,7 +188,7 @@ export async function handleComponentPage(
         dependencyPinningCacheKey,
         dependencyPinningDependencies: options?.dependencyPinningDependencies,
         dependencyPinningSource: options?.dependencyPinningSource,
-        mode: options?.mode,
+        mode: options?.environment,
         signal: options?.signal,
       },
     );
@@ -226,10 +243,17 @@ export async function bundleComponentForClient(
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
   dependencyPinningSource?: DependencyPinningSourceInput,
   serverExternalPackages?: readonly string[],
+  /**
+   * Compile the hydration bundle in development mode. Production renders must
+   * leave this false: dev output is unminified, not tree-shaken and carries an
+   * inline sourcemap that discloses the project source.
+   */
+  dev = false,
 ): Promise<string> {
   try {
     const cacheHash = await buildComponentHydrationCacheHash(
       source,
+      dev,
       moduleServerUrl,
       reactVersion,
       serverExternalPackages,
@@ -253,7 +277,7 @@ export async function bundleComponentForClient(
         const { transformToESM } = injectedDeps ?? await getBundleComponentForClientDeps();
         const transformed = await transformToESM(source, filePath, projectDir, adapter, {
           projectId: projectId ?? projectDir,
-          dev: true,
+          dev,
           jsxImportSource: "react",
           moduleServerUrl,
           moduleServerOrigin,

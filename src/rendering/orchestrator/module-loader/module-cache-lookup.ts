@@ -22,11 +22,13 @@ export function buildModuleTransformCacheVariant(
   dependencyPinningCacheKey?: string,
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
+  dev?: boolean,
 ): string | undefined {
   return getMdxModuleCacheVariant(
     dependencyPinningCacheKey,
     moduleServerOrigin,
     serverExternalPackages,
+    dev,
   );
 }
 
@@ -53,6 +55,7 @@ export function getModuleCacheKey(
     dependencyPinningCacheKey,
     moduleServerOrigin,
     serverExternalPackages,
+    mode === "development",
   );
   return JSON.stringify(cacheVariant ? [...fields, cacheVariant, filePath] : [...fields, filePath]);
 }
@@ -70,6 +73,8 @@ export interface ResolveCachedModulePathInput {
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
   serverExternalPackages?: readonly string[];
+  /** Compile mode of the artifacts this lookup may reuse. */
+  dev?: boolean;
   moduleCache: Map<string, string>;
   readTextFile?: (path: string) => Promise<string>;
   fileSystem?: FileSystemReader;
@@ -132,6 +137,7 @@ async function resolveMdxEsmCachedPath(
       input.dependencyPinningCacheKey,
       input.moduleServerOrigin,
       input.serverExternalPackages,
+      input.dev,
     ),
   );
 

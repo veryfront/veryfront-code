@@ -55,6 +55,9 @@ const module = await mdxRenderer.loadModuleESM(compiledCode, {
   projectDir,
   projectSlug: "example-project",
   contentSourceId: "content",
+  // Selects the compile mode of the entry's `/_vf_modules/*` imports.
+  // Omit it and they compile for production.
+  mode: "production",
 });
 // Use module.default or module exports
 ```

@@ -803,6 +803,7 @@ export class RenderPipeline {
                   options?.dependencyPinningSource,
                   options?.url?.origin,
                   options?.abortSignal,
+                  options?.environment,
                 )
                 : Promise.resolve();
 
@@ -974,6 +975,7 @@ export class RenderPipeline {
                         options?.dependencyPinningDependencies,
                         options?.dependencyPinningSource,
                         options?.abortSignal,
+                        options?.environment,
                       ),
                     {
                       "render.slug": slug,
@@ -1467,9 +1469,11 @@ export class RenderPipeline {
       ...(this.config.renderCacheKeyComposition ?? {}),
       colorScheme: options?.colorScheme,
     };
+    const environment = options?.environment === "preview" ? "preview" : "production";
     if (options?.cacheKey) {
+      const cacheKey = `${options.cacheKey}:environment-${environment}`;
       return buildDependencyPinnedRenderCacheKey(
-        options.cacheKey,
+        cacheKey,
         dependencyPinningCacheKey,
         options.url?.origin,
         composition,
@@ -1480,7 +1484,9 @@ export class RenderPipeline {
       if (requestHasCacheSensitiveState(req)) return null;
     }
 
-    const baseKey = buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions);
+    const baseKey = `${
+      buildQueryAwareCacheKey(slug, options?.url, this.config.queryParamOptions)
+    }:environment-${environment}`;
     return buildDependencyPinnedRenderCacheKey(
       baseKey,
       dependencyPinningCacheKey,

@@ -80,28 +80,6 @@ function resolveProjectRoot(dir: string): string {
   return dir.replace(/[/\\]components$/, "");
 }
 
-function getLoaderOptions(
-  projectRoot: string,
-  projectId?: string,
-  moduleServerUrl?: string,
-  vendorBundleHash?: string,
-  contentSourceId?: string,
-): {
-  projectId: string;
-  dev: true;
-  moduleServerUrl?: string;
-  vendorBundleHash?: string;
-  contentSourceId?: string;
-} {
-  return {
-    projectId: projectId ?? projectRoot,
-    dev: true,
-    moduleServerUrl,
-    vendorBundleHash,
-    contentSourceId,
-  };
-}
-
 describe("ComponentRegistry logic", () => {
   describe("createErrorFallbackComponent", () => {
     it("should create a fallback with component name and error", () => {
@@ -246,39 +224,6 @@ describe("ComponentRegistry logic", () => {
     });
   });
 
-  describe("getLoaderOptions", () => {
-    it("should use projectId when provided", () => {
-      const opts = getLoaderOptions("/project", "proj-uuid-123");
-      assertEquals(opts.projectId, "proj-uuid-123");
-      assertEquals(opts.dev, true);
-    });
-
-    it("should fall back to projectRoot when no projectId", () => {
-      const opts = getLoaderOptions("/project");
-      assertEquals(opts.projectId, "/project");
-    });
-
-    it("should include optional fields when provided", () => {
-      const opts = getLoaderOptions(
-        "/project",
-        "proj-123",
-        "http://localhost:3000",
-        "abc123",
-        "branch:main",
-      );
-      assertEquals(opts.moduleServerUrl, "http://localhost:3000");
-      assertEquals(opts.vendorBundleHash, "abc123");
-      assertEquals(opts.contentSourceId, "branch:main");
-    });
-
-    it("should leave optional fields undefined when not provided", () => {
-      const opts = getLoaderOptions("/project");
-      assertEquals(opts.moduleServerUrl, undefined);
-      assertEquals(opts.vendorBundleHash, undefined);
-      assertEquals(opts.contentSourceId, undefined);
-    });
-  });
-
   describe("component registry Map operations (simulated)", () => {
     it("should store and retrieve components", () => {
       const components = new Map<string, unknown>();
@@ -323,6 +268,70 @@ describe("ComponentRegistry logic", () => {
   });
 
   describe("dependency snapshot isolation", () => {
+    it("isolates component maps by request environment", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/project/components/Button.tsx",
+        "export default function Button() { return null; }",
+      );
+      const seenEnvironments: string[] = [];
+      const registry = new ComponentRegistry(
+        { registerModule: () => Promise.resolve() } as unknown as VirtualModuleSystem,
+        3001,
+        adapter,
+        undefined,
+        undefined,
+        "project-id",
+        "branch:main",
+        (_source, _filePath, _projectDir, _adapter, options) => {
+          const environment = options?.mode ?? "missing";
+          seenEnvironments.push(environment);
+          const Component: React.ComponentType<Record<string, unknown>> = () => null;
+          Component.displayName = `Button(${environment})`;
+          return Promise.resolve(Component);
+        },
+        { compileMode: "production", environment: "production" },
+      );
+
+      await registry.loadFromDirectory("/project/components", true);
+      const productionKey = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "production",
+      );
+      const previewKey = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "preview",
+      );
+      const previewKeyAgain = await registry.prepareDependencySnapshot(
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "preview",
+      );
+
+      assertEquals(productionKey === previewKey, false);
+      assertEquals(previewKeyAgain, previewKey);
+      assertEquals(
+        registry.getAllAsComponents(productionKey).Button?.displayName,
+        "Button(production)",
+      );
+      assertEquals(
+        registry.getAllAsComponents(previewKey).Button?.displayName,
+        "Button(preview)",
+      );
+      assertEquals(seenEnvironments, ["production", "preview"]);
+    });
+
     it("materializes distinct component maps for concurrent package snapshots", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(

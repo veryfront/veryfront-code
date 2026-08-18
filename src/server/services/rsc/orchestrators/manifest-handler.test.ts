@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
@@ -33,7 +33,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Card", { path: "/app/components/Card.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       const response = await handler.handle(manifest as any);
 
       assertEquals(response.headers.get("content-type"), "application/json");
@@ -44,7 +44,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
     });
 
     it("should return empty components for empty manifest", async () => {
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       const response = await handler.handle(new Map());
       const body = await response.json();
       assertEquals(body.components, {});
@@ -162,7 +162,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["A", { path: "/a.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       const response1 = await handler.handle(manifest as any);
       const body1 = await response1.json();
 
@@ -210,6 +210,41 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       assertEquals(stateBAgain.hash, stateB.hash);
       assertEquals(stateB.dependencyPinningCacheKey, "on:pins-b");
     });
+
+    it("defaults an omitted isLocalProject to remote", async () => {
+      const manifest = new Map([
+        [
+          "Button",
+          {
+            id: "Button",
+            path: "/project/frontend/Button.tsx",
+            rel: "frontend/Button.tsx",
+            contentHash: "rev-a",
+            exports: ["default"],
+          },
+        ],
+      ]);
+
+      const body = await (await new ManifestHandler("/project").handle(manifest)).json();
+
+      assertEquals(
+        body.components.Button,
+        "/_veryfront/rsc/module?rel=frontend%2FButton.tsx&v=rev-a",
+      );
+      assertEquals(JSON.stringify(body).includes("/project/frontend/Button.tsx"), false);
+    });
+
+    it("rejects a rel-less component when isLocalProject is omitted", async () => {
+      const manifest = new Map([
+        ["Button", { id: "Button", path: "/project/frontend/Button.tsx", exports: ["default"] }],
+      ]);
+
+      await assertRejects(
+        () => new ManifestHandler("/project").handle(manifest),
+        Error,
+        "missing its project-relative module path",
+      );
+    });
   });
 
   describe("handle with injected CacheRepository", () => {
@@ -219,7 +254,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["X", { path: "/x.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project", { cacheRepo });
+      const handler = new ManifestHandler("/project", { cacheRepo, isLocalProject: true });
       await handler.handle(manifest as any);
 
       assertEquals(cacheRepo.store.size, 1);
@@ -231,7 +266,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Y", { path: "/y.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project", { cacheRepo });
+      const handler = new ManifestHandler("/project", { cacheRepo, isLocalProject: true });
       await handler.handle(manifest as any);
 
       // Second call should use cache
@@ -246,10 +281,12 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
 
       await new ManifestHandler("/project", {
         cacheRepo,
+        isLocalProject: true,
         contentSourceId: "release-a",
       }).handle(manifest as any);
       await new ManifestHandler("/project", {
         cacheRepo,
+        isLocalProject: true,
         contentSourceId: "release-b",
       }).handle(manifest as any);
 
@@ -324,7 +361,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
         ["Z", { path: "/z.tsx", exports: [] }],
       ]);
 
-      const handler = new ManifestHandler("/project");
+      const handler = new ManifestHandler("/project", { isLocalProject: true });
       await handler.handle(manifest as any);
       handler.clearCache();
 
@@ -369,7 +406,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
           return `'use client';\nexport default function Counter() { return "fresh"; }`;
         },
       };
-      const handler = new ManifestHandler("/project", { fs: fs as any });
+      const handler = new ManifestHandler("/project", { fs: fs as any, isLocalProject: true });
 
       const preInvalidation = handler.handle(null);
       await firstReadStarted;

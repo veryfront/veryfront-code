@@ -3,8 +3,15 @@ import { rendererLogger as logger, throwIfAborted } from "#veryfront/utils";
 import { normalizePath } from "#veryfront/utils/path-utils.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
+
+/** Test seam for the component loader that {@link loadReservedWithPath} imports lazily. */
+export interface LoadReservedDeps {
+  loadComponentFromSource: typeof loadComponentFromSource;
+}
 
 export const RESERVED_COMPONENTS = {
   loading: "loading.tsx",
@@ -83,7 +90,7 @@ export async function loadReservedWithPath(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
-  _mode: "development" | "production",
+  modes: RenderModes,
   adapter: RuntimeAdapter,
   projectId?: string,
   contentSourceId?: string,
@@ -94,13 +101,14 @@ export async function loadReservedWithPath(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  deps?: LoadReservedDeps,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
   throwIfAborted(signal);
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
-  const { loadComponentFromSource } = await import(
-    "#veryfront/modules/react-loader/component-loader.ts"
-  );
+  const loadComponentFromSource = deps?.loadComponentFromSource ??
+    (await import("#veryfront/modules/react-loader/component-loader.ts"))
+      .loadComponentFromSource;
 
   for (const dir of dirs) {
     for (const ext of [".tsx", ".jsx"]) {
@@ -109,7 +117,8 @@ export async function loadReservedWithPath(
         const src = await adapter.fs.readFile(file);
         const Cmp = await loadComponentFromSource(src, file, projectDir, adapter, {
           projectId: projectId ?? projectDir,
-          dev: true,
+          dev: modes.compileMode === "development",
+          mode: modes.environment,
           contentSourceId,
           reactVersion,
           serverExternalPackages,
@@ -136,7 +145,7 @@ export async function tryLoadReservedInDirs(
   dirs: string[],
   which: keyof typeof RESERVED_COMPONENTS,
   projectDir: string,
-  mode: "development" | "production",
+  modes: RenderModes,
   adapter: RuntimeAdapter,
   projectId?: string,
   contentSourceId?: string,
@@ -147,12 +156,13 @@ export async function tryLoadReservedInDirs(
   moduleServerOrigin?: string,
   serverExternalPackages?: readonly string[],
   signal?: AbortSignal,
+  deps?: LoadReservedDeps,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
     which,
     projectDir,
-    mode,
+    modes,
     adapter,
     projectId,
     contentSourceId,
@@ -163,6 +173,7 @@ export async function tryLoadReservedInDirs(
     moduleServerOrigin,
     serverExternalPackages,
     signal,
+    deps,
   );
   return loaded?.component ?? null;
 }

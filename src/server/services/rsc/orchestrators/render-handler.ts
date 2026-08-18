@@ -162,6 +162,7 @@ export class RenderHandler {
         projectDir: this.projectDir,
         projectSlug: this.moduleOptions.projectSlug,
         contentSourceId: this.moduleOptions.contentSourceId,
+        mode: this.mode,
         reactVersion,
         serverExternalPackages: this.moduleOptions.serverExternalPackages,
         dependencyPinningCacheKey: dependencySnapshot.cacheKey,

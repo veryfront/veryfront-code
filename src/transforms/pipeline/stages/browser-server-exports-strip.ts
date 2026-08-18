@@ -1290,6 +1290,13 @@ function freeReferencedIdentifiers(
 
   const visit = (node: Node, scopes: LexicalScope[]): void => {
     if (node.type === "ImportDeclaration" || elided.has(node)) return;
+    // `declare const`, `declare function`, `declare class`, `declare enum` and
+    // `declare namespace` are ambient: they emit nothing, so a name inside one
+    // (a type annotation, a heritage clause) is not a runtime read. Decorators
+    // are the exception: tsc and esbuild both emit a runtime `__decorate` call
+    // for `@audit declare id: string`, so a decorated declared member falls
+    // through and its erased type positions are skipped individually below.
+    if (node.declare === true && !hasDecorators(node)) return;
     if (node.type === "TSEnumDeclaration") {
       visitTsEnum(node, scopes);
       return;
@@ -1300,6 +1307,12 @@ function freeReferencedIdentifiers(
     }
     if (node.type === "TSImportEqualsDeclaration") {
       visitTsImportEquals(node, scopes);
+      return;
+    }
+    // `export = handler` emits an assignment to the module export, so its
+    // operand is a real runtime read.
+    if (node.type === "TSExportAssignment") {
+      if (isNode(node.expression)) visit(node.expression, scopes);
       return;
     }
     if (visitTsExpression(node, scopes)) return;
@@ -1327,13 +1340,15 @@ function freeReferencedIdentifiers(
 
     // `export { other as KEY }` reads `other` and publishes the *name* `KEY`.
     // A re-export (`export … from "./x"`) reads nothing declared here at all.
+    // `export type { Cfg }` and `export { type Only }` are erased whole, so
+    // neither the clause nor the type-only specifier reads its local binding.
     if (node.type === "ExportNamedDeclaration" || node.type === "ExportAllDeclaration") {
-      if (isNode(node.source)) return;
+      if (isNode(node.source) || node.exportKind === "type") return;
       visitChildren(node, scopes);
       return;
     }
     if (node.type === "ExportSpecifier") {
-      if (isNode(node.local)) visit(node.local, scopes);
+      if (node.exportKind !== "type" && isNode(node.local)) visit(node.local, scopes);
       return;
     }
     if (node.type === "ExportDefaultSpecifier" || node.type === "ExportNamespaceSpecifier") return;
@@ -1561,6 +1576,28 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
   }
 
   return referenced;
+}
+
+/**
+ * Both reference walkers' answers for one parsed module.
+ *
+ * The previous implementation kept two walkers (a flat over-approximation for
+ * declaration and import liveness, and a scope-aware walk for the stripped
+ * hooks' dependency closure) and exported this to prove they classify
+ * TypeScript syntax identically. Every liveness question now flows through the
+ * single scope-aware walker, so both answers are that walker's answer. The
+ * export remains so the TypeScript classification stays directly testable on
+ * authored source, which `stripServerOnlyExports` cannot exercise once the
+ * compile stage has erased every TypeScript node.
+ */
+export function moduleReferenceWalkers(ast: ASTNode): {
+  referenced: Set<string>;
+  free: Set<string>;
+} {
+  const program = (ast as { program?: unknown }).program;
+  const root: Node = isNode(program) ? program : ast;
+  const free = freeReferencedIdentifiers(root);
+  return { referenced: new Set(free), free };
 }
 
 /**
@@ -5571,12 +5608,18 @@ function dropUnreachableModuleScopeBindings(
   return [];
 }
 
-/** Local binding names an import statement introduces. */
+/**
+ * Local *runtime* binding names an import statement introduces. A type-only
+ * specifier (`import { hashOf, type Cfg }`) is erased before the module runs,
+ * so it is not a runtime binding: counting it would make a mixed import whose
+ * only value binding was hook-owned look partly alive, reducing it to a bare
+ * side-effect import instead of deleting it.
+ */
 function importedBindings(statement: Node): string[] {
   const bindings: string[] = [];
 
   for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
-    if (!isNode(specifier)) continue;
+    if (!isNode(specifier) || specifier.importKind === "type") continue;
     const name = nodeName(specifier.local);
     if (name) bindings.push(name);
   }

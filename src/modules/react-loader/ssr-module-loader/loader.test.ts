@@ -3,6 +3,7 @@ import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
 import {
   assert,
   assertEquals,
+  assertNotEquals,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
@@ -14,12 +15,17 @@ import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts"
 import { clearSSRModuleCache, clearSSRModuleCacheForProject, SSRModuleLoader } from "./index.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
 import {
+  acquireTransformSlot,
   failedComponents,
   globalCrossProjectCache,
   globalInProgress,
   globalModuleCache,
+  releaseTransformSlot,
 } from "./cache/memory.ts";
 import {
+  getTransformAcquireTimeoutMs,
+  TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS,
+  TRANSFORM_ACQUIRE_TIMEOUT_MS,
   TRANSFORM_IN_PROGRESS_STALE_EVICTION_MS,
   TRANSFORM_IN_PROGRESS_WAIT_TIMEOUT_MS,
 } from "./constants.ts";
@@ -28,7 +34,15 @@ import { buildSSRModuleCacheKey, isKeyForProject } from "../../../cache/keys.ts"
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  deleteEnv,
+  getEnv,
+  makeTempDir,
+  mkdir,
+  remove,
+  setEnv,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
@@ -37,6 +51,7 @@ import {
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { MDX_MODULE_DEV_COMPILE_VARIANT } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ModuleCacheEntry } from "./types.ts";
@@ -123,6 +138,35 @@ function createProxyProjectAdapter(files: Record<string, string>): RuntimeAdapte
     server: denoAdapter.server,
     serve: denoAdapter.serve.bind(denoAdapter),
   };
+}
+
+/**
+ * Downstream proof for the SSR dev-mode gate (issue 555). Every branch these
+ * cases cover used to take the dev path on the hosted runtime because the
+ * render mode was discarded before it reached SSRModuleLoader.
+ */
+const PRODUCTION_GATE_CONTENT_SOURCE_ID = "local-main";
+const PRODUCTION_GATE_JSX_SOURCE =
+  'export default function Widget() { return <div id="w">hi</div>; }';
+
+function productionGateCacheKey(
+  projectId: string,
+  filePath: string,
+  contentHash: string,
+  dev: boolean,
+): string {
+  const configHash = computeConfigHashSync({ dev });
+  return buildSSRModuleCacheKey(
+    RUNTIME_VERSION,
+    projectId,
+    `${PRODUCTION_GATE_CONTENT_SOURCE_ID}:default:${configHash}:${filePath}:${contentHash}`,
+  );
+}
+
+function productionGateRelativePath(filePath: string, projectDir: string): string {
+  return filePath.startsWith(projectDir)
+    ? filePath.slice(projectDir.length).replace(/^\/+/, "")
+    : filePath;
 }
 
 describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -223,10 +267,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const originA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://a.example",
+      dev: false,
     });
     const originB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://b.example",
+      dev: false,
     });
 
     assert(originA?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
@@ -236,17 +282,27 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
         dependencyPinningCacheKey: "off",
         moduleServerOrigin: "https://a.example",
+        dev: false,
       }),
       undefined,
     );
     const externalA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       serverExternalPackages: ["knex", "@prisma/client"],
+      dev: false,
     });
     const externalB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       serverExternalPackages: ["@prisma/client", "knex"],
+      dev: false,
     });
     assertEquals(externalB, externalA);
     assert(externalA?.startsWith("on:server-externals-"));
+    assertEquals(
+      __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+        serverExternalPackages: ["knex", "@prisma/client"],
+        dev: true,
+      }),
+      `${externalA}:${MDX_MODULE_DEV_COMPILE_VARIANT}`,
+    );
   });
 
   it("invalidates stale cache entries with missing local dependencies and retransforms", async () => {
@@ -624,6 +680,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/VerifiedMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       const mdxPathCache = await getModulePathCache(mdxCacheDir);
       mdxPathCache.set(mdxPathCacheKey, staleTempPath);
@@ -708,6 +766,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/ColdMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -799,6 +859,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/BranchMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -1734,6 +1796,243 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       globalThis.fetch = originalFetch;
       clearSSRModuleCache();
       globalCrossProjectCache.clear();
+    }
+  });
+
+  it("uses the 5s acquire deadline in production and the 30s deadline in dev", () => {
+    assertEquals(getTransformAcquireTimeoutMs(false), TRANSFORM_ACQUIRE_TIMEOUT_MS);
+    assertEquals(getTransformAcquireTimeoutMs(false), 5_000);
+    assertEquals(getTransformAcquireTimeoutMs(true), TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS);
+    assertEquals(getTransformAcquireTimeoutMs(true), 30_000);
+  });
+
+  it("skips node position injection for production tsx transforms", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-prod-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "prod-gate-positions";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rel = productionGateRelativePath(filePath, projectDir);
+      const injected = injectNodePositions(PRODUCTION_GATE_JSX_SOURCE, { filePath: rel });
+      assertNotEquals(
+        injected,
+        PRODUCTION_GATE_JSX_SOURCE,
+        "the parser extension must be active for this assertion to mean anything",
+      );
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+      });
+      await loader.loadRawModule(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rawKey = productionGateCacheKey(
+        projectId,
+        filePath,
+        hashCodeHex(PRODUCTION_GATE_JSX_SOURCE),
+        false,
+      );
+      const injectedKey = productionGateCacheKey(projectId, filePath, hashCodeHex(injected), false);
+
+      assertEquals(
+        globalModuleCache.has(rawKey),
+        true,
+        "production must transform the untouched source",
+      );
+      assertEquals(
+        globalModuleCache.has(injectedKey),
+        false,
+        "production must not run injectNodePositions on tsx",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("compiles _vf_modules imports for production without an inline sourcemap", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-vfmod-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "prod-gate-vf-modules";
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, PRODUCTION_GATE_CONTENT_SOURCE_ID);
+    const source = [
+      `import { used } from "/_vf_modules/util.js";`,
+      `export default function Widget() { return used(); }`,
+    ].join("\n");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+      await writeTextFile(
+        join(projectDir, "util.ts"),
+        ["function unusedHelper() { return 2; }", "export const used = () => 1;"].join("\n"),
+      );
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+      });
+      await loader.loadRawModule(filePath, source);
+
+      const pathCache = await getModulePathCache(mdxCacheDir);
+      const artifactPath = pathCache.get(buildMdxEsmPathCacheKey("_vf_modules/util.js"));
+      assert(artifactPath !== undefined, "expected the _vf_modules artifact to be cached");
+
+      const artifact = await Deno.readTextFile(artifactPath);
+      assertEquals(
+        artifact.includes("sourceMappingURL=data:"),
+        false,
+        "production must not ship an inline sourcemap for _vf_modules imports",
+      );
+      assertEquals(artifact.includes("unusedHelper"), false, "production must tree-shake");
+    } finally {
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      await remove(mdxCacheDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("injects node positions for dev tsx transforms", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-dev-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "dev-gate-positions";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const rel = productionGateRelativePath(filePath, projectDir);
+      const injected = injectNodePositions(PRODUCTION_GATE_JSX_SOURCE, { filePath: rel });
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      await loader.loadRawModule(filePath, PRODUCTION_GATE_JSX_SOURCE);
+
+      const injectedKey = productionGateCacheKey(projectId, filePath, hashCodeHex(injected), true);
+      assertEquals(
+        globalModuleCache.has(injectedKey),
+        true,
+        "dev must keep injecting node positions for Studio Navigator",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("applies the per-project transform cap in production and bypasses it in dev", async () => {
+    const previousLimit = getEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+    setEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT", "1");
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-cap-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Capped.tsx");
+    const source = "export default function Capped() { return null; }";
+    const projectId = "prod-gate-capacity";
+    let held = false;
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+
+      // Occupy the only per-project slot for this project.
+      held = acquireTransformSlot(projectId);
+      assertEquals(held, true);
+
+      const devLoader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      // Dev bypasses the per-project cap, so this completes while the slot is held.
+      const devModule = await devLoader.loadRawModule(filePath, source);
+      assert(typeof devModule.default === "function");
+
+      const prodLoader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+      });
+
+      // The deadline is a timer, so drive it with fake time instead of burning
+      // 5s of wall clock and asserting on a Date.now() delta. Ticking to one
+      // millisecond short of the production deadline and only then over it
+      // pins the exact value: a shorter deadline settles early, and the 30s dev
+      // deadline never settles at all.
+      using time = new FakeTime();
+      let settled = false;
+      const rejection = prodLoader.loadRawModule(filePath, source).then(
+        () => undefined,
+        (error: unknown) => error,
+      ).finally(() => {
+        settled = true;
+      });
+
+      // Let the loader reach the capacity wait without advancing the clock.
+      for (let i = 0; i < 50 && !settled; i++) await time.tickAsync(0);
+      assertEquals(settled, false, "production must not fail before the deadline");
+
+      await time.tickAsync(TRANSFORM_ACQUIRE_TIMEOUT_MS - 1);
+      assertEquals(
+        settled,
+        false,
+        `production must wait the full ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline`,
+      );
+
+      await time.tickAsync(1);
+      // Crossing the deadline fires the timer; the rejection still has to walk
+      // the promise chain. Flush it without advancing the clock, so the 30s dev
+      // deadline would still read as unsettled here.
+      for (let i = 0; i < 10 && !settled; i++) await time.tickAsync(0);
+      assertEquals(
+        settled,
+        true,
+        `production must reject at the ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline, not the ` +
+          `${TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS}ms dev deadline`,
+      );
+
+      const error = await rejection;
+      assert(error instanceof Error, `expected a rejection, got ${String(error)}`);
+      assert(
+        (error as Error).message.includes("at transform capacity"),
+        `unexpected rejection: ${(error as Error).message}`,
+      );
+    } finally {
+      if (held) releaseTransformSlot(projectId);
+      if (previousLimit === undefined) {
+        deleteEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
+      } else {
+        setEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT", previousLimit);
+      }
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
     }
   });
 });

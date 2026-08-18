@@ -1,9 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findVfModuleImports, resolveProjectDir } from "./loader-helpers.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  findVfModuleImports,
+  processVfModuleImports,
+  resolveProjectDir,
+} from "./loader-helpers.ts";
 import type { ESMLoaderContext } from "./types.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
+import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import { clearModulePathCache, getModulePathCache } from "./cache/index.ts";
+import { MDX_MODULE_DEV_COMPILE_VARIANT } from "./module-fetcher/cache-keys.ts";
 
 function makeContext(overrides: Partial<ESMLoaderContext> = {}): ESMLoaderContext {
   return {
@@ -13,6 +22,13 @@ function makeContext(overrides: Partial<ESMLoaderContext> = {}): ESMLoaderContex
 }
 
 describe("transforms/mdx/esm-module-loader/loader-helpers", () => {
+  // Transforming a real module starts esbuild's child process; stop it so the
+  // handle does not leak into a later suite.
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   describe("findVfModuleImports", () => {
     it("finds _vf_modules imports with leading slash", () => {
       const code = `import { foo } from "/_vf_modules/lib/utils.js";`;
@@ -68,6 +84,76 @@ import { bar } from "/_vf_modules/components/Button.js";
       const code = `const path = "_vf_modules/lib/utils.js";`;
       const result = findVfModuleImports(code);
       assertEquals(result.length, 0);
+    });
+  });
+
+  describe("processVfModuleImports compile mode", () => {
+    async function collectPathCacheKeys(
+      mode: ESMLoaderContext["mode"],
+    ): Promise<string[]> {
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-entry-mode-project-" });
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-entry-mode-cache-" });
+      const code = `import { label } from "/_vf_modules/lib/label.js";\nexport default label;`;
+
+      try {
+        await mkdir(join(projectDir, "lib"), { recursive: true });
+        await writeTextFile(
+          join(projectDir, "lib/label.js"),
+          `export const label = "compiled";`,
+        );
+
+        clearModulePathCache();
+        await processVfModuleImports(
+          code,
+          findVfModuleImports(code),
+          {
+            moduleCache: new LRUCache({ maxEntries: 10 }),
+            esmCacheDir,
+            adapter: await getLocalAdapter(),
+            projectId: "mdx-entry-mode",
+            projectDir,
+            projectSlug: "mdx-entry-mode",
+            contentSourceId: "release-1",
+            reactVersion: "19.1.1",
+            mode,
+          },
+          projectDir,
+          true,
+        );
+
+        return [...(await getModulePathCache(esmCacheDir)).keys()];
+      } finally {
+        clearModulePathCache();
+        await remove(projectDir, { recursive: true }).catch(() => undefined);
+        await remove(esmCacheDir, { recursive: true }).catch(() => undefined);
+      }
+    }
+
+    it("compiles a compiled-MDX entry's modules for the render mode", async () => {
+      const developmentKeys = await collectPathCacheKeys("development");
+      const productionKeys = await collectPathCacheKeys("production");
+
+      // The compile mode decides minification, tree shaking and the inline
+      // sourcemap, so the two renders must not meet on one cache key.
+      assertEquals(
+        developmentKeys.every((key) => key.includes(MDX_MODULE_DEV_COMPILE_VARIANT)),
+        true,
+        `expected development keys to carry the compile-mode segment: ${developmentKeys}`,
+      );
+      assertEquals(
+        productionKeys.some((key) => key.includes(MDX_MODULE_DEV_COMPILE_VARIANT)),
+        false,
+        `expected no development key from a production render: ${productionKeys}`,
+      );
+      assertEquals(developmentKeys.length > 0, true);
+      assertEquals(productionKeys.length > 0, true);
+    });
+
+    it("compiles for production when the context carries no render mode", async () => {
+      const keys = await collectPathCacheKeys(undefined);
+
+      assertEquals(keys.length > 0, true);
+      assertEquals(keys.some((key) => key.includes(MDX_MODULE_DEV_COMPILE_VARIANT)), false);
     });
   });
 

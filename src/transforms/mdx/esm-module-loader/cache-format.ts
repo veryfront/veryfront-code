@@ -17,6 +17,14 @@ const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
 const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
 export const UNRESOLVED_IMPORTS_SIDECAR_SUFFIX = ".unresolved-imports.json";
 const CYCLE_MANIFEST_CACHE_DIR = "veryfront-cycle-manifests";
+
+/**
+ * Variant segment that isolates development-compiled module artifacts. It
+ * lives with the key format because the namespace schema below has to name it:
+ * the namespace roll is what keeps legacy, always-development-compiled entries
+ * off the unsegmented production key.
+ */
+export const MDX_MODULE_DEV_COMPILE_VARIANT = "on:compile-dev";
 export const CYCLE_MANIFEST_SIDECAR_SUFFIX = ".cycle-manifest.json";
 
 /** Cache-wide storage that no project or content-source namespace can occupy. */
@@ -102,7 +110,15 @@ function formatFrameworkVfModuleCacheFileName(
   return `vfmod-${namespace}-${pathHash}-${envKey}-${contentHash}.mjs`;
 }
 
-function buildMdxEsmCacheSchemaSample() {
+/**
+ * Declarative description of every MDX-ESM cache key shape. `createCacheNamespace`
+ * hashes it, so naming a format change here rolls the namespace and makes the
+ * entries written under the previous shape unreachable.
+ *
+ * Exported so a test can rebuild the namespace from a modified sample and assert
+ * the isolation the roll provides, rather than pinning the resulting hash.
+ */
+export function buildMdxEsmCacheSchemaSample() {
   return {
     transformKey: formatMdxEsmTransformCacheKey(
       CACHE_NAMESPACE_SENTINEL,
@@ -112,6 +128,12 @@ function buildMdxEsmCacheSchemaSample() {
       "_vf_modules/pages/index.js",
       "deadbeef",
     ),
+    // Development artifacts carry a compile-mode variant segment; production
+    // artifacts stay on the unsegmented key. Naming the split here rolls the
+    // namespace, so entries written before the compile mode was part of the
+    // cache identity (all of them development-compiled) cannot be served to a
+    // production render. `cache-format.test.ts` fails if this line is dropped.
+    devCompileVariant: MDX_MODULE_DEV_COMPILE_VARIANT,
     pathKey: formatMdxEsmPathCacheKey(
       CACHE_NAMESPACE_SENTINEL,
       REACT_DEFAULT_VERSION,

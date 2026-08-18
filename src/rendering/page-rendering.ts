@@ -160,6 +160,8 @@ export function handleMDXPage(
     serverExternalPackages?: readonly string[];
     /** Server-trusted local-project identity for dev-only module-server fallback. */
     isLocalProject?: boolean;
+    /** Request mode ("development" | "production") for the module compile mode */
+    mode?: string;
   },
 ): Promise<MDXPageResult> {
   return withSpan(
@@ -180,6 +182,9 @@ export function handleMDXPage(
           projectDir,
           projectSlug: options?.projectSlug,
           contentSourceId: options?.contentSourceId,
+          // A missing render mode compiles for production, matching the SSR
+          // module loader and #3844's production-leaning default.
+          mode: options?.mode === "development" ? "development" : "production",
           reactVersion: options?.reactVersion,
           serverExternalPackages: options?.serverExternalPackages,
           dependencyPinningCacheKey: options?.dependencyPinningCacheKey,

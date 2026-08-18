@@ -7,18 +7,37 @@ import {
   createLayoutComponentCache,
   loadMDXLayout,
   loadTSXComponent,
+  preloadMDXLayoutModule,
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "./component-loader.ts";
 import { type MDXLoadModuleOptions, mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 import { hashString } from "#veryfront/cache/hash.ts";
 import { validateVeryfrontConfig } from "#veryfront/config";
 import {
   clearImportMapCache,
   getCachedImportMap,
 } from "#veryfront/modules/import-map/preloader.ts";
+
+const PRODUCTION_MODES = {
+  compileMode: "production",
+  environment: "production",
+} as const;
+
+/** Hosted preview: production compile, preview instrumentation. */
+const PREVIEW_MODES = {
+  compileMode: "production",
+  environment: "preview",
+} as const;
+
+/** Local development: development compile, preview instrumentation. */
+const DEVELOPMENT_MODES = {
+  compileMode: "development",
+  environment: "preview",
+} as const;
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -341,6 +360,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         {
           loadComponentFromSource: (_source, _filePath, _projectDir, _adapter, options) => {
@@ -387,6 +407,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         {
           loadComponentFromSource: () => {
@@ -403,6 +424,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         {
           loadComponentFromSource: () => {
@@ -443,6 +465,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
         deps,
       );
@@ -460,6 +483,7 @@ describe("rendering/layouts/utils/component-loader", () => {
           "project-1",
           "project-slug",
           "release-1",
+          PRODUCTION_MODES,
           "19.1.0",
           deps,
         ),
@@ -491,6 +515,7 @@ describe("rendering/layouts/utils/component-loader", () => {
         "project-1",
         "project-slug",
         "release-1",
+        PRODUCTION_MODES,
         "19.1.0",
       ] as const;
 
@@ -546,22 +571,129 @@ describe("rendering/layouts/utils/component-loader", () => {
     };
 
     try {
-      await loadMDXLayout(
-        { compiledCode: "export default function Layout() { return null; }" } as MdxBundle,
-        "/project",
-        { fs: {} } as unknown as RuntimeAdapter,
-        "project-18",
-        "project-slug",
-        "preview-main",
-        { imports: {} },
-        "18.3.1",
-        SNAPSHOT_A_PIN_KEY,
-        SNAPSHOT_A_DEPENDENCIES,
-      );
+      await loadMDXLayout({
+        bundle: {
+          compiledCode: "export default function Layout() { return null; }",
+        } as MdxBundle,
+        projectDir: "/project",
+        adapter: { fs: {} } as unknown as RuntimeAdapter,
+        projectId: "project-18",
+        projectSlug: "project-slug",
+        contentSourceId: "preview-main",
+        modes: PRODUCTION_MODES,
+        preloadedImportMap: { imports: {} },
+        reactVersion: "18.3.1",
+        dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+        dependencyPinningDependencies: SNAPSHOT_A_DEPENDENCIES,
+      });
 
       assertEquals(moduleReactVersion, "18.3.1");
       assertEquals(modulePinKey, SNAPSHOT_A_PIN_KEY);
       assertEquals(moduleDependencies, SNAPSHOT_A_DEPENDENCIES);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("unpacks the compile half of the render modes into MDX layout module loading", async () => {
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    const observed: Array<MDXLoadModuleOptions | undefined> = [];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observed.push(options as MDXLoadModuleOptions | undefined);
+      return Promise.resolve({ default: () => null });
+    };
+
+    const loadWithModes = (modes: RenderModes) =>
+      loadMDXLayout({
+        bundle: {
+          compiledCode: "export default function Layout() { return null; }",
+        } as MdxBundle,
+        projectDir: "/project",
+        adapter: { fs: {} } as unknown as RuntimeAdapter,
+        projectId: "mode-project",
+        projectSlug: "project-slug",
+        contentSourceId: "release-1",
+        modes,
+        preloadedImportMap: { imports: {} },
+        reactVersion: "19.1.1",
+      });
+
+    try {
+      // A layout's own `/_vf_modules/*` imports must compile for the same mode
+      // as the page that wraps them. The loader speaks the compile vocabulary
+      // only, so the hosted preview pair is the case that fails if the request
+      // vocabulary is unpacked in its place.
+      await loadWithModes(DEVELOPMENT_MODES);
+      await loadWithModes(PREVIEW_MODES);
+      await loadWithModes(PRODUCTION_MODES);
+
+      assertEquals(observed.map((options) => options?.mode), [
+        "development",
+        "production",
+        "production",
+      ]);
+      assertEquals(observed.map((options) => options?.projectSlug), [
+        "project-slug",
+        "project-slug",
+        "project-slug",
+      ]);
+      assertEquals(observed.map((options) => options?.reactVersion), [
+        "19.1.1",
+        "19.1.1",
+        "19.1.1",
+      ]);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("unpacks the compile half of the render modes when preloading an MDX layout", async () => {
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    const observed: Array<MDXLoadModuleOptions | undefined> = [];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observed.push(options as MDXLoadModuleOptions | undefined);
+      return Promise.resolve({ default: () => null });
+    };
+
+    const preloadWithModes = (modes: RenderModes) =>
+      preloadMDXLayoutModule({
+        bundle: {
+          compiledCode: "export default function Layout() { return null; }",
+        } as MdxBundle,
+        projectDir: "/project",
+        adapter: { fs: {} } as unknown as RuntimeAdapter,
+        projectId: "preload-mode-project",
+        projectSlug: "preload-project-slug",
+        contentSourceId: "release-1",
+        modes,
+        reactVersion: "19.1.1",
+        isLocalProject: true,
+      });
+
+    try {
+      // Preloading warms the same module cache the apply phase reads back, so
+      // it must resolve the identical compile mode for the identical pair.
+      await preloadWithModes(DEVELOPMENT_MODES);
+      await preloadWithModes(PREVIEW_MODES);
+      await preloadWithModes(PRODUCTION_MODES);
+
+      assertEquals(observed.map((options) => options?.mode), [
+        "development",
+        "production",
+        "production",
+      ]);
+      assertEquals(observed.map((options) => options?.isLocalProject), [true, true, true]);
+      assertEquals(observed.map((options) => options?.projectSlug), [
+        "preload-project-slug",
+        "preload-project-slug",
+        "preload-project-slug",
+      ]);
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
@@ -596,21 +728,21 @@ describe("rendering/layouts/utils/component-loader", () => {
     });
 
     try {
-      await loadMDXLayout(
-        { compiledCode: "export default function Layout() { return null; }" } as MdxBundle,
-        "/context-project",
+      await loadMDXLayout({
+        bundle: {
+          compiledCode: "export default function Layout() { return null; }",
+        } as MdxBundle,
+        projectDir: "/context-project",
         adapter,
-        "context-project-id",
-        "project-slug",
-        "release-1",
-        undefined,
-        "19.1.0",
-        SNAPSHOT_A_PIN_KEY,
-        SNAPSHOT_A_DEPENDENCIES,
-        undefined,
-        undefined,
+        projectId: "context-project-id",
+        projectSlug: "project-slug",
+        contentSourceId: "release-1",
+        modes: PRODUCTION_MODES,
+        reactVersion: "19.1.0",
+        dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+        dependencyPinningDependencies: SNAPSHOT_A_DEPENDENCIES,
         config,
-      );
+      });
 
       // The production call site must register the preloaded map under the
       // exact release/config variant, not the ambient projectId-only variant.
@@ -664,6 +796,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       "project-id",
       "project-slug",
       "preview-main",
+      PRODUCTION_MODES,
       "19.1.1",
       undefined,
       SNAPSHOT_A_PIN_KEY,
@@ -704,6 +837,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       "project-id",
       "project-slug",
       "preview-main",
+      PRODUCTION_MODES,
       "19.1.1",
     ] as const;
 
@@ -749,6 +883,7 @@ describe("rendering/layouts/utils/component-loader", () => {
       "project-id",
       "project-slug",
       "preview-main",
+      PRODUCTION_MODES,
       "19.1.1",
       undefined,
       "off",

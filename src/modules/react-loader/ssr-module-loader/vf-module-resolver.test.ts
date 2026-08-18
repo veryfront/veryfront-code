@@ -1,7 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findVfModuleImports } from "./vf-module-resolver.ts";
+import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import {
+  makeTempDir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
+import { join } from "#veryfront/compat/path";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { clearModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { findVfModuleImports, resolveVfModuleImports } from "./vf-module-resolver.ts";
 
 describe("modules/react-loader/ssr-module-loader/vf-module-resolver", () => {
   describe("findVfModuleImports", () => {
@@ -45,5 +56,73 @@ describe("modules/react-loader/ssr-module-loader/vf-module-resolver", () => {
       const code = `import x from "./local.js";`;
       assertEquals(await findVfModuleImports(code), []);
     });
+  });
+});
+
+/**
+ * `/_vf_modules/*` imports are fetched and compiled for every SSR module, so
+ * the render mode has to reach the module fetcher. A production render that
+ * compiled these modules in development mode shipped unminified, un-tree-shaken
+ * code with an inline sourcemap of the project source, and because the compile
+ * mode was absent from the module cache identity the two modes could also be
+ * served each other's artifacts.
+ */
+describe("modules/react-loader/ssr-module-loader/vf-module-resolver compile mode", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  const MODULE_SOURCE = [
+    "function unusedHelper() { return 2; }",
+    "export const used = () => 1;",
+  ].join("\n");
+
+  async function resolveModuleArtifact(dev: boolean, projectDir: string): Promise<string> {
+    const code = [
+      `import { used } from "/_vf_modules/util.js";`,
+      `export default used;`,
+    ].join("\n");
+
+    const resolved = await resolveVfModuleImports(code, {
+      filePath: join(projectDir, "page.tsx"),
+      projectId: "compile-mode-project",
+      contentSourceId: "release-compile-mode",
+      adapter: { fs: {} } as unknown as RuntimeAdapter,
+      projectDir,
+      dev,
+    });
+
+    const cachedPath = /file:\/\/([^"']+)/.exec(resolved)?.[1];
+    assert(cachedPath !== undefined, "Expected the _vf_modules import to resolve to a cache file");
+    return cachedPath;
+  }
+
+  it("compiles _vf_modules imports for production without an inline sourcemap", async () => {
+    const cacheDir = await makeTempDir({ prefix: "vf-compile-mode-cache-" });
+    const projectDir = await makeTempDir({ prefix: "vf-compile-mode-project-" });
+    await writeTextFile(join(projectDir, "util.ts"), MODULE_SOURCE);
+
+    try {
+      await runWithCacheDir(cacheDir, async () => {
+        // The development render runs first so a production render that ignored
+        // the compile mode would be served this artifact from the module caches.
+        const devPath = await resolveModuleArtifact(true, projectDir);
+        const devCode = await readTextFile(devPath);
+        assertEquals(devCode.includes("sourceMappingURL=data:"), true);
+        assertEquals(devCode.includes("unusedHelper"), true);
+
+        const productionPath = await resolveModuleArtifact(false, projectDir);
+        assertNotEquals(productionPath, devPath);
+
+        const productionCode = await readTextFile(productionPath);
+        assertEquals(productionCode.includes("sourceMappingURL=data:"), false);
+        assertEquals(productionCode.includes("unusedHelper"), false);
+        assertEquals(productionCode.includes("__name"), false);
+      });
+    } finally {
+      clearModulePathCache();
+      await remove(cacheDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true }).catch(() => {});
+    }
   });
 });

@@ -28,6 +28,11 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
     releaseKey = options.branch ?? "main";
   }
 
+  // isLocalProject, not environment, decides the compile mode, so it has to
+  // reach the cache prefix: a local development server and a hosted preview
+  // server agree on every other prefix field.
+  const mode = options.isLocalProject ? "development" : "production";
+
   return {
     projectId: options.projectId,
     projectSlug: options.projectSlug,
@@ -39,7 +44,7 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
     isLocalProject: options.isLocalProject,
     allowHostProjectCodeExecution: options.isLocalProject ||
       options.allowHostProjectCodeExecution === true,
-    mode: options.isLocalProject ? "development" : "production",
+    mode,
 
     contentSourceId: options.contentSourceId,
     releaseId: options.releaseId,
@@ -53,6 +58,7 @@ export function buildEnrichedContext(options: BuildEnrichedContextOptions): Enri
       options.projectId,
       options.environment,
       releaseKey,
+      mode,
       getReadyManifestForRender(options.releaseId)?.manifestVersion,
     ),
 

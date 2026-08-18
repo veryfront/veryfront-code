@@ -13,6 +13,7 @@ import { getElementTypeName } from "../../element-validator/primitive-checks.ts"
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import type { RenderModes } from "#veryfront/rendering/context/render-context.ts";
 
 const logger = rendererLogger.component("apply-layouts-esm");
 
@@ -28,6 +29,7 @@ export function applyLayoutsESM(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  modes: RenderModes,
   preloadedImportMap?: ImportMapConfig,
   reactVersion?: string,
   dependencyPinningCacheKey?: string,
@@ -72,15 +74,16 @@ export function applyLayoutsESM(
             element = await withSpan(
               SpanNames.LAYOUT_APPLY_MDX,
               () =>
-                applyMDXLayout(
+                applyMDXLayout({
                   element,
-                  item.bundle!,
+                  bundle: item.bundle!,
                   projectDir,
                   mergedComponents,
                   adapter,
                   projectId,
                   projectSlug,
                   contentSourceId,
+                  modes,
                   preloadedImportMap,
                   reactVersion,
                   dependencyPinningCacheKey,
@@ -89,7 +92,7 @@ export function applyLayoutsESM(
                   moduleServerOrigin,
                   config,
                   isLocalProject,
-                ),
+                }),
               spanAttrs,
             );
             continue;
@@ -111,6 +114,7 @@ export function applyLayoutsESM(
                 projectId,
                 projectSlug,
                 contentSourceId,
+                modes,
                 reactVersion,
                 dependencyPinningCacheKey,
                 dependencyPinningDependencies,
@@ -138,15 +142,16 @@ export function applyLayoutsESM(
       element = await withSpan(
         SpanNames.LAYOUT_APPLY_MDX,
         () =>
-          applyMDXLayout(
+          applyMDXLayout({
             element,
-            layoutBundle,
+            bundle: layoutBundle,
             projectDir,
             mergedComponents,
             adapter,
             projectId,
             projectSlug,
             contentSourceId,
+            modes,
             preloadedImportMap,
             reactVersion,
             dependencyPinningCacheKey,
@@ -155,7 +160,7 @@ export function applyLayoutsESM(
             moduleServerOrigin,
             config,
             isLocalProject,
-          ),
+          }),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
       logger.debug("Named layoutBundle applied successfully");
@@ -182,6 +187,7 @@ export async function applyLayoutsFunctionBody(
   projectId: string,
   projectSlug: string,
   contentSourceId: string,
+  modes: RenderModes,
   reactVersion?: string,
   dependencyPinningCacheKey?: string,
   dependencyPinningDependencies?: Readonly<Record<string, string>>,
@@ -231,6 +237,7 @@ export async function applyLayoutsFunctionBody(
         projectId,
         projectSlug,
         contentSourceId,
+        modes,
         reactVersion,
         undefined,
         dependencyPinningCacheKey,

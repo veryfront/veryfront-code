@@ -15,6 +15,13 @@ export interface ESMLoaderContext {
   contentSourceId?: string;
   /** Server-trusted local-project identity for dev-only module-server fallback. */
   isLocalProject?: boolean;
+  /**
+   * Compile mode for the `/_vf_modules/*` imports of this entry. It decides
+   * minification, tree shaking and inline sourcemaps, and it is part of every
+   * module cache identity. Absent means production, so a caller that cannot
+   * name a render mode gets production output.
+   */
+  mode?: "development" | "production";
   /** React version for transforms (from project config) */
   reactVersion?: string;
   /** Bare npm package roots that the runtime resolves without bundling. */
@@ -84,6 +91,12 @@ export interface ModuleFetcherContext {
   inFlightModules?: Map<string, Promise<string | null>>;
   /** Unique normalized modules admitted to this request-scoped graph. */
   moduleGraph?: Set<string>;
+  /**
+   * Compile fetched modules in development mode. Defaults to false so a caller
+   * that cannot name a render mode gets production output, and it is part of
+   * every module cache identity because it changes the emitted code.
+   */
+  dev?: boolean;
   /** React version for transforms (from project config) */
   reactVersion?: string;
   /** Bare npm package roots that the runtime resolves without bundling. */

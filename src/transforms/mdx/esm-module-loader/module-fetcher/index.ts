@@ -274,6 +274,7 @@ async function doFetchAndCacheModule(
   const log = getLog(context);
   const { esmCacheDir, adapter, projectDir, projectId, contentSourceId } = context;
   const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+  const dev = context.dev === true;
   const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
   const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")
     ? context.moduleServerOrigin
@@ -286,6 +287,7 @@ async function doFetchAndCacheModule(
     dependencyPinningCacheKey,
     moduleServerOrigin,
     context.serverExternalPackages,
+    dev,
   );
   const cachedPath = await readValidCachedModulePath({
     normalizedPath,
@@ -319,6 +321,7 @@ async function doFetchAndCacheModule(
         dependencyPinningCacheKey,
         moduleServerOrigin,
         serverExternalPackages: context.serverExternalPackages,
+        dev,
         parentModulePath,
       });
     }
@@ -344,6 +347,7 @@ async function doFetchAndCacheModule(
         dependencyPinningCacheKey,
         moduleServerOrigin,
         context.serverExternalPackages,
+        dev,
       )
       : null;
 
@@ -386,6 +390,7 @@ async function doFetchAndCacheModule(
         dependencyPinningSource: context.dependencyPinningSource,
         adapter,
         log,
+        dev,
       });
 
       // Mark for distributed cache write AFTER nested imports are resolved.
@@ -415,6 +420,7 @@ async function doFetchAndCacheModule(
       dependencyPinningCacheKey,
       moduleServerOrigin,
       serverExternalPackages: context.serverExternalPackages,
+      dev,
       distributedCacheWrite:
         needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
           contentSourceId
@@ -447,6 +453,8 @@ export function createModuleFetcherContext(
     contentSourceId?: string;
     isLocalProject?: boolean;
     projectSlug?: string;
+    /** Compile fetched modules in development mode. Defaults to false. */
+    dev?: boolean;
     reactVersion?: string;
     moduleServerOrigin?: string;
     dependencyPinningCacheKey?: string;

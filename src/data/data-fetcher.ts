@@ -43,7 +43,11 @@ export class DataFetcher {
   fetchData(
     pageModule: PageWithData,
     context: DataContext,
-    mode: "development" | "production" = "development",
+    // Defaults to production. In development every page is routed through
+    // `getServerData` (sandbox worker execution) even when it exports
+    // `getStaticData`, so an omitted mode must not opt a hosted render into
+    // that path. The one non-test caller passes `this.config.mode`.
+    mode: "development" | "production" = "production",
     options?: FetchDataOptions,
   ): Promise<DataResult> {
     const preferServerData = mode === "development" || !pageModule.getStaticData;

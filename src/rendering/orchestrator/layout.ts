@@ -17,6 +17,10 @@ import {
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import type { ComponentRegistry } from "../ssr/component-registry.ts";
+import type {
+  RenderEnvironment,
+  RenderModes,
+} from "#veryfront/rendering/context/render-context.ts";
 
 const logger = rendererLogger.component("layout-orchestrator");
 
@@ -27,7 +31,13 @@ export interface LayoutOrchestratorConfig {
   contentSourceId: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
+  /** Compile vocabulary. Selects minification and tree shaking. */
   mode: "development" | "production";
+  /**
+   * Request vocabulary. Selects preview-only instrumentation. A hosted preview
+   * render is mode "production" with environment "preview".
+   */
+  environment: RenderEnvironment;
   moduleServerUrl?: string;
   layoutCollector: LayoutCollector;
   layoutCompiler: LayoutCompiler;
@@ -76,6 +86,10 @@ export class LayoutOrchestrator {
 
   constructor(config: LayoutOrchestratorConfig) {
     this.config = config;
+  }
+
+  private get renderModes(): RenderModes {
+    return { compileMode: this.config.mode, environment: this.config.environment };
   }
 
   private getReactVersion(
@@ -135,6 +149,7 @@ export class LayoutOrchestrator {
     dependencyPinningSource?: DependencyPinningSourceInput,
     moduleServerOrigin?: string,
     signal?: AbortSignal,
+    environment: RenderEnvironment = this.config.environment,
   ): Promise<LayoutPreloadSummary> {
     return withSpan(
       "layout.preloadModules",
@@ -217,6 +232,7 @@ export class LayoutOrchestrator {
                   this.config.projectId,
                   this.config.projectSlug,
                   this.config.contentSourceId,
+                  { ...this.renderModes, environment },
                   reactVersion,
                   undefined,
                   dependencyPinningCacheKey,
@@ -250,21 +266,22 @@ export class LayoutOrchestrator {
           preloadPromises.push(
             (async (): Promise<LayoutPreloadResult> => {
               try {
-                await preloadMDXLayoutModule(
-                  layout.bundle!,
-                  this.config.projectDir,
-                  this.config.adapter,
-                  this.config.projectId,
-                  this.config.projectSlug,
-                  this.config.contentSourceId,
+                await preloadMDXLayoutModule({
+                  bundle: layout.bundle!,
+                  projectDir: this.config.projectDir,
+                  adapter: this.config.adapter,
+                  projectId: this.config.projectId,
+                  projectSlug: this.config.projectSlug,
+                  contentSourceId: this.config.contentSourceId,
+                  modes: { ...this.renderModes, environment },
                   reactVersion,
                   dependencyPinningCacheKey,
                   dependencyPinningDependencies,
                   dependencyPinningSource,
                   moduleServerOrigin,
-                  this.config.config,
-                  this.config.isLocalProject === true,
-                );
+                  config: this.config.config,
+                  isLocalProject: this.config.isLocalProject === true,
+                });
                 return { type: "mdx" as const, path: layout.path, success: true };
               } catch (error) {
                 throwIfAborted(signal);
@@ -347,11 +364,18 @@ export class LayoutOrchestrator {
     dependencyPinningDependencies?: Readonly<Record<string, string>>,
     dependencyPinningSource?: DependencyPinningSourceInput,
     signal?: AbortSignal,
+    /**
+     * Request environment for this render. Takes precedence over the
+     * orchestrator's own, so a reused orchestrator never carries one render's
+     * instrumentation into the next.
+     */
+    environment?: RenderEnvironment,
   ): Promise<React.ReactElement> {
     return withSpan(
       "layout.applyLayoutsAndWrappers",
       async () => {
         throwIfAborted(signal);
+        const renderEnvironment = environment ?? this.config.environment;
         const reactVersion = await this.getReactVersion(
           dependencyPinningCacheKey,
           dependencyPinningDependencies,
@@ -366,6 +390,7 @@ export class LayoutOrchestrator {
               dependencyPinningSource,
               requestUrl?.origin,
               this.config.config.build?.serverExternalPackages,
+              renderEnvironment,
             ),
           )
           : this.config.componentRegistry;
@@ -385,6 +410,7 @@ export class LayoutOrchestrator {
           layoutCache: this.config.layoutCache,
           mergedComponents,
           mode: this.config.mode,
+          environment: renderEnvironment,
           moduleServerUrl: this.config.moduleServerUrl,
           requestUrl,
           params,

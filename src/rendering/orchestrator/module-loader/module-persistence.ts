@@ -78,6 +78,8 @@ export interface PersistTransformedModuleInput {
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
   serverExternalPackages?: readonly string[];
+  /** Compile mode of `transformedCode`, kept in the artifact cache identity. */
+  dev?: boolean;
   /** Tenant-authored imports left unresolved in this module subtree. */
   unresolvedSpecifiers?: readonly string[];
   /** Exact graph-content-addressed path for a cycle-dependent artifact. */
@@ -96,6 +98,11 @@ type ModuleOutputInput = Pick<
   | "serverExternalPackages"
 >;
 
+/**
+ * Artifact filenames carry a hash of the transformed code, so the two compile
+ * modes cannot collide on disk and the directory layout leaves the compile mode
+ * out. The cache keys that point at these artifacts do carry it.
+ */
 function getOutputRelativePath(input: ModuleOutputInput): string {
   const relativePath = input.filePath.startsWith(input.projectDir)
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
@@ -592,6 +599,7 @@ export async function persistTransformedModule(
             input.dependencyPinningCacheKey,
             input.moduleServerOrigin,
             input.serverExternalPackages,
+            input.dev,
           ),
         );
         const cache = await getModulePathCache(input.tmpDir);

@@ -10,7 +10,9 @@ async function serve(pathname: string): Promise<Response> {
   const { serveModule } = await import("./module-server.ts");
   return await serveModule(
     new Request(`http://localhost${pathname}`),
-    { projectId: "test", projectDir, adapter: denoAdapter },
+    // dev: the refusal case asserts the specific limit message, which the
+    // production branch deliberately redacts.
+    { projectId: "test", projectDir, adapter: denoAdapter, dev: true },
   );
 }
 

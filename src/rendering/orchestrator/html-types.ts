@@ -8,7 +8,13 @@ export interface HTMLGeneratorConfig {
   projectDir: string;
   adapter: RuntimeAdapter;
   config: VeryfrontConfig;
+  /** Compile vocabulary. Selects minification and tree shaking. */
   mode: "development" | "production";
+  /**
+   * Request vocabulary. Selects preview-only instrumentation. Defaults to
+   * "production" when the caller does not know the request environment.
+   */
+  environment?: "preview" | "production";
   /** Whether project filesystem URLs are trusted for browser access. */
   isLocalProject?: boolean;
 }

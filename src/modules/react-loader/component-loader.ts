@@ -24,11 +24,14 @@ export async function loadModuleFromSource(
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ): Promise<Record<string, unknown>> {
   const fileName = filePath.split("/").pop() ?? filePath;
   const projectId = options?.projectId ?? projectDir;
-  const dev = options?.dev ?? true;
+  // `dev` is required by the type, so a TypeScript caller cannot reach this
+  // without it. The `?? false` is the runtime half of the same rule: if an
+  // untyped caller ever supplies nothing, production is the safe landing.
+  const dev = options?.dev ?? false;
   const ssr = options?.ssr ?? true;
 
   return await withSpan(
@@ -114,7 +117,7 @@ export async function loadComponentFromSource(
   filePath: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  options?: LoadComponentOptions,
+  options: LoadComponentOptions,
 ): Promise<React.ComponentType<Record<string, unknown>>> {
   const mod = await loadModuleFromSource(source, filePath, projectDir, adapter, options);
   return extractComponent(mod, filePath);

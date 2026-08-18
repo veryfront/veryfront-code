@@ -9,6 +9,7 @@
  *   getIcon,
  *   getRemoteIntegrationToolDiscovery,
  *   getRemoteIntegrationToolDefinitions,
+ *   createSalesforceServiceAccountToolSource,
  *   listConnectors,
  * } from "veryfront/integrations";
  *
@@ -78,3 +79,9 @@ export {
 } from "./remote-tools.ts";
 export type { RemoteIntegrationToolDiscoveryResult } from "./remote-tools.ts";
 export type { IntegrationConnector, IntegrationTool } from "./types.ts";
+
+export {
+  createSalesforceServiceAccountToolSource,
+  SALESFORCE_SERVICE_ACCOUNT_ENV_VARS,
+} from "./salesforce-service-account.ts";
+export type { SalesforceServiceAccountToolSourceOptions } from "./salesforce-service-account.ts";

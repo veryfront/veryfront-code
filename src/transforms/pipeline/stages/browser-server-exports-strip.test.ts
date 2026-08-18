@@ -9,8 +9,11 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
 import {
   browserServerExportsStripPlugin,
+  moduleReferenceWalkers,
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
 import { COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, compilePlugin } from "./compile.ts";
@@ -6267,6 +6270,588 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes(result, "function format(v)");
       assertNotIncludes(result, `getEnv("K")`);
+    });
+  });
+
+  describe("TypeScript reference classification", () => {
+    /**
+     * Both walkers' answers restricted to `names`, so a fixture asserts which
+     * module-level bindings each one attributes to runtime code without
+     * listing every local it also sees.
+     */
+    async function referencesAmong(
+      code: string,
+      names: string[],
+      filePath = "page.tsx",
+    ): Promise<{ referenced: string[]; free: string[] }> {
+      const parser = tryResolve<CodeParser>("CodeParser");
+      if (!parser) throw new Error("no CodeParser extension is registered");
+      const ast = await parser.parse({ code, filePath });
+      const { referenced, free } = moduleReferenceWalkers(ast);
+      const pick = (found: Set<string>) => names.filter((name) => found.has(name));
+      return { referenced: pick(referenced), free: pick(free) };
+    }
+
+    /**
+     * The defect this classification fixes is the two walkers disagreeing, so
+     * every fixture asserts the same expectation against both.
+     */
+    async function assertWalkers(
+      code: string,
+      names: string[],
+      expected: string[],
+    ): Promise<void> {
+      const { referenced, free } = await referencesAmong(code, names);
+      assertEquals(referenced, expected, "referencedIdentifiers");
+      assertEquals(free, expected, "freeReferencedIdentifiers");
+    }
+
+    describe("erased type positions do not reference a binding", () => {
+      it("ignores `typeof` in a parameter type annotation", async () => {
+        await assertWalkers(
+          [
+            `import { KEY, used } from "./server.ts";`,
+            `export default function Page(p: { k: typeof KEY }) { return used(p); }`,
+          ].join("\n"),
+          ["KEY", "used"],
+          ["used"],
+        );
+      });
+
+      it("ignores a type alias over `ReturnType<typeof loadUser>`", async () => {
+        await assertWalkers(
+          [
+            `import { loadUser, render } from "./server.ts";`,
+            `type User = ReturnType<typeof loadUser>;`,
+            `export default function Page(u: User) { return render(u); }`,
+          ].join("\n"),
+          ["loadUser", "render"],
+          ["render"],
+        );
+      });
+
+      it("ignores an interface member type", async () => {
+        await assertWalkers(
+          `import { Loader, run } from "./server.ts";
+interface Shape { l: Loader; m(a: Loader): Loader }
+export default function Page() { return run(); }`,
+          ["Loader", "run"],
+          ["run"],
+        );
+      });
+
+      it("ignores the type operand of `as` and `satisfies` but keeps the value", async () => {
+        await assertWalkers(
+          `import { Cast, raw, SAT } from "./server.ts";
+export const a = raw as Cast;
+export const b = raw satisfies typeof SAT;`,
+          ["Cast", "raw", "SAT"],
+          ["raw"],
+        );
+      });
+
+      it("ignores heritage clauses in a type position", async () => {
+        await assertWalkers(
+          `import { Iface, Base, Mixin } from "./server.ts";
+interface Derived extends Base<Iface> { x: number }
+export class Page extends Mixin implements Iface {}`,
+          ["Iface", "Base", "Mixin"],
+          ["Mixin"],
+        );
+      });
+
+      it("ignores type parameters and type arguments", async () => {
+        await assertWalkers(
+          `import { Bound, TArg, call } from "./server.ts";
+export function f<T extends Bound>(x: T) { return call<TArg>(x); }`,
+          ["Bound", "TArg", "call"],
+          ["call"],
+        );
+      });
+
+      it("ignores type-only import and export specifiers", async () => {
+        await assertWalkers(
+          `import { hashOf, type Cfg } from "./server.ts";
+import type { Only } from "./types.ts";
+export type { Cfg };
+export { type Only };
+export const h = hashOf("x");`,
+          ["hashOf", "Cfg", "Only"],
+          ["hashOf"],
+        );
+      });
+
+      it("ignores `declare` forms and declared function signatures", async () => {
+        await assertWalkers(
+          `import { Amb, live } from "./server.ts";
+declare const ambient: Amb;
+declare function ambientFn(a: Amb): Amb;
+declare class Ambient extends Amb {}
+export const v = live();`,
+          ["Amb", "live"],
+          ["live"],
+        );
+      });
+
+      it("keeps a decorator on a declared property, which still emits a runtime call", async () => {
+        // `@audit declare id: string` is ambient in the type system, but tsc and
+        // esbuild both emit a `__decorate` call for it, so the decorator is a
+        // real read. Erasing it deleted the import the call needs and produced a
+        // ReferenceError at browser module evaluation.
+        const code = [
+          'import { audit } from "./audit.ts";',
+          'import { getEnv } from "veryfront";',
+          'const KEY = getEnv("SECRET");',
+          "export async function getServerData() { return { props: { k: KEY } }; }",
+          "class Model {",
+          "  @audit declare id: string;",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        // The NAMED binding must survive: the emitted `__decorate` call reads
+        // `audit` by name. Asserting only on the specifier would pass even when
+        // the import is demoted to a bare side-effect import, which is the bug.
+        assertStringIncludes(result, "{ audit }");
+        assertNotIncludes(result, 'getEnv("SECRET")');
+      });
+
+      it("still erases an undecorated declared property", async () => {
+        const code = [
+          'import { audit } from "./audit.ts";',
+          'import { getEnv } from "veryfront";',
+          'const KEY = getEnv("SECRET");',
+          "export async function getServerData() { return { props: { k: KEY } }; }",
+          "class Model {",
+          "  declare id: string;",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        // The binding goes; the module specifier is demoted to a side-effect
+        // import by dropUnusedImportBindings, which is pre-existing behaviour
+        // and not what this case is about.
+        assertNotIncludes(result, "{ audit }");
+        assertNotIncludes(result, 'getEnv("SECRET")');
+      });
+
+      it("ignores an ambient namespace but not its runtime sibling", async () => {
+        await assertWalkers(
+          `import { AMBIENT_ONLY, RUNTIME_ONLY } from "./server.ts";
+declare namespace Ambient { const a: typeof AMBIENT_ONLY; }
+namespace Runtime { export const b = RUNTIME_ONLY; }
+export const used = Runtime.b;`,
+          ["AMBIENT_ONLY", "RUNTIME_ONLY"],
+          ["RUNTIME_ONLY"],
+        );
+      });
+    });
+
+    describe("value-emitting TypeScript nodes do reference a binding", () => {
+      it("keeps an enum member initialiser", async () => {
+        await assertWalkers(
+          `import { compute, SEED } from "./server.ts";
+export enum Level { Low = compute(SEED) }`,
+          ["compute", "SEED"],
+          ["compute", "SEED"],
+        );
+      });
+
+      it("binds enum member names while walking their initialisers", async () => {
+        // `Both = Read` names a preceding MEMBER, not module scope. Without an
+        // enum-member scope the pass reported `Read` as free, pulled the
+        // unrelated `const Read = boot()` into the hook closure, and deleted it
+        // together with its side-effectful import.
+        const code = [
+          'import { boot } from "./boot.ts";',
+          "const Read = boot();",
+          "export async function getServerData() {",
+          "  enum Access { Read = 1, Both = Read }",
+          "  return { props: { a: Access.Both } };",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertStringIncludes(result, "const Read = boot()");
+        assertStringIncludes(result, "./boot.ts");
+      });
+
+      it("does not hoist a block-scoped enum into the enclosing function scope", async () => {
+        // An enum nested in a block is block scoped: TypeScript emits `let` there.
+        // Hoisting it into the function scope made the outer `consume(Alias)` read
+        // look shadowed, so import liveness reduced the named import to a bare
+        // side-effect import and left `client` with an unresolved binding.
+        const code = [
+          'import { Alias, secret } from "./lib.ts";',
+          "export async function getServerData() { return { props: { s: secret } }; }",
+          "export function client() {",
+          "  consume(Alias);",
+          "  if (false) { enum Alias { X } }",
+          "}",
+          "declare function consume(v: unknown): void;",
+          "export default function Page() { client(); return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertStringIncludes(result, "import { Alias");
+      });
+
+      it("still reduces an import a same-scope enum genuinely shadows", async () => {
+        // Paired with the case above: asserting only that the import survives
+        // would also pass if the pass stopped reducing imports altogether.
+        const code = [
+          'import { Alias, secret } from "./lib.ts";',
+          "export async function getServerData() { return { props: { s: secret } }; }",
+          "export function client() {",
+          "  enum Alias { X }",
+          "  consume(Alias);",
+          "}",
+          "declare function consume(v: unknown): void;",
+          "export default function Page() { client(); return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertNotIncludes(result, "import { Alias");
+      });
+
+      it("still strips a module binding an enum initialiser genuinely reads", async () => {
+        // No member is named `Read` here, so `Read` really is a module-scope
+        // read owned only by the hook and must still be removed.
+        const code = [
+          'import { boot } from "./boot.ts";',
+          "const Read = boot();",
+          "export async function getServerData() {",
+          "  enum Access { X = 1 }",
+          "  return { props: { a: Access.X, r: Read } };",
+          "}",
+          "export default function Page() { return null; }",
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
+
+        assertNotIncludes(result, "const Read = boot()");
+      });
+
+      it("keeps a runtime namespace body", async () => {
+        await assertWalkers(
+          `import { NSREF } from "./server.ts";
+export namespace Runtime { export const value = NSREF; }`,
+          ["NSREF"],
+          ["NSREF"],
+        );
+      });
+
+      it("keeps a parameter property default", async () => {
+        await assertWalkers(
+          `import { Dep, DEFAULT_DEP } from "./server.ts";
+export class Service { constructor(private readonly dep: Dep = DEFAULT_DEP) {} }`,
+          ["Dep", "DEFAULT_DEP"],
+          ["DEFAULT_DEP"],
+        );
+      });
+
+      it("keeps an import-equals alias target", async () => {
+        await assertWalkers(
+          `import { NS } from "./server.ts";
+import Alias = NS.Sub;
+export const v = Alias;`,
+          ["NS"],
+          ["NS"],
+        );
+      });
+
+      it("keeps an export assignment operand", async () => {
+        await assertWalkers(
+          `import { handler } from "./server.ts";
+export = handler;`,
+          ["handler"],
+          ["handler"],
+        );
+      });
+
+      it("keeps an `accessor` field initialiser", async () => {
+        await assertWalkers(
+          `import { ACCESSOR_INIT } from "./server.ts";
+export class Page { accessor field = ACCESSOR_INIT; }`,
+          ["ACCESSOR_INIT"],
+          ["ACCESSOR_INIT"],
+        );
+      });
+
+      it("keeps decorator arguments on a class and on its members", async () => {
+        await assertWalkers(
+          `import { decorate, CLASS_TOKEN, inject, MEMBER_TOKEN, METHOD_TOKEN } from "./server.ts";
+@decorate(CLASS_TOKEN)
+export class Page {
+  @inject(MEMBER_TOKEN) field = 1;
+  @inject(METHOD_TOKEN) method() { return 1; }
+}`,
+          ["decorate", "CLASS_TOKEN", "inject", "MEMBER_TOKEN", "METHOD_TOKEN"],
+          ["decorate", "CLASS_TOKEN", "inject", "MEMBER_TOKEN", "METHOD_TOKEN"],
+        );
+      });
+
+      it("keeps the value side of `as`, `satisfies`, `!` and instantiation", async () => {
+        await assertWalkers(
+          `import { raw, maybe, generic, TArg } from "./server.ts";
+export const a = raw as unknown;
+export const b = maybe!;
+export const c = generic<TArg>;`,
+          ["raw", "maybe", "generic", "TArg"],
+          ["raw", "maybe", "generic"],
+        );
+      });
+
+      it("treats runtime TypeScript declaration names as bindings, not reads", async () => {
+        // Enum, namespace and member IDs are fixed names, not reads. The
+        // walker must report none of the local names, because its answer also
+        // grows the hook dependency closure and can delete an unrelated
+        // declaration. Every liveness question now flows through the single
+        // scope-aware walker, so the flat over-approximation this fixture once
+        // held to a looser standard (`["Level", "Runtime"]`) answers precisely
+        // too.
+        const { referenced, free } = await referencesAmong(
+          `import { Level, Low, Runtime, Alias } from "./server.ts";
+export function hook() {
+  enum Level { Low = 1 }
+  namespace Runtime { export const v = 1; }
+  return Level.Low;
+}`,
+          ["Level", "Low", "Runtime", "Alias"],
+        );
+
+        assertEquals(free, []);
+        assertEquals(referenced, []);
+      });
+    });
+
+    describe("stripping authored TypeScript source", () => {
+      it("drops a hook-only import referenced only from a type position", async () => {
+        const code = [
+          `import { hashOf } from "../lib/server-only.ts";`,
+          `export async function getServerData() {`,
+          `  return { props: { h: hashOf("x") } };`,
+          `}`,
+          `export default function Page(p: { k: typeof hashOf }) { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "server-only.ts");
+      });
+
+      it("deletes a mixed value and type import instead of reducing it", async () => {
+        const code = [
+          `import { hashOf, type Cfg } from "../lib/server-only.ts";`,
+          `export function getServerData(): { props: { c: Cfg } } {`,
+          `  return { props: { c: hashOf() } };`,
+          `}`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "server-only.ts");
+      });
+
+      it("keeps an import an enum member initialiser still reads", async () => {
+        const code = [
+          `import { SEED } from "../lib/shared.ts";`,
+          `export function getServerData() { return { props: { s: SEED } }; }`,
+          `export enum Level { Low = SEED }`,
+          `export default function Page() { return Level.Low; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, "shared.ts");
+        assertStringIncludes(result, "SEED");
+      });
+
+      it("keeps a module-scope binding a runtime namespace still reads", async () => {
+        const code = [
+          `import { makeToken } from "../lib/shared.ts";`,
+          `const TOKEN = makeToken();`,
+          `export function getServerData() { return { props: { t: TOKEN } }; }`,
+          `export namespace Config { export const value = TOKEN; }`,
+          `export default function Page() { return Config.value; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, "const TOKEN = makeToken()");
+      });
+
+      it("keeps an import a parameter property default still reads", async () => {
+        const code = [
+          `import { DEFAULT_DEP } from "../lib/shared.ts";`,
+          `export function getServerData() { return { props: { d: DEFAULT_DEP } }; }`,
+          `export class Service { constructor(public dep = DEFAULT_DEP) {} }`,
+          `export default function Page() { return new Service().dep; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, "shared.ts");
+        assertStringIncludes(result, "DEFAULT_DEP");
+      });
+
+      it("does not keep an import binding whose name matches an enum member", async () => {
+        const code = [
+          `import { secretOnly, Low } from "../lib/server-only.ts";`,
+          `export function getServerData() { return { props: { s: secretOnly } }; }`,
+          `export enum Level { Low = 1 }`,
+          `export default function Page() { return Level.Low; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "{ secretOnly, Low }");
+        // A mixed project import keeps its pre-existing side-effect contract.
+        // The TypeScript fix removes the false live binding; it does not prove
+        // that evaluating the imported module is safe to delete.
+        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, "Level.Low");
+      });
+
+      it("keeps an import read after a static block shadows its name", async () => {
+        const code = [
+          `import { token } from "../lib/client.ts";`,
+          `function local() { return "cache"; }`,
+          `export class Cache { static { const token = local(); } }`,
+          `export function getServerData() { return { props: { token } }; }`,
+          `export default function Page() { return token; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, `{ token }`);
+        assertStringIncludes(result, `return token`);
+      });
+
+      it("keeps an import that matches a nested namespace segment", async () => {
+        const code = [
+          `import { B } from "../lib/client.ts";`,
+          `export namespace A.B { export const value = 1; }`,
+          `export function getServerData() { return { props: { b: B } }; }`,
+          `export default function Page() { return B; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, `{ B }`);
+        assertStringIncludes(result, `return B`);
+      });
+
+      it("drops a hook-only binding shadowed by a surviving enum member", async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const Read = getEnv("SECRET_KEY");`,
+          `export enum Access { Read = 1, Both = Read }`,
+          `export function getServerData() { return { props: { r: Read } }; }`,
+          `export default function Page() { return Access.Both; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "SECRET_KEY");
+        assertNotIncludes(result, "const Read =");
+        assertStringIncludes(result, "Both = Read");
+      });
+
+      it("keeps a module binding shadowed by a hoisted namespace var", async () => {
+        const code = [
+          `import { boot } from "../lib/analytics.ts";`,
+          `const token = boot();`,
+          `export function getServerData() {`,
+          `  namespace N { consume(token); if (false) { var token = 1; } }`,
+          `  return { props: {} };`,
+          `}`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, "const token = boot()");
+        assertStringIncludes(result, "analytics.ts");
+      });
+
+      it("does not keep an import shadowed by a hoisted namespace alias", async () => {
+        const code = [
+          `import { secretOnly, Alias } from "../lib/server-only.ts";`,
+          `export namespace M {`,
+          `  queue(() => Alias.x);`,
+          `  import Alias = ClientNS;`,
+          `}`,
+          `export function getServerData() { return { props: { s: secretOnly } }; }`,
+          `export default function Page() { return M; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "{ secretOnly, Alias }");
+        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, "import Alias = ClientNS");
+      });
+
+      it("drops a hook-only binding that matches a qualified-name property", async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const Sub = getEnv("SECRET_KEY");`,
+          `import Alias = ClientNS.Sub;`,
+          `export function getServerData() { return { props: { s: Sub } }; }`,
+          `export default function Page() { return Alias; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "SECRET_KEY");
+        assertNotIncludes(result, "const Sub =");
+        assertStringIncludes(result, "ClientNS.Sub");
+      });
+
+      it("does not keep an import shadowed by a namespace-local enum", async () => {
+        const code = [
+          `import { secretOnly, Alias } from "../lib/server-only.ts";`,
+          `export namespace M {`,
+          `  queue(() => Alias);`,
+          `  enum Alias { X }`,
+          `}`,
+          `export function getServerData() { return { props: { s: secretOnly } }; }`,
+          `export default function Page() { return M; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "{ secretOnly, Alias }");
+        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, "enum Alias");
+      });
+
+      it("keeps a declaration whose name matches a hook-local enum member", async () => {
+        const code = [
+          `import { boot } from "../lib/analytics.ts";`,
+          `const Low = boot();`,
+          `export function getServerData() {`,
+          `  enum Level { Low = 1 }`,
+          `  return { props: { l: Level.Low } };`,
+          `}`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertStringIncludes(result, "const Low = boot()");
+        assertStringIncludes(result, "analytics.ts");
+      });
     });
   });
 });

@@ -13,6 +13,7 @@ import {
 } from "#veryfront/modules/import-map/preloader.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem, MdxBundle } from "#veryfront/types";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 
 function createMissingFileAdapter(): RuntimeAdapter {
   return {
@@ -55,6 +56,7 @@ describe("rendering/orchestrator/layout", () => {
       adapter: createMissingFileAdapter(),
       config,
       mode: "production",
+      environment: "production",
       layoutCollector: {} as LayoutCollector,
       layoutCompiler: {} as LayoutCompiler,
       layoutCache: createLayoutComponentCache(),
@@ -127,6 +129,7 @@ describe("rendering/orchestrator/layout", () => {
       adapter: createMockAdapter(),
       config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
       mode: "development",
+      environment: "preview",
       layoutCollector: {} as LayoutCollector,
       layoutCompiler: {} as LayoutCompiler,
       layoutCache: createLayoutComponentCache(),
@@ -144,6 +147,80 @@ describe("rendering/orchestrator/layout", () => {
 
       assertEquals(result.mdxSuccess, 1);
       assertEquals(observedIsLocalProject, true);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+      clearImportMapCache();
+    }
+  });
+
+  it("threads the compile mode through MDX layout preloading", async () => {
+    clearImportMapCache();
+    const projectDir = "/<PROJECT_DIR>";
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    const observed: Array<Record<string, unknown>> = [];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observed.push({ ...(options as Record<string, unknown> | undefined) });
+      return Promise.resolve({ default: () => null });
+    };
+
+    const preloadWithModes = (
+      mode: "development" | "production",
+      environment: RenderEnvironment,
+    ) => {
+      const orchestrator = new LayoutOrchestrator({
+        projectDir,
+        projectId: "mode-project",
+        projectSlug: "mode-project",
+        contentSourceId: "mode-main",
+        adapter: createMockAdapter(),
+        config: validateVeryfrontConfig({ react: { version: "19.1.1" } }),
+        mode,
+        environment,
+        layoutCollector: {} as LayoutCollector,
+        layoutCompiler: {} as LayoutCompiler,
+        layoutCache: createLayoutComponentCache(),
+        componentRegistry: {},
+        isLocalProject: true,
+      });
+      const layouts = [{
+        kind: "mdx",
+        path: `${projectDir}/layout.mdx`,
+        bundle: { compiledCode: "export default function Layout() { return null; }" },
+      }] as LayoutItem[];
+      return orchestrator.preloadLayoutModules(layouts);
+    };
+
+    try {
+      assertEquals((await preloadWithModes("development", "preview")).mdxSuccess, 1);
+      // Hosted preview compiles for production, so this case fails if the
+      // request vocabulary reaches the loader in place of the compile one.
+      assertEquals((await preloadWithModes("production", "preview")).mdxSuccess, 1);
+      assertEquals((await preloadWithModes("production", "production")).mdxSuccess, 1);
+
+      // Preloading warms the module cache the apply phase reads back, so a
+      // preload that drops the compile mode compiles the layout's modules for
+      // production and a development render then serves those artifacts.
+      assertEquals(observed.map((options) => options.mode), [
+        "development",
+        "production",
+        "production",
+      ]);
+      // The compile mode travels a long positional chain: pin the neighbouring
+      // arguments so a value landing in the wrong slot fails here too.
+      assertEquals(observed.map((options) => options.isLocalProject), [true, true, true]);
+      assertEquals(observed.map((options) => options.projectSlug), [
+        "mode-project",
+        "mode-project",
+        "mode-project",
+      ]);
+      assertEquals(observed.map((options) => options.reactVersion), [
+        "19.1.1",
+        "19.1.1",
+        "19.1.1",
+      ]);
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
       clearImportMapCache();

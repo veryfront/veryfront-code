@@ -5,7 +5,17 @@ export interface LoadComponentOptions {
   projectId?: string;
   /** Project slug for cache directory (human-readable name) */
   projectSlug?: string;
-  dev?: boolean;
+  /**
+   * Render mode for every transform this load triggers. `true` selects
+   * development semantics: no minification, no tree shaking, inline
+   * sourcemaps, MDX development mode, and the dev-only SSR loader branches.
+   *
+   * Required, not optional with a default, because an omitted flag used to
+   * resolve to `true` and hand a production render development semantics. A
+   * required field moves that failure from a silent runtime downgrade to a
+   * `deno task typecheck` failure in CI.
+   */
+  dev: boolean;
   moduleServerUrl?: string;
   /** Absolute request origin used to identify same-origin module URLs. */
   moduleServerOrigin?: string;

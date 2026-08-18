@@ -208,6 +208,7 @@ describe("rendering/page-rendering", () => {
     const renderer = new PageRenderer({
       projectDir: "/project",
       mode: "development",
+      environment: "preview",
       config: { react: { version: "19.1.1" } },
       adapter: { fs: {} } as unknown as RuntimeAdapter,
       componentRegistry: {
@@ -232,6 +233,89 @@ describe("rendering/page-rendering", () => {
       );
 
       assertEquals(observedIsLocalProject, true);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("threads the render mode from PageRenderer into MDX module loading", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    const observedModes: unknown[] = [];
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observedModes.push((options as MDXLoadModuleOptions | undefined)?.mode);
+      return Promise.resolve({ default: () => null });
+    };
+
+    const renderMDXWithMode = async (mode: "development" | "production") => {
+      const renderer = new PageRenderer({
+        projectDir: "/project",
+        mode,
+        // Hosted preview: the request vocabulary says preview while the
+        // compile vocabulary says production, so the production case proves
+        // the compile half is what reaches the loader.
+        environment: "preview",
+        config: { react: { version: "19.1.1" } },
+        adapter: { fs: {} } as unknown as RuntimeAdapter,
+        componentRegistry: {
+          prepareDependencySnapshot: () => Promise.resolve("off"),
+          getAllAsComponents: () => ({}),
+        } as never,
+        compileMDX: async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+      });
+
+      await renderer.preparePageBundles(
+        createMDXPageInfo("# Mode probe"),
+        "probe",
+        undefined,
+        {
+          projectId: "mode-project",
+          projectSlug: "mode-project",
+          contentSourceId: "release-1",
+          url: new URL("http://localhost/probe"),
+        },
+      );
+    };
+
+    try {
+      await renderMDXWithMode("production");
+      await renderMDXWithMode("development");
+
+      assertEquals(observedModes, ["production", "development"]);
+    } finally {
+      mutableRenderer.loadModuleESM = originalLoadModuleESM;
+    }
+  });
+
+  it("compiles MDX modules for production when the caller names no render mode", async () => {
+    __setServerModuleLoaderForTests(() => Promise.resolve({ default: React }));
+
+    const originalLoadModuleESM = mdxRenderer.loadModuleESM;
+    const mutableRenderer = mdxRenderer as unknown as {
+      loadModuleESM: typeof mdxRenderer.loadModuleESM;
+    };
+    let observedMode: unknown;
+    mutableRenderer.loadModuleESM = (_compiledProgramCode, options) => {
+      observedMode = (options as MDXLoadModuleOptions | undefined)?.mode;
+      return Promise.resolve({ default: () => null });
+    };
+
+    try {
+      await handleMDXPage(
+        createMDXPageInfo("# Default mode probe"),
+        "probe",
+        "/project",
+        {},
+        async () => ({ compiledCode: "", frontmatter: {}, headings: [] }),
+        { fs: {} } as unknown as RuntimeAdapter,
+        { projectId: "default-mode-project", contentSourceId: "release-1" },
+      );
+
+      assertEquals(observedMode, "production");
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
