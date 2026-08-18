@@ -300,7 +300,10 @@ describe("Salesforce service-account integration source", () => {
       body: capture.body,
     })));
     assertEquals(serializedCaptures.includes("host-client"), false);
-    assertEquals(serializedCaptures.includes("host.my.salesforce.com"), false);
+    assertEquals(
+      transport.captures.some((capture) => capture.baseUrl === "https://host.my.salesforce.com"),
+      false,
+    );
   });
 
   it("applies safe query defaults, response transforms, and a bounded token cache", async () => {
