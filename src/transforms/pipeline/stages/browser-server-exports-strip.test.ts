@@ -3281,6 +3281,27 @@ describe("browser-server-exports-strip", () => {
       );
     });
 
+    it("analyzes a fallthrough consequent before an unproven case test", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { switch (1) { case cond: case maybe(): missing; globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-switch-impure-case-prefix.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes(
+        (error as Error).message,
+        "root-iife-switch-impure-case-prefix.tsx",
+      );
+    });
+
     it("does not evaluate a try-block tail after its prefix aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
