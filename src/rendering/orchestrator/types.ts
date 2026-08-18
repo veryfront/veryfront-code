@@ -9,7 +9,14 @@ export type { RenderResult };
 
 export interface RendererOptions {
   projectDir: string;
+  /** Compile vocabulary. Selects minification and tree shaking. */
   mode: "development" | "production";
+  /**
+   * Request vocabulary. Selects preview-only instrumentation such as Studio
+   * Navigator node positions. Defaults to "production" so an unset value never
+   * turns that instrumentation on.
+   */
+  environment?: "preview" | "production";
   /** Whether browser-facing local filesystem module URLs are trusted. */
   isLocalProject?: boolean;
   port?: number;

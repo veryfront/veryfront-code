@@ -51,6 +51,7 @@ import {
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { MDX_MODULE_DEV_COMPILE_VARIANT } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/cache-keys.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ModuleCacheEntry } from "./types.ts";
@@ -266,10 +267,12 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const originA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://a.example",
+      dev: false,
     });
     const originB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       dependencyPinningCacheKey: CANONICAL_PIN_KEY,
       moduleServerOrigin: "https://b.example",
+      dev: false,
     });
 
     assert(originA?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
@@ -279,17 +282,27 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
         dependencyPinningCacheKey: "off",
         moduleServerOrigin: "https://a.example",
+        dev: false,
       }),
       undefined,
     );
     const externalA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       serverExternalPackages: ["knex", "@prisma/client"],
+      dev: false,
     });
     const externalB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
       serverExternalPackages: ["@prisma/client", "knex"],
+      dev: false,
     });
     assertEquals(externalB, externalA);
     assert(externalA?.startsWith("on:server-externals-"));
+    assertEquals(
+      __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+        serverExternalPackages: ["knex", "@prisma/client"],
+        dev: true,
+      }),
+      `${externalA}:${MDX_MODULE_DEV_COMPILE_VARIANT}`,
+    );
   });
 
   it("invalidates stale cache entries with missing local dependencies and retransforms", async () => {
@@ -667,6 +680,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/VerifiedMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       const mdxPathCache = await getModulePathCache(mdxCacheDir);
       mdxPathCache.set(mdxPathCacheKey, staleTempPath);
@@ -751,6 +766,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/ColdMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -842,6 +859,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
 
       const mdxPathCacheKey = buildMdxEsmPathCacheKey(
         "_vf_modules/components/BranchMdxStaleCache.js",
+        undefined,
+        MDX_MODULE_DEV_COMPILE_VARIANT,
       );
       await writeTextFile(
         join(mdxCacheDir, "_index.json"),
@@ -1839,6 +1858,55 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("compiles _vf_modules imports for production without an inline sourcemap", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-vfmod-gate-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "Widget.tsx");
+    const projectId = "prod-gate-vf-modules";
+    const mdxCacheDir = getMdxEsmSsrCacheDir(projectId, PRODUCTION_GATE_CONTENT_SOURCE_ID);
+    const source = [
+      `import { used } from "/_vf_modules/util.js";`,
+      `export default function Widget() { return used(); }`,
+    ].join("\n");
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+      await writeTextFile(
+        join(projectDir, "util.ts"),
+        ["function unusedHelper() { return 2; }", "export const used = () => 1;"].join("\n"),
+      );
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId: PRODUCTION_GATE_CONTENT_SOURCE_ID,
+        adapter: denoAdapter,
+        dev: false,
+      });
+      await loader.loadRawModule(filePath, source);
+
+      const pathCache = await getModulePathCache(mdxCacheDir);
+      const artifactPath = pathCache.get(buildMdxEsmPathCacheKey("_vf_modules/util.js"));
+      assert(artifactPath !== undefined, "expected the _vf_modules artifact to be cached");
+
+      const artifact = await Deno.readTextFile(artifactPath);
+      assertEquals(
+        artifact.includes("sourceMappingURL=data:"),
+        false,
+        "production must not ship an inline sourcemap for _vf_modules imports",
+      );
+      assertEquals(artifact.includes("unusedHelper"), false, "production must tree-shake");
+    } finally {
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      await remove(mdxCacheDir, { recursive: true }).catch(() => {});
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("injects node positions for dev tsx transforms", async () => {
     clearSSRModuleCache();
 
@@ -1913,21 +1981,48 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
         dev: false,
       });
 
-      const startedAt = Date.now();
-      await assertRejects(
-        () => prodLoader.loadRawModule(filePath, source),
-        Error,
-        "at transform capacity",
-      );
-      const elapsed = Date.now() - startedAt;
+      // The deadline is a timer, so drive it with fake time instead of burning
+      // 5s of wall clock and asserting on a Date.now() delta. Ticking to one
+      // millisecond short of the production deadline and only then over it
+      // pins the exact value: a shorter deadline settles early, and the 30s dev
+      // deadline never settles at all.
+      using time = new FakeTime();
+      let settled = false;
+      const rejection = prodLoader.loadRawModule(filePath, source).then(
+        () => undefined,
+        (error: unknown) => error,
+      ).finally(() => {
+        settled = true;
+      });
 
-      assert(
-        elapsed >= TRANSFORM_ACQUIRE_TIMEOUT_MS - 500,
-        `production should wait for the 5s deadline, waited ${elapsed}ms`,
+      // Let the loader reach the capacity wait without advancing the clock.
+      for (let i = 0; i < 50 && !settled; i++) await time.tickAsync(0);
+      assertEquals(settled, false, "production must not fail before the deadline");
+
+      await time.tickAsync(TRANSFORM_ACQUIRE_TIMEOUT_MS - 1);
+      assertEquals(
+        settled,
+        false,
+        `production must wait the full ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline`,
       );
+
+      await time.tickAsync(1);
+      // Crossing the deadline fires the timer; the rejection still has to walk
+      // the promise chain. Flush it without advancing the clock, so the 30s dev
+      // deadline would still read as unsettled here.
+      for (let i = 0; i < 10 && !settled; i++) await time.tickAsync(0);
+      assertEquals(
+        settled,
+        true,
+        `production must reject at the ${TRANSFORM_ACQUIRE_TIMEOUT_MS}ms deadline, not the ` +
+          `${TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS}ms dev deadline`,
+      );
+
+      const error = await rejection;
+      assert(error instanceof Error, `expected a rejection, got ${String(error)}`);
       assert(
-        elapsed < TRANSFORM_ACQUIRE_TIMEOUT_DEV_MS / 2,
-        `production must not use the 30s dev deadline, waited ${elapsed}ms`,
+        (error as Error).message.includes("at transform capacity"),
+        `unexpected rejection: ${(error as Error).message}`,
       );
     } finally {
       if (held) releaseTransformSlot(projectId);

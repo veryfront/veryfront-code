@@ -14,6 +14,7 @@ import { getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.t
 import {
   buildMdxEsmPathCacheKey,
   getCycleManifestCacheDir,
+  MDX_MODULE_DEV_COMPILE_VARIANT,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
   clearModulePathCache,
@@ -334,6 +335,128 @@ describe("module-loader/transformModuleWithDeps", () => {
         assertEquals(root.branch.read(), ["root-default", 0]);
         root.increment();
         assertEquals(root.branch.read(), ["root-default", 1]);
+      },
+    );
+  });
+
+  it("keeps the two compile modes on separate artifact cache entries", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const page = "compile-mode";` },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.ts");
+          const diskConfig = {
+            ...config,
+            projectId: "compile-mode-split",
+            contentSourceId: "main",
+          };
+          const cacheDir = join(
+            getMdxEsmCacheDir(),
+            encodeURIComponent(diskConfig.projectId),
+            encodeURIComponent(diskConfig.contentSourceId),
+          );
+          await Deno.mkdir(cacheDir, { recursive: true });
+
+          await transformModuleWithDeps(pagePath, cacheDir, diskConfig.adapter, {
+            ...diskConfig,
+            mode: "development",
+            moduleCache: new Map(),
+          });
+          await transformModuleWithDeps(pagePath, cacheDir, diskConfig.adapter, {
+            ...diskConfig,
+            mode: "production",
+            moduleCache: new Map(),
+          });
+
+          // The transform publishes the index write without awaiting it.
+          await saveModulePathCache(cacheDir);
+
+          const pathCache = await getModulePathCache(cacheDir);
+          const developmentKey = buildMdxEsmPathCacheKey(
+            "_vf_modules/app/page.js",
+            diskConfig.reactVersion,
+            MDX_MODULE_DEV_COMPILE_VARIANT,
+          );
+          const productionKey = buildMdxEsmPathCacheKey(
+            "_vf_modules/app/page.js",
+            diskConfig.reactVersion,
+          );
+
+          // A production render resolves productionKey. The development render
+          // must have registered its artifact somewhere else entirely.
+          assert(
+            pathCache.has(developmentKey),
+            "development transform did not register a compile-mode-scoped artifact",
+          );
+          assert(
+            pathCache.has(productionKey),
+            "production transform did not register an artifact on its own key",
+          );
+        });
+      },
+    );
+  });
+
+  it("does not serve a development-compiled artifact to a production render", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const page = "poison-probe";` },
+      async ({ projectDir, tmpDir, config }) => {
+        await runWithCacheDir(tmpDir, async () => {
+          const pagePath = join(projectDir, "app/page.ts");
+          const diskConfig = {
+            ...config,
+            projectId: "compile-mode-poison",
+            contentSourceId: "main",
+          };
+          const cacheDir = join(
+            getMdxEsmCacheDir(),
+            encodeURIComponent(diskConfig.projectId),
+            encodeURIComponent(diskConfig.contentSourceId),
+          );
+          await Deno.mkdir(cacheDir, { recursive: true });
+
+          const developmentArtifact = join(cacheDir, "planted-development.mjs");
+          const productionArtifact = join(cacheDir, "planted-production.mjs");
+          await Deno.writeTextFile(
+            developmentArtifact,
+            `export const compiledFor = "development";`,
+          );
+          await Deno.writeTextFile(
+            productionArtifact,
+            `export const compiledFor = "production";`,
+          );
+
+          const pathCache = await getModulePathCache(cacheDir);
+          pathCache.set(
+            buildMdxEsmPathCacheKey(
+              "_vf_modules/app/page.js",
+              diskConfig.reactVersion,
+              MDX_MODULE_DEV_COMPILE_VARIANT,
+            ),
+            developmentArtifact,
+          );
+          pathCache.set(
+            buildMdxEsmPathCacheKey("_vf_modules/app/page.js", diskConfig.reactVersion),
+            productionArtifact,
+          );
+
+          const resolvedForProduction = await transformModuleWithDeps(
+            pagePath,
+            cacheDir,
+            diskConfig.adapter,
+            { ...diskConfig, mode: "production", moduleCache: new Map() },
+          );
+          const resolvedForDevelopment = await transformModuleWithDeps(
+            pagePath,
+            cacheDir,
+            diskConfig.adapter,
+            { ...diskConfig, mode: "development", moduleCache: new Map() },
+          );
+          await saveModulePathCache(cacheDir);
+
+          assertEquals(resolvedForProduction, productionArtifact);
+          assertEquals(resolvedForDevelopment, developmentArtifact);
+        });
       },
     );
   });

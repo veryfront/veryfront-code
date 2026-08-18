@@ -28,6 +28,8 @@ export interface ResolveUnresolvedModuleViaHttpFallbackInput {
   dependencyPinningCacheKey?: string;
   moduleServerOrigin?: string;
   serverExternalPackages?: readonly string[];
+  /** Compile mode of the render fetching this module, part of the cache identity. */
+  dev?: boolean;
   fetchViaHttp?: FetchModuleViaHttpFn;
   cacheLocalModule?: CacheLocalModuleFn;
 }
@@ -67,6 +69,7 @@ export async function resolveUnresolvedModuleViaHttpFallback(
       input.dependencyPinningCacheKey,
       input.moduleServerOrigin,
       input.serverExternalPackages,
+      input.dev,
     );
   }
 

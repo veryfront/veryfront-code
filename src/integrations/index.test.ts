@@ -1,13 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
+import type { AgentConfig } from "#veryfront/agent";
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { connectors, icons } from "./_data.ts";
 import {
   EXPERIMENTAL_INTEGRATIONS_ENV,
   filterVisibleIntegrations,
   HOST_ADAPTER_INTEGRATIONS_ENV,
 } from "./feature-flags.ts";
-import { getConnector, getConnectorNames, getIcon, listConnectors } from "./index.ts";
+import {
+  createSalesforceServiceAccountToolSource,
+  getConnector,
+  getConnectorNames,
+  getIcon,
+  listConnectors,
+  SALESFORCE_SERVICE_ACCOUNT_ENV_VARS,
+} from "./index.ts";
 
 describe("integrations/index", () => {
   afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
@@ -68,5 +77,28 @@ describe("integrations/index", () => {
   it("returns undefined for unknown connector lookups", () => {
     assertEquals(getConnector("missing-integration"), undefined);
     assertEquals(getIcon("missing-integration"), undefined);
+  });
+
+  it("exports the explicit local Salesforce service-account source", async () => {
+    assertEquals(SALESFORCE_SERVICE_ACCOUNT_ENV_VARS, [
+      "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
+      "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
+      "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
+    ]);
+    const source = createSalesforceServiceAccountToolSource({
+      allowedTools: ["salesforce__get_case"],
+    });
+    assertEquals(source.id, "salesforce-service-account");
+    assertEquals((await source.listTools()).map((tool) => tool.name), [
+      "salesforce__get_case",
+    ]);
+
+    const tools = await loadRemoteToolsFromSource(source);
+    const config: AgentConfig = {
+      system: "Read Salesforce cases.",
+      tools,
+    };
+    assertStrictEquals(config.tools, tools);
+    assertEquals(Object.keys(tools), ["salesforce__get_case"]);
   });
 });

@@ -58,6 +58,12 @@ export {
   type EncodedCacheSourceIdentity,
 } from "./source-identity.ts";
 
+export {
+  isRenderCompileModeSegment,
+  RENDER_COMPILE_MODE_SEGMENTS,
+  type RenderCompileMode,
+} from "./render-compile-mode.ts";
+
 // File/dir/stat cache key builders
 export {
   buildConfigCacheKey,

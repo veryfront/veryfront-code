@@ -18,6 +18,21 @@ export interface BabelParseOnlyParserContract {
   parse(options: ParseOptions): Promise<ASTNode>;
 }
 
+/**
+ * The path the plugin choice reasons about.
+ *
+ * Markdown and MDX can reach this parser as compiled JSX, and the authored
+ * `.md` or `.mdx` extension would switch JSX off, so the emitted markup parses
+ * as a regular expression and throws "Unterminated regular expression". Map
+ * them onto a `.tsx` path for the plugin choice only. Nothing else reads this
+ * value, and `.ts` keeps `<T>x` a type assertion because only Markdown paths
+ * are rewritten.
+ */
+function parseablePath(filePath?: string): string | undefined {
+  if (filePath === undefined) return undefined;
+  return filePath.replace(/\.mdx?$/i, ".tsx");
+}
+
 function pickPlugins(filePath?: string): parser.ParserPlugin[] {
   const normalizedPath = filePath?.toLowerCase() ?? "";
   const supportsJsx = !filePath ||
@@ -53,7 +68,7 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
       sourceType: "unambiguous",
       allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
         /\.(?:cjs|js)$/.test(filePath),
-      plugins: pickPlugins(options.filePath),
+      plugins: pickPlugins(parseablePath(options.filePath)),
     });
     const node: { type: string } = ast;
     return Promise.resolve(node as ASTNode);

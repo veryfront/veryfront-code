@@ -24,6 +24,7 @@ import { injectElementSelectors } from "#veryfront/studio/element-selector-injec
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { hasUseClientDirective } from "#veryfront/rendering/rsc/page-island.ts";
+import type { RenderEnvironment } from "#veryfront/rendering/context/render-context.ts";
 import { getReadyManifestForRenderAsync } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
@@ -54,6 +55,47 @@ import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
+
+export function resolveRenderEnvironment(
+  requestEnvironment?: RenderEnvironment,
+  configuredEnvironment?: RenderEnvironment,
+): RenderEnvironment {
+  return requestEnvironment ?? configuredEnvironment ?? "production";
+}
+
+export function resolveErrorContentSourceEnvironment(
+  isLocalProject: boolean,
+  environment: RenderEnvironment,
+  releaseId?: string,
+): RenderEnvironment {
+  if (!isLocalProject && environment === "production" && !releaseId) {
+    return "preview";
+  }
+  return environment;
+}
+
+export function resolveErrorContentSourceParameters(
+  isLocalProject: boolean,
+  requestEnvironment: RenderEnvironment | undefined,
+  configuredEnvironment: RenderEnvironment | undefined,
+  options: { releaseId?: string; contentSourceId?: string } | undefined,
+): {
+  environment: RenderEnvironment;
+  contentSourceEnvironment: RenderEnvironment;
+  releaseId?: string;
+} {
+  const environment = resolveRenderEnvironment(requestEnvironment, configuredEnvironment);
+  const releaseId = resolveReleaseId(options);
+  return {
+    environment,
+    contentSourceEnvironment: resolveErrorContentSourceEnvironment(
+      isLocalProject,
+      environment,
+      releaseId,
+    ),
+    releaseId,
+  };
+}
 
 function hasCollectedHeadEntries(
   head: HTMLGenerationContext["collectedHead"],
@@ -243,8 +285,21 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
-    const committedHead = resolveCommittedHeadFromHTML(context.html, context.collectedHead);
-    const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
+    // Configured preview must reach every HTML path. Omitted production keeps
+    // legacy behavior; an explicit production request still enables project CSS.
+    const environment = context.options?.environment ??
+      (this.config.environment === "preview" ? "preview" : undefined);
+    const resolvedContext = environment === undefined ? context : {
+      ...context,
+      options: { ...context.options, environment },
+    };
+    const committedHead = resolveCommittedHeadFromHTML(
+      resolvedContext.html,
+      resolvedContext.collectedHead,
+    );
+    const effectiveContext = committedHead
+      ? { ...resolvedContext, collectedHead: committedHead }
+      : resolvedContext;
     let html: string;
     if (isFullHTMLDocument(effectiveContext.html)) {
       html = await this.handleFullHTMLDocument(effectiveContext);
@@ -277,8 +332,12 @@ export class HTMLGenerator {
     }
 
     const committedHead = resolveCommittedHeadFromHTML(reactContent, context.collectedHead);
+    // Match generateFullHTML: inherit only the positive preview signal.
+    const environment = context.options?.environment ??
+      (this.config.environment === "preview" ? "preview" : undefined);
     const fullContext = {
       ...context,
+      ...(environment === undefined ? {} : { options: { ...context.options, environment } }),
       html: reactContent,
       ...(committedHead ? { collectedHead: committedHead } : {}),
     } as HTMLGenerationContext;
@@ -661,17 +720,28 @@ export class HTMLGenerator {
         dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
+      const { environment, contentSourceEnvironment, releaseId } =
+        resolveErrorContentSourceParameters(
+          this.config.isLocalProject === true,
+          context.options?.environment,
+          this.config.environment,
+          context.options,
+        );
       const contentSourceId = computeContentSourceId(
         this.config.isLocalProject === true,
-        context.options?.environment ?? "preview",
+        contentSourceEnvironment,
         null,
-        context.options?.releaseId,
+        releaseId,
       );
+      // The loader always receives the resolved request environment. A
+      // release-less hosted production render keeps the legacy preview content
+      // identity only so content-source validation cannot hide its error
+      // boundary; it does not enable preview instrumentation.
       const loaded = await loadReservedWithPath(
         dirs,
         "error",
         this.config.projectDir,
-        this.config.mode,
+        { compileMode: this.config.mode, environment },
         this.config.adapter,
         context.options?.projectId,
         contentSourceId,

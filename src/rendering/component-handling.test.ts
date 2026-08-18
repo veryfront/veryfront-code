@@ -1,10 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { EntityInfo } from "#veryfront/types";
 import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
-import { bundleComponentForClient } from "./component-handling.ts";
+import { bundleComponentForClient, handleComponentPage } from "./component-handling.ts";
 
 const PIN_KEY_A = "on:z7bg3qnfgtcb";
 const PIN_KEY_B = "on:3w5e11264sgsf";
@@ -388,5 +391,107 @@ describe("rendering/component-handling", () => {
       "replacement-code",
     );
     assertEquals(transformCalls, 2);
+  });
+});
+
+describe("rendering/component-handling client hydration compile mode", () => {
+  afterAll(async () => {
+    await stopEsbuild();
+  });
+
+  const HYDRATION_SOURCE = [
+    "function unusedHelper() { return 2; }",
+    "export default function Page() { return null; }",
+  ].join("\n");
+
+  function pageEntity(path: string): EntityInfo {
+    return {
+      entity: {
+        id: path,
+        path,
+        slug: "compile-mode",
+        type: "page",
+        content: HYDRATION_SOURCE,
+        frontmatter: {},
+        kind: "tsx",
+      },
+    };
+  }
+
+  async function renderClientModule(mode: "development" | "production"): Promise<string> {
+    const path = `/compile-mode-project/app/${mode}.tsx`;
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(path, HYDRATION_SOURCE);
+
+    const result = await handleComponentPage(
+      pageEntity(path),
+      "compile-mode",
+      "/compile-mode-project",
+      undefined,
+      adapter as unknown as RuntimeAdapter,
+      {
+        projectId: "compile-mode-project",
+        contentSourceId: "release-compile-mode",
+        mode,
+      },
+    );
+
+    const clientModuleCode = result.pageBundle.clientModuleCode;
+    assert(clientModuleCode !== undefined, "Expected a client hydration bundle");
+    return clientModuleCode;
+  }
+
+  it("emits a production hydration bundle without an inline sourcemap", async () => {
+    const code = await renderClientModule("production");
+
+    assertEquals(code.includes("sourceMappingURL=data:"), false);
+    assertEquals(code.includes("unusedHelper"), false);
+    assertEquals(code.includes("__name"), false);
+  });
+
+  it("keeps the development hydration bundle debuggable", async () => {
+    const code = await renderClientModule("development");
+
+    assertEquals(code.includes("sourceMappingURL=data:"), true);
+    assertEquals(code.includes("unusedHelper"), true);
+    assertEquals(code.includes("__name"), true);
+  });
+
+  it("keeps the hydration cache entries of the two compile modes apart", async () => {
+    const transformed: boolean[] = [];
+    const deps = {
+      transformToESM: (
+        _source: string,
+        _filePath: string,
+        _projectDir: string,
+        _adapter: RuntimeAdapter,
+        options: { dev: boolean },
+      ) => {
+        transformed.push(options.dev);
+        return Promise.resolve(options.dev ? "dev-bundle" : "production-bundle");
+      },
+    };
+    const bundle = (dev: boolean) =>
+      bundleComponentForClient(
+        "export default function Page() { return null; }",
+        "/compile-mode-project/app/cache-identity.tsx",
+        "/compile-mode-project",
+        {} as RuntimeAdapter,
+        "https://modules.example.test",
+        "project-compile-mode-identity",
+        "19.1.0",
+        deps,
+        undefined,
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        dev,
+      );
+
+    assertEquals(await bundle(false), "production-bundle");
+    assertEquals(await bundle(true), "dev-bundle");
+    assertEquals(await bundle(false), "production-bundle");
+    assertEquals(transformed, [false, true]);
   });
 });

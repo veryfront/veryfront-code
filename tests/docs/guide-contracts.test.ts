@@ -663,7 +663,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
       "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
       "createLocalIntegrationToolSource",
-      "Admin approved users are pre-authorized",
+      "Create an External Client App",
       "Verify it worked",
     ],
   },

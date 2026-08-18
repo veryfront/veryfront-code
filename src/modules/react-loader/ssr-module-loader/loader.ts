@@ -216,13 +216,14 @@ function wasRetainedInProgressTransformLeader(
 function getMdxEsmCacheVariant(
   options: Pick<
     SSRModuleLoaderOptions,
-    "dependencyPinningCacheKey" | "moduleServerOrigin" | "serverExternalPackages"
+    "dependencyPinningCacheKey" | "moduleServerOrigin" | "serverExternalPackages" | "dev"
   >,
 ): string | undefined {
   return getMdxModuleCacheVariant(
     options.dependencyPinningCacheKey,
     options.moduleServerOrigin,
     options.serverExternalPackages,
+    options.dev,
   );
 }
 
@@ -1068,6 +1069,7 @@ export class SSRModuleLoader {
             contentSourceId: this.options.contentSourceId!,
             adapter: this.options.adapter,
             projectDir: this.options.projectDir,
+            dev: this.options.dev,
             reactVersion: this.options.reactVersion,
             moduleServerOrigin: this.options.moduleServerOrigin,
             dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,

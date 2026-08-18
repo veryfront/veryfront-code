@@ -49,26 +49,26 @@ ticket, or client-side environment variable.
 ## Use a service account
 
 Use a service account when a run needs non-interactive access. Veryfront uses
-Salesforce OAuth client credentials and executes as the Connected App's
-dedicated **Run As** integration user. It does not open browser consent or use
-a user's personal OAuth token.
+Salesforce OAuth client credentials and executes as the OAuth app's dedicated
+**Run As** integration user. It does not open browser consent or use a user's
+personal OAuth token.
 
 In the target Salesforce org:
 
 1. Create a dedicated integration user with the minimum object, field, and API permissions required by the project.
-2. Create or configure a Salesforce Connected App for the client-credentials flow.
+2. Create an External Client App for the client-credentials flow. Existing Connected Apps remain supported.
 3. Enable **Client Credentials Flow** and select the **Manage user data via APIs** (`api`) OAuth scope.
-4. In the Connected App policy, set permitted users to **Admin approved users are pre-authorized**, then select the dedicated integration user as the **Run As** user.
-5. Record the Connected App consumer key and consumer secret in your approved secret manager.
+4. On the app's **Policies** tab, enable **Client Credentials Flow** and select the dedicated integration user as the **Run As** user.
+5. Record the app's consumer key and consumer secret in your approved secret manager.
 
 Set all three values as project environment variables in the matching
 Veryfront environment:
 
-| Variable                                   | Value                         |
-| ------------------------------------------ | ----------------------------- |
-| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID`     | Connected App consumer key    |
-| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET` | Connected App consumer secret |
-| `SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL`     | Salesforce My Domain origin   |
+| Variable                                   | Value                       |
+| ------------------------------------------ | --------------------------- |
+| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID`     | OAuth app consumer key      |
+| `SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET` | OAuth app consumer secret   |
+| `SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL`     | Salesforce My Domain origin |
 
 Set `SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL` to the target org's Salesforce My
 Domain origin, for example `https://acme.my.salesforce.com`. Veryfront rejects
@@ -110,6 +110,14 @@ tokens never enter the tool definition, model prompt, arguments, logs, or URLs.
 Local Salesforce execution supports the catalog's fixed REST tools and the
 client-credentials service account only. Keep using managed execution for a
 Salesforce user's authorization-code OAuth connection.
+
+For a local or self-hosted project, create a source with
+`createSalesforceServiceAccountToolSource` from `veryfront/integrations`, then
+materialize it with `loadRemoteToolsFromSource` from `veryfront/tool` and pass
+the result through each agent's `tools` field. The source reads the same three
+variables from the host environment and calls Salesforce directly. See
+[Self-host Veryfront Code](../self-hosting.md#run-salesforce-integration-tools-locally)
+for a complete agent example.
 
 ## Verify it worked
 

@@ -468,11 +468,54 @@ describe("RenderPipeline behavior", () => {
 
     await pipeline.renderPage("", { delivery: "string" });
 
-    assertEquals(checks, [{ slug: "", cacheKey: "index" }]);
-    assertEquals(persists, [{ slug: "", cacheKey: "index" }]);
+    assertEquals(checks, [{ slug: "", cacheKey: "index:environment-production" }]);
+    assertEquals(persists, [{ slug: "", cacheKey: "index:environment-production" }]);
   });
 
-  it("bounds the complete API render key while preserving the flag-off override", () => {
+  it("isolates preview HTML from the production render cache", () => {
+    const pipeline = createPipeline("/project/pages/index.mdx");
+    const buildCacheKey = (pipeline as unknown as {
+      buildCacheKey(
+        slug: string,
+        options: RenderOptions | undefined,
+        dependencyPinningCacheKey: string,
+      ): string | null;
+    }).buildCacheKey.bind(pipeline);
+
+    assertEquals(
+      buildCacheKey("", { environment: "production" }, "off"),
+      "index:environment-production",
+    );
+    assertEquals(buildCacheKey("", undefined, "off"), "index:environment-production");
+    assertEquals(
+      buildCacheKey("", { environment: "preview" }, "off"),
+      "index:environment-preview",
+    );
+    assertEquals(
+      buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off"),
+      "custom:environment-preview",
+    );
+    assertEquals(
+      buildCacheKey("", { cacheKey: "custom", environment: "production" }, "off"),
+      "custom:environment-production",
+    );
+    assert(
+      buildCacheKey("", { cacheKey: "custom", environment: "preview" }, "off") !==
+        buildCacheKey(
+          "",
+          { cacheKey: "custom:environment-preview", environment: "production" },
+          "off",
+        ),
+      "preview and production custom cache identities must not collide",
+    );
+    assert(
+      buildCacheKey("foo", { environment: "preview" }, "off") !==
+        buildCacheKey("foo:environment-preview", { environment: "production" }, "off"),
+      "preview and production route cache identities must not collide",
+    );
+  });
+
+  it("bounds the complete API render key for a flag-off override", () => {
     const cachePrefix = "project:preview:branch:v1";
     const pipeline = createPipeline("/project/pages/index.mdx", {
       renderCacheKeyComposition: {
@@ -500,7 +543,10 @@ describe("RenderPipeline behavior", () => {
     const completeKey = `render:${cachePrefix}:page:${cacheKey}:theme-dark`;
     assert(completeKey.length <= 512);
     assert(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey));
-    assertEquals(buildCacheKey("/", options, "off"), legacyKey);
+    assertEquals(
+      buildCacheKey("/", options, "off"),
+      `${legacyKey}:environment-production`,
+    );
   });
 
   it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {

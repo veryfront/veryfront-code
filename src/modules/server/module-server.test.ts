@@ -112,12 +112,16 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     resetRequestProfiles();
   });
 
+  // The local-project helper. `dev` is stated rather than inherited: these cases
+  // assert unminified identifiers and sourcemap comments, which are development
+  // output. `serveProductionModule` below is the production counterpart.
   async function serve(req: Request, projectDir = "/tmp/test"): Promise<Response> {
     const { serveModule } = await import("./module-server.ts");
     return await serveModule(req, {
       projectId: "test",
       projectDir,
       adapter: denoAdapter,
+      dev: true,
       isLocalProject: true,
       allowSSRModuleMode: true,
     });
@@ -277,6 +281,14 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     });
     assertEquals(developmentResponse.status, 500);
     assertStringIncludes(await developmentResponse.text(), secret);
+
+    // An omitted dev flag must land on the redacted production branch, not the
+    // one that returns the raw adapter failure to a browser.
+    const defaultedResponse = await serveModule(request, options);
+    assertEquals(defaultedResponse.status, 500);
+    const defaultedBody = await defaultedResponse.text();
+    assertEquals(defaultedBody, productionBody);
+    assertEquals(defaultedBody.includes(secret), false);
   });
 
   it("does not expose project metadata or server route roots as browser modules", async () => {

@@ -6,6 +6,7 @@ type MockReadDir = (path: string) => AsyncIterable<DirEntry>;
 
 type CreateGeneratorOptions = {
   mode?: HTMLGeneratorConfig["mode"];
+  environment?: HTMLGeneratorConfig["environment"];
   isLocalProject?: boolean;
   readFile?: MockReadFile;
   readDir?: MockReadDir;
@@ -32,6 +33,7 @@ export function createMockAdapter(
 
 export function createHTMLGenerator({
   mode = "production",
+  environment,
   isLocalProject,
   readFile = defaultReadFile,
   readDir = defaultReadDir,
@@ -41,6 +43,7 @@ export function createHTMLGenerator({
     adapter: createMockAdapter(readFile, readDir) as any,
     config: {} as any,
     mode,
+    environment,
     isLocalProject,
   });
 }

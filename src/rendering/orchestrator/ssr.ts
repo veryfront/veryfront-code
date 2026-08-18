@@ -24,6 +24,7 @@ export class VeryfrontRenderer {
   private moduleServerUrl?: string;
   private projectDir: string;
   private mode: "development" | "production";
+  private environment: "preview" | "production";
   private isLocalProject: boolean;
   private preloadedConfig?: VeryfrontConfig;
   private projectId: string;
@@ -38,6 +39,7 @@ export class VeryfrontRenderer {
   constructor(options: RendererOptions) {
     this.projectDir = options.projectDir;
     this.mode = options.mode;
+    this.environment = options.environment ?? "production";
     this.isLocalProject = options.isLocalProject === true;
     this.adapter = options.adapter;
     this.port = options.port ?? DEFAULT_DASHBOARD_PORT;
@@ -91,6 +93,7 @@ export class VeryfrontRenderer {
           projectId: this.projectId,
           contentSourceId: this.contentSourceId,
           isLocalProject: this.isLocalProject,
+          environment: this.environment,
         });
         this.services = await this.lifecycle.initialize();
 
@@ -123,6 +126,7 @@ export class VeryfrontRenderer {
       adapter,
       config,
       mode,
+      environment: this.environment,
       moduleServerUrl: this.moduleServerUrl,
       layoutCollector: this.services.layoutCollector,
       layoutCompiler: this.services.layoutCompiler,
@@ -136,6 +140,7 @@ export class VeryfrontRenderer {
       adapter,
       config,
       mode,
+      environment: this.environment,
       isLocalProject: this.isLocalProject,
     });
 
@@ -171,6 +176,10 @@ export class VeryfrontRenderer {
       projectId: options?.projectId ?? this.projectId,
       projectSlug: options?.projectSlug ?? this.projectSlug,
       contentSourceId: options?.contentSourceId ?? this.contentSourceId,
+      // Preview is a positive capability signal. Leave omitted production
+      // unset so legacy callers keep their production-safe behavior.
+      environment: options?.environment ??
+        (this.environment === "preview" ? "preview" : undefined),
     };
   }
 

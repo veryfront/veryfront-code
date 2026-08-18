@@ -136,6 +136,20 @@ export async function registerExtMdxForTests(): Promise<void> {
   }
 }
 
+// Register the ext-css-tailwind CSSProcessor contract. Rendering integration
+// tests use this context after production bootstrap or another test resets the
+// process-wide contract registry, so import-time registration is insufficient.
+export async function registerExtCssForTests(): Promise<void> {
+  try {
+    const { registerTailwindExtension } = await import(
+      "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts"
+    );
+    await registerTailwindExtension();
+  } catch {
+    // Ignore if ext-css-tailwind cannot be loaded.
+  }
+}
+
 export async function registerExtAnthropicForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
@@ -212,6 +226,7 @@ export async function registerExtGoogleForTests(): Promise<void> {
 await registerExtBabelForTests();
 await registerExtOpenAIForTests();
 await registerExtMdxForTests();
+await registerExtCssForTests();
 await registerExtAnthropicForTests();
 await registerExtGoogleForTests();
 
@@ -760,6 +775,7 @@ export async function withTestContext<T>(
       // wipes the registry via teardownAll().
       await registerExtBabelForTests();
       await registerExtMdxForTests();
+      await registerExtCssForTests();
       await registerExtOpenAIForTests();
       await registerExtAnthropicForTests();
 

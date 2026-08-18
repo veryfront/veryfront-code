@@ -196,6 +196,11 @@ export async function processVfModuleImports(
     {
       contentSourceId: context.contentSourceId,
       isLocalProject: context.isLocalProject,
+      // The render mode decides the compile mode for every `/_vf_modules/*`
+      // import of this compiled-MDX entry. A context without one compiles for
+      // production, so a hosted production render never ships unminified,
+      // untree-shaken code carrying an inline sourcemap of the project source.
+      dev: context.mode === "development",
       reactVersion: context.reactVersion,
       serverExternalPackages: context.serverExternalPackages,
       moduleServerOrigin: context.moduleServerOrigin,

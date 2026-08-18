@@ -214,7 +214,20 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "Direct provider inference");
     assertStringIncludes(guide, "Local agent delegation with `delegates`");
     assertStringIncludes(guide, "Remote integration tools");
-    assertStringIncludes(guide, "Requires a backing API or service layer");
+    assertStringIncludes(guide, "Salesforce service account");
+    assertStringIncludes(guide, "External Client App");
+    assertStringIncludes(guide, "createSalesforceServiceAccountToolSource");
+    assertStringIncludes(guide, "loadRemoteToolsFromSource");
+    assertStringIncludes(guide, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID");
+    assertStringIncludes(guide, "tools: salesforceTools");
+    assertStringIncludes(guide, "Credentials stay in the host process");
+    assertEquals(guide.includes("remoteTools:"), false);
+    assertEquals(
+      guide.includes(
+        "Managed Salesforce and other remote tools have no standalone credential path",
+      ),
+      false,
+    );
     assertStringIncludes(guide, "## Deploy to Kubernetes");
     assertStringIncludes(guide, "kubectl create namespace veryfront-app");
     assertStringIncludes(guide, "kubectl create secret generic provider-credentials");

@@ -250,6 +250,7 @@ export class SSROrchestrator {
         renderOptions?.dependencyPinningDependencies,
         renderOptions?.dependencyPinningSource,
         renderOptions?.abortSignal,
+        renderOptions?.environment,
       )
       : errorInfo.element;
 

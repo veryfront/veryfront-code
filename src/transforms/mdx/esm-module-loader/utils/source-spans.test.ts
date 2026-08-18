@@ -35,6 +35,29 @@ function countStartsWithCalls(callback: () => void): number {
   return calls;
 }
 
+function countIndexOfCalls(callback: () => void): number {
+  const original = String.prototype.indexOf;
+  let calls = 0;
+  Object.defineProperty(String.prototype, "indexOf", {
+    configurable: true,
+    writable: true,
+    value(this: string, searchString: string, position?: number) {
+      calls++;
+      return original.call(this, searchString, position);
+    },
+  });
+  try {
+    callback();
+  } finally {
+    Object.defineProperty(String.prototype, "indexOf", {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+  }
+  return calls;
+}
+
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   it("keeps static imports inside regexes hidden after local type export lists", () => {
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
@@ -1725,19 +1748,27 @@ import real from "./real.js";`,
       );
     });
 
-    it("keeps distinct TypeScript assertion lookahead within a bounded runtime", () => {
+    // Every assertion here sits in one statement with a distinct tag name, so the
+    // closing-tag lookahead must index that statement once and answer all 8,000
+    // names from the cache. Losing the cache makes the scan quadratic. Counting
+    // the `indexOf` calls that build the index states that invariant directly:
+    // the cached scan makes one call per assertion, an uncached one makes a call
+    // per assertion per source character.
+    it("keeps distinct TypeScript assertion lookahead linear", () => {
       const source = "type Value = unknown;\nconst values = [" +
         Array.from({ length: 8_000 }, (_, index) => `<T${index}>value`).join(",") +
         "];";
-      const startedAt = performance.now();
+      let paths: string[] = [];
 
-      assertEquals(specifiers(source), []);
+      const indexOfCalls = countIndexOfCalls(() => {
+        paths = specifiers(source);
+      });
 
-      const durationMs = performance.now() - startedAt;
+      assertEquals(paths, []);
       assert(
-        durationMs < 200,
-        `Expected a ${Math.round(source.length / 1024)} KB distinct TypeScript assertion scan ` +
-          `to finish within 200 ms, got ${durationMs.toFixed(1)} ms`,
+        indexOfCalls < source.length,
+        `Expected a linear distinct TypeScript assertion scan, got ${indexOfCalls} indexOf ` +
+          `calls for ${source.length} source characters`,
       );
     });
 

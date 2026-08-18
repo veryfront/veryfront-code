@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../../html/styles-builder/__tests__/css-processor-setup.ts";
+import { registerTailwindExtension } from "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
@@ -9,6 +9,8 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { unregister } from "#veryfront/extensions/contracts.ts";
+import { CSSProcessorName } from "#veryfront/extensions/css/index.ts";
 import {
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
@@ -20,7 +22,13 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
-import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
+import {
+  HTMLGenerator,
+  type HTMLGeneratorConfig,
+  resolveErrorContentSourceEnvironment,
+  resolveErrorContentSourceParameters,
+  resolveRenderEnvironment,
+} from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
 import {
   deserializeManagedHeadPayload,
@@ -81,6 +89,42 @@ describe("HTMLGenerator helpers", () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
     clearReleaseAssetManifestCache();
     clearCSSCache();
+  });
+
+  it("uses the configured production environment when a request omits it", () => {
+    assertEquals(resolveRenderEnvironment(undefined, "production"), "production");
+    assertEquals(resolveRenderEnvironment("preview", "production"), "preview");
+  });
+
+  it("uses a valid preview content identity for release-less hosted production errors", () => {
+    assertEquals(
+      resolveErrorContentSourceEnvironment(false, "production", undefined),
+      "preview",
+    );
+    assertEquals(
+      resolveErrorContentSourceEnvironment(false, "production", "release-1"),
+      "production",
+    );
+    assertEquals(
+      resolveErrorContentSourceEnvironment(true, "production", undefined),
+      "production",
+    );
+  });
+
+  it("derives hosted production error identity from a release content source", () => {
+    assertEquals(
+      resolveErrorContentSourceParameters(
+        false,
+        "production",
+        undefined,
+        { contentSourceId: "release-release-123" },
+      ),
+      {
+        environment: "production",
+        contentSourceEnvironment: "production",
+        releaseId: "release-123",
+      },
+    );
   });
 
   describe("buildHeadElements", () => {
@@ -581,6 +625,35 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+    });
+
+    it("uses configured preview rendering for full HTML when the request omits it", async () => {
+      const generator = createHTMLGenerator({
+        environment: "preview",
+        readFile: async () => `'use client';`,
+      });
+
+      const html = await generator.generateFullHTML(createHTMLContext());
+
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+    });
+
+    it("does not activate production CSS when a legacy request omits its environment", async () => {
+      unregister(CSSProcessorName);
+      try {
+        const generator = createHTMLGenerator({
+          environment: "production",
+          readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+        });
+
+        const html = await generator.generateFullHTML(createHTMLContext());
+
+        assertEquals(html.includes('id="vf-project-css"'), false);
+        assertEquals(html.includes("/_vf/css/"), false);
+      } finally {
+        await registerTailwindExtension();
+      }
     });
 
     it("injects production project stylesheet links into full HTML documents", async () => {
@@ -1268,6 +1341,25 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('data-theme="dark"'), true);
       assertEquals(html.includes('id="vf-project-css"'), true);
       assertEquals(html.includes(`localStorage.setItem('theme','dark')`), true);
+    });
+
+    it("uses configured preview rendering for streams when the request omits it", async () => {
+      const generator = createHTMLGenerator({
+        environment: "preview",
+        readFile: async () => `'use client';`,
+      });
+      const stream = createSingleChunkStream(
+        "<!DOCTYPE html><html><head></head><body><main>Hello</main></body></html>",
+      );
+
+      const responseStream = await generator.generateHTMLStream(
+        stream,
+        createHTMLContext(),
+      );
+      const html = await new Response(responseStream).text();
+
+      assertEquals(html.includes('id="vf-project-css"'), true);
+      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
     });
 
     it("keeps production project stylesheet links for streamed full-document pages", async () => {
