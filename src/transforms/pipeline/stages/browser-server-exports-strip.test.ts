@@ -2551,6 +2551,21 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("keeps a secret read by an immediately invoked object method", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `({ run() { globalThis.registered = KEY; } }).run();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "pages/root-object-method.tsx");
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("fails the build when a called generator defers the last secret read", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -2621,6 +2636,53 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "new class extends class");
       assertStringIncludes(result, 'throw new Error("server-only")');
     });
+
+    it("does not trust a nested inline superclass with nonconstructable heritage", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class extends (class extends null {}) { field = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/nested-nonconstructable-superclass.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "nested-nonconstructable-superclass.tsx");
+    });
+
+    for (
+      const [description, heritage, path] of [
+        [
+          "satisfies",
+          `((class {}) satisfies abstract new () => object)`,
+          "pages/satisfies-superclass.tsx",
+        ],
+        [
+          "type assertion",
+          `(<abstract new () => object>(class {}))`,
+          "pages/type-assertion-superclass.ts",
+        ],
+      ] as const
+    ) {
+      it(`unwraps a ${description} around a constructable inline superclass`, async () => {
+        const code = [
+          `import { getEnv } from "veryfront";`,
+          `const KEY = getEnv("SECRET_KEY");`,
+          `const instance = new class extends ${heritage} { field = KEY; };`,
+          `export async function getServerData() { return { props: { k: KEY } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, path);
+
+        assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+        assertStringIncludes(result, 'throw new Error("server-only")');
+      });
+    }
 
     it("does not assume an explicit derived constructor invokes its inline base", async () => {
       const code = [

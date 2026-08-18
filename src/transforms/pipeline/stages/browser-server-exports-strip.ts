@@ -1932,7 +1932,9 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     let current = node;
     while (
       (current.type === "ParenthesizedExpression" || current.type === "TSAsExpression" ||
-        current.type === "TSNonNullExpression" || current.type === "TSInstantiationExpression") &&
+        current.type === "TSTypeAssertion" || current.type === "TSNonNullExpression" ||
+        current.type === "TSInstantiationExpression" ||
+        current.type === "TSSatisfiesExpression") &&
       isNode(current.expression)
     ) {
       current = current.expression;
@@ -1940,18 +1942,52 @@ function deferredExecutionNodes(root: Node): Set<Node> {
     return current;
   };
 
-  const superClassIsConstructable = (node: Node): boolean => {
+  const constructionIsProven = (node: Node): boolean => {
     if (!isNode(node.superClass)) return true;
     const superClass = unwrap(node.superClass);
-    return superClass.type === "ClassExpression" ||
+    const constructable = (superClass.type === "ClassExpression" &&
+      constructionIsProven(superClass)) ||
       (superClass.type === "FunctionExpression" &&
         superClass.async !== true && superClass.generator !== true);
+    return constructable &&
+      (!explicitConstructor(node) || constructorBeginsWithSuper(node));
   };
 
-  const constructsInstanceFields = (node: Node): boolean =>
-    !isNode(node.superClass) ||
-    (superClassIsConstructable(node) &&
-      (!explicitConstructor(node) || constructorBeginsWithSuper(node)));
+  const constructsInstanceFields = (node: Node): boolean => constructionIsProven(node);
+
+  const staticMemberName = (member: Node): string | null => {
+    if (!isNode(member.property)) return null;
+    if (member.computed !== true) return nodeName(member.property);
+    return member.property.type === "StringLiteral" &&
+        typeof member.property.value === "string"
+      ? member.property.value
+      : null;
+  };
+
+  const invokedInlineObjectMethod = (callee: Node): Node | null => {
+    if (
+      callee.type !== "MemberExpression" || !isNode(callee.object) ||
+      !isNode(callee.property)
+    ) return null;
+    const object = unwrap(callee.object);
+    if (object.type !== "ObjectExpression" || !Array.isArray(object.properties)) return null;
+    const selectedName = staticMemberName(callee);
+    if (selectedName === null) return null;
+
+    let selected: Node | null = null;
+    for (const property of object.properties) {
+      // Plain method definitions are inert while the object is created. Keep
+      // the proof narrow so a spread, property initializer, getter, or
+      // computed key that can throw cannot make a later method look invoked.
+      if (
+        !isNode(property) || property.type !== "ObjectMethod" ||
+        property.kind !== "method" || property.computed === true ||
+        !isNode(property.key)
+      ) return null;
+      if (nodeName(property.key) === selectedName) selected = property;
+    }
+    return selected;
+  };
 
   const invokedChild = (node: Node): Node | null => {
     if (node.type === "CallExpression" && isNode(node.callee)) {
@@ -1978,6 +2014,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
           return target;
         }
       }
+      const objectMethod = invokedInlineObjectMethod(callee);
+      if (objectMethod) return objectMethod;
       return callee;
     }
     if (node.type === "OptionalCallExpression" || node.type === "NewExpression") {
@@ -2033,7 +2071,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
         }
       } else if (
         nextInvoked.type === "FunctionExpression" ||
-        nextInvoked.type === "ArrowFunctionExpression"
+        nextInvoked.type === "ArrowFunctionExpression" ||
+        nextInvoked.type === "ObjectMethod"
       ) {
         executedNodes.add(nextInvoked);
       }
