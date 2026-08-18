@@ -1344,6 +1344,72 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     }
   });
 
+  it("returns a dependency error to followers after retained work already settled", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = await makeTempDir({ prefix: "vf-ssr-loader-settled-follower-" });
+    const componentsDir = join(projectDir, "components");
+    const filePath = join(componentsDir, "SettledFollower.tsx");
+    const projectId = "project-settled-follower";
+    const contentSourceId = "local-main";
+    const source = "export default function SettledFollower() { return null; }";
+    const dependencyError = new Error("dependency failed");
+    let rejectLeader!: (error: Error) => void;
+    let follower: Promise<React.ComponentType<Record<string, unknown>>> | undefined;
+    let contentCacheKey = "";
+
+    try {
+      await mkdir(componentsDir, { recursive: true });
+      await writeTextFile(filePath, source);
+
+      const contentHash = hashAsLoader(source, filePath, projectDir);
+      const leader = new Promise<ModuleCacheEntry>((_, reject) => {
+        rejectLeader = reject;
+      });
+      leader.catch(() => {});
+
+      const loader = new SSRModuleLoader({
+        projectDir,
+        projectId,
+        contentSourceId,
+        adapter: denoAdapter,
+        dev: true,
+      });
+      contentCacheKey = (loader as unknown as {
+        cache: { getCacheKey(value: string): string };
+      }).cache.getCacheKey(`${filePath}:${contentHash}`);
+      globalInProgress.set(contentCacheKey, leader);
+      __ssrModuleLoaderInternals.registerInProgressTransformObservers(contentCacheKey, leader);
+
+      follower = loader.loadModule(filePath, source);
+      let attempts = 0;
+      while (
+        __ssrModuleLoaderInternals.inProgressTransformObserverCount(leader) === 0 &&
+        attempts++ < 100
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      assertEquals(__ssrModuleLoaderInternals.inProgressTransformObserverCount(leader), 1);
+
+      __ssrModuleLoaderInternals.retainInProgressTransformUntilSettled(
+        contentCacheKey,
+        leader,
+        Promise.resolve(),
+        dependencyError,
+      );
+      rejectLeader(dependencyError);
+
+      const error = await assertRejects(() => follower!, Error, "dependency failed");
+      assertStrictEquals(error, dependencyError);
+    } finally {
+      rejectLeader?.(dependencyError);
+      await follower?.catch(() => {});
+      if (contentCacheKey) globalInProgress.delete(contentCacheKey);
+      clearSSRModuleCache();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("allows one rejected shared transform retry per caller", () => {
     assertEquals(
       __ssrModuleLoaderInternals.shouldRetryRejectedInProgressTransform(1),

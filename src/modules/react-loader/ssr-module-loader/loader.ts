@@ -108,10 +108,7 @@ const inProgressTransformObservers = new WeakMap<
   Promise<ModuleCacheEntry>,
   InProgressTransformObserverState
 >();
-const retainedInProgressTransformLeaders = new WeakMap<
-  Promise<ModuleCacheEntry>,
-  Promise<ModuleCacheEntry>
->();
+const retainedInProgressTransformLeaders = new WeakSet<Promise<ModuleCacheEntry>>();
 
 function signalAbortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
@@ -201,7 +198,7 @@ function retainInProgressTransformUntilSettled(
   const retained = transformSettlement.then<ModuleCacheEntry>(() => {
     throw retainedError;
   });
-  retainedInProgressTransformLeaders.set(retained, leader);
+  retainedInProgressTransformLeaders.add(leader);
   globalInProgress.set(key, retained);
   void retained.then(
     () => deleteInProgressTransformIfCurrent(key, retained),
@@ -210,12 +207,10 @@ function retainInProgressTransformUntilSettled(
   return retained;
 }
 
-function hasRetainedReservationForLeader(
-  key: string,
+function wasRetainedInProgressTransformLeader(
   leader: Promise<ModuleCacheEntry>,
 ): boolean {
-  const retained = globalInProgress.get(key);
-  return retained !== undefined && retainedInProgressTransformLeaders.get(retained) === leader;
+  return retainedInProgressTransformLeaders.has(leader);
 }
 
 function getMdxEsmCacheVariant(
@@ -911,7 +906,7 @@ export class SSRModuleLoader {
         }
         // Callers already joined to this failed leader receive its dependency
         // error now. The replacement only reserves capacity for new callers.
-        if (hasRetainedReservationForLeader(inProgressKey, existingTransform)) {
+        if (wasRetainedInProgressTransformLeader(existingTransform)) {
           throw error;
         }
 
