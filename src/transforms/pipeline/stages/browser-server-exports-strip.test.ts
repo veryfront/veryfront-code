@@ -1540,10 +1540,11 @@ export const c = generic<TArg>;`,
       });
 
       it("treats runtime TypeScript declaration names as bindings, not reads", async () => {
-        // The flat walker deliberately over-approximates, so it still counts
-        // these fixed names; over-counting there only ever keeps a binding. The
-        // scope-aware walker must not, because a name it reports grows the
-        // hook's dependency closure and can delete an unrelated declaration.
+        // The flat walker remains conservative for module-declaration
+        // liveness, but enum declaration and member IDs are fixed names, not
+        // reads. Import liveness uses the scope-aware walker. That walker must
+        // report none of the local names, because its answer also grows the
+        // hook dependency closure and can delete an unrelated declaration.
         const { referenced, free } = await referencesAmong(
           `import { Level, Low, Runtime, Alias } from "./server.ts";
 export function hook() {
@@ -1555,7 +1556,7 @@ export function hook() {
         );
 
         assertEquals(free, []);
-        assertEquals(referenced, ["Level", "Low", "Runtime"]);
+        assertEquals(referenced, ["Level", "Runtime"]);
       });
     });
 
@@ -1628,6 +1629,24 @@ export function hook() {
 
         assertStringIncludes(result, "shared.ts");
         assertStringIncludes(result, "DEFAULT_DEP");
+      });
+
+      it("does not keep an import binding whose name matches an enum member", async () => {
+        const code = [
+          `import { secretOnly, Low } from "../lib/server-only.ts";`,
+          `export function getServerData() { return { props: { s: secretOnly } }; }`,
+          `export enum Level { Low = 1 }`,
+          `export default function Page() { return Level.Low; }`,
+        ].join("\n");
+
+        const result = await stripServerOnlyExports(code, "page.tsx");
+
+        assertNotIncludes(result, "{ secretOnly, Low }");
+        // A mixed project import keeps its pre-existing side-effect contract.
+        // The TypeScript fix removes the false live binding; it does not prove
+        // that evaluating the imported module is safe to delete.
+        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertStringIncludes(result, "Level.Low");
       });
 
       it("keeps a declaration whose name matches a hook-local enum member", async () => {

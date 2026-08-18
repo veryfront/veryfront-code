@@ -130,8 +130,8 @@ function walk(node: Node, visit: (node: Node) => boolean | void): void {
  *
  * The list is closed and enumerable, which is the point: it is a decidable
  * question, unlike proving what a module does to an intrinsic. A TypeScript
- * node type this pass does not know is treated as runtime code, because
- * over-counting a reference only ever keeps a binding.
+ * node type this pass does not know is erased by default. Any new TypeScript
+ * node type that emits runtime code must be added to this allowlist.
  *
  * The split is invisible while this stage runs after the compile stage, which
  * erases every TypeScript node before this pass sees the module. It exists so
@@ -396,7 +396,8 @@ function emptyServerOnlyHooks(
 /**
  * Identifiers the module reads, ignoring import statements and the positions
  * where an identifier is a fixed name rather than a reference (`a.hashOf`,
- * `{ hashOf: 1 }`). Over-counting only ever keeps an import.
+ * `{ hashOf: 1 }`). This flat walk is used for module-declaration liveness;
+ * import liveness uses the scope-aware walker below.
  *
  * `excluded` holds identifier nodes that are binding *positions* rather than
  * references (the `id` a declaration introduces), so a declaration is not
@@ -415,6 +416,8 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
           node.type === "ClassMethod" || node.type === "ClassProperty" ||
           node.type === "ClassAccessorProperty"
       ? node.key
+      : node.type === "TSEnumDeclaration" || node.type === "TSEnumMember"
+      ? node.id
       : undefined;
 
     if (node.computed === true) return;
@@ -1175,7 +1178,10 @@ function importedBindings(statement: Node): string[] {
  * the legacy conservative side-effect rewrite.
  */
 function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[] {
-  const referenced = referencedIdentifiers(body);
+  // Import liveness must be scope-aware. A local enum member, namespace,
+  // parameter property, or ordinary nested binding can share a spelling with
+  // an import without reading that imported binding.
+  const referenced = freeReferencedIdentifiers({ type: "Program", body });
 
   return body.filter((statement) => {
     if (statement.type !== "ImportDeclaration") return true;
