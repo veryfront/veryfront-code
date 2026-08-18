@@ -654,7 +654,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Connect a Salesforce user",
       "VERYFRONT_HOST_ADAPTER_INTEGRATIONS=salesforce",
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
-      "Admin approved users are pre-authorized",
+      "Create an External Client App",
       "Verify it worked",
     ],
   },
