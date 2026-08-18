@@ -2430,13 +2430,38 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         isNode(target.body) && target.body.type === "BlockStatement" &&
         Array.isArray(target.body.body)
       ) {
-        const abruptIndex = target.body.body.findIndex((statement) =>
-          isNode(statement) &&
-          (statement.type === "ThrowStatement" || statement.type === "ReturnStatement")
-        );
-        if (abruptIndex >= 0) {
-          for (const statement of target.body.body.slice(abruptIndex + 1)) {
-            if (isNode(statement)) deferred.add(statement);
+        const statementCompletes = (statement: Node): boolean => {
+          if (statement.type === "EmptyStatement" || statement.type === "FunctionDeclaration") {
+            return true;
+          }
+          if (statement.type === "ExpressionStatement") {
+            return isInertExpression(
+              isNode(statement.expression) ? statement.expression : undefined,
+              noNameHelpers,
+              initializedAtCall,
+            );
+          }
+          if (statement.type !== "VariableDeclaration") return false;
+          return declaratorsOf(statement).every((declarator) =>
+            isNode(declarator.id) && declarator.id.type === "Identifier" &&
+            isInertExpression(
+              isNode(declarator.init) ? declarator.init : undefined,
+              noNameHelpers,
+              initializedAtCall,
+            )
+          );
+        };
+        let continues = true;
+        for (const statement of target.body.body) {
+          if (!isNode(statement)) continue;
+          if (!continues) {
+            deferred.add(statement);
+            continue;
+          }
+          if (statement.type === "ThrowStatement" || statement.type === "ReturnStatement") {
+            continues = false;
+          } else if (!statementCompletes(statement)) {
+            continues = false;
           }
         }
       }
@@ -2445,7 +2470,8 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     const targetParameters = Array.isArray(target.params) ? target.params : [];
     const boundaryParameter = targetParameters[boundary];
     const firstDeferredParameter = isNode(boundaryParameter) &&
-        boundaryParameter.type === "AssignmentPattern"
+        boundaryParameter.type === "AssignmentPattern" && isNode(boundaryParameter.left) &&
+        boundaryParameter.left.type === "Identifier"
       ? boundary + 1
       : boundary;
     for (let index = firstDeferredParameter; index < targetParameters.length; index++) {
@@ -2689,6 +2715,20 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           ? instanceInitializationCompletes(node) ? "all" : "fields-only"
           : "constructor-only"
         : null;
+      if (
+        instanceFieldsContinue && isInstanceField(child) && isNode(child.value) &&
+        child.value.type === "SequenceExpression" && Array.isArray(child.value.expressions)
+      ) {
+        let sequenceContinues = true;
+        for (const expression of child.value.expressions) {
+          if (!isNode(expression)) continue;
+          if (!sequenceContinues) {
+            deferred.add(expression);
+          } else if (!inertCompletionExpression(expression)) {
+            sequenceContinues = false;
+          }
+        }
+      }
       const invokedMember = constructedClassBody !== null &&
           ((isConstructor(child) && constructedClassBody !== "fields-only") ||
             (instanceFieldsContinue && isInstanceField(child)))
