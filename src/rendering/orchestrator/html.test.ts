@@ -24,6 +24,7 @@ import {
   HTMLGenerator,
   type HTMLGeneratorConfig,
   resolveErrorContentSourceEnvironment,
+  resolveErrorContentSourceParameters,
   resolveRenderEnvironment,
 } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
@@ -105,6 +106,22 @@ describe("HTMLGenerator helpers", () => {
     assertEquals(
       resolveErrorContentSourceEnvironment(true, "production", undefined),
       "production",
+    );
+  });
+
+  it("derives hosted production error identity from a release content source", () => {
+    assertEquals(
+      resolveErrorContentSourceParameters(
+        false,
+        "production",
+        undefined,
+        { contentSourceId: "release-release-123" },
+      ),
+      {
+        environment: "production",
+        contentSourceEnvironment: "production",
+        releaseId: "release-123",
+      },
     );
   });
 

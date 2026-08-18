@@ -74,6 +74,29 @@ export function resolveErrorContentSourceEnvironment(
   return environment;
 }
 
+export function resolveErrorContentSourceParameters(
+  isLocalProject: boolean,
+  requestEnvironment: RenderEnvironment | undefined,
+  configuredEnvironment: RenderEnvironment | undefined,
+  options: { releaseId?: string; contentSourceId?: string } | undefined,
+): {
+  environment: RenderEnvironment;
+  contentSourceEnvironment: RenderEnvironment;
+  releaseId?: string;
+} {
+  const environment = resolveRenderEnvironment(requestEnvironment, configuredEnvironment);
+  const releaseId = resolveReleaseId(options);
+  return {
+    environment,
+    contentSourceEnvironment: resolveErrorContentSourceEnvironment(
+      isLocalProject,
+      environment,
+      releaseId,
+    ),
+    releaseId,
+  };
+}
+
 function hasCollectedHeadEntries(
   head: HTMLGenerationContext["collectedHead"],
 ): boolean {
@@ -692,20 +715,18 @@ export class HTMLGenerator {
         dependencyPinningSource: context.options?.dependencyPinningSource,
       });
       const { computeContentSourceId } = await import("#veryfront/cache/keys.ts");
-      const environment = resolveRenderEnvironment(
-        context.options?.environment,
-        this.config.environment,
-      );
-      const contentSourceEnvironment = resolveErrorContentSourceEnvironment(
-        this.config.isLocalProject === true,
-        environment,
-        context.options?.releaseId,
-      );
+      const { environment, contentSourceEnvironment, releaseId } =
+        resolveErrorContentSourceParameters(
+          this.config.isLocalProject === true,
+          context.options?.environment,
+          this.config.environment,
+          context.options,
+        );
       const contentSourceId = computeContentSourceId(
         this.config.isLocalProject === true,
         contentSourceEnvironment,
         null,
-        context.options?.releaseId,
+        releaseId,
       );
       // The loader always receives the resolved request environment. A
       // release-less hosted production render keeps the legacy preview content
