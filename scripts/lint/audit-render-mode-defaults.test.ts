@@ -83,6 +83,33 @@ describe("findFailOpenDefaults", () => {
     assertEquals(findFailOpenDefaults(source)[0]?.line, 5);
   });
 
+  it("does not treat a comment delimiter inside a string as a comment", () => {
+    const source = [
+      'const open = "/*";', // 1
+      'const shut = "*/";', // 2
+      "const dev = options?.dev ?? true;", // 3
+      'const slashes = "http://example.test";', // 4
+      "const dev2 = options?.dev ?? true;", // 5
+    ].join("\n");
+    assertEquals(rules(source), ["3:dev-fallback", "5:dev-fallback"]);
+  });
+
+  it("does not treat a comment delimiter inside a template literal as a comment", () => {
+    const source = [
+      "const t = `/* not a comment`;",
+      "const dev = options?.dev ?? true;",
+    ].join("\n");
+    assertEquals(rules(source), ["2:dev-fallback"]);
+  });
+
+  it("keeps scanning past an escaped quote inside a string", () => {
+    const source = [
+      'const s = "he said \\"/*\\" and left";',
+      "const dev = options?.dev ?? true;",
+    ].join("\n");
+    assertEquals(rules(source), ["2:dev-fallback"]);
+  });
+
   it("reports one violation per line and a 1-based line number", () => {
     const source = ["const a = 1;", "", "const dev = options?.dev ?? true;"]
       .join("\n");
@@ -103,6 +130,21 @@ describe("stripComments", () => {
     const stripped = stripComments("/*\n * x\n */\ncode;");
     assertEquals(stripped.split("\n").length, 4);
     assertEquals(stripped.split("\n")[3], "code;");
+  });
+
+  it("leaves code after a string that contains a comment delimiter", () => {
+    assertEquals(
+      stripComments('const a = "/*";\nconst b = 1;'),
+      'const a = "/*";\nconst b = 1;',
+    );
+  });
+
+  it("preserves column positions when blanking a line comment", () => {
+    const source = "const a = 1; // note";
+    const stripped = stripComments(source);
+
+    assertEquals(stripped.length, source.length);
+    assertEquals(stripped.trimEnd(), "const a = 1;");
   });
 });
 

@@ -60,19 +60,90 @@ const RULES: Rule[] = [
 ];
 
 /**
- * Strip comments so documentation examples cannot trigger a match. String
- * literals are kept, because two of the rules match on `"development"`.
+ * Blank out comments so documentation examples cannot trigger a match, while
+ * keeping string literals intact (two of the rules match on `"development"`).
  *
- * A block comment is blanked rather than deleted so that the line and column
- * layout survives. Deleting it would shift every line number after a
- * multi-line comment and make the reported location wrong.
+ * This is a character scanner rather than a regex because a regex cannot tell
+ * a real `/*` from one inside a string. Getting that wrong is not cosmetic
+ * here: a single `"/*"` in a source file would make everything up to the next
+ * `*` + `/` look like a comment, and a fail-open default inside that span
+ * would sail through the check unseen.
+ *
+ * Comments are replaced with spaces rather than deleted so that line and
+ * column positions survive and reported line numbers stay correct.
  */
 export function stripComments(text: string): string {
-  const withoutBlocks = text.replace(
-    /\/\*[\s\S]*?\*\//g,
-    (comment) => comment.replace(/[^\r\n]/g, " "),
-  );
-  return withoutBlocks.replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  const out: string[] = [];
+  let index = 0;
+  let quote: string | null = null;
+
+  const keep = (char: string) => out.push(char);
+  const blank = (char: string) =>
+    out.push(char === "\n" || char === "\r" ? char : " ");
+
+  while (index < text.length) {
+    const char = text[index] as string;
+    const next = text[index + 1];
+
+    if (quote) {
+      keep(char);
+      // A backslash escapes the next character, including a closing quote.
+      if (char === "\\" && index + 1 < text.length) {
+        keep(text[index + 1] as string);
+        index += 2;
+        continue;
+      }
+      if (char === quote) quote = null;
+      index += 1;
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      quote = char;
+      keep(char);
+      index += 1;
+      continue;
+    }
+
+    // Outside a string, consume an escaped character as a unit so that an
+    // escaped slash in a regex literal cannot open a comment.
+    if (char === "\\" && index + 1 < text.length) {
+      keep(char);
+      keep(text[index + 1] as string);
+      index += 2;
+      continue;
+    }
+
+    if (char === "/" && next === "/") {
+      while (index < text.length && text[index] !== "\n") {
+        blank(text[index] as string), index += 1;
+      }
+      continue;
+    }
+
+    if (char === "/" && next === "*") {
+      blank(char);
+      blank(next as string);
+      index += 2;
+      while (
+        index < text.length && !(text[index] === "*" && text[index + 1] === "/")
+      ) {
+        blank(text[index] as string);
+        index += 1;
+      }
+      if (index < text.length) {
+        blank("*");
+        blank("/");
+        index += 2;
+      }
+      continue;
+    }
+
+    keep(char);
+    index += 1;
+  }
+
+  return out.join("");
 }
 
 export interface FailOpenDefault {
