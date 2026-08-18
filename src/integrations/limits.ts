@@ -25,6 +25,9 @@ export const MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES = 4 * 1024;
 /** Maximum number of remote tool definitions admitted atomically. */
 export const MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS = 1_000;
 
+/** Maximum exact catalog tool grants admitted into one local integration source. */
+export const MAX_LOCAL_INTEGRATION_TOOLS = 256;
+
 /** Maximum caller or environment credential length admitted into an HTTP header. */
 export const MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH = 16_384;
 
