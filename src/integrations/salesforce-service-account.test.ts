@@ -129,7 +129,12 @@ describe("Salesforce service-account integration source", () => {
       idempotentHint: true,
       openWorldHint: true,
     });
-    assertEquals(definitions[1]?.annotations?.readOnlyHint, false);
+    assertEquals(definitions[1]?.annotations, {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
     assertEquals(transport.captures, []);
 
     const serialized = JSON.stringify(definitions);
@@ -367,6 +372,41 @@ describe("Salesforce service-account integration source", () => {
       integration: "salesforce",
       message: "Salesforce API request failed.",
     });
+  });
+
+  it("preserves a provider 403 as an API error without refreshing credentials", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "client-id",
+      [CLIENT_SECRET_ENV]: "client-secret",
+      [LOGIN_URL_ENV]: "https://acme.my.salesforce.com",
+    });
+    let tokenRequests = 0;
+    const transport = createTransport(({ request }) => {
+      if (request.url.endsWith("/services/oauth2/token")) {
+        tokenRequests++;
+        return Response.json({
+          access_token: "access-token",
+          instance_url: "https://na123.salesforce.com",
+        });
+      }
+      return Response.json([{ errorCode: "INSUFFICIENT_ACCESS" }], { status: 403 });
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    const result = await source.executeTool("salesforce__get_case", {
+      caseId: "500000000000001",
+    });
+
+    assertEquals(result, {
+      error: "salesforce_api_error",
+      integration: "salesforce",
+      status: 403,
+      message: "Salesforce API request failed.",
+    });
+    assertEquals(tokenRequests, 1);
   });
 
   it("rejects unsafe login and token-returned origins before provider execution", async () => {

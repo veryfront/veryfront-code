@@ -187,7 +187,7 @@ function toToolDefinition(tool: IntegrationToolMeta): ToolDefinition {
     throw new TypeError("Salesforce service-account tools require endpoint-backed identifiers");
   }
   const readOnly = tool.requiresWrite !== true;
-  const idempotent = ["GET", "PUT", "PATCH", "DELETE"].includes(tool.endpoint.method);
+  const idempotent = ["GET", "PUT", "DELETE"].includes(tool.endpoint.method);
   return {
     name,
     description: tool.description,
@@ -262,10 +262,10 @@ function authFailureResult(): unknown {
 
 function apiFailureResult(status?: number): unknown {
   return {
-    error: status === 401 || status === 403 ? "invalid_credentials" : "salesforce_api_error",
+    error: status === 401 ? "invalid_credentials" : "salesforce_api_error",
     integration: SALESFORCE_INTEGRATION,
     ...(status === undefined ? {} : { status }),
-    message: status === 401 || status === 403
+    message: status === 401
       ? "Salesforce rejected the service account credential."
       : "Salesforce API request failed.",
   };
