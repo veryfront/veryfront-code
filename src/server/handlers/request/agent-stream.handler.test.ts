@@ -15,7 +15,7 @@ import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-serve
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
@@ -984,6 +984,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("loads and applies integration restrictions from the exact requested source", async () => {
     let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
     let discoveryConfig: HandlerContext["config"];
+    const fetchUrls: string[] = [];
 
     const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async (ctx) => {
@@ -993,6 +994,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAgent: (id) =>
         id === "assistant-1"
           ? createAgentWithConfig("assistant-1", {
+            mcpServers: [],
             tools: {
               gmail__list_emails: true,
               gmail__delete_email: true,
@@ -1075,20 +1077,28 @@ describe("server/handlers/request/agent-stream.handler", () => {
       fs,
     };
 
-    const result = await handler.handle(
-      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-veryfront-control-plane-jws": jws,
-        },
-        body,
-      }),
-      ctx,
+    const result = await withMockFetch(
+      (input) => {
+        fetchUrls.push(String(input));
+        return Promise.reject(new Error(`unexpected fetch: ${input}`));
+      },
+      () =>
+        handler.handle(
+          new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-veryfront-control-plane-jws": jws,
+            },
+            body,
+          }),
+          ctx,
+        ),
     );
 
     assertExists(result.response);
     assertEquals(result.response.status, 200);
+    assertEquals(fetchUrls, []);
     assertEquals(contextCalls, ["restrict-gmail"]);
     assertEquals(configReads, ["restrict-gmail"]);
     assertEquals(sourceEvents.slice(0, 2), ["source-fresh", "config-read"]);
