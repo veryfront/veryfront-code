@@ -3280,19 +3280,11 @@ function invokedFunctionParameterBindings(
       candidate.type === "MemberExpression" ||
       candidate.type === "OptionalMemberExpression"
     ) {
-      const concrete = concreteValues(
-        candidate,
-        new Set(seenBindings),
-        new Set(seenMemberFlows),
-      );
-      return {
-        values: concrete
-          .map((resolved) => stringLiteralText(resolved))
-          .filter((resolved): resolved is string => resolved !== null),
-        // A member read can retain concrete values while an unresolved owner,
-        // key, or write flow contributes another runtime value.
-        complete: false,
-      };
+      // Resolving a key through the same member-flow graph that is asking for
+      // that key explores every permutation of unresolved computed writes.
+      // A member read is never complete here, so keep it unresolved and let
+      // the caller conservatively retain every member it could select.
+      return { values: [], complete: false };
     }
 
     const concrete = concreteValues(

@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import "../../plugins/__tests__/code-parser-setup.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   browserServerExportsStripPlugin,
@@ -2446,6 +2451,39 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
+      assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+    });
+
+    it("bounds unresolved computed write key traversal", async () => {
+      const writes = Array.from(
+        { length: 9 },
+        (_, index) => `owner[globalThis.key${index}] = safeFactory;`,
+      );
+      const code = [
+        `const mutatingFactory = () => function (intrinsic) {`,
+        `  intrinsic.defineProperty = (target) => target;`,
+        `};`,
+        `const safeFactory = () => function (_intrinsic) {};`,
+        `const owner = { make: mutatingFactory };`,
+        ...writes,
+        `owner.make()(Object);`,
+        `var setName = (target, value) => Object.defineProperty(`,
+        `  target, "name", { value, configurable: true },`,
+        `);`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `function loadSecret() { return KEY; }`,
+        `setName(loadSecret, "loadSecret");`,
+        `export async function getServerData() { return { props: { k: loadSecret() } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const started = performance.now();
+      const result = await stripServerOnlyExports(code);
+      const elapsed = performance.now() - started;
+
+      assert(elapsed < 1_500, `expected bounded traversal, got ${elapsed.toFixed(1)} ms`);
       assertStringIncludes(result, `setName(loadSecret, "loadSecret")`);
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
     });
