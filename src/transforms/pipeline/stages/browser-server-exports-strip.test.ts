@@ -2634,6 +2634,23 @@ describe("browser-server-exports-strip", () => {
       });
     }
 
+    it("does not run direct instance fields when class definition throws", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const instance = new class { static value = missing; field = KEY; };`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/throwing-inline-class-definition.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "throwing-inline-class-definition.tsx");
+    });
+
     it("keeps an uncalled inline class method deferred", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,

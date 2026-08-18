@@ -2144,8 +2144,10 @@ function deferredExecutionNodes(root: Node): Set<Node> {
 
     const constructsInlineClass = node.type === "ClassExpression" &&
       constructedClasses.has(node);
+    const completesInlineClassDefinition = constructsInlineClass &&
+      classDefinitionCompletes(node);
     if (
-      constructsInlineClass && invokesSuperclass(node) &&
+      completesInlineClassDefinition && invokesSuperclass(node) &&
       isNode(node.superClass)
     ) {
       const superClass = unwrap(node.superClass);
@@ -2173,7 +2175,8 @@ function deferredExecutionNodes(root: Node): Set<Node> {
       }
     }
     for (const child of children(node)) {
-      const entersConstructedClassBody = constructsInlineClass && child.type === "ClassBody"
+      const entersConstructedClassBody = completesInlineClassDefinition &&
+          child.type === "ClassBody"
         ? constructsInstanceFields(node) ? "all" : "constructor-only"
         : null;
       const invokedMember = constructedClassBody !== null &&
