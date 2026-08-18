@@ -7,7 +7,7 @@
  * Veryfront APIs.
  */
 
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
@@ -289,7 +289,7 @@ function tokenFailureResult(cause: unknown): unknown {
 }
 
 function readCredential(name: SalesforceServiceAccountEnvVar): string | undefined {
-  const value = getHostEnv(name);
+  const value = getEnv(name);
   if (
     typeof value !== "string" ||
     value.trim().length === 0 ||

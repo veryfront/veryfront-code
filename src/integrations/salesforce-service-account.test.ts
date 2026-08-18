@@ -8,6 +8,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import {
   createSalesforceServiceAccountToolSourceWithTransport,
@@ -257,6 +258,49 @@ describe("Salesforce service-account integration source", () => {
     assertEquals(providerRequest?.request.headers.get("authorization"), `Bearer ${accessToken}`);
     assertEquals(providerRequest?.request.url.includes(clientSecret), false);
     assertEquals(JSON.stringify(result).includes(clientSecret), false);
+  });
+
+  it("uses the active project credential scope without host fallback", async () => {
+    setCredentials({
+      [CLIENT_ID_ENV]: "host-client-id",
+      [CLIENT_SECRET_ENV]: "host-client-secret",
+      [LOGIN_URL_ENV]: "https://host.my.salesforce.com",
+    });
+    const projectCredentials = {
+      [CLIENT_ID_ENV]: "project-client-id",
+      [CLIENT_SECRET_ENV]: "project-client-secret",
+      [LOGIN_URL_ENV]: "https://project.my.salesforce.com",
+    };
+    const transport = createTransport(({ baseUrl, request, body }) => {
+      if (request.url.endsWith("/services/oauth2/token")) {
+        assertEquals(baseUrl, projectCredentials[LOGIN_URL_ENV]);
+        assertStringIncludes(body, "client_id=project-client-id");
+        assertStringIncludes(body, "client_secret=project-client-secret");
+        return Response.json({
+          access_token: "project-access-token",
+          instance_url: "https://project-instance.my.salesforce.com",
+        });
+      }
+      assertEquals(request.headers.get("authorization"), "Bearer project-access-token");
+      return Response.json({ Id: "500000000000001" });
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    const result = await runWithProjectEnv(
+      projectCredentials,
+      () => source.executeTool("salesforce__get_case", { caseId: "500000000000001" }),
+    );
+
+    assertEquals(result, { Id: "500000000000001" });
+    const serializedCaptures = JSON.stringify(transport.captures.map((capture) => ({
+      baseUrl: capture.baseUrl,
+      body: capture.body,
+    })));
+    assertEquals(serializedCaptures.includes("host-client"), false);
+    assertEquals(serializedCaptures.includes("host.my.salesforce.com"), false);
   });
 
   it("applies safe query defaults, response transforms, and a bounded token cache", async () => {
