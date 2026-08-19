@@ -113,6 +113,13 @@ const REMOVED_RENDER_TOOL_COMPONENTS = new Set([
 ]);
 
 const REMOVED_PROP_MIGRATIONS: Record<string, Record<string, string>> = {
+  ChatSidebar: {
+    fill: 'Replace fill with an explicit width class such as className="w-full".',
+  },
+  StepIndicator: {
+    icon:
+      "Compose StepIndicator.Rule and StepIndicator.Label, then pass the custom icon as the label child.",
+  },
   ChatInput: {
     messages: "Move messages to ChatInput.Export.messages.",
     onExportClick: "Move onExportClick to ChatInput.Export.onClick.",
@@ -124,6 +131,16 @@ const REMOVED_PROP_MIGRATIONS: Record<string, Record<string, string>> = {
     searchPlaceholder: "Move searchPlaceholder to ModelSelector.Search.placeholder.",
   },
 };
+
+const CHILD_ICON_COMPONENTS = new Set([
+  "AttachmentPillRetry",
+  "AttachmentPillRemove",
+  "AttachmentsPanelItemRemove",
+  "BranchPickerPrevious",
+  "BranchPickerNext",
+  "ReasoningTrigger",
+  "ToolCallTrigger",
+]);
 
 const DEFAULT_TOGGLES: Record<string, Record<string, boolean>> = {
   Chat: {
@@ -631,6 +648,62 @@ function rewriteRemovedProps(
   return true;
 }
 
+function iconAttributeChild(
+  attribute: t.JSXAttribute,
+): t.JSXElement["children"][number] | undefined {
+  if (attribute.value == null) {
+    return t.jsxExpressionContainer(t.booleanLiteral(true));
+  }
+  if (t.isStringLiteral(attribute.value)) {
+    return t.jsxText(attribute.value.value);
+  }
+  if (!t.isJSXExpressionContainer(attribute.value)) return undefined;
+  const expression = attribute.value.expression;
+  if (t.isJSXEmptyExpression(expression)) return undefined;
+  if (t.isJSXElement(expression) || t.isJSXFragment(expression)) {
+    return t.cloneNode(expression, true);
+  }
+  if (t.isExpression(expression)) {
+    return t.jsxExpressionContainer(t.cloneNode(expression, true));
+  }
+  return undefined;
+}
+
+function rewriteLeafIcon(
+  element: t.JSXElement,
+  canonicalElement: string,
+  warnings: string[],
+): boolean {
+  if (!CHILD_ICON_COMPONENTS.has(canonicalElement)) return false;
+  const icon = element.openingElement.attributes.find(
+    (attribute): attribute is t.JSXAttribute =>
+      t.isJSXAttribute(attribute) && attributeName(attribute) === "icon",
+  );
+  if (!icon) return false;
+
+  const child = iconAttributeChild(icon);
+  const hasSpread = element.openingElement.attributes.some(t.isJSXSpreadAttribute);
+  if (!element.openingElement.selfClosing || hasSpread || !child) {
+    addTodo(
+      element,
+      "Move the icon prop to children after reconciling existing children or spread props.",
+      icon,
+    );
+    warnings.push(`The icon prop on ${canonicalElement} requires manual child migration.`);
+    return true;
+  }
+
+  element.openingElement.attributes = element.openingElement.attributes.filter((attribute) =>
+    attribute !== icon
+  );
+  element.openingElement.selfClosing = false;
+  element.closingElement = t.jsxClosingElement(
+    t.cloneNode(element.openingElement.name, true),
+  );
+  element.children = [child];
+  return true;
+}
+
 function renderItemAdapter(
   expression: t.Expression,
   includeIndex: boolean,
@@ -889,6 +962,7 @@ export function migrateChatComposition(source: string): ChatCodemodResult {
       ) || changed;
     }
     changed = rewriteToggles(node, canonical, warnings) || changed;
+    changed = rewriteLeafIcon(node, canonical, warnings) || changed;
     changed = rewriteRemovedProps(node, canonical, warnings) || changed;
     changed = rewriteRemovedSlots(node, warnings) || changed;
     changed = rewriteLegacyRenderProps(

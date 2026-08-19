@@ -164,6 +164,25 @@ control.
 The corresponding compatibility prop type aliases are removed as well. Import
 the prop type that matches the canonical component name.
 
+## Move leaf icons to children
+
+The codemod moves `icon` to children for the icon-bearing compound leaves:
+`AttachmentPill.Retry`, `AttachmentPill.Remove`,
+`AttachmentsPanel.Item.Remove`, `BranchPicker.Previous`, `BranchPicker.Next`,
+`Reasoning.Trigger`, and `ToolCall.Trigger`.
+
+```tsx
+<ToolCall.Trigger icon={<CustomIcon />} />
+// becomes
+<ToolCall.Trigger><CustomIcon /></ToolCall.Trigger>
+```
+
+When a leaf already has children or spread props, the codemod leaves the prop
+visible with a migration TODO because changing precedence would be unsafe.
+`StepIndicator.icon` requires explicit `StepIndicator.Rule` / `.Label`
+composition, and `ChatSidebar.fill` becomes an explicit width class such as
+`className="w-full"`; both receive migration TODOs.
+
 ## Replace deferred render props
 
 | Removed prop                  | Replacement                                                                 |

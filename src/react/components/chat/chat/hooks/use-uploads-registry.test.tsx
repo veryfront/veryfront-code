@@ -153,19 +153,25 @@ function fakeFile(name: string): File {
 
 describe("react/components/chat/hooks/useAttachments", () => {
   it("keeps the canonical result interface structurally source-compatible", () => {
-    const legacyResult = {
+    const result = {
       items: [],
       isLoading: false,
       isUploading: false,
       uploadError: null,
       clearUploadError: () => undefined,
+      storageError: null,
+      clearStorageError: () => undefined,
+      refreshError: null,
+      clearRefreshError: () => undefined,
+      removeError: null,
+      clearRemoveError: () => undefined,
       upload: () => undefined,
       add: () => undefined,
       remove: () => Promise.resolve(),
       clear: () => undefined,
       refresh: () => Promise.resolve(),
     } satisfies ReturnType<typeof useAttachments>;
-    assertEquals(legacyResult.items, []);
+    assertEquals(result.items, []);
   });
 
   it("uploads a file, captures the server id, and persists it", async () => {

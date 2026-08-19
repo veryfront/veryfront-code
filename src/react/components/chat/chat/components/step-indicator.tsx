@@ -11,7 +11,6 @@ export interface StepIndicatorProps
   /** Whether this step has finished. Swaps the pending glyph for a check. */
   isComplete: boolean;
   className?: string;
-  icon?: React.ReactNode;
   /** Compose your own divider; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;
   /** React 19: ref is a regular prop. */
@@ -33,8 +32,6 @@ export interface StepIndicatorContextValue {
   stepIndex: number;
   /** Whether this step has finished. Swaps the pending glyph for a check. */
   isComplete: boolean;
-  /** Optional override for the complete/pending status glyph. */
-  icon?: React.ReactNode;
 }
 
 const [StepIndicatorContext, useStepIndicatorContext] = createStrictContext<
@@ -68,12 +65,11 @@ function StepIndicatorRoot({
   stepIndex,
   isComplete,
   className,
-  icon,
   children,
   ref,
   ...props
 }: StepIndicatorProps): React.ReactElement {
-  const context: StepIndicatorContextValue = { stepIndex, isComplete, icon };
+  const context: StepIndicatorContextValue = { stepIndex, isComplete };
   return (
     <StepIndicatorContext.Provider value={context}>
       <div
@@ -113,7 +109,7 @@ function StepIndicatorLabel(
     & React.HTMLAttributes<HTMLDivElement>
     & { ref?: React.Ref<HTMLDivElement> },
 ): React.JSX.Element {
-  const { stepIndex, isComplete, icon } = useStepIndicator();
+  const { stepIndex, isComplete } = useStepIndicator();
   return (
     <div
       {...props}
@@ -123,7 +119,7 @@ function StepIndicatorLabel(
         className,
       )}
     >
-      {children ?? icon ?? (isComplete
+      {children ?? (isComplete
         ? <CheckCircleIcon className="size-3.5 text-[var(--success)]" />
         : <span className="size-2 rounded-full bg-[var(--faint)] animate-pulse" />)}
       <span className="font-medium">Step {stepIndex + 1}</span>

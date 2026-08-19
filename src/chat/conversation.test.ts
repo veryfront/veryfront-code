@@ -14,15 +14,13 @@ import type {
   ProviderModelMessage,
 } from "veryfront/chat/types";
 import {
-  apiConversationSchema,
-  apiMessageSchema,
-  conversationTypeSchema,
-  messagePartSchema,
-  messageStatusSchema,
-} from "#veryfront/chat/compat";
-import {
   extractTextFromMessage,
   extractUploadId,
+  getApiConversationSchema,
+  getApiMessageSchema,
+  getConversationTypeSchema,
+  getMessagePartSchema,
+  getMessageStatusSchema,
   hasIncompleteToolParts,
   isRecord,
   isToolCallPart,
@@ -35,6 +33,11 @@ import {
 } from "#veryfront/chat/conversation";
 import { convertUiMessagesToProviderModelMessages } from "./provider-message-conversion.ts";
 
+const apiConversationSchema = getApiConversationSchema();
+const apiMessageSchema = getApiMessageSchema();
+const conversationTypeSchema = getConversationTypeSchema();
+const messagePartSchema = getMessagePartSchema();
+const messageStatusSchema = getMessageStatusSchema();
 const GITHUB_PR_DIFF_INPUT = { owner: "veryfront", repo: "veryfront-code", pull_number: 3092 };
 const GITHUB_LIST_PRS_INPUT = { owner: "veryfront", repo: "veryfront-code" };
 type JsonToolResultValue = Extract<ChatToolResultPart["output"], { type: "json" }>["value"];

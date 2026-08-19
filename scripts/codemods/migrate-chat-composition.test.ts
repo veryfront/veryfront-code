@@ -72,6 +72,64 @@ export const Example = ({ tool }) => <ToolCallCard tool={tool} />;
   assertStringIncludes(result.code, "ToolCall as ToolCallCard");
 });
 
+Deno.test("chat composition codemod moves deprecated leaf icons to children", () => {
+  const source = `
+import {
+  AttachmentPill,
+  AttachmentsPanel,
+  BranchPicker,
+  Reasoning,
+  ToolCall,
+} from "veryfront/chat";
+export const Example = () => <>
+  <AttachmentPill.Retry icon={<RetryIcon />} />
+  <AttachmentPill.Remove icon={<RemoveIcon />} />
+  <AttachmentsPanel.Item.Remove icon={<RemoveIcon />} />
+  <BranchPicker.Previous icon={<PreviousIcon />} />
+  <BranchPicker.Next icon={<NextIcon />} />
+  <Reasoning.Trigger icon={<ReasoningIcon />} />
+  <ToolCall.Trigger icon={<ToolIcon />} />
+</>;
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertEquals(result.warnings, []);
+  assertStringIncludes(
+    result.code,
+    "<AttachmentPill.Retry><RetryIcon /></AttachmentPill.Retry>",
+  );
+  assertStringIncludes(
+    result.code,
+    "<AttachmentsPanel.Item.Remove><RemoveIcon /></AttachmentsPanel.Item.Remove>",
+  );
+  assertStringIncludes(
+    result.code,
+    "<ToolCall.Trigger><ToolIcon /></ToolCall.Trigger>",
+  );
+  assertEquals(result.code.includes(" icon="), false);
+});
+
+Deno.test("chat composition codemod flags root props that require composition", () => {
+  const source = `
+import { ChatSidebar, StepIndicator } from "veryfront/chat";
+export const Example = () => <>
+  <ChatSidebar fill />
+  <StepIndicator stepIndex={0} isComplete={false} icon={<StepIcon />} />
+</>;
+`;
+  const result = migrateChatComposition(source);
+
+  assert(result.changed);
+  assertStringIncludes(result.code, "TODO(veryfront-migration)");
+  assertStringIncludes(result.code, "fill />");
+  assertStringIncludes(result.code, "icon={<StepIcon />}");
+  assertEquals(result.warnings, [
+    "Removed ChatSidebar props require compound-leaf migration: fill.",
+    "Removed StepIndicator props require compound-leaf migration: icon.",
+  ]);
+});
+
 Deno.test("chat composition codemod rewrites useChat aliases from the agent entrypoint", () => {
   const source = `
 import { useChat } from "veryfront/agent/react";

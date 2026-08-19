@@ -408,12 +408,11 @@ AttachmentPillLabel.displayName = "AttachmentPill.Label";
  * when an `onRetry` handler is provided.
  */
 function AttachmentPillRetry(
-  { className, children, icon, ref }: {
+  { className, children, ref }: {
     className?: string;
     /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
      * default icon when childless; pass children to replace it). */
     children?: React.ReactNode;
-    icon?: React.ReactNode;
     /** React 19: ref is a regular prop (threaded to the button). */
     ref?: React.Ref<HTMLButtonElement>;
   },
@@ -431,7 +430,7 @@ function AttachmentPillRetry(
       aria-label={`Retry ${attachment.name}`}
       className={cn("shrink-0", className)}
     >
-      {children ?? icon ?? <RefreshCwIcon />}
+      {children ?? <RefreshCwIcon />}
     </Button>
   );
 }
@@ -442,12 +441,11 @@ AttachmentPillRetry.displayName = "AttachmentPill.Retry";
  * `onRemove` handler is provided and the pill isn't a legacy uploading pill.
  */
 function AttachmentPillRemove(
-  { className, children, icon, ref }: {
+  { className, children, ref }: {
     className?: string;
     /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
      * default icon when childless; pass children to replace it). */
     children?: React.ReactNode;
-    icon?: React.ReactNode;
     /** React 19: ref is a regular prop (threaded to the button). */
     ref?: React.Ref<HTMLButtonElement>;
   },
@@ -468,7 +466,7 @@ function AttachmentPillRemove(
         className,
       )}
     >
-      {children ?? icon ?? (
+      {children ?? (
         <svg
           viewBox="0 0 24 24"
           fill="none"

@@ -81,7 +81,7 @@ One graduation path, not three products: every L1 default is public L2; every L2
 - [InlineCitation](./components/inline-citation.md) - inline footnote markers
 - [MessageActionBar](./components/message-action-bar.md) - re-export of the `Message.Actions` family
 - [BranchPicker](./components/branch-picker.md) - message branch navigation
-- [Markdown](./components/markdown.md) - streamed markdown + `RichCodeBlock` (the sanctioned multi-node exception)
+- [Markdown](./components/markdown.md) - streamed markdown + `CodeBlock` (the sanctioned multi-node exception)
 
 ### Conversations & files
 
