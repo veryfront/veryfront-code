@@ -623,15 +623,15 @@ import {
 | ------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `hasProjectIdentityControlCharacters` | Whether a string contains a Unicode Cc control code point. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts#L38)      |
 | `isCanonicalOpaqueProjectIdentifier`  | Whether a value is a bounded, exact opaque identifier.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts#L54)      |
-| `parseProxyRoutingInvalidationEvent`  |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L234) |
+| `parseProxyRoutingInvalidationEvent`  |                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L328) |
 
 #### Types
 
 | Name                                    | Description | Source                                                                                                |
 | --------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
-| `ProxyRoutingInvalidationEvent`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L31) |
-| `ProxyRoutingInvalidationPublisher`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L41) |
-| `ProxyRoutingInvalidationPublishResult` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L35) |
+| `ProxyRoutingInvalidationEvent`         |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L36) |
+| `ProxyRoutingInvalidationPublisher`     |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L46) |
+| `ProxyRoutingInvalidationPublishResult` |             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/proxy/routing-invalidation.ts#L40) |
 
 ### `veryfront/extensions/eval`
 
