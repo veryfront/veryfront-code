@@ -97,7 +97,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "indexContentDir",
       "createAgUiHandler",
       "beforeStream",
-      "useUploadsRegistry",
+      "useAttachments",
       ".veryfront/rag/uploads/",
       "DocumentExtractor",
       "XLS, XLSX",

@@ -766,7 +766,6 @@ export interface ToolCallTriggerProps {
   /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
    * default icon when childless; pass children to replace it). */
   children?: React.ReactNode;
-  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   className?: string;
   /** React 19: ref is a regular prop. */

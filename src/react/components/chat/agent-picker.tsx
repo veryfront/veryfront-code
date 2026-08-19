@@ -132,7 +132,7 @@ function AgentPickerTrigger(
       {selected && (
         <Avatar
           name={selected.name}
-          avatarSrc={selected.avatarUrl ?? selected.avatarSrc}
+          avatarSrc={selected.avatarUrl}
           tone="muted"
           aria-hidden="true"
           className="size-5! bg-[var(--background)]"
@@ -232,7 +232,7 @@ function AgentPickerItem(
     >
       <Avatar
         name={agent.name}
-        avatarSrc={agent.avatarUrl ?? agent.avatarSrc}
+        avatarSrc={agent.avatarUrl}
         tone="muted"
         aria-hidden="true"
         className="size-5! bg-[var(--background)]"

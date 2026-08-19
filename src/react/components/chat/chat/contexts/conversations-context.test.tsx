@@ -24,9 +24,7 @@ function noop(): void {}
 const fakeResult: UseConversationsResult = {
   conversations: [],
   activeConversation: null,
-  active: null,
   activeConversationId: null,
-  activeId: null,
   isLoading: false,
   select: noop,
   create: () => ({
@@ -196,13 +194,13 @@ describe("ConversationsProvider — activeReady", () => {
     try {
       flushSync(() => root.render(<App store={store} />));
       await settle();
-      assertEquals(latest!.activeId, null);
+      assertEquals(latest!.activeConversationId, null);
       assertEquals(latest!.activeReady, false, "no active id means not ready");
 
       id = "a";
       flushSync(() => root.render(<App store={store} />));
       await settle();
-      assertEquals(latest!.activeId, "a");
+      assertEquals(latest!.activeConversationId, "a");
       assertEquals(
         latest!.activeReady,
         false,
@@ -211,7 +209,7 @@ describe("ConversationsProvider — activeReady", () => {
 
       pendingLoads.get("a")!(recordA);
       await settle();
-      assertEquals(latest!.active?.id, "a");
+      assertEquals(latest!.activeConversation?.id, "a");
       assertEquals(latest!.activeReady, true, "a matching active record is ready");
 
       flushSync(() => root.render(<App store={replacement} />));

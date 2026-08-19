@@ -11,7 +11,6 @@ export interface StepIndicatorProps
   /** Whether this step has finished. Swaps the pending glyph for a check. */
   isComplete: boolean;
   className?: string;
-  /** @deprecated Pass `children` to `StepIndicator.Label` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   /** Compose your own divider; when omitted, the default anatomy is rendered. */
   children?: React.ReactNode;

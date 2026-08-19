@@ -39,7 +39,6 @@ export interface UseAttachmentsOptions {
    * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
    */
   url?: string;
-  /** @deprecated Renamed to `url`. */
   api?: string;
   /** localStorage key for the persisted list. @default "vf-uploads" */
   storageKey?: string;
@@ -749,14 +748,9 @@ export function useAttachments(
 }
 
 /**
- * @deprecated Renamed to {@link useAttachments}. The registry is the headless
- * attachments primitive; the new name matches the `Attachment*` components.
- * Kept as an alias for back-compat.
  */
 export const useUploadsRegistry = useAttachments;
 
-/** @deprecated Renamed to {@link UseAttachmentsOptions}. */
 export type UseUploadsRegistryOptions = UseAttachmentsOptions;
 
-/** @deprecated Renamed to {@link UseAttachmentsResult}. */
 export type UseUploadsRegistryResult = UseAttachmentsResult;

@@ -40,7 +40,6 @@ export interface ChatInputActionProps extends
   /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
    * default icon when childless; pass children to replace it). */
   children?: React.ReactNode;
-  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   /** Additional classes merged with the action's Button variant classes. */
   className?: string;
@@ -65,7 +64,6 @@ export type ChatInputSlottedActionProps<T extends HTMLElement = HTMLElement> =
     asChild: true;
     children: React.ReactElement;
     disabled?: boolean;
-    /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
     icon?: React.ReactNode;
     className?: string;
     onClick?: WrapClick<T>;

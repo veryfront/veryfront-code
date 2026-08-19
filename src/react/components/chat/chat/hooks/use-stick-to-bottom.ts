@@ -48,8 +48,6 @@ export interface UseStickToBottomResult<T extends HTMLElement> {
  * `contentKey` (e.g. `messages.length`) is still accepted as a fallback trigger
  * for environments without `ResizeObserver`.
  *
- * @deprecated Use {@link useChatScroll}, the canonical RFC 2980 name. This alias
- * stays for backward compatibility and is not removed.
  */
 export function useStickToBottom<T extends HTMLElement>(
   contentKey: number,

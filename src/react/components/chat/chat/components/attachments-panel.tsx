@@ -408,7 +408,6 @@ export interface AttachmentsPanelItemRemoveProps {
   /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
    * default icon when childless; pass children to replace it). */
   children?: React.ReactNode;
-  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
   /** React 19: ref is a regular prop (threaded to the button). */
   ref?: React.Ref<HTMLButtonElement>;

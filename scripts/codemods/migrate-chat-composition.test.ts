@@ -21,18 +21,24 @@ Deno.test("chat composition codemod rewrites removed compatibility imports", () 
   const source = `
 import {
   Attachment,
+  ComposerContextProvider,
   ChatComponents,
   ReasoningCard,
   StandaloneMessage as LegacyMessage,
+  useComposerContext,
+  useUploadsRegistry,
 } from "veryfront/chat";
 `;
   const result = migrateChatComposition(source);
 
   assert(result.changed);
   assertStringIncludes(result.code, "AttachmentPill as Attachment");
+  assertStringIncludes(result.code, "ChatInputContextProvider as ComposerContextProvider");
   assertStringIncludes(result.code, "Chat as ChatComponents");
   assertStringIncludes(result.code, "Reasoning as ReasoningCard");
   assertStringIncludes(result.code, "Message as LegacyMessage");
+  assertStringIncludes(result.code, "useChatInputContext as useComposerContext");
+  assertStringIncludes(result.code, "useAttachments as useUploadsRegistry");
 });
 
 Deno.test("chat composition codemod supports the public React barrel", () => {

@@ -55,10 +55,10 @@ describe("ModelSelector preset", () => {
 });
 
 describe("ModelSelector — composability contract", () => {
-  it("keeps the legacy selected alias aligned with selectedModel", () => {
+  it("exposes selectedModel on the context", () => {
     function SelectionProbe(): null {
       const context = useModelSelector();
-      assertEquals(context.selected, context.selectedModel);
+      assertEquals(context.selectedModel?.value, "openai/gpt-4o");
       return null;
     }
 

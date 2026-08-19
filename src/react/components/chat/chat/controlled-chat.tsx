@@ -35,7 +35,6 @@ export function ControlledChat(
     theme: userTheme,
     renderMessage,
     suggestions: suggestionsProp,
-    onSuggestionClick,
     onSuggestionSelect,
     emptyState,
     initializing = false,
@@ -185,7 +184,6 @@ export function ControlledChat(
             title={emptyState.title}
             description={emptyState.description}
             suggestions={suggestions}
-            onSuggestionClick={onSuggestionClick}
             onSuggestionSelect={onSuggestionSelect}
           />
         )

@@ -151,8 +151,10 @@ control.
 | --------------------------------------- | --------------------------------------- |
 | `ChatComponents`                        | `Chat`                                  |
 | `ChatComposer`, `Chat.Composer`         | `ChatInput`, `Chat.Input`               |
+| `ComposerContextProvider`, `useComposerContext` | `ChatInputContextProvider`, `useChatInputContext` |
 | `Attachment`                            | `AttachmentPill`                        |
 | `UploadsPanel`                          | `AttachmentsPanel`                      |
+| `useUploadsRegistry`                    | `useAttachments`                        |
 | `StandaloneMessage`, `StreamingMessage` | `Message`                               |
 | `MessageActions`                        | `MessageActionBar` or `Message.Actions` |
 | `ReasoningCard`                         | `Reasoning`                             |

@@ -73,9 +73,7 @@ function contextValue(
   return {
     conversations: [],
     activeConversation: active,
-    active,
     activeConversationId: active.id,
-    activeId: active.id,
     isLoading: false,
     select: noop,
     create: () => active,
@@ -101,9 +99,7 @@ describe("react/components/chat/hooks/useConversationChat", () => {
     const unboundValue = {
       ...contextValue(placeholder, (conversation) => saved.push(conversation)),
       activeConversation: null,
-      active: null,
       activeConversationId: null,
-      activeId: null,
     };
     let latest: UseConversationChatResult | null = null;
 

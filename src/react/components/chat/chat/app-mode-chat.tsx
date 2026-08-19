@@ -27,7 +27,6 @@ function UncontrolledChat(
     onUpdate,
     agent: userAgent,
     suggestions: suggestionsProp,
-    onSuggestionClick,
     onSuggestionSelect,
     emptyState,
     // Attachments: default-wired through `useUpload` unless the caller
@@ -103,7 +102,7 @@ function UncontrolledChat(
     : undefined;
 
   const handleSuggestionSelect = onSuggestionSelect ??
-    (onSuggestionClick ? undefined : (suggestion: PromptSuggestion) => {
+    ((suggestion: PromptSuggestion) => {
       void chat.sendMessage({ text: suggestion.prompt });
     });
 
@@ -142,7 +141,6 @@ function UncontrolledChat(
       agent={resolvedAgent}
       initializing={agentInitializing}
       suggestions={derivedSuggestions}
-      onSuggestionClick={onSuggestionClick}
       onSuggestionSelect={handleSuggestionSelect}
       onAttach={manageAttachments ? upload.upload : userOnAttach}
       onDrop={manageAttachments ? upload.upload : userOnDrop}

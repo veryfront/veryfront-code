@@ -40,6 +40,8 @@ const IMPORT_RENAMES = new Map<string, string>([
   ["AttachmentProps", "AttachmentPillProps"],
   ["UploadsPanel", "AttachmentsPanel"],
   ["UploadsPanelProps", "AttachmentsPanelProps"],
+  ["ComposerContextProvider", "ChatInputContextProvider"],
+  ["ComposerContextValue", "ChatInputContextValue"],
   ["ChatComposer", "ChatInput"],
   ["ChatComposerProps", "ChatInputProps"],
   ["ChatComponents", "Chat"],
@@ -51,6 +53,11 @@ const IMPORT_RENAMES = new Map<string, string>([
   ["MessageActionsProps", "MessageActionBarProps"],
   ["ReasoningCard", "Reasoning"],
   ["ToolCallCard", "ToolCall"],
+  ["useComposerContext", "useChatInputContext"],
+  ["useComposerContextOptional", "useChatInputContextOptional"],
+  ["useUploadsRegistry", "useAttachments"],
+  ["UseUploadsRegistryOptions", "UseAttachmentsOptions"],
+  ["UseUploadsRegistryResult", "UseAttachmentsResult"],
 ]);
 
 const FLAT_CHAT_PROPS = new Set([

@@ -16,8 +16,8 @@ export interface CodeBlockProps {
 /**
  * Render rich code block.
  *
- * @deprecated Use the shared `CodeBlock` primitive (`ui/code-block.tsx`)
- * instead. It provides the maintained copy/collapse surface and accepts
+ * Use the shared `CodeBlock` primitive (`ui/code-block.tsx`) instead. It
+ * provides the maintained copy/collapse surface and accepts
  * extension-owned syntax and diagram renderers without putting third-party
  * implementations in core. This older plain `<pre>` fork is retained only for
  * compatibility and will be removed.
