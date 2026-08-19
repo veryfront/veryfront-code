@@ -789,7 +789,7 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "rest"), 0);
     });
 
-    it("keeps a pattern default visible as a client reference", async () => {
+    it("conservatively keeps a pattern with a default value", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const DEFAULT = getEnv("CLIENT_FALLBACK");`,
@@ -802,11 +802,11 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes(result, "CLIENT_FALLBACK");
       assertStringIncludes(result, "DEFAULT");
-      assertNotIncludes(result, "SERVER_ONLY");
-      assertEquals(occurrences(result, "a"), 0);
+      assertStringIncludes(result, "SERVER_ONLY");
+      assertStringIncludes(result, "a = DEFAULT");
     });
 
-    it("keeps a computed pattern key visible as a client reference", async () => {
+    it("conservatively keeps a pattern with a computed key", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const KEY = getEnv("CLIENT_KEY");`,
@@ -819,8 +819,8 @@ describe("browser-server-exports-strip", () => {
 
       assertStringIncludes(result, "CLIENT_KEY");
       assertStringIncludes(result, "KEY");
-      assertNotIncludes(result, "SERVER_ONLY");
-      assertEquals(occurrences(result, "value"), 0);
+      assertStringIncludes(result, "SERVER_ONLY");
+      assertStringIncludes(result, "[KEY]: value");
     });
 
     it("removes one destructuring declarator without dropping its client sibling", async () => {
@@ -837,6 +837,46 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, "getEnv");
       assertStringIncludes(result, "client = bootClient()");
       assertStringIncludes(result, "return client");
+    });
+
+    it("keeps a destructuring default with an unrelated client effect", async () => {
+      const code = [
+        `const { token, client = startClient() } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "client = startClient()");
+      assertStringIncludes(result, "loadSecret()");
+    });
+
+    it("keeps a computed pattern key with an unrelated client effect", async () => {
+      const code = [
+        `const { [startClient()]: token } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "[startClient()]: token");
+      assertStringIncludes(result, "loadSecret()");
+    });
+
+    it("keeps a destructuring declarator with a sibling outside the hook closure", async () => {
+      const code = [
+        `const { token, client } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "loadSecret()");
+      assertEquals(occurrences(result, "token"), 1);
+      assertEquals(occurrences(result, "client"), 1);
     });
 
     it("keeps an import that the client still references", async () => {
