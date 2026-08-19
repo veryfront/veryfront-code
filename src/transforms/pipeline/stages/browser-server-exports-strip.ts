@@ -3103,30 +3103,39 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         deferred.add(parameter);
         return "unknown";
       }
+      let pendingCompletion: Completion | null = null;
+      let hasNonNullishArgument = false;
+      let hasEmptyObjectArgument = false;
+      for (const argument of thrownArguments) {
+        const primitive = staticPrimitiveValue(argument, initializedNames);
+        if (primitive.known && (primitive.value === null || primitive.value === undefined)) {
+          pendingCompletion = mergeCompletionAlternatives(pendingCompletion, "throw");
+          continue;
+        }
+        if (!definitelyNonNullish(argument)) {
+          pendingCompletion = mergeCompletionAlternatives(pendingCompletion, "unknown");
+          continue;
+        }
+        hasNonNullishArgument = true;
+        const thrown = unwrap(argument);
+        const isEmptyObject = thrown.type === "ObjectExpression" &&
+          Array.isArray(thrown.properties) && thrown.properties.length === 0;
+        if (isEmptyObject) {
+          hasEmptyObjectArgument = true;
+        } else {
+          pendingCompletion = mergeCompletionAlternatives(pendingCompletion, "unknown");
+        }
+      }
       const properties = Array.isArray(parameter.properties) ? parameter.properties : [];
       if (properties.length === 0) {
-        let completion: Completion | null = null;
-        for (const argument of thrownArguments) {
-          const primitive = staticPrimitiveValue(argument, initializedNames);
-          const argumentCompletion: Completion = primitive.known &&
-              (primitive.value === null || primitive.value === undefined)
-            ? "throw"
-            : definitelyNonNullish(argument)
-            ? "normal"
-            : "unknown";
-          completion = mergeCompletionAlternatives(completion, argumentCompletion);
-        }
-        return completion ?? "unknown";
+        return hasNonNullishArgument
+          ? mergeCompletionAlternatives(pendingCompletion, "normal")
+          : pendingCompletion ?? "unknown";
       }
-      if (!thrownArguments.every(definitelyNonNullish)) {
+      if (!hasEmptyObjectArgument) {
         deferred.add(parameter);
-        return "unknown";
+        return pendingCompletion ?? "unknown";
       }
-      const thrownAreEmptyObjects = thrownArguments.every((argument) => {
-        const thrown = unwrap(argument);
-        return thrown.type === "ObjectExpression" && Array.isArray(thrown.properties) &&
-          thrown.properties.length === 0;
-      });
       const inheritedObjectProperties = new Set([
         "__defineGetter__",
         "__defineSetter__",
@@ -3150,20 +3159,17 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const property = properties[index];
         if (!isNode(property)) continue;
         if (property.type === "RestElement") {
-          if (
-            thrownAreEmptyObjects && isNode(property.argument) &&
-            property.argument.type === "Identifier"
-          ) {
+          if (isNode(property.argument) && property.argument.type === "Identifier") {
             continue;
           }
           deferred.add(property);
           deferLaterProperties(index);
-          return "unknown";
+          return mergeCompletionAlternatives(pendingCompletion, "unknown");
         }
         if (property.type !== "ObjectProperty" || !isNode(property.value)) {
           deferred.add(property);
           deferLaterProperties(index);
-          return "unknown";
+          return mergeCompletionAlternatives(pendingCompletion, "unknown");
         }
         const key = property.type === "ObjectProperty" && property.computed === true &&
             isNode(property.key)
@@ -3178,14 +3184,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             deferred.add(property.value);
           }
           deferLaterProperties(index);
-          return "unknown";
+          return mergeCompletionAlternatives(pendingCompletion, "unknown");
         }
         const value = property.value;
-        if (!thrownAreEmptyObjects) {
-          if (value.type !== "Identifier") deferred.add(value);
-          deferLaterProperties(index);
-          return "unknown";
-        }
         if (value.type === "Identifier") continue;
         const propertyName = property.computed === true && key
           ? (() => {
@@ -3200,7 +3201,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (isNode(value.left) && value.left.type === "Identifier") continue;
           if (isNode(value.left)) deferred.add(value.left);
           deferLaterProperties(index);
-          return "unknown";
+          return mergeCompletionAlternatives(pendingCompletion, "unknown");
         }
         if (
           value.type === "AssignmentPattern" && isNode(value.right) &&
@@ -3209,7 +3210,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           deferOrderedExpressionTail(value.right, initializedNames);
           if (isNode(value.left) && value.left.type !== "Identifier") deferred.add(value.left);
           deferLaterProperties(index);
-          return "unknown";
+          return mergeCompletionAlternatives(pendingCompletion, "unknown");
         }
         if (
           value.type === "AssignmentPattern" && isNode(value.left) &&
@@ -3219,9 +3220,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         deferred.add(value);
         deferLaterProperties(index);
-        return "unknown";
+        return mergeCompletionAlternatives(pendingCompletion, "unknown");
       }
-      return "normal";
+      return mergeCompletionAlternatives(pendingCompletion, "normal");
     };
     const statementCompletion = (
       statement: Node,
