@@ -3043,14 +3043,42 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     statements: unknown[],
     initializedNames: ReadonlySet<string>,
   ): Completion {
-    const directThrownArgument = (block: Node | undefined): Node | null => {
-      if (block?.type !== "BlockStatement" || !Array.isArray(block.body)) return null;
-      const body = block.body.filter(isNode);
-      const onlyStatement = body[0];
-      if (body.length !== 1 || !onlyStatement || onlyStatement.type !== "ThrowStatement") {
-        return null;
+    const directThrownArguments = (statement: Node | undefined): Node[] | null => {
+      if (!statement) return [];
+      if (statement.type === "ThrowStatement") {
+        return isNode(statement.argument) ? [statement.argument] : null;
       }
-      return isNode(onlyStatement.argument) ? onlyStatement.argument : null;
+      if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
+        const body = statement.body.filter(isNode);
+        const onlyStatement = body[0];
+        return body.length === 1 && onlyStatement ? directThrownArguments(onlyStatement) : null;
+      }
+      if (statement.type === "IfStatement") {
+        const test = isNode(statement.test) ? statement.test : undefined;
+        if (!test) return null;
+        const value = staticPrimitiveValue(test, initializedNames);
+        if (value.known) {
+          const selected = staticValueIsTruthy(value.value)
+            ? statement.consequent
+            : statement.alternate;
+          return directThrownArguments(isNode(selected) ? selected : undefined);
+        }
+        if (!isInertExpression(test, noNameHelpers, initializedNames)) return null;
+        const consequent = directThrownArguments(
+          isNode(statement.consequent) ? statement.consequent : undefined,
+        );
+        const alternate = directThrownArguments(
+          isNode(statement.alternate) ? statement.alternate : undefined,
+        );
+        return consequent && alternate ? [...consequent, ...alternate] : null;
+      }
+      if (
+        statement.type === "BreakStatement" || statement.type === "ContinueStatement" ||
+        statement.type === "ReturnStatement" || statement.type === "EmptyStatement"
+      ) {
+        return [];
+      }
+      return null;
     };
     const definitelyNonNullish = (value: Node | null): boolean => {
       if (!value) return false;
@@ -3066,18 +3094,23 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     };
     const catchParameterCompletion = (
       parameter: Node | null,
-      thrownArgument: Node | null,
+      thrownArguments: readonly Node[] | null,
     ): Completion => {
       if (!parameter || parameter.type === "Identifier") return "normal";
-      if (parameter.type !== "ObjectPattern" || !definitelyNonNullish(thrownArgument)) {
+      if (
+        parameter.type !== "ObjectPattern" || !thrownArguments ||
+        thrownArguments.length === 0 || !thrownArguments.every(definitelyNonNullish)
+      ) {
         deferred.add(parameter);
         return "unknown";
       }
       const properties = Array.isArray(parameter.properties) ? parameter.properties : [];
       if (properties.length === 0) return "normal";
-      const thrown = thrownArgument ? unwrap(thrownArgument) : null;
-      const thrownIsEmptyObject = thrown?.type === "ObjectExpression" &&
-        Array.isArray(thrown.properties) && thrown.properties.length === 0;
+      const thrownAreEmptyObjects = thrownArguments.every((argument) => {
+        const thrown = unwrap(argument);
+        return thrown.type === "ObjectExpression" && Array.isArray(thrown.properties) &&
+          thrown.properties.length === 0;
+      });
       const inheritedObjectProperties = new Set([
         "__defineGetter__",
         "__defineSetter__",
@@ -3102,7 +3135,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         if (!isNode(property)) continue;
         if (property.type === "RestElement") {
           if (
-            thrownIsEmptyObject && isNode(property.argument) &&
+            thrownAreEmptyObjects && isNode(property.argument) &&
             property.argument.type === "Identifier"
           ) {
             continue;
@@ -3132,7 +3165,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           return "unknown";
         }
         const value = property.value;
-        if (!thrownIsEmptyObject) {
+        if (!thrownAreEmptyObjects) {
           if (value.type !== "Identifier") deferred.add(value);
           deferLaterProperties(index);
           return "unknown";
@@ -3636,7 +3669,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             const parameter = isNode(handler.param) ? handler.param : null;
             const parameterCompletion = catchParameterCompletion(
               parameter,
-              directThrownArgument(block),
+              directThrownArguments(block),
             );
             if (parameterCompletion !== "normal") deferred.add(handler.body);
             const handlerCompletion: Completion = parameterCompletion === "normal"
