@@ -325,6 +325,103 @@ describe("FileCache", () => {
 });
 
 describe("Distributed cache functions", () => {
+  describe("process-local cache for immutable keys", () => {
+    // Each case takes a query-qualified import so it owns its module-scoped
+    // backend AND its module-scoped L1, and cannot leak into sibling tests.
+    async function withCountingBackend(
+      tag: string,
+      run: (mod: typeof import("./file-cache.ts"), reads: () => number) => Promise<void>,
+    ): Promise<void> {
+      const mod = await import(`./file-cache.ts?${tag}`);
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let reads = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => {
+              reads += 1;
+              return Promise.resolve(JSON.stringify({ value: "content", timestamp: Date.now() }));
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+      try {
+        await run(mod, () => reads);
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    }
+
+    it("reads an immutable key from the backend once across separate requests", async () => {
+      await withCountingBackend("l1-immutable-hit", async (mod, reads) => {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "content");
+        });
+        assertEquals(reads(), 1);
+
+        // A second request would otherwise pay another HTTP round trip: the
+        // per-request batcher cache does not survive the request.
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "content");
+        });
+        assertEquals(reads(), 1, "the second request must be served locally");
+      });
+    });
+
+    it("still reads a branch key from the backend on every request", async () => {
+      await withCountingBackend("l1-branch-miss", async (mod, reads) => {
+        const cache = new mod.FileCache();
+        const key = "file:branch:acme:main:/app/page.tsx";
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+
+        // Branch content changes on save and the key does not encode a release,
+        // so it must never be held locally.
+        assertEquals(reads(), 2);
+      });
+    });
+
+    it("lets an explicit write supersede the process-local copy", async () => {
+      await withCountingBackend("l1-write-supersedes", async (mod, reads) => {
+        const cache = new mod.FileCache();
+        const key = "file:env:acme:production+rel_123:/app/page.tsx";
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        assertEquals(reads(), 1);
+
+        await runWithCacheBatching(async () => {
+          await cache.setAsync(key, "rewritten");
+        });
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        assertEquals(reads(), 2, "the write must drop the local copy");
+      });
+    });
+  });
+
   describe("initializeFileCacheBackend", () => {
     it("should export initializeFileCacheBackend function", () => {
       assertExists(initializeFileCacheBackend);

@@ -24,6 +24,7 @@ import {
   getCachedWithBatching,
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
+import { isImmutableFileCacheKey } from "./immutable-keys.ts";
 
 const logger = baseLogger.component("file-cache");
 
@@ -93,6 +94,64 @@ export function isFileCacheDistributedEnabled(): boolean {
  * When backend is available: Uses backend (API/Redis)
  * When backend unavailable: Small memory fallback for local dev
  */
+/**
+ * Process-local store for entries whose keys can never denote different content
+ * (see {@link isImmutableFileCacheKey}). With the API backend present, every
+ * read otherwise costs an HTTP round trip on every request, in every replica —
+ * a single SSR render was measured issuing thousands of them
+ * (veryfront-issue-inbox#602).
+ *
+ * There is deliberately no invalidation path: an entry is only admitted when the
+ * key embeds the release identity, so the value behind it cannot change. Eviction
+ * is a memory bound, not a correctness mechanism. The store is keyed on the full
+ * cache key, which includes the project slug, so it cannot serve one project's
+ * content to another.
+ */
+const IMMUTABLE_L1_MAX_ENTRIES = 2_000;
+/** Skip outsized entries rather than let one file evict the whole working set. */
+const IMMUTABLE_L1_MAX_ENTRY_BYTES = 512 * 1024;
+const immutableL1 = new Map<string, string>();
+
+function immutableL1Get(key: string): string | undefined {
+  const hit = immutableL1.get(key);
+  if (hit === undefined) return undefined;
+  // Re-insert so eviction order is least-recently-used rather than insertion.
+  immutableL1.delete(key);
+  immutableL1.set(key, hit);
+  return hit;
+}
+
+function immutableL1Set(key: string, raw: string): void {
+  if (raw.length > IMMUTABLE_L1_MAX_ENTRY_BYTES) return;
+  immutableL1.delete(key);
+  immutableL1.set(key, raw);
+  while (immutableL1.size > IMMUTABLE_L1_MAX_ENTRIES) {
+    const oldest = immutableL1.keys().next().value;
+    if (oldest === undefined) break;
+    immutableL1.delete(oldest);
+  }
+}
+
+/**
+ * Drop a process-local entry. Immutable keys should never be rewritten, so this
+ * exists to keep an explicit write or delete authoritative rather than to make
+ * the store correct.
+ */
+function immutableL1Drop(key: string): void {
+  immutableL1.delete(key);
+}
+
+function immutableL1DropByPredicate(matches: (key: string) => boolean): void {
+  for (const key of [...immutableL1.keys()]) {
+    if (matches(key)) immutableL1.delete(key);
+  }
+}
+
+/** Test seam: the store is process-global, so suites must be able to reset it. */
+export function clearImmutableFileCacheL1(): void {
+  immutableL1.clear();
+}
+
 export class FileCache {
   private fallbackCache = new Map<string, CacheEntry<unknown>>();
   private fallbackMemoryUsed = 0;
@@ -172,8 +231,11 @@ export class FileCache {
           // Use request-scoped batching to dedupe and batch cache requests
           // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
           // The backend will add its own namespace prefix, so we pass the key as-is
-          const raw = await getCachedWithBatching(backend, key);
+          const immutable = isImmutableFileCacheKey(key);
+          const cached = immutable ? immutableL1Get(key) : undefined;
+          const raw = cached ?? await getCachedWithBatching(backend, key);
           if (raw) {
+            if (immutable && cached === undefined) immutableL1Set(key, raw);
             const entry = JSON.parse(raw) as CacheEntry<T>;
             // When using backend (Redis/API), trust the backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.
@@ -197,6 +259,7 @@ export class FileCache {
    */
   set<T>(key: string, value: T): void {
     if (!this.options.enabled) return;
+    immutableL1Drop(key);
 
     const size = estimateSize(value);
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
@@ -230,6 +293,7 @@ export class FileCache {
    * Async set - writes to backend (primary) or fallback memory cache.
    */
   setAsync<T>(key: string, value: T): Promise<void> {
+    immutableL1Drop(key);
     if (!this.options.enabled) return Promise.resolve();
 
     const size = estimateSize(value);
@@ -287,12 +351,14 @@ export class FileCache {
   }
 
   delete(key: string): boolean {
+    immutableL1Drop(key);
     const entry = this.fallbackCache.get(key);
     if (entry) this.fallbackMemoryUsed -= entry.size;
     return this.fallbackCache.delete(key);
   }
 
   deleteAsync(key: string): Promise<boolean> {
+    immutableL1Drop(key);
     return withSpan(
       "platform.fs.cache.deleteAsync",
       async () => {
@@ -340,6 +406,7 @@ export class FileCache {
   }
 
   deleteByPrefix(prefix: string): number {
+    immutableL1DropByPredicate((key) => key.startsWith(prefix));
     const count = this.clearLocalByPrefix(prefix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
@@ -353,6 +420,7 @@ export class FileCache {
   }
 
   deleteByPrefixAsync(prefix: string): Promise<number> {
+    immutableL1DropByPredicate((key) => key.startsWith(prefix));
     return withSpan(
       "platform.fs.cache.deleteByPrefixAsync",
       async () => {
@@ -374,6 +442,7 @@ export class FileCache {
   }
 
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
+    immutableL1DropByPredicate((key) => key.startsWith(prefix) && key.endsWith(suffix));
     const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
@@ -387,6 +456,7 @@ export class FileCache {
   }
 
   deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
+    immutableL1DropByPredicate((key) => key.startsWith(prefix) && key.endsWith(suffix));
     return withSpan(
       "platform.fs.cache.deleteByPrefixAndSuffixAsync",
       async () => {
@@ -408,6 +478,7 @@ export class FileCache {
   }
 
   clear(): void {
+    immutableL1.clear();
     this.fallbackCache.clear();
     this.fallbackMemoryUsed = 0;
     this.hits = 0;
