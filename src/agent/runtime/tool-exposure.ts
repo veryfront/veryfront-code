@@ -381,14 +381,20 @@ function scoreToolExposureTerms(
   const scored: { score: number; match: ToolSearchMatch }[] = [];
   for (const candidate of candidates) {
     let score = 0;
+    let matchedTermCount = 0;
     let matchedSelectiveTerm = false;
     for (const { term, inverseDocumentFrequency } of weightedTerms) {
       const field = getMatchedField(term, candidate);
       if (field === null) continue;
+      matchedTermCount += 1;
       score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[field];
       if (inverseDocumentFrequency >= TOOL_SEARCH_MIN_SELECTIVE_IDF) matchedSelectiveTerm = true;
     }
-    if (!matchedSelectiveTerm) continue;
+    // Selectivity suppresses filler, which only means anything when there is
+    // something better to prefer. A candidate matching *every* term is not filler
+    // however common those terms are: in a one-tool catalog every term matches
+    // everything, so the floor alone would report a certain match as a miss.
+    if (!matchedSelectiveTerm && matchedTermCount < terms.length) continue;
     scored.push({ score, match: toSearchMatch(candidate) });
   }
 

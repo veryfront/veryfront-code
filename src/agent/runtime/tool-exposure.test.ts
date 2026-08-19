@@ -990,6 +990,20 @@ it("tool search accepts canonical ids with the authorization layer's segment gra
   );
 });
 
+it("tool search matches a full-coverage candidate in a single-tool catalog", () => {
+  // With one candidate every term matches everything, so no term can clear the
+  // selectivity floor. Full term coverage is its own evidence: there is no
+  // competing candidate for the floor to protect against.
+  assertEquals(
+    searchToolExposure({
+      query: "create project",
+      authorized: [definition("create_file", "Create a project file")],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["create_file"],
+  );
+});
+
 it("tool search reports a miss when no candidate matches a selective term", () => {
   assertEquals(
     searchToolExposure({
