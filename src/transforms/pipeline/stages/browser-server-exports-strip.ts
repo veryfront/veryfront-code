@@ -61,6 +61,14 @@ import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
+import {
+  isErasedNode,
+  isNode,
+  isReferenceChildKey,
+  type Node,
+  referenceChildren,
+  referenceClassOf,
+} from "./reference-classification.ts";
 
 /** Exports that only ever execute on the server. */
 const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
@@ -81,13 +89,12 @@ function dropSourceMapSuffix(code: string): string {
 const STUB_SOURCE = `function __vfStub() { throw new Error("server-only"); }
 const __vfStubInit = function () { throw new Error("server-only"); };`;
 
-type Node = Record<string, unknown> & { type: string };
-
-function isNode(value: unknown): value is Node {
-  return typeof value === "object" && value !== null &&
-    typeof (value as { type?: unknown }).type === "string";
-}
-
+/**
+ * Every child node, whatever position it sits in. Used for `var` hoisting,
+ * which has to find a declaration wherever it is written. Reference counting
+ * uses `referenceChildren` instead, which skips the positions that hold a fixed
+ * name rather than a reference.
+ */
 function children(node: Node): Node[] {
   const found: Node[] = [];
 
@@ -105,88 +112,14 @@ function children(node: Node): Node[] {
 }
 
 /**
- * Walk every node in the tree. Returning `false` from `visit` skips the
- * subtree, which is how import statements stay out of the reference count.
+ * Walk every node that can hold a runtime reference. Returning `false` from
+ * `visit` skips the subtree, which is how import statements stay out of the
+ * reference count. Positions that hold a fixed name are skipped by
+ * `referenceChildren` itself, so both walkers agree on them by construction.
  */
 function walk(node: Node, visit: (node: Node) => boolean | void): void {
   if (visit(node) === false) return;
-  for (const child of children(node)) walk(child, visit);
-}
-
-/**
- * TypeScript nodes that survive type erasure and emit runtime code.
- *
- * Everything else the TypeScript grammar adds is erased before the module
- * runs, so an identifier read inside it is a type reference and must not keep a
- * binding alive. Getting the split wrong is unsafe in both directions: treating
- * a runtime node as erased deletes live code, and treating an erased node as
- * runtime pins a server-only import into the browser artifact.
- *
- * The list is closed and enumerable, which is the point: it is a decidable
- * question, unlike proving what a module does to an intrinsic. A TypeScript
- * node type this pass does not know is erased by default. Any new TypeScript
- * node type that emits runtime code must be added to this allowlist.
- *
- * The split is invisible while this stage runs after the compile stage, which
- * erases every TypeScript node before this pass sees the module. It exists so
- * the stage stays correct when it runs on authored source.
- */
-const RUNTIME_TS_NODE_TYPES = new Set<string>([
-  // Value expressions wrapping a value expression plus an erased type operand.
-  "TSAsExpression",
-  "TSSatisfiesExpression",
-  "TSNonNullExpression",
-  "TSTypeAssertion",
-  "TSInstantiationExpression",
-  // `enum E { A = compute() }` emits an object and evaluates each initialiser.
-  "TSEnumDeclaration",
-  "TSEnumBody",
-  "TSEnumMember",
-  // `namespace N { … }` with a body emits an IIFE over a runtime object.
-  "TSModuleDeclaration",
-  "TSModuleBlock",
-  // `constructor(private dep = fallback())` emits an assignment in the body.
-  "TSParameterProperty",
-  // `import L = require("./l.ts")` and `import A = N.Sub` both emit a binding.
-  "TSImportEqualsDeclaration",
-  "TSExternalModuleReference",
-  "TSQualifiedName",
-  // `export = handler` emits an assignment to the module export.
-  "TSExportAssignment",
-]);
-
-/**
- * Whether the compiler erases `node` and everything under it, so no identifier
- * inside it is a runtime read.
- *
- * Both reference walkers ask this, and they must ask the same question. A
- * walker that counts a type-position read as a runtime reference keeps the
- * server-only import that binding came from; a walker that skips a runtime
- * TypeScript node reports live code as dead.
- */
-/** Whether a node carries decorators, which emit a runtime call even when the
- * declaration they annotate is ambient. */
-function nodeHasDecorators(node: Node): boolean {
-  const decorators = node.decorators;
-  return Array.isArray(decorators) && decorators.length > 0;
-}
-
-function isErasedTypeNode(node: Node): boolean {
-  // `declare const`, `declare class`, `declare namespace`, `declare enum` and
-  // `declare prop: T` are all ambient: they emit nothing.
-  //
-  // Decorators are the exception. Both tsc and esbuild emit a runtime
-  // `__decorate` call for `@audit declare id: string`, so the decorator
-  // expression is a real read even though the property it annotates is not.
-  // Erasing it here deletes the import the decorator needs and the emitted
-  // call then throws a ReferenceError at module evaluation.
-  if (node.declare === true) return !nodeHasDecorators(node);
-  // `import { type Cfg }`, `export { type Cfg }`, `export type { Cfg }`.
-  if (node.importKind === "type" || node.exportKind === "type") return true;
-  if (!node.type.startsWith("TS")) return false;
-  if (!RUNTIME_TS_NODE_TYPES.has(node.type)) return true;
-  // An ambient `declare module "x";` has no body to run.
-  return node.type === "TSModuleDeclaration" && !isNode(node.body);
+  for (const child of referenceChildren(node)) walk(child, visit);
 }
 
 function nodeName(value: unknown): string | null {
@@ -388,30 +321,12 @@ function emptyServerOnlyHooks(
 }
 
 /**
- * Whether a JSX element name is intrinsic tag text rather than a binding read.
- *
- * `<table>`, `<section>` and `<my-widget>` become string arguments to the JSX
- * factory, so they can never resolve to an import or a module-scope
- * declaration. Every JSX compiler agrees on the rule: a name that starts with a
- * lowercase letter, or that is not spelled like an identifier, is a string.
- * `<Card />` is a real reference and must keep its import alive.
- *
- * This pass only met lowered factory calls while it ran after compile, so both
- * reference walkers treated every `JSXIdentifier` as a runtime read. Running
- * before compile they see the JSX itself, and an intrinsic name that collides
- * with an import pins a server-only module into the browser artifact.
- */
-function isIntrinsicJsxName(name: string | null): boolean {
-  if (!name) return false;
-  if (/^[a-z]/.test(name)) return true;
-  return !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
-}
-
-/**
  * Identifiers the module reads, ignoring import statements and the positions
  * where an identifier is a fixed name rather than a reference (`a.hashOf`,
- * `{ hashOf: 1 }`). This flat walk is used for module-declaration liveness;
- * import liveness uses the scope-aware walker below.
+ * `{ hashOf: 1 }`). Which positions those are is
+ * `reference-classification.ts`, shared with the scope-aware walker below so
+ * the two cannot drift. This flat walk is used for module-declaration
+ * liveness; import liveness uses the scope-aware walker.
  *
  * `excluded` holds identifier nodes that are binding *positions* rather than
  * references (the `id` a declaration introduces), so a declaration is not
@@ -419,51 +334,12 @@ function isIntrinsicJsxName(name: string | null): boolean {
  */
 function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<string> {
   const referenced = new Set<string>();
-  // Filled in as each parent is visited, which always happens before its
-  // children.
+  // An enum member initialiser can name a sibling member without qualifying it.
+  // That is the one fixed-name position the shared classification cannot
+  // express as a child key, because it depends on the names the enclosing enum
+  // declares. Filled in as each parent is visited, which always happens before
+  // its children.
   const fixedNames = new WeakSet<Node>();
-
-  const markFixedName = (node: Node): void => {
-    const property = node.type === "MemberExpression" || node.type === "OptionalMemberExpression"
-      ? node.property
-      : node.type === "ObjectProperty" || node.type === "ObjectMethod" ||
-          node.type === "ClassMethod" || node.type === "ClassProperty" ||
-          node.type === "ClassAccessorProperty"
-      ? node.key
-      : node.type === "TSEnumDeclaration" || node.type === "TSEnumMember"
-      ? node.id
-      : node.type === "TSQualifiedName"
-      ? node.right
-      : undefined;
-
-    if (node.computed === true) return;
-    if (isNode(property)) fixedNames.add(property);
-  };
-
-  /**
-   * JSX identifier positions that are never references. `markFixedName` above
-   * only knows the JavaScript and TypeScript shapes, so without this a JSX
-   * attribute name or a member property counts as a read.
-   */
-  const markJsxFixedNames = (node: Node): void => {
-    // `<svg:circle xlink:href="x" />` compiles to `("svg:circle", {
-    // "xlink:href": "x" })`: both halves of a namespaced name are string text,
-    // whether it names an element or an attribute.
-    if (node.type === "JSXNamespacedName") {
-      if (isNode(node.namespace)) fixedNames.add(node.namespace);
-      if (isNode(node.name)) fixedNames.add(node.name);
-      return;
-    }
-    // `placeholder=`, `title=`, `href=`: an attribute name is a property key.
-    if (node.type === "JSXAttribute") {
-      if (isNode(node.name) && node.name.type === "JSXIdentifier") fixedNames.add(node.name);
-      return;
-    }
-    // `<UI.Item />`: only the leftmost object (`UI`) is read.
-    if (node.type === "JSXMemberExpression") {
-      if (isNode(node.property)) fixedNames.add(node.property);
-    }
-  };
 
   const markEnumLocalReferences = (node: Node): void => {
     if (node.type !== "TSEnumDeclaration") return;
@@ -497,14 +373,13 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
       // A type position is not a runtime read. Without this the walker counts
       // `p: typeof KEY` as a use of `KEY` and keeps the server-only import it
       // came from.
-      if (isErasedTypeNode(node)) return false;
+      if (isErasedNode(node)) return false;
 
       markEnumLocalReferences(node);
-      markFixedName(node);
-      markJsxFixedNames(node);
 
-      if (node.type === "Identifier" || node.type === "JSXIdentifier") {
-        if (node.type === "JSXIdentifier" && isIntrinsicJsxName(nodeName(node))) return true;
+      // Every other fixed-name position is a child key `walk` never descended
+      // into, so anything that reaches here is a reference.
+      if (referenceClassOf(node) === "read") {
         if (fixedNames.has(node)) return true;
         if (excluded?.has(node)) return true;
         const name = nodeName(node);
@@ -556,7 +431,7 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
     // like any other exported declaration, so it is never a candidate.
     if (
       statement.type === "TSImportEqualsDeclaration" && statement.isExport !== true &&
-      !isErasedTypeNode(statement)
+      !isErasedNode(statement)
     ) {
       const id = statement.id;
       const name = nodeName(id);
@@ -600,8 +475,9 @@ function isLexicallyBound(name: string, scopes: LexicalScope[]): boolean {
 
 /**
  * Free identifiers read by a hook body or by a declaration in the stripped
- * hook's dependency closure. Unlike `referencedIdentifiers`, this is
- * scope-aware: a nested declaration that shadows `loadJob` must not hide a
+ * hook's dependency closure. It classifies node types and positions exactly as
+ * `referencedIdentifiers` does, through `reference-classification.ts`. What it
+ * adds is scope: a nested declaration that shadows `loadJob` must not hide a
  * real outer hook read of the imported `loadJob`, and a nested local inside a
  * pruned helper must not add an unrelated import to the hook closure.
  */
@@ -622,7 +498,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       node.type !== "TSEnumDeclaration" && node.type !== "TSModuleDeclaration" &&
       node.type !== "TSImportEqualsDeclaration"
     ) return false;
-    if (!isErasedTypeNode(node)) bindPatternNames(scope, node.id);
+    if (!isErasedNode(node)) bindPatternNames(scope, node.id);
     return true;
   };
 
@@ -677,8 +553,12 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
   };
 
+  // The generic fallback. It descends only through the child keys the shared
+  // classification allows, so a fixed-name position is skipped here exactly as
+  // it is in the flat walker. Rounds three and four of review both fell through
+  // this fallback while it descended into everything.
   const visitChildren = (node: Node, scopes: LexicalScope[]): void => {
-    for (const child of children(node)) visit(child, scopes);
+    for (const child of referenceChildren(node)) visit(child, scopes);
   };
 
   const visitDecorators = (node: Node, scopes: LexicalScope[]): void => {
@@ -784,12 +664,6 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     }
   };
 
-  const visitObjectMember = (node: Node, scopes: LexicalScope[]): void => {
-    visitDecorators(node, scopes);
-    if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
-    if (isNode(node.value)) visit(node.value, scopes);
-  };
-
   const visitFor = (node: Node, scopes: LexicalScope[]): void => {
     const loopScope: LexicalScope = { kind: "block", names: new Set() };
     const scoped = [loopScope, ...scopes];
@@ -825,34 +699,19 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     // Same classification `referencedIdentifiers` uses. A value-emitting
     // TypeScript node such as an enum or a namespace body falls through to the
     // generic walk below, and its erased type operand is skipped there in turn.
-    if (isErasedTypeNode(node)) return;
+    if (isErasedNode(node)) return;
 
-    if (node.type === "Identifier" || node.type === "JSXIdentifier") {
-      // Same JSX classification `referencedIdentifiers` uses: an intrinsic tag
-      // name is string text, not a binding read.
-      if (node.type === "JSXIdentifier" && isIntrinsicJsxName(nodeName(node))) return;
+    if (referenceClassOf(node) === "read") {
       const name = nodeName(node);
       if (name && !isLexicallyBound(name, scopes)) free.add(name);
       return;
     }
 
-    // The remaining JSX positions that hold a name rather than a reference.
-    // A namespaced name is string text on both halves, an attribute name is a
-    // property key, and only the leftmost object of `<UI.Item />` is read.
-    // Everything else in a JSX tree reaches the generic walk below: an
-    // expression container, a spread attribute and the children of an element
-    // all hold ordinary expressions.
-    if (node.type === "JSXNamespacedName") return;
-
-    if (node.type === "JSXAttribute") {
-      if (isNode(node.value)) visit(node.value, scopes);
-      return;
-    }
-
-    if (node.type === "JSXMemberExpression") {
-      if (isNode(node.object)) visit(node.object, scopes);
-      return;
-    }
+    // Every JSX position that holds a name rather than a reference is a child
+    // key the shared classification already skipped, so an intrinsic tag name,
+    // a namespaced name, an attribute name and the property of `<UI.Item />`
+    // never reach the branch above. Everything else in a JSX tree is ordinary
+    // expression syntax and reaches the generic walk below.
 
     if (
       node.type === "Program" || node.type === "BlockStatement" ||
@@ -980,23 +839,25 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
       return;
     }
 
-    if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
-      if (isNode(node.object)) visit(node.object, scopes);
-      if (node.computed === true && isNode(node.property)) visit(node.property, scopes);
+    // A property holds no scope of its own, so the classification alone decides
+    // which of its children are reads: a computed key, the value, and any
+    // decorator.
+    if (
+      node.type === "ObjectProperty" || node.type === "ClassProperty" ||
+      node.type === "ClassAccessorProperty" || node.type === "ClassPrivateProperty"
+    ) {
+      visitChildren(node, scopes);
       return;
     }
 
     if (
-      node.type === "ObjectProperty" || node.type === "ClassProperty" ||
-      node.type === "ClassAccessorProperty"
+      node.type === "ObjectMethod" || node.type === "ClassMethod" ||
+      node.type === "ClassPrivateMethod"
     ) {
-      visitObjectMember(node, scopes);
-      return;
-    }
-
-    if (node.type === "ObjectMethod" || node.type === "ClassMethod") {
       visitDecorators(node, scopes);
-      if (node.computed === true && isNode(node.key)) visit(node.key, scopes);
+      // `{ [key]: v }` reads `key`; `{ key: v }` does not. The classification
+      // owns that distinction for both walkers.
+      if (isReferenceChildKey(node, "key") && isNode(node.key)) visit(node.key, scopes);
       visitFunction(node, scopes);
       return;
     }

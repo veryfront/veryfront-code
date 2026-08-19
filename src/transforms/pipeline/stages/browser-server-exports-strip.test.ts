@@ -1795,6 +1795,151 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result.code, "server-only-lib");
     });
 
+    // Defect 4A. `isIntrinsicJsxName` implements Babel's `isCompatTag` rule,
+    // which is only valid for a bare JSXIdentifier that IS the element name.
+    // Running it on the OBJECT of a member element name classified `motion`,
+    // `styled`, `ui` and `dialog` as string tag text, so the pass deleted the
+    // binding they read and the page died on a ReferenceError. Three trigger
+    // paths reach it, and the second needs no hook relationship at all.
+    it("keeps a lowercase member object a stripped hook also read", async () => {
+      const source = [
+        `import { motion } from "./lib/motion.ts";`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
+        `export async function getServerData() {`,
+        `  return { props: { k: KEY, variants: motion.presets } };`,
+        `}`,
+        `export default function Page() { return <motion.div>x</motion.div>; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-member-object-hook-owned",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/motion");
+      // The hook's own dependency still goes.
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+    });
+
+    // The droppable-source branch deletes a `node:` or `veryfront` import the
+    // moment nothing reads it, whatever the hooks owned. A member object the
+    // walkers read as tag text is read by nothing, so the import went and the
+    // element it names lost its binding. `node:` is prefix-matched, so the
+    // specifier here only has to carry the prefix.
+    for (
+      const source of ["veryfront/ui", "node:widgets"] as const
+    ) {
+      it(`keeps a lowercase member object imported from ${source}`, async () => {
+        const code = [
+          `import { dialog } from "${source}";`,
+          `export async function getServerData() { return { props: {} }; }`,
+          `export default function Page() { return <dialog.Root>x</dialog.Root>; }`,
+        ].join("\n");
+
+        const result = await runPipeline(code, "/project/pages/test.jsx", "/project", {
+          projectId: `pre-compile-jsx-member-object-${source.replace(/\W+/g, "-")}`,
+          ssr: false,
+        });
+
+        assertStringIncludes(result.code, "dialog");
+        assertStringIncludes(result.code, ".Root");
+      });
+    }
+
+    it("keeps a hook-owned module-scope declaration a lowercase member object reads", async () => {
+      const source = [
+        `import { makeStyled } from "./lib/styled.ts";`,
+        `const styled = makeStyled();`,
+        `export async function getServerData() { return { props: { s: styled.id } }; }`,
+        `export default function Page() { return <styled.div>x</styled.div>; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-member-object-module-scope",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/styled");
+      assertStringIncludes(result.code, "makeStyled");
+    });
+
+    // Defect 4B, the leak direction. `export { token as clientToken } from
+    // "./client-utils.js"` reads no local binding: `token` names an export of
+    // the SOURCE module. Neither walker had a case for it, so the generic
+    // descent counted both halves of the specifier as free reads and the
+    // hook-owned `import { token } from "./server-only-lib.js"` stayed alive.
+    for (const ext of ["jsx", "mdx"] as const) {
+      it(`deletes a hook-owned import a re-export clause only looks like it reads on .${ext}`, async () => {
+        const source = ext === "mdx"
+          ? [
+            `import { token } from "${SERVER_LIB}";`,
+            ``,
+            `export { token as clientToken } from "./lib/client-utils.js";`,
+            ``,
+            `export async function getServerData() { return { props: { t: token() } }; }`,
+            ``,
+            `# heading`,
+          ].join("\n")
+          : [
+            `import { token } from "${SERVER_LIB}";`,
+            `export { token as clientToken } from "./lib/client-utils.js";`,
+            `export async function getServerData() { return { props: { t: token() } }; }`,
+            `export default function Page() { return <span>ok</span>; }`,
+          ].join("\n");
+
+        const result = await runPipeline(source, `/project/pages/reexport.${ext}`, "/project", {
+          projectId: `pre-compile-reexport-source-${ext}`,
+          ssr: false,
+        });
+
+        assertNoServerLibImport(result.code, `reexport-${ext}`);
+        // The re-export itself is untouched: it is the module's contract.
+        assertStringIncludes(result.code, "clientToken");
+      });
+    }
+
+    it("still reads the local half of an export clause with no source", async () => {
+      // The other side of 4B. Without a `source`, `token` really is this
+      // module's binding, so the import that provides it has to stay.
+      const source = [
+        `import { token } from "./lib/client-utils.js";`,
+        `export { token as clientToken };`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return <span>ok</span>; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/reexport-local.jsx", "/project", {
+        projectId: "pre-compile-reexport-local",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "client-utils");
+      assertStringIncludes(result.code, "clientToken");
+    });
+
+    it("keeps a component import that shares its name with an intrinsic tag", async () => {
+      // The positive half of the element-name rule, through the artifact:
+      // `<Table />` reads the import, `<table />` beside it is string text, and
+      // the hook-only `rows` import still goes.
+      const source = [
+        `import { Table } from "./lib/table.ts";`,
+        `import { rows } from "${SERVER_LIB}";`,
+        `export async function getServerData() { return { props: { r: rows() } }; }`,
+        `export default function Page() {`,
+        `  return <><Table /><table><tbody /></table></>;`,
+        `}`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-component-beside-intrinsic",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/table");
+      assertNoServerLibImport(result.code, "component-beside-intrinsic");
+    });
+
     it("does not run for the ssr target", () => {
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "ssr")), false);
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "browser")), true);
@@ -1807,11 +1952,14 @@ describe("browser-server-exports-strip", () => {
   describe("JSX reference classification", () => {
     const page = (body: string) =>
       [
-        `import { table, placeholder, Item, UI, Card, cls } from "./mod.js";`,
+        `import { table, placeholder, Item, UI, Card, cls, motion, Table, Fragment, Bar }` +
+        ` from "./mod.js";`,
         `export default function Page() { return ${body}; }`,
       ].join("\n");
 
     const NAMES = ["table", "placeholder", "Item", "UI", "Card", "cls"];
+    /** The same fixture names plus the ones only the newer cases use. */
+    const ALL = [...NAMES, "motion", "Table", "Fragment", "Bar"];
 
     it("does not read an intrinsic element name", async () => {
       // `<table>` is the string "table" to the factory, never the import.
@@ -1850,6 +1998,69 @@ describe("browser-server-exports-strip", () => {
         page(`<Card {...table} className={cls}>{placeholder}</Card>`),
         NAMES,
         ["table", "placeholder", "Card", "cls"],
+      );
+    });
+
+    // Defect 4A at the walker level. Babel's `isCompatTag` rule answers for a
+    // bare element name only. The object of a member element name is a binding
+    // read whatever its case, which is the whole reason `<motion.div />`,
+    // `<styled.div />` and `<dialog.Root />` render at all.
+    it("reads a lowercase member element object", async () => {
+      await assertWalkers(page(`<motion.div>x</motion.div>`), ALL, ["motion"]);
+    });
+
+    it("reads a lowercase member element object nested two deep", async () => {
+      await assertWalkers(page(`<motion.ui.Panel />`), ALL, ["motion"]);
+    });
+
+    it("reads a capitalised element name beside an intrinsic one", async () => {
+      await assertWalkers(page(`<div><Table /><table /></div>`), ALL, ["Table"]);
+    });
+
+    it("reads neither spelling of a fragment", async () => {
+      await assertWalkers(page(`<><table /></>`), ALL, []);
+      await assertWalkers(page(`<Fragment><table /></Fragment>`), ALL, ["Fragment"]);
+    });
+
+    it("reads an attribute value but not the attribute name", async () => {
+      await assertWalkers(page(`<Card as={Bar} />`), ALL, ["Card", "Bar"]);
+    });
+  });
+
+  // The positions that hold a fixed name rather than a reference. Each of them
+  // is one cell of the shared classification, and each one that a walker got
+  // wrong would pin a server-only import into the browser artifact.
+  describe("fixed-name positions are not reads", () => {
+    const moduleOf = (body: string) =>
+      [`import { token, meta, order, target } from "./mod.js";`, body].join("\n");
+
+    const NAMES = ["token", "meta", "order", "target"];
+
+    it("does not read an object literal key", async () => {
+      await assertWalkers(moduleOf(`const o = { token: 1, [order]: 2 };`), NAMES, ["order"]);
+    });
+
+    it("does not read a class private name", async () => {
+      await assertWalkers(
+        moduleOf(`class Box { #token = 1; #meta() { return this.#token; } }`),
+        NAMES,
+        [],
+      );
+    });
+
+    it("does not read a statement label", async () => {
+      await assertWalkers(
+        moduleOf(`function loop() { token: for (;;) { break token; } }`),
+        NAMES,
+        [],
+      );
+    });
+
+    it("does not read either half of a meta property", async () => {
+      await assertWalkers(
+        moduleOf(`const u = import.meta.url; function F() { return new.target; }`),
+        NAMES,
+        [],
       );
     });
   });
