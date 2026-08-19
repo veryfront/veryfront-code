@@ -101,7 +101,6 @@ const expectedRuntimeExports = [
   "ModelAvatar",
   "ModelSelector",
   "QuickActions",
-  "RichCodeBlock",
   "Shimmer",
   "SkillBadge",
   "SourcePill",

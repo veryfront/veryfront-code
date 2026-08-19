@@ -51,7 +51,6 @@ export interface ChatSidebarRootProps extends ChatSidebarControlProps {
   loading?: boolean;
   /** When `false`, the rail renders nothing. Default `true`. */
   isOpen?: boolean;
-  fill?: boolean;
   className?: string;
   children: React.ReactNode;
   /** React 19: ref is a regular prop. */

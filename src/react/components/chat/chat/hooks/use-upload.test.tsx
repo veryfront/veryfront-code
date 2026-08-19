@@ -253,7 +253,7 @@ describe("useUpload", () => {
         return createObjectURL(blob);
       };
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -299,7 +299,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -331,7 +331,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const rootElement = document.getElementById("root");
@@ -366,7 +366,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -406,7 +406,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -444,17 +444,17 @@ describe("useUpload", () => {
     let latest: UseUploadResult | null = null;
 
     try {
-      const Capture = ({ api }: { api: string }): null => {
-        latest = useUpload({ api });
+      const Capture = ({ url }: { url: string }): null => {
+        latest = useUpload({ url });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
-      flushSync(() => root.render(<Capture api="/old" />));
+      flushSync(() => root.render(<Capture url="/old" />));
       flushSync(() => latest?.upload([new File(["x"], "report.txt")]));
       const oldRequest = PendingXMLHttpRequest.instances[0]!;
       const id = (latest as unknown as UseUploadResult).attachments[0]!.id;
 
-      flushSync(() => root.render(<Capture api="/new" />));
+      flushSync(() => root.render(<Capture url="/new" />));
       await new Promise((resolve) => setTimeout(resolve, 0));
       flushSync(() => {});
       assertEquals(oldRequest.aborted, true);
@@ -498,14 +498,14 @@ describe("useUpload", () => {
         return null;
       };
       const Capture = (
-        { api, authorization, run }: { api: string; authorization: string; run: boolean },
+        { url, authorization, run }: { url: string; authorization: string; run: boolean },
       ): React.JSX.Element => {
-        latest = useUpload({ api, headers: { authorization } });
+        latest = useUpload({ url, headers: { authorization } });
         return <Child upload={latest.upload} run={run} />;
       };
       const root = createRoot(document.getElementById("root")!);
-      flushSync(() => root.render(<Capture api="/old" authorization="Bearer old" run={false} />));
-      flushSync(() => root.render(<Capture api="/new" authorization="Bearer new" run />));
+      flushSync(() => root.render(<Capture url="/old" authorization="Bearer old" run={false} />));
+      flushSync(() => root.render(<Capture url="/new" authorization="Bearer new" run />));
 
       assertEquals(PendingXMLHttpRequest.instances.length, 1);
       assertEquals(PendingXMLHttpRequest.instances[0]?.url, "/new");
@@ -527,7 +527,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -592,7 +592,7 @@ describe("useUpload", () => {
 
     try {
       const Capture = (): null => {
-        latest = useUpload({ api: "/api/uploads" });
+        latest = useUpload({ url: "/api/uploads" });
         return null;
       };
       const root = createRoot(document.getElementById("root")!);
@@ -621,9 +621,9 @@ describe("useUpload", () => {
 
     try {
       const Capture = (
-        { api, suspend = false }: { api: string; suspend?: boolean },
+        { url, suspend = false }: { url: string; suspend?: boolean },
       ): null => {
-        const result = useUpload({ api });
+        const result = useUpload({ url });
         React.useLayoutEffect(() => {
           committed = result;
         });
@@ -637,7 +637,7 @@ describe("useUpload", () => {
       flushSync(() =>
         root.render(
           <React.Suspense fallback={null}>
-            <Capture api="/committed" />
+            <Capture url="/committed" />
           </React.Suspense>,
         )
       );
@@ -647,7 +647,7 @@ describe("useUpload", () => {
       React.startTransition(() => {
         root.render(
           <React.Suspense fallback={null}>
-            <Capture api="/abandoned" suspend />
+            <Capture url="/abandoned" suspend />
           </React.Suspense>,
         );
       });
@@ -672,7 +672,7 @@ describe("useUpload", () => {
       flushSync(() =>
         root.render(
           <React.Suspense fallback={null}>
-            <Capture api="/committed" />
+            <Capture url="/committed" />
           </React.Suspense>,
         )
       );

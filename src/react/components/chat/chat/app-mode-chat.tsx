@@ -109,7 +109,7 @@ function UncontrolledChat(
   // Batteries-included attachments: unless the caller controls them, files
   // uploaded via the `+` menu / drag land here, ride along on submit as
   // `file` parts, and clear once sent.
-  const upload = useUpload({ api: uploadApi });
+  const upload = useUpload({ url: uploadApi });
   const attachControlled = userOnAttach !== undefined ||
     userOnDrop !== undefined ||
     userAttachments !== undefined ||

@@ -199,7 +199,6 @@ export {
   ModelSelector,
   QuickActions,
   Reasoning,
-  RichCodeBlock,
   Shimmer,
   Sources,
   StepIndicator,

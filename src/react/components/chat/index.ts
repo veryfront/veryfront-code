@@ -187,7 +187,6 @@ export {
   ModelSelector,
   QuickActions,
   Reasoning,
-  RichCodeBlock,
   Shimmer,
   SkillBadge,
   Sources,

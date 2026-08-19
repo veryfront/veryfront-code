@@ -95,7 +95,7 @@ export function ControlledChat(
   // uploads get an instant thumbnail (`preview`) and a resolved `url` (base64
   // `data:` by default, or a durable POST when `uploadApi` is set). The old
   // path only recorded name/size, so pills had no preview and never sent.
-  const upload = useUpload({ api: uploadApi });
+  const upload = useUpload({ url: uploadApi });
   const manageAttachments = !isAttachControlled;
 
   const effectiveOnAttach = isAttachControlled ? onAttach : upload.upload;

@@ -118,7 +118,6 @@ export {
   type AttachmentPillProps,
   useAttachmentPill,
 } from "./components/attachment-pill.tsx";
-export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
 export {
   StepIndicator,
   type StepIndicatorContextValue,

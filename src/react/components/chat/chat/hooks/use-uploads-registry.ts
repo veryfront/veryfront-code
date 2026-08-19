@@ -39,7 +39,6 @@ export interface UseAttachmentsOptions {
    * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
    */
   url?: string;
-  api?: string;
   /** localStorage key for the persisted list. @default "vf-uploads" */
   storageKey?: string;
   /** Extra headers sent with upload / delete requests. */
@@ -353,8 +352,7 @@ export function useAttachments(
   options: UseAttachmentsOptions = {},
 ): UseAttachmentsResult & UseAttachmentsStorageState & UseAttachmentsRequestState {
   const { storageKey = "vf-uploads", headers } = options;
-  // `url` is canonical; `api` is the deprecated alias.
-  const endpoint = options.url ?? options.api ?? "/api/uploads";
+  const endpoint = options.url ?? "/api/uploads";
   const headersKey = stableHeadersKey(headers);
   const headersRef = React.useRef(headers);
   useIsomorphicLayoutEffect(() => {
