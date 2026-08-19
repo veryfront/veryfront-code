@@ -3172,6 +3172,17 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           ),
         };
       };
+      const completeAlwaysContinuingLoop = (
+        remaining: Completion | null,
+      ): Completion => {
+        if (!remaining) return "unknown";
+        const abrupt = completionAbruptAlternative(remaining);
+        if (abrupt === "break") return "normal";
+        if (abrupt === "normal") {
+          return continueTargetsCompletion(completionContinueTargets(remaining)) ?? "unknown";
+        }
+        return remaining;
+      };
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
       }
@@ -3232,7 +3243,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (bodyCompletion === "break") return "normal";
           if (bodyCompletion === "normal") return "unknown";
           const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
-          return continueFlow.reachesCurrent ? continueFlow.remaining ?? "unknown" : bodyCompletion;
+          return continueFlow.reachesCurrent
+            ? completeAlwaysContinuingLoop(continueFlow.remaining)
+            : bodyCompletion;
         }
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known && !staticValueIsTruthy(value.value)) {
@@ -3244,7 +3257,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (bodyCompletion === "break") return "normal";
           if (bodyCompletion === "normal") return "unknown";
           const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
-          return continueFlow.reachesCurrent ? continueFlow.remaining ?? "unknown" : bodyCompletion;
+          return continueFlow.reachesCurrent
+            ? completeAlwaysContinuingLoop(continueFlow.remaining)
+            : bodyCompletion;
         }
         if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
@@ -3265,13 +3280,17 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         if (!test) return "unknown";
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known) {
-          if (continueFlow.remaining) return continueFlow.remaining;
-          return staticValueIsTruthy(value.value) ? "unknown" : "normal";
+          if (!staticValueIsTruthy(value.value)) return "normal";
+          return completeAlwaysContinuingLoop(continueFlow.remaining);
         }
         if (!isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
         }
-        if (continueFlow.remaining) return continueFlow.remaining;
+        if (continueFlow.remaining) {
+          const abrupt = completionAbruptAlternative(continueFlow.remaining);
+          if (abrupt === "break" || abrupt === "normal") return "normal";
+          return continueFlow.remaining;
+        }
         return "unknown";
       }
       if (statement.type === "ForStatement") {
@@ -3310,7 +3329,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (bodyCompletion === "normal" || continueFlow.reachesCurrent) {
             analyzeUpdate();
           }
-          if (continueFlow.remaining) return continueFlow.remaining;
+          if (continueFlow.remaining) {
+            return completeAlwaysContinuingLoop(continueFlow.remaining);
+          }
           return bodyCompletion === "normal" || continueFlow.reachesCurrent
             ? "unknown"
             : bodyCompletion;
@@ -3334,7 +3355,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (bodyCompletion === "normal" || continueFlow.reachesCurrent) {
             analyzeUpdate();
           }
-          if (continueFlow.remaining) return continueFlow.remaining;
+          if (continueFlow.remaining) {
+            return completeAlwaysContinuingLoop(continueFlow.remaining);
+          }
           return bodyCompletion === "normal" || continueFlow.reachesCurrent
             ? "unknown"
             : bodyCompletion;

@@ -3711,6 +3711,62 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("keeps a normal alternative inside a continuing while loop", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { while (true) { if (cond) continue; } globalThis.registered = KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(code, "pages/root-iife-while-normal-continue.tsx")
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes((error as Error).message, "root-iife-while-normal-continue.tsx");
+    });
+
+    it("keeps a false do-while exit beside an outer continue", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { outer: for (;;) { do { if (cond) continue; else continue outer; } while (false); globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-do-while-normal-outer.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("consumes a break alternative in its owning loop", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { for (; true;) { if (cond) continue; else break; } globalThis.registered = KEY; })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-loop-continue-break.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("does not evaluate a labeled block tail after its prefix aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
