@@ -2063,6 +2063,31 @@ describe("browser-server-exports-strip", () => {
         [],
       );
     });
+
+    // A method name and a class member name are property keys, exactly like an
+    // object literal key. Counting one as a read pins the import it collides
+    // with, which is the leak direction.
+    it("does not read a fixed method or class member key", async () => {
+      await assertWalkers(
+        moduleOf(
+          `const o = { token() { return 1; } };` +
+            ` class Box { meta = 1; order() {} accessor target = 2; }`,
+        ),
+        NAMES,
+        [],
+      );
+    });
+
+    it("reads a computed method or class member key", async () => {
+      await assertWalkers(
+        moduleOf(
+          `const o = { [token]() { return 1; } };` +
+            ` class Box { [meta] = 1; [order]() {} accessor [target] = 2; }`,
+        ),
+        NAMES,
+        ["token", "meta", "order", "target"],
+      );
+    });
   });
 
   describe("TypeScript reference classification", () => {

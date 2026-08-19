@@ -168,6 +168,26 @@ describe("reference classification", () => {
       assertEquals(referenceChildren(specifier), [local]);
     });
 
+    // `export v from "./m.js"` and `export * as ns from "./m.js"`. Both carry a
+    // source by construction, so the parent guard already stops the walkers,
+    // but the cell is pinned so the table stays correct on its own.
+    it("reads the exported name of neither default nor namespace re-export", () => {
+      assertEquals(
+        referenceChildren({
+          type: "ExportDefaultSpecifier",
+          exported: { type: "Identifier", name: "token" },
+        }),
+        [],
+      );
+      assertEquals(
+        referenceChildren({
+          type: "ExportNamespaceSpecifier",
+          exported: { type: "Identifier", name: "token" },
+        }),
+        [],
+      );
+    });
+
     // These three positions hold no identifier the walkers could report, so a
     // misclassification is invisible in an artifact. Asserted here instead, so
     // the cell is still pinned.
@@ -197,6 +217,61 @@ describe("reference classification", () => {
       );
     });
 
+    // Neither walker hands an import statement to `referenceChildren`: both
+    // skip the statement outright. The cell is pinned anyway so the table stays
+    // correct for a caller that does.
+    it("reads neither half of an import specifier", () => {
+      assertEquals(
+        referenceChildren({
+          type: "ImportSpecifier",
+          local: { type: "Identifier", name: "token" },
+          imported: { type: "Identifier", name: "token" },
+        }),
+        [],
+      );
+      assertEquals(
+        referenceChildren({
+          type: "ImportDefaultSpecifier",
+          local: { type: "Identifier", name: "token" },
+        }),
+        [],
+      );
+      assertEquals(
+        referenceChildren({
+          type: "ImportNamespaceSpecifier",
+          local: { type: "Identifier", name: "token" },
+        }),
+        [],
+      );
+      assertEquals(
+        referenceChildren({
+          type: "ImportDeclaration",
+          specifiers: [{
+            type: "ImportDefaultSpecifier",
+            local: { type: "Identifier", name: "token" },
+          }],
+          source: { type: "StringLiteral", value: "./server-only.js" },
+        }),
+        [],
+      );
+    });
+
+    // A parsed file carries its comments and tokens beside the program, and a
+    // comment is node-shaped, so descending into them would walk text.
+    it("reads neither the comments nor the tokens of a parsed file", () => {
+      const program = { type: "Program", body: [] };
+
+      assertEquals(
+        referenceChildren({
+          type: "File",
+          program,
+          comments: [{ type: "CommentLine", value: " token" }],
+          tokens: [{ type: "Identifier", value: "token" }],
+        }),
+        [program],
+      );
+    });
+
     it("reads nothing of a directive", () => {
       assertEquals(
         referenceChildren({
@@ -205,6 +280,20 @@ describe("reference classification", () => {
         }),
         [],
       );
+    });
+
+    // `Placeholder.name` is an Identifier node, unlike the string-valued
+    // `V8IntrinsicIdentifier.name`. No enabled parser plugin produces either,
+    // but the classification covers the whole package, so the cell is pinned.
+    it("reads the name of neither placeholder form", () => {
+      assertEquals(
+        referenceChildren({
+          type: "Placeholder",
+          name: { type: "Identifier", name: "token" },
+        }),
+        [],
+      );
+      assertEquals(referenceChildren({ type: "V8IntrinsicIdentifier", name: "token" }), []);
     });
 
     it("reads a computed member property but not a fixed one", () => {
