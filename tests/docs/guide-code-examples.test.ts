@@ -56,11 +56,13 @@ import { schedule } from "../../src/schedule/index.ts";
 import { webhook } from "../../src/webhook/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
+  createLocalIntegrationToolSource,
   getConnector,
   getIcon,
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
+import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { parseDeployArgs } from "../../cli/commands/deploy/command.ts";
 import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
 import { parsePullArgs } from "../../cli/commands/pull/command.ts";
@@ -107,6 +109,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "create-api.md",
   "deploy-project.md",
   "integrations.md",
+  "integrations/salesforce.md",
   "move-studio-changes-to-git.md",
   "pages-and-routing.md",
   "project-knowledge.md",
@@ -926,6 +929,32 @@ describe("Guide: integrations.md", () => {
     assertExists(github);
     assertExists(githubIcon);
     assertEquals(typeof getRemoteIntegrationToolDefinitions, "function");
+  });
+
+  it("loads an exact-grant local integration source with named credentials", async () => {
+    const credentials = new Map([
+      ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID", "client-id"],
+      ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET", "client-secret"],
+      [
+        "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
+        "https://acme.my.salesforce.com",
+      ],
+    ]);
+    const source = createLocalIntegrationToolSource({
+      tools: ["salesforce__find_customer"],
+      credentialProvider: (name) => credentials.get(name),
+    });
+
+    const integrationTools = await loadRemoteToolsFromSource(source);
+
+    assertEquals(Object.keys(integrationTools), ["salesforce__find_customer"]);
+  });
+});
+
+describe("Guide: integrations/salesforce.md", () => {
+  it("uses the public local integration source and remote tool loader", () => {
+    assertEquals(typeof createLocalIntegrationToolSource, "function");
+    assertEquals(typeof loadRemoteToolsFromSource, "function");
   });
 });
 

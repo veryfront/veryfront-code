@@ -78,6 +78,11 @@ export {
   isRemoteIntegrationTool,
 } from "./remote-tools.ts";
 export type { RemoteIntegrationToolDiscoveryResult } from "./remote-tools.ts";
+export { createLocalIntegrationToolSource } from "./local-tool-source.ts";
+export type {
+  LocalIntegrationCredentialProvider,
+  LocalIntegrationToolSourceOptions,
+} from "./local-tool-source.ts";
 export type { IntegrationConnector, IntegrationTool } from "./types.ts";
 
 export {

@@ -9,6 +9,12 @@
 
 import type { IntegrationName } from "./schema.ts";
 
+const apply = Reflect.apply;
+const stringCharCodeAt = String.prototype.charCodeAt;
+const stringIndexOf = String.prototype.indexOf;
+const stringLastIndexOf = String.prototype.lastIndexOf;
+const stringSlice = String.prototype.slice;
+
 export interface SourceIntegrationRestriction {
   /**
    * Exact connector-local tool IDs. Omit to allow every catalog tool for the
@@ -230,25 +236,52 @@ export interface IntegrationToolIdentity {
   toolId: string;
 }
 
+function canonicalToolSegment(value: string): boolean {
+  if (value.length === 0) return false;
+  for (let index = 0; index < value.length; index++) {
+    const code = apply(stringCharCodeAt, value, [index]) as number;
+    const allowed = code >= 97 && code <= 122 || code >= 48 && code <= 57 ||
+      (index > 0 && (code === 45 || code === 95));
+    if (!allowed) return false;
+  }
+  return true;
+}
+
+function stringIndex(
+  operation: (this: string, search: string) => number,
+  value: string,
+  search: string,
+): number {
+  return apply(operation, value, [search]);
+}
+
+function slice(value: string, start: number, end?: number): string {
+  return end === undefined
+    ? apply(stringSlice, value, [start])
+    : apply(stringSlice, value, [start, end]);
+}
+
 /**
  * Parse the canonical API tool name (`integration__tool_id`). Aliases and
  * alternate separators are intentionally not accepted at this policy layer.
  */
 export function parseIntegrationToolIdentity(toolName: string): IntegrationToolIdentity | null {
-  const separator = toolName.indexOf("__");
+  const separator = stringIndex(stringIndexOf, toolName, "__");
   if (
     separator <= 0 ||
-    separator !== toolName.lastIndexOf("__") ||
-    separator + 2 >= toolName.length ||
-    !CANONICAL_INTEGRATION_TOOL_SEGMENT.test(toolName.slice(0, separator)) ||
-    !CANONICAL_INTEGRATION_TOOL_SEGMENT.test(toolName.slice(separator + 2))
+    separator !== stringIndex(stringLastIndexOf, toolName, "__") ||
+    separator + 2 >= toolName.length
   ) {
     return null;
   }
 
+  const integration = slice(toolName, 0, separator);
+  const toolId = slice(toolName, separator + 2);
+  if (!canonicalToolSegment(integration) || !canonicalToolSegment(toolId)) return null;
+
   return {
-    integration: toolName.slice(0, separator),
-    toolId: toolName.slice(separator + 2),
+    integration,
+    toolId,
   };
 }
 
