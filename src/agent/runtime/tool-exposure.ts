@@ -122,12 +122,28 @@ function normalizeSearchText(value: string): string {
  */
 function parseCanonicalIntegrationQuery(
   query: string,
-): { namespace: string; canonicalName: string } | null {
-  const identity = parseIntegrationToolIdentity(query.trim().toLowerCase());
-  return identity === null ? null : {
-    namespace: identity.integration,
-    canonicalName: `${identity.integration}__${identity.toolId}`,
-  };
+): { namespace: string; canonicalName: string | null } | null {
+  const trimmed = query.trim().toLowerCase();
+  const separator = trimmed.indexOf("__");
+  if (separator <= 0) return null;
+
+  const identity = parseIntegrationToolIdentity(trimmed);
+  if (identity !== null) {
+    return {
+      namespace: identity.integration,
+      canonicalName: `${identity.integration}__${identity.toolId}`,
+    };
+  }
+
+  // `__` is the reserved integration namespace separator and `assertLocalToolId`
+  // forbids it in local ids, so a query carrying it is asking for an integration
+  // tool even when the rest is malformed (`jira__list__projects`). Keep such a
+  // query on the namespace path: otherwise normalization collapses it onto a
+  // local id like `jira_list_projects`, which then wins the phrase match.
+  const namespace = trimmed.slice(0, separator);
+  return parseIntegrationToolIdentity(`${namespace}__placeholder`) === null
+    ? null
+    : { namespace, canonicalName: null };
 }
 
 function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
@@ -422,8 +438,9 @@ function rankToolExposureMatches(input: {
   // canonical name satisfies a canonical query; anything else is namespace discovery.
   const canonical = parseCanonicalIntegrationQuery(input.query);
   if (canonical !== null) {
-    const exact = candidates
-      .filter((candidate) => candidate.name.toLowerCase() === canonical.canonicalName)
+    const canonicalName = canonical.canonicalName;
+    const exact = canonicalName === null ? [] : candidates
+      .filter((candidate) => candidate.name.toLowerCase() === canonicalName)
       .map(toSearchMatch)
       .sort(compareToolSearchMatches);
     if (exact.length > 0) return exact;
@@ -432,13 +449,18 @@ function rankToolExposureMatches(input: {
     // match is neither: a sibling tool in the same namespace, or a tool that
     // *documents* the namespace (the catalog readers do). A local
     // `jira_list_projects` merely contains the word and is not the Jira integration.
+    //
+    // Sibling identity compares raw ids; text evidence must compare normalized,
+    // because a namespace may itself contain `_` (`foo_bar__list_items`) and every
+    // candidate's text has already had underscores rewritten to spaces.
+    const namespaceTerm = normalizeSearchText(canonical.namespace);
     const namespaceCandidates = candidates.filter((candidate) => {
       const identity = parseIntegrationToolIdentity(candidate.name.toLowerCase());
       if (identity !== null) return identity.integration === canonical.namespace;
-      const field = getMatchedField(canonical.namespace, candidate);
+      const field = getMatchedField(namespaceTerm, candidate);
       return field === "description" || field === "parameterDescription";
     });
-    return rankWholeQueryMatches(canonical.namespace, namespaceCandidates);
+    return rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
   }
 
   // The query taken whole is the strongest signal for every non-canonical query.

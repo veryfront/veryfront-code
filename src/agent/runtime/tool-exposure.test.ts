@@ -977,6 +977,42 @@ it("tool search does not let a same-named local tool satisfy a canonical id", ()
   assertEquals(result.matches.map((match) => match.name), ["get_integration"]);
 });
 
+it("tool search keeps a malformed namespace-shaped query off local tools", () => {
+  // `jira__list__projects` is not a valid canonical id, but `__` is reserved for
+  // the integration namespace and local ids may not contain it. Normalization
+  // collapses it onto the local `jira_list_projects`, which must not win.
+  const authorized = [
+    ...integrationDiscoveryCatalog(),
+    definition("jira_list_projects", "A project-local tool that is not the Jira integration"),
+  ];
+
+  for (const query of ["jira__list__projects", "JIRA__LIST_PROJECTS", "jira__list_projects "]) {
+    assertEquals(
+      searchToolExposure({ query, authorized, state: createToolExposureState() }).matches.map((
+        match,
+      ) => match.name),
+      ["get_integration"],
+      `namespace-shaped query ${JSON.stringify(query)} must not resolve to a local tool`,
+    );
+  }
+});
+
+it("tool search resolves a namespace that itself contains an underscore", () => {
+  // The grammar permits `_` inside a namespace segment, but candidate text has
+  // underscores rewritten to spaces, so an un-normalized namespace never matches.
+  assertEquals(
+    searchToolExposure({
+      query: "foo_bar__list_items",
+      authorized: [
+        definition("get_integration", "Tool ids and schemas. Namespaces: foo_bar, jira."),
+        definition("list_items", "List items in this project"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["get_integration"],
+  );
+});
+
 it("tool search accepts canonical ids with the authorization layer's segment grammar", () => {
   // The authoritative grammar allows consecutive and trailing separators; search
   // must not be stricter, or it disagrees with authorization about what an id is.
