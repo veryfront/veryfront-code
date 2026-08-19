@@ -428,6 +428,29 @@ describe("listTestFiles supports bracket character classes", () => {
     });
   });
 
+  it("does not read braces inside a class as alternation", () => {
+    // `expandBraces` scanned the raw pattern, so the `{}` inside this class was
+    // expanded away before `globToRegex` could parse the class:
+    // `src/[{}].test.ts` became `src/[].test.ts` and selected nothing. Empty is
+    // the dangerous answer — `tests/node/run-tests.mjs` turns an empty
+    // selection into `process.exit(0)` — and it is the exact failure this
+    // module is being fixed for. rg 15.2.0 and `node:fs` globSync both return
+    // `{.test.ts` and `}.test.ts` here.
+    withFixture(["src/{.test.ts", "src/}.test.ts", "src/a.test.ts"], (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[{}].test.ts"], root), root),
+        ["src/{.test.ts", "src/}.test.ts"],
+      );
+      // A real group and a class carrying braces in one pattern: the group
+      // still expands, the class still does not. Same answer from rg 15.2.0
+      // and globSync.
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/{a,[{}]}.test.ts"], root), root),
+        ["src/a.test.ts", "src/{.test.ts", "src/}.test.ts"],
+      );
+    });
+  });
+
   it("treats an unterminated bracket as a literal", () => {
     withFixture(["src/[a.test.ts"], (root) => {
       deepStrictEqual(

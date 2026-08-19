@@ -38,6 +38,22 @@ function hasGlob(pattern) {
   return GLOB_CHARS_RE.test(pattern);
 }
 
+/**
+ * Index of the `]` closing the class opened at `start`, or -1 when there is
+ * none and the `[` is therefore a literal.
+ *
+ * A `]` in the first position is part of the class body rather than its
+ * terminator, which is why the search can start past it.
+ *
+ * Shared so `expandBraces` and `globToRegex` cannot disagree about where a
+ * class ends. They did: `expandBraces` did not know classes existed, so
+ * `src/[{}].test.ts` was reduced to `src/[].test.ts` before `globToRegex` ever
+ * saw it. Two scanners, one grammar, is how that bug happens again.
+ */
+function findClassEnd(glob, start) {
+  return glob.indexOf("]", glob[start + 1] === "]" ? start + 2 : start + 1);
+}
+
 function globToRegex(glob) {
   let re = "^";
   for (let i = 0; i < glob.length; i += 1) {
@@ -81,7 +97,7 @@ function globToRegex(glob) {
       // made every bracket pattern match nothing — and an empty selection is a
       // silently passing test run, not an error. `rg -g 'src/[ab].test.ts'`
       // returns a.test.ts and b.test.ts, so the class is translated instead.
-      const closing = glob.indexOf("]", char === "[" && glob[i + 1] === "]" ? i + 2 : i + 1);
+      const closing = findClassEnd(glob, i);
       if (closing !== -1) {
         let body = glob.slice(i + 1, closing);
         // `!` is the glob spelling of a negated class; `^` is the regex one.
@@ -140,34 +156,80 @@ function walk(dir, onFile) {
 }
 
 /**
+ * Index of the `{` opening the outermost brace group, or -1 when the pattern
+ * has none. Braces inside a `[...]` class are class members, not alternation:
+ * `rg` 15.2.0 and `node:fs` globSync both return `{.test.ts` and `}.test.ts`
+ * for `src/[{}].test.ts`, and `globToRegex` already translates that class
+ * correctly — it just never got the chance while this scan ran first.
+ *
+ * Backslash escapes are deliberately not honoured here. `globToRegex` does not
+ * honour them either (it emits `\\` for a `\`, matching a literal backslash),
+ * so `rg -g 'src/\{a\}.test.ts'` matches where this module does not. That is a
+ * pre-existing gap in the translator, not in this scan: skipping `\{` here
+ * would only hand `globToRegex` a pattern it still cannot match. Fixing it
+ * means teaching the translator about escapes, which is a separate change.
+ */
+function findBraceOpen(pattern) {
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    if (char === "[") {
+      const closing = findClassEnd(pattern, i);
+      if (closing !== -1) i = closing;
+      continue;
+    }
+    if (char === "{") return i;
+  }
+  return -1;
+}
+
+/**
  * Expand `{a,b}` alternation into one pattern per branch.
  *
  * Expands the outermost group and recurses, so nested groups resolve without a
- * parser. An unbalanced `{` is left literal, which is what `rg` does.
+ * parser. An unbalanced `{` is left literal, which is what `rg` does. Every
+ * scan — for the opening brace, its match, and the commas between branches —
+ * steps over `[...]` classes, so a class carrying braces survives intact for
+ * `globToRegex` to translate.
  */
 function expandBraces(pattern) {
-  const open = pattern.indexOf("{");
+  const open = findBraceOpen(pattern);
   if (open === -1) return [pattern];
   let depth = 0;
   for (let i = open; i < pattern.length; i += 1) {
-    if (pattern[i] === "{") depth += 1;
-    else if (pattern[i] === "}") {
+    const char = pattern[i];
+    if (char === "[") {
+      const closing = findClassEnd(pattern, i);
+      if (closing !== -1) i = closing;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
       depth -= 1;
       if (depth !== 0) continue;
       const head = pattern.slice(0, open);
       const tail = pattern.slice(i + 1);
+      const body = pattern.slice(open + 1, i);
       const branches = [];
       let nested = 0;
       let current = "";
-      for (const char of pattern.slice(open + 1, i)) {
-        if (char === "{") nested += 1;
-        if (char === "}") nested -= 1;
-        if (char === "," && nested === 0) {
+      for (let j = 0; j < body.length; j += 1) {
+        const bodyChar = body[j];
+        if (bodyChar === "[") {
+          const closingClass = findClassEnd(body, j);
+          if (closingClass !== -1) {
+            current += body.slice(j, closingClass + 1);
+            j = closingClass;
+            continue;
+          }
+        }
+        if (bodyChar === "{") nested += 1;
+        if (bodyChar === "}") nested -= 1;
+        if (bodyChar === "," && nested === 0) {
           branches.push(current);
           current = "";
           continue;
         }
-        current += char;
+        current += bodyChar;
       }
       branches.push(current);
       return branches.flatMap((branch) => expandBraces(`${head}${branch}${tail}`));
