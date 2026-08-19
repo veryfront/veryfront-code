@@ -8,6 +8,7 @@ import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
 import {
   browserServerExportsStripPlugin,
   moduleReferenceWalkers,
+  patternBindings,
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
 import { COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, compilePlugin } from "./compile.ts";
@@ -26,6 +27,68 @@ function occurrences(haystack: string, name: string): number {
 describe("browser-server-exports-strip", () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  // The binding/value-position split inside a destructuring pattern is the safety
+  // property of `patternBindings`: a binding position joins the `excluded` set in
+  // `dropUnusedModuleScopeBindings`, so anything wrongly classified as a binding
+  // becomes invisible to `referencedIdentifiers` and can be pruned while still live.
+  //
+  // These assert the split directly because it is NOT observable end to end today —
+  // a naive walk that also collected default and computed-key identifiers produced
+  // byte-identical stage output on every module shape probed. That makes an
+  // end-to-end test useless as a guard here, and this the only place the invariant
+  // can actually be pinned.
+  describe("patternBindings", () => {
+    const bindingNamesOf = async (source: string): Promise<string[] | null> => {
+      const parser = tryResolve<CodeParser>("CodeParser");
+      if (!parser) throw new Error("CodeParser extension is not registered");
+      const ast = await parser.parse({ code: source, filePath: "pattern.ts" }) as unknown as {
+        program: { body: Array<Record<string, unknown>> };
+      };
+      const statement = ast.program.body[0];
+      const declarations = statement.declarations as Array<Record<string, unknown>>;
+      const bindings = patternBindings(declarations[0].id);
+      return bindings === null
+        ? null
+        : bindings.map((node) => (node as unknown as { name: string }).name);
+    };
+
+    it("collects a plain identifier", async () => {
+      assertEquals(await bindingNamesOf("const a = x;"), ["a"]);
+    });
+
+    it("collects object-pattern bindings through their values, not their keys", async () => {
+      assertEquals(await bindingNamesOf("const { k: a } = x;"), ["a"]);
+    });
+
+    it("excludes a destructuring default expression — it is a read", async () => {
+      assertEquals(await bindingNamesOf("const { a = fallback } = x;"), ["a"]);
+    });
+
+    it("excludes a computed key expression — it is a read", async () => {
+      assertEquals(await bindingNamesOf("const { [keyName]: a } = x;"), ["a"]);
+    });
+
+    it("excludes a nested default expression", async () => {
+      assertEquals(await bindingNamesOf("const { o: { a = fallback } } = x;"), ["a"]);
+    });
+
+    it("excludes an array-pattern default expression", async () => {
+      assertEquals(await bindingNamesOf("const [a = fallback] = x;"), ["a"]);
+    });
+
+    it("collects nested, rest and hole shapes", async () => {
+      assertEquals(await bindingNamesOf("const { o: { i } } = x;"), ["i"]);
+      assertEquals(await bindingNamesOf("const { a, ...rest } = x;"), ["a", "rest"]);
+      assertEquals(await bindingNamesOf("const [a, , b] = x;"), ["a", "b"]);
+      assertEquals(await bindingNamesOf("const [...rest] = x;"), ["rest"]);
+    });
+
+    it("returns null for a shape it does not model, so the caller keeps the statement", () => {
+      assertEquals(patternBindings(undefined), null);
+      assertEquals(patternBindings({ type: "TSParameterProperty" }), null);
+    });
   });
 
   describe("emptying server-only hooks", () => {
@@ -758,12 +821,12 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "TOKEN"), 0); // hook-only tail → dropped
     });
 
-    // Known limitation (pinned): a *destructured* server value is NOT pruned —
-    // `moduleScopeDeclarations` handles only simple identifiers, to avoid
-    // mishandling default-value references inside patterns. Conservative (never
-    // over-prunes) but it means a destructured server value still ships. If this
-    // ever needs closing, extend the declaration collector to safe patterns.
-    it("conservatively keeps a destructured server value (documented limitation)", async () => {
+    // A destructured server value is pruned like a simple one. `moduleScopeDeclarations`
+    // collects binding positions out of object/array patterns; value positions inside a
+    // pattern (defaults, computed keys) stay visible to `referencedIdentifiers`, so the
+    // pass keeps its conservative "never over-prune" property. See the over-prune guards
+    // immediately below — those are what make this safe.
+    it("drops a hook-only destructured server value and its import", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const { a } = getEnv("X");`,
@@ -773,8 +836,100 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // Pinned as-is: the destructured binding and its import survive.
+      assertEquals(occurrences(result, "getEnv"), 0);
+      assertEquals(occurrences(result, "veryfront"), 0);
+    });
+
+    it("drops a hook-only nested destructured server value", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { outer: { inner } } = getEnv("X");`,
+        `export async function getServerData() { return { props: { inner } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("drops a hook-only array-destructured server value, holes included", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const [first, , third] = getEnv("X");`,
+        `export async function getServerData() { return { props: { first, third } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    it("drops a hook-only rest-destructured server value", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { a, ...rest } = getEnv("X");`,
+        `export async function getServerData() { return { props: { a, rest } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertEquals(occurrences(result, "getEnv"), 0);
+    });
+
+    // --- over-prune guards -------------------------------------------------
+    // These are the reason the collector originally bailed out on patterns. A default
+    // value or a computed key inside a pattern is a *read*, not a binding. If the
+    // collector swallowed those identifiers as bindings they would be hidden from
+    // `referencedIdentifiers` and the pass would delete live client code — a worse
+    // failure than the leak it is closing.
+
+    it("keeps a client binding referenced by a destructuring default in a stripped hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import { fallback } from "../lib/client.js";`,
+        `const { a = fallback } = getEnv("X");`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return fallback; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "fallback");
+      assertStringIncludes(result, "../lib/client.js");
+    });
+
+    it("keeps a client binding used as a computed key in a stripped hook's pattern", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `import { keyName } from "../lib/client.js";`,
+        `const { [keyName]: a } = getEnv("X");`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return keyName; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "keyName");
+      assertStringIncludes(result, "../lib/client.js");
+    });
+
+    it("keeps a destructured binding the client still reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { a, b } = getEnv("X");`,
+        `export async function getServerData() { return { props: { b } }; }`,
+        `export default function Page() { return a; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      // One binding of the pattern is live on the client, so the whole
+      // declaration — and its import — must survive.
       assertStringIncludes(result, "getEnv");
+      assertStringIncludes(result, "a");
     });
 
     it("keeps an import that the client still references", async () => {

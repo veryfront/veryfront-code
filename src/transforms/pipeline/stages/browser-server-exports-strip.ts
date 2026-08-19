@@ -492,6 +492,81 @@ interface ModuleScopeDecl {
  * Destructuring declarations are skipped — a pattern can carry default-value
  * references, and a partial removal is not worth the risk.
  */
+/**
+ * Binding identifiers introduced by a declarator `id`, or `null` when the
+ * pattern contains a shape this collector does not model.
+ *
+ * Only *binding positions* are returned. Value positions inside a pattern are
+ * deliberately left out so `referencedIdentifiers` still counts them as reads:
+ *
+ * - `AssignmentPattern.right` — `const { a = fallback } = ...` reads `fallback`
+ * - a computed `ObjectProperty.key` — `const { [keyName]: a } = ...` reads `keyName`
+ *
+ * Swallowing those as bindings would add them to the `excluded` set in
+ * `dropUnusedModuleScopeBindings`, hiding a live client read and letting the
+ * pass delete code the browser still needs. Over-pruning is a worse failure
+ * than leaving a server value in place, so an unrecognised shape returns `null`
+ * and the caller keeps the whole statement.
+ *
+ * Exported for direct testing: the binding/value-position split is the safety
+ * property of this walk, and it is not observable through the stage's
+ * end-to-end behaviour today (a naive walk that also collected default and
+ * computed-key identifiers produces byte-identical output on every shape
+ * probed). Testing it here is what keeps the invariant from silently rotting.
+ */
+export function patternBindings(value: unknown): Node[] | null {
+  if (!isNode(value)) return null;
+
+  switch (value.type) {
+    case "Identifier":
+      return [value];
+
+    case "ObjectPattern": {
+      const bindings: Node[] = [];
+      const properties = Array.isArray(value.properties) ? value.properties : [];
+      for (const property of properties) {
+        if (!isNode(property)) return null;
+        // A rest element binds; an ordinary property binds through its *value*,
+        // never its key. A computed key is a read and is left to the reference
+        // walker.
+        const target = property.type === "RestElement"
+          ? property.argument
+          : property.type === "ObjectProperty"
+          ? property.value
+          : undefined;
+        if (target === undefined) return null;
+        const nested = patternBindings(target);
+        if (!nested) return null;
+        bindings.push(...nested);
+      }
+      return bindings;
+    }
+
+    case "ArrayPattern": {
+      const bindings: Node[] = [];
+      const elements = Array.isArray(value.elements) ? value.elements : [];
+      for (const element of elements) {
+        // `[a, , b]` — a hole binds nothing.
+        if (element === null || element === undefined) continue;
+        const nested = patternBindings(element);
+        if (!nested) return null;
+        bindings.push(...nested);
+      }
+      return bindings;
+    }
+
+    // `left` is the binding; `right` is the default expression, i.e. a read.
+    case "AssignmentPattern":
+      return patternBindings(value.left);
+
+    case "RestElement":
+      return patternBindings(value.argument);
+
+    default:
+      return null;
+  }
+}
+
 function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
   const decls: ModuleScopeDecl[] = [];
 
@@ -510,14 +585,30 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
         const declarator of Array.isArray(statement.declarations) ? statement.declarations : []
       ) {
         if (!isNode(declarator)) continue;
-        const id = declarator.id;
-        if (isNode(id) && id.type === "Identifier") {
-          const name = nodeName(id);
-          if (name) variableDecls.push({ statement, declarator, names: [name], bindingIds: [id] });
-        } else {
+        const bindingIds = patternBindings(declarator.id);
+        if (!bindingIds) {
           variableDecls.length = 0;
           break;
         }
+
+        const names: string[] = [];
+        for (const bindingId of bindingIds) {
+          const name = nodeName(bindingId);
+          // A binding whose name cannot be resolved would be invisible to the
+          // liveness check, so keep the whole statement rather than prune
+          // around it.
+          if (!name) {
+            names.length = 0;
+            break;
+          }
+          names.push(name);
+        }
+        if (names.length !== bindingIds.length) {
+          variableDecls.length = 0;
+          break;
+        }
+
+        variableDecls.push({ statement, declarator, names, bindingIds });
       }
 
       decls.push(...variableDecls);
