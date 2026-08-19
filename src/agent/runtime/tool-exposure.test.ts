@@ -1013,6 +1013,22 @@ it("tool search resolves a namespace that itself contains an underscore", () => 
   );
 });
 
+it("tool search matches a canonical namespace as a whole token", () => {
+  // `exa` is a real integration name. Substring evidence would admit anything
+  // whose text merely contains `example`, which is most of a catalog.
+  assertEquals(
+    searchToolExposure({
+      query: "exa__search",
+      authorized: [
+        definition("get_integration", "Tool ids and schemas. Namespaces: exa, jira."),
+        definition("run_sample", "Runs the example workflow", "an example value"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["get_integration"],
+  );
+});
+
 it("tool search accepts canonical ids with the authorization layer's segment grammar", () => {
   // The authoritative grammar allows consecutive and trailing separators; search
   // must not be stricter, or it disagrees with authorization about what an id is.

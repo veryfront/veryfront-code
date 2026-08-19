@@ -146,6 +146,19 @@ function parseCanonicalIntegrationQuery(
     : { namespace, canonicalName: null };
 }
 
+/**
+ * Match a namespace as a whole token, never as a substring.
+ *
+ * Namespaces can be very short (`exa` is a real integration), so substring
+ * evidence would admit any tool whose text merely contains `example`. Normalized
+ * text is lowercase with `_` rewritten to spaces, so the boundaries are anything
+ * that is not alphanumeric.
+ */
+function createNamespaceTokenPattern(namespaceTerm: string): RegExp {
+  const escaped = namespaceTerm.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+  return new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`);
+}
+
 function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
   return { name: tool.name, description: tool.description, status: tool.status };
 }
@@ -454,11 +467,16 @@ function rankToolExposureMatches(input: {
     // because a namespace may itself contain `_` (`foo_bar__list_items`) and every
     // candidate's text has already had underscores rewritten to spaces.
     const namespaceTerm = normalizeSearchText(canonical.namespace);
+    const namespacePattern = createNamespaceTokenPattern(namespaceTerm);
     const namespaceCandidates = candidates.filter((candidate) => {
       const identity = parseIntegrationToolIdentity(candidate.name.toLowerCase());
       if (identity !== null) return identity.integration === canonical.namespace;
-      const field = getMatchedField(namespaceTerm, candidate);
-      return field === "description" || field === "parameterDescription";
+      // A non-canonical tool carrying the namespace in its *name* is a
+      // normalization coincidence, not the integration, whatever its description
+      // happens to mention: `jira_list_projects` is a local tool, not Jira.
+      if (namespacePattern.test(candidate.normalizedName)) return false;
+      return namespacePattern.test(candidate.normalizedDescription) ||
+        candidate.parameterDescriptions.some((description) => namespacePattern.test(description));
     });
     return rankWholeQueryMatches(namespaceTerm, namespaceCandidates);
   }
