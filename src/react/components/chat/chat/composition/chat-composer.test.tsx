@@ -700,13 +700,15 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     }
   });
 
-  it("Send accepts a per-leaf `icon` override", () => {
+  it("Send replaces the default glyph with children", () => {
     const html = renderToString(
       <ChatInput.Root input="hi" onChange={() => {}} onSubmit={() => {}}>
-        <ChatInput.Send icon={<svg data-testid="custom-send" />} />
+        <ChatInput.Send>
+          <svg data-testid="custom-send" />
+        </ChatInput.Send>
       </ChatInput.Root>,
     );
-    assert(html.includes("custom-send"), "Expected the custom send icon to render");
+    assert(html.includes("custom-send"), "Expected the custom send glyph to render");
   });
 
   it("action leaves forward native button attributes without weakening guards", () => {
@@ -1129,18 +1131,20 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
   });
 
   describe("ChatInput.Submit", () => {
-    it("renders the send control (with its icon) while idle", () => {
+    it("renders the send control with a child glyph while idle", () => {
       const html = renderToString(
         <ChatInput.Root input="hi" onChange={() => {}} onSubmit={() => {}}>
-          <ChatInput.Submit icon={<svg data-testid="mail-icon" />} />
+          <ChatInput.Submit>
+            <svg data-testid="mail-icon" />
+          </ChatInput.Submit>
         </ChatInput.Root>,
       );
       assert(html.includes('aria-label="Send"'), "idle submit is the Send control");
-      assert(html.includes("mail-icon"), "idle submit uses the `icon` override");
+      assert(html.includes("mail-icon"), "idle submit uses the child glyph");
       assert(!html.includes('aria-label="Stop"'), "idle submit is not the Stop control");
     });
 
-    it("renders the stop control while streaming, ignoring the send icon", () => {
+    it("renders the stop control while streaming", () => {
       const html = renderToString(
         <ChatInput.Root
           input="hi"
@@ -1149,22 +1153,24 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
           isLoading
           stop={() => {}}
         >
-          <ChatInput.Submit icon={<svg data-testid="mail-icon" />} />
+          <ChatInput.Submit>
+            <svg data-testid="mail-icon" />
+          </ChatInput.Submit>
         </ChatInput.Root>,
       );
       assert(html.includes('aria-label="Stop"'), "streaming submit is the Stop control");
-      assert(!html.includes("mail-icon"), "the send icon must not leak onto Stop");
+      assert(!html.includes("mail-icon"), "the child glyph must not leak onto Stop");
     });
 
     it("keeps idle children out of the streaming stop control", () => {
       const html = renderToString(
         <ChatInput.Root input="hi" onChange={() => {}} isLoading stop={() => {}}>
-          <ChatInput.Submit stopIcon={<svg data-testid="stop-override" />}>
+          <ChatInput.Submit>
             <svg data-testid="send-child" />
           </ChatInput.Submit>
         </ChatInput.Root>,
       );
-      assert(html.includes("stop-override"), "streaming uses the stop override");
+      assert(html.includes("Stop"), "streaming renders the stop control");
       assert(!html.includes("send-child"), "idle content must not leak onto Stop");
     });
   });

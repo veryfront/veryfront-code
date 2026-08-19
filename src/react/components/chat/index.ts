@@ -104,8 +104,6 @@ export {
   type ChatContextValue,
   ChatInputContextProvider,
   type ChatInputContextValue,
-  ComposerContextProvider,
-  type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
   type MessagePartsData,
@@ -113,8 +111,6 @@ export {
   useChatContextOptional,
   useChatInputContext,
   useChatInputContextOptional,
-  useComposerContext,
-  useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
@@ -191,7 +187,6 @@ export {
   ModelSelector,
   QuickActions,
   Reasoning,
-  RichCodeBlock,
   Shimmer,
   SkillBadge,
   Sources,
@@ -299,12 +294,6 @@ export {
   useModelSelector,
   useSources,
   useStepIndicator,
-  useStickToBottom,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
-  useUploadsRegistry,
-  type UseUploadsRegistryOptions,
-  type UseUploadsRegistryResult,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------

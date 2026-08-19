@@ -470,8 +470,8 @@ describe("react/components/chat/hooks/useConversations — save", () => {
       const view = mount(store);
       await settle();
 
-      assertEquals(view.get().active, view.get().activeConversation);
-      assertEquals(view.get().activeId, view.get().activeConversationId);
+      assertEquals(view.get().activeConversation?.id, "active");
+      assertEquals(view.get().activeConversationId, "active");
 
       await unmountReactRoot(view.root);
       await settle();

@@ -4,7 +4,7 @@ Renders streamed markdown content - the one sanctioned multi-node primitive, tam
 
 > **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `CodeBlock`, `Markdown`, `RichCodeBlock`
+> - **Exported from `veryfront/chat` today:** `CodeBlock`, `Markdown`
 > - **Not exported today:** none
 >
 > An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
@@ -12,7 +12,7 @@ Renders streamed markdown content - the one sanctioned multi-node primitive, tam
 ## Import
 
 ```tsx
-import { Markdown, RichCodeBlock } from "veryfront/chat";
+import { CodeBlock, Markdown } from "veryfront/chat";
 ```
 
 ## The markdown exception
@@ -24,7 +24,7 @@ Every other primitive in `veryfront/chat` renders exactly one DOM node. `Markdow
 - [`Markdown`](#markdown---changed) - `changed`: `renderCodeBlock` deleted; hardening props + streaming ownership proposed
 - [`components`](#components---the-override-map---changed) - `changed`: block-code hook moves from `pre` interception to the `code` key; virtual `citation` slot
 - [Streaming](#streaming-proposed---owned-here---new) - `new`: incremental parsing, mid-stream repair, URL hardening
-- [`RichCodeBlock`](#richcodeblock---changed) - `changed`: deprecated plain-`<pre>` fork collapses onto the `ui` `CodeBlock`; `copyIcon` / `collapseIcon` deleted
+- [`CodeBlock`](#codeblock) - the shared maintained code renderer
 
 ## Anatomy
 
@@ -33,7 +33,7 @@ Not a compound - one component, one override map:
 ```tsx
 <Markdown
   components={{
-    code: MyCodeBlock, // replaces RichCodeBlock, the default
+    code: MyCodeBlock, // replaces the default CodeBlock renderer
     a: MyLink,
     img: MyImage,
     table: MyTable,
@@ -60,7 +60,7 @@ With no `components` overrides, a typical assistant message renders this tree to
   <ul class="my-4 list-disc pl-6"><li class="my-1.5 pl-1">…</li></ul>
   <!-- markers restored (preflight strips them) -->
 
-  <!-- fenced code - the default `pre` interception → ui CodeBlock (= proposed RichCodeBlock): -->
+  <!-- fenced code - the default `pre` interception → CodeBlock: -->
   <div class="my-4 overflow-hidden rounded-md border bg-secondary">
     <!-- code card; in-flow block -->
     <div class="flex items-center justify-between py-1.5 pl-3 pr-1.5 text-xs">
@@ -149,13 +149,13 @@ is keyed `code` and adds the virtual `citation` slot.
 The react-markdown convention: a map from emitted element type to the component that renders it.
 
 - **Every emitted element type is replaceable.** Pass a component for any element `Markdown` emits and yours renders instead - including the built-in defaults for `pre`/`code`, `table`, `th`, `td`, `a`, and `blockquote` documented in the DOM above.
-- **`code`** - defaults to [`RichCodeBlock`](#richcodeblock---changed). The default renderer receives `{ language, code }` extracted from the fence.
+- **`code`** - defaults to [`CodeBlock`](#codeblock). The default renderer receives `{ language, code }` extracted from the fence.
 - **Inline code** also uses the `code` key with `inline: true`; the built-in
   renderer returns a styled `<code>` and never routes inline code through
-  `RichCodeBlock`.
+  `CodeBlock`.
 - **`citation`** - a _virtual_ slot (no HTML element named `citation`): renders footnote markers generated from source parts. Defaults to [`InlineCitation`](./inline-citation.md) - numbered pills.
 
-Because [`ToolCall.Input`](./tool-call.md) and `ToolCall.Output` are `RichCodeBlock`/`Markdown`-backed, the same `components` map reaches those surfaces too.
+Because [`ToolCall.Input`](./tool-call.md) and `ToolCall.Output` are `CodeBlock`/`Markdown`-backed, the same `components` map reaches those surfaces too.
 
 ### Streaming (proposed - owned here) - `new`
 
@@ -169,13 +169,13 @@ Streaming is owned by `Markdown` (the streamdown model) - consumers never hand-r
   HAST, so a plugin cannot reintroduce `javascript:` links or unsafe images by
   running late.
 
-## `RichCodeBlock` - `changed`
+## `CodeBlock`
 
-Changed: today's deprecated plain-`<pre>` fork and the `ui` `CodeBlock` collapse into one name aliasing the `ui` primitive; `copyIcon` / `collapseIcon` are deleted.
-
-The **default `components.code` renderer** - an alias over the `veryfront/ui` `CodeBlock` (shiki highlighting, copy button with ~2s copied feedback, language label, collapsible shell, mermaid support). **Layout: an in-flow block card (`my-4 rounded border overflow-hidden`): header row (`flex justify-between`, label left / actions right) above the scrolling `<pre>`.**
-
-> Today's exported `RichCodeBlock` is a _deprecated plain-`<pre>` fork with no highlighting_, kept for back-compat while `Markdown` already renders fences through the `ui` `CodeBlock`. The proposal collapses this: one name, aliasing the `ui` primitive.
+The **default `components.code` renderer** is the shared maintained `CodeBlock`
+primitive (syntax highlighting, copy feedback, language label, collapsible
+shell, and explicit diagram support). **Layout: an in-flow block card (`my-4
+rounded border overflow-hidden`): header row (`flex justify-between`, label left
+/ actions right) above the scrolling `<pre>`.**
 
 | Prop                               | Type                             | Default                         | Description                                                    |
 | ---------------------------------- | -------------------------------- | ------------------------------- | -------------------------------------------------------------- |
@@ -192,12 +192,12 @@ The **default `components.code` renderer** - an alias over the `veryfront/ui` `C
 
 ## Context (what the parts read)
 
-None - `Markdown` is stateless from the consumer's perspective (input string in, tree out). The `components` map is the entire extension surface; `RichCodeBlock`'s copy behavior is available standalone via `useClipboard(text)` → `{ copied, copy }`.
+None - `Markdown` is stateless from the consumer's perspective (input string in, tree out). The `components` map is the entire extension surface; `CodeBlock`'s copy behavior is available standalone via `useClipboard(text)` → `{ copied, copy }`.
 
 ## Where it appears
 
 - [`Message.Text`](./message.md) renders its part content through `Markdown`.
-- [`ToolCall.Input` / `ToolCall.Output`](./tool-call.md) are `RichCodeBlock`/`Markdown`-backed.
+- [`ToolCall.Input` / `ToolCall.Output`](./tool-call.md) are `CodeBlock`/`Markdown`-backed.
 - The default [`components.citation`](./inline-citation.md) renderer is `InlineCitation`.
 
 ## Examples
@@ -224,15 +224,15 @@ None - `Markdown` is stateless from the consumer's perspective (input string in,
 ### Reusing the default renderer elsewhere
 
 ```tsx
-import { RichCodeBlock } from "veryfront/chat";
+import { CodeBlock } from "veryfront/chat";
 
-<RichCodeBlock code={toolCall.input} language="json" collapsible />;
+<CodeBlock code={toolCall.input} language="json" collapsible />;
 ```
 
 ## Customization (eject path)
 
 1. **L1** - the default tree inside `<Chat />` / `Message.Text` (defaults above).
-2. **L2** - override per element type via `components` - per-element ejection, never all-or-nothing; `RichCodeBlock` stays importable for use inside your overrides.
+2. **L2** - override per element type via `components` - per-element ejection, never all-or-nothing; `CodeBlock` stays importable for use inside your overrides.
 3. **L3** - there is deliberately no lower layer: parsing + streaming repair are the library's job (the exception exists _because_ this tree shouldn't be hand-built). For fully custom rendering, take `part.text` and use your own pipeline.
 
 ## Related

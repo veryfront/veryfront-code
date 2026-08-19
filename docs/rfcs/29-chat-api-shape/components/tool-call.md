@@ -4,7 +4,7 @@ A disclosure for one tool invocation - input, output, and the full lifecycle inc
 
 > **Status: RFC 29 - proposed; nothing on this page has landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `Markdown`, `RichCodeBlock`, `ToolCall`, `ToolCall.Body`, `ToolCall.Error`, `ToolCall.Input`, `ToolCall.Output`, `ToolCall.Root`, `ToolCall.Trigger`
+> - **Exported from `veryfront/chat` today:** `Markdown`, `CodeBlock`, `ToolCall`, `ToolCall.Body`, `ToolCall.Error`, `ToolCall.Input`, `ToolCall.Output`, `ToolCall.Root`, `ToolCall.Trigger`
 > - **Not exported today:** none
 >
 > An exported symbol is not a landed delta - see [reading the status block](../README.md#reading-the-status-block). Full rationale: [`29-chat-api-shape.md`](../../29-chat-api-shape.md).
@@ -24,8 +24,8 @@ import { ToolCall, ToolCallTrigger, type ToolCallTriggerProps } from "veryfront/
 - [`.Root`](#toolcallroot---changed) - `changed`: `tool` → `part` rename; `icon` deleted; `data-state` approval lifecycle; auto-open on completion
 - [`.Trigger`](#toolcalltrigger---changed) - `changed`: `icon` deleted - children replace the default content
 - [`.Body`](#toolcallbody---kept) - `kept`
-- [`.Input`](#toolcallinput---changed) - `changed`: bespoke regex-highlighted `<pre>` → `RichCodeBlock`
-- [`.Output`](#toolcalloutput---changed) - `changed`: becomes `Markdown`/`RichCodeBlock`-backed
+- [`.Input`](#toolcallinput---changed) - `changed`: bespoke regex-highlighted `<pre>` → `CodeBlock`
+- [`.Output`](#toolcalloutput---changed) - `changed`: becomes `Markdown`/`CodeBlock`-backed
 - [`.Error`](#toolcallerror---changed) - `changed`: `role="alert"` proposed (today's Alert renders no role)
 
 ## Anatomy
@@ -168,7 +168,7 @@ One `<div>` (top border, padded). Default content: `Input` → `Output` → `Err
 
 ### `ToolCall.Input` - `changed`
 
-Changed: today's bespoke regex-highlighted `<pre>` moves onto `RichCodeBlock`, so the markdown `components` override map reaches it.
+Changed: today's bespoke regex-highlighted `<pre>` moves onto `CodeBlock`, so the markdown `components` override map reaches it.
 
 The "Parameters" block: a muted `Parameters` heading + the tool input as syntax-highlighted JSON (keys green, strings amber, numbers blue, booleans purple; HTML-escaped first) on a secondary surface. **Renders `null` when `part.input === undefined`.** While `data-state="input-streaming"`, the input is the partial object streamed so far.
 
@@ -179,11 +179,11 @@ The "Parameters" block: a muted `Parameters` heading + the tool input as syntax-
 | `children`                 | `ReactNode` | Replaces the rendered value (the heading and surface stay). |
 | `asChild` + native + `ref` |             | Own the node.                                               |
 
-**Proposed:** the JSON rendering moves onto `RichCodeBlock`, so it falls under the markdown exception - the `Markdown` `components={{ code, … }}` override map reaches it. Today it is a bespoke `<pre>` with regex highlighting.
+**Proposed:** the JSON rendering moves onto `CodeBlock`, so it falls under the markdown exception - the `Markdown` `components={{ code, … }}` override map reaches it. Today it is a bespoke `<pre>` with regex highlighting.
 
 ### `ToolCall.Output` - `changed`
 
-Changed: the value rendering becomes `Markdown`/`RichCodeBlock`-backed - the same markdown exception as `.Input`, every emitted element replaceable via the `components` map.
+Changed: the value rendering becomes `Markdown`/`CodeBlock`-backed - the same markdown exception as `.Input`, every emitted element replaceable via the `components` map.
 
 The "Result" block: a muted `Result` heading + the output. Default rendering: an array of uniform objects becomes an auto `<table>` (title-cased column headers from the first row's keys); anything else renders as syntax-highlighted JSON. **Renders `null` when `part.output` is `undefined` or `null`.**
 
@@ -194,7 +194,7 @@ The "Result" block: a muted `Result` heading + the output. Default rendering: an
 | `children`                 | `ReactNode` | Replaces the rendered value (heading and surface stay). |
 | `asChild` + native + `ref` |             | Own the node.                                           |
 
-**Proposed:** `Markdown`/`RichCodeBlock`-backed, same markdown exception as `.Input` - every emitted element stays replaceable via the `components` map.
+**Proposed:** `Markdown`/`CodeBlock`-backed, same markdown exception as `.Input` - every emitted element stays replaceable via the `components` map.
 
 ### `ToolCall.Error` - `changed`
 

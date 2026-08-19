@@ -123,7 +123,7 @@ app/
 | What | Framework | Template code |
 |------|-----------|---------------|
 | Chat UI + streaming | app-mode `Chat` | `page.tsx` |
-| Upload management | `AttachmentsPanel`, `useUploadsRegistry` | `uploads/page.tsx` |
+| Upload management | `AttachmentsPanel`, `useAttachments` | `uploads/page.tsx` |
 | Source display | Built into the `Chat` preset | `page.tsx` |
 | Upload API route | `createUploadHandler` | 1 line in `route.ts` |
 | AG-UI route | `createAgUiHandler` | 1 line in `route.ts` |

@@ -67,11 +67,11 @@ describe("AgentPicker — preset (back-compat)", () => {
     assertStringIncludes(html, "Inbox Helper");
   });
 
-  it("keeps the legacy avatarSrc option rendering during migration", () => {
+  it("renders avatarUrl for the selected agent", () => {
     const legacyAgents: AgentOption[] = [{
       id: "legacy",
       name: "Legacy Agent",
-      avatarSrc: "https://example.com/legacy-agent.png",
+      avatarUrl: "https://example.com/legacy-agent.png",
     }];
     const html = renderToString(<AgentPicker agents={legacyAgents} value="legacy" />);
     assertStringIncludes(html, "https://example.com/legacy-agent.png");

@@ -11,11 +11,11 @@ Reads the scoped composer state provided by the nearest `ChatInput` (via `ChatIn
 
 ## Landed so far
 
-### `useChatInputContext` - `new` - `shipped` (src/react/components/chat/chat/contexts/composer-context.tsx:83)
+### `useChatInputContext` - `new` - `shipped` (src/react/components/chat/chat/contexts/composer-context.tsx:73)
 
 The naming half of the RFC's "the word Composer is banned" decision has landed: `useChatInputContext`, `useChatInputContextOptional`, and `ChatInputContextProvider` are real exports of `veryfront/chat`, and the raw context object stays unexported as the providers rule requires.
 
-**Still proposed:** the retirement itself. `useComposerContext`, `useComposerContextOptional`, and `ComposerContextProvider` remain exported as `@deprecated` aliases pointing at the same functions, so the old names have not gone away - that removal is batched into the one breaking release. The **returned shape** is also still the old `ComposerContextValue` (`input`, `isLoading`, `onSubmit`, …), not the `UseChatInputResult` documented below; see [`useChatInput`](./use-chat-input.md) for exactly which members are real.
+**Still proposed:** none. The old composer aliases have been removed. The **returned shape** is the canonical `ChatInputContextValue`, which is still the same state object consumed by `useChatInput`; see [`useChatInput`](./use-chat-input.md) for exactly which members are real.
 
 ## Import
 

@@ -118,7 +118,6 @@ export {
   type AttachmentPillProps,
   useAttachmentPill,
 } from "./components/attachment-pill.tsx";
-export { type CodeBlockProps, RichCodeBlock } from "./components/code-block.tsx";
 export {
   StepIndicator,
   type StepIndicatorContextValue,
@@ -257,8 +256,6 @@ export {
   type ChatContextValue,
   ChatInputContextProvider,
   type ChatInputContextValue,
-  ComposerContextProvider,
-  type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
   type MessagePartsData,
@@ -266,8 +263,6 @@ export {
   useChatContextOptional,
   useChatInputContext,
   useChatInputContextOptional,
-  useComposerContext,
-  useComposerContextOptional,
   useMessageBranches,
   type UseMessageBranchesResult,
   useMessageContext,

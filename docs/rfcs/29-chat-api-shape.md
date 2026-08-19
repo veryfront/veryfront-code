@@ -240,7 +240,7 @@ one documented exception to the node contract, tamed by:
 
 - **`components={{ code, a, img, table, … }}` override map** (react-markdown
   convention): every emitted element type is replaceable - still no unreachable
-  node. `RichCodeBlock` is the default `code` renderer; swap it via the map.
+  node. `CodeBlock` is the default `code` renderer; swap it via the map.
 - **Streaming is owned here** (streamdown model): incremental block parsing (only
   the tail block re-renders per token), unterminated fence/emphasis repair, and
   hardening via `allowedLinkPrefixes` / `allowedImagePrefixes`.
@@ -258,7 +258,7 @@ one documented exception to the node contract, tamed by:
 - **Inline citations** are an override slot (`components.citation`) rendering
   footnote markers from source parts; default = numbered pills.
 
-### Scroll contract (`useChatScroll`, subsumes `useStickToBottom`)
+### Scroll contract (`useChatScroll`)
 
 Transcript scrolling is a subsystem, not a boolean (per shadcn MessageScroller /
 assistant-ui viewport):
@@ -572,7 +572,7 @@ no node)_ · `.Text` · `.Reasoning` · `.Source` · `.File` · `.Image` · `.So
 ### Empty state · Markdown · Shell
 
 - **`ChatEmptyState`** - `Root <div>` · `.Avatar` · `.Heading <h2>` · `.Suggestions <div>` · `.Suggestion <button>`.
-- **`Markdown`** / `RichCodeBlock` - rendered content (built on `ui/code-block`).
+- **`Markdown`** / `CodeBlock` - rendered content (built on `ui/code-block`).
 - **`AppShell`** (from `veryfront/ui`) - `.Sidebar · .SidebarHeader · .SidebarContent · .SidebarFooter · .Main · .Header · .Content · .Trigger`; `useAppShell` · `useChatScroll` · `ColorModeToggle`.
 
 ### Helpers (pure functions - no DOM)
@@ -696,7 +696,7 @@ generics) - blocks only state what's specific to them.
 ### `ToolCall`
 
 - **Nodes:** `.Root <div>` · `.Trigger <button>` · `.Body <div>` · `.Input` ·
-  `.Output` · `.Error <div>`. `.Input`/`.Output` are `RichCodeBlock`/`Markdown`-
+  `.Output` · `.Error <div>`. `.Input`/`.Output` are `CodeBlock`/`Markdown`-
   backed (markdown exception applies - `components` map reaches them).
   `variant="compact"` is the retired `SkillTool`.
 - **`data-*` (`.Root`):** `data-state` (full lifecycle incl.
@@ -847,14 +847,13 @@ generics) - blocks only state what's specific to them.
   `getAgentPromptSuggestionItems(agent)` → `{ label, prompt }[]` (made public,
   #2978) - selection hands the *item* back, no `.find` massaging.
 
-### `Markdown` · `RichCodeBlock`
+### `Markdown` · `CodeBlock`
 
 - **`Markdown`** - the sanctioned multi-node exception (see _Cross-cutting
   contracts_): `components={{ code, a, img, table, citation, … }}` override map;
   owns streaming (incremental parse, fence repair, prefix hardening).
   `renderCodeBlock` deleted - it's `components.code` (ledger).
-- **`RichCodeBlock`** - default `components.code`; alias over `ui` `CodeBlock`
-  (whose `copyIcon`/`collapseIcon` props fall to the icon-slot ban - ledger).
+- **`CodeBlock`** - the shared maintained default `components.code` renderer.
 
 ### `AppShell` (reference - lives in `veryfront/ui`)
 
