@@ -924,13 +924,28 @@ it("tool search ranks a rare description term above a common name term", () => {
 });
 
 it("tool search resolves a canonical integration tool id to its namespace", () => {
-  const result = searchToolExposure({
-    query: "jira__list_projects",
-    authorized: integrationDiscoveryCatalog(),
-    state: createToolExposureState(),
-  });
-
-  assertEquals(result.matches.map((match) => match.name), ["get_integration"]);
+  // Every one of these word-splits onto a platform tool that would otherwise win:
+  // `list_projects`, `list_...`, and the `search_*` family all share the generic
+  // half of the id. Resolving the namespace is what keeps the wrong tool out.
+  for (
+    const query of [
+      "jira__list_projects",
+      "jira__list_comments",
+      "jira__list_sites",
+      "jira__search_users",
+      "github__list_repos",
+    ]
+  ) {
+    assertEquals(
+      searchToolExposure({
+        query,
+        authorized: integrationDiscoveryCatalog(),
+        state: createToolExposureState(),
+      }).matches.map((match) => match.name),
+      ["get_integration"],
+      `canonical id ${query} must resolve to its namespace`,
+    );
+  }
 });
 
 it("tool search prefers an authorized integration tool over its namespace catalog entry", () => {

@@ -7,8 +7,25 @@ export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
 const DEFAULT_BOOTSTRAP_TOOL_NAMES = new Set(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
-/** Field weights indexed by match rank: exact name, name, description, parameter description. */
-const TOOL_SEARCH_FIELD_WEIGHTS = [4, 3, 2, 1] as const;
+/** Which field a query term matched on, strongest evidence first. */
+type ToolSearchMatchField = "exactName" | "name" | "description" | "parameterDescription";
+
+/** Ordering for a whole-query match: lower wins. */
+const TOOL_SEARCH_FIELD_PRECEDENCE: Record<ToolSearchMatchField, number> = {
+  exactName: 0,
+  name: 1,
+  description: 2,
+  parameterDescription: 3,
+};
+
+/** Contribution to a per-term score: higher wins. Keyed by the same union as the
+ * precedence above so the two orderings cannot drift apart silently. */
+const TOOL_SEARCH_FIELD_WEIGHTS: Record<ToolSearchMatchField, number> = {
+  exactName: 4,
+  name: 3,
+  description: 2,
+  parameterDescription: 1,
+};
 /**
  * A term matching more than half the catalog carries no information about which
  * tool the caller meant. `log(2)` is exactly the inverse-document-frequency of a
@@ -80,6 +97,9 @@ export type ToolSearchResult = {
 };
 
 type SearchableTool = ToolSearchMatch & {
+  /** Normalized once at snapshot time: matching rescans every candidate per term. */
+  normalizedName: string;
+  normalizedDescription: string;
   parameterDescriptions: string[];
 };
 
@@ -268,6 +288,8 @@ function snapshotSearchableTool(
       name: name.value,
       description: description.value,
       status,
+      normalizedName: normalizeSearchText(name.value),
+      normalizedDescription: normalizeSearchText(description.value),
       parameterDescriptions: parameters
         ? snapshotSchemaDescriptions(parameters.value, budget) ?? []
         : [],
@@ -277,15 +299,16 @@ function snapshotSearchableTool(
   }
 }
 
-function getIndexedMatchRank(
+function getMatchedField(
   query: string,
   tool: SearchableTool,
-): 0 | 1 | 2 | 3 | null {
-  const name = normalizeSearchText(tool.name);
-  if (name === query) return 0;
-  if (name.includes(query)) return 1;
-  if (normalizeSearchText(tool.description).includes(query)) return 2;
-  return tool.parameterDescriptions.some((description) => description.includes(query)) ? 3 : null;
+): ToolSearchMatchField | null {
+  if (tool.normalizedName === query) return "exactName";
+  if (tool.normalizedName.includes(query)) return "name";
+  if (tool.normalizedDescription.includes(query)) return "description";
+  return tool.parameterDescriptions.some((description) => description.includes(query))
+    ? "parameterDescription"
+    : null;
 }
 
 function collectSearchCandidates(input: {
@@ -313,15 +336,18 @@ function rankWholeQueryMatches(
   query: string,
   candidates: readonly SearchableTool[],
 ): ToolSearchMatch[] {
-  const ranked: { rank: number; match: ToolSearchMatch }[] = [];
+  const ranked: { precedence: number; match: ToolSearchMatch }[] = [];
   for (const candidate of candidates) {
-    const rank = getIndexedMatchRank(query, candidate);
-    if (rank === null) continue;
-    ranked.push({ rank, match: toSearchMatch(candidate) });
+    const field = getMatchedField(query, candidate);
+    if (field === null) continue;
+    ranked.push({
+      precedence: TOOL_SEARCH_FIELD_PRECEDENCE[field],
+      match: toSearchMatch(candidate),
+    });
   }
   return ranked
     .sort((left, right) =>
-      left.rank - right.rank || compareToolSearchMatches(left.match, right.match)
+      left.precedence - right.precedence || compareToolSearchMatches(left.match, right.match)
     )
     .map(({ match }) => match);
 }
@@ -332,7 +358,7 @@ function rankWholeQueryMatches(
  * Two properties matter, and the previous pure-OR fallback had neither. First,
  * a term is weighted by how few candidates it matches, so a rare term such as an
  * integration namespace outweighs a common one such as `list`. Second, a
- * candidate must match at least one *selective* term to be returned at all —
+ * candidate must match at least one *selective* term to be returned at all;
  * otherwise a query containing one common word returns whichever tools happen to
  * sort first, and reports it as a hit.
  */
@@ -346,7 +372,7 @@ function scoreToolExposureTerms(
   const weightedTerms = terms.map((term) => {
     let documentFrequency = 0;
     for (const candidate of candidates) {
-      if (getIndexedMatchRank(term, candidate) !== null) documentFrequency += 1;
+      if (getMatchedField(term, candidate) !== null) documentFrequency += 1;
     }
     return {
       term,
@@ -361,9 +387,9 @@ function scoreToolExposureTerms(
     let score = 0;
     let matchedSelectiveTerm = false;
     for (const { term, inverseDocumentFrequency } of weightedTerms) {
-      const rank = getIndexedMatchRank(term, candidate);
-      if (rank === null) continue;
-      score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[rank];
+      const field = getMatchedField(term, candidate);
+      if (field === null) continue;
+      score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[field];
       if (inverseDocumentFrequency >= TOOL_SEARCH_MIN_SELECTIVE_IDF) matchedSelectiveTerm = true;
     }
     if (!matchedSelectiveTerm) continue;
