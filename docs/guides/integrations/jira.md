@@ -34,7 +34,7 @@ managed OAuth connection.
 4. Open **Distribution** and enable sharing. An OAuth 2.0 (3LO) app is private
    when created, so only the account that owns it can authorize. Leave sharing
    off and every other user reaches Atlassian, picks their site, and gets
-   Atlassian's own "Something went wrong" page — your deployment never sees the
+   Atlassian's own "Something went wrong" page. Your deployment never sees the
    callback, so nothing surfaces in your logs. Test with an account outside the
    app owner's Atlassian organization; the owner's account succeeds either way
    and proves nothing.
