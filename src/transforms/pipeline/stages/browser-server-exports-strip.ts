@@ -3001,6 +3001,26 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       : leftAbrupt ?? rightAbrupt;
     return mixedContinueCompletion([...leftTargets, ...rightTargets], abrupt);
   };
+  const completionHasNormalAlternative = (completion: Completion): boolean =>
+    completion === "normal" || completionAbruptAlternative(completion) === "normal";
+  const withoutNormalAlternative = (completion: Completion): Completion | null => {
+    if (completion === "normal") return null;
+    if (completionAbruptAlternative(completion) !== "normal") return completion;
+    return continueTargetsCompletion(completionContinueTargets(completion));
+  };
+  const mergeCompletionAlternatives = (
+    left: Completion | null,
+    right: Completion,
+  ): Completion => {
+    if (!left) return right;
+    if (left === right) return left;
+    const continueMerge = mergeContinueCompletions(left, right);
+    if (continueMerge) return continueMerge;
+    if (completionHasNormalAlternative(left) || completionHasNormalAlternative(right)) {
+      return "normal";
+    }
+    return "unknown";
+  };
 
   function deferStatementListTail(
     statements: unknown[],
@@ -3177,7 +3197,12 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       ): Completion => {
         if (!remaining) return "unknown";
         const abrupt = completionAbruptAlternative(remaining);
-        if (abrupt === "break") return "normal";
+        if (abrupt === "break") {
+          return mixedContinueCompletion(
+            completionContinueTargets(remaining),
+            "normal",
+          ) ?? "normal";
+        }
         if (abrupt === "normal") {
           return continueTargetsCompletion(completionContinueTargets(remaining)) ?? "unknown";
         }
@@ -3280,7 +3305,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         if (!test) return "unknown";
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known) {
-          if (!staticValueIsTruthy(value.value)) return "normal";
+          if (!staticValueIsTruthy(value.value)) {
+            return mergeCompletionAlternatives(continueFlow.remaining, "normal");
+          }
           return completeAlwaysContinuingLoop(continueFlow.remaining);
         }
         if (!isInertExpression(test, noNameHelpers, initializedNames)) {
@@ -3288,7 +3315,12 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         if (continueFlow.remaining) {
           const abrupt = completionAbruptAlternative(continueFlow.remaining);
-          if (abrupt === "break" || abrupt === "normal") return "normal";
+          if (abrupt === "break" || abrupt === "normal") {
+            return mixedContinueCompletion(
+              completionContinueTargets(continueFlow.remaining),
+              "normal",
+            ) ?? "normal";
+          }
           return continueFlow.remaining;
         }
         return "unknown";
@@ -3412,13 +3444,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           const normalized = completion === "break" ? "normal" : completion;
           if (possibleCompletedEntry === null) {
             possibleCompletedEntry = normalized;
-          } else if (possibleCompletedEntry === "normal" || normalized === "normal") {
-            possibleCompletedEntry = "normal";
           } else if (possibleCompletedEntry !== normalized) {
-            possibleCompletedEntry = mergeContinueCompletions(
+            possibleCompletedEntry = mergeCompletionAlternatives(
               possibleCompletedEntry,
               normalized,
-            ) ?? "unknown";
+            );
           }
         };
         for (let index = 0; index < cases.length; index++) {
@@ -3677,10 +3707,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     let completion: Completion = "normal";
     for (const statement of statements) {
       if (!isNode(statement)) continue;
-      if (completion !== "normal") {
-        deferred.add(statement);
-      } else {
+      if (completion === "normal") {
         completion = statementCompletion(statement);
+      } else if (completionHasNormalAlternative(completion)) {
+        const pending = withoutNormalAlternative(completion);
+        completion = mergeCompletionAlternatives(
+          pending,
+          statementCompletion(statement),
+        );
+      } else {
+        deferred.add(statement);
       }
     }
     return completion;
