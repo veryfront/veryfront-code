@@ -28,6 +28,38 @@ describe("browser-server-exports-strip", () => {
     await stopEsbuild();
   });
 
+  /**
+   * Both walkers' answers restricted to `names`, so a fixture asserts which
+   * module-level bindings each one attributes to runtime code without
+   * listing every local it also sees.
+   */
+  async function referencesAmong(
+    code: string,
+    names: string[],
+    filePath = "page.tsx",
+  ): Promise<{ referenced: string[]; free: string[] }> {
+    const parser = tryResolve<CodeParser>("CodeParser");
+    if (!parser) throw new Error("no CodeParser extension is registered");
+    const ast = await parser.parse({ code, filePath });
+    const { referenced, free } = moduleReferenceWalkers(ast);
+    const pick = (found: Set<string>) => names.filter((name) => found.has(name));
+    return { referenced: pick(referenced), free: pick(free) };
+  }
+
+  /**
+   * The defect this classification fixes is the two walkers disagreeing, so
+   * every fixture asserts the same expectation against both.
+   */
+  async function assertWalkers(
+    code: string,
+    names: string[],
+    expected: string[],
+  ): Promise<void> {
+    const { referenced, free } = await referencesAmong(code, names);
+    assertEquals(referenced, expected, "referencedIdentifiers");
+    assertEquals(free, expected, "freeReferencedIdentifiers");
+  }
+
   describe("emptying server-only hooks", () => {
     it("empties an exported async function declaration body", async () => {
       const code = [
@@ -1531,45 +1563,298 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "/*! package license */");
     });
 
+    // The JSX axis. Post-compile this pass only ever met lowered factory calls,
+    // so an intrinsic tag, an attribute name and a member property all reached
+    // the walkers as plain strings. Pre-compile they arrive as JSXIdentifiers
+    // and were counted as runtime reads, in both directions: an import that
+    // shares a tag name survived into the browser artifact, and an unrelated
+    // declaration that shares one was deleted. Asserted through `runPipeline`,
+    // because what the browser receives is the artifact, not the stage output.
+    it("does not keep a hook-only import that shares an intrinsic tag name", async () => {
+      const source = [
+        `import { table } from "./lib/server-only-lib.ts";`,
+        `export async function getServerData() { return { props: { rows: table() } }; }`,
+        `export default function Page() { return <table><tr><td>x</td></tr></table>; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-intrinsic-collision",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
+      assertStringIncludes(result.code, `"table"`);
+    });
+
+    it("does not keep a hook-only import that shares a jsx attribute name", async () => {
+      const source = [
+        `import { placeholder, title, href } from "./lib/server-only-lib.ts";`,
+        `export async function getServerData() {`,
+        `  return { props: { p: placeholder(title(href())) } };`,
+        `}`,
+        `export default function Page() {`,
+        `  return <a placeholder="p" title="t" href="/h">x</a>;`,
+        `}`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-attribute-collision",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
+      assertStringIncludes(result.code, "placeholder");
+    });
+
+    it("does not keep a hook-only import that shares a member element property", async () => {
+      const source = [
+        `import { Item } from "./lib/server-only-lib.ts";`,
+        `import { UI } from "./lib/ui.ts";`,
+        `export async function getServerData() { return { props: { p: Item() } }; }`,
+        `export default function Page() { return <UI.Item>x</UI.Item>; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-member-collision",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
+      // The leftmost object is a real read, so its import has to stay.
+      assertStringIncludes(result.code, "lib/ui");
+    });
+
+    it("keeps an unrelated declaration that shares a tag name used in the hook", async () => {
+      // The deletion direction. `<section />` inside the hook is string text,
+      // so `section` never enters the hook's dependency closure and the
+      // module-scope declaration keeps its browser side effect, along with the
+      // import it is the last user of.
+      const source = [
+        `import { boot } from "./lib/analytics.ts";`,
+        `const section = boot();`,
+        `export async function getServerData() { return { props: { s: <section /> } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-unrelated-declaration",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/analytics");
+      assertStringIncludes(result.code, "boot");
+    });
+
+    it("keeps an unrelated declaration that shares an attribute name", async () => {
+      const source = [
+        `import { boot } from "./lib/analytics.ts";`,
+        `const placeholder = boot();`,
+        `export async function getServerData() {`,
+        `  return { props: { s: <input placeholder="x" /> } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-unrelated-attribute-declaration",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/analytics");
+      assertStringIncludes(result.code, "boot");
+    });
+
+    it("keeps the component import a capitalised element name reads", async () => {
+      const source = [
+        `import { Card } from "./lib/card.ts";`,
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return <Card />; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-component-import",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/card");
+      assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
+    });
+
+    it("keeps the imports a member object and an expression container read", async () => {
+      const source = [
+        `import { UI } from "./lib/ui.ts";`,
+        `import { cls, items } from "./lib/client.ts";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() {`,
+        `  return <UI.Item className={cls}>{items.map((i) => i)}</UI.Item>;`,
+        `}`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-jsx-positive-reads",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/ui");
+      assertStringIncludes(result.code, "lib/client");
+    });
+
+    // The classic JSX pragmas name a factory the compile stage calls. That
+    // stage now runs after this one, so nothing in the module reads the name
+    // yet and the import that provides it looked dead.
+    it("keeps the factory import a classic `@jsx` pragma names", async () => {
+      const source = [
+        `/** @jsxRuntime classic */`,
+        `/** @jsx h */`,
+        `import { h } from "veryfront";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return <div />; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-classic-jsx-pragma",
+        ssr: false,
+      });
+
+      // The artifact is minified, so bind the emitted call to the surviving
+      // import rather than to a spelling: `h` is renamed, and the point is that
+      // whatever the call names is imported and not a free variable.
+      const call = /(?<local>[A-Za-z_$][\w$]*)\("div",\s*null\)/.exec(result.code);
+      assertEquals(call !== null, true, `no classic factory call in:\n${result.code}`);
+      const local = call?.groups?.local ?? "";
+      assertEquals(
+        new RegExp(`\\bh as ${local}\\b`).test(result.code),
+        true,
+        `the factory call is not bound by an import in:\n${result.code}`,
+      );
+    });
+
+    it("keeps the fragment import a classic `@jsxFrag` pragma names", async () => {
+      const source = [
+        `/** @jsxRuntime classic */`,
+        `/** @jsx h */`,
+        `/** @jsxFrag Frag */`,
+        `import { h, Frag } from "veryfront";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return <><div /></>; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-classic-jsxfrag-pragma",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "_veryfront/index.client.js");
+      assertEquals(occurrences(result.code, "Frag") > 0, true, result.code);
+    });
+
+    it("keeps the default classic factory when the module names none", async () => {
+      // `@jsxRuntime classic` alone makes esbuild emit `React.createElement`,
+      // so the classic runtime pins `React` whatever the module named.
+      // The hook owns the only other read of `React`, so without the default
+      // pin the import is deleted and the emitted call has no binding.
+      const source = [
+        `/** @jsxRuntime classic */`,
+        `import { React } from "./lib/react-shim.ts";`,
+        `export async function getServerData() { return { props: { v: React.version } }; }`,
+        `export default function Page() { return <div />; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-classic-default-factory",
+        ssr: false,
+      });
+
+      assertStringIncludes(result.code, "lib/react-shim");
+      const call = /(?<local>[A-Za-z_$][\w$]*)\.createElement\("div",\s*null\)/.exec(result.code);
+      assertEquals(call !== null, true, `no default classic call in:\n${result.code}`);
+      assertEquals(
+        new RegExp(`\\bReact as ${call?.groups?.local ?? ""}\\b`).test(result.code),
+        true,
+        `the default factory is not bound by an import in:\n${result.code}`,
+      );
+    });
+
+    it("does not pin a `@jsx` pragma without the classic runtime", async () => {
+      // esbuild ignores `@jsx` under the automatic runtime, so the name it
+      // holds is not called by anything and must not keep a hook-only import.
+      const source = [
+        `/** @jsx table */`,
+        `import { table } from "./lib/server-only-lib.ts";`,
+        `export async function getServerData() { return { props: { t: table() } }; }`,
+        `export default function Page() { return <div />; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.jsx", "/project", {
+        projectId: "pre-compile-automatic-runtime-pragma",
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
+    });
+
     it("does not run for the ssr target", () => {
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "ssr")), false);
       assertEquals(browserServerExportsStripPlugin.condition?.(ctx("", "browser")), true);
     });
   });
 
+  // Running before compile, this pass sees JSX that esbuild used to lower into
+  // factory calls before either walker ever ran. A `JSXIdentifier` is only
+  // sometimes a binding read, and the walkers counted every one of them.
+  describe("JSX reference classification", () => {
+    const page = (body: string) =>
+      [
+        `import { table, placeholder, Item, UI, Card, cls } from "./mod.js";`,
+        `export default function Page() { return ${body}; }`,
+      ].join("\n");
+
+    const NAMES = ["table", "placeholder", "Item", "UI", "Card", "cls"];
+
+    it("does not read an intrinsic element name", async () => {
+      // `<table>` is the string "table" to the factory, never the import.
+      await assertWalkers(page(`<table>x</table>`), NAMES, []);
+    });
+
+    it("does not read a custom element name", async () => {
+      // A dash cannot appear in an identifier, so `<x-table />` is string text.
+      await assertWalkers(page(`<x-table />`), NAMES, []);
+    });
+
+    it("does not read an attribute name", async () => {
+      await assertWalkers(page(`<Card placeholder="p" />`), NAMES, ["Card"]);
+    });
+
+    it("does not read either half of a namespaced name", async () => {
+      // esbuild emits `("svg:circle", { "xlink:href": "x" })`: string text on
+      // both sides of the colon, for an element name and an attribute alike.
+      await assertWalkers(page(`<svg:table xlink:placeholder="x" />`), NAMES, []);
+    });
+
+    it("reads only the leftmost object of a member element name", async () => {
+      await assertWalkers(page(`<UI.Item>x</UI.Item>`), NAMES, ["UI"]);
+    });
+
+    it("reads only the leftmost object of a nested member element name", async () => {
+      await assertWalkers(page(`<UI.Item.Card />`), NAMES, ["UI"]);
+    });
+
+    it("reads a capitalised element name", async () => {
+      await assertWalkers(page(`<Card />`), NAMES, ["Card"]);
+    });
+
+    it("reads an expression container and a spread", async () => {
+      await assertWalkers(
+        page(`<Card {...table} className={cls}>{placeholder}</Card>`),
+        NAMES,
+        ["table", "placeholder", "Card", "cls"],
+      );
+    });
+  });
+
   describe("TypeScript reference classification", () => {
-    /**
-     * Both walkers' answers restricted to `names`, so a fixture asserts which
-     * module-level bindings each one attributes to runtime code without
-     * listing every local it also sees.
-     */
-    async function referencesAmong(
-      code: string,
-      names: string[],
-      filePath = "page.tsx",
-    ): Promise<{ referenced: string[]; free: string[] }> {
-      const parser = tryResolve<CodeParser>("CodeParser");
-      if (!parser) throw new Error("no CodeParser extension is registered");
-      const ast = await parser.parse({ code, filePath });
-      const { referenced, free } = moduleReferenceWalkers(ast);
-      const pick = (found: Set<string>) => names.filter((name) => found.has(name));
-      return { referenced: pick(referenced), free: pick(free) };
-    }
-
-    /**
-     * The defect this classification fixes is the two walkers disagreeing, so
-     * every fixture asserts the same expectation against both.
-     */
-    async function assertWalkers(
-      code: string,
-      names: string[],
-      expected: string[],
-    ): Promise<void> {
-      const { referenced, free } = await referencesAmong(code, names);
-      assertEquals(referenced, expected, "referencedIdentifiers");
-      assertEquals(free, expected, "freeReferencedIdentifiers");
-    }
-
     describe("erased type positions do not reference a binding", () => {
       it("ignores `typeof` in a parameter type annotation", async () => {
         await assertWalkers(

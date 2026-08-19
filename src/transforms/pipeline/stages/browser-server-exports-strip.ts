@@ -388,6 +388,26 @@ function emptyServerOnlyHooks(
 }
 
 /**
+ * Whether a JSX element name is intrinsic tag text rather than a binding read.
+ *
+ * `<table>`, `<section>` and `<my-widget>` become string arguments to the JSX
+ * factory, so they can never resolve to an import or a module-scope
+ * declaration. Every JSX compiler agrees on the rule: a name that starts with a
+ * lowercase letter, or that is not spelled like an identifier, is a string.
+ * `<Card />` is a real reference and must keep its import alive.
+ *
+ * This pass only met lowered factory calls while it ran after compile, so both
+ * reference walkers treated every `JSXIdentifier` as a runtime read. Running
+ * before compile they see the JSX itself, and an intrinsic name that collides
+ * with an import pins a server-only module into the browser artifact.
+ */
+function isIntrinsicJsxName(name: string | null): boolean {
+  if (!name) return false;
+  if (/^[a-z]/.test(name)) return true;
+  return !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
+}
+
+/**
  * Identifiers the module reads, ignoring import statements and the positions
  * where an identifier is a fixed name rather than a reference (`a.hashOf`,
  * `{ hashOf: 1 }`). This flat walk is used for module-declaration liveness;
@@ -418,6 +438,31 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
 
     if (node.computed === true) return;
     if (isNode(property)) fixedNames.add(property);
+  };
+
+  /**
+   * JSX identifier positions that are never references. `markFixedName` above
+   * only knows the JavaScript and TypeScript shapes, so without this a JSX
+   * attribute name or a member property counts as a read.
+   */
+  const markJsxFixedNames = (node: Node): void => {
+    // `<svg:circle xlink:href="x" />` compiles to `("svg:circle", {
+    // "xlink:href": "x" })`: both halves of a namespaced name are string text,
+    // whether it names an element or an attribute.
+    if (node.type === "JSXNamespacedName") {
+      if (isNode(node.namespace)) fixedNames.add(node.namespace);
+      if (isNode(node.name)) fixedNames.add(node.name);
+      return;
+    }
+    // `placeholder=`, `title=`, `href=`: an attribute name is a property key.
+    if (node.type === "JSXAttribute") {
+      if (isNode(node.name) && node.name.type === "JSXIdentifier") fixedNames.add(node.name);
+      return;
+    }
+    // `<UI.Item />`: only the leftmost object (`UI`) is read.
+    if (node.type === "JSXMemberExpression") {
+      if (isNode(node.property)) fixedNames.add(node.property);
+    }
   };
 
   const markEnumLocalReferences = (node: Node): void => {
@@ -456,8 +501,10 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
 
       markEnumLocalReferences(node);
       markFixedName(node);
+      markJsxFixedNames(node);
 
       if (node.type === "Identifier" || node.type === "JSXIdentifier") {
+        if (node.type === "JSXIdentifier" && isIntrinsicJsxName(nodeName(node))) return true;
         if (fixedNames.has(node)) return true;
         if (excluded?.has(node)) return true;
         const name = nodeName(node);
@@ -781,8 +828,29 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     if (isErasedTypeNode(node)) return;
 
     if (node.type === "Identifier" || node.type === "JSXIdentifier") {
+      // Same JSX classification `referencedIdentifiers` uses: an intrinsic tag
+      // name is string text, not a binding read.
+      if (node.type === "JSXIdentifier" && isIntrinsicJsxName(nodeName(node))) return;
       const name = nodeName(node);
       if (name && !isLexicallyBound(name, scopes)) free.add(name);
+      return;
+    }
+
+    // The remaining JSX positions that hold a name rather than a reference.
+    // A namespaced name is string text on both halves, an attribute name is a
+    // property key, and only the leftmost object of `<UI.Item />` is read.
+    // Everything else in a JSX tree reaches the generic walk below: an
+    // expression container, a spread attribute and the children of an element
+    // all hold ordinary expressions.
+    if (node.type === "JSXNamespacedName") return;
+
+    if (node.type === "JSXAttribute") {
+      if (isNode(node.value)) visit(node.value, scopes);
+      return;
+    }
+
+    if (node.type === "JSXMemberExpression") {
+      if (isNode(node.object)) visit(node.object, scopes);
       return;
     }
 
@@ -1144,6 +1212,72 @@ function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
 }
 
 /**
+ * Factory bindings the classic JSX pragmas make the compiled module call.
+ *
+ * The pipeline compiles with `jsx: "automatic"`, but a module can opt itself
+ * out with `@jsxRuntime classic`, and esbuild then emits calls to the factory
+ * `@jsx` names (`h("div", null)`) and the fragment `@jsxFrag` names. That
+ * lowering happens in the compile stage, which now runs AFTER this one, so at
+ * this point nothing in the module reads those names and the import that
+ * provides them looks dead: `dropUnusedImportBindings` deletes it and the page
+ * dies on `h is not defined`.
+ *
+ * Pinning the pragma targets is preferred over the blunter alternative of
+ * skipping import pruning for any classic-pragma module. Skipping would leave
+ * every import of such a module untouched, a genuinely server-only one
+ * included, which reopens the leak this whole pass exists to close. Pinning
+ * keeps exactly the bindings the emitted factory calls reference.
+ *
+ * Two boundaries, both checked against esbuild's own behaviour:
+ *
+ * - The pragmas only take effect under the classic runtime. `@jsx h` on its own
+ *   is ignored and the automatic runtime is used, so pinning `h` there would
+ *   keep an import nothing calls, and a `@jsx` word inside an unrelated comment
+ *   could pin a server-only binding.
+ * - `@jsxRuntime classic` with no `@jsx` falls back to esbuild's default
+ *   `React.createElement` / `React.Fragment`, so the classic runtime always
+ *   pins at least `React`. That is the fail-closed half: a classic module never
+ *   loses its factory import, whatever it did or did not name.
+ *
+ * `@jsxImportSource` names a module for the automatic runtime, and esbuild
+ * writes that import itself, so it pins no binding here.
+ */
+const JSX_PRAGMA_RUNTIME = /@jsxRuntime\s+(\S+)/;
+const JSX_PRAGMA_FACTORY = /@jsx\s+(\S+)/;
+const JSX_PRAGMA_FRAGMENT = /@jsxFrag\s+(\S+)/;
+/** esbuild's classic factory when the module names none. */
+const DEFAULT_CLASSIC_FACTORY_ROOT = "React";
+
+/** The binding a pragma expression reads: `React.createElement` reads `React`. */
+function pragmaRootBinding(expression: string | undefined): string | null {
+  const root = expression?.split(/[.([]/)[0]?.trim();
+  return root && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(root) ? root : null;
+}
+
+function jsxPragmaBindings(ast: ASTNode): Set<string> {
+  const pinned = new Set<string>();
+  const comments = (ast as { comments?: unknown }).comments;
+  if (!Array.isArray(comments)) return pinned;
+
+  const texts: string[] = [];
+  for (const comment of comments) {
+    const text = isNode(comment) ? comment.value : undefined;
+    if (typeof text === "string" && text.includes("@jsx")) texts.push(text);
+  }
+  if (!texts.some((text) => JSX_PRAGMA_RUNTIME.exec(text)?.[1] === "classic")) return pinned;
+
+  for (const text of texts) {
+    for (const pattern of [JSX_PRAGMA_FACTORY, JSX_PRAGMA_FRAGMENT]) {
+      const root = pragmaRootBinding(pattern.exec(text)?.[1]);
+      if (root) pinned.add(root);
+    }
+  }
+  pinned.add(DEFAULT_CLASSIC_FACTORY_ROOT);
+
+  return pinned;
+}
+
+/**
  * Drop the top-level declarations the emptied server-only hooks closed over.
  *
  * Scope is the *dependency closure of the stripped hooks*, not "everything
@@ -1157,7 +1291,11 @@ function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
  * fixpoint: removing one binding can leave a helper it was the last user of
  * newly dead *within the closure*.
  */
-function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): Node[] {
+function dropUnusedModuleScopeBindings(
+  body: Node[],
+  hookClosure: Set<string>,
+  pinned: Set<string>,
+): Node[] {
   let current = body;
 
   for (;;) {
@@ -1181,7 +1319,7 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
     const removedDecls: ModuleScopeDecl[] = [];
     for (const decl of decls) {
       const inClosure = decl.names.some((name) => hookClosure.has(name));
-      const unused = decl.names.every((name) => !referenced.has(name));
+      const unused = decl.names.every((name) => !referenced.has(name) && !pinned.has(name));
       if (!inClosure || !unused) continue;
 
       removedDecls.push(decl);
@@ -1263,7 +1401,11 @@ function importedBindings(statement: Node): string[] {
  * of those bindings exactly as authored, and a bare `import "./x.ts"` written
  * by hand is never touched.
  */
-function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[] {
+function dropUnusedImportBindings(
+  body: Node[],
+  hookClosure: Set<string>,
+  pinned: Set<string>,
+): Node[] {
   // Import liveness must be scope-aware. A local enum member, namespace,
   // parameter property, or ordinary nested binding can share a spelling with
   // an import without reading that imported binding.
@@ -1278,7 +1420,7 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
     if (bindings.length === 0) return true;
     // A binding still read by surviving code keeps the statement, and keeps it
     // with every specifier it was authored with.
-    if (bindings.some((binding) => referenced.has(binding))) return true;
+    if (bindings.some((binding) => referenced.has(binding) || pinned.has(binding))) return true;
 
     const source = isNode(statement.source) ? statement.source.value : undefined;
     const isKnownDroppableSource = typeof source === "string" &&
@@ -1457,8 +1599,18 @@ export async function stripServerOnlyExports(
   // `src/build/bundler/code-splitter/esbuild-plugin.ts`, meets the same
   // requirement a different way: it strips inside an esbuild `onLoad` hook, so
   // esbuild bundles and tree-shakes the stripped module afterwards.
-  const pruned = retainLeadingComments(body, dropUnusedModuleScopeBindings(body, hookClosure));
-  setBody(ast, retainLeadingComments(pruned, dropUnusedImportBindings(pruned, hookClosure)));
+  // Bindings the compile stage will call on this module's behalf, which no
+  // statement reads yet. See `jsxPragmaBindings`.
+  const pinned = jsxPragmaBindings(ast);
+
+  const pruned = retainLeadingComments(
+    body,
+    dropUnusedModuleScopeBindings(body, hookClosure, pinned),
+  );
+  setBody(
+    ast,
+    retainLeadingComments(pruned, dropUnusedImportBindings(pruned, hookClosure, pinned)),
+  );
 
   const generated = await parser.generate(ast);
   return dropSourceMapSuffix(generated.code);
