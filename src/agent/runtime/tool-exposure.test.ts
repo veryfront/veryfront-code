@@ -961,6 +961,35 @@ it("tool search prefers an authorized integration tool over its namespace catalo
   assertEquals(result.matches[0]?.name, "jira__list_projects");
 });
 
+it("tool search does not let a same-named local tool satisfy a canonical id", () => {
+  // `jira__list_projects` and the local id `jira_list_projects` normalize to the
+  // same text, and the registry permits any local id without `__`. A phrase match
+  // must not hand back the local tool for a canonical query.
+  const result = searchToolExposure({
+    query: "jira__list_projects",
+    authorized: [
+      ...integrationDiscoveryCatalog(),
+      definition("jira_list_projects", "A project-local tool that is not the Jira integration"),
+    ],
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["get_integration"]);
+});
+
+it("tool search accepts canonical ids with the authorization layer's segment grammar", () => {
+  // The authoritative grammar allows consecutive and trailing separators; search
+  // must not be stricter, or it disagrees with authorization about what an id is.
+  assertEquals(
+    searchToolExposure({
+      query: "github__list-issues-",
+      authorized: integrationDiscoveryCatalog(),
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["get_integration"],
+  );
+});
+
 it("tool search reports a miss when no candidate matches a selective term", () => {
   assertEquals(
     searchToolExposure({

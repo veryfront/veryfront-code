@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "#veryfront/tool";
+import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { RuntimeToolLoadingMode } from "./runtime-tool-config.ts";
 import { isOwnDataPropertyDescriptor } from "./data-property-descriptor.ts";
 
@@ -34,8 +35,6 @@ const TOOL_SEARCH_FIELD_WEIGHTS: Record<ToolSearchMatchField, number> = {
  * be the sole reason a candidate is returned.
  */
 const TOOL_SEARCH_MIN_SELECTIVE_IDF = Math.LN2;
-/** Canonical integration tool ids are `<namespace>__<tool_id>` over this segment shape. */
-const CANONICAL_INTEGRATION_SEGMENT = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 const TOOL_SEARCH_QUERY_MAX_BYTES = 256;
 const TOOL_SEARCH_CANDIDATE_LIMIT = 4_096;
 const TOOL_SEARCH_NAME_MAX_BYTES = 256;
@@ -117,21 +116,18 @@ function normalizeSearchText(value: string): string {
  * Recognize `<namespace>__<tool_id>` on the raw query, before normalization
  * rewrites `_` to a space and destroys the separator.
  *
- * Deliberately a local, narrow reimplementation rather than an import from the
- * integrations policy layer: this is a search heuristic over untrusted model
- * input, not an authorization decision, and the runtime must not take a value
- * dependency on that module.
+ * Defers to the authorization layer's grammar rather than restating it: a query
+ * search accepts but authorization rejects, or the reverse, is a disagreement
+ * about what a canonical id even is.
  */
-function parseCanonicalIntegrationNamespace(query: string): string | null {
-  const trimmed = query.trim().toLowerCase();
-  const separator = trimmed.indexOf("__");
-  if (separator <= 0 || separator !== trimmed.lastIndexOf("__")) return null;
-  const namespace = trimmed.slice(0, separator);
-  const toolId = trimmed.slice(separator + 2);
-  return CANONICAL_INTEGRATION_SEGMENT.test(namespace) &&
-      CANONICAL_INTEGRATION_SEGMENT.test(toolId)
-    ? namespace
-    : null;
+function parseCanonicalIntegrationQuery(
+  query: string,
+): { namespace: string; canonicalName: string } | null {
+  const identity = parseIntegrationToolIdentity(query.trim().toLowerCase());
+  return identity === null ? null : {
+    namespace: identity.integration,
+    canonicalName: `${identity.integration}__${identity.toolId}`,
+  };
 }
 
 function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
@@ -413,16 +409,35 @@ function rankToolExposureMatches(input: {
   if (!query) return [];
   const candidates = collectSearchCandidates(input);
 
-  // The query taken whole is the strongest signal: an exact tool id, including a
-  // canonical `<namespace>__<tool_id>` the run is authorized for, resolves here.
+  // Canonical integration ids are classified before any normalized matching.
+  // Normalization maps `jira__list_projects` and the *local* id `jira_list_projects`
+  // onto the same text, so a phrase pass here would hand back a same-named local
+  // tool instead of the namespace the caller actually asked for. Only the real
+  // canonical name satisfies a canonical query; anything else is namespace discovery.
+  const canonical = parseCanonicalIntegrationQuery(input.query);
+  if (canonical !== null) {
+    const exact = candidates
+      .filter((candidate) => candidate.name.toLowerCase() === canonical.canonicalName)
+      .map(toSearchMatch)
+      .sort(compareToolSearchMatches);
+    if (exact.length > 0) return exact;
+
+    // Namespace discovery accepts two kinds of evidence, and a coincidental name
+    // match is neither: a sibling tool in the same namespace, or a tool that
+    // *documents* the namespace (the catalog readers do). A local
+    // `jira_list_projects` merely contains the word and is not the Jira integration.
+    const namespaceCandidates = candidates.filter((candidate) => {
+      const identity = parseIntegrationToolIdentity(candidate.name.toLowerCase());
+      if (identity !== null) return identity.integration === canonical.namespace;
+      const field = getMatchedField(canonical.namespace, candidate);
+      return field === "description" || field === "parameterDescription";
+    });
+    return rankWholeQueryMatches(canonical.namespace, namespaceCandidates);
+  }
+
+  // The query taken whole is the strongest signal for every non-canonical query.
   const wholeQueryMatches = rankWholeQueryMatches(query, candidates);
   if (wholeQueryMatches.length > 0) return wholeQueryMatches;
-
-  // A canonical integration tool id the run is *not* authorized for must resolve
-  // to its namespace, not be word-split into terms that collide with unrelated
-  // platform tools (`jira__list_projects` must never surface `list_projects`).
-  const namespace = parseCanonicalIntegrationNamespace(input.query);
-  if (namespace !== null) return scoreToolExposureTerms([namespace], candidates);
 
   const terms = [...new Set(query.split(/\s+/).filter(Boolean))];
   return terms.length >= 2 ? scoreToolExposureTerms(terms, candidates) : [];
