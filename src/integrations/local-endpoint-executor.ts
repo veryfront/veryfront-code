@@ -276,6 +276,23 @@ function scalarString(value: unknown): string {
   requestInvalid("Local integration path, query, and header arguments must be scalar values");
 }
 
+/**
+ * Encodes a path argument as a single URL path segment.
+ *
+ * `encodeURIComponent` escapes `/` but leaves `.` alone, so a value of `.` or
+ * `..` survives into the template as a relative segment that `new URL` then
+ * resolves away: `/repos/{owner}/{repo}/issues` with both arguments set to `..`
+ * collapses to `/issues`. The origin never changes, so the admitted-origin check
+ * cannot see it, and the grant would no longer pin the endpoint it named.
+ */
+function pathSegment(value: unknown): string {
+  const encoded = encodeUriComponent(scalarString(value));
+  if (encoded === "" || encoded === "." || encoded === "..") {
+    requestInvalid("Local integration path arguments must name a single path segment");
+  }
+  return encoded;
+}
+
 function appendQueryValue(
   searchParams: URLSearchParams,
   name: string,
@@ -388,11 +405,7 @@ function buildRequest(
     const resolved = fieldValue(args, name, field);
     if (!resolved.present) continue;
     if (field.in === "path") {
-      endpointUrl = replaceAll(
-        endpointUrl,
-        `{${name}}`,
-        encodeUriComponent(scalarString(resolved.value)),
-      );
+      endpointUrl = replaceAll(endpointUrl, `{${name}}`, pathSegment(resolved.value));
     } else if (field.in === "header") {
       setHeader(headers, field.headerName ?? name, scalarString(resolved.value));
     }

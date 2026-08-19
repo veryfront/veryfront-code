@@ -450,6 +450,94 @@ describe("local integration endpoint executor", () => {
     }
   });
 
+  it("rejects a path argument that is a dot segment", async () => {
+    const attempts: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      attempts.push(request.url.href);
+      return Promise.resolve(Response.json({}));
+    };
+
+    for (const traversal of ["..", ".", ""]) {
+      const error = await assertRejects(
+        () =>
+          executeLocalIntegrationEndpoint({
+            endpoint: endpoint({
+              method: "GET",
+              url: "https://api.example.test/repos/{owner}/{repo}/issues",
+              params: {
+                owner: { type: "string", in: "path", description: "Owner", required: true },
+                repo: { type: "string", in: "path", description: "Repo", required: true },
+              },
+            }),
+            args: { owner: traversal, repo: traversal },
+            authHeaders: { Authorization: `Bearer ${SECRET}` },
+            allowedOrigin: "https://api.example.test",
+            transport,
+          }),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-request-invalid");
+      assertEquals(error.message.includes(SECRET), false);
+    }
+
+    assertEquals(attempts, []);
+  });
+
+  it("keeps a granted endpoint path pinned when a path argument only contains dots", async () => {
+    const requests: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      requests.push(request.url.href);
+      return Promise.resolve(Response.json({}));
+    };
+
+    await executeLocalIntegrationEndpoint({
+      endpoint: endpoint({
+        method: "GET",
+        url: "https://api.example.test/repos/{owner}/{repo}/issues",
+        params: {
+          owner: { type: "string", in: "path", description: "Owner", required: true },
+          repo: { type: "string", in: "path", description: "Repo", required: true },
+        },
+      }),
+      args: { owner: "...", repo: "%2e%2e" },
+      authHeaders: {},
+      allowedOrigin: "https://api.example.test",
+      transport,
+    });
+
+    assertEquals(requests, ["https://api.example.test/repos/.../%252e%252e/issues"]);
+  });
+
+  it("rejects an endpoint whose built URL leaves the admitted origin", async () => {
+    const attempts: string[] = [];
+    const transport: LocalIntegrationEndpointTransport = (request) => {
+      attempts.push(request.url.href);
+      return Promise.resolve(Response.json({}));
+    };
+
+    const error = await assertRejects(
+      () =>
+        executeLocalIntegrationEndpoint({
+          endpoint: endpoint({
+            method: "GET",
+            url: "https://api.example.test/items",
+          }),
+          args: {},
+          authHeaders: { Authorization: `Bearer ${SECRET}` },
+          allowedOrigin: "https://other.example.test",
+          transport,
+        }),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(error.message.includes(SECRET), false);
+    assertEquals(attempts, []);
+  });
+
   it("cancels a response rejected by its declared size", async () => {
     const response = new Response("{}", {
       headers: { "content-length": String(4 * 1024 * 1024 + 1) },
