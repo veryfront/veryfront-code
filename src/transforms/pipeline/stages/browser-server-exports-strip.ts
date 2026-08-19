@@ -223,14 +223,13 @@ async function parseStubs(parser: CodeParser): Promise<{ body: Node; init: Node 
   return { body, init };
 }
 
-/** Every binding name a destructuring pattern introduces. */
-function patternBoundNames(pattern: Node): string[] {
-  const names: string[] = [];
+/** Every binding identifier a variable or parameter pattern introduces. */
+function patternBindingIds(pattern: Node): Node[] {
+  const bindings: Node[] = [];
 
   const collect = (node: Node): void => {
     if (node.type === "Identifier") {
-      const name = nodeName(node);
-      if (name) names.push(name);
+      bindings.push(node);
       return;
     }
 
@@ -274,7 +273,12 @@ function patternBoundNames(pattern: Node): string[] {
 
   collect(pattern);
 
-  return names;
+  return bindings;
+}
+
+/** Every binding name a destructuring pattern introduces. */
+function patternBoundNames(pattern: Node): string[] {
+  return patternBindingIds(pattern).map(nodeName).filter((name): name is string => Boolean(name));
 }
 
 /**
@@ -489,8 +493,8 @@ interface ModuleScopeDecl {
  * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
  * whose bindings we could safely drop if nothing references them. Exported
  * declarations are part of the module's contract and are never candidates.
- * Destructuring declarations are skipped — a pattern can carry default-value
- * references, and a partial removal is not worth the risk.
+ * Pattern keys and defaults remain ordinary references; only binding positions
+ * are excluded from liveness analysis.
  */
 function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
   const decls: ModuleScopeDecl[] = [];
@@ -511,13 +515,13 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
       ) {
         if (!isNode(declarator)) continue;
         const id = declarator.id;
-        if (isNode(id) && id.type === "Identifier") {
-          const name = nodeName(id);
-          if (name) variableDecls.push({ statement, declarator, names: [name], bindingIds: [id] });
-        } else {
+        const bindingIds = isNode(id) ? patternBindingIds(id) : [];
+        const names = bindingIds.map(nodeName).filter((name): name is string => Boolean(name));
+        if (names.length === 0 || names.length !== bindingIds.length) {
           variableDecls.length = 0;
           break;
         }
+        variableDecls.push({ statement, declarator, names, bindingIds });
       }
 
       decls.push(...variableDecls);

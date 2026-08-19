@@ -758,12 +758,7 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "TOKEN"), 0); // hook-only tail → dropped
     });
 
-    // Known limitation (pinned): a *destructured* server value is NOT pruned —
-    // `moduleScopeDeclarations` handles only simple identifiers, to avoid
-    // mishandling default-value references inside patterns. Conservative (never
-    // over-prunes) but it means a destructured server value still ships. If this
-    // ever needs closing, extend the declaration collector to safe patterns.
-    it("conservatively keeps a destructured server value (documented limitation)", async () => {
+    it("drops a destructured module-scope server value", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const { a } = getEnv("X");`,
@@ -773,8 +768,75 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // Pinned as-is: the destructured binding and its import survive.
-      assertStringIncludes(result, "getEnv");
+      assertNotIncludes(result, "getEnv");
+      assertEquals(occurrences(result, "a"), 0);
+    });
+
+    it("drops nested, array, and rest bindings used only by the hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { nested: { value }, list: [first, , ...rest] } = getEnv("SERVER_ONLY");`,
+        `export async function getServerData() { return { props: { value, first, rest } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SERVER_ONLY");
+      assertNotIncludes(result, "getEnv");
+      assertEquals(occurrences(result, "value"), 0);
+      assertEquals(occurrences(result, "first"), 0);
+      assertEquals(occurrences(result, "rest"), 0);
+    });
+
+    it("keeps a pattern default visible as a client reference", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const DEFAULT = getEnv("CLIENT_FALLBACK");`,
+        `const { a = DEFAULT } = getEnv("SERVER_ONLY");`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return DEFAULT; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "CLIENT_FALLBACK");
+      assertStringIncludes(result, "DEFAULT");
+      assertNotIncludes(result, "SERVER_ONLY");
+      assertEquals(occurrences(result, "a"), 0);
+    });
+
+    it("keeps a computed pattern key visible as a client reference", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("CLIENT_KEY");`,
+        `const { [KEY]: value } = getEnv("SERVER_ONLY");`,
+        `export async function getServerData() { return { props: { value } }; }`,
+        `export default function Page() { return KEY; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "CLIENT_KEY");
+      assertStringIncludes(result, "KEY");
+      assertNotIncludes(result, "SERVER_ONLY");
+      assertEquals(occurrences(result, "value"), 0);
+    });
+
+    it("removes one destructuring declarator without dropping its client sibling", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { a } = getEnv("SERVER_ONLY"), client = bootClient();`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return client; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SERVER_ONLY");
+      assertNotIncludes(result, "getEnv");
+      assertStringIncludes(result, "client = bootClient()");
+      assertStringIncludes(result, "return client");
     });
 
     it("keeps an import that the client still references", async () => {
