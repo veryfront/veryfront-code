@@ -686,7 +686,7 @@ describe("compiler predicates, measured differentially", () => {
     });
   });
 
-  describe("the shared identifier test against the runtime's own grammar", () => {
+  describe("the shared identifier test against the runtime and the compiler", () => {
     /**
      * Whether the runtime parses `name` as one identifier.
      *
@@ -704,25 +704,54 @@ describe("compiler predicates, measured differentially", () => {
       }
     }
 
-    // `isEcmaScriptIdentifier` claims to implement the ECMAScript identifier
-    // grammar. The runtime evaluating this test implements the same grammar and
-    // will say so, which is a second oracle for the same predicate and needs no
-    // corpus of expectations at all.
-    it("agrees with the runtime over every code point up to U+2FFFF", () => {
-      const disagreements: string[] = [];
+    /**
+     * Every code point where the predicate and the host runtime's own lexer
+     * give different answers, as a start character and inside an identifier.
+     *
+     * `isEcmaScriptIdentifier` reads `\p{ID_Start}` and `\p{ID_Continue}`,
+     * which are the ENGINE's Unicode tables, and the engine's lexer is a
+     * separate table versioned independently of them. On V8 the two agree over
+     * this whole range and this set is empty. On JavaScriptCore it is not: it
+     * names about twenty code points added in recent Unicode versions.
+     */
+    function tableDisagreements(): { label: string; name: string }[] {
+      const found: { label: string; name: string }[] = [];
       for (let cp = 0; cp <= 0x2FFFF; cp++) {
         if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+        const point = `U+${cp.toString(16).toUpperCase()}`;
         const ch = String.fromCodePoint(cp);
         if (isEcmaScriptIdentifier(ch) !== runtimeAcceptsIdentifier(ch)) {
-          disagreements.push(`U+${cp.toString(16).toUpperCase()} as a start`);
+          found.push({ label: `${point} as a start`, name: ch });
         }
         const inside = `A${ch}_`;
         if (isEcmaScriptIdentifier(inside) !== runtimeAcceptsIdentifier(inside)) {
-          disagreements.push(`U+${cp.toString(16).toUpperCase()} as a continuation`);
+          found.push({ label: `${point} as a continuation`, name: inside });
         }
       }
+      return found;
+    }
 
-      assertEquals(disagreements.slice(0, 20), []);
+    // The predicate is asked about names the COMPILER will meet, so the
+    // compiler decides whether a table disagreement can matter. Where esbuild
+    // refuses the name, the module never builds and no artifact can depend on
+    // which side was right; where esbuild accepts it, the two answers reach an
+    // artifact and one of them deletes a live import.
+    //
+    // Asserting the runtimes agree outright is the wrong assertion and it fails
+    // on JavaScriptCore, whose regular-expression tables and lexer are on
+    // different Unicode versions. This suite runs on Deno, Node and Bun.
+    it("never disagrees with the runtime about a name the compiler accepts", async () => {
+      const reachable: string[] = [];
+      for (const { label, name } of tableDisagreements()) {
+        if (await esbuildElementNameVerdict(name) !== "rejected") reachable.push(label);
+      }
+
+      assertEquals(
+        reachable,
+        [],
+        "the host runtime and the predicate disagree about a name esbuild compiles, " +
+          "so one of the two answers reaches a browser artifact",
+      );
     });
 
     // Pinned separately from the sweep because the sweep would still pass if
