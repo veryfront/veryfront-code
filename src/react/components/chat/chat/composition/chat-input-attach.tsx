@@ -56,7 +56,11 @@ export function ChatInputAttach(
     );
   }
 
-  return <ChatInputAttachMenu children={children} runUpload={runUpload} ref={ref} />;
+  return (
+    <ChatInputAttachMenu runUpload={runUpload} ref={ref}>
+      {children}
+    </ChatInputAttachMenu>
+  );
 }
 
 /**

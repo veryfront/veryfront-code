@@ -18,9 +18,7 @@ export {
   getMessagePartSchema,
   getMessageStatusSchema,
 } from "./conversation.ts";
-export {
-  convertUiMessagesToProviderModelMessages,
-} from "./provider-message-conversion.ts";
+export { convertUiMessagesToProviderModelMessages } from "./provider-message-conversion.ts";
 export {
   prepareProviderModelMessagesFromUiMessages,
   sanitizeProviderModelMessages,
