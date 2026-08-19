@@ -35,6 +35,7 @@ __test_project__/
 
 # Dependencies
 node_modules/
+node_modules
 
 # NPM config
 # Local npm configs may contain credentials. Track only the root policy file.
