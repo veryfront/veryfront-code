@@ -3106,6 +3106,8 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       let pendingCompletion: Completion | null = null;
       let hasNonNullishArgument = false;
       let hasEmptyObjectArgument = false;
+      const properties = Array.isArray(parameter.properties) ? parameter.properties : [];
+      const patternIsEmpty = properties.length === 0;
       for (const argument of thrownArguments) {
         const primitive = staticPrimitiveValue(argument, initializedNames);
         if (primitive.known && (primitive.value === null || primitive.value === undefined)) {
@@ -3122,12 +3124,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           Array.isArray(thrown.properties) && thrown.properties.length === 0;
         if (isEmptyObject) {
           hasEmptyObjectArgument = true;
-        } else {
+        } else if (!patternIsEmpty) {
           pendingCompletion = mergeCompletionAlternatives(pendingCompletion, "unknown");
         }
       }
-      const properties = Array.isArray(parameter.properties) ? parameter.properties : [];
-      if (properties.length === 0) {
+      if (patternIsEmpty) {
         return hasNonNullishArgument
           ? mergeCompletionAlternatives(pendingCompletion, "normal")
           : pendingCompletion ?? "unknown";

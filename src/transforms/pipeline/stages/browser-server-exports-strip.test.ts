@@ -3901,6 +3901,29 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("keeps an outer catch unreachable after an empty catch pattern returns", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { try { try { throw { x: 1 }; } catch ({}) { return; } } catch { globalThis.registered = KEY; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(() =>
+        stripServerOnlyExports(
+          code,
+          "pages/root-iife-empty-catch-pattern-return.tsx",
+        )
+      );
+
+      assertStringIncludes((error as Error).message, "KEY");
+      assertStringIncludes(
+        (error as Error).message,
+        "root-iife-empty-catch-pattern-return.tsx",
+      );
+    });
+
     it("consumes a break alternative in its owning loop", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
