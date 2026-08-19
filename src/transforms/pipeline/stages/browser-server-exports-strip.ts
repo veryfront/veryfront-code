@@ -2911,7 +2911,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     }
   };
 
-  type Completion =
+  type CompletionAtom =
     | "normal"
     | "throw"
     | "return"
@@ -2920,9 +2920,12 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     | `break:${string}`
     | `continue:${string}`
     | `continue-target:${number}`
+    | "unknown";
+  type Completion =
+    | CompletionAtom
     | `continue-targets:${string}`
     | `continue-mixed:${string}`
-    | "unknown";
+    | `completion-union:${string}`;
   const activeLoopTargets: Array<{ id: number; labels: readonly string[] }> = [];
   const loopTargetIds = new WeakMap<Node, number>();
   let nextLoopTargetId = 1;
@@ -2937,45 +2940,80 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     loopTargetIds.set(node, created);
     return created;
   };
-  const completionContinueTargets = (completion: Completion): number[] => {
+  const completionAtoms = (completion: Completion): CompletionAtom[] => {
+    if (completion.startsWith("completion-union:")) {
+      const encoded = completion.slice("completion-union:".length);
+      return encoded.split(",").flatMap((alternative) =>
+        completionAtoms(decodeURIComponent(alternative) as Completion)
+      );
+    }
     if (completion.startsWith("continue-mixed:")) {
-      const targets = completion.slice("continue-mixed:".length).split("|")[0] ?? "";
-      return targets.split(",").map(Number).filter(Number.isInteger);
+      const [encodedTargets = "", ...abruptParts] = completion
+        .slice("continue-mixed:".length).split("|");
+      const targets = encodedTargets.split(",").map(Number).filter(Number.isInteger)
+        .map((target) => `continue-target:${target}` as CompletionAtom);
+      const abrupt = abruptParts.join("|");
+      return abrupt ? [...targets, ...completionAtoms(abrupt as Completion)] : targets;
     }
     if (completion.startsWith("continue-targets:")) {
       return completion.slice("continue-targets:".length).split(",")
-        .map(Number).filter(Number.isInteger);
+        .map(Number).filter(Number.isInteger)
+        .map((target) => `continue-target:${target}` as CompletionAtom);
     }
-    if (completion.startsWith("continue-target:")) {
-      const parsed = Number(completion.slice("continue-target:".length));
-      return Number.isInteger(parsed) ? [parsed] : [];
-    }
-    if (completion === "continue") {
-      const target = activeLoopTargets[activeLoopTargets.length - 1];
-      return target ? [target.id] : [];
-    }
-    if (completion.startsWith("continue:")) {
-      const label = completion.slice("continue:".length);
-      for (let index = activeLoopTargets.length - 1; index >= 0; index--) {
-        const target = activeLoopTargets[index];
-        if (target?.labels.includes(label)) return [target.id];
+    return [completion as CompletionAtom];
+  };
+  const completionFromAlternatives = (
+    alternatives: Iterable<Completion>,
+  ): Completion | null => {
+    const atoms = [
+      ...new Set(
+        [...alternatives].flatMap(completionAtoms),
+      ),
+    ].sort();
+    if (atoms.length === 0) return null;
+    const only = atoms[0];
+    if (atoms.length === 1 && only) return only;
+    return `completion-union:${atoms.map(encodeURIComponent).join(",")}`;
+  };
+  const isContinueCompletionAtom = (completion: CompletionAtom): boolean =>
+    completion === "continue" || completion.startsWith("continue:") ||
+    completion.startsWith("continue-target:");
+  const completionContinueTargets = (completion: Completion): number[] => {
+    const targets: number[] = [];
+    for (const alternative of completionAtoms(completion)) {
+      if (alternative.startsWith("continue-target:")) {
+        const parsed = Number(alternative.slice("continue-target:".length));
+        if (Number.isInteger(parsed)) targets.push(parsed);
+        continue;
+      }
+      if (alternative === "continue") {
+        const target = activeLoopTargets[activeLoopTargets.length - 1];
+        if (target) targets.push(target.id);
+        continue;
+      }
+      if (alternative.startsWith("continue:")) {
+        const label = alternative.slice("continue:".length);
+        for (let index = activeLoopTargets.length - 1; index >= 0; index--) {
+          const target = activeLoopTargets[index];
+          if (target?.labels.includes(label)) {
+            targets.push(target.id);
+            break;
+          }
+        }
       }
     }
-    return [];
+    return [...new Set(targets)].sort((left, right) => left - right);
   };
   const completionAbruptAlternative = (completion: Completion): Completion | null => {
-    if (completion.startsWith("continue-mixed:")) {
-      const abrupt = completion.slice("continue-mixed:".length).split("|").slice(1).join("|");
-      return abrupt ? abrupt as Completion : null;
-    }
-    return completionContinueTargets(completion).length > 0 ? null : completion;
+    return completionFromAlternatives(
+      completionAtoms(completion).filter((alternative) => !isContinueCompletionAtom(alternative)),
+    );
   };
   const continueTargetsCompletion = (targets: Iterable<number>): Completion | null => {
     const unique = [...new Set(targets)].sort((left, right) => left - right);
-    if (unique.length === 0) return null;
-    const first = unique[0];
-    if (unique.length === 1 && first !== undefined) return `continue-target:${first}`;
-    return `continue-targets:${unique.join(",")}`;
+    return completionFromAlternatives(
+      unique.map((target) => `continue-target:${target}` as Completion),
+    );
   };
   const mixedContinueCompletion = (
     targets: Iterable<number>,
@@ -2984,42 +3022,21 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     const targetCompletion = continueTargetsCompletion(targets);
     if (!targetCompletion) return abrupt;
     if (!abrupt) return targetCompletion;
-    const encodedTargets = completionContinueTargets(targetCompletion).join(",");
-    return `continue-mixed:${encodedTargets}|${abrupt}`;
-  };
-  const mergeContinueCompletions = (
-    left: Completion,
-    right: Completion,
-  ): Completion | null => {
-    const leftTargets = completionContinueTargets(left);
-    const rightTargets = completionContinueTargets(right);
-    if (leftTargets.length === 0 && rightTargets.length === 0) return null;
-    const leftAbrupt = completionAbruptAlternative(left);
-    const rightAbrupt = completionAbruptAlternative(right);
-    const abrupt = leftAbrupt && rightAbrupt
-      ? leftAbrupt === rightAbrupt ? leftAbrupt : "unknown"
-      : leftAbrupt ?? rightAbrupt;
-    return mixedContinueCompletion([...leftTargets, ...rightTargets], abrupt);
+    return completionFromAlternatives([targetCompletion, abrupt]);
   };
   const completionHasNormalAlternative = (completion: Completion): boolean =>
-    completion === "normal" || completionAbruptAlternative(completion) === "normal";
+    completionAtoms(completion).includes("normal");
   const withoutNormalAlternative = (completion: Completion): Completion | null => {
-    if (completion === "normal") return null;
-    if (completionAbruptAlternative(completion) !== "normal") return completion;
-    return continueTargetsCompletion(completionContinueTargets(completion));
+    return completionFromAlternatives(
+      completionAtoms(completion).filter((alternative) => alternative !== "normal"),
+    );
   };
   const mergeCompletionAlternatives = (
     left: Completion | null,
     right: Completion,
   ): Completion => {
     if (!left) return right;
-    if (left === right) return left;
-    const continueMerge = mergeContinueCompletions(left, right);
-    if (continueMerge) return continueMerge;
-    if (completionHasNormalAlternative(left) || completionHasNormalAlternative(right)) {
-      return "normal";
-    }
-    return "unknown";
+    return completionFromAlternatives([left, right]) ?? "unknown";
   };
 
   function deferStatementListTail(
@@ -3196,18 +3213,20 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         remaining: Completion | null,
       ): Completion => {
         if (!remaining) return "unknown";
-        const abrupt = completionAbruptAlternative(remaining);
-        if (abrupt === "break") {
-          return mixedContinueCompletion(
-            completionContinueTargets(remaining),
-            "normal",
-          ) ?? "normal";
-        }
-        if (abrupt === "normal") {
-          return continueTargetsCompletion(completionContinueTargets(remaining)) ?? "unknown";
-        }
-        return remaining;
+        const alternatives = completionAtoms(remaining);
+        const exitsWithBreak = alternatives.includes("break");
+        const outward: CompletionAtom[] = alternatives.filter((alternative) =>
+          alternative !== "normal" && alternative !== "break"
+        );
+        if (exitsWithBreak) outward.push("normal");
+        return completionFromAlternatives(outward) ?? "unknown";
       };
+      const consumeUnlabeledBreak = (completion: Completion): Completion =>
+        completionFromAlternatives(
+          completionAtoms(completion).map((alternative) =>
+            alternative === "break" ? "normal" : alternative
+          ),
+        ) ?? "normal";
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
       }
@@ -3265,12 +3284,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const body = isNode(statement.body) ? statement.body : undefined;
         if (!test) {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
-          if (bodyCompletion === "break") return "normal";
-          if (bodyCompletion === "normal") return "unknown";
           const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
-          return continueFlow.reachesCurrent
-            ? completeAlwaysContinuingLoop(continueFlow.remaining)
-            : bodyCompletion;
+          return completeAlwaysContinuingLoop(
+            continueFlow.reachesCurrent ? continueFlow.remaining : bodyCompletion,
+          );
         }
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known && !staticValueIsTruthy(value.value)) {
@@ -3279,12 +3296,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         if (value.known && staticValueIsTruthy(value.value)) {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
-          if (bodyCompletion === "break") return "normal";
-          if (bodyCompletion === "normal") return "unknown";
           const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
-          return continueFlow.reachesCurrent
-            ? completeAlwaysContinuingLoop(continueFlow.remaining)
-            : bodyCompletion;
+          return completeAlwaysContinuingLoop(
+            continueFlow.reachesCurrent ? continueFlow.remaining : bodyCompletion,
+          );
         }
         if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
@@ -3298,30 +3313,34 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const bodyCompletion = body ? statementCompletion(body) : "normal";
         if (bodyCompletion === "break") return "normal";
         const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
-        if (bodyCompletion !== "normal" && !continueFlow.reachesCurrent) {
+        const bodyCanReachTest = completionHasNormalAlternative(bodyCompletion) ||
+          continueFlow.reachesCurrent;
+        if (!bodyCanReachTest) {
           if (test) deferred.add(test);
           return bodyCompletion;
         }
         if (!test) return "unknown";
+        const pendingCompletion = continueFlow.reachesCurrent
+          ? continueFlow.remaining
+          : withoutNormalAlternative(bodyCompletion);
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known) {
           if (!staticValueIsTruthy(value.value)) {
-            return mergeCompletionAlternatives(continueFlow.remaining, "normal");
+            return mergeCompletionAlternatives(
+              pendingCompletion ? consumeUnlabeledBreak(pendingCompletion) : null,
+              "normal",
+            );
           }
-          return completeAlwaysContinuingLoop(continueFlow.remaining);
+          return completeAlwaysContinuingLoop(pendingCompletion);
         }
         if (!isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
         }
-        if (continueFlow.remaining) {
-          const abrupt = completionAbruptAlternative(continueFlow.remaining);
-          if (abrupt === "break" || abrupt === "normal") {
-            return mixedContinueCompletion(
-              completionContinueTargets(continueFlow.remaining),
-              "normal",
-            ) ?? "normal";
-          }
-          return continueFlow.remaining;
+        if (pendingCompletion) {
+          return mergeCompletionAlternatives(
+            consumeUnlabeledBreak(pendingCompletion),
+            "normal",
+          );
         }
         return "unknown";
       }
@@ -3350,23 +3369,18 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         if (!test) {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
-          if (bodyCompletion === "break") {
-            if (update) deferred.add(update);
-            return "normal";
-          }
           const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
-          if (bodyCompletion !== "normal" && !continueFlow.reachesCurrent && update) {
+          const bodyCanReachUpdate = completionHasNormalAlternative(bodyCompletion) ||
+            continueFlow.reachesCurrent;
+          if (!bodyCanReachUpdate && update) {
             deferred.add(update);
           }
-          if (bodyCompletion === "normal" || continueFlow.reachesCurrent) {
+          if (bodyCanReachUpdate) {
             analyzeUpdate();
           }
-          if (continueFlow.remaining) {
-            return completeAlwaysContinuingLoop(continueFlow.remaining);
-          }
-          return bodyCompletion === "normal" || continueFlow.reachesCurrent
-            ? "unknown"
-            : bodyCompletion;
+          return completeAlwaysContinuingLoop(
+            continueFlow.reachesCurrent ? continueFlow.remaining : bodyCompletion,
+          );
         }
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known && !staticValueIsTruthy(value.value)) {
@@ -3376,23 +3390,18 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         if (value.known && staticValueIsTruthy(value.value)) {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
-          if (bodyCompletion === "break") {
-            if (update) deferred.add(update);
-            return "normal";
-          }
           const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
-          if (bodyCompletion !== "normal" && !continueFlow.reachesCurrent && update) {
+          const bodyCanReachUpdate = completionHasNormalAlternative(bodyCompletion) ||
+            continueFlow.reachesCurrent;
+          if (!bodyCanReachUpdate && update) {
             deferred.add(update);
           }
-          if (bodyCompletion === "normal" || continueFlow.reachesCurrent) {
+          if (bodyCanReachUpdate) {
             analyzeUpdate();
           }
-          if (continueFlow.remaining) {
-            return completeAlwaysContinuingLoop(continueFlow.remaining);
-          }
-          return bodyCompletion === "normal" || continueFlow.reachesCurrent
-            ? "unknown"
-            : bodyCompletion;
+          return completeAlwaysContinuingLoop(
+            continueFlow.reachesCurrent ? continueFlow.remaining : bodyCompletion,
+          );
         }
         if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
@@ -3441,7 +3450,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         let possibleCaseMatch = false;
         let possibleCompletedEntry: Completion | null = null;
         const mergeCompletedEntry = (completion: Completion): void => {
-          const normalized = completion === "break" ? "normal" : completion;
+          const normalized = consumeUnlabeledBreak(completion);
           if (possibleCompletedEntry === null) {
             possibleCompletedEntry = normalized;
           } else if (possibleCompletedEntry !== normalized) {
@@ -3465,10 +3474,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
                 initializedNames,
               );
               earlierDefaultCompletion = defaultCompletion;
-              if (defaultReachableByPriorMatch && defaultCompletion !== "normal") {
-                mergeCompletedEntry(defaultCompletion);
+              const pendingDefault = withoutNormalAlternative(defaultCompletion);
+              if (defaultReachableByPriorMatch && pendingDefault) {
+                mergeCompletedEntry(pendingDefault);
               }
-              possibleEarlierEntry = defaultCompletion === "normal";
+              possibleEarlierEntry = completionHasNormalAlternative(defaultCompletion);
             }
             continue;
           }
@@ -3514,10 +3524,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
                 caseNode.consequent,
                 initializedNames,
               );
-              if (mismatchCompletion !== "normal") {
-                mergeCompletedEntry(mismatchCompletion);
+              const pendingMismatch = withoutNormalAlternative(mismatchCompletion);
+              if (pendingMismatch) {
+                mergeCompletedEntry(pendingMismatch);
               }
-              possibleEarlierEntry = mismatchCompletion === "normal";
+              possibleEarlierEntry = completionHasNormalAlternative(mismatchCompletion);
             }
             continue;
           }
@@ -3529,10 +3540,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
                 caseNode.consequent,
                 initializedNames,
               );
-              if (caseCompletion !== "normal") {
-                mergeCompletedEntry(caseCompletion);
+              const pendingCase = withoutNormalAlternative(caseCompletion);
+              if (pendingCase) {
+                mergeCompletedEntry(pendingCase);
               }
-              possibleEarlierEntry = caseCompletion === "normal";
+              possibleEarlierEntry = completionHasNormalAlternative(caseCompletion);
             }
             continue;
           }
@@ -3548,10 +3560,11 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
               caseNode.consequent,
               initializedNames,
             );
-            if (fallthroughCompletion !== "normal") {
-              mergeCompletedEntry(fallthroughCompletion);
+            const pendingFallthrough = withoutNormalAlternative(fallthroughCompletion);
+            if (pendingFallthrough) {
+              mergeCompletedEntry(pendingFallthrough);
             }
-            possibleEarlierEntry = fallthroughCompletion === "normal";
+            possibleEarlierEntry = completionHasNormalAlternative(fallthroughCompletion);
           }
           const laterCases = cases.slice(index + 1);
           for (const later of laterCases) {
@@ -3591,15 +3604,16 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             selectedStatements,
             initializedNames,
           );
-          return selectedCompletion === "break" ? "normal" : selectedCompletion;
+          return consumeUnlabeledBreak(selectedCompletion);
         }
         if (discriminantValue.known && !possibleCaseMatch && !earlierDefault) {
           return "normal";
         }
         if (possibleCaseMatch) {
           if (earlierDefault) {
-            if (earlierDefaultCompletion && earlierDefaultCompletion !== "normal") {
-              mergeCompletedEntry(earlierDefaultCompletion);
+            if (earlierDefaultCompletion) {
+              const pendingDefault = withoutNormalAlternative(earlierDefaultCompletion);
+              if (pendingDefault) mergeCompletedEntry(pendingDefault);
             }
           } else {
             mergeCompletedEntry("normal");
@@ -3614,7 +3628,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const finalizer = isNode(statement.finalizer) ? statement.finalizer : undefined;
         let completion: Completion = block ? statementCompletion(block) : "normal";
         if (handler) {
-          if (completion !== "throw" && completion !== "unknown") {
+          const tryAlternatives = completionAtoms(completion);
+          const hasThrowAlternative = tryAlternatives.includes("throw");
+          if (!hasThrowAlternative && !tryAlternatives.includes("unknown")) {
             deferred.add(handler);
           } else if (isNode(handler.body)) {
             const parameter = isNode(handler.param) ? handler.param : null;
@@ -3626,12 +3642,27 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             const handlerCompletion: Completion = parameterCompletion === "normal"
               ? statementCompletion(handler.body)
               : parameterCompletion;
-            if (completion === "throw") completion = handlerCompletion;
+            if (hasThrowAlternative) {
+              const nonThrowCompletion = completionFromAlternatives(
+                tryAlternatives.filter((alternative) => alternative !== "throw"),
+              );
+              completion = mergeCompletionAlternatives(
+                nonThrowCompletion,
+                handlerCompletion,
+              );
+            }
           }
         }
         if (finalizer) {
           const finalizerCompletion = statementCompletion(finalizer);
-          if (finalizerCompletion !== "normal") completion = finalizerCompletion;
+          if (!completionHasNormalAlternative(finalizerCompletion)) {
+            completion = finalizerCompletion;
+          } else {
+            completion = mergeCompletionAlternatives(
+              withoutNormalAlternative(finalizerCompletion),
+              completion,
+            );
+          }
         }
         return completion;
       }
@@ -3646,7 +3677,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           statement.body,
           carriesLoopLabels ? nestedLoopLabels : [],
         );
-        if (label && completion === `break:${label}`) return "normal";
+        if (label) {
+          const consumedBreak = completionFromAlternatives(
+            completionAtoms(completion).map((alternative) =>
+              alternative === `break:${label}` ? "normal" : alternative
+            ),
+          );
+          if (consumedBreak && consumedBreak !== completion) return consumedBreak;
+        }
         if (label && completion === `continue:${label}`) return "unknown";
         return completion;
       }
@@ -3679,7 +3717,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             ? statementCompletion(statement.alternate)
             : "normal";
           if (consequentCompletion === alternateCompletion) return consequentCompletion;
-          return mergeContinueCompletions(consequentCompletion, alternateCompletion) ?? "unknown";
+          return mergeCompletionAlternatives(consequentCompletion, alternateCompletion);
         }
         return "unknown";
       }
