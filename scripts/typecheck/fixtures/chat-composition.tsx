@@ -340,7 +340,7 @@ const pickerActionProps: AgentPickerActionProps = {
 };
 const pickerSearchProps: AgentPickerSearchProps = { className: "picker-search" };
 const branchActionProps: BranchPickerActionProps = {
-  icon: <span aria-hidden="true">&lt;</span>,
+  children: <span aria-hidden="true">&lt;</span>,
   className: "branch-action",
 };
 const branchCountProps: BranchPickerCountProps = { className: "branch-count" };
