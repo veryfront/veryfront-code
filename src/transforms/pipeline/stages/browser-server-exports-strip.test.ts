@@ -3444,6 +3444,24 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "[KEY]");
     });
 
+    it("skips a catch default for an inherited property", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { try { throw {}; } catch ({ toString = missing, [KEY]: y }) {} })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-catch-inherited-property.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "[KEY]");
+    });
+
     it("does not trust a thrown class whose evaluation aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3593,6 +3611,44 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(
         code,
         "pages/root-iife-stacked-label-mixed-continues.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("merges switch continues that target the same loop", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { outer: for (; true; globalThis.registered = KEY) { switch (cond) { case 1: continue; default: continue outer; } } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-switch-continues.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("keeps an unlabeled continue on the innermost loop", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { outer: for (;;) { for (;; globalThis.registered = KEY) { if (cond) continue; else continue outer; } } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-nested-loop-continues.tsx",
       );
 
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
