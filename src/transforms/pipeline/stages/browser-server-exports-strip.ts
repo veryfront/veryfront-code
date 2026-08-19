@@ -2920,6 +2920,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     | `break:${string}`
     | `continue:${string}`
     | `continue-target:${number}`
+    | `continue-targets:${string}`
     | "unknown";
   const activeLoopTargets: Array<{ id: number; labels: readonly string[] }> = [];
   const loopTargetIds = new WeakMap<Node, number>();
@@ -2935,35 +2936,43 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     loopTargetIds.set(node, created);
     return created;
   };
-  const completionContinueTarget = (completion: Completion): number | null => {
+  const completionContinueTargets = (completion: Completion): number[] => {
+    if (completion.startsWith("continue-targets:")) {
+      return completion.slice("continue-targets:".length).split(",")
+        .map(Number).filter(Number.isInteger);
+    }
     if (completion.startsWith("continue-target:")) {
       const parsed = Number(completion.slice("continue-target:".length));
-      return Number.isInteger(parsed) ? parsed : null;
+      return Number.isInteger(parsed) ? [parsed] : [];
     }
     if (completion === "continue") {
-      return activeLoopTargets[activeLoopTargets.length - 1]?.id ?? null;
+      const target = activeLoopTargets[activeLoopTargets.length - 1];
+      return target ? [target.id] : [];
     }
     if (completion.startsWith("continue:")) {
       const label = completion.slice("continue:".length);
       for (let index = activeLoopTargets.length - 1; index >= 0; index--) {
         const target = activeLoopTargets[index];
-        if (target?.labels.includes(label)) return target.id;
+        if (target?.labels.includes(label)) return [target.id];
       }
     }
-    return null;
+    return [];
+  };
+  const continueTargetsCompletion = (targets: Iterable<number>): Completion | null => {
+    const unique = [...new Set(targets)].sort((left, right) => left - right);
+    if (unique.length === 0) return null;
+    const first = unique[0];
+    if (unique.length === 1 && first !== undefined) return `continue-target:${first}`;
+    return `continue-targets:${unique.join(",")}`;
   };
   const mergeContinueCompletions = (
     left: Completion,
     right: Completion,
   ): Completion | null => {
-    const leftTarget = completionContinueTarget(left);
-    const rightTarget = completionContinueTarget(right);
-    if (leftTarget === null || rightTarget === null) return null;
-    if (leftTarget === rightTarget) return `continue-target:${leftTarget}`;
-    const leftIndex = activeLoopTargets.findIndex((target) => target.id === leftTarget);
-    const rightIndex = activeLoopTargets.findIndex((target) => target.id === rightTarget);
-    const reachableTarget = leftIndex > rightIndex ? leftTarget : rightTarget;
-    return `continue-target:${reachableTarget}`;
+    const leftTargets = completionContinueTargets(left);
+    const rightTargets = completionContinueTargets(right);
+    if (leftTargets.length === 0 || rightTargets.length === 0) return null;
+    return continueTargetsCompletion([...leftTargets, ...rightTargets]);
   };
 
   function deferStatementListTail(
@@ -3119,11 +3128,22 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       const currentLoopTarget = statementIsLoop
         ? activeLoopTargets[activeLoopTargets.length - 1]
         : undefined;
-      const continuesCurrentLoop = (completion: Completion): boolean =>
-        completion === "continue" ||
-        (currentLoopTarget !== undefined &&
-          completion === `continue-target:${currentLoopTarget.id}`) ||
-        loopLabels.some((label) => completion === `continue:${label}`);
+      const consumeCurrentLoopContinue = (
+        completion: Completion,
+      ): { reachesCurrent: boolean; remaining: Completion | null } => {
+        if (!currentLoopTarget) return { reachesCurrent: false, remaining: null };
+        const targets = completionContinueTargets(completion);
+        const reachesCurrent = targets.includes(currentLoopTarget.id) ||
+          completion === "continue" ||
+          loopLabels.some((label) => completion === `continue:${label}`);
+        if (!reachesCurrent) return { reachesCurrent: false, remaining: null };
+        return {
+          reachesCurrent: true,
+          remaining: continueTargetsCompletion(
+            targets.filter((target) => target !== currentLoopTarget.id),
+          ),
+        };
+      };
       if (statement.type === "BlockStatement" && Array.isArray(statement.body)) {
         return deferStatementListTail(statement.body, initializedNames);
       }
@@ -3181,11 +3201,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const body = isNode(statement.body) ? statement.body : undefined;
         if (!test) {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
-          return bodyCompletion === "break"
-            ? "normal"
-            : bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
-            ? "unknown"
-            : bodyCompletion;
+          if (bodyCompletion === "break") return "normal";
+          if (bodyCompletion === "normal") return "unknown";
+          const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
+          return continueFlow.reachesCurrent ? continueFlow.remaining ?? "unknown" : bodyCompletion;
         }
         const value = staticPrimitiveValue(test, initializedNames);
         if (value.known && !staticValueIsTruthy(value.value)) {
@@ -3194,11 +3213,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         if (value.known && staticValueIsTruthy(value.value)) {
           const bodyCompletion = body ? statementCompletion(body) : "normal";
-          return bodyCompletion === "break"
-            ? "normal"
-            : bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
-            ? "unknown"
-            : bodyCompletion;
+          if (bodyCompletion === "break") return "normal";
+          if (bodyCompletion === "normal") return "unknown";
+          const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
+          return continueFlow.reachesCurrent ? continueFlow.remaining ?? "unknown" : bodyCompletion;
         }
         if (!value.known && !isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
@@ -3211,12 +3229,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         const test = isNode(statement.test) ? statement.test : undefined;
         const bodyCompletion = body ? statementCompletion(body) : "normal";
         if (bodyCompletion === "break") return "normal";
-        if (bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion)) {
+        const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
+        if (bodyCompletion !== "normal" && !continueFlow.reachesCurrent) {
           if (test) deferred.add(test);
           return bodyCompletion;
         }
         if (!test) return "unknown";
         const value = staticPrimitiveValue(test, initializedNames);
+        if (continueFlow.remaining) return continueFlow.remaining;
         if (value.known) return staticValueIsTruthy(value.value) ? "unknown" : "normal";
         if (!isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
@@ -3252,13 +3272,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             if (update) deferred.add(update);
             return "normal";
           }
-          if (
-            bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion) && update
-          ) deferred.add(update);
-          if (bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)) {
+          const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
+          if (bodyCompletion !== "normal" && !continueFlow.reachesCurrent && update) {
+            deferred.add(update);
+          }
+          if (bodyCompletion === "normal" || continueFlow.reachesCurrent) {
             analyzeUpdate();
           }
-          return bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
+          if (continueFlow.remaining) return continueFlow.remaining;
+          return bodyCompletion === "normal" || continueFlow.reachesCurrent
             ? "unknown"
             : bodyCompletion;
         }
@@ -3274,13 +3296,15 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             if (update) deferred.add(update);
             return "normal";
           }
-          if (
-            bodyCompletion !== "normal" && !continuesCurrentLoop(bodyCompletion) && update
-          ) deferred.add(update);
-          if (bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)) {
+          const continueFlow = consumeCurrentLoopContinue(bodyCompletion);
+          if (bodyCompletion !== "normal" && !continueFlow.reachesCurrent && update) {
+            deferred.add(update);
+          }
+          if (bodyCompletion === "normal" || continueFlow.reachesCurrent) {
             analyzeUpdate();
           }
-          return bodyCompletion === "normal" || continuesCurrentLoop(bodyCompletion)
+          if (continueFlow.remaining) return continueFlow.remaining;
+          return bodyCompletion === "normal" || continueFlow.reachesCurrent
             ? "unknown"
             : bodyCompletion;
         }
