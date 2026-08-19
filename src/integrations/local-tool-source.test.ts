@@ -497,6 +497,35 @@ describe("createLocalIntegrationToolSource", () => {
     }
   });
 
+  it("rejects an invalid header argument before minting credentials", async () => {
+    let credentialProviderCalls = 0;
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["mongodb-atlas__list_projects"],
+        credentialProvider: () => {
+          credentialProviderCalls += 1;
+          return TEST_CREDENTIAL;
+        },
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ access_token: TEST_CREDENTIAL }));
+      },
+    );
+
+    const error = await assertRejects(
+      () =>
+        source.executeTool("mongodb-atlas__list_projects", { accept: "application/json\r\nx: y" }),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
+    assertEquals(credentialProviderCalls, 0);
+    assertEquals(transportCalls, 0);
+  });
+
   it("rejects pre-aborted execution before resolving credentials", async () => {
     let credentialProviderCalls = 0;
     let transportCalls = 0;

@@ -363,12 +363,18 @@ export function snapshotLocalIntegrationEndpointArguments(
     if (!field) continue;
     const resolved = fieldValue(snapshot, name, field);
     if (!resolved.present) continue;
-    // Path arguments are validated here, not only where the URL is built:
-    // `executeTool` mints credentials between this snapshot and `buildRequest`,
-    // so a rejection that waits for build time would already have sent the
-    // client credentials to the token endpoint.
+    // Path and header arguments are fully validated here, not only where the
+    // request is built: `executeTool` mints credentials between this snapshot
+    // and `buildRequest`, so a rejection that waits for build time would
+    // already have sent the client credentials to the token endpoint.
     if (field.in === "path") pathSegment(resolved.value);
-    else if (field.in === "header") scalarString(resolved.value);
+    else if (field.in === "header") {
+      setHeader(
+        new HeadersConstructor(),
+        field.headerName ?? name,
+        scalarString(resolved.value),
+      );
+    }
   }
 
   const bodyNames = objectKeys(endpoint.body ?? {});
