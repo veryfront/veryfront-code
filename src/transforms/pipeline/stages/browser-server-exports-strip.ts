@@ -2921,6 +2921,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     | `continue:${string}`
     | `continue-target:${number}`
     | `continue-targets:${string}`
+    | `continue-mixed:${string}`
     | "unknown";
   const activeLoopTargets: Array<{ id: number; labels: readonly string[] }> = [];
   const loopTargetIds = new WeakMap<Node, number>();
@@ -2937,6 +2938,10 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     return created;
   };
   const completionContinueTargets = (completion: Completion): number[] => {
+    if (completion.startsWith("continue-mixed:")) {
+      const targets = completion.slice("continue-mixed:".length).split("|")[0] ?? "";
+      return targets.split(",").map(Number).filter(Number.isInteger);
+    }
     if (completion.startsWith("continue-targets:")) {
       return completion.slice("continue-targets:".length).split(",")
         .map(Number).filter(Number.isInteger);
@@ -2958,6 +2963,13 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     }
     return [];
   };
+  const completionAbruptAlternative = (completion: Completion): Completion | null => {
+    if (completion.startsWith("continue-mixed:")) {
+      const abrupt = completion.slice("continue-mixed:".length).split("|").slice(1).join("|");
+      return abrupt ? abrupt as Completion : null;
+    }
+    return completionContinueTargets(completion).length > 0 ? null : completion;
+  };
   const continueTargetsCompletion = (targets: Iterable<number>): Completion | null => {
     const unique = [...new Set(targets)].sort((left, right) => left - right);
     if (unique.length === 0) return null;
@@ -2965,14 +2977,29 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     if (unique.length === 1 && first !== undefined) return `continue-target:${first}`;
     return `continue-targets:${unique.join(",")}`;
   };
+  const mixedContinueCompletion = (
+    targets: Iterable<number>,
+    abrupt: Completion | null,
+  ): Completion | null => {
+    const targetCompletion = continueTargetsCompletion(targets);
+    if (!targetCompletion) return abrupt;
+    if (!abrupt) return targetCompletion;
+    const encodedTargets = completionContinueTargets(targetCompletion).join(",");
+    return `continue-mixed:${encodedTargets}|${abrupt}`;
+  };
   const mergeContinueCompletions = (
     left: Completion,
     right: Completion,
   ): Completion | null => {
     const leftTargets = completionContinueTargets(left);
     const rightTargets = completionContinueTargets(right);
-    if (leftTargets.length === 0 || rightTargets.length === 0) return null;
-    return continueTargetsCompletion([...leftTargets, ...rightTargets]);
+    if (leftTargets.length === 0 && rightTargets.length === 0) return null;
+    const leftAbrupt = completionAbruptAlternative(left);
+    const rightAbrupt = completionAbruptAlternative(right);
+    const abrupt = leftAbrupt && rightAbrupt
+      ? leftAbrupt === rightAbrupt ? leftAbrupt : "unknown"
+      : leftAbrupt ?? rightAbrupt;
+    return mixedContinueCompletion([...leftTargets, ...rightTargets], abrupt);
   };
 
   function deferStatementListTail(
@@ -3139,8 +3166,9 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         if (!reachesCurrent) return { reachesCurrent: false, remaining: null };
         return {
           reachesCurrent: true,
-          remaining: continueTargetsCompletion(
+          remaining: mixedContinueCompletion(
             targets.filter((target) => target !== currentLoopTarget.id),
+            completionAbruptAlternative(completion),
           ),
         };
       };
@@ -3236,11 +3264,14 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
         }
         if (!test) return "unknown";
         const value = staticPrimitiveValue(test, initializedNames);
-        if (continueFlow.remaining) return continueFlow.remaining;
-        if (value.known) return staticValueIsTruthy(value.value) ? "unknown" : "normal";
+        if (value.known) {
+          if (continueFlow.remaining) return continueFlow.remaining;
+          return staticValueIsTruthy(value.value) ? "unknown" : "normal";
+        }
         if (!isInertExpression(test, noNameHelpers, initializedNames)) {
           deferOrderedExpressionTail(test, initializedNames);
         }
+        if (continueFlow.remaining) return continueFlow.remaining;
         return "unknown";
       }
       if (statement.type === "ForStatement") {
