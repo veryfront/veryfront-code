@@ -21,6 +21,18 @@ export interface LocalIntegrationDiagnosticIdentity {
   readonly toolId: string;
 }
 
+/**
+ * Reduces a caller-supplied identifier to a bounded, log-safe form.
+ *
+ * Tool names reach this module from the model, so an unbounded value carrying
+ * newlines or control characters must not land verbatim in error metadata that
+ * is logged upstream. Anything outside the identifier charset collapses to
+ * `"unknown"` rather than being escaped, so no caller string survives.
+ */
+export function safeLocalIntegrationIdentifier(value: unknown): string {
+  return safeIdentifier(value);
+}
+
 function safeIdentifier(value: unknown): string {
   if (typeof value !== "string" || value.length === 0 || value.length > 200) return "unknown";
   for (let index = 0; index < value.length; index++) {

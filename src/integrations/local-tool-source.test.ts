@@ -339,6 +339,25 @@ describe("createLocalIntegrationToolSource", () => {
     );
   });
 
+  it("keeps an ungranted tool name out of the error verbatim", async () => {
+    const source = createLocalIntegrationToolSource({
+      tools: ["vercel__list_projects"],
+      credentialProvider: testCredentialProvider,
+    });
+
+    const hostile = `vercel__evil\n${"x".repeat(400)}`;
+    const error = await assertRejects(
+      () => source.executeTool(hostile, {}),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-config-invalid");
+    assertEquals(error.message.includes(hostile), false);
+    assertEquals(error.message.includes("\n"), false);
+    assert(error.message.includes("unknown"), error.message);
+  });
+
   it("executes admitted API-key and Basic tools with project-owned credentials", async () => {
     const directRequests: string[] = [];
     const transport: LocalIntegrationEndpointTransport = (request) => {

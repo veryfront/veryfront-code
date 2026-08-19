@@ -19,7 +19,10 @@ import {
   type LocalIntegrationEndpointTransport,
   snapshotLocalIntegrationEndpointArguments,
 } from "#veryfront/integrations/local-endpoint-executor.ts";
-import { localIntegrationConfigurationError } from "#veryfront/integrations/local-integration-errors.ts";
+import {
+  localIntegrationConfigurationError,
+  safeLocalIntegrationIdentifier,
+} from "#veryfront/integrations/local-integration-errors.ts";
 import { MAX_LOCAL_INTEGRATION_TOOLS } from "#veryfront/integrations/limits.ts";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { IntegrationConfig, IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -536,7 +539,11 @@ function createLocalIntegrationToolSourceInternal(
       throwIfCallerAborted(context?.abortSignal);
       const tool = mapValue(admitted, toolName);
       if (!tool) {
-        configurationError(`Local integration tool "${toolName}" is not granted by this source`);
+        configurationError(
+          `Local integration tool "${
+            safeLocalIntegrationIdentifier(toolName)
+          }" is not granted by this source`,
+        );
       }
       const validatedArgs = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
       const auth = await mintLocalCredentialAuth(
