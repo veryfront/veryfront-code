@@ -1299,6 +1299,28 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result.code, "unusedThing"), 0);
     });
 
+    it("does not demote an unrelated unused import in development either", async () => {
+      // `compilePlugin` sets `treeShaking: !ctx.dev`, so the case above only
+      // proves the tree-shaken path. What erases this import is not tree
+      // shaking, it is TypeScript unused-import elision, which the `ts` and
+      // `tsx` loaders perform in both modes. Pinned so a future change to
+      // either setting cannot quietly make development ship the module.
+      const source = [
+        `import { unusedThing } from "./lib/server-only-lib.ts";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(source, "/project/pages/test.tsx", "/project", {
+        projectId: "pre-compile-unused-import-demotion-dev",
+        dev: true,
+        ssr: false,
+      });
+
+      assertNotIncludes(result.code, "server-only-lib");
+      assertEquals(occurrences(result.code, "unusedThing"), 0);
+    });
+
     it("keeps a genuine side-effect import in the artifact", async () => {
       // Paired with the case above. An import authored as a side-effect import
       // is preserved by design: it is not an unused named import, and nothing

@@ -1446,6 +1446,13 @@ export async function stripServerOnlyExports(
   // stage that erases unused imports after this one or restore the old
   // reduction to a bare side-effect import here.
   //
+  // The erasure is TypeScript unused-import elision under the `ts` and `tsx`
+  // loaders, not tree shaking, so `treeShaking: !ctx.dev` in `compile.ts` does
+  // not gate it and development output matches production. It is also why an
+  // import the hooks own a binding of is deleted outright whatever the loader:
+  // under `js`, `jsx`, `md` and `mdx` nothing elides, and see the comment in
+  // `dropUnusedImportBindings` for what esbuild does with the remainder there.
+  //
   // The other caller, `createSplitterPlugin` in
   // `src/build/bundler/code-splitter/esbuild-plugin.ts`, meets the same
   // requirement a different way: it strips inside an esbuild `onLoad` hook, so
