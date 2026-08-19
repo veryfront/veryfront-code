@@ -45,9 +45,10 @@ managed OAuth connection.
    colleague in the same organization fails too. The owner's own account
    succeeds either way, so testing with it proves nothing.
 
-   This covers **Confluence** as well. Both connectors use the same Atlassian
-   app and the same `ATLASSIAN_CLIENT_ID` and `ATLASSIAN_CLIENT_SECRET`, so
-   enabling sharing once unblocks both.
+   Sharing is a property of the **app**, not of one connector, so you enable it
+   once even if you also use Confluence. Confluence still needs its own setup on
+   the same app: a second callback URL ending `/api/auth/confluence/callback`
+   and its own scopes. See the Confluence connector's README for that list.
 5. Set the OAuth app client ID and client secret as project environment variables:
 
 | Variable                  | Value                         |

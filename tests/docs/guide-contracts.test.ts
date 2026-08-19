@@ -649,9 +649,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "read:jira-user",
       "ATLASSIAN_CLIENT_ID",
       "JIRA_CLOUD_ID",
-      // A 3LO app is private until sharing is enabled, and the failure is invisible in our
-      // logs because the flow dies on Atlassian's page. Pinned so a later edit cannot drop it.
+      // A 3LO app is private until sharing is enabled, and the failure is invisible in the
+      // deployment's logs because the flow dies on Atlassian's page. These three pin the step
+      // and the two corrections that were needed, so none can silently regress.
       "Distribution",
+      "Privacy policy",
+      "owning **account**",
     ],
   },
   "guides/integrations/salesforce.md": {

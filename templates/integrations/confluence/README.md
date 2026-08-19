@@ -51,6 +51,23 @@ confluence/
      - `read:page:confluence`
      - `write:page:confluence`
      - `offline_access` (for refresh tokens)
+5. Open **Distribution** and enable sharing. An OAuth 2.0 (3LO) app is private
+   when created, so only the account that owns it can authorize. Atlassian will
+   not save the toggle until **Vendor** and **Privacy policy** are filled in
+   (plus **Terms of service** where it asks for one).
+
+   Leave sharing off and every other user reaches Atlassian, picks their site,
+   and gets Atlassian's own "Something went wrong" page. The flow never reaches
+   your callback, so nothing appears in the deployment's logs.
+
+   Test with any Atlassian account other than the app owner's. A private app is
+   restricted to the owning **account**, not the owning organization, so a
+   colleague in the same organization fails too. The owner's own account
+   succeeds either way, so testing with it proves nothing.
+
+   Sharing is a property of the app. If the same app also serves the Jira
+   connector, enabling it once covers both — but each connector still needs its
+   own callback URL and scopes.
 
 ### 2. Configure Environment Variables
 
