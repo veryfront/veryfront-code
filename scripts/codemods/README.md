@@ -152,6 +152,7 @@ control.
 | `ChatComponents`                        | `Chat`                                  |
 | `ChatComposer`, `Chat.Composer`         | `ChatInput`, `Chat.Input`               |
 | `ComposerContextProvider`, `useComposerContext` | `ChatInputContextProvider`, `useChatInputContext` |
+| `useStickToBottom`                      | `useChatScroll`                                 |
 | `Attachment`                            | `AttachmentPill`                        |
 | `UploadsPanel`                          | `AttachmentsPanel`                      |
 | `useUploadsRegistry`                    | `useAttachments`                        |

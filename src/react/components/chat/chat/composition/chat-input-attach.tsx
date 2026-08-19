@@ -28,7 +28,7 @@ import type { ChatInputAttachProps } from "./chat-composer.types.ts";
  * files" and "Select document".
  */
 export function ChatInputAttach(
-  { icon, onClick, ref }: ChatInputAttachProps,
+  { children, onClick, ref }: ChatInputAttachProps,
 ): React.ReactElement | null {
   const c = useChatInputContext();
   if (!c.onAttach && !c.onSelectAttachment) return null;
@@ -50,13 +50,13 @@ export function ChatInputAttach(
           className="shrink-0"
           onClick={runUpload}
         >
-          {icon ?? <PlusIcon />}
+          {children ?? <PlusIcon />}
         </Button>
       </div>
     );
   }
 
-  return <ChatInputAttachMenu icon={icon} runUpload={runUpload} ref={ref} />;
+  return <ChatInputAttachMenu children={children} runUpload={runUpload} ref={ref} />;
 }
 
 /**
@@ -64,8 +64,8 @@ export function ChatInputAttach(
  * its open state belongs to the branch that uses it.
  */
 function ChatInputAttachMenu(
-  { icon, runUpload, ref }: {
-    icon?: React.ReactNode;
+  { children, runUpload, ref }: {
+    children?: React.ReactNode;
     runUpload: (event: React.MouseEvent<HTMLButtonElement>) => void;
     ref?: React.Ref<HTMLDivElement>;
   },
@@ -81,10 +81,10 @@ function ChatInputAttachMenu(
             type="button"
             variant="icon-tertiary"
             size="icon-lg"
-            aria-label={c.onAttach ? "Add photos & files" : "Add document"}
-            className="shrink-0"
-          >
-            {icon ?? <PlusIcon />}
+          aria-label={c.onAttach ? "Add photos & files" : "Add document"}
+          className="shrink-0"
+        >
+            {children ?? <PlusIcon />}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">

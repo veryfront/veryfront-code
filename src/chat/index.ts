@@ -195,8 +195,6 @@ export {
   useModelSelector,
   useSources,
   useStepIndicator,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
   useUpload,
   type UseUploadOptions,
   type UseUploadResult,

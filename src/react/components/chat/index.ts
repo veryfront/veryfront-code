@@ -295,8 +295,6 @@ export {
   useModelSelector,
   useSources,
   useStepIndicator,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------

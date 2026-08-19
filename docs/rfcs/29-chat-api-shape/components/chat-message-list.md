@@ -103,7 +103,7 @@ The scroll container `<div>` + the compound's scoped context. Default content: `
 | `asChild`   | `boolean`                                | `false`         | Merge the scroll container onto your element                                                           |
 | + native    | `HTMLAttributes<HTMLDivElement>` · `ref` | -               | Spread onto the single node; `className` merges                                                        |
 
-**State attributes (proposed):** `data-at-bottom` · `data-autoscrolling` · `data-scrollable` - **updated imperatively** (no React re-render per scroll tick) - plus `data-loading` (fetch in flight) and `data-empty` (zero messages). Today none of these exist; scroll state lives in `useStickToBottom` React state.
+**State attributes (proposed):** `data-at-bottom` · `data-autoscrolling` · `data-scrollable` - **updated imperatively** (no React re-render per scroll tick) - plus `data-loading` (fetch in flight) and `data-empty` (zero messages). Today none of these exist; scroll state lives in `useChatScroll` React state.
 
 **Behavior (today → contract):** stick-to-bottom follows new content only while pinned; a new _user_ turn force-scrolls (and re-pins) even from scrolled-up history. The RFC subsumes both into [`useChatScroll`](../hooks/use-chat-scroll.md): escape-on-scroll-up + resume threshold, `turnAnchor: "bottom" | "top"`, position restore on thread switch, `preserveScrollOnPrepend`. Component-level scroll options surface as `scroll?: UseChatScrollOptions`; omit it to use hook defaults, or call `useChatScroll` directly for custom transcript shells.
 

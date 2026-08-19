@@ -8,8 +8,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import {
   useAttachments,
-  useUploadsRegistry,
-  type UseUploadsRegistryResult,
 } from "./use-uploads-registry.ts";
 
 function installDom(): () => void {
@@ -111,7 +109,7 @@ function stubFetch(
 function mount(storageKey: string) {
   let latest: ReturnType<typeof useAttachments> | null = null;
   function Capture(): null {
-    latest = useUploadsRegistry({ storageKey });
+    latest = useAttachments({ storageKey });
     return null;
   }
   const root = createRoot(document.getElementById("root")!);
@@ -155,12 +153,8 @@ function fakeFile(name: string): File {
   return new File(["1234567890"], name, { type: "text/plain" });
 }
 
-describe("react/components/chat/hooks/useUploadsRegistry", () => {
-  it("useUploadsRegistry is a back-compat alias of useAttachments", () => {
-    assert(useUploadsRegistry === useAttachments);
-  });
-
-  it("keeps the legacy result interface structurally source-compatible", () => {
+describe("react/components/chat/hooks/useAttachments", () => {
+  it("keeps the canonical result interface structurally source-compatible", () => {
     const legacyResult = {
       items: [],
       isLoading: false,
@@ -172,7 +166,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       remove: () => Promise.resolve(),
       clear: () => undefined,
       refresh: () => Promise.resolve(),
-    } satisfies UseUploadsRegistryResult;
+    } satisfies ReturnType<typeof useAttachments>;
     assertEquals(legacyResult.items, []);
   });
 
@@ -225,9 +219,9 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
     const restoreDom = installDom();
     const fetchStub = stubFetch();
     try {
-      let latest: UseUploadsRegistryResult | null = null;
+      let latest: ReturnType<typeof useAttachments> | null = null;
       const Capture = (): null => {
-        latest = useUploadsRegistry({
+        latest = useAttachments({
           storageKey: "test-inline-headers",
           headers: { authorization: "Bearer test" },
         });
@@ -239,7 +233,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       await flush(() => {});
       await flush(() => {});
 
-      assertEquals((latest as unknown as UseUploadsRegistryResult).isLoading, false);
+      assertEquals((latest as unknown as ReturnType<typeof useAttachments>).isLoading, false);
       assertEquals(fetchStub.gets.length, 1, "inline headers should not retrigger refresh");
       await unmountReactRoot(root);
       await flush(() => {});
@@ -262,9 +256,9 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
           pending.set(String(input), { resolve, signal: init?.signal });
         })) as typeof fetch;
 
-    let latest: UseUploadsRegistryResult | null = null;
+    let latest: ReturnType<typeof useAttachments> | null = null;
     const Capture = ({ url }: { url: string }): null => {
-      latest = useUploadsRegistry({ storageKey: "test-endpoint-switch", url });
+      latest = useAttachments({ storageKey: "test-endpoint-switch", url });
       return null;
     };
     const root = createRoot(document.getElementById("root")!);
@@ -284,7 +278,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       );
       await flush(() => {});
       assertEquals(
-        (latest as unknown as UseUploadsRegistryResult).items.map((item) => item.id),
+        (latest as unknown as ReturnType<typeof useAttachments>).items.map((item) => item.id),
         ["new"],
       );
 
@@ -297,7 +291,7 @@ describe("react/components/chat/hooks/useUploadsRegistry", () => {
       );
       await flush(() => {});
       assertEquals(
-        (latest as unknown as UseUploadsRegistryResult).items.map((item) => item.id),
+        (latest as unknown as ReturnType<typeof useAttachments>).items.map((item) => item.id),
         ["new"],
       );
 

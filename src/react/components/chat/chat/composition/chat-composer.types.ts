@@ -37,10 +37,8 @@ export interface ChatInputActionProps extends
     React.ButtonHTMLAttributes<HTMLButtonElement>,
     "children" | "onClick" | "ref" | "type"
   > {
-  /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
-   * default icon when childless; pass children to replace it). */
+  /** Replace the default glyph. Pass children to replace the built-in icon. */
   children?: React.ReactNode;
-  icon?: React.ReactNode;
   /** Additional classes merged with the action's Button variant classes. */
   className?: string;
   onClick?: WrapClick;
@@ -64,7 +62,6 @@ export type ChatInputSlottedActionProps<T extends HTMLElement = HTMLElement> =
     asChild: true;
     children: React.ReactElement;
     disabled?: boolean;
-    icon?: React.ReactNode;
     className?: string;
     onClick?: WrapClick<T>;
     /** React 19: ref targets the element rendered by the custom child. */
@@ -82,22 +79,13 @@ export type ChatInputVoiceProps = ChatInputActionProps;
 
 /** Props for the unified {@link ChatInputSubmit} control. */
 export interface ChatInputSubmitProps extends ChatInputActionProps {
-  /** Replace the idle/send glyph. With `asChild`, supplies the element in both states. */
+  /** Replace the idle/send glyph. The stop state keeps its default glyph. */
   children?: React.ReactNode;
-  /**
-   * Icon shown while streaming. Defaults to the stop glyph. The `icon` prop
-   * applies to the idle/send state.
-   */
-  stopIcon?: React.ReactNode;
 }
 
 /** Literal slotted props for the unified {@link ChatInputSubmit} control. */
 export type ChatInputSlottedSubmitProps<T extends HTMLElement = HTMLElement> =
-  & ChatInputSlottedActionProps<T>
-  & {
-    /** Icon shown while streaming. Defaults to the stop glyph. */
-    stopIcon?: React.ReactNode;
-  };
+  ChatInputSlottedActionProps<T>;
 
 /** Props accepted by `<ChatInput.Model>`. */
 export interface ChatInputModelProps {
@@ -108,7 +96,7 @@ export interface ChatInputModelProps {
 /** Props accepted by `<ChatInput.Attach>`. */
 export interface ChatInputAttachProps {
   /** Replace the default attachment glyph. */
-  icon?: React.ReactNode;
+  children?: React.ReactNode;
   /** Wrap the attachment action; call `next()` to open the picker. */
   onClick?: WrapClick;
   /** React 19: ref is a regular prop (the wrapper this sub-part owns). */
@@ -120,7 +108,7 @@ export interface ChatInputExportProps {
   /** Messages included in the downloaded Markdown document. */
   messages: ChatMessage[];
   /** Override the download glyph. */
-  icon?: React.ReactNode;
+  children?: React.ReactNode;
   className?: string;
   /** Wrap the download action; call `next()` to continue. */
   onClick?: WrapClick;

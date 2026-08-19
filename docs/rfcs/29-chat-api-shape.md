@@ -258,7 +258,7 @@ one documented exception to the node contract, tamed by:
 - **Inline citations** are an override slot (`components.citation`) rendering
   footnote markers from source parts; default = numbered pills.
 
-### Scroll contract (`useChatScroll`, subsumes `useStickToBottom`)
+### Scroll contract (`useChatScroll`)
 
 Transcript scrolling is a subsystem, not a boolean (per shadcn MessageScroller /
 assistant-ui viewport):

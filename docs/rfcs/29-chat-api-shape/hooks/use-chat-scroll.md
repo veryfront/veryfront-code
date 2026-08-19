@@ -1,10 +1,10 @@
 # useChatScroll
 
-The transcript scroll contract - stick-to-bottom, anchoring, restore, and prepend preservation as one subsystem (subsumes `useStickToBottom`).
+The transcript scroll contract - stick-to-bottom, anchoring, restore, and prepend preservation as one subsystem.
 
 > **Status: RFC 29 - partly landed.** Per-symbol truth, verified against `src/` by `deno task lint:rfc-status`:
 >
-> - **Exported from `veryfront/chat` today:** `useChatScroll`, `UseChatScrollOptions`, `UseChatScrollResult`, `useStickToBottom`
+> - **Exported from `veryfront/chat` today:** `useChatScroll`, `UseChatScrollOptions`, `UseChatScrollResult`
 > - **Not exported today:** none
 > - **Not in `src/` today:** `isAutoScrolling`, `currentAnchorId`, `visibleMessageIds`, `turnAnchor`, `preserveScrollOnPrepend`, `observeVisibleMessages`
 >
@@ -16,7 +16,7 @@ The transcript scroll contract - stick-to-bottom, anchoring, restore, and prepen
 
 [#3277](https://github.com/veryfront/veryfront-code/pull/3277) shipped the hook and its attachment surface: `viewportRef`, `getViewportProps()`, `isAtBottom`, `scrollToBottom()`, `scrollToMessage(id)`, `scrollToStart()`, and `scrollToEnd()` are all real on `main`, and `getViewportProps()` already emits `data-at-bottom`.
 
-**Still proposed:** the whole options object (`turnAnchor`, `preserveScrollOnPrepend`, `observeVisibleMessages`) and the `isAutoScrolling` / `currentAnchorId` / `visibleMessageIds` state - none of those names exist in `src/`. `useStickToBottom` is also still exported rather than subsumed, so the "subsumes" claim in the heading above is a proposal too.
+**Still proposed:** the whole options object (`turnAnchor`, `preserveScrollOnPrepend`, `observeVisibleMessages`) and the `isAutoScrolling` / `currentAnchorId` / `visibleMessageIds` state - none of those names exist in `src/`.
 
 ## Import
 

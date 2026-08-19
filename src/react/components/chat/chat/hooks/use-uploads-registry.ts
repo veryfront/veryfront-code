@@ -746,11 +746,3 @@ export function useAttachments(
     refresh,
   };
 }
-
-/**
- */
-export const useUploadsRegistry = useAttachments;
-
-export type UseUploadsRegistryOptions = UseAttachmentsOptions;
-
-export type UseUploadsRegistryResult = UseAttachmentsResult;

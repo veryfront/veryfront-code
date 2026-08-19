@@ -26,6 +26,7 @@ import {
   ReasoningCard,
   StandaloneMessage as LegacyMessage,
   useComposerContext,
+  useStickToBottom,
   useUploadsRegistry,
 } from "veryfront/chat";
 `;
@@ -38,6 +39,7 @@ import {
   assertStringIncludes(result.code, "Reasoning as ReasoningCard");
   assertStringIncludes(result.code, "Message as LegacyMessage");
   assertStringIncludes(result.code, "useChatInputContext as useComposerContext");
+  assertStringIncludes(result.code, "useChatScroll as useStickToBottom");
   assertStringIncludes(result.code, "useAttachments as useUploadsRegistry");
 });
 

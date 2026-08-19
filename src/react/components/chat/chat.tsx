@@ -244,8 +244,6 @@ export {
   useChatScroll,
   type UseChatScrollOptions,
   type UseChatScrollResult,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
 } from "./chat/hooks/use-stick-to-bottom.ts";
 
 // ---------------------------------------------------------------------------
