@@ -526,6 +526,57 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(transportCalls, 0);
   });
 
+  // Deno-only for the same reason as the primordial-poisoning proof above: the
+  // poison window spans an await, and Node's runner serializes its own
+  // diagnostics through the mutated prototype.
+  const bodyDriftIt = isDeno ? it : it.skip;
+  bodyDriftIt("sends the body it bound-checked, not one re-serialized after minting", async () => {
+    let sentBody: BodyInit | null | undefined;
+    let restored = false;
+    const restore = (): void => {
+      if (restored) return;
+      restored = true;
+      deleteProperty(Object.prototype, "toJSON");
+    };
+
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["brevo__create_contact"],
+        credentialProvider: () => {
+          // Caller-supplied code runs between the pre-auth snapshot and request
+          // construction. Re-serializing after this point would send a body
+          // nothing ever checked.
+          defineProperty(Object.prototype, "toJSON", {
+            configurable: true,
+            value: () => "POISONED",
+            writable: true,
+          });
+          return TEST_CREDENTIAL;
+        },
+      },
+      (request) => {
+        sentBody = request.init.body;
+        restore();
+        return Promise.resolve(Response.json({ contact: { id: "1" } }));
+      },
+    );
+
+    try {
+      await source.executeTool("brevo__create_contact", {
+        email: "ada@example.test",
+        attributes: { FIRSTNAME: "Ada" },
+      });
+    } finally {
+      restore();
+    }
+
+    // Includes the catalog default, i.e. the assembled body that was bounded.
+    assertEquals(
+      sentBody,
+      '{"email":"ada@example.test","attributes":{"FIRSTNAME":"Ada"},"updateEnabled":false}',
+    );
+  });
+
   it("rejects pre-aborted execution before resolving credentials", async () => {
     let credentialProviderCalls = 0;
     let transportCalls = 0;

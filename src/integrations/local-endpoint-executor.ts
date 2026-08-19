@@ -110,6 +110,14 @@ export interface ExecuteLocalIntegrationEndpointOptions extends LocalIntegration
   readonly authHeaders: Readonly<Record<string, string>>;
   readonly allowedOrigin: string;
   readonly signal?: AbortSignal;
+  /**
+   * Body serialized by {@link snapshotLocalIntegrationEndpointArguments} before
+   * any credential was resolved. Supply it whenever the arguments were
+   * snapshotted: re-serializing here would run after caller-supplied credential
+   * code, which can change what `JSON.stringify` produces, so the body sent
+   * would not be the body that was checked.
+   */
+  readonly body?: string | undefined;
   /** Internal test seam. Production callers use the standard integration deadline. */
   readonly timeoutMs?: number;
   /** Internal test seam. Production callers use the guarded egress transport. */
@@ -352,7 +360,7 @@ function assertKnownArguments(
 export function snapshotLocalIntegrationEndpointArguments(
   endpoint: IntegrationEndpoint,
   args: Record<string, unknown>,
-): Record<string, unknown> {
+): { args: Record<string, unknown>; body: string | undefined } {
   const snapshot = snapshotArguments(args);
   assertKnownArguments(snapshot, endpoint);
 
@@ -379,11 +387,16 @@ export function snapshotLocalIntegrationEndpointArguments(
 
   // Assembled rather than checked field by field: an omitted field still
   // contributes its catalog default, so fields that each fit can still add up
-  // to a body over the JSON bound. The result is discarded and `buildRequest`
-  // rebuilds it from the same helper; the point here is to reject before
-  // anything is minted.
-  assembleBody(endpoint, snapshot);
-  return snapshot;
+  // to a body over the JSON bound.
+  //
+  // The serialized result is returned, not discarded, because re-serializing it
+  // in `buildRequest` would happen after caller-supplied credential code has
+  // run. That code can install an `Object.prototype.toJSON`, which
+  // `JSON.stringify` honours for the ordinary nested objects a snapshot
+  // contains, so a second assembly can produce a body that was never bounded
+  // or checked.
+  const body = assembleBody(endpoint, snapshot);
+  return { args: snapshot, body };
 }
 
 function serializeJson(value: unknown): string {
@@ -444,6 +457,7 @@ function buildRequest(
   authHeaders: Readonly<Record<string, string>>,
   allowedOrigin: string,
   signal: AbortSignal,
+  preSerializedBody?: string | undefined,
 ): LocalIntegrationEndpointTransportRequest {
   assertKnownArguments(args, endpoint);
   let endpointUrl = endpoint.url;
@@ -497,7 +511,9 @@ function buildRequest(
     setHeader(headers, name, value.value);
   }
 
-  const body = assembleBody(endpoint, args);
+  // Only assemble here when no pre-auth body was threaded in; see
+  // `ExecuteLocalIntegrationEndpointOptions.body`.
+  const body = preSerializedBody ?? assembleBody(endpoint, args);
 
   if (body !== undefined) {
     setHeader(headers, "Content-Type", endpoint.contentType ?? "application/json");
@@ -680,7 +696,12 @@ export async function executeLocalIntegrationEndpoint(
   options: ExecuteLocalIntegrationEndpointOptions,
 ): Promise<unknown> {
   throwIfCallerAborted(options.signal);
-  const args = snapshotLocalIntegrationEndpointArguments(options.endpoint, options.args);
+  // A caller that already snapshotted supplies its own pre-auth body; this
+  // local snapshot covers direct callers, which have no credential step to
+  // straddle.
+  const snapshot = snapshotLocalIntegrationEndpointArguments(options.endpoint, options.args);
+  const args = snapshot.args;
+  const body = options.body ?? snapshot.body;
   const signalLease = createRequestSignal(
     options.signal,
     options.timeoutMs ?? INTEGRATION_REQUEST_TIMEOUT_MS,
@@ -693,6 +714,7 @@ export async function executeLocalIntegrationEndpoint(
       options.authHeaders,
       options.allowedOrigin,
       signalLease.signal,
+      body,
     );
     const result = await executeTransportRequest(
       request,

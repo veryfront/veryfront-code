@@ -545,7 +545,7 @@ function createLocalIntegrationToolSourceInternal(
           }" is not granted by this source`,
         );
       }
-      const validatedArgs = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
+      const validated = snapshotLocalIntegrationEndpointArguments(tool.endpoint, args);
       const auth = await mintLocalCredentialAuth(
         await resolveLocalCredentialAuth(tool.authPlan, credentialProvider),
         toolName,
@@ -574,7 +574,10 @@ function createLocalIntegrationToolSourceInternal(
         connectorName: tool.connector.name,
         toolId: toolName,
         endpoint,
-        args: validatedArgs,
+        args: validated.args,
+        // Serialized before the credential step below; re-serializing after it
+        // could send a body that was never bound-checked.
+        body: validated.body,
         authHeaders: auth.headers,
         allowedOrigin,
         signal: context?.abortSignal,
