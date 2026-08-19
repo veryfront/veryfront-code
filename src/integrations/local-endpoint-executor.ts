@@ -377,12 +377,12 @@ export function snapshotLocalIntegrationEndpointArguments(
     }
   }
 
-  const bodyNames = objectKeys(endpoint.body ?? {});
-  for (let index = 0; index < bodyNames.length; index++) {
-    const name = bodyNames[index]!;
-    const field = endpoint.body?.[name];
-    if (field) fieldValue(snapshot, name, field);
-  }
+  // Assembled rather than checked field by field: an omitted field still
+  // contributes its catalog default, so fields that each fit can still add up
+  // to a body over the JSON bound. The result is discarded and `buildRequest`
+  // rebuilds it from the same helper; the point here is to reject before
+  // anything is minted.
+  assembleBody(endpoint, snapshot);
   return snapshot;
 }
 
@@ -394,6 +394,48 @@ function serializeJson(value: unknown): string {
   } catch {
     requestInvalid("Local integration request body must be serializable JSON");
   }
+}
+
+/**
+ * Serializes the request body an endpoint would send for these arguments.
+ *
+ * Assembling it is the only way to bound-check it: an omitted field still
+ * contributes its catalog default, so fields that individually fit can still
+ * add up to a body over the JSON limit. Shared with the pre-auth snapshot so
+ * that oversize body is rejected before any credential is minted, rather than
+ * at request-construction time.
+ */
+function assembleBody(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): string | undefined {
+  const bodyFields = objectKeys(endpoint.body ?? {});
+  if (endpoint.bodyMode === "passthrough") {
+    if (bodyFields.length !== 1) {
+      requestInvalid("Local integration passthrough bodies require exactly one field");
+    }
+    const name = bodyFields[0]!;
+    const field = endpoint.body?.[name]!;
+    const resolved = fieldValue(args, name, field);
+    return resolved.present ? serializeJson(resolved.value) : undefined;
+  }
+  if (bodyFields.length === 0) return undefined;
+
+  const record = objectCreate(null) as Record<string, unknown>;
+  for (let index = 0; index < bodyFields.length; index++) {
+    const name = bodyFields[index]!;
+    const field = endpoint.body?.[name]!;
+    const resolved = fieldValue(args, name, field);
+    if (resolved.present) {
+      objectDefineProperty(record, name, {
+        configurable: true,
+        enumerable: true,
+        value: resolved.value,
+        writable: true,
+      });
+    }
+  }
+  return serializeJson(record);
 }
 
 function buildRequest(
@@ -455,33 +497,7 @@ function buildRequest(
     setHeader(headers, name, value.value);
   }
 
-  let body: string | undefined;
-  const bodyFields = objectKeys(endpoint.body ?? {});
-  if (endpoint.bodyMode === "passthrough") {
-    if (bodyFields.length !== 1) {
-      requestInvalid("Local integration passthrough bodies require exactly one field");
-    }
-    const name = bodyFields[0]!;
-    const field = endpoint.body?.[name]!;
-    const resolved = fieldValue(args, name, field);
-    if (resolved.present) body = serializeJson(resolved.value);
-  } else if (bodyFields.length > 0) {
-    const record = objectCreate(null) as Record<string, unknown>;
-    for (let index = 0; index < bodyFields.length; index++) {
-      const name = bodyFields[index]!;
-      const field = endpoint.body?.[name]!;
-      const resolved = fieldValue(args, name, field);
-      if (resolved.present) {
-        objectDefineProperty(record, name, {
-          configurable: true,
-          enumerable: true,
-          value: resolved.value,
-          writable: true,
-        });
-      }
-    }
-    body = serializeJson(record);
-  }
+  const body = assembleBody(endpoint, args);
 
   if (body !== undefined) {
     setHeader(headers, "Content-Type", endpoint.contentType ?? "application/json");

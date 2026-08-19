@@ -6,6 +6,7 @@ import {
   assertInstanceOf,
   assertRejects,
   assertStrictEquals,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { IntegrationToolMeta } from "./schema.ts";
@@ -14,6 +15,7 @@ import {
   type ExecuteLocalIntegrationEndpointOptions,
   type LocalIntegrationEndpointTransport,
   type LocalIntegrationEndpointTransportRequest,
+  snapshotLocalIntegrationEndpointArguments,
 } from "./local-endpoint-executor.ts";
 
 type IntegrationEndpoint = NonNullable<IntegrationToolMeta["endpoint"]>;
@@ -536,6 +538,45 @@ describe("local integration endpoint executor", () => {
     assertEquals(error.slug, "local-integration-request-invalid");
     assertEquals(error.message.includes(SECRET), false);
     assertEquals(attempts, []);
+  });
+
+  it("rejects an assembled body that only exceeds the JSON bound once defaults apply", () => {
+    // A body field left unsupplied still contributes its catalog default to the
+    // assembled request. Validating each field on its own therefore proves
+    // nothing about the size of the body they add up to.
+    const bodyEndpoint = endpoint({
+      method: "POST",
+      url: "https://api.example.test/v1/records",
+      body: {
+        a: { type: "string", description: "A", required: true },
+        b: { type: "string", description: "B", required: true },
+        c: { type: "string", description: "C", required: true },
+        d: { type: "string", description: "D", required: true },
+        padded: { type: "string", description: "Padded", default: "default-value" },
+      },
+    });
+
+    const maxSerializedBytes = 4 * 1024 * 1024;
+    // Four strings just under the 1 MiB per-string cap, sized so the supplied
+    // arguments land a few bytes under the 4 MiB serialized cap and the single
+    // defaulted field is what carries them over it.
+    const chunk = "x".repeat(1024 * 1024 - 8);
+    const supplied = { a: chunk, b: chunk, c: chunk, d: chunk };
+    const suppliedBytes = new TextEncoder().encode(JSON.stringify(supplied)).length;
+    const assembled = { ...supplied, padded: "default-value" };
+    const assembledBytes = new TextEncoder().encode(JSON.stringify(assembled)).length;
+
+    // The premise: supplied arguments fit, the assembled body does not.
+    assert(suppliedBytes <= maxSerializedBytes, `supplied ${suppliedBytes}`);
+    assert(assembledBytes > maxSerializedBytes, `assembled ${assembledBytes}`);
+
+    const error = assertThrows(
+      () => snapshotLocalIntegrationEndpointArguments(bodyEndpoint, supplied),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "local-integration-request-invalid");
   });
 
   it("cancels a response rejected by its declared size", async () => {
