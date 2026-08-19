@@ -467,6 +467,36 @@ describe("createLocalIntegrationToolSource", () => {
     assertEquals(transportCalls, 0);
   });
 
+  it("rejects a dot-segment path argument before minting credentials", async () => {
+    for (const traversal of ["..", ".", ""]) {
+      let credentialProviderCalls = 0;
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["paypal__get_invoice"],
+          credentialProvider: () => {
+            credentialProviderCalls += 1;
+            return TEST_CREDENTIAL;
+          },
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({ access_token: TEST_CREDENTIAL }));
+        },
+      );
+
+      const error = await assertRejects(
+        () => source.executeTool("paypal__get_invoice", { invoiceId: traversal }),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-request-invalid");
+      assertEquals(credentialProviderCalls, 0);
+      assertEquals(transportCalls, 0);
+    }
+  });
+
   it("rejects pre-aborted execution before resolving credentials", async () => {
     let credentialProviderCalls = 0;
     let transportCalls = 0;
