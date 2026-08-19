@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
+  createProxyRoutingInvalidationRejectionThrottle,
   handleProxyRoutingInvalidationRequest,
   PROXY_ROUTING_INVALIDATION_PATH,
   type ProxyRoutingInvalidationEvent,
@@ -269,12 +269,60 @@ describe("proxy routing invalidation ingress", () => {
     const [warning] = warnings;
     assertEquals(typeof warning?.extra?.reason, "string");
     assertStringIncludes(String(warning?.extra?.reason), "signature verification failed");
-    assertEquals(warning?.extra?.projectId, "proj-1");
-    assertEquals(warning?.extra?.projectSlug, "demo-project");
     // The rejected credential must never reach the log.
     const serialized = JSON.stringify(warnings);
     assertEquals(serialized.includes(tampered), false);
     assertEquals(serialized.includes(tampered.split(".")[2] ?? ""), false);
+  });
+
+  it("keeps caller-supplied identifiers out of a rejected invalidation warning", async () => {
+    // Nothing in the body is trustworthy on this path: verification has already
+    // failed, so every identifier is attacker-chosen. Logging them lets an
+    // unauthenticated caller pin a forged rejection on someone else's project
+    // and turns each request into ~4.5KB of caller-controlled log volume, which
+    // AGENTS.md ("Secret and internal-detail safety") forbids. The reason is
+    // minted by our own verification code, so it stays.
+    const body = createBody();
+    const { jws, publicKeyPem } = await createDispatchSignature(body);
+    const tampered = jws.slice(0, -4) + (jws.endsWith("AAAA") ? "BBBB" : "AAAA");
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const response = await handleProxyRoutingInvalidationRequest(
+      new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+        method: "POST",
+        headers: { "x-veryfront-dispatch-jws": tampered },
+        body,
+      }),
+      {
+        publicKeyPem,
+        logger: {
+          warn: (message, extra) => warnings.push({ message, extra }),
+        },
+        publisher: {
+          publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+        },
+      },
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(String(warnings[0]?.extra?.reason), "signature verification failed");
+    const serialized = JSON.stringify(warnings);
+    for (
+      const identifier of [
+        "proj-1",
+        "demo-project",
+        "deployment-1",
+        "environment-1",
+        "production",
+        "release-1",
+      ]
+    ) {
+      assertEquals(
+        serialized.includes(identifier),
+        false,
+        `rejection warning leaked the caller-supplied identifier ${identifier}`,
+      );
+    }
   });
 
   it("logs the missing-signature rejection without inventing a verification reason", async () => {
@@ -299,6 +347,49 @@ describe("proxy routing invalidation ingress", () => {
     assertEquals(response.status, 401);
     assertEquals(warnings.length, 1);
     assertStringIncludes(String(warnings[0]?.extra?.reason), "missing");
+  });
+
+  it("coalesces repeated rejections of one class into a counted warning", async () => {
+    // Unauthenticated callers reach this path, so one log write per request is
+    // an amplification lever. The first rejection must still warn immediately —
+    // suppressing it would rebuild the silence that hid this bug for a month.
+    const body = createBody();
+    const warnings: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    let clockMs = 0;
+    const rejectionThrottle = createProxyRoutingInvalidationRejectionThrottle({
+      nowMs: () => clockMs,
+      windowMs: 60_000,
+    });
+    const reject = (): Promise<Response> =>
+      handleProxyRoutingInvalidationRequest(
+        new Request(`http://proxy.test${PROXY_ROUTING_INVALIDATION_PATH}`, {
+          method: "POST",
+          body,
+        }),
+        {
+          publicKeyPem: "configured",
+          logger: {
+            warn: (message, extra) => warnings.push({ message, extra }),
+          },
+          publisher: {
+            publish: () => Promise.resolve({ acknowledged: 1, converged: true, recipients: 1 }),
+          },
+          rejectionThrottle,
+        },
+      );
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assertEquals((await reject()).status, 401);
+      clockMs += 1_000;
+    }
+    assertEquals(warnings.length, 1);
+    assertEquals(warnings[0]?.extra?.coalescedSincePreviousWarning, undefined);
+
+    clockMs += 60_000;
+    assertEquals((await reject()).status, 401);
+    assertEquals(warnings.length, 2);
+    assertEquals(warnings[1]?.extra?.coalescedSincePreviousWarning, 4);
+    assertStringIncludes(String(warnings[1]?.extra?.reason), "missing");
   });
 
   // Deliberately no in-process "missing SchemaValidator" test. One was written
