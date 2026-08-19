@@ -3098,14 +3098,30 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
     ): Completion => {
       if (!parameter || parameter.type === "Identifier") return "normal";
       if (
-        parameter.type !== "ObjectPattern" || !thrownArguments ||
-        thrownArguments.length === 0 || !thrownArguments.every(definitelyNonNullish)
+        parameter.type !== "ObjectPattern" || !thrownArguments || thrownArguments.length === 0
       ) {
         deferred.add(parameter);
         return "unknown";
       }
       const properties = Array.isArray(parameter.properties) ? parameter.properties : [];
-      if (properties.length === 0) return "normal";
+      if (properties.length === 0) {
+        let completion: Completion | null = null;
+        for (const argument of thrownArguments) {
+          const primitive = staticPrimitiveValue(argument, initializedNames);
+          const argumentCompletion: Completion = primitive.known &&
+              (primitive.value === null || primitive.value === undefined)
+            ? "throw"
+            : definitelyNonNullish(argument)
+            ? "normal"
+            : "unknown";
+          completion = mergeCompletionAlternatives(completion, argumentCompletion);
+        }
+        return completion ?? "unknown";
+      }
+      if (!thrownArguments.every(definitelyNonNullish)) {
+        deferred.add(parameter);
+        return "unknown";
+      }
       const thrownAreEmptyObjects = thrownArguments.every((argument) => {
         const thrown = unwrap(argument);
         return thrown.type === "ObjectExpression" && Array.isArray(thrown.properties) &&
@@ -3671,9 +3687,13 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
               parameter,
               directThrownArguments(block),
             );
-            if (parameterCompletion !== "normal") deferred.add(handler.body);
-            const handlerCompletion: Completion = parameterCompletion === "normal"
-              ? statementCompletion(handler.body)
+            const parameterCanComplete = completionHasNormalAlternative(parameterCompletion);
+            if (!parameterCanComplete) deferred.add(handler.body);
+            const handlerCompletion: Completion = parameterCanComplete
+              ? mergeCompletionAlternatives(
+                withoutNormalAlternative(parameterCompletion),
+                statementCompletion(handler.body),
+              )
               : parameterCompletion;
             if (hasThrowAlternative) {
               const nonThrowCompletion = completionFromAlternatives(

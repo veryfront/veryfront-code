@@ -3863,6 +3863,25 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "globalThis.registered = KEY");
     });
 
+    it("enters a catch pattern for a non-nullish throw alternative", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { while (true) { try { if (cond) throw {}; else throw null; } catch ({}) { globalThis.registered = KEY; break; } } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-catch-pattern-mixed-nullish.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
     it("consumes a break alternative in its owning loop", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
