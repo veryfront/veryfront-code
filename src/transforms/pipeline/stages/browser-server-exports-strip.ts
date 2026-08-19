@@ -2958,9 +2958,33 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
       }
       const properties = Array.isArray(parameter.properties) ? parameter.properties : [];
       if (properties.length === 0) return "normal";
+      const thrown = thrownArgument ? unwrap(thrownArgument) : null;
+      const thrownIsEmptyObject = thrown?.type === "ObjectExpression" &&
+        Array.isArray(thrown.properties) && thrown.properties.length === 0;
+      const deferLaterProperties = (index: number): void => {
+        for (const later of properties.slice(index + 1)) {
+          if (isNode(later)) deferred.add(later);
+        }
+      };
       for (let index = 0; index < properties.length; index++) {
         const property = properties[index];
         if (!isNode(property)) continue;
+        if (property.type === "RestElement") {
+          if (
+            thrownIsEmptyObject && isNode(property.argument) &&
+            property.argument.type === "Identifier"
+          ) {
+            continue;
+          }
+          deferred.add(property);
+          deferLaterProperties(index);
+          return "unknown";
+        }
+        if (property.type !== "ObjectProperty" || !isNode(property.value)) {
+          deferred.add(property);
+          deferLaterProperties(index);
+          return "unknown";
+        }
         const key = property.type === "ObjectProperty" && property.computed === true &&
             isNode(property.key)
           ? property.key
@@ -2973,24 +2997,36 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
           if (property.type === "ObjectProperty" && isNode(property.value)) {
             deferred.add(property.value);
           }
+          deferLaterProperties(index);
+          return "unknown";
         }
-        const value = property.type === "ObjectProperty" && isNode(property.value)
-          ? property.value
-          : null;
+        const value = property.value;
+        if (!thrownIsEmptyObject) {
+          if (value.type !== "Identifier") deferred.add(value);
+          deferLaterProperties(index);
+          return "unknown";
+        }
+        if (value.type === "Identifier") continue;
         if (
-          value?.type === "AssignmentPattern" && isNode(value.right) &&
+          value.type === "AssignmentPattern" && isNode(value.right) &&
           !isInertExpression(value.right, noNameHelpers, initializedNames)
         ) {
           deferOrderedExpressionTail(value.right, initializedNames);
-        } else if (value && value.type !== "Identifier") {
-          deferred.add(value);
+          if (isNode(value.left) && value.left.type !== "Identifier") deferred.add(value.left);
+          deferLaterProperties(index);
+          return "unknown";
         }
-        for (const later of properties.slice(index + 1)) {
-          if (isNode(later)) deferred.add(later);
+        if (
+          value.type === "AssignmentPattern" && isNode(value.left) &&
+          value.left.type === "Identifier"
+        ) {
+          continue;
         }
+        deferred.add(value);
+        deferLaterProperties(index);
         return "unknown";
       }
-      return "unknown";
+      return "normal";
     };
     const statementCompletion = (
       statement: Node,
@@ -3445,10 +3481,17 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
             ? statementCompletion(statement.alternate)
             : "normal";
           if (consequentCompletion === alternateCompletion) return consequentCompletion;
-          const consequentLabel = consequentCompletion.startsWith("continue:")
+          const currentLoopTarget = activeContinueLabelGroups[
+            activeContinueLabelGroups.length - 1
+          ];
+          const consequentLabel = consequentCompletion === "continue"
+            ? currentLoopTarget?.[0] ?? null
+            : consequentCompletion.startsWith("continue:")
             ? consequentCompletion.slice("continue:".length)
             : null;
-          const alternateLabel = alternateCompletion.startsWith("continue:")
+          const alternateLabel = alternateCompletion === "continue"
+            ? currentLoopTarget?.[0] ?? null
+            : alternateCompletion.startsWith("continue:")
             ? alternateCompletion.slice("continue:".length)
             : null;
           const sharedTarget = consequentLabel && alternateLabel

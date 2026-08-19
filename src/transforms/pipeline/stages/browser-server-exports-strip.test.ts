@@ -3426,6 +3426,24 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "root-iife-catch-default-order.tsx");
     });
 
+    it("continues after a completing catch pattern default", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `(() => { try { throw {}; } catch ({ x = 0, [KEY]: y }) {} })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-catch-completing-default.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "[KEY]");
+    });
+
     it("does not trust a thrown class whose evaluation aborts", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -3556,6 +3574,25 @@ describe("browser-server-exports-strip", () => {
       const result = await stripServerOnlyExports(
         code,
         "pages/root-iife-stacked-label-continues.tsx",
+      );
+
+      assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
+      assertStringIncludes(result, "globalThis.registered = KEY");
+    });
+
+    it("merges unlabeled and labeled continues for one stacked-label loop", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("SECRET_KEY");`,
+        `const cond = globalThis.flag;`,
+        `(() => { outer: inner: for (; true; globalThis.registered = KEY) { if (cond) continue; else continue outer; } })();`,
+        `export async function getServerData() { return { props: { k: KEY } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(
+        code,
+        "pages/root-iife-stacked-label-mixed-continues.tsx",
       );
 
       assertStringIncludes(result, `const KEY = getEnv("SECRET_KEY")`);
