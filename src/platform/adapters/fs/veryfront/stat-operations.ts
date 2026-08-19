@@ -272,6 +272,28 @@ export class StatOperations extends VeryfrontOperationsBase {
   }
 
   /**
+   * Restart the authority window for the index already in memory, after the
+   * API has confirmed the listing it was built from is still current.
+   *
+   * `INDEX_AUTHORITY_LIMIT_MS` bounds a poke that never arrived, so crossing
+   * it has to cost one re-check -- not one per probe. A refresh that comes
+   * back unchanged is exactly that re-check: it just compared this snapshot
+   * against the API and found nothing new, which is stronger evidence than
+   * the build that opened the window. Without renewing here the index stays
+   * expired, and every distinct module probe pays its own refresh forever --
+   * the fan-out this gate removes, returning after five minutes.
+   *
+   * This cannot become "never re-check again": only a completed refresh calls
+   * it, so each renewal costs one verified listing fetch and the next window
+   * expires on the same timer. An edit is still seen the moment its poke
+   * lands, because `clearIndex` drops the index outright.
+   */
+  renewIndexAuthority(): void {
+    if (!this.fileIndex || !this.directoryIndex) return;
+    this.indexBuiltAt = Date.now();
+  }
+
+  /**
    * Whether the built index is the complete file listing for the snapshot
    * being rendered, and may therefore answer "this path does not exist"
    * without asking the API.

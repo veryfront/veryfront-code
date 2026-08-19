@@ -847,4 +847,99 @@ describe("file list fan-out (issue inbox#32)", () => {
       "authority must lapse so recovery turns back on without a poke",
     );
   });
+
+  it("renews index authority when an expired refresh finds the snapshot unchanged", async () => {
+    // The expiry above is a safety valve, not a budget: crossing it must cost
+    // ONE re-check, not one per probe. A preview open longer than the window
+    // whose refresh keeps confirming "nothing changed" must not slide back
+    // into the per-probe fan-out this whole change exists to remove.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter, counts } = createDraftAdapter(files, true, true);
+
+    // A preview that has been open a while: the listing is warm and a snapshot
+    // has been recorded, so later refreshes have a baseline to compare against
+    // and can come back unchanged.
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+    await adapter.refreshSourceSnapshot("test-warmup");
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+
+    const statOps = (adapter as unknown as {
+      statOps: { isIndexAuthoritative(): boolean; indexBuiltAt: number };
+    }).statOps;
+    assertEquals(statOps.isIndexAuthoritative(), true, "the warm index answers authoritatively");
+
+    // Five idle minutes pass. Age the index rather than sleeping through it.
+    statOps.indexBuiltAt = Date.now() - (5 * 60 * 1000 + 1);
+
+    // The first probe past the window re-checks the API, as designed.
+    const beforeFirstMiss = counts.listingRequests;
+    assertEquals(await adapter.exists("components/Missing-one.tsx"), false);
+    assertEquals(
+      counts.listingRequests > beforeFirstMiss,
+      true,
+      "the first probe past the window must re-check the listing against the API",
+    );
+
+    // That re-check confirmed the listing, so the index built from it describes
+    // the current snapshot again. Every later probe must be answered from it.
+    const afterFirstMiss = counts.listingRequests;
+    assertEquals(await adapter.exists("components/Missing-two.tsx"), false);
+    assertEquals(
+      counts.listingRequests,
+      afterFirstMiss,
+      "an unchanged refresh must renew index authority, not leave each later probe to re-check",
+    );
+  });
+
+  it("still sees an edit whose poke was missed once the renewed window lapses", async () => {
+    // The other half of the renewal: it must not turn "unchanged once" into
+    // "never re-check again". Each renewal buys exactly one more window, and
+    // an edit that arrives without a poke must be picked up when that lapses.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter } = createDraftAdapter(files, true, true);
+
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+    await adapter.refreshSourceSnapshot("test-warmup");
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+
+    const statOps = (adapter as unknown as {
+      statOps: { isIndexAuthoritative(): boolean; indexBuiltAt: number };
+    }).statOps;
+    const expire = () => {
+      statOps.indexBuiltAt = Date.now() - (5 * 60 * 1000 + 1);
+    };
+
+    // Window one lapses against an unchanged listing, so authority is renewed.
+    // Probe a path unrelated to the edit below: a path that misses while the
+    // window is open is memoised as a recent recovery failure, which would
+    // suppress the recovery this test is here to observe.
+    expire();
+    assertEquals(await adapter.exists("components/Unrelated.tsx"), false);
+    assertEquals(
+      statOps.isIndexAuthoritative(),
+      true,
+      "the confirming refresh renews the window",
+    );
+
+    // The user now creates the file and the poke never reaches us.
+    files.push({ path: "components/Welcome.tsx", content: "export const Welcome = 1;" });
+    assertEquals(
+      await adapter.exists("components/Welcome.tsx"),
+      false,
+      "inside the renewed window the index still answers from the confirmed listing",
+    );
+
+    // Window two lapses. The renewal bought a window, not immunity.
+    expire();
+    assertEquals(
+      await adapter.exists("components/Welcome.tsx"),
+      true,
+      "a missed poke must still surface once the renewed window expires",
+    );
+    assertEquals(
+      await adapter.readTextFile("components/Welcome.tsx"),
+      "export const Welcome = 1;",
+      "the recovered snapshot must serve the missed file's content",
+    );
+  });
 });

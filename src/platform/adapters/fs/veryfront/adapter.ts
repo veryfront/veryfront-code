@@ -1091,6 +1091,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.sourceSnapshotFiles = files;
         this.sourceSnapshotIdentity = refreshIdentity;
         this.sourceSnapshotCheckedAt = Date.now();
+        // The API just confirmed this listing is current, so the index built
+        // from it may answer "absent" on its own again. Skipping this leaves
+        // the index expired after the first probe past
+        // INDEX_AUTHORITY_LIMIT_MS, and every later probe repeats this refresh
+        // to be told the same thing -- the per-probe fan-out, five minutes in.
+        this.statOps.renewIndexAuthority();
       }
 
       this.branchMissRecoveryFailures.clear();
