@@ -32,12 +32,22 @@ managed OAuth connection.
      to keep a user connection active; omit it only when the connection must
      not be refreshable.
 4. Open **Distribution** and enable sharing. An OAuth 2.0 (3LO) app is private
-   when created, so only the account that owns it can authorize. Leave sharing
-   off and every other user reaches Atlassian, picks their site, and gets
-   Atlassian's own "Something went wrong" page. Your deployment never sees the
-   callback, so nothing surfaces in your logs. Test with an account outside the
-   app owner's Atlassian organization; the owner's account succeeds either way
-   and proves nothing.
+   when created, so only the account that owns it can authorize. Atlassian will
+   not save the toggle until you also fill in **Vendor** and **Privacy policy**
+   (plus **Terms of service** where it asks for one), so have those URLs ready.
+
+   Leave sharing off and every other user reaches Atlassian, picks their site,
+   and gets Atlassian's own "Something went wrong" page. Your deployment never
+   sees the callback, so nothing surfaces in your logs.
+
+   Test with any Atlassian account other than the app owner's. A private app is
+   restricted to the owning **account**, not to the owning organization, so a
+   colleague in the same organization fails too. The owner's own account
+   succeeds either way, so testing with it proves nothing.
+
+   This covers **Confluence** as well. Both connectors use the same Atlassian
+   app and the same `ATLASSIAN_CLIENT_ID` and `ATLASSIAN_CLIENT_SECRET`, so
+   enabling sharing once unblocks both.
 5. Set the OAuth app client ID and client secret as project environment variables:
 
 | Variable                  | Value                         |
