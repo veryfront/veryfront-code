@@ -62,6 +62,7 @@ import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts"
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
 import {
+  isEcmaScriptIdentifier,
   isErasedNode,
   isNode,
   isReferenceChildKey,
@@ -1109,13 +1110,23 @@ const JSX_PRAGMA_FRAGMENT = /@jsxFrag\s+(\S+)/;
 /** esbuild's classic factory when the module names none. */
 const DEFAULT_CLASSIC_FACTORY_ROOT = "React";
 
-/** The binding a pragma expression reads: `React.createElement` reads `React`. */
-function pragmaRootBinding(expression: string | undefined): string | null {
+/**
+ * The binding a pragma expression reads: `React.createElement` reads `React`.
+ *
+ * The identifier test is the Unicode one, shared with
+ * {@link isIntrinsicJsxName}. esbuild parses `@jsx Ħ.créate` and emits
+ * `Ħ.créate("div", null)`, so an ASCII-only test drops the pin and
+ * `dropUnusedImportBindings` then deletes the factory import the emitted call
+ * needs. A pragma esbuild cannot parse as an expression is not pinned here
+ * either: esbuild ignores it and falls back to `React.createElement`, which
+ * `DEFAULT_CLASSIC_FACTORY_ROOT` already pins.
+ */
+export function pragmaRootBinding(expression: string | undefined): string | null {
   const root = expression?.split(/[.([]/)[0]?.trim();
-  return root && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(root) ? root : null;
+  return root && isEcmaScriptIdentifier(root) ? root : null;
 }
 
-function jsxPragmaBindings(ast: ASTNode): Set<string> {
+export function jsxPragmaBindings(ast: ASTNode): Set<string> {
   const pinned = new Set<string>();
   const comments = (ast as { comments?: unknown }).comments;
   if (!Array.isArray(comments)) return pinned;

@@ -462,18 +462,55 @@ const IGNORED_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Whether `name` is spelled as an ECMAScript identifier.
+ *
+ * The grammar is Unicode, not ASCII: `IdentifierStart` is `$`, `_` or any
+ * `ID_Start` code point, and `IdentifierPart` adds `ID_Continue`, ZWNJ
+ * (`U+200C`) and ZWJ (`U+200D`). `$` and `_` are spelled out because neither
+ * carries the Unicode property.
+ *
+ * The two joiner escapes are redundant on V8, whose `\p{ID_Continue}` already
+ * matches both, so removing them changes no answer here. They stay because the
+ * grammar lists them separately from the property, and the property is the
+ * engine's table rather than the specification's rule. The differential test
+ * asserts the ANSWER for both joiners against the runtime, which is the part
+ * that has to keep holding.
+ *
+ * An ASCII-only spelling of this test is not a smaller version of it, it is a
+ * different predicate: `Café`, `Ωmega` and `日本語` are identifiers that an
+ * ASCII test rejects. The two callers both use the answer to decide whether a
+ * name is a binding read, so rejecting a valid identifier deletes live code.
+ * {@link isIntrinsicJsxName} and the JSX pragma pin in
+ * `browser-server-exports-strip.ts` are differentially tested against esbuild
+ * for exactly that reason.
+ */
+export function isEcmaScriptIdentifier(name: string): boolean {
+  return /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u.test(name);
+}
+
+/**
  * Whether a JSX element name is intrinsic tag text rather than a binding read.
  *
  * `<table>`, `<section>` and `<my-widget>` become string arguments to the JSX
  * factory, so they can never resolve to an import or a module-scope
- * declaration. Every JSX compiler agrees on the rule: a name that starts with a
- * lowercase letter, or that is not spelled like an identifier, is a string.
- * `<Card />` is a real reference and must keep its import alive.
+ * declaration. `<Card />` is a real reference and must keep its import alive.
+ *
+ * This mirrors esbuild's rule, which is the compiler the pipeline actually
+ * runs: a name is tag text when its first character is ASCII `a`-`z`, or when
+ * the whole name is not spelled as an identifier. Both halves matter and the
+ * order matters. `café` is a valid identifier and still tag text, because the
+ * first clause fires first; `Café` is not tag text, because it fails the first
+ * clause and passes the second.
+ *
+ * The first clause is deliberately ASCII: esbuild compares the first character
+ * against `a`-`z`, so `ωmega` and `привет` are binding reads even though their
+ * first character is a lowercase letter. Widening it to `\p{Ll}` would delete
+ * those imports.
  */
 export function isIntrinsicJsxName(name: string | null): boolean {
   if (!name) return false;
   if (/^[a-z]/.test(name)) return true;
-  return !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name);
+  return !isEcmaScriptIdentifier(name);
 }
 
 /**

@@ -1,6 +1,10 @@
+import "#veryfront/schemas/_test-setup.ts";
+import "../../plugins/__tests__/code-parser-setup.ts";
 import * as babelTypes from "npm:@babel/types@7.29.0";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
 import {
   DEFAULT_REFERENCE_CLASS,
   DEFAULT_TS_REFERENCE_CLASS,
@@ -12,11 +16,61 @@ import {
 } from "./reference-classification.ts";
 
 /**
- * The specifier this test pins. It must stay equal to the one the parser
- * extension resolves, or the guard below would certify a package the parser
- * does not use.
+ * The specifiers this test pins.
+ *
+ * `@babel/types` is the guard's oracle: it defines the node types the
+ * classification has to cover. `@babel/parser` is what actually EMITS the nodes
+ * the walkers meet, and the manifest pins the two separately, so they can drift
+ * apart. A parser-only bump is the dangerous half: a new `TS`-prefixed node
+ * type would reach `DEFAULT_TS_REFERENCE_CLASS`, be treated as erased, and its
+ * identifiers would stop keeping bindings alive. That is the over-DELETE
+ * direction, and the oracle would stay green because `@babel/types` never
+ * moved.
+ *
+ * So both pins are asserted. Bumping either one in the manifest must fail here,
+ * and whoever bumps it has to re-run the guard against the new package rather
+ * than discover the gap in a browser.
  */
 const PINNED_BABEL_TYPES = "npm:@babel/types@7.29.0";
+const PINNED_BABEL_PARSER = "npm:@babel/parser@7.29.2";
+
+/** Paths that cover every branch of the parser extension's plugin choice. */
+const PARSER_PATHS: readonly (string | undefined)[] = [
+  "page.tsx",
+  "page.ts",
+  "page.jsx",
+  "page.js",
+  "page.mjs",
+  "page.cjs",
+  "page.md",
+  "page.mdx",
+  undefined,
+];
+
+/** TypeScript-only syntax. Flow has no `satisfies`. */
+const TYPESCRIPT_ONLY = "const a = 1 satisfies number;";
+
+/** Flow-only syntax. TypeScript has no `opaque type` and no `%checks`. */
+const FLOW_ONLY: readonly string[] = [
+  "opaque type A = number;",
+  "declare module.exports: number;",
+];
+
+function codeParser(): CodeParser {
+  const found = tryResolve<CodeParser>("CodeParser");
+  if (!found) throw new Error("no CodeParser extension is registered");
+  return found;
+}
+
+/** Whether the parser accepts `code` on the plugin set it picks for `filePath`. */
+async function parses(code: string, filePath: string | undefined): Promise<boolean> {
+  try {
+    await codeParser().parse({ code, filePath });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const EXTENSION_MANIFEST = new URL(
   "../../../../extensions/ext-parser-babel/deno.json",
@@ -73,6 +127,60 @@ describe("reference classification", () => {
       };
 
       assertEquals(manifest.imports?.["@babel/types"], PINNED_BABEL_TYPES);
+    });
+
+    // The oracle and the node source are pinned separately in the same
+    // manifest, so a parser-only bump would leave this guard green while a new
+    // node type fell to the erased default. Pin the parser too.
+    it("pins the @babel/parser the nodes are emitted by", async () => {
+      const manifest = JSON.parse(await Deno.readTextFile(EXTENSION_MANIFEST)) as {
+        imports?: Record<string, string>;
+      };
+
+      assertEquals(manifest.imports?.["@babel/parser"], PINNED_BABEL_PARSER);
+    });
+
+    // `parseableNodeTypes` removes the Flow family from the guard's scope. That
+    // is sound only while the parser never enables the `flow` plugin. The
+    // dependency is asserted rather than described: Babel refuses to enable
+    // `flow` and `typescript` together, so a path that parses TypeScript-only
+    // syntax and refuses Flow-only syntax cannot be emitting Flow nodes.
+    it("never enables the Flow plugin the guard's filter depends on", async () => {
+      const accepted: string[] = [];
+      const refused: string[] = [];
+
+      for (const filePath of PARSER_PATHS) {
+        const label = filePath ?? "no path";
+        if (!await parses(TYPESCRIPT_ONLY, filePath)) refused.push(label);
+        for (const code of FLOW_ONLY) {
+          if (await parses(code, filePath)) accepted.push(`${label}: ${code}`);
+        }
+      }
+
+      assertEquals(
+        refused,
+        [],
+        "a path refused TypeScript-only syntax, so `typescript` is no longer always enabled",
+      );
+      assertEquals(
+        accepted,
+        [],
+        "a path accepted Flow-only syntax, so the guard's Flow filter now hides " +
+          "node types nobody classified",
+      );
+    });
+
+    // A filter that removes nothing would make the assertion above vacuous.
+    it("filters a non-empty Flow family out of the guard's scope", () => {
+      const flow = new Set<string>(babelTypes.FLIPPED_ALIAS_KEYS.Flow ?? []);
+      const covered = new Set(parseableNodeTypes());
+
+      assertEquals(flow.size > 0, true, "FLIPPED_ALIAS_KEYS.Flow must not be empty");
+      assertEquals(
+        [...flow].some((type) => covered.has(type)),
+        false,
+        "a Flow node type reached the guard's scope",
+      );
     });
 
     // A guard that cannot fail proves nothing, so assert that it reports a
