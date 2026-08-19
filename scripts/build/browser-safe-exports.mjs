@@ -31,7 +31,6 @@ export const BROWSER_SAFE_CLIENT_MODULES = [
   "src/chat/conversation.js",
   "src/chat/provider-errors.js",
   "src/agent/react/use-voice-input.js",
-  "src/react/components/chat/chat/components/code-block.js",
   "src/react/components/chat/chat/components/inline-citation.js",
   "src/react/components/chat/chat/components/message-actions.js",
   "src/react/components/chat/chat/components/reasoning.js",
