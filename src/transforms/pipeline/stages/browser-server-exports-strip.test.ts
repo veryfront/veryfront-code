@@ -47,8 +47,11 @@ describe("browser-server-exports-strip", () => {
         program: { body: Array<Record<string, unknown>> };
       };
       const statement = ast.program.body[0];
+      if (!statement) throw new Error(`no statement parsed from: ${source}`);
       const declarations = statement.declarations as Array<Record<string, unknown>>;
-      const bindings = patternBindings(declarations[0].id);
+      const declarator = declarations[0];
+      if (!declarator) throw new Error(`no declarator parsed from: ${source}`);
+      const bindings = patternBindings(declarator.id);
       return bindings === null
         ? null
         : bindings.map((node) => (node as unknown as { name: string }).name);
@@ -879,12 +882,23 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
-    // --- over-prune guards -------------------------------------------------
-    // These are the reason the collector originally bailed out on patterns. A default
-    // value or a computed key inside a pattern is a *read*, not a binding. If the
-    // collector swallowed those identifiers as bindings they would be hidden from
-    // `referencedIdentifiers` and the pass would delete live client code — a worse
-    // failure than the leak it is closing.
+    // --- over-prune behaviour -----------------------------------------------
+    // A default value or a computed key inside a pattern is a *read*, not a binding.
+    // If the collector swallowed those identifiers as bindings they would be hidden
+    // from `referencedIdentifiers` and the pass could delete live client code — a
+    // worse failure than the leak it is closing.
+    //
+    // These pin the resulting BEHAVIOUR. They are deliberately NOT the guard for that
+    // property, and should not be read as one: a collector that wrongly treats
+    // defaults and computed keys as bindings passes all three. Two independent
+    // attempts to build a discriminating end-to-end case failed — a differential run
+    // over both collectors produced byte-identical stage output on every shape tried,
+    // including `const { a = fallback } = getEnv("X")` with no client read of
+    // `fallback`, where the declaration is dropped either way because `a` is
+    // unreferenced once the hook body is emptied, taking `fallback` with it.
+    //
+    // The property is pinned in the `patternBindings` block above, at the seam where
+    // it is actually decidable.
 
     it("keeps a client binding referenced by a destructuring default in a stripped hook", async () => {
       const code = [
