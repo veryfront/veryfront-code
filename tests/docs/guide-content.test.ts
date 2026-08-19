@@ -213,7 +213,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "## Check capability support");
     assertStringIncludes(guide, "Direct provider inference");
     assertStringIncludes(guide, "Local agent delegation with `delegates`");
-    assertStringIncludes(guide, "Remote integration tools");
+    assertStringIncludes(guide, "Integration tools");
     assertStringIncludes(guide, "Salesforce service account");
     assertStringIncludes(guide, "External Client App");
     assertStringIncludes(guide, "createSalesforceServiceAccountToolSource");
@@ -296,6 +296,30 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "Managed OAuth");
     assertStringIncludes(guide, "cannot\nenable an integration");
     assertStringIncludes(guide, "`scope`, `perUser`, and\n`tools` fields are rejected");
+  });
+
+  it("documents account-free local integration credentials without weakening grants", async () => {
+    const integrations = await Deno.readTextFile(
+      new URL("docs/guides/integrations.md", repoRoot),
+    );
+    const salesforce = await Deno.readTextFile(
+      new URL("docs/guides/integrations/salesforce.md", repoRoot),
+    );
+    const selfHosting = await Deno.readTextFile(
+      new URL("docs/guides/self-hosting.md", repoRoot),
+    );
+    const docs = [integrations, salesforce, selfHosting].join("\n");
+
+    assertStringIncludes(docs, "createLocalIntegrationToolSource");
+    assertStringIncludes(docs, "loadRemoteToolsFromSource");
+    assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID");
+    assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET");
+    assertStringIncludes(docs, "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL");
+    assertStringIncludes(integrations, "integrations.allow only narrows");
+    assertStringIncludes(integrations, "never sends local credentials to Veryfront");
+    assertStringIncludes(integrations, "authorization-code OAuth");
+    assertStringIncludes(integrations, "query-string credentials");
+    assertEquals(selfHosting.includes("have no standalone credential path"), false);
   });
 
   it("documents fail-closed extension activation modes", async () => {

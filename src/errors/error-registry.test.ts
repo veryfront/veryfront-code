@@ -29,9 +29,25 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 113 registered errors", () => {
+    it("should have 119 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 113);
+      assertEquals(slugs.length, 119);
+    });
+
+    it("registers every local integration boundary error", () => {
+      const slugs = new Set(getAllSlugs());
+      for (
+        const slug of [
+          "local-integration-config-invalid",
+          "local-integration-credentials-missing",
+          "local-integration-credential-unavailable",
+          "local-integration-request-invalid",
+          "local-integration-request-failed",
+          "local-integration-response-invalid",
+        ] as const
+      ) {
+        assertEquals(slugs.has(slug), true, `Missing registered error slug "${slug}"`);
+      }
     });
   });
 
@@ -172,7 +188,7 @@ describe("error-registry", () => {
   describe("getErrorsByCategory", () => {
     it("should return CONFIG errors", () => {
       const errors = getErrorsByCategory("CONFIG");
-      assertEquals(errors.length, 12);
+      assertEquals(errors.length, 14);
       for (const error of errors) {
         assertEquals(error.category, "CONFIG");
       }
@@ -321,13 +337,13 @@ describe("error-registry", () => {
 
   describe("error categories coverage", () => {
     const expectedCategoryCounts: Record<string, number> = {
-      CONFIG: 12,
+      CONFIG: 14,
       BUILD: 9,
-      RUNTIME: 11,
+      RUNTIME: 14,
       ROUTE: 6,
       MODULE: 8,
       SERVER: 18,
-      BOUNDARY: 7,
+      BOUNDARY: 8,
       DEV: 5,
       DEPLOY: 16,
       AGENT: 8,

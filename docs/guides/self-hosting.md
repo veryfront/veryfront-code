@@ -18,24 +18,39 @@ environment. Self-hosting does not require a Veryfront account.
 
 Choose substitutes for managed capabilities before you deploy.
 
-| Capability                                 | Self-hosted support                          | Requirement                                                                    |
-| ------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------ |
-| Pages, API routes, AG-UI, tools, and MCP   | Supported                                    | Run the project with `veryfront serve`.                                        |
-| Direct provider inference                  | Supported                                    | Set the selected provider key or configure an OpenAI-compatible endpoint.      |
-| Local agent delegation with `delegates`    | Supported                                    | Delegates run in the application process.                                      |
-| Workflows                                  | Supported                                    | Use the in-memory backend or configure Redis for shared durable state.         |
-| Source-controlled project knowledge        | Supported                                    | Use the local project directory and the project knowledge tools.               |
-| Remote integration tools                   | Supported with a local source or backing API | Use the built-in Salesforce service account source or provide a service layer. |
-| Sandbox sessions                           | Requires a backing API or service layer      | Configure authenticated sandbox session APIs.                                  |
-| Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                     | These capabilities depend on project and control-plane context.                |
+| Capability                                 | Self-hosted support                     | Requirement                                                               |
+| ------------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------- |
+| Pages, API routes, AG-UI, tools, and MCP   | Supported                               | Run the project with `veryfront serve`.                                   |
+| Direct provider inference                  | Supported                               | Set the selected provider key or configure an OpenAI-compatible endpoint. |
+| Local agent delegation with `delegates`    | Supported                               | Delegates run in the application process.                                 |
+| Workflows                                  | Supported                               | Use the in-memory backend or configure Redis for shared durable state.    |
+| Source-controlled project knowledge        | Supported                               | Use the local project directory and the project knowledge tools.          |
+| Integration tools                          | Supported subset                        | Use a local catalog source or a managed backing API.                      |
+| Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                             |
+| Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 
-Managed integration definitions and execution are fetched from the configured
-API layer. A provider model key alone does not make those tools available in a
-standalone project. Salesforce also has an explicit local service account
-source for account-free runtimes. Other connectors still need a project-owned
-tool implementation or backing service layer.
+For supported fixed REST tools, create a local source with the exact canonical
+tool IDs the application grants:
+
+```ts
+import { createLocalIntegrationToolSource } from "veryfront/integrations";
+import { loadRemoteToolsFromSource } from "veryfront/tool";
+
+const source = createLocalIntegrationToolSource({
+  tools: ["salesforce__find_customer"],
+});
+const integrationTools = await loadRemoteToolsFromSource(source);
+```
+
+Pass `integrationTools` to an agent's `tools` option. The source resolves
+credentials from the project environment by default and never sends them to
+Veryfront. Managed per-user OAuth and connector features outside the supported
+local subset still require the configured API layer.
 
 ## Run Salesforce integration tools locally
+
+The Salesforce service account source runs the catalog's fixed Salesforce
+REST tools without a backing API.
 
 Use a dedicated Salesforce integration user and External Client App with the
 OAuth client credentials flow. Existing Connected Apps remain supported. Set
