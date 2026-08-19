@@ -210,20 +210,23 @@ it("tool search normalizes ASCII case and underscores as spaces", () => {
   );
 });
 
-it("tool search falls back to deterministic whitespace terms after a phrase miss", () => {
+it("tool search scores fallback terms by selectivity after a phrase miss", () => {
   const fileCatalog = [
     definition("create_file", "Create a project file"),
     definition("update_file", "Update a project file"),
     definition("sandbox_write_file", "Write only inside the sandbox filesystem"),
   ];
 
+  // `file` matches every candidate and therefore says nothing about which one the
+  // caller meant; `create` and `update` each match exactly one. `sandbox_write_file`
+  // matches no term but `file`, so returning it would be filler, not a result.
   assertEquals(
     searchToolExposure({
       query: "create_file update_file project file",
       authorized: fileCatalog,
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
-    ["create_file", "update_file", "sandbox_write_file"],
+    ["create_file", "update_file"],
   );
 });
 
@@ -864,4 +867,103 @@ it("tool_search is reserved only when deferred framework search is injected", ()
     message = error instanceof Error ? error.message : String(error);
   }
   assert(message.includes("reserved"));
+});
+
+const VERYFRONT_LIST_TOOL_NAMES = [
+  "list_accessible_agents",
+  "list_agent_runs",
+  "list_agent_templates",
+  "list_agent_tool_references",
+  "list_agent_workers",
+  "list_agents",
+  "list_child_agent_runs",
+  "list_child_agent_runs_by_parent_conversation",
+  "list_eval_runs",
+  "list_evals",
+  "list_external_files",
+  "list_files",
+  "list_input_requests",
+  "list_integrations",
+  "list_models",
+  "list_projects",
+  "list_prompts",
+  "list_releases",
+  "list_resources",
+  "list_sandbox_background_commands",
+  "list_sandbox_sessions",
+  "list_schedules",
+  "list_skills",
+  "list_tasks",
+  "list_tools",
+  "list_uploads",
+  "list_workflows",
+];
+
+const CATALOG_NAMESPACE_DESCRIPTION =
+  "Get detailed configuration, available tool IDs, and input schemas for an integration. " +
+  "Use this for integration tool IDs in these namespaces: confluence, github, jira, salesforce.";
+
+function integrationDiscoveryCatalog(): ToolDefinition[] {
+  return [
+    ...VERYFRONT_LIST_TOOL_NAMES.map((name) =>
+      definition(name, `List ${name.slice("list_".length).replaceAll("_", " ")}`)
+    ),
+    definition("get_integration", CATALOG_NAMESPACE_DESCRIPTION, "integration namespace name"),
+  ];
+}
+
+it("tool search ranks a rare description term above a common name term", () => {
+  const matches = searchToolExposure({
+    query: "list github issues",
+    authorized: integrationDiscoveryCatalog(),
+    state: createToolExposureState(),
+  }).matches.map((match) => match.name);
+
+  assertEquals(matches[0], "get_integration");
+  assertEquals(matches.filter((name) => name.startsWith("list_agent")), []);
+});
+
+it("tool search resolves a canonical integration tool id to its namespace", () => {
+  const result = searchToolExposure({
+    query: "jira__list_projects",
+    authorized: integrationDiscoveryCatalog(),
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["get_integration"]);
+});
+
+it("tool search prefers an authorized integration tool over its namespace catalog entry", () => {
+  const result = searchToolExposure({
+    query: "jira__list_projects",
+    authorized: [
+      ...integrationDiscoveryCatalog(),
+      definition("jira__list_projects", "List Jira projects on a site"),
+    ],
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches[0]?.name, "jira__list_projects");
+});
+
+it("tool search reports a miss when no candidate matches a selective term", () => {
+  assertEquals(
+    searchToolExposure({
+      query: "list spreadsheet macros",
+      authorized: integrationDiscoveryCatalog(),
+      state: createToolExposureState(),
+    }),
+    { matches: [], resultCount: 0, loadedCount: 0, miss: true },
+  );
+});
+
+it("tool search still resolves a bare platform tool id to its exact name match", () => {
+  assertEquals(
+    searchToolExposure({
+      query: "list_projects",
+      authorized: integrationDiscoveryCatalog(),
+      state: createToolExposureState(),
+    }).matches[0]?.name,
+    "list_projects",
+  );
 });

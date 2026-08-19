@@ -7,6 +7,18 @@ export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
 const DEFAULT_BOOTSTRAP_TOOL_NAMES = new Set(["load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
+/** Field weights indexed by match rank: exact name, name, description, parameter description. */
+const TOOL_SEARCH_FIELD_WEIGHTS = [4, 3, 2, 1] as const;
+/**
+ * A term matching more than half the catalog carries no information about which
+ * tool the caller meant. `log(2)` is exactly the inverse-document-frequency of a
+ * term present in half the candidates, so it is the point where a term stops
+ * discriminating. Below it a term may still contribute score, but it can never
+ * be the sole reason a candidate is returned.
+ */
+const TOOL_SEARCH_MIN_SELECTIVE_IDF = Math.LN2;
+/** Canonical integration tool ids are `<namespace>__<tool_id>` over this segment shape. */
+const CANONICAL_INTEGRATION_SEGMENT = /^[a-z0-9]+(?:[-_][a-z0-9]+)*$/;
 const TOOL_SEARCH_QUERY_MAX_BYTES = 256;
 const TOOL_SEARCH_CANDIDATE_LIMIT = 4_096;
 const TOOL_SEARCH_NAME_MAX_BYTES = 256;
@@ -67,12 +79,6 @@ export type ToolSearchResult = {
   miss: boolean;
 };
 
-type RankedToolSearchMatch = {
-  rank: number;
-  matchCount: number;
-  match: ToolSearchMatch;
-};
-
 type SearchableTool = ToolSearchMatch & {
   parameterDescriptions: string[];
 };
@@ -85,6 +91,36 @@ type SchemaSearchBudget = {
 function normalizeSearchText(value: string): string {
   return value.replace(/[A-Z]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 32))
     .replaceAll("_", " ").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Recognize `<namespace>__<tool_id>` on the raw query, before normalization
+ * rewrites `_` to a space and destroys the separator.
+ *
+ * Deliberately a local, narrow reimplementation rather than an import from the
+ * integrations policy layer: this is a search heuristic over untrusted model
+ * input, not an authorization decision, and the runtime must not take a value
+ * dependency on that module.
+ */
+function parseCanonicalIntegrationNamespace(query: string): string | null {
+  const trimmed = query.trim().toLowerCase();
+  const separator = trimmed.indexOf("__");
+  if (separator <= 0 || separator !== trimmed.lastIndexOf("__")) return null;
+  const namespace = trimmed.slice(0, separator);
+  const toolId = trimmed.slice(separator + 2);
+  return CANONICAL_INTEGRATION_SEGMENT.test(namespace) &&
+      CANONICAL_INTEGRATION_SEGMENT.test(toolId)
+    ? namespace
+    : null;
+}
+
+function toSearchMatch(tool: SearchableTool): ToolSearchMatch {
+  return { name: tool.name, description: tool.description, status: tool.status };
+}
+
+function compareToolSearchMatches(left: ToolSearchMatch, right: ToolSearchMatch): number {
+  return (left.status === right.status ? 0 : left.status === "available" ? -1 : 1) ||
+    compareAscii(left.name, right.name);
 }
 
 function compareAscii(left: string, right: string): number {
@@ -244,7 +280,7 @@ function snapshotSearchableTool(
 function getIndexedMatchRank(
   query: string,
   tool: SearchableTool,
-): number | null {
+): 0 | 1 | 2 | 3 | null {
   const name = normalizeSearchText(tool.name);
   if (name === query) return 0;
   if (name.includes(query)) return 1;
@@ -252,15 +288,10 @@ function getIndexedMatchRank(
   return tool.parameterDescriptions.some((description) => description.includes(query)) ? 3 : null;
 }
 
-function rankToolExposureMatches(input: {
-  query: string;
+function collectSearchCandidates(input: {
   available: readonly ToolDefinition[];
   authorized: readonly ToolDefinition[];
-}): RankedToolSearchMatch[] {
-  if (!isUtf8LengthWithin(input.query, TOOL_SEARCH_QUERY_MAX_BYTES)) return [];
-  const query = normalizeSearchText(input.query);
-  if (!query) return [];
-  const terms = [...new Set(query.split(/\s+/).filter(Boolean))];
+}): SearchableTool[] {
   const budget: SchemaSearchBudget = { nodes: 0, bytes: 0 };
   const candidates: SearchableTool[] = [];
   let examinedCandidates = 0;
@@ -274,38 +305,101 @@ function rankToolExposureMatches(input: {
   };
   append(input.available, "available");
   append(input.authorized, "loaded");
-  const ranked: RankedToolSearchMatch[] = [];
+  return candidates;
+}
 
-  for (const tool of candidates) {
-    const rank = getIndexedMatchRank(query, tool);
+/** Rank candidates against the query taken as one phrase, strongest field first. */
+function rankWholeQueryMatches(
+  query: string,
+  candidates: readonly SearchableTool[],
+): ToolSearchMatch[] {
+  const ranked: { rank: number; match: ToolSearchMatch }[] = [];
+  for (const candidate of candidates) {
+    const rank = getIndexedMatchRank(query, candidate);
     if (rank === null) continue;
-    ranked.push({
-      rank,
-      matchCount: 1,
-      match: { name: tool.name, description: tool.description, status: tool.status },
-    });
+    ranked.push({ rank, match: toSearchMatch(candidate) });
   }
+  return ranked
+    .sort((left, right) =>
+      left.rank - right.rank || compareToolSearchMatches(left.match, right.match)
+    )
+    .map(({ match }) => match);
+}
 
-  if (ranked.length === 0 && terms.length >= 2) {
-    for (const tool of candidates) {
-      const ranks = terms.flatMap((term) => {
-        const rank = getIndexedMatchRank(term, tool);
-        return rank === null ? [] : [rank];
-      });
-      if (ranks.length === 0) continue;
-      ranked.push({
-        rank: Math.min(...ranks),
-        matchCount: ranks.length,
-        match: { name: tool.name, description: tool.description, status: tool.status },
-      });
+/**
+ * Score candidates across independent query terms.
+ *
+ * Two properties matter, and the previous pure-OR fallback had neither. First,
+ * a term is weighted by how few candidates it matches, so a rare term such as an
+ * integration namespace outweighs a common one such as `list`. Second, a
+ * candidate must match at least one *selective* term to be returned at all —
+ * otherwise a query containing one common word returns whichever tools happen to
+ * sort first, and reports it as a hit.
+ */
+function scoreToolExposureTerms(
+  terms: readonly string[],
+  candidates: readonly SearchableTool[],
+): ToolSearchMatch[] {
+  const total = candidates.length;
+  if (total === 0 || terms.length === 0) return [];
+
+  const weightedTerms = terms.map((term) => {
+    let documentFrequency = 0;
+    for (const candidate of candidates) {
+      if (getIndexedMatchRank(term, candidate) !== null) documentFrequency += 1;
     }
+    return {
+      term,
+      inverseDocumentFrequency: documentFrequency === 0
+        ? 0
+        : Math.log((total + 1) / (documentFrequency + 0.5)),
+    };
+  });
+
+  const scored: { score: number; match: ToolSearchMatch }[] = [];
+  for (const candidate of candidates) {
+    let score = 0;
+    let matchedSelectiveTerm = false;
+    for (const { term, inverseDocumentFrequency } of weightedTerms) {
+      const rank = getIndexedMatchRank(term, candidate);
+      if (rank === null) continue;
+      score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[rank];
+      if (inverseDocumentFrequency >= TOOL_SEARCH_MIN_SELECTIVE_IDF) matchedSelectiveTerm = true;
+    }
+    if (!matchedSelectiveTerm) continue;
+    scored.push({ score, match: toSearchMatch(candidate) });
   }
 
-  return ranked.sort((left, right) =>
-    left.rank - right.rank || right.matchCount - left.matchCount ||
-    (left.match.status === right.match.status ? 0 : left.match.status === "available" ? -1 : 1) ||
-    compareAscii(left.match.name, right.match.name)
-  );
+  return scored
+    .sort((left, right) =>
+      right.score - left.score || compareToolSearchMatches(left.match, right.match)
+    )
+    .map(({ match }) => match);
+}
+
+function rankToolExposureMatches(input: {
+  query: string;
+  available: readonly ToolDefinition[];
+  authorized: readonly ToolDefinition[];
+}): ToolSearchMatch[] {
+  if (!isUtf8LengthWithin(input.query, TOOL_SEARCH_QUERY_MAX_BYTES)) return [];
+  const query = normalizeSearchText(input.query);
+  if (!query) return [];
+  const candidates = collectSearchCandidates(input);
+
+  // The query taken whole is the strongest signal: an exact tool id, including a
+  // canonical `<namespace>__<tool_id>` the run is authorized for, resolves here.
+  const wholeQueryMatches = rankWholeQueryMatches(query, candidates);
+  if (wholeQueryMatches.length > 0) return wholeQueryMatches;
+
+  // A canonical integration tool id the run is *not* authorized for must resolve
+  // to its namespace, not be word-split into terms that collide with unrelated
+  // platform tools (`jira__list_projects` must never surface `list_projects`).
+  const namespace = parseCanonicalIntegrationNamespace(input.query);
+  if (namespace !== null) return scoreToolExposureTerms([namespace], candidates);
+
+  const terms = [...new Set(query.split(/\s+/).filter(Boolean))];
+  return terms.length >= 2 ? scoreToolExposureTerms(terms, candidates) : [];
 }
 
 /** Create fresh run-local tool exposure state. */
@@ -420,11 +514,10 @@ export function searchToolExposure(input: {
     available: input.available ?? [],
     authorized: input.authorized,
   });
-  if (ranked[0]?.match.status === "available") {
+  if (ranked[0]?.status === "available") {
     const matches = ranked
-      .filter(({ match }) => match.status === "available")
-      .slice(0, TOOL_SEARCH_RESULT_LIMIT)
-      .map(({ match }) => match);
+      .filter((match) => match.status === "available")
+      .slice(0, TOOL_SEARCH_RESULT_LIMIT);
     return {
       matches,
       resultCount: matches.length,
@@ -434,14 +527,13 @@ export function searchToolExposure(input: {
   }
 
   const matches = ranked
-    .filter(({ match }) => match.status === "loaded")
+    .filter((match) => match.status === "loaded")
     .slice(
       0,
       input.maxLoadedTools === undefined
         ? TOOL_SEARCH_RESULT_LIMIT
         : Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools),
-    )
-    .map(({ match }) => match);
+    );
 
   for (const match of matches) {
     input.state.loadedToolNames.delete(match.name);
