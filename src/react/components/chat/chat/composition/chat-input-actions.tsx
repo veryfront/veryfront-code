@@ -67,8 +67,8 @@ export function ChatInputSend<T extends HTMLElement = HTMLElement>({
       aria-label={ariaLabel ?? "Send"}
       disabled={disabled || !c.canSubmit}
       onClick={(event: React.MouseEvent<HTMLElement>) => invokeChatInputClick(onClick, event, run)}
-    className={cn("shrink-0", className)}
-  >
+      className={cn("shrink-0", className)}
+    >
       {children ?? <ArrowUpIcon />}
     </Button>
   );
@@ -104,8 +104,8 @@ export function ChatInputStop<T extends HTMLElement = HTMLElement>({
       aria-label={ariaLabel ?? "Stop"}
       disabled={disabled}
       onClick={(event: React.MouseEvent<HTMLElement>) => invokeChatInputClick(onClick, event, run)}
-    className={cn("shrink-0", className)}
-  >
+      className={cn("shrink-0", className)}
+    >
       {children ?? <StopIcon />}
     </Button>
   );

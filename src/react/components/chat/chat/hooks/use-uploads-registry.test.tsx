@@ -6,9 +6,7 @@ import { unmountReactRoot } from "#veryfront/react/react-root.test-helpers.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing/deno-compat.ts";
-import {
-  useAttachments,
-} from "./use-uploads-registry.ts";
+import { useAttachments } from "./use-uploads-registry.ts";
 
 function installDom(): () => void {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {

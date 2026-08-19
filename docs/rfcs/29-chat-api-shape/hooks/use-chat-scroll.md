@@ -12,7 +12,7 @@ The transcript scroll contract - stick-to-bottom, anchoring, restore, and prepen
 
 ## Landed so far
 
-### `useChatScroll` - `new` - `partly shipped` (src/react/components/chat/chat/hooks/use-stick-to-bottom.ts:177)
+### `useChatScroll` - `new` - `partly shipped` (src/react/components/chat/chat/hooks/use-stick-to-bottom.ts:176)
 
 [#3277](https://github.com/veryfront/veryfront-code/pull/3277) shipped the hook and its attachment surface: `viewportRef`, `getViewportProps()`, `isAtBottom`, `scrollToBottom()`, `scrollToMessage(id)`, `scrollToStart()`, and `scrollToEnd()` are all real on `main`, and `getViewportProps()` already emits `data-at-bottom`.
 

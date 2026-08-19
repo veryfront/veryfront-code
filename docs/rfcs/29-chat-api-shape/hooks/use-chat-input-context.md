@@ -11,7 +11,7 @@ Reads the scoped composer state provided by the nearest `ChatInput` (via `ChatIn
 
 ## Landed so far
 
-### `useChatInputContext` - `new` - `shipped` (src/react/components/chat/chat/contexts/composer-context.tsx:83)
+### `useChatInputContext` - `new` - `shipped` (src/react/components/chat/chat/contexts/composer-context.tsx:73)
 
 The naming half of the RFC's "the word Composer is banned" decision has landed: `useChatInputContext`, `useChatInputContextOptional`, and `ChatInputContextProvider` are real exports of `veryfront/chat`, and the raw context object stays unexported as the providers rule requires.
 

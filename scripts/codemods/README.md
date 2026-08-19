@@ -147,19 +147,19 @@ control.
 
 ## Replace compatibility component names
 
-| Removed import                          | Canonical import                        |
-| --------------------------------------- | --------------------------------------- |
-| `ChatComponents`                        | `Chat`                                  |
-| `ChatComposer`, `Chat.Composer`         | `ChatInput`, `Chat.Input`               |
+| Removed import                                  | Canonical import                                  |
+| ----------------------------------------------- | ------------------------------------------------- |
+| `ChatComponents`                                | `Chat`                                            |
+| `ChatComposer`, `Chat.Composer`                 | `ChatInput`, `Chat.Input`                         |
 | `ComposerContextProvider`, `useComposerContext` | `ChatInputContextProvider`, `useChatInputContext` |
-| `useStickToBottom`                      | `useChatScroll`                                 |
-| `Attachment`                            | `AttachmentPill`                        |
-| `UploadsPanel`                          | `AttachmentsPanel`                      |
-| `useUploadsRegistry`                    | `useAttachments`                        |
-| `StandaloneMessage`, `StreamingMessage` | `Message`                               |
-| `MessageActions`                        | `MessageActionBar` or `Message.Actions` |
-| `ReasoningCard`                         | `Reasoning`                             |
-| `ToolCallCard`                          | `ToolCall`                              |
+| `useStickToBottom`                              | `useChatScroll`                                   |
+| `Attachment`                                    | `AttachmentPill`                                  |
+| `UploadsPanel`                                  | `AttachmentsPanel`                                |
+| `useUploadsRegistry`                            | `useAttachments`                                  |
+| `StandaloneMessage`, `StreamingMessage`         | `Message`                                         |
+| `MessageActions`                                | `MessageActionBar` or `Message.Actions`           |
+| `ReasoningCard`                                 | `Reasoning`                                       |
+| `ToolCallCard`                                  | `ToolCall`                                        |
 
 The corresponding compatibility prop type aliases are removed as well. Import
 the prop type that matches the canonical component name.
