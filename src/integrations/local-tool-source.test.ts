@@ -577,6 +577,53 @@ describe("createLocalIntegrationToolSource", () => {
     );
   });
 
+  bodyDriftIt("does not re-serialize the body when a pre-auth body was threaded in", async () => {
+    // A `toJSON` that THROWS, not one that returns a value: a discarded second
+    // assembly is invisible when the poison returns, but fatal when it throws.
+    let sentBody: BodyInit | null | undefined;
+    let restored = false;
+    const restore = (): void => {
+      if (restored) return;
+      restored = true;
+      deleteProperty(Object.prototype, "toJSON");
+    };
+
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["brevo__create_contact"],
+        credentialProvider: () => {
+          defineProperty(Object.prototype, "toJSON", {
+            configurable: true,
+            value: () => {
+              throw new Error("toJSON poisoned after credential resolution");
+            },
+            writable: true,
+          });
+          return TEST_CREDENTIAL;
+        },
+      },
+      (request) => {
+        sentBody = request.init.body;
+        restore();
+        return Promise.resolve(Response.json({ contact: { id: "1" } }));
+      },
+    );
+
+    try {
+      await source.executeTool("brevo__create_contact", {
+        email: "ada@example.test",
+        attributes: { FIRSTNAME: "Ada" },
+      });
+    } finally {
+      restore();
+    }
+
+    assertEquals(
+      sentBody,
+      '{"email":"ada@example.test","attributes":{"FIRSTNAME":"Ada"},"updateEnabled":false}',
+    );
+  });
+
   it("rejects pre-aborted execution before resolving credentials", async () => {
     let credentialProviderCalls = 0;
     let transportCalls = 0;

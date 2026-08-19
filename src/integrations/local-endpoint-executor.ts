@@ -361,6 +361,31 @@ export function snapshotLocalIntegrationEndpointArguments(
   endpoint: IntegrationEndpoint,
   args: Record<string, unknown>,
 ): { args: Record<string, unknown>; body: string | undefined } {
+  const snapshot = snapshotAndValidateArguments(endpoint, args);
+  // Assembled rather than checked field by field: an omitted field still
+  // contributes its catalog default, so fields that each fit can still add up
+  // to a body over the JSON bound.
+  //
+  // The serialized result is returned, not discarded, because re-serializing it
+  // later would happen after caller-supplied credential code has run. That code
+  // can install an `Object.prototype.toJSON`, which `JSON.stringify` honours for
+  // the ordinary nested objects a snapshot contains, so a second assembly can
+  // produce a body that was never bounded -- or throw outright.
+  const body = assembleBody(endpoint, snapshot);
+  return { args: snapshot, body };
+}
+
+/**
+ * Validates arguments without touching the body.
+ *
+ * Split out so a caller that already holds a pre-auth body never triggers a
+ * second serialization: that assembly runs after credential resolution, where a
+ * poisoned `toJSON` can make it throw even though the threaded body is sound.
+ */
+function snapshotAndValidateArguments(
+  endpoint: IntegrationEndpoint,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
   const snapshot = snapshotArguments(args);
   assertKnownArguments(snapshot, endpoint);
 
@@ -385,18 +410,7 @@ export function snapshotLocalIntegrationEndpointArguments(
     }
   }
 
-  // Assembled rather than checked field by field: an omitted field still
-  // contributes its catalog default, so fields that each fit can still add up
-  // to a body over the JSON bound.
-  //
-  // The serialized result is returned, not discarded, because re-serializing it
-  // in `buildRequest` would happen after caller-supplied credential code has
-  // run. That code can install an `Object.prototype.toJSON`, which
-  // `JSON.stringify` honours for the ordinary nested objects a snapshot
-  // contains, so a second assembly can produce a body that was never bounded
-  // or checked.
-  const body = assembleBody(endpoint, snapshot);
-  return { args: snapshot, body };
+  return snapshot;
 }
 
 function serializeJson(value: unknown): string {
@@ -696,12 +710,11 @@ export async function executeLocalIntegrationEndpoint(
   options: ExecuteLocalIntegrationEndpointOptions,
 ): Promise<unknown> {
   throwIfCallerAborted(options.signal);
-  // A caller that already snapshotted supplies its own pre-auth body; this
-  // local snapshot covers direct callers, which have no credential step to
-  // straddle.
-  const snapshot = snapshotLocalIntegrationEndpointArguments(options.endpoint, options.args);
-  const args = snapshot.args;
-  const body = options.body ?? snapshot.body;
+  const args = snapshotAndValidateArguments(options.endpoint, options.args);
+  // Assemble only when the caller did not already do it before resolving a
+  // credential. Re-assembling here would run after that credential step, where
+  // a poisoned `toJSON` can throw even though the threaded body is sound.
+  const body = options.body ?? assembleBody(options.endpoint, args);
   const signalLease = createRequestSignal(
     options.signal,
     options.timeoutMs ?? INTEGRATION_REQUEST_TIMEOUT_MS,
