@@ -276,12 +276,16 @@ dataset: datasets.jsonl("datasets/research.jsonl");
 
 ### Where dataset paths resolve from
 
-A relative path passed to `datasets.json()` or `datasets.jsonl()` resolves
-against the **project root**, not against the directory the eval file lives in.
-An eval at `evals/agents/research.eval.ts` that loads
-`datasets.jsonl("datasets/research.jsonl")` reads
+In CLI eval runs, a relative path passed to `datasets.json()` or
+`datasets.jsonl()` resolves against the **project root**, not against the
+directory the eval file lives in. An eval at `evals/agents/research.eval.ts`
+that loads `datasets.jsonl("datasets/research.jsonl")` reads
 `<project>/datasets/research.jsonl`, so a dataset stored next to the eval is
 addressed as `evals/agents/research.jsonl`.
+
+Programmatic `runEval()` callers resolve relative dataset paths against the
+current working directory by default. Pass `baseDir` when the process runs from
+another directory or when you want a different dataset root.
 
 Pass `--dataset-base <path>` to resolve relative dataset paths against a
 different directory:
