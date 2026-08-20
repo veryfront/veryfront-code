@@ -65,6 +65,19 @@ export const DURABLE_RUN_EVENT_PERSISTENCE_FAILED = defineError({
     "Correct invalid or oversized event data, or retry after durable event storage recovers",
 });
 
+/**
+ * The default model's provider has no credential while a different provider
+ * does. Resolution stays deterministic rather than silently substituting
+ * whichever key happens to be present on this machine.
+ */
+export const DEFAULT_MODEL_CREDENTIAL_MISMATCH = defineError({
+  slug: "default-model-credential-mismatch",
+  category: "AGENT",
+  status: 400,
+  title: "Default model has no matching provider credential",
+  suggestion: 'Set the agent\'s model to a provider you have a key for, or use model: "auto"',
+});
+
 /** Registry fragment for AGENT errors (slug → definition). */
 export const AGENT_REGISTRY = {
   "agent-error": AGENT_ERROR,
@@ -75,4 +88,5 @@ export const AGENT_REGISTRY = {
   "cost-limit-exceeded": COST_LIMIT_EXCEEDED,
   "tool-id-conflict": TOOL_ID_CONFLICT,
   "durable-run-event-persistence-failed": DURABLE_RUN_EVENT_PERSISTENCE_FAILED,
+  "default-model-credential-mismatch": DEFAULT_MODEL_CREDENTIAL_MISMATCH,
 } as const;

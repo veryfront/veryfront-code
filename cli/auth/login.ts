@@ -951,17 +951,6 @@ export async function whoami(
   console.log("  " + error("✗") + " Not logged in");
   console.log("  " + dim("Run 'veryfront login' to authenticate"));
 
-  // Show provider tokens
-  try {
-    const { listProviderTokens } = await import("./provider-store.ts");
-    const providers = await listProviderTokens(env);
-    for (const p of providers) {
-      console.log(`  ✓ ${p} API key configured`);
-    }
-  } catch {
-    // Provider store not available
-  }
-
   return null;
 }
 

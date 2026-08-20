@@ -798,6 +798,13 @@ Durable run event persistence failed.
 - **HTTP status:** 500
 - **What to do:** Correct invalid or oversized event data, or retry after durable event storage recovers
 
+### default-model-credential-mismatch
+
+Default model has no matching provider credential.
+
+- **HTTP status:** 400
+- **What to do:** Set the agent's model to a provider you have a key for, or use model: "auto"
+
 ## General
 
 Raised anywhere; these are not specific to one subsystem.
