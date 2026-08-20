@@ -22,8 +22,10 @@ import { estimateSize } from "./size-estimator.ts";
 import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 import {
   getCachedWithBatching,
+  getRequestCacheContext,
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
+import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { isImmutableFileCacheKey } from "./immutable-keys.ts";
 
 const logger = baseLogger.component("file-cache");
@@ -96,8 +98,8 @@ export function isFileCacheDistributedEnabled(): boolean {
  */
 /**
  * Process-local store for entries whose keys can never denote different content
- * (see {@link isImmutableFileCacheKey}). With the API backend present, every
- * read otherwise costs an HTTP round trip on every request, in every replica —
+ * (see {@link isImmutableFileCacheKey}). With an eligible distributed backend,
+ * read otherwise costs an HTTP round trip on every request, in every replica.
  * a single SSR render was measured issuing thousands of them
  * (veryfront-issue-inbox#602).
  *
@@ -110,21 +112,41 @@ export function isFileCacheDistributedEnabled(): boolean {
 const IMMUTABLE_L1_MAX_ENTRIES = 2_000;
 /** Skip outsized entries rather than let one file evict the whole working set. */
 const IMMUTABLE_L1_MAX_ENTRY_BYTES = 512 * 1024;
+const textEncoder = new TextEncoder();
 const immutableL1 = new Map<string, string>();
+let immutableL1MutationGeneration = 0;
 
-function immutableL1Get(key: string): string | undefined {
-  const hit = immutableL1.get(key);
+function immutableL1AuthorityScope(backend: CacheBackend, key: string): string | null {
+  if (!isImmutableFileCacheKey(key)) return null;
+  if (backend.type !== "api") return backend.type;
+
+  const verifiedCredential = getVerifiedCacheApiCredential();
+  if (!verifiedCredential) return null;
+  return `api:${verifiedCredential.projectId}:${verifiedCredential.projectSlug}`;
+}
+
+function immutableL1Key(scope: string, key: string): string {
+  return `${scope}\n${key}`;
+}
+
+function immutableL1SourceKey(scopedKey: string): string {
+  const separator = scopedKey.indexOf("\n");
+  return separator === -1 ? scopedKey : scopedKey.slice(separator + 1);
+}
+
+function immutableL1Get(scopedKey: string): string | undefined {
+  const hit = immutableL1.get(scopedKey);
   if (hit === undefined) return undefined;
   // Re-insert so eviction order is least-recently-used rather than insertion.
-  immutableL1.delete(key);
-  immutableL1.set(key, hit);
+  immutableL1.delete(scopedKey);
+  immutableL1.set(scopedKey, hit);
   return hit;
 }
 
-function immutableL1Set(key: string, raw: string): void {
-  if (raw.length > IMMUTABLE_L1_MAX_ENTRY_BYTES) return;
-  immutableL1.delete(key);
-  immutableL1.set(key, raw);
+function immutableL1Set(scopedKey: string, raw: string): void {
+  if (textEncoder.encode(raw).byteLength > IMMUTABLE_L1_MAX_ENTRY_BYTES) return;
+  immutableL1.delete(scopedKey);
+  immutableL1.set(scopedKey, raw);
   while (immutableL1.size > IMMUTABLE_L1_MAX_ENTRIES) {
     const oldest = immutableL1.keys().next().value;
     if (oldest === undefined) break;
@@ -138,10 +160,11 @@ function immutableL1Set(key: string, raw: string): void {
  * the store correct.
  */
 function immutableL1Drop(key: string): void {
-  immutableL1.delete(key);
+  immutableL1DropByPredicate((scopedKey) => immutableL1SourceKey(scopedKey) === key);
 }
 
 function immutableL1DropByPredicate(matches: (key: string) => boolean): void {
+  immutableL1MutationGeneration++;
   for (const key of [...immutableL1.keys()]) {
     if (matches(key)) immutableL1.delete(key);
   }
@@ -149,6 +172,7 @@ function immutableL1DropByPredicate(matches: (key: string) => boolean): void {
 
 /** Test seam: the store is process-global, so suites must be able to reset it. */
 export function clearImmutableFileCacheL1(): void {
+  immutableL1MutationGeneration++;
   immutableL1.clear();
 }
 
@@ -231,11 +255,23 @@ export class FileCache {
           // Use request-scoped batching to dedupe and batch cache requests
           // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
           // The backend will add its own namespace prefix, so we pass the key as-is
-          const immutable = isImmutableFileCacheKey(key);
-          const cached = immutable ? immutableL1Get(key) : undefined;
+          const requestCache = getRequestCacheContext();
+          const requestCacheAlreadyHasValue = requestCache?.cache.has(key) ?? false;
+          const l1Scope = requestCacheAlreadyHasValue
+            ? null
+            : immutableL1AuthorityScope(backend, key);
+          const l1Key = l1Scope ? immutableL1Key(l1Scope, key) : null;
+          const cached = l1Key ? immutableL1Get(l1Key) : undefined;
+          const mutationGeneration = immutableL1MutationGeneration;
           const raw = cached ?? await getCachedWithBatching(backend, key);
           if (raw) {
-            if (immutable && cached === undefined) immutableL1Set(key, raw);
+            if (
+              l1Key &&
+              cached === undefined &&
+              mutationGeneration === immutableL1MutationGeneration
+            ) {
+              immutableL1Set(l1Key, raw);
+            }
             const entry = JSON.parse(raw) as CacheEntry<T>;
             // When using backend (Redis/API), trust the backend's TTL for expiry.
             // The backend TTL is derived from this.options.ttl and handles expiry.
@@ -406,7 +442,7 @@ export class FileCache {
   }
 
   deleteByPrefix(prefix: string): number {
-    immutableL1DropByPredicate((key) => key.startsWith(prefix));
+    immutableL1DropByPredicate((key) => immutableL1SourceKey(key).startsWith(prefix));
     const count = this.clearLocalByPrefix(prefix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
@@ -420,7 +456,7 @@ export class FileCache {
   }
 
   deleteByPrefixAsync(prefix: string): Promise<number> {
-    immutableL1DropByPredicate((key) => key.startsWith(prefix));
+    immutableL1DropByPredicate((key) => immutableL1SourceKey(key).startsWith(prefix));
     return withSpan(
       "platform.fs.cache.deleteByPrefixAsync",
       async () => {
@@ -442,7 +478,10 @@ export class FileCache {
   }
 
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
-    immutableL1DropByPredicate((key) => key.startsWith(prefix) && key.endsWith(suffix));
+    immutableL1DropByPredicate((key) => {
+      const sourceKey = immutableL1SourceKey(key);
+      return sourceKey.startsWith(prefix) && sourceKey.endsWith(suffix);
+    });
     const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
@@ -456,7 +495,10 @@ export class FileCache {
   }
 
   deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
-    immutableL1DropByPredicate((key) => key.startsWith(prefix) && key.endsWith(suffix));
+    immutableL1DropByPredicate((key) => {
+      const sourceKey = immutableL1SourceKey(key);
+      return sourceKey.startsWith(prefix) && sourceKey.endsWith(suffix);
+    });
     return withSpan(
       "platform.fs.cache.deleteByPrefixAndSuffixAsync",
       async () => {

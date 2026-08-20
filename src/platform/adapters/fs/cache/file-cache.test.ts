@@ -420,6 +420,218 @@ describe("Distributed cache functions", () => {
         assertEquals(reads(), 2, "the write must drop the local copy");
       });
     });
+
+    it("does not use process-local entries for API reads without verified authority", async () => {
+      const mod = await import("./file-cache.ts?l1-api-auth-scope");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let reads = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "api",
+            size: 0,
+            get: () => {
+              reads += 1;
+              return Promise.resolve(JSON.stringify({ value: "content", timestamp: Date.now() }));
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "content");
+        });
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "content");
+        });
+        assertEquals(reads, 2, "unverified API reads must not populate process-local L1");
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    });
+
+    it("does not admit request-local values after a failed backend write", async () => {
+      const mod = await import("./file-cache.ts?l1-failed-write-not-admitted");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const persisted = JSON.stringify({ value: "persisted", timestamp: Date.now() });
+      let reads = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => {
+              reads += 1;
+              return Promise.resolve(persisted);
+            },
+            set: () => Promise.reject(new Error("write failed")),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+        await runWithCacheBatching(async () => {
+          await cache.setAsync(key, "request-only");
+          assertEquals(await cache.getAsync(key), "request-only");
+        });
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "persisted");
+        });
+        assertEquals(reads, 1, "a failed write's request cache must not enter process-local L1");
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    });
+
+    it("does not admit backend reads invalidated while in flight", async () => {
+      const mod = await import("./file-cache.ts?l1-pending-invalidation");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let reads = 0;
+      let releaseRead: (() => void) | undefined;
+      const readReleased = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      let markReadStarted: (() => void) | undefined;
+      const readStarted = new Promise<void>((resolve) => {
+        markReadStarted = resolve;
+      });
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: async () => {
+              reads += 1;
+              markReadStarted?.();
+              await readReleased;
+              return JSON.stringify({ value: "content", timestamp: Date.now() });
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+        await runWithCacheBatching(async () => {
+          const pending = cache.getAsync(key);
+          await readStarted;
+          await cache.deleteAsync(key);
+          releaseRead?.();
+          await pending;
+        });
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        assertEquals(reads, 2, "the invalidated in-flight read must not repopulate L1");
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    });
+
+    it("enforces the process-local entry limit by UTF-8 bytes", async () => {
+      const mod = await import("./file-cache.ts?l1-utf8-entry-limit");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      const raw = JSON.stringify({ value: "😀".repeat(140_000), timestamp: Date.now() });
+      assertEquals(raw.length <= 512 * 1024, true, "precondition: UTF-16 length fits");
+      assertEquals(new TextEncoder().encode(raw).byteLength > 512 * 1024, true);
+      let reads = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => {
+              reads += 1;
+              return Promise.resolve(raw);
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "😀".repeat(140_000));
+        });
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "😀".repeat(140_000));
+        });
+        assertEquals(reads, 2, "UTF-8 oversized entries must not be retained locally");
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    });
+
+    it("drops process-local entries on prefix and suffix invalidation", async () => {
+      await withCountingBackend("l1-prefix-suffix-invalidation", async (mod, reads) => {
+        const cache = new mod.FileCache();
+        const first = "file:release:acme:rel_123:/app/page.tsx";
+        const second = "file:release:acme:rel_123:/app/layout.tsx";
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(first);
+          await cache.getAsync(second);
+        });
+        assertEquals(reads(), 2);
+
+        cache.deleteByPrefix("file:release:acme:rel_123:");
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(first);
+          await cache.getAsync(second);
+        });
+        assertEquals(reads(), 4, "prefix invalidation must drop both L1 entries");
+
+        await cache.deleteByPrefixAndSuffixAsync("file:release:acme:rel_123:", "/app/page.tsx");
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(first);
+          await cache.getAsync(second);
+        });
+        assertEquals(reads(), 5, "suffix invalidation must drop only the matching L1 entry");
+      });
+    });
   });
 
   describe("initializeFileCacheBackend", () => {
