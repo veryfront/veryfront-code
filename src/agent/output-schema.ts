@@ -42,6 +42,10 @@ export interface ResolvedAgentOutputSchema {
 
 const OUTPUT_SCHEMA_PARSER = Symbol("veryfront.agent.outputSchemaParser");
 
+type OutputSchemaParserHost = {
+  [OUTPUT_SCHEMA_PARSER]?: unknown;
+};
+
 function outputSchemaError(agentId: string, message: string): never {
   throw AGENT_ERROR.create({ detail: `Agent "${agentId}" ${message}` });
 }
@@ -60,9 +64,10 @@ export function attachOutputSchemaParser<TResponse extends object>(
 }
 
 export function getOutputSchemaParser(
-  response: object,
+  response: unknown,
 ): ((text: string) => Promise<unknown>) | undefined {
-  const value = (response as { [OUTPUT_SCHEMA_PARSER]?: unknown })[OUTPUT_SCHEMA_PARSER];
+  if (typeof response !== "object" || response === null) return undefined;
+  const value = (response as OutputSchemaParserHost)[OUTPUT_SCHEMA_PARSER];
   return typeof value === "function" ? value as (text: string) => Promise<unknown> : undefined;
 }
 
