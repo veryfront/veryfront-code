@@ -22,6 +22,7 @@ import {
   DEFAULT_RETRY_INITIAL_DELAY_MS,
   DEFAULT_RETRY_MAX_DELAY_MS,
   isRetryableWorkflowError,
+  retryTelemetryErrorType,
 } from "./retry-policy.ts";
 import type {
   CapturedTenantContext,
@@ -221,7 +222,7 @@ export class StepExecutor {
           addActiveSpanEvent("workflow.node.retry", {
             "workflow.node.attempt": attempt,
             "workflow.node.retry_delay_ms": delay,
-            "workflow.node.error": lastError.message,
+            "workflow.node.error_type": retryTelemetryErrorType(lastError),
           });
           await sleep(delay, abortSignal);
           continue;

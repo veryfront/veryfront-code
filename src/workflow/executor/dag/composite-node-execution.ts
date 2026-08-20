@@ -5,7 +5,11 @@ import { parseDuration, validateRetryConfig } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import { createSetContextPatch } from "./context-patch.ts";
-import { calculateRetryDelay, isRetryableWorkflowError } from "../retry-policy.ts";
+import {
+  calculateRetryDelay,
+  isRetryableWorkflowError,
+  retryTelemetryErrorType,
+} from "../retry-policy.ts";
 import {
   addActiveSpanEvent,
   setActiveSpanAttributes,
@@ -33,7 +37,7 @@ function recordCompositeRetry(
     "workflow.node.id": nodeId,
     "workflow.node.attempt": attempt,
     "workflow.node.retry_delay_ms": delayMs,
-    "workflow.node.error": error.message,
+    "workflow.node.error_type": retryTelemetryErrorType(error),
   });
 }
 

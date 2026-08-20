@@ -225,7 +225,57 @@ describe("workflow/executor tracing", () => {
       const retryEvent = nodeSpan.events.find((event) => event.name === "workflow.node.retry");
       assertExists(retryEvent, "expected a workflow.node.retry event");
       assertEquals(retryEvent.attributes?.["workflow.node.attempt"], 1);
-      assertEquals(retryEvent.attributes?.["workflow.node.error"], "ECONNRESET");
+      assertEquals(retryEvent.attributes?.["workflow.node.error_type"], "Error");
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("does not export raw retry error messages or secrets", async () => {
+    const tracing = installRealTracing();
+    try {
+      let attempts = 0;
+      const secret = "sk-customer-secret-value";
+      const rawMessage = `ECONNRESET while using ${secret}`;
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "retry-secret-workflow",
+          steps: [
+            step("flaky", {
+              retry: { maxAttempts: 2, backoff: "fixed", initialDelay: 1 },
+              tool: createTool("flaky", () => {
+                attempts += 1;
+                if (attempts === 1) throw new Error(rawMessage);
+                return { ok: true };
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("retry-secret-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const nodeSpan = byName(tracing.exporter.getFinishedSpans(), "workflow.node flaky");
+      assertExists(nodeSpan);
+      const retryEvent = nodeSpan.events.find((event) => event.name === "workflow.node.retry");
+      assertExists(retryEvent);
+      assertEquals(retryEvent.attributes?.["workflow.node.error"], undefined);
+
+      for (const value of Object.values(retryEvent.attributes ?? {})) {
+        assertEquals(
+          String(value).includes(rawMessage),
+          false,
+          "retry event exported the raw error message",
+        );
+        assertEquals(
+          String(value).includes(secret),
+          false,
+          "retry event exported a customer secret",
+        );
+      }
     } finally {
       await tracing.dispose();
     }
@@ -417,6 +467,43 @@ describe("workflow/executor tracing", () => {
     }
   });
 
+  it("marks returned failed composite node and workflow outcomes as errored on spans", async () => {
+    const tracing = installRealTracing();
+    try {
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "returned-composite-failure-workflow",
+          steps: [
+            map("each", {
+              items: ["only"],
+              processor: step("item", {
+                tool: createTool("item", () => {
+                  throw new Error("returned-composite-detail");
+                }),
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("returned-composite-failure-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const mapSpan = byName(spans, "workflow.node each");
+      const runSpan = byName(spans, "workflow.run");
+      assertExists(mapSpan);
+      assertExists(runSpan);
+      assertEquals(mapSpan.attributes["workflow.node.status"], "failed");
+      assertEquals(mapSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(runSpan.status.code, SpanStatusCode.ERROR);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
   it("records retry telemetry for composite nodes, not only steps", async () => {
     const tracing = installRealTracing();
     try {
@@ -452,7 +539,53 @@ describe("workflow/executor tracing", () => {
       const retryEvent = mapSpan.events.find((event) => event.name === "workflow.node.retry");
       assertExists(retryEvent, "composite retries must be recorded, not only step retries");
       assertEquals(retryEvent.attributes?.["workflow.node.attempt"], 1);
+      assertEquals(retryEvent.attributes?.["workflow.node.error"], undefined);
+      assertEquals(retryEvent.attributes?.["workflow.node.error_type"], "Error");
     } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("records the exact composite retry delay that was slept", async () => {
+    const tracing = installRealTracing();
+    const originalRandom = Math.random;
+    try {
+      Math.random = () => 1;
+      let attempts = 0;
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "composite-retry-delay-workflow",
+          steps: [
+            map("each", {
+              items: ["only"],
+              retry: { maxAttempts: 2, backoff: "fixed", initialDelay: 20 },
+              processor: step("item", {
+                tool: createTool("item", () => {
+                  attempts += 1;
+                  if (attempts === 1) throw new Error("ECONNRESET");
+                  return { ok: true };
+                }),
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const start = Date.now();
+      const handle = await executor.start("composite-retry-delay-workflow", {});
+      await handle.settled();
+      const elapsed = Date.now() - start;
+      await tracing.provider.forceFlush();
+
+      const mapSpan = byName(tracing.exporter.getFinishedSpans(), "workflow.node each");
+      assertExists(mapSpan);
+      const retryEvent = mapSpan.events.find((event) => event.name === "workflow.node.retry");
+      assertExists(retryEvent, "composite retries must record their sleep delay");
+      assertEquals(retryEvent.attributes?.["workflow.node.retry_delay_ms"], 22);
+      assertEquals(elapsed >= 22, true);
+    } finally {
+      Math.random = originalRandom;
       await tracing.dispose();
     }
   });
