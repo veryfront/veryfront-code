@@ -80,8 +80,6 @@ export interface ChatProps {
    * `PromptSuggestion` objects for a short label + longer prompt.
    */
   suggestions?: Array<string | PromptSuggestion>;
-  /** @deprecated Use `onSuggestionSelect` for the full suggestion object. */
-  onSuggestionClick?: (prompt: string) => void;
   /** Receives the selected `{ label, prompt }` object. */
   onSuggestionSelect?: (suggestion: PromptSuggestion) => void;
   /**

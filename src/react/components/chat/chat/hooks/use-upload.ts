@@ -3,7 +3,7 @@
  * lifecycle states. Forks the *technique* of Studio's `useInlineFileUpload`
  * (blob preview → POST → resolved URL), simplified to a single multipart POST:
  *
- *   POST `{api}` with `FormData { file }` → `{ id?, url }`
+ *   POST `{url}` with `FormData { file }` → `{ id?, url }`
  *
  * Each file is tracked as an `AttachmentInfo` that transitions
  * `uploading` (with `progress`) → `uploaded` (with `url`) or `error`. Upload
@@ -32,7 +32,7 @@ export interface UseUploadOptions {
    * Upload endpoint (multipart `file` → `{ url }`). When omitted, files are
    * inlined as base64 `data:` URLs instead — no backend required (guest mode).
    */
-  api?: string;
+  url?: string;
   /** Extra headers to send with each upload request. */
   headers?: Record<string, string>;
 }
@@ -190,7 +190,7 @@ function revokePreview(preview: string | undefined): void {
 
 /** Drive file uploads and expose the resulting attachment lifecycle. */
 export function useUpload(
-  { api, headers }: UseUploadOptions = {},
+  { url, headers }: UseUploadOptions = {},
 ): UseUploadResult {
   const [tracked, setTracked] = React.useState<Tracked[]>([]);
   const trackedRef = React.useRef<Tracked[]>(tracked);
@@ -204,7 +204,7 @@ export function useUpload(
   }, [headersKey]);
   const scope = React.useMemo(
     () => Symbol("chat-upload-scope"),
-    [api, headersKey],
+    [url, headersKey],
   );
   const activeScopeRef = React.useRef<symbol | null>(scope);
 
@@ -302,7 +302,7 @@ export function useUpload(
       // No endpoint → inline the file as a base64 `data:` URL (guest mode).
       // This is the one explicit data-URL policy: the value is generated from
       // the selected File and never admitted from a server/cache response.
-      if (!api) {
+      if (!url) {
         if (entry.file.size > INLINE_ATTACHMENT_MAX_BYTES) {
           settleOperation(operation, { state: "error" });
           return;
@@ -332,12 +332,12 @@ export function useUpload(
       try {
         const xhr = new XMLHttpRequest();
         operation.xhr = xhr;
-        xhr.open("POST", api);
+        xhr.open("POST", url);
         // A production build turns `security.csrf` on by default, so this POST
         // has to echo the `__Host-vf_csrf` cookie back or the server answers
         // 403 — dev, where CSRF is off, would never show it. The helper keeps
         // any caller-supplied header and skips cross-origin endpoints.
-        for (const [key, value] of csrfMutationHeaders(api, [...headerEntries])) {
+        for (const [key, value] of csrfMutationHeaders(url, [...headerEntries])) {
           xhr.setRequestHeader(key, value);
         }
         xhr.upload.onprogress = (event) => {
@@ -387,9 +387,9 @@ export function useUpload(
       }
     },
     [
-      api,
       cancelOperation,
       headerEntries,
+      url,
       scope,
       settleOperation,
       updateOperation,

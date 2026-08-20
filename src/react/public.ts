@@ -123,14 +123,11 @@ export type {
 export {
   ChatContextProvider,
   ChatInputContextProvider,
-  ComposerContextProvider,
   MessageContextProvider,
   useChatContext,
   useChatContextOptional,
   useChatInputContext,
   useChatInputContextOptional,
-  useComposerContext,
-  useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
@@ -138,7 +135,6 @@ export {
 export type {
   ChatContextValue,
   ChatInputContextValue,
-  ComposerContextValue,
   MessageContextValue,
   MessagePartsData,
 } from "./components/chat/chat.tsx";
@@ -203,7 +199,6 @@ export {
   ModelSelector,
   QuickActions,
   Reasoning,
-  RichCodeBlock,
   Shimmer,
   Sources,
   StepIndicator,
@@ -315,15 +310,9 @@ export {
   useModelSelector,
   useSources,
   useStepIndicator,
-  useStickToBottom,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
   useUpload,
   type UseUploadOptions,
   type UseUploadResult,
-  useUploadsRegistry,
-  type UseUploadsRegistryOptions,
-  type UseUploadsRegistryResult,
 } from "./components/chat/chat.tsx";
 
 export { AgentCard } from "./components/chat/agent-card.tsx";

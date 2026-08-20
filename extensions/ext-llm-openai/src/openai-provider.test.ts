@@ -1143,6 +1143,68 @@ describe("openai-provider", () => {
     ]);
   });
 
+  it("streams through strict OpenAI-compatible endpoints with one merged system message", async () => {
+    const encoder = new TextEncoder();
+    let requestBody: { messages?: Array<{ content: string; role: string }> } | undefined;
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "test-local-key",
+      baseURL: "https://strict-compatible.test/v1",
+      fetch: (_input, init) => {
+        requestBody = JSON.parse(readRequestBody(init) ?? "{}");
+        const systemMessages = requestBody?.messages?.filter((message) =>
+          message.role === "system"
+        ) ?? [];
+        if (systemMessages.length !== 1) {
+          return Promise.resolve(
+            Response.json(
+              { error: { message: "Only one system message is supported" } },
+              { status: 400 },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              encoder.encode('data: {"choices":[{"delta":{"content":"Ready."}}]}\n\n'),
+              encoder.encode(
+                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    }, "local-model");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "system",
+        content: "You are a helpful local assistant.",
+      }, {
+        role: "system",
+        content: "<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+      }, {
+        role: "user",
+        content: [{ type: "text", text: "Say hello" }],
+      }],
+    });
+
+    const parts = await collectAsync(result.stream);
+    assertEquals(requestBody?.messages, [{
+      role: "system",
+      content:
+        "You are a helpful local assistant.\n\n<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+    }, {
+      role: "user",
+      content: "Say hello",
+    }]);
+    assertEquals(parts.map((part) => (part as { type: string }).type), [
+      "text-delta",
+      "finish",
+    ]);
+  });
+
   it("parses OpenAI-compatible SSE streams when events use CRLF delimiters", async () => {
     const encoder = new TextEncoder();
     const runtime = createOpenAIModelRuntime({

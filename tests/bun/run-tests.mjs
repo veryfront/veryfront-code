@@ -179,6 +179,7 @@ for (
     "ANTHROPIC_BASE_URL",
     "GOOGLE_API_KEY",
     "GOOGLE_GENERATIVE_AI_API_KEY",
+    "GOOGLE_GEMINI_BASE_URL",
   ]
 ) {
   delete env[key];

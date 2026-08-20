@@ -148,7 +148,7 @@ function ReasoningRoot(
       <div ref={ref} className={cn("not-prose", className)}>
         {children ?? (
           <>
-            <ReasoningTrigger icon={icon} labels={labels} />
+            <ReasoningTrigger labels={labels}>{icon}</ReasoningTrigger>
             <ReasoningContent />
           </>
         )}
@@ -163,8 +163,6 @@ export interface ReasoningTriggerProps {
   /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
    * default icon when childless; pass children to replace it). */
   children?: React.ReactNode;
-  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
-  icon?: React.ReactNode;
   /** Override the two labels; each defaults to the current string. */
   labels?: { thinking?: string; thought?: string };
   className?: string;
@@ -174,7 +172,7 @@ export interface ReasoningTriggerProps {
 
 /** The header row: a "Thinking…" / "Thought process" label + expand chevron. */
 function ReasoningTrigger(
-  { children, icon, labels, className, ref }: ReasoningTriggerProps,
+  { children, labels, className, ref }: ReasoningTriggerProps,
 ): React.JSX.Element {
   const { isStreaming, isOpen, toggle } = useReasoning();
   const thinkingLabel = labels?.thinking ?? "Thinking...";
@@ -198,7 +196,7 @@ function ReasoningTrigger(
           !isOpen && "-rotate-90",
         )}
       >
-        {children ?? icon ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
+        {children ?? <ChevronDownIcon className="size-3.5 shrink-0" />}
       </span>
     </button>
   );

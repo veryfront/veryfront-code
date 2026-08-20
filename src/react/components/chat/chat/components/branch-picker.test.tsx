@@ -24,15 +24,13 @@ describe("BranchPicker", () => {
   it("composes and restyles addressable icon leaves", () => {
     const html = renderToString(
       <BranchPicker current={2} total={3} onPrev={() => {}} onNext={() => {}}>
-        <BranchPicker.Next
-          icon={<span data-testid="custom-next">next</span>}
-          className="vf-next"
-        />
+        <BranchPicker.Next className="vf-next">
+          <span data-testid="custom-next">next</span>
+        </BranchPicker.Next>
         <BranchPicker.Count className="vf-count" />
-        <BranchPicker.Previous
-          icon={<span data-testid="custom-previous">previous</span>}
-          className="vf-previous"
-        />
+        <BranchPicker.Previous className="vf-previous">
+          <span data-testid="custom-previous">previous</span>
+        </BranchPicker.Previous>
       </BranchPicker>,
     );
 

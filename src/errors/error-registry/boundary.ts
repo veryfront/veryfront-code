@@ -56,6 +56,14 @@ export const SSR_OUTPUT_LIMIT_EXCEEDED = defineError({
   suggestion: "Reduce the rendered HTML size or split the response into smaller pages",
 });
 
+export const LOCAL_INTEGRATION_REQUEST_INVALID = defineError({
+  slug: "local-integration-request-invalid",
+  category: "BOUNDARY",
+  status: 400,
+  title: "Local integration request is invalid",
+  suggestion: "Pass only the documented tool arguments with their declared JSON types",
+});
+
 /** Registry fragment for BOUNDARY errors (slug → definition). */
 export const BOUNDARY_REGISTRY = {
   "client-boundary-violation": CLIENT_BOUNDARY_VIOLATION,
@@ -65,4 +73,5 @@ export const BOUNDARY_REGISTRY = {
   "invalid-use-server": INVALID_USE_SERVER,
   "rsc-payload-error": RSC_PAYLOAD_ERROR,
   "ssr-output-limit-exceeded": SSR_OUTPUT_LIMIT_EXCEEDED,
+  "local-integration-request-invalid": LOCAL_INTEGRATION_REQUEST_INVALID,
 } as const;

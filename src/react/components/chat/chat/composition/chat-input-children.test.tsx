@@ -1,7 +1,5 @@
 /**
- * ChatInput action leaves: `children` override the default glyph (RFC 2980 —
- * "a leaf renders its default icon when childless; pass children to replace
- * it"), while the deprecated `icon` prop still works (backward compat).
+ * ChatInput action leaves: `children` override the default glyph.
  */
 import * as React from "react";
 import { renderToString } from "react-dom/server";
@@ -27,18 +25,14 @@ describe("ChatInput action leaves — children override", () => {
     assert(html.includes("kids-send"), "children render inside Send");
   });
 
-  it("the deprecated icon prop still works when no children given", () => {
-    const html = composer(<ChatInput.Send icon={<svg data-testid="icon-send" />} />);
-    assert(html.includes("icon-send"), "icon prop still honoured (backward compat)");
-  });
-
-  it("children win over icon when both are provided", () => {
+  it("children replace the default Stop glyph", () => {
     const html = composer(
-      <ChatInput.Send icon={<svg data-testid="icon-send" />}>
-        <svg data-testid="kids-send" />
-      </ChatInput.Send>,
+      <ChatInput.Root input="hi" onChange={() => {}} onSubmit={() => {}} isLoading stop={() => {}}>
+        <ChatInput.Stop>
+          <svg data-testid="kids-stop" />
+        </ChatInput.Stop>
+      </ChatInput.Root>,
     );
-    assert(html.includes("kids-send"), "children take precedence");
-    assert(!html.includes("icon-send"), "icon is not rendered when children present");
+    assert(html.includes("kids-stop"), "children take precedence");
   });
 });

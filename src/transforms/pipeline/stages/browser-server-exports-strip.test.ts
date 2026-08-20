@@ -758,12 +758,7 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "TOKEN"), 0); // hook-only tail → dropped
     });
 
-    // Known limitation (pinned): a *destructured* server value is NOT pruned —
-    // `moduleScopeDeclarations` handles only simple identifiers, to avoid
-    // mishandling default-value references inside patterns. Conservative (never
-    // over-prunes) but it means a destructured server value still ships. If this
-    // ever needs closing, extend the declaration collector to safe patterns.
-    it("conservatively keeps a destructured server value (documented limitation)", async () => {
+    it("drops a destructured module-scope server value", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const { a } = getEnv("X");`,
@@ -773,8 +768,115 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // Pinned as-is: the destructured binding and its import survive.
-      assertStringIncludes(result, "getEnv");
+      assertNotIncludes(result, "getEnv");
+      assertEquals(occurrences(result, "a"), 0);
+    });
+
+    it("drops nested, array, and rest bindings used only by the hook", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { nested: { value }, list: [first, , ...rest] } = getEnv("SERVER_ONLY");`,
+        `export async function getServerData() { return { props: { value, first, rest } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SERVER_ONLY");
+      assertNotIncludes(result, "getEnv");
+      assertEquals(occurrences(result, "value"), 0);
+      assertEquals(occurrences(result, "first"), 0);
+      assertEquals(occurrences(result, "rest"), 0);
+    });
+
+    it("conservatively keeps a pattern with a default value", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const DEFAULT = getEnv("CLIENT_FALLBACK");`,
+        `const { a = DEFAULT } = getEnv("SERVER_ONLY");`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return DEFAULT; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "CLIENT_FALLBACK");
+      assertStringIncludes(result, "DEFAULT");
+      assertStringIncludes(result, "SERVER_ONLY");
+      assertStringIncludes(result, "a = DEFAULT");
+    });
+
+    it("conservatively keeps a pattern with a computed key", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const KEY = getEnv("CLIENT_KEY");`,
+        `const { [KEY]: value } = getEnv("SERVER_ONLY");`,
+        `export async function getServerData() { return { props: { value } }; }`,
+        `export default function Page() { return KEY; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "CLIENT_KEY");
+      assertStringIncludes(result, "KEY");
+      assertStringIncludes(result, "SERVER_ONLY");
+      assertStringIncludes(result, "[KEY]: value");
+    });
+
+    it("removes one destructuring declarator without dropping its client sibling", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { a } = getEnv("SERVER_ONLY"), client = bootClient();`,
+        `export async function getServerData() { return { props: { a } }; }`,
+        `export default function Page() { return client; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SERVER_ONLY");
+      assertNotIncludes(result, "getEnv");
+      assertStringIncludes(result, "client = bootClient()");
+      assertStringIncludes(result, "return client");
+    });
+
+    it("keeps a destructuring default with an unrelated client effect", async () => {
+      const code = [
+        `const { token, client = startClient() } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "client = startClient()");
+      assertStringIncludes(result, "loadSecret()");
+    });
+
+    it("keeps a computed pattern key with an unrelated client effect", async () => {
+      const code = [
+        `const { [startClient()]: token } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "[startClient()]: token");
+      assertStringIncludes(result, "loadSecret()");
+    });
+
+    it("keeps a destructuring declarator with a sibling outside the hook closure", async () => {
+      const code = [
+        `const { token, client } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "loadSecret()");
+      assertEquals(occurrences(result, "token"), 1);
+      assertEquals(occurrences(result, "client"), 1);
     });
 
     it("keeps an import that the client still references", async () => {

@@ -21,7 +21,7 @@ const CONSUMED_SURFACE = [
   "TabsItem",
   "AttachmentsPanel",
   "useChat",
-  "useUploadsRegistry",
+  "useAttachments",
 ] as const;
 
 describe("veryfront/chat black-box backward-compat contract", () => {

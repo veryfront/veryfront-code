@@ -187,7 +187,7 @@ function groupConversations(
 
 /** Context provider + outer rail container for the compound sidebar. */
 export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement | null {
-  const { loading, isOpen = true, fill = false, className, children, ref } = props;
+  const { loading, isOpen = true, className, children, ref } = props;
   const resolved = useResolvedSidebar(props);
 
   const value = React.useMemo<ChatSidebarContextValue>(
@@ -212,9 +212,7 @@ export function ChatSidebarRoot(props: ChatSidebarRootProps): React.ReactElement
       <div
         {...UI_SCOPE_ATTRS}
         ref={ref}
-        // Fills its parent by default (a composed layout container provides
-        // width + overlay); the standalone preset supplies its own rail chrome.
-        className={cn("flex flex-col h-full", fill && "w-full", className)}
+        className={cn("flex flex-col h-full", className)}
       >
         {children}
       </div>
@@ -636,7 +634,7 @@ function ChatSidebarBase(props: ChatSidebarProps): React.ReactElement | null {
   return (
     <ChatSidebarRoot
       {...props}
-      className={cn(props.fill ? "w-full" : STANDALONE_SIDEBAR_CHROME, props.className)}
+      className={cn(STANDALONE_SIDEBAR_CHROME, props.className)}
     >
       {hasNew && <ChatSidebarNewButton />}
       <ChatSidebarList />

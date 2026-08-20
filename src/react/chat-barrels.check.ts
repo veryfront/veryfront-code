@@ -214,9 +214,8 @@ type CompoundChatRuntimeExport =
   | "useModelSelector"
   | "useSources"
   | "useStepIndicator"
-  | "useStickToBottom"
   | "useUpload"
-  | "useUploadsRegistry";
+  | "useAttachments";
 
 type ContainsRuntimeExports<TModule, TName extends PropertyKey> =
   Exclude<TName, keyof TModule> extends never ? true : never;
@@ -302,12 +301,10 @@ export type CompoundChatPublicTypeContracts = [
   import("./public.ts").UseChatScrollOptions,
   import("./public.ts").UseChatScrollResult<HTMLElement>,
   import("./public.ts").UseMessageBranchesResult,
-  import("./public.ts").UseStickToBottomOptions,
-  import("./public.ts").UseStickToBottomResult<HTMLElement>,
   import("./public.ts").UseUploadOptions,
   import("./public.ts").UseUploadResult,
-  import("./public.ts").UseUploadsRegistryOptions,
-  import("./public.ts").UseUploadsRegistryResult,
+  import("./public.ts").UseAttachmentsOptions,
+  import("./public.ts").UseAttachmentsResult,
 ];
 
 export type CompoundChatComponentTypeContracts = [
@@ -356,12 +353,10 @@ export type CompoundChatComponentTypeContracts = [
   import("./components/chat/index.ts").UseChatScrollOptions,
   import("./components/chat/index.ts").UseChatScrollResult<HTMLElement>,
   import("./components/chat/index.ts").UseMessageBranchesResult,
-  import("./components/chat/index.ts").UseStickToBottomOptions,
-  import("./components/chat/index.ts").UseStickToBottomResult<HTMLElement>,
   import("./components/chat/index.ts").UseUploadOptions,
   import("./components/chat/index.ts").UseUploadResult,
-  import("./components/chat/index.ts").UseUploadsRegistryOptions,
-  import("./components/chat/index.ts").UseUploadsRegistryResult,
+  import("./components/chat/index.ts").UseAttachmentsOptions,
+  import("./components/chat/index.ts").UseAttachmentsResult,
 ];
 
 export type CompoundCanonicalChatTypeContracts = [
@@ -405,10 +400,8 @@ export type CompoundCanonicalChatTypeContracts = [
   import("../chat/index.ts").UseAttachmentsRequestState,
   import("../chat/index.ts").UseAttachmentsResult,
   import("../chat/index.ts").UseAttachmentsStorageState,
-  import("../chat/index.ts").UseStickToBottomOptions,
-  import("../chat/index.ts").UseStickToBottomResult<HTMLElement>,
   import("../chat/index.ts").UseUploadOptions,
   import("../chat/index.ts").UseUploadResult,
-  import("../chat/index.ts").UseUploadsRegistryOptions,
-  import("../chat/index.ts").UseUploadsRegistryResult,
+  import("../chat/index.ts").UseAttachmentsOptions,
+  import("../chat/index.ts").UseAttachmentsResult,
 ];

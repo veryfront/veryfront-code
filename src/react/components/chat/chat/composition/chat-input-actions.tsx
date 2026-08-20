@@ -43,7 +43,6 @@ export function ChatInputSend<T extends HTMLElement = HTMLElement>(
 export function ChatInputSend(props: ChatInputSendProps): React.ReactElement | null;
 export function ChatInputSend<T extends HTMLElement = HTMLElement>({
   children,
-  icon,
   className,
   asChild,
   onClick,
@@ -70,7 +69,7 @@ export function ChatInputSend<T extends HTMLElement = HTMLElement>({
       onClick={(event: React.MouseEvent<HTMLElement>) => invokeChatInputClick(onClick, event, run)}
       className={cn("shrink-0", className)}
     >
-      {children ?? icon ?? <ArrowUpIcon />}
+      {children ?? <ArrowUpIcon />}
     </Button>
   );
 }
@@ -83,7 +82,6 @@ export function ChatInputStop<T extends HTMLElement = HTMLElement>(
 export function ChatInputStop(props: ChatInputStopProps): React.ReactElement | null;
 export function ChatInputStop<T extends HTMLElement = HTMLElement>({
   children,
-  icon,
   className,
   asChild,
   onClick,
@@ -108,7 +106,7 @@ export function ChatInputStop<T extends HTMLElement = HTMLElement>({
       onClick={(event: React.MouseEvent<HTMLElement>) => invokeChatInputClick(onClick, event, run)}
       className={cn("shrink-0", className)}
     >
-      {children ?? icon ?? <StopIcon />}
+      {children ?? <StopIcon />}
     </Button>
   );
 }
@@ -121,7 +119,6 @@ export function ChatInputVoice<T extends HTMLElement = HTMLElement>(
 export function ChatInputVoice(props: ChatInputVoiceProps): React.ReactElement | null;
 export function ChatInputVoice<T extends HTMLElement = HTMLElement>({
   children,
-  icon,
   className,
   asChild,
   onClick,
@@ -152,7 +149,7 @@ export function ChatInputVoice<T extends HTMLElement = HTMLElement>({
         className,
       )}
     >
-      {children ?? icon ?? <MicGlyph />}
+      {children ?? <MicGlyph />}
     </Button>
   );
 }

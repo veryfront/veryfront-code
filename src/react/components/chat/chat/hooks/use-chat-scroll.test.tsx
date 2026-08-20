@@ -1,6 +1,6 @@
 /**
- * `useChatScroll` superset behaviour (RFC 2980): keeps the `useStickToBottom`
- * base (`scrollRef`/`contentRef`/`isAtBottom`/`scrollToBottom`) and adds
+ * `useChatScroll` superset behaviour (RFC 2980): provides
+ * `scrollRef`/`contentRef`/`isAtBottom`/`scrollToBottom` plus
  * `viewportRef`, `scrollToStart`/`scrollToEnd`, `scrollToMessage`, and
  * `getViewportProps`. Methods no-op safely when refs are unattached.
  */
@@ -22,7 +22,7 @@ function capture(): UseChatScrollResult<HTMLDivElement> {
 }
 
 describe("useChatScroll (superset)", () => {
-  it("keeps the useStickToBottom base surface", () => {
+  it("keeps the canonical base surface", () => {
     const s = capture();
     assert(s.scrollRef, "scrollRef present");
     assert(s.contentRef, "contentRef present");

@@ -97,16 +97,16 @@ describe("ChatEmpty suggestions", () => {
     }
   });
 
-  it("keeps legacy onSuggestionClick handlers receiving prompt text", async () => {
+  it("keeps the prompt-only suggestion handler path out of the surface", async () => {
     const restoreDom = installDom();
-    const clicked: string[] = [];
+    const clicked: PromptSuggestion[] = [];
     try {
       const root = createRoot(document.getElementById("root")!);
       flushSync(() => {
         root.render(
           <ChatEmpty
             suggestions={[{ label: "Triage login", prompt: "Triage the login incident." }]}
-            onSuggestionClick={(value) => clicked.push(value)}
+            onSuggestionSelect={(value) => clicked.push(value)}
           />,
         );
       });
@@ -116,7 +116,9 @@ describe("ChatEmpty suggestions", () => {
       );
       assert(button, "renders the legacy suggestion chip");
       flushSync(() => button.click());
-      assertEquals(clicked, ["Triage the login incident."]);
+      assertEquals(clicked, [
+        { label: "Triage login", prompt: "Triage the login incident." },
+      ]);
       await unmountReactRoot(root);
     } finally {
       restoreDom();

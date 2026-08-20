@@ -100,6 +100,9 @@ Equal-rank matches use ASCII tool-name order. Each search returns at most five
 matches. Results contain the tool name, description, and loading status, but no
 input or output schema. The search tool has no page or pagination parameter.
 Refine the query when the required tool is not in the first five matches.
+For multi-term queries, search suppresses filler that only matches a query's
+least selective term unless the candidate also matches a more selective term or
+every query term.
 
 Search work is bounded to 4,096 catalog candidates. Each parameter schema is
 inspected iteratively with depth, node, and byte budgets, and the whole search

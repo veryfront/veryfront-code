@@ -223,14 +223,13 @@ async function parseStubs(parser: CodeParser): Promise<{ body: Node; init: Node 
   return { body, init };
 }
 
-/** Every binding name a destructuring pattern introduces. */
-function patternBoundNames(pattern: Node): string[] {
-  const names: string[] = [];
+/** Every binding identifier a variable or parameter pattern introduces. */
+function patternBindingIds(pattern: Node): Node[] {
+  const bindings: Node[] = [];
 
   const collect = (node: Node): void => {
     if (node.type === "Identifier") {
-      const name = nodeName(node);
-      if (name) names.push(name);
+      bindings.push(node);
       return;
     }
 
@@ -274,7 +273,40 @@ function patternBoundNames(pattern: Node): string[] {
 
   collect(pattern);
 
-  return names;
+  return bindings;
+}
+
+/** Whether evaluating a pattern can run code outside its binding positions. */
+function patternHasEvaluatedValuePosition(pattern: Node): boolean {
+  if (pattern.type === "Identifier") return false;
+  if (pattern.type === "AssignmentPattern") return true;
+  if (pattern.type === "RestElement") {
+    return !isNode(pattern.argument) || patternHasEvaluatedValuePosition(pattern.argument);
+  }
+  if (pattern.type === "TSParameterProperty") {
+    return !isNode(pattern.parameter) || patternHasEvaluatedValuePosition(pattern.parameter);
+  }
+  if (pattern.type === "ArrayPattern") {
+    return (Array.isArray(pattern.elements) ? pattern.elements : []).some((element) =>
+      isNode(element) && patternHasEvaluatedValuePosition(element)
+    );
+  }
+  if (pattern.type === "ObjectPattern") {
+    return (Array.isArray(pattern.properties) ? pattern.properties : []).some((property) => {
+      if (!isNode(property)) return false;
+      if (property.type === "RestElement") {
+        return patternHasEvaluatedValuePosition(property);
+      }
+      return property.type !== "ObjectProperty" || property.computed === true ||
+        !isNode(property.value) || patternHasEvaluatedValuePosition(property.value);
+    });
+  }
+  return true;
+}
+
+/** Every binding name a destructuring pattern introduces. */
+function patternBoundNames(pattern: Node): string[] {
+  return patternBindingIds(pattern).map(nodeName).filter((name): name is string => Boolean(name));
 }
 
 /**
@@ -489,8 +521,9 @@ interface ModuleScopeDecl {
  * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
  * whose bindings we could safely drop if nothing references them. Exported
  * declarations are part of the module's contract and are never candidates.
- * Destructuring declarations are skipped — a pattern can carry default-value
- * references, and a partial removal is not worth the risk.
+ * Patterns with defaults or computed keys stay fail-closed because evaluating
+ * them can run unrelated client code. In supported patterns, only binding
+ * positions are excluded from liveness analysis.
  */
 function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
   const decls: ModuleScopeDecl[] = [];
@@ -511,13 +544,17 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
       ) {
         if (!isNode(declarator)) continue;
         const id = declarator.id;
-        if (isNode(id) && id.type === "Identifier") {
-          const name = nodeName(id);
-          if (name) variableDecls.push({ statement, declarator, names: [name], bindingIds: [id] });
-        } else {
+        if (!isNode(id) || patternHasEvaluatedValuePosition(id)) {
           variableDecls.length = 0;
           break;
         }
+        const bindingIds = patternBindingIds(id);
+        const names = bindingIds.map(nodeName).filter((name): name is string => Boolean(name));
+        if (names.length === 0 || names.length !== bindingIds.length) {
+          variableDecls.length = 0;
+          break;
+        }
+        variableDecls.push({ statement, declarator, names, bindingIds });
       }
 
       decls.push(...variableDecls);
@@ -1164,7 +1201,7 @@ function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): 
     const removableDeclarators = new Map<Node, Set<Node>>();
     const removedDecls: ModuleScopeDecl[] = [];
     for (const decl of decls) {
-      const inClosure = decl.names.some((name) => hookClosure.has(name));
+      const inClosure = decl.names.every((name) => hookClosure.has(name));
       const unused = decl.names.every((name) => !referenced.has(name));
       if (!inClosure || !unused) continue;
 

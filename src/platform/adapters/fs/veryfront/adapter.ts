@@ -677,6 +677,17 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private shouldRecoverBranchMiss(path: string, error: unknown): boolean {
     if (this.contentContext?.sourceType !== "branch") return false;
     if (!isNotFoundLikeError(error)) return false;
+    // The index was built from a listing already fetched for this snapshot, and
+    // it says the path is absent. Recovering here re-derives that answer per
+    // probe, so a page trying N candidate spellings pays N recoveries to be
+    // told the same thing N times — which is the fan-out this fixes.
+    //
+    // Two things bound the staleness this trades for. A poke clears the index
+    // (see the invalidation path below), so an edit that reaches us re-enables
+    // recovery immediately. And `isIndexAuthoritative` is time-boxed by
+    // INDEX_AUTHORITY_LIMIT_MS, so an edit whose poke we MISS costs at most
+    // that window before recovery turns back on by itself.
+    if (this.statOps.isIndexAuthoritative()) return false;
 
     const recoveryKey = this.getBranchMissRecoveryKey(path);
     return !this.hasRecentBranchMissRecoveryFailure(recoveryKey);
@@ -968,7 +979,13 @@ export class VeryfrontFSAdapter implements FSAdapter {
         await this.cache.deleteAsync(cacheKey);
         return undefined;
       }
+      // The stat index and directory tree are built from the listing this
+      // poke just replaced. Left standing they keep answering with the
+      // pre-edit file set -- a file created by the edit reads as absent, and
+      // one deleted by it reads as present.
       this.readOps.clearFileListIndex();
+      this.statOps.clearIndex();
+      this.dirOps.clearTree();
       this.markSourceSnapshotChanged(files);
       // Retain after the version bump so the poked listing -- not the one it
       // replaced -- is what later reads see when the cache keeps nothing.
@@ -1074,6 +1091,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
         this.sourceSnapshotFiles = files;
         this.sourceSnapshotIdentity = refreshIdentity;
         this.sourceSnapshotCheckedAt = Date.now();
+        // The API just confirmed this listing is current, so the index built
+        // from it may answer "absent" on its own again. Skipping this leaves
+        // the index expired after the first probe past
+        // INDEX_AUTHORITY_LIMIT_MS, and every later probe repeats this refresh
+        // to be told the same thing -- the per-probe fan-out, five minutes in.
+        this.statOps.renewIndexAuthority();
       }
 
       this.branchMissRecoveryFailures.clear();

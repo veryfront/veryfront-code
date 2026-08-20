@@ -1,13 +1,14 @@
 # Integration runtime
 
 This page describes the connector catalog, integration metadata schemas, and
-remote integration tool loading and execution. It does not cover OAuth route
-handlers or local tool definitions.
+the remote and local integration tool execution paths. It does not cover OAuth
+route handlers or project-authored tools.
 
 ## Responsibility
 
-Integration code exposes connector metadata, icons, and per-request remote tools
-fetched from the configured API layer.
+Integration code exposes connector metadata, icons, per-request remote tools
+fetched from the configured API layer, and exact-grant local tools backed by
+project-owned credentials.
 
 Primary source areas:
 
@@ -16,6 +17,8 @@ Primary source areas:
 - [`src/integrations/schema.ts`](../../src/integrations/schema.ts)
 - [`src/integrations/_data.ts`](../../src/integrations/_data.ts)
 - [`src/integrations/remote-tools.ts`](../../src/integrations/remote-tools.ts)
+- [`src/integrations/local-tool-source.ts`](../../src/integrations/local-tool-source.ts)
+- [`src/integrations/local-endpoint-executor.ts`](../../src/integrations/local-endpoint-executor.ts)
 - [`src/integrations/types.ts`](../../src/integrations/types.ts)
 
 ## Runtime flow
@@ -36,6 +39,12 @@ flowchart TD
   readiness --> execute
   execute --> api[Integrations tools API]
   api --> result[Structured tool result or sanitized error]
+
+  localGrant[Exact local tool grant] --> localTool[Build local tool definitions]
+  localTool --> localCall[Model requests local integration tool]
+  localCall --> credential[Resolve named project credential]
+  credential --> provider[Call supported provider REST endpoint]
+  provider --> localResult[Structured tool result or sanitized error]
 ```
 
 1. Connector metadata defines supported providers, auth requirements, tools,
@@ -51,20 +60,28 @@ flowchart TD
 7. Remote tool helpers resolve request-scoped or environment API credentials.
 8. Tool definitions are fetched per request so source-declared integration
    requests remain project-scoped.
-9. Tool execution is delegated to the configured API layer and normalized for
-   the agent runtime.
+9. Remote tool execution is delegated to the configured API layer and normalized
+   for the agent runtime.
+10. A local source can instead grant exact catalog tool IDs, resolve catalog-
+    named credentials immediately before each call, and execute supported HTTPS
+    REST endpoints without a Veryfront account or project token.
 
 ## Boundaries
 
-- Integration runtime owns connector metadata and remote tool bridge behavior.
+- Integration runtime owns connector metadata, the remote tool bridge, and the
+  bounded local endpoint executor.
 - Agent source owns the agent's integration tool declaration.
 - Exact-source `veryfront.config.ts` owns an optional monotonic allowlist. Its
   absence is unrestricted; it never enables an integration or grants credentials.
 - The control plane owns optional project policy and connection inventory.
 - OAuth runtime owns provider redirects, callbacks, and token storage.
-- Local project tools belong in [agent runtime](./05-agent-runtime.md) and the
+- Project-authored tools belong in [agent runtime](./05-agent-runtime.md) and the
   public [Tools](../guides/tools.md) guide.
-- The backing API owns actual third-party API calls and provider token access.
+- The backing API owns provider token access and third-party API calls for remote
+  integration tools.
+- A local integration source owns only its exact tool grant. The runtime resolves
+  catalog-named credentials from the project boundary and makes supported direct
+  provider calls without exposing credentials to tool arguments or the model.
 
 Effective integration capability is the intersection of agent selection,
 connector catalog, source configuration, and control-plane policy. No policy
@@ -82,6 +99,8 @@ child; handler-local tool-list rewriting is not an authorization boundary.
   metadata.
 - Add remote-tool tests when changing request-scoped token resolution, tool
   listing, call payloads, or result normalization.
+- Add local-source and endpoint-executor tests when changing exact-grant
+  admission, credential resolution, request construction, or response handling.
 - Keep per-project tool visibility scoped to the active request or environment
   token.
 - Keep config caches qualified by the exact branch, release, or environment;
