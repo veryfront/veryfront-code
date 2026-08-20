@@ -91,6 +91,23 @@ Set only the variables for the provider you use:
 - `MISTRAL_API_KEY` for direct Mistral requests. Without this key, hosted Mistral models route through Veryfront Cloud when cloud bootstrap is available.
 - `OPENAI_BASE_URL` for OpenAI-compatible services.
 
+### Keeping keys out of the project
+
+Provider credentials are read from the environment. To avoid a plaintext key in the project, keep the reference in an ignored env file and resolve it with your secret manager when you run a command:
+
+```dotenv
+# .env.local
+ANTHROPIC_API_KEY="op://Private/Anthropic API/credential"
+```
+
+```bash
+op run --env-file=.env.local -- veryfront dev
+```
+
+Veryfront never overwrites a variable that is already set, so the resolved value wins over anything in a `.env` file. Wrap once in a package script or a `.envrc` rather than per command. The same pattern works with `doppler run`, `infisical run`, and `vault`.
+
+If you would rather not manage a provider key at all, use the [Veryfront Cloud AI Gateway](#veryfront-cloud-ai-gateway) instead.
+
 Explicit provider env vars still work when you want to pin a provider directly:
 
 ```ts
