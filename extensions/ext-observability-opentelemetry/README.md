@@ -106,4 +106,11 @@ the request that triggered it — but note the request span typically finishes b
 does, because execution is dispatched without being awaited.
 
 Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
-ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work.
+ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work. A cancelled run
+is not a failure: the in-flight node span ends as ERROR carrying the cancellation reason,
+while the `workflow.run` span stays unset, so cancellations do not show up in errored-run
+queries.
+
+Retry attempts of a composite node appear as repeated sibling spans sharing one name. They
+are told apart by status — the attempts that failed are ERROR, the one that succeeded is
+not — and the parent node span carries a `workflow.node.retry` event per retry.

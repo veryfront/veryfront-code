@@ -622,4 +622,51 @@ describe("workflow/executor tracing", () => {
       await tracing.dispose();
     }
   });
+
+  it("records the retry delay it actually slept, not a fresh jitter draw", async () => {
+    const tracing = installRealTracing();
+    // calculateRetryDelay applies +/-10% jitter from Math.random, so drawing it twice --
+    // once to sleep, once to report -- yields a number that was never slept. Forcing the
+    // draws to alternate makes a second draw produce a different, detectable value.
+    const realRandom = Math.random;
+    const draws = [0, 1, 0, 1];
+    let index = 0;
+    Math.random = () => draws[index++ % draws.length]!;
+    try {
+      let attempts = 0;
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "jitter-workflow",
+          steps: [
+            map("each", {
+              items: ["x"],
+              retry: { maxAttempts: 2, backoff: "fixed", initialDelay: 100 },
+              processor: step("item", {
+                tool: createTool("item", () => {
+                  attempts += 1;
+                  if (attempts === 1) throw new Error("ECONNRESET");
+                  return { ok: true };
+                }),
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("jitter-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const mapSpan = byName(tracing.exporter.getFinishedSpans(), "workflow.node each");
+      assertExists(mapSpan);
+      const retryEvent = mapSpan.events.find((event) => event.name === "workflow.node.retry");
+      assertExists(retryEvent);
+      // First draw (0) gives floor(100 - 10) = 90. A second draw (1) would give 110.
+      assertEquals(retryEvent.attributes?.["workflow.node.retry_delay_ms"], 90);
+    } finally {
+      Math.random = realRandom;
+      await tracing.dispose();
+    }
+  });
 });
