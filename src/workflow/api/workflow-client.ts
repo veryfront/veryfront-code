@@ -9,9 +9,12 @@ import type {
   PendingApproval,
   RunFilter,
   WorkflowDefinition,
+  WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
@@ -42,6 +45,8 @@ export class WorkflowClient {
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private debug: boolean;
+  /** Wait-node response schemas, keyed "<workflowId>::<nodeId>". */
+  private approvalSchemas = new Map<string, Schema<unknown>>();
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
@@ -99,7 +104,72 @@ export class WorkflowClient {
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
     this.executor.register(definition);
+    this.indexApprovalSchemas(definition);
     logger.debug("Registered workflow", { workflowId: definition.id });
+  }
+
+  /**
+   * Record every wait node's `responseSchema` under "<workflowId>::<nodeId>".
+   *
+   * Schemas are live objects and never reach the run record, so a decision is
+   * validated against the registered definition. Node ids are already
+   * arm-qualified by the DSL, so they match what an approval is keyed by.
+   *
+   * A workflow whose `steps` is a function is not walked: the node list depends
+   * on the run's input, so no schema can be resolved ahead of a decision and
+   * such nodes are accepted unvalidated.
+   */
+  private indexApprovalSchemas(definition: WorkflowDefinition): void {
+    if (!Array.isArray(definition.steps)) return;
+
+    const visit = (nodes: readonly WorkflowNode[]): void => {
+      for (const node of nodes) {
+        const config = node.config as {
+          type?: string;
+          responseSchema?: Schema<unknown>;
+          nodes?: WorkflowNode[];
+          then?: WorkflowNode[];
+          else?: WorkflowNode[];
+        };
+        if (config.type === "wait" && config.responseSchema) {
+          this.approvalSchemas.set(`${definition.id}::${node.id}`, config.responseSchema);
+        }
+        if (Array.isArray(config.nodes)) visit(config.nodes);
+        if (Array.isArray(config.then)) visit(config.then);
+        if (Array.isArray(config.else)) visit(config.else);
+      }
+    };
+
+    visit(definition.steps);
+  }
+
+  /**
+   * Validate a structured answer before it is persisted.
+   *
+   * Runs before `ApprovalManager`, so a non-conformant answer never consumes the
+   * approval -- the reviewer can correct it and submit again.
+   */
+  private async validateApprovalData(runId: string, approvalId: string, data: unknown) {
+    if (data === undefined) return;
+
+    const run = await this.backend.getRun(runId);
+    if (!run) return;
+
+    const approval = (await this.approvalManager.getPendingApprovals(runId))
+      .find((pending) => pending.id === approvalId);
+    if (!approval) return;
+
+    const schema = this.approvalSchemas.get(`${run.workflowId}::${approval.nodeId}`);
+    if (!schema) return;
+
+    try {
+      schema.parse(data);
+    } catch (error) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Approval "${approvalId}" data does not match the wait node's responseSchema: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
@@ -145,12 +215,26 @@ export class WorkflowClient {
     return this.approvalManager.getPendingApprovals(runId);
   }
 
-  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.approvalManager.approve(runId, approvalId, approver, comment);
+  async approve(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    await this.validateApprovalData(runId, approvalId, data);
+    return await this.approvalManager.approve(runId, approvalId, approver, comment, data);
   }
 
-  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.approvalManager.reject(runId, approvalId, approver, comment);
+  async reject(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    await this.validateApprovalData(runId, approvalId, data);
+    return await this.approvalManager.reject(runId, approvalId, approver, comment, data);
   }
 
   listAllPendingApprovals(filter?: {

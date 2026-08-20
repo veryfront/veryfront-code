@@ -72,6 +72,75 @@ describe("WorkflowClient", () => {
     await client.destroy();
   });
 
+  describe("typed approval payload", () => {
+    const schemaWorkflow = workflow({
+      id: "typed-approval-workflow",
+      steps: [
+        waitForApproval("review", {
+          message: "Confirm the extracted values",
+          responseSchema: defineSchema((v) =>
+            v.object({ correctedName: v.string(), confirmed: v.boolean() })
+          )(),
+        }),
+      ],
+    });
+
+    it("surfaces a schema-conformant payload in workflow context", async () => {
+      client.register(schemaWorkflow);
+      const handle = await client.start("typed-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await client.approve(handle.runId, approval.id, "reviewer", undefined, {
+        correctedName: "Ada",
+        confirmed: true,
+      });
+
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      const decision = run.nodeStates["review"]?.output as { data?: unknown } | undefined;
+      assertEquals(decision?.data, { correctedName: "Ada", confirmed: true });
+    });
+
+    it("rejects a non-conformant payload without persisting the decision", async () => {
+      client.register(schemaWorkflow);
+      const handle = await client.start("typed-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await assertRejects(() =>
+        client.approve(handle.runId, approval.id, "reviewer", undefined, {
+          correctedName: 42,
+        })
+      );
+
+      // Still pending: a bad payload must not consume the approval.
+      const stillPending = await backend.getPendingApprovals(handle.runId);
+      assertEquals(stillPending.length, 1);
+      assertEquals(stillPending[0]!.status, "pending");
+    });
+
+    it("leaves comment-only approvals working when no schema is declared", async () => {
+      client.register(workflow({
+        id: "untyped-approval-workflow",
+        steps: [waitForApproval("review", { message: "Confirm" })],
+      }));
+
+      const handle = await client.start("untyped-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await client.approve(handle.runId, approval.id, "reviewer", "looks good");
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+    });
+  });
+
   describe("register()", () => {
     async function withNewClient(
       register: (client: WorkflowClient) => void,

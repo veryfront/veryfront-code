@@ -266,22 +266,36 @@ export class ApprovalManager {
     approver: string,
     approved: boolean,
     comment?: string,
+    data?: unknown,
   ): Promise<void> {
     return this.processDecision(runId, approvalId, {
       approved,
       approver,
       comment,
+      ...(data === undefined ? {} : { data }),
     });
   }
 
   /** Approve an approval request */
-  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.submitDecision(runId, approvalId, approver, true, comment);
+  approve(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, true, comment, data);
   }
 
   /** Reject an approval request */
-  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.submitDecision(runId, approvalId, approver, false, comment);
+  reject(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, false, comment, data);
   }
 
   /** List all pending approvals across workflows */

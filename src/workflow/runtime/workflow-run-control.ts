@@ -267,6 +267,7 @@ async function reconcileApprovalDecision(
     approved: operation.decision.approved,
     approver: operation.decision.approver,
     comment: operation.decision.comment,
+    ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
     decidedAt: decidedAt.toISOString(),
   };
 
@@ -294,6 +295,7 @@ async function reconcileApprovalDecision(
             approved: operation.decision.approved,
             approver: operation.decision.approver,
             comment: operation.decision.comment,
+            ...(operation.decision.data === undefined ? {} : { data: operation.decision.data }),
           },
           attempt: 1,
           completedAt: decidedAt,

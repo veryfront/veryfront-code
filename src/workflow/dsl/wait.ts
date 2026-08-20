@@ -1,3 +1,4 @@
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
@@ -10,6 +11,11 @@ export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint
   approvers?: string[];
   retry?: RetryConfig;
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
+  /**
+   * Shape the approver's structured answer must satisfy. Submitting a
+   * non-conformant answer is refused instead of persisted.
+   */
+  responseSchema?: Schema<unknown>;
 }
 
 /** Create a wait-for-approval node. Pauses until human approves/rejects. */
@@ -24,6 +30,7 @@ export function waitForApproval(id: string, options: WaitForApprovalOptions = {}
       message: options.message ?? "Approval required",
       payload: options.payload,
       approvers: options.approvers,
+      ...(options.responseSchema ? { responseSchema: options.responseSchema } : {}),
       timeout: options.timeout,
       checkpoint: true,
       retry: options.retry,
