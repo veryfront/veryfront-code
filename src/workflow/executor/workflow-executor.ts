@@ -6,6 +6,7 @@
 
 import { logger as baseLogger, sleep } from "#veryfront/utils";
 import {
+  ensureError,
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
@@ -28,6 +29,7 @@ import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
+import { retryTelemetryErrorType } from "./retry-policy.ts";
 import { setActiveSpanErrorStatus, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
@@ -433,8 +435,10 @@ export class WorkflowExecutor {
         },
         onError: async (errorRun, error, context) => {
           // Run failures arrive through this callback rather than being thrown past the
-          // span, so the span's own catch never sees them.
-          setActiveSpanErrorStatus(error);
+          // span, so the span's own catch never sees them. Report a bounded
+          // classification: the raw message is user-supplied and reaches the wire via
+          // both the span status and the recorded exception.
+          setActiveSpanErrorStatus(new Error(retryTelemetryErrorType(error)));
           await workflow.onError?.(error, context);
           this.config.onError?.(errorRun, error);
         },
@@ -443,6 +447,8 @@ export class WorkflowExecutor {
     }, {
       "workflow.id": run.workflowId,
       "workflow.run_id": run.id,
+    }, {
+      errorStatus: (error) => new Error(retryTelemetryErrorType(ensureError(error))),
     });
   }
 

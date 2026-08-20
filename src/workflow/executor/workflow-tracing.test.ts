@@ -64,6 +64,25 @@ function byName(spans: readonly ReadableSpan[], name: string): ReadableSpan | un
   return spans.find((candidate) => candidate.name === name);
 }
 
+function assertSpanDoesNotContain(spans: readonly ReadableSpan[], value: string): void {
+  for (const span of spans) {
+    assertEquals(
+      (span.status.message ?? "").includes(value),
+      false,
+      `${span.name} leaked sensitive text into its span status`,
+    );
+    for (const event of span.events) {
+      for (const attributeValue of Object.values(event.attributes ?? {})) {
+        assertEquals(
+          String(attributeValue).includes(value),
+          false,
+          `${span.name} leaked sensitive text into the ${event.name} event`,
+        );
+      }
+    }
+  }
+}
+
 function createTool(id: string, execute: () => unknown | Promise<unknown>): Tool {
   return {
     id,
@@ -725,6 +744,158 @@ describe("workflow/executor tracing", () => {
       assertEquals(retryEvent.attributes?.["workflow.node.retry_delay_ms"], 90);
     } finally {
       Math.random = realRandom;
+      await tracing.dispose();
+    }
+  });
+
+  it("reports a run failure normally even when the thrown error resists inspection", async () => {
+    const tracing = installRealTracing();
+    try {
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "hostile-error-workflow",
+          steps: [
+            step("hostile", {
+              tool: createTool("hostile", () => {
+                // Telemetry reads properties off whatever the caller threw. This pins
+                // the end-to-end property that such an error still produces a normal
+                // failed run. Note sanitizeErrorForTelemetry is itself defensive -- no
+                // input was found that makes it throw -- so this covers the path, not
+                // the guard inside it.
+                const error = new Error("outer");
+                Object.defineProperty(error, "message", {
+                  get() {
+                    throw new Error("message accessor exploded");
+                  },
+                });
+                Object.defineProperty(error, "stack", {
+                  get() {
+                    throw new Error("stack accessor exploded");
+                  },
+                });
+                throw error;
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("hostile-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      // The run still reaches a normal terminal state rather than the telemetry path
+      // throwing past the executor.
+      const run = await handle.status();
+      assertEquals(run.status, "failed");
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("keeps escaped node callback errors off the node span", async () => {
+    const tracing = installRealTracing();
+    try {
+      const personal = "skip-secret@example.com";
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "leaky-skip-error-workflow",
+          steps: [
+            step("guarded", {
+              skip: () => {
+                throw new Error(`skip failed for ${personal}`);
+              },
+              tool: createTool("guarded", () => ({ ok: true })),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("leaky-skip-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const nodeSpan = byName(spans, "workflow.node guarded");
+      assertExists(nodeSpan);
+      assertEquals(nodeSpan.status.code, SpanStatusCode.ERROR);
+      assertSpanDoesNotContain(spans, personal);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("keeps rethrown run failures and raw network codes off the run span", async () => {
+    const tracing = installRealTracing();
+    try {
+      const personal = "run-secret@example.com";
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "leaky-run-error-workflow",
+          steps: () => {
+            const error = new Error("completion failed");
+            (error as { code?: string }).code = `ECONNRESET:${personal}`;
+            throw error;
+          },
+        }).definition,
+      );
+
+      const handle = await executor.start("leaky-run-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const runSpan = byName(spans, "workflow.run");
+      assertExists(runSpan);
+      assertEquals(runSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(runSpan.status.message, "ECONNRESET");
+      assertSpanDoesNotContain(spans, personal);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("keeps a thrown error's message off the span status and recorded exception", async () => {
+    const tracing = installRealTracing();
+    try {
+      // The attribute sanitiser is key-name driven: it redacts key-shaped tokens but
+      // passes ordinary prose through. A live OTLP export showed a customer email
+      // reaching the wire via status.message and exception.message on both the node and
+      // run spans, which span-attribute assertions alone never covered.
+      const personal = "bob@example.com";
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "leaky-error-workflow",
+          steps: [
+            step("publish", {
+              tool: createTool("publish", () => {
+                throw new Error(`publish failed for account ${personal}`);
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("leaky-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const nodeSpan = byName(spans, "workflow.node publish");
+      const runSpan = byName(spans, "workflow.run");
+      assertExists(nodeSpan);
+      assertExists(runSpan);
+
+      // Still visible to errored-span queries.
+      assertEquals(nodeSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(runSpan.status.code, SpanStatusCode.ERROR);
+
+      assertSpanDoesNotContain(spans, personal);
+    } finally {
       await tracing.dispose();
     }
   });
