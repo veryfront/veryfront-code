@@ -6,6 +6,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -361,6 +362,60 @@ describe("ApprovalManager", () => {
   });
 
   describe("processDecision", () => {
+    it("rejects invalid structured approval data before persisting a direct approval", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-direct-invalid-data";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) =>
+            v.object({ correctedName: v.string(), confirmed: v.boolean() })
+          )(),
+        },
+        createContext(runId),
+      );
+
+      await assertRejects(() =>
+        manager.approve(runId, request.approvalId, "reviewer", undefined, {
+          correctedName: 42,
+        })
+      );
+
+      const pending = await backend.getPendingApprovals(runId);
+      assertEquals(pending.length, 1);
+      assertEquals(pending[0]?.status, "pending");
+    });
+
+    it("rejects omitted structured approval data when the response schema requires it", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-direct-missing-data";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+
+      await assertRejects(() => manager.approve(runId, request.approvalId, "reviewer"));
+
+      const pending = await backend.getPendingApprovals(runId);
+      assertEquals(pending.length, 1);
+      assertEquals(pending[0]?.status, "pending");
+    });
+
     it("resumes an owner-bound run with the same worker ID", async () => {
       const resumeCalls: unknown[][] = [];
       const executor = {
