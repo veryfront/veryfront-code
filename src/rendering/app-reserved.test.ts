@@ -24,7 +24,7 @@ describe("rendering/app-reserved", () => {
     const controller = new AbortController();
     controller.abort(new DOMException("render cancelled", "AbortError"));
 
-    const error = await assertRejects(
+    await assertRejects(
       () =>
         loadReservedWithPath(
           ["/project/app/blog", "/project/app"],
@@ -43,10 +43,7 @@ describe("rendering/app-reserved", () => {
           controller.signal,
         ),
       Error,
-    );
-    assertEquals(
-      ["render cancelled", "The operation was aborted"].includes((error as Error).message),
-      true,
+      "render cancelled",
     );
     assertEquals(reads, 0);
   });
