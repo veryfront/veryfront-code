@@ -669,4 +669,50 @@ describe("workflow/executor tracing", () => {
       await tracing.dispose();
     }
   });
+
+  it("reports a run failure normally even when the thrown error resists inspection", async () => {
+    const tracing = installRealTracing();
+    try {
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "hostile-error-workflow",
+          steps: [
+            step("hostile", {
+              tool: createTool("hostile", () => {
+                // Telemetry reads properties off whatever the caller threw. This pins
+                // the end-to-end property that such an error still produces a normal
+                // failed run. Note sanitizeErrorForTelemetry is itself defensive -- no
+                // input was found that makes it throw -- so this covers the path, not
+                // the guard inside it.
+                const error = new Error("outer");
+                Object.defineProperty(error, "message", {
+                  get() {
+                    throw new Error("message accessor exploded");
+                  },
+                });
+                Object.defineProperty(error, "stack", {
+                  get() {
+                    throw new Error("stack accessor exploded");
+                  },
+                });
+                throw error;
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("hostile-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      // The run still reaches a normal terminal state rather than the telemetry path
+      // throwing past the executor.
+      const run = await handle.status();
+      assertEquals(run.status, "failed");
+    } finally {
+      await tracing.dispose();
+    }
+  });
 });

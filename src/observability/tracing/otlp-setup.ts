@@ -257,17 +257,29 @@ function startSpanWithFallback(
 }
 
 function setSpanErrorStatus(span: Span, error: unknown): void {
-  const telemetryError = sanitizeErrorForTelemetry(error);
+  // Sanitization runs on caller-supplied values on every error path, so it is guarded
+  // like the span calls are: a throw here would turn a handled failure into a thrown one,
+  // and telemetry must never change the outcome it reports on. Defence in depth -- probing
+  // throwing proxy traps, accessors and toString found no input that actually throws.
+  let telemetryError: Error | undefined;
+  runTelemetryOperation(
+    () => {
+      telemetryError = sanitizeErrorForTelemetry(error);
+    },
+    "Failed to sanitize error for telemetry",
+  );
+  if (!telemetryError) return;
+  const sanitized = telemetryError;
   runTelemetryOperation(
     () =>
       span.setStatus({
         code: SpanStatusCode.ERROR,
-        message: telemetryError.message,
+        message: sanitized.message,
       }),
     "Failed to set span error status",
   );
   runTelemetryOperation(
-    () => span.recordException(telemetryError),
+    () => span.recordException(sanitized),
     "Failed to record span exception",
   );
 }
