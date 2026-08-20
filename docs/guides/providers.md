@@ -29,6 +29,13 @@ Run `veryfront login`, then Push the project once to create its local project
 link. `veryfront dev` and `veryfront eval` load the stored login and linked
 project automatically.
 
+To authenticate without an interactive browser (CI, a container, a remote
+shell), set `VERYFRONT_API_TOKEN` instead. The environment variable takes
+precedence over a stored login, so it also works as a temporary override on a
+machine that is already signed in. `veryfront whoami` reports which credential
+is active. This is a separate credential from a model provider key: it selects
+the AI Gateway, it does not authenticate you to a vendor.
+
 Model selection follows these rules:
 
 | Agent model                            | With Cloud context                                  | With a matching direct provider key                      |
@@ -104,7 +111,30 @@ ANTHROPIC_API_KEY="op://Private/Anthropic API/credential"
 op run --env-file=.env.local -- veryfront dev
 ```
 
-Veryfront never overwrites a variable that is already set, so the resolved value wins over anything in a `.env` file. Wrap once in a package script or a `.envrc` rather than per command. The same pattern works with `doppler run`, `infisical run`, and `vault`.
+Veryfront never overwrites a variable that is already set, so the resolved value wins over the `op://` reference sitting in the file.
+
+Wrap once rather than per command:
+
+```json
+{
+  "scripts": {
+    "dev": "op run --env-file=.env.local -- veryfront dev",
+    "eval": "op run --env-file=.env.local -- veryfront eval"
+  }
+}
+```
+
+A `.envrc` with [direnv](https://direnv.net) covers every command in the directory, including ones started by an editor. The same pattern works with other managers:
+
+```bash
+doppler run -- veryfront dev
+infisical run -- veryfront dev
+envconsul -secret secret/veryfront -- veryfront dev   # HashiCorp Vault
+```
+
+Veryfront does not resolve `op://` or similar references itself. An unresolved reference is treated as a literal value and reaches the provider as an invalid key, so run the wrapper rather than the bare command.
+
+The same applies to `VERYFRONT_API_TOKEN` if you keep the platform credential in a manager too.
 
 If you would rather not manage a provider key at all, use the [Veryfront Cloud AI Gateway](#veryfront-cloud-ai-gateway) instead.
 
@@ -233,6 +263,18 @@ OPENAI_BASE_URL=https://openrouter.ai/api/v1
 ```
 
 Both `apiKey` and `baseURL` are resolved per-request, so each project in a multi-tenant setup can have its own configuration.
+
+Anthropic and Mistral take the same treatment, for a self-hosted deployment or
+a gateway in front of the vendor:
+
+| Provider  | Base URL variable        | Default                                            |
+| --------- | ------------------------ | -------------------------------------------------- |
+| OpenAI    | `OPENAI_BASE_URL`        | `https://api.openai.com/v1`                        |
+| Anthropic | `ANTHROPIC_BASE_URL`     | `https://api.anthropic.com/v1`                     |
+| Mistral   | `MISTRAL_BASE_URL`       | `https://api.mistral.ai/v1`                        |
+| Google    | `GOOGLE_GEMINI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta` |
+
+Include the API version segment in the value, matching the defaults above.
 
 For local chat development, use Ollama or LM Studio. Both keep model loading and
 hardware management outside the Veryfront app process.
