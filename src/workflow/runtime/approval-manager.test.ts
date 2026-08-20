@@ -44,6 +44,26 @@ class ReclaimDuringDecisionBackend extends MemoryBackend {
   }
 }
 
+class DecisionDuringSaveBackend extends MemoryBackend {
+  manager?: ApprovalManager;
+  decisionError?: unknown;
+
+  override async savePendingApproval(
+    runId: string,
+    approval: PendingApproval,
+  ): Promise<void> {
+    await super.savePendingApproval(runId, approval);
+
+    try {
+      await this.manager?.approve(runId, approval.id, "reviewer", undefined, {
+        confirmed: "yes",
+      });
+    } catch (error) {
+      this.decisionError = error;
+    }
+  }
+}
+
 describe("ApprovalManager", () => {
   let backend: MemoryBackend;
   let manager: ApprovalManager;
@@ -414,6 +434,97 @@ describe("ApprovalManager", () => {
       const pending = await backend.getPendingApprovals(runId);
       assertEquals(pending.length, 1);
       assertEquals(pending[0]?.status, "pending");
+    });
+
+    it("registers a direct approval schema before the persisted approval can be decided", async () => {
+      const racingBackend = new DecisionDuringSaveBackend();
+      backend = racingBackend;
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      racingBackend.manager = manager;
+      const runId = "run-direct-schema-race";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+
+      assertExists(racingBackend.decisionError);
+      const pending = await backend.getPendingApprovals(runId);
+      assertEquals(pending.length, 1);
+      assertEquals(pending[0]?.id, request.approvalId);
+      assertEquals(pending[0]?.status, "pending");
+    });
+
+    it("drops a direct approval schema after a decision is persisted", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-direct-schema-cleanup";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        1,
+      );
+
+      await manager.approve(runId, request.approvalId, "reviewer", undefined, {
+        confirmed: true,
+      });
+
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        0,
+      );
+    });
+
+    it("drops a direct approval schema after expiration is persisted", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-expired-schema-cleanup";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          timeout: "1ms",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        1,
+      );
+
+      assertExists(await backend.getPendingApproval(runId, request.approvalId));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      await manager.checkExpiredApprovals();
+
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        0,
+      );
     });
 
     it("resumes an owner-bound run with the same worker ID", async () => {

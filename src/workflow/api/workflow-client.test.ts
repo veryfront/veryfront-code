@@ -238,6 +238,54 @@ describe("WorkflowClient", () => {
       assertEquals(await backend.getPendingApprovals(runId), []);
     });
 
+    it("drops stale approval schemas when a workflow id is re-registered", async () => {
+      const workflowId = "re-registered-approval-workflow";
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          waitForApproval("review", {
+            message: "Initial typed review",
+            responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+          }),
+        ],
+      }));
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          waitForApproval("review", { message: "Replacement untyped review" }),
+        ],
+      }));
+
+      const runId = "run-re-registered-approval";
+      await backend.createRun({
+        id: runId,
+        workflowId,
+        status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {}, runId, workflowId },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-re-registered",
+        nodeId: "review",
+        message: "Replacement untyped review",
+        payload: undefined,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await client.approve(runId, "apr-re-registered", "reviewer", undefined, {
+        confirmed: "yes",
+      });
+
+      assertEquals(await backend.getPendingApprovals(runId), []);
+    });
+
     it("leaves comment-only approvals working when no schema is declared", async () => {
       client.register(workflow({
         id: "untyped-approval-workflow",

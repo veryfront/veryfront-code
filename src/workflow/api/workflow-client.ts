@@ -126,6 +126,13 @@ export class WorkflowClient {
    * of a decision and such nodes are accepted unvalidated.
    */
   private indexApprovalSchemas(definition: WorkflowDefinition): void {
+    const keyPrefix = `${definition.id}::`;
+    for (const key of this.approvalSchemas.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.approvalSchemas.delete(key);
+      }
+    }
+
     if (!Array.isArray(definition.steps)) return;
 
     const visit = (nodes: readonly WorkflowNode[]): void => {

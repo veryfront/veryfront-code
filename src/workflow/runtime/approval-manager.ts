@@ -125,10 +125,18 @@ export class ApprovalManager {
       runId: run.id,
     });
 
+    const responseSchemaKey = waitConfig.responseSchema
+      ? this.responseSchemaKey(run.id, approval.id)
+      : undefined;
+    if (responseSchemaKey && waitConfig.responseSchema) {
+      this.responseSchemas.set(responseSchemaKey, waitConfig.responseSchema);
+    }
+
     // Worker-owned approvals are reserved atomically before notification. This
     // prevents a delayed onWaiting callback from notifying or appending after a
     // replacement worker has claimed the run.
     const ownerBound = run.workerId !== undefined;
+    let persisted = false;
     if (ownerBound) {
       const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
       const saved = saveOwned
@@ -141,10 +149,14 @@ export class ApprovalManager {
         )
         : false;
       if (!saved) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
         throw ORCHESTRATION_ERROR.create({
           detail: "Workflow execution ownership changed before approval persistence",
         });
       }
+      persisted = true;
     }
 
     try {
@@ -169,14 +181,15 @@ export class ApprovalManager {
     } else {
       // Preserve direct/ownerless behavior: resolve notification first so its
       // delivery error is included in the initial append.
-      await this.config.backend.savePendingApproval(run.id, approval);
-    }
-
-    if (waitConfig.responseSchema) {
-      this.responseSchemas.set(
-        this.responseSchemaKey(run.id, approval.id),
-        waitConfig.responseSchema,
-      );
+      try {
+        await this.config.backend.savePendingApproval(run.id, approval);
+        persisted = true;
+      } catch (error) {
+        if (!persisted && responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
+        throw error;
+      }
     }
 
     return {
@@ -289,6 +302,7 @@ export class ApprovalManager {
     if (applied === false) {
       throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approvalId}` });
     }
+    this.responseSchemas.delete(this.responseSchemaKey(runId, approvalId));
 
     // The approval decision is already durable. Reconcile it onto whichever
     // worker owns the run now, retrying if ownership changes between the read,
@@ -410,6 +424,7 @@ export class ApprovalManager {
       if (expired === false) {
         continue;
       }
+      this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
 
       await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
         status: "failed",
