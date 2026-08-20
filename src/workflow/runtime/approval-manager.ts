@@ -138,15 +138,23 @@ export class ApprovalManager {
     const ownerBound = run.workerId !== undefined;
     if (ownerBound) {
       const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
-      const saved = saveOwned
-        ? await saveOwned.call(
-          this.config.backend,
-          run.id,
-          ["waiting"],
-          run.workerId!,
-          approval,
-        )
-        : false;
+      let saved: boolean;
+      try {
+        saved = saveOwned
+          ? await saveOwned.call(
+            this.config.backend,
+            run.id,
+            ["waiting"],
+            run.workerId!,
+            approval,
+          )
+          : false;
+      } catch (error) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
+        throw error;
+      }
       if (!saved) {
         if (responseSchemaKey) {
           this.responseSchemas.delete(responseSchemaKey);

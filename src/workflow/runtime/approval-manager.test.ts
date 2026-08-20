@@ -64,6 +64,12 @@ class DecisionDuringSaveBackend extends MemoryBackend {
   }
 }
 
+class RejectOwnerBoundApprovalSaveBackend extends MemoryBackend {
+  override savePendingApprovalIfStatusAndWorker(): Promise<boolean> {
+    return Promise.reject(new Error("approval save failed"));
+  }
+}
+
 describe("ApprovalManager", () => {
   let backend: MemoryBackend;
   let manager: ApprovalManager;
@@ -295,6 +301,39 @@ describe("ApprovalManager", () => {
       );
 
       assertEquals(notifications, 0);
+      assertEquals(await backend.getPendingApprovals(run.id), []);
+    });
+
+    it("drops an owner-bound approval schema when the save rejects", async () => {
+      backend = new RejectOwnerBoundApprovalSaveBackend();
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const run = createTestRun("run-owner-bound-save-reject", {
+        status: "waiting",
+        workerId: "run-execution:current-owner",
+      });
+      await backend.createRun(run);
+
+      await assertRejects(
+        () =>
+          manager.createApproval(
+            run,
+            "review-node",
+            {
+              type: "wait",
+              waitType: "approval",
+              message: "Please approve",
+              responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+            },
+            run.context,
+          ),
+        Error,
+        "approval save failed",
+      );
+
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        0,
+      );
       assertEquals(await backend.getPendingApprovals(run.id), []);
     });
 
