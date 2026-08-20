@@ -163,6 +163,12 @@ export interface StepBuilderContext<TInput = unknown> {
  * Base node configuration (shared by all node types)
  */
 export interface BaseNodeConfig {
+  /**
+   * Human-readable purpose for this node, surfaced through workflow metadata so
+   * a run view can label the step with something an operator understands rather
+   * than its id.
+   */
+  description?: string;
   checkpoint?: boolean;
   retry?: RetryConfig;
   timeout?: string | number;

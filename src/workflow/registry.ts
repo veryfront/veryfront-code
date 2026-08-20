@@ -27,6 +27,8 @@ export interface NodeInfo {
   children?: readonly string[];
   /** Description from wait/approval nodes */
   message?: string;
+  /** Human-readable purpose declared on the node config. */
+  description?: string;
 }
 
 export interface WorkflowMetadata {
@@ -165,10 +167,15 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         agent?: unknown;
         tool?: unknown;
         message?: unknown;
+        description?: unknown;
         nodes?: unknown;
         then?: unknown;
         else?: unknown;
       };
+
+      if (typeof config.description === "string") {
+        nodeInfo.description = config.description;
+      }
 
       if (type === "step") {
         const agentValue = config.agent;

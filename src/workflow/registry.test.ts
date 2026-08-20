@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "#veryfront/errors/safe-diagnostics.ts";
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
+import { workflowRegistry as publicWorkflowRegistry } from "./index.ts";
+import type { NodeInfo, WorkflowMetadata } from "./index.ts";
+import { waitForApproval } from "./dsl/wait.ts";
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { MAX_WORKFLOW_DEFINITION_DEPTH, MAX_WORKFLOW_DEFINITION_NODES } from "./limits.ts";
 import { workflow } from "./dsl/workflow.ts";
@@ -841,5 +844,72 @@ describe("Auto-registration with workflow() DSL", () => {
     const metadata = workflowRegistry.get("branch-test");
     assertExists(metadata);
     assertEquals(metadata.nodeTypes.includes("branch"), true);
+  });
+});
+
+describe("workflow graph metadata as a public surface", () => {
+  beforeEach(() => workflowRegistry.clear());
+  afterEach(() => workflowRegistry.clear());
+
+  it("is reachable from the package entry point", () => {
+    registerWorkflow(
+      workflow({ id: "public-surface", steps: [step("only", { tool: "t" })] }),
+    );
+
+    const metadata: WorkflowMetadata | undefined = publicWorkflowRegistry.get("public-surface");
+    assertExists(metadata);
+    const nodes: readonly NodeInfo[] = metadata.nodes;
+    assertEquals(nodes.map((n) => n.id), ["only"]);
+  });
+
+  it("reports composite child ids exactly as the executor keys them", () => {
+    registerWorkflow(
+      workflow({
+        id: "id-scheme",
+        steps: [
+          step("first", { tool: "t" }),
+          parallel("group", [step("p1", { tool: "t" })]),
+          branch("gate", {
+            condition: () => true,
+            then: [waitForApproval("inner-wait", { message: "m" })],
+            else: [step("otherwise", { tool: "t" })],
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("id-scheme");
+    assertExists(metadata);
+    // These are the same strings the executor writes into run.nodeStates, so a
+    // consumer can join metadata to run state without guessing the scheme.
+    assertEquals(metadata.nodes.map((n) => n.id), [
+      "first",
+      "group/p1",
+      "group",
+      "gate/then/inner-wait",
+      "gate/else/otherwise",
+      "gate",
+    ]);
+  });
+
+  it("carries an optional per-node description through to the metadata", () => {
+    registerWorkflow(
+      workflow({
+        id: "described",
+        steps: [
+          step("verify", { tool: "t", description: "Check the claim against the record" }),
+          parallel("fan-out", [step("child", { tool: "t" })], {
+            description: "Run the independent checks together",
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("described");
+    assertExists(metadata);
+    const byId = new Map(metadata.nodes.map((n) => [n.id, n]));
+    assertEquals(byId.get("verify")!.description, "Check the claim against the record");
+    assertEquals(byId.get("fan-out")!.description, "Run the independent checks together");
+    assertEquals(byId.get("fan-out/child")!.description, undefined);
   });
 });

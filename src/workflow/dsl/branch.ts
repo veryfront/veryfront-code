@@ -36,6 +36,7 @@ export function branch(id: string, options: BranchOptions): WorkflowNode {
 
   const config: BranchNodeConfig = {
     type: "branch",
+    description: options.description,
     condition: options.condition,
     then: prefixNodes(id, "then", options.then),
     else: options.else ? prefixNodes(id, "else", options.else) : undefined,

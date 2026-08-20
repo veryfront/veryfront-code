@@ -43,6 +43,7 @@ export function parallel(
 
   const config: ParallelNodeConfig = {
     type: "parallel",
+    description: options.description,
     nodes: prefixedNodes,
     strategy: options.strategy ?? "all",
     checkpoint: options.checkpoint ?? true,
