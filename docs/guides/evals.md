@@ -274,6 +274,24 @@ Use JSONL when each example should be reviewed as a single line:
 dataset: datasets.jsonl("datasets/research.jsonl");
 ```
 
+### Where dataset paths resolve from
+
+A relative path passed to `datasets.json()` or `datasets.jsonl()` resolves
+against the **project root**, not against the directory the eval file lives in.
+An eval at `evals/agents/research.eval.ts` that loads
+`datasets.jsonl("datasets/research.jsonl")` reads
+`<project>/datasets/research.jsonl`, so a dataset stored next to the eval is
+addressed as `evals/agents/research.jsonl`.
+
+Pass `--dataset-base <path>` to resolve relative dataset paths against a
+different directory:
+
+```bash
+veryfront eval --dataset-base evals
+```
+
+Absolute paths are used as given and ignore the base directory.
+
 ## Metrics
 
 Use deterministic metrics for stable requirements:
