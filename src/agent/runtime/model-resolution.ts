@@ -5,7 +5,7 @@ import {
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
 import { findVeryfrontCloudModelByModelId } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
+import { DEFAULT_MODEL_CREDENTIAL_MISMATCH, NOT_SUPPORTED } from "#veryfront/errors";
 import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
@@ -116,6 +116,13 @@ function hasDirectProviderCredentials(provider: string): boolean {
   }
 }
 
+/** Direct-credential providers that currently have a key, in stable order. */
+function listAvailableDirectProviders(): string[] {
+  return DIRECT_AUTO_MODEL_DEFAULTS
+    .map(({ provider }) => provider)
+    .filter((provider) => hasDirectProviderCredentials(provider));
+}
+
 function isSupportedHostedMistralModel(modelId: string): boolean {
   return Boolean(findVeryfrontCloudModelByModelId(`mistral/${modelId}`));
 }
@@ -220,6 +227,24 @@ export function resolveRuntimeModel(model?: string): string {
   }
 
   if (!isVeryfrontCloudEnabled() || hasDirectProviderCredentials(provider)) {
+    // The default model is a framework choice, not the user's. If its provider
+    // has no key but another provider does, the user almost certainly meant
+    // that other provider. Say so instead of failing later against the wrong
+    // vendor. Resolution stays deterministic — never substitute silently, or
+    // the same project resolves differently per machine.
+    if (
+      model === undefined && !isVeryfrontCloudEnabled() &&
+      !hasDirectProviderCredentials(provider)
+    ) {
+      const available = listAvailableDirectProviders();
+      if (available.length > 0) {
+        throw DEFAULT_MODEL_CREDENTIAL_MISMATCH.create({
+          detail: `Default model "${configuredModel}" needs a ${provider} credential. ` +
+            `Found ${available.join(", ")} instead. ` +
+            `Set model: "${available[0]}/<model>" or model: "auto".`,
+        });
+      }
+    }
     return toDirectRuntimeModel(provider, modelId);
   }
 

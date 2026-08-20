@@ -308,7 +308,7 @@ describe("Storybook UI workbench", () => {
     // The public API target. Fails until every component is exported under its
     // final name (renames landed + new components built). `\b` boundaries mean
     // "Attachment" does not match "AttachmentPill", and "CodeBlock" does not
-    // match "RichCodeBlock".
+    // match the retired compatibility alias.
     const publicBarrel = await readText("src/chat/index.ts");
     const targetExports = [
       "AttachmentPill",
@@ -339,8 +339,8 @@ describe("Storybook UI workbench", () => {
 
   it("has a CodeBlock primitive under UI (driver)", async () => {
     // CodeBlock is the shared syntax-highlight primitive (Markdown + ToolCall).
-    // Renamed from RichCodeBlock, moved to the ui barrel, shiki github-light/dark
-    // + mermaid, lazy-loaded from esm.sh (no bundled dep).
+    // Moved to the ui barrel, shiki github-light/dark + mermaid, lazy-loaded
+    // from esm.sh (no bundled dep).
     const problems: string[] = [];
 
     const uiBarrel = await readText("src/react/components/ui/index.ts");

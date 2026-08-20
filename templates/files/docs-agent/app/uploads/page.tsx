@@ -1,12 +1,12 @@
 'use client'
 
-import { AttachmentsPanel, useUploadsRegistry } from 'veryfront/chat'
+import { AttachmentsPanel, useAttachments } from 'veryfront/chat'
 
 const UPLOAD_API = '/api/uploads'
 const ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.md,.mdx,.html,.rtf,.epub,.json,.xml'
 
 export default function UploadsPage(): React.JSX.Element {
-  const uploads = useUploadsRegistry({ url: UPLOAD_API, storageKey: 'rag-uploads' })
+  const uploads = useAttachments({ url: UPLOAD_API, storageKey: 'rag-uploads' })
   const error = uploads.uploadError
     ?? uploads.refreshError
     ?? uploads.removeError

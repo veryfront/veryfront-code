@@ -18,10 +18,11 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable                       | Required | Description                                                                    |
-| ------------------------------ | -------- | ------------------------------------------------------------------------------ |
-| `GOOGLE_API_KEY`               | Yes      | Your Google AI API key (from [AI Studio](https://aistudio.google.com/apikey)). |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | No       | Alternative name for the API key (checked as fallback).                        |
+| Variable                       | Required | Description                                                                                                                                     |
+| ------------------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOOGLE_API_KEY`               | Yes      | Your Google AI API key (from [AI Studio](https://aistudio.google.com/apikey)).                                                                  |
+| `GOOGLE_GEMINI_BASE_URL`       | No       | Custom Gemini endpoint (proxy or regional). Include the API version segment, e.g. `https://example.com/v1beta`. Applies to chat and embeddings. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | No       | Alternative name for the API key (checked as fallback).                                                                                         |
 
 ## Usage
 

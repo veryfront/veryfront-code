@@ -79,15 +79,11 @@ export {
 export {
   ChatContextProvider,
   type ChatContextValue,
-  ComposerContextProvider,
-  type ComposerContextValue,
   MessageContextProvider,
   type MessageContextValue,
   type MessagePartsData,
   useChatContext,
   useChatContextOptional,
-  useComposerContext,
-  useComposerContextOptional,
   useMessageContext,
   useMessageContextOptional,
   useMessageParts,
@@ -123,7 +119,6 @@ export {
   type ChatSidebarProps,
   type ChatSidebarRootProps,
   type ChatTab,
-  type CodeBlockProps,
   ConversationEmptyState,
   type ConversationEmptyStateProps,
   ConversationScrollButton,
@@ -167,7 +162,6 @@ export {
   type QuickAction,
   QuickActions,
   type QuickActionsProps,
-  RichCodeBlock,
   Shimmer,
   SkillBadge,
   type SkillBadgeProps,
@@ -199,15 +193,9 @@ export {
   useModelSelector,
   useSources,
   useStepIndicator,
-  useStickToBottom,
-  type UseStickToBottomOptions,
-  type UseStickToBottomResult,
   useUpload,
   type UseUploadOptions,
   type UseUploadResult,
-  useUploadsRegistry,
-  type UseUploadsRegistryOptions,
-  type UseUploadsRegistryResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
 // Conversation persistence adapters and hooks. localStorage is the convenience
@@ -289,7 +277,7 @@ export {
   useReasoning,
   useToolCall,
 } from "#veryfront/react/components/chat/chat.tsx";
-// RFC 2980 canonical hook + context surface (additive; old names kept @deprecated).
+// RFC 2980 canonical hook + context surface.
 export {
   ChatInputContextProvider,
   type ChatInputContextValue,

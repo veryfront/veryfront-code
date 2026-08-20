@@ -16,6 +16,12 @@ const MAX_SIGNATURE_AGE_SECONDS = 60;
 const MAX_REQUEST_BODY_BYTES = 16 * 1024;
 const DEFAULT_REQUEST_BODY_TIMEOUT_MS = 5_000;
 const MAX_REQUEST_BODY_TIMEOUT_MS = 60_000;
+const MAX_LOGGED_REJECTION_REASON_CODE_UNITS = 200;
+const MAX_REJECTION_CLASS_CODE_UNITS = 64;
+const MAX_TRACKED_REJECTION_CLASSES = 32;
+const OVERFLOW_REJECTION_CLASS = "OverflowRejection";
+const REJECTION_WARNING_WINDOW_MS = 60_000;
+const MISSING_SIGNATURE_REJECTION_CLASS = "MissingDispatchSignature";
 
 export interface ProxyRoutingInvalidationRequest {
   readonly version: 1;
@@ -43,11 +49,158 @@ export interface ProxyRoutingInvalidationPublisher {
   ): Promise<ProxyRoutingInvalidationPublishResult>;
 }
 
+/**
+ * Warning sink for rejected invalidations.
+ *
+ * Structurally compatible with `proxyLogger`, which is what `src/proxy/main.ts`
+ * passes in.
+ */
+export interface ProxyRoutingInvalidationLogger {
+  warn(message: string, extra?: Record<string, unknown>): void;
+}
+
+/**
+ * Coalescer for rejection warnings.
+ *
+ * This endpoint sits on the public listener with no source-IP guard, so an
+ * unauthenticated caller can drive one log write per request. Without this,
+ * every rejection is a separate line in the log pipeline.
+ */
+export interface ProxyRoutingInvalidationRejectionThrottle {
+  /**
+   * Open a warning window for `rejectionClass`, or coalesce into the window
+   * that is already open.
+   *
+   * Returns the number of warnings coalesced away since the previous emission,
+   * or `null` when this rejection should stay silent.
+   */
+  admit(rejectionClass: string): number | null;
+}
+
 interface ProxyRoutingInvalidationHandlerOptions {
   bodyReadTimeoutMs?: number;
   createEventId?: () => string;
+  logger?: ProxyRoutingInvalidationLogger;
   publicKeyPem?: string;
   publisher: ProxyRoutingInvalidationPublisher | null;
+  /**
+   * Omit to warn on every rejection. `src/proxy/main.ts` passes one so a flood
+   * against the public listener cannot flood the log pipeline with it.
+   */
+  rejectionThrottle?: ProxyRoutingInvalidationRejectionThrottle;
+}
+
+/**
+ * Build a rejection throttle that emits at most one warning per class per
+ * window and counts the rest.
+ *
+ * The first rejection of a class always warns, so a new failure mode is never
+ * hidden — this endpoint stayed inert for a month precisely because rejections
+ * were silent, and suppressing the first occurrence would rebuild that trap.
+ * Repeats inside the window are counted and reported on the next emission.
+ *
+ * Classes are bounded and never caller-chosen (see `classifySignatureRejection`),
+ * but the tracking map is capped anyway: an unforeseen error type carrying a
+ * dynamic `name` must not turn this into a memory leak.
+ */
+export function createProxyRoutingInvalidationRejectionThrottle(
+  options: { nowMs?: () => number; windowMs?: number } = {},
+): ProxyRoutingInvalidationRejectionThrottle {
+  const nowMs = options.nowMs ?? (() => Date.now());
+  const windowMs = options.windowMs ?? REJECTION_WARNING_WINDOW_MS;
+  const openWindows = new Map<string, { openedAtMs: number; coalesced: number }>();
+  return {
+    admit(rejectionClass: string): number | null {
+      const key = openWindows.has(rejectionClass) ||
+          openWindows.size < MAX_TRACKED_REJECTION_CLASSES
+        ? rejectionClass
+        : OVERFLOW_REJECTION_CLASS;
+      const now = nowMs();
+      const open = openWindows.get(key);
+      if (open) {
+        const elapsedMs = now - open.openedAtMs;
+        // A clock that stepped backwards expires the window rather than
+        // silencing the class until the clock catches up.
+        if (elapsedMs >= 0 && elapsedMs < windowMs) {
+          open.coalesced += 1;
+          return null;
+        }
+      }
+      openWindows.set(key, { openedAtMs: now, coalesced: 0 });
+      return open?.coalesced ?? 0;
+    },
+  };
+}
+
+/**
+ * Bucket a rejection by the failing check rather than by its message.
+ *
+ * The message can carry caller-shaped fragments — a claim-schema rejection can
+ * name the properties the caller sent — so keying windows on it would let a
+ * caller mint unlimited classes and defeat the coalescing. Which error type our
+ * verification throws is ours alone.
+ */
+function classifySignatureRejection(error: unknown): string {
+  const name = error instanceof Error && typeof error.name === "string" ? error.name : "";
+  return name.length > 0 && name.length <= MAX_REJECTION_CLASS_CODE_UNITS
+    ? name
+    : "UnrecognizedRejection";
+}
+
+/**
+ * Describe why a dispatch signature was refused, without ever echoing the
+ * credential.
+ *
+ * Every message this can surface is minted by our own verification code
+ * ("Control-plane audience mismatch", "Control-plane signature expired",
+ * `Missing extension for contract "SchemaValidator"`, …) and names the check
+ * that failed rather than the material that failed it. The bound keeps a
+ * third-party error message from turning a proxy log line into an unbounded
+ * write.
+ */
+function describeSignatureRejection(error: unknown): string {
+  const message = error instanceof Error && typeof error.message === "string"
+    ? error.message
+    : "Unrecognized routing invalidation signature failure";
+  return message.length > MAX_LOGGED_REJECTION_REASON_CODE_UNITS
+    ? `${message.slice(0, MAX_LOGGED_REJECTION_REASON_CODE_UNITS)}…`
+    : message;
+}
+
+/**
+ * Report a refused invalidation.
+ *
+ * A 401 here means a deployment is still being routed to the previous release,
+ * so it has to be diagnosable from proxy logs alone: the response body is
+ * deliberately generic, and the sender only ever sees that generic body.
+ *
+ * The warning carries the failing check and nothing else. The body reached this
+ * point unauthenticated, so its `projectId`, `projectSlug`, `deploymentId`,
+ * `environmentId` and `releaseId` are attacker-chosen: logging them would let
+ * any caller on the public listener attribute a forged rejection to someone
+ * else's project, and would write kilobytes of caller-controlled text per
+ * request into the log pipeline. Identifiers may only be logged past a
+ * successful `verifyDispatchJws`, never here. Diagnosis does not need them: the
+ * question a stuck rollout raises is *why* dispatch was refused, and the sender
+ * already holds the authenticated identifiers for the attempt it made.
+ */
+function warnRejectedInvalidation(
+  logger: ProxyRoutingInvalidationLogger | undefined,
+  throttle: ProxyRoutingInvalidationRejectionThrottle | undefined,
+  rejectionClass: string,
+  reason: string,
+): void {
+  if (!logger) return;
+  const coalesced = throttle ? throttle.admit(rejectionClass) : 0;
+  if (coalesced === null) return;
+  try {
+    logger.warn("Rejected proxy routing invalidation", {
+      reason,
+      ...(coalesced > 0 ? { coalescedSincePreviousWarning: coalesced } : {}),
+    });
+  } catch {
+    // A logging sink must never upgrade a rejection into a 500.
+  }
 }
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
@@ -267,7 +420,15 @@ export async function handleProxyRoutingInvalidationRequest(
   if (!input) return jsonResponse(400, { error: "Invalid routing invalidation request" });
 
   const jws = req.headers.get(DISPATCH_JWS_HEADER);
-  if (!jws) return jsonResponse(401, { error: "Invalid routing invalidation signature" });
+  if (!jws) {
+    warnRejectedInvalidation(
+      options.logger,
+      options.rejectionThrottle,
+      MISSING_SIGNATURE_REJECTION_CLASS,
+      `Request is missing the ${DISPATCH_JWS_HEADER} dispatch signature`,
+    );
+    return jsonResponse(401, { error: "Invalid routing invalidation signature" });
+  }
 
   try {
     await verifyDispatchJws(jws, body, {
@@ -278,7 +439,13 @@ export async function handleProxyRoutingInvalidationRequest(
       maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
       publicKeyPem,
     });
-  } catch {
+  } catch (error) {
+    warnRejectedInvalidation(
+      options.logger,
+      options.rejectionThrottle,
+      classifySignatureRejection(error),
+      describeSignatureRejection(error),
+    );
     return jsonResponse(401, { error: "Invalid routing invalidation signature" });
   }
 

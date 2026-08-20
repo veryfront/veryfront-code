@@ -20,14 +20,14 @@ import {
   Chat,
   ChatContextProvider,
   ChatThemeScope,
-  ComposerContextProvider,
+  ChatInputContextProvider,
   Message,
   MessageContextProvider,
   useAgent,
   useChat,
   useChatContextOptional,
   useCompletion,
-  useUploadsRegistry,
+  useAttachments,
 } from "../../src/chat/index.ts";
 import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
@@ -416,7 +416,7 @@ describe("Guide: chat-ui.md", () => {
     assertExists(chatRecord.Input);
     assertExists(messageRecord.Root);
     assertExists(ChatContextProvider);
-    assertExists(ComposerContextProvider);
+    assertExists(ChatInputContextProvider);
     assertExists(MessageContextProvider);
     assertEquals(typeof useChatContextOptional, "function");
 
@@ -520,7 +520,7 @@ describe("Guide: build-a-rag-app.md", () => {
 
     assertEquals(typeof ragStore, "function");
     assertEquals(typeof createUploadHandler, "function");
-    assertEquals(typeof useUploadsRegistry, "function");
+    assertEquals(typeof useAttachments, "function");
     assertExists(AttachmentsPanel.Root);
     assertEquals(typeof useChat, "function");
     assertEquals(typeof ChatThemeScope, "function");
@@ -551,7 +551,7 @@ describe("Guide: build-a-rag-app.md", () => {
       template.some((file) => file.path === "app/uploads/page.tsx"),
       "docs-agent template includes the uploads page",
     );
-    assertStringIncludes(guide, 'useUploadsRegistry({ url: "/api/uploads" })');
+    assertStringIncludes(guide, 'useAttachments({ url: "/api/uploads" })');
     assertStringIncludes(guide, "AttachmentsPanel");
     assertStringIncludes(guide, 'import { store } from "../../../store.ts";');
     assertStringIncludes(guide, "await store.indexContentDir();");

@@ -28,20 +28,21 @@ export function ChatInputSubmit<T extends HTMLElement = HTMLElement>(
 ): React.ReactElement | null {
   const c = useChatInputContext();
   if (isSlottedSubmit(props)) {
-    const { children, icon, stopIcon, ...actionProps } = props;
+    const { children, ...actionProps } = props;
     // Rest destructuring cannot preserve a generic conditional mapped type;
     // the type guard above establishes this exact slotted contract.
     const slottedAction = {
       ...actionProps,
       children,
     } as ChatInputSlottedActionProps<T>;
+    const loadingAction = actionProps as ChatInputSlottedActionProps<T>;
     return c.isLoading
-      ? <ChatInputStop<T> {...slottedAction} icon={stopIcon} />
-      : <ChatInputSend<T> {...slottedAction} icon={icon} />;
+      ? <ChatInputStop<T> {...loadingAction} />
+      : <ChatInputSend<T> {...slottedAction} />;
   }
-  const { children, icon, stopIcon, ...actionProps } = props;
+  const { children, ...actionProps } = props;
   return c.isLoading
-    ? <ChatInputStop {...actionProps} icon={stopIcon} />
-    : <ChatInputSend {...actionProps} icon={icon}>{children}</ChatInputSend>;
+    ? <ChatInputStop {...actionProps} />
+    : <ChatInputSend {...actionProps}>{children}</ChatInputSend>;
 }
 ChatInputSubmit.displayName = "ChatInput.Submit";

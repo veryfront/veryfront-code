@@ -39,6 +39,43 @@ describe("agent/runtime/model-resolution", () => {
     clearModelEnv();
   });
 
+  it("keeps the Cloud gateway for a defaulted model when a different provider key is present", () => {
+    // Regression: an account holder who happens to have an Anthropic key must
+    // keep routing the default model through the gateway. The
+    // default-model mismatch error is only for the no-cloud case.
+    setEnv("VERYFRONT_API_TOKEN", "vf-token");
+    setEnv("VERYFRONT_SERVICE_LAYER", "cloud");
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+
+    assertEquals(resolveRuntimeModel(), `veryfront-cloud/${DEFAULT_AGENT_MODEL}`);
+  });
+
+  it("reports a default-model mismatch when only another provider has a key", () => {
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+
+    const err = assertThrows(() => resolveRuntimeModel());
+    const message = err instanceof Error ? err.message : String(err);
+    assertEquals(message.includes("anthropic"), true, message);
+  });
+
+  it("still routes the default model directly when its own provider has a key", () => {
+    setEnv("OPENAI_API_KEY", "sk-openai-test");
+
+    assertEquals(resolveRuntimeModel(), DEFAULT_AGENT_MODEL);
+  });
+
+  it("does not report a mismatch when no direct provider key exists at all", () => {
+    // No credentials anywhere is a different, already-clear failure; this path
+    // must stay untouched so the message does not change for those users.
+    assertEquals(resolveRuntimeModel(), DEFAULT_AGENT_MODEL);
+  });
+
+  it("does not report a mismatch for an explicitly configured model", () => {
+    setEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+
+    assertEquals(resolveRuntimeModel("openai/gpt-5.5"), "openai/gpt-5.5");
+  });
+
   it("normalizes omitted models to the default and blank models to auto", () => {
     assertEquals(normalizeAgentModelConfig(), DEFAULT_AGENT_MODEL);
     assertEquals(normalizeAgentModelConfig("   "), AUTO_AGENT_MODEL);

@@ -110,7 +110,10 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(
       providerGuide,
-      'agent({ model: "openai/qwen2.5-7b-instruct" })',
+      `agent({
+  model: "openai/qwen2.5-7b-instruct",
+  system: "You are a helpful local assistant.",
+});`,
     );
   });
 

@@ -8,12 +8,12 @@ import { renderToString } from "react-dom/server";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  ComposerContextProvider,
-  type ComposerContextValue,
+  ChatInputContextProvider,
+  type ChatInputContextValue,
 } from "../contexts/composer-context.tsx";
 import { mergeProps, useChatInput } from "./use-chat-input.ts";
 
-function makeCtx(over: Partial<ComposerContextValue> = {}): ComposerContextValue {
+function makeCtx(over: Partial<ChatInputContextValue> = {}): ChatInputContextValue {
   return {
     input: "hi",
     setInput: () => {},
@@ -41,9 +41,9 @@ function Fixture(): React.ReactElement {
 describe("useChatInput", () => {
   it("getFieldProps carries the input value; getSubmitProps enables when canSubmit", () => {
     const html = renderToString(
-      <ComposerContextProvider value={makeCtx()}>
+      <ChatInputContextProvider value={makeCtx()}>
         <Fixture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
     assert(html.includes("hi"), "field renders the input value");
     assert(!html.includes("disabled"), "submit is enabled when canSubmit is true");
@@ -51,9 +51,9 @@ describe("useChatInput", () => {
 
   it("getSubmitProps disables the button when canSubmit is false", () => {
     const html = renderToString(
-      <ComposerContextProvider value={makeCtx({ canSubmit: false })}>
+      <ChatInputContextProvider value={makeCtx({ canSubmit: false })}>
         <Fixture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
     assert(html.includes("disabled"), "submit is disabled when canSubmit is false");
   });
@@ -66,19 +66,19 @@ describe("useChatInput", () => {
     }
 
     renderToString(
-      <ComposerContextProvider
+      <ChatInputContextProvider
         value={makeCtx({ input: "draft", isListening: true, transcript: "live words" })}
       >
         <Capture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
     assertEquals(fieldProps.value, "live words");
     assertEquals(fieldProps.disabled, true);
 
     renderToString(
-      <ComposerContextProvider value={makeCtx({ input: "draft", isLoading: true })}>
+      <ChatInputContextProvider value={makeCtx({ input: "draft", isLoading: true })}>
         <Capture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
     assertEquals(fieldProps.value, "draft");
     assertEquals(fieldProps.disabled, true);
@@ -92,11 +92,11 @@ describe("useChatInput", () => {
       return null;
     }
     renderToString(
-      <ComposerContextProvider
+      <ChatInputContextProvider
         value={makeCtx({ onOpenAttachmentPicker: () => pickerCalls += 1 })}
       >
         <Capture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
 
     Reflect.apply(attachProps.onClick!, undefined, [{ defaultPrevented: false }]);
@@ -109,11 +109,11 @@ describe("useChatInput", () => {
       result = useChatInput();
       return null;
     }
-    const capture = (context: ComposerContextValue) => {
+    const capture = (context: ChatInputContextValue) => {
       renderToString(
-        <ComposerContextProvider value={context}>
+        <ChatInputContextProvider value={context}>
           <Capture />
-        </ComposerContextProvider>,
+        </ChatInputContextProvider>,
       );
       assert(result);
       return result;
@@ -144,9 +144,9 @@ describe("useChatInput", () => {
       return null;
     }
     renderToString(
-      <ComposerContextProvider value={makeCtx({ onSubmit: () => submitted = true })}>
+      <ChatInputContextProvider value={makeCtx({ onSubmit: () => submitted = true })}>
         <Capture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
 
     let prevented = false;
@@ -169,11 +169,11 @@ describe("useChatInput", () => {
       return null;
     }
     renderToString(
-      <ComposerContextProvider
+      <ChatInputContextProvider
         value={makeCtx({ canSubmit: false, onSubmit: () => submissions += 1 })}
       >
         <Capture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
 
     let formPrevented = false;
@@ -203,9 +203,9 @@ describe("useChatInput", () => {
       return null;
     }
     renderToString(
-      <ComposerContextProvider value={makeCtx({ onSubmit: () => submissions += 1 })}>
+      <ChatInputContextProvider value={makeCtx({ onSubmit: () => submissions += 1 })}>
         <Capture />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
 
     const compositionSignals = [
@@ -245,11 +245,11 @@ describe("useChatInput", () => {
       result = useChatInput();
       return null;
     }
-    const capture = (context: ComposerContextValue) => {
+    const capture = (context: ChatInputContextValue) => {
       renderToString(
-        <ComposerContextProvider value={context}>
+        <ChatInputContextProvider value={context}>
           <Capture />
-        </ComposerContextProvider>,
+        </ChatInputContextProvider>,
       );
       assert(result);
       return result;

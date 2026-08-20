@@ -186,7 +186,7 @@ export const Composed: Story = {
 
 // Recompose the card: Result first, a custom icon, and a restyled Output.
 <ToolCall.Root tool={completedTool} defaultExpanded>
-  <ToolCall.Trigger icon={<span aria-hidden>🔧</span>} />
+  <ToolCall.Trigger><span aria-hidden>🔧</span></ToolCall.Trigger>
   <ToolCall.Body>
     <ToolCall.Output className="ring-1 ring-[var(--edge)]" />
     <ToolCall.Input />
@@ -199,7 +199,7 @@ export const Composed: Story = {
   render: () => (
     <StoryFrame maxWidth="720px">
       <ToolCall.Root tool={completedToolPart} defaultExpanded>
-        <ToolCall.Trigger icon={<span aria-hidden>🔧</span>} />
+        <ToolCall.Trigger><span aria-hidden>🔧</span></ToolCall.Trigger>
         <ToolCall.Body>
           <ToolCall.Output className="ring-1 ring-[var(--edge)]" />
           <ToolCall.Input />

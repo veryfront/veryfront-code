@@ -327,6 +327,11 @@ export async function prepareChatExecutionWithinProjectRuntime(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,
     ),
+    // Sourced from the verified run-event token, never from forwardedProps, so
+    // it is trusted on the durable-chat path without trusting that body.
+    ...(req.serverResolvedIntegrationToolNames?.length
+      ? { serverResolvedIntegrationToolNames: req.serverResolvedIntegrationToolNames }
+      : {}),
     agentConfig,
     apiUrl: config.VERYFRONT_API_URL,
     abortSignal: preparationSignal,

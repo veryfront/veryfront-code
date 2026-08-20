@@ -15,7 +15,7 @@ import type { ChatTheme } from "../../theme.ts";
 import { cn } from "../../theme.ts";
 import type { Source } from "../components/sources.tsx";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
-import { useStickToBottom } from "../hooks/use-stick-to-bottom.ts";
+import { useChatScroll } from "../hooks/use-stick-to-bottom.ts";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import { PendingMessage } from "./pending-message.tsx";
 import { Message } from "./message.tsx";
@@ -164,7 +164,7 @@ function ChatMessageListBase(
 ): React.ReactElement {
   // Stick-to-bottom: auto-scroll on new messages only while pinned, and drive
   // the scroll-to-bottom button's visibility off `isAtBottom`.
-  const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useStickToBottom<HTMLDivElement>(
+  const { scrollRef, contentRef, isAtBottom, scrollToBottom } = useChatScroll<HTMLDivElement>(
     messages.length,
   );
 
@@ -196,7 +196,7 @@ function ChatMessageListBase(
   const lastMessage = messages[messages.length - 1];
 
   // Force-scroll to the bottom when the user submits a new message, even if
-  // they'd scrolled up into history. `useStickToBottom` only *follows* growth
+  // they'd scrolled up into history. `useChatScroll` only *follows* growth
   // while already pinned, so a fresh user turn from a scrolled-up position
   // would otherwise stay off-screen. Scrolling re-pins the view (the scroll
   // listener flips `isAtBottom` back to true), so the streaming response then

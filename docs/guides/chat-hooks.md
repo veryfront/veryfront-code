@@ -432,8 +432,7 @@ export default function CustomTranscript(
 ```
 
 Also: `viewportRef`, `isAtBottom`, `scrollToBottom`/`scrollToEnd`, `scrollToStart`,
-`scrollToMessage(id)`, and `getViewportProps()`. (`useStickToBottom` is the old
-name, kept as a deprecated alias.)
+`scrollToMessage(id)`, and `getViewportProps()`.
 
 ### useMessageBranches
 

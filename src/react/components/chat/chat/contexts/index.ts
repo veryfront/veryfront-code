@@ -28,12 +28,8 @@ export {
 export {
   ChatInputContextProvider,
   type ChatInputContextValue,
-  ComposerContextProvider,
-  type ComposerContextValue,
   useChatInputContext,
   useChatInputContextOptional,
-  useComposerContext,
-  useComposerContextOptional,
 } from "./composer-context.tsx";
 
 export {

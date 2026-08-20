@@ -2,14 +2,13 @@ import { renderToString } from "react-dom/server";
 import { assert, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
-  ComposerContextProvider,
+  ChatInputContextProvider,
+  type ChatInputContextValue,
   useChatInputContext,
-  useComposerContext,
-  useComposerContextOptional,
+  useChatInputContextOptional,
 } from "./composer-context.tsx";
-import type { ComposerContextValue } from "./composer-context.tsx";
 
-const fakeContext: ComposerContextValue = {
+const fakeContext: ChatInputContextValue = {
   input: "draft message",
   setInput: () => {},
   onChange: () => {},
@@ -21,24 +20,24 @@ const fakeContext: ComposerContextValue = {
   models: [],
 };
 
-describe("ComposerContextProvider / useComposerContext", () => {
+describe("ChatInputContextProvider / useChatInputContext", () => {
   it("supplies the provided value to a descendant", () => {
     function Consumer() {
-      const ctx = useComposerContext();
+      const ctx = useChatInputContext();
       return <div data-can-submit={String(ctx.canSubmit)}>{ctx.input}</div>;
     }
     const html = renderToString(
-      <ComposerContextProvider value={fakeContext}>
+      <ChatInputContextProvider value={fakeContext}>
         <Consumer />
-      </ComposerContextProvider>,
+      </ChatInputContextProvider>,
     );
     assertStringIncludes(html, "draft message");
     assertStringIncludes(html, 'data-can-submit="true"');
   });
 
-  it("fails fast when used outside a Composer", () => {
+  it("fails fast when used outside a ChatInput", () => {
     function Orphan() {
-      useComposerContext();
+      useChatInputContext();
       return null;
     }
     let threw = false;
@@ -47,7 +46,7 @@ describe("ComposerContextProvider / useComposerContext", () => {
     } catch {
       threw = true;
     }
-    assert(threw, "a misplaced useComposerContext is a loud error, not silent");
+    assert(threw, "a misplaced useChatInputContext is a loud error, not silent");
   });
 
   it("names the canonical hook and provider in missing-context errors", () => {
@@ -67,9 +66,9 @@ describe("ComposerContextProvider / useComposerContext", () => {
     );
   });
 
-  it("useComposerContextOptional returns null outside a provider, without throwing", () => {
+  it("useChatInputContextOptional returns null outside a provider, without throwing", () => {
     function OptionalConsumer() {
-      const ctx = useComposerContextOptional();
+      const ctx = useChatInputContextOptional();
       return <div data-has-context={String(ctx !== null)} />;
     }
     const html = renderToString(<OptionalConsumer />);

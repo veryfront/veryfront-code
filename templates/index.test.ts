@@ -548,7 +548,7 @@ describe("templates", () => {
       "the RAG ingestion route does not return a runtime-fetchable Chat attachment URL",
     );
     assertEquals(uploadsPage.includes("AttachmentsPanel"), true);
-    assertEquals(uploadsPage.includes("useUploadsRegistry"), true);
+    assertEquals(uploadsPage.includes("useAttachments"), true);
     assertEquals(uploadsPage.includes('role="alert"'), true);
     assertEquals(uploadsPage.includes("refreshError"), true);
     assertEquals(uploadsPage.includes("removeError"), true);

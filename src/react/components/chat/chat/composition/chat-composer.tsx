@@ -90,7 +90,7 @@ export function ChatInputModel(
 
 /** Download the supplied conversation as Markdown. */
 export function ChatInputExport(
-  { messages, icon, className, onClick, ref }: ChatInputExportProps,
+  { messages, children, className, onClick, ref }: ChatInputExportProps,
 ): React.ReactElement | null {
   if (messages.length === 0) return null;
   const download = () => downloadMarkdown(messages);
@@ -107,7 +107,7 @@ export function ChatInputExport(
       tooltipSide="top"
       className={cn("shrink-0", className)}
     >
-      {icon ?? <ArrowDownIcon />}
+      {children ?? <ArrowDownIcon />}
     </IconButton>
   );
 }
