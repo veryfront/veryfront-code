@@ -367,6 +367,54 @@ console.log(result.toolCalls); // Tools the agent called
 console.log(result.usage); // Token usage
 ```
 
+## Structured output
+
+Set `outputSchema` to constrain every response to a schema. Veryfront maps it to
+the selected provider's native structured-output field, then parses and
+validates the model's text back into `response.object`, typed from the schema
+with no annotation of your own.
+
+```ts
+// agents/weather.ts
+import { agent } from "veryfront/agent";
+import { defineSchema } from "veryfront/schemas";
+
+const getForecastSchema = defineSchema((v) =>
+  v.object({
+    city: v.string(),
+    tempC: v.number(),
+  })
+);
+
+export default agent({
+  id: "weather",
+  system: "You report weather.",
+  outputSchema: getForecastSchema(),
+});
+```
+
+```ts
+import { getAgent } from "veryfront/agent";
+
+const weather = getAgent("weather");
+if (!weather) throw new Error("Agent not found: weather");
+
+const result = await weather.generate({ input: "What is it like in Berlin?" });
+
+console.log(result.object.city); // string
+console.log(result.object.tempC); // number
+```
+
+Pass `outputSchema` to `generate()` or `stream()` to constrain a single request
+instead; a per-call schema replaces the configured one. The response type always
+follows `config.outputSchema`, so read `object` through the override's own type
+when the two differ. A raw JSON Schema object is accepted in both places and is
+sent to the provider unchanged.
+
+A requested schema is never dropped silently. A model runtime that does not
+support structured output rejects the request, and output that does not parse or
+does not validate raises rather than returning a partial object.
+
 ## Runtime UTC context
 
 Veryfront captures UTC once at the start of every `generate()`, `stream()`, and
@@ -448,6 +496,7 @@ export default agent({
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                                          |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                                                    |
 | `skills`              | `true \| string[]`                                                                                     | Advertise all visible skills (`true` or omitted), selected IDs, or none (`[]`)                        |
+| `outputSchema`        | `Schema<T> \| JsonSchema`                                                                              | Constrain responses to a schema and expose the parsed value as `response.object`                      |
 | `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                                              |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                                                  |
 | `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                                          |

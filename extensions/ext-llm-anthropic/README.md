@@ -207,6 +207,14 @@ providerOptions: {
 }
 ```
 
+### Structured Outputs
+
+A `json_schema` response format maps to Anthropic `output_config`:
+
+```json
+{ "output_config": { "format": { "type": "json_schema", "schema": { "type": "object" } } } }
+```
+
 ### Container
 
 Pass `anthropicContainer` to attach a container context to the request (for computer-use sessions).
@@ -235,7 +243,7 @@ The following unified options have no Anthropic equivalent and are silently drop
 - `frequencyPenalty`
 - `seed`
 - `topK`
-- `responseFormat` (non-text; use tool schemas instead)
+- `responseFormat` with `type: "json"` (Anthropic `output_config` requires a schema)
 - `stopSequences` beyond 4 entries (extras truncated)
 
 ## Running Tests

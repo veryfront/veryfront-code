@@ -43,3 +43,25 @@ export function supportsModelRuntimeToolCalling(model: ModelRuntime): boolean {
   }
   return toolCalling;
 }
+
+/**
+ * Return whether a runtime accepts JSON or JSON-schema response formats.
+ *
+ * Unlike tool calling there is no historical behavior to preserve: a runtime
+ * that never advertised the capability is treated as unsupported, so a
+ * requested schema fails loudly instead of being dropped on the way to a
+ * provider that would ignore it.
+ */
+export function supportsModelRuntimeStructuredOutput(model: ModelRuntime): boolean {
+  const capabilities = model.runtimeCapabilities;
+  if (capabilities === undefined) return false;
+  if (typeof capabilities !== "object" || capabilities === null) {
+    throw new TypeError("Model runtime capabilities must be an object");
+  }
+  const structuredOutput = capabilities.structuredOutput;
+  if (structuredOutput === undefined) return false;
+  if (typeof structuredOutput !== "boolean") {
+    throw new TypeError("Model runtime structuredOutput capability must be a boolean");
+  }
+  return structuredOutput;
+}

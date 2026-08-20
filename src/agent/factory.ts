@@ -192,6 +192,7 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
             {
               toolReplacements: input.tools,
               retainSkillLoaderTools: input.retainSkillLoaderTools,
+              outputSchema: input.outputSchema,
             },
           );
         },
@@ -229,6 +230,7 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
             input.model,
             input.maxOutputTokens,
             input.abortSignal,
+            { outputSchema: input.outputSchema },
           );
 
           return createAgentStreamResult(stream);
@@ -425,8 +427,13 @@ function createAugmentedSystem(input: {
   );
 }
 
-/** Agent helper. */
-export function agent(config: AgentConfig): Agent {
+/**
+ * Agent helper.
+ *
+ * `TOutput` is inferred from `config.outputSchema`, so `response.object` is
+ * typed without an annotation. Agents without one keep no `object`.
+ */
+export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput> {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
     throw toError(
       createError({

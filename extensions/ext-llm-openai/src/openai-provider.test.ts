@@ -2060,6 +2060,22 @@ describe("openai-provider", () => {
       assertEquals("parallel_tool_calls" in (captured ?? {}), false);
     });
 
+    it("advertises structured output support on both transports", () => {
+      const config = {
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.reject(new Error("not called")),
+      };
+      assertEquals(
+        createOpenAIModelRuntime(config, "gpt-4o-mini").runtimeCapabilities?.structuredOutput,
+        true,
+      );
+      assertEquals(
+        createOpenAIResponsesRuntime(config, "gpt-4o-mini").runtimeCapabilities?.structuredOutput,
+        true,
+      );
+    });
+
     it("emits OpenAI response_format json_schema when responseFormat is structured", async () => {
       let captured: Record<string, unknown> | null = null;
       const runtime = createOpenAIModelRuntime({

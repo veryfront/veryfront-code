@@ -483,6 +483,7 @@ export function createAnthropicModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: { structuredOutput: true },
     async doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getAnthropicMessagesUrl(config.baseURL);
       const warnings = createWarningCollector();

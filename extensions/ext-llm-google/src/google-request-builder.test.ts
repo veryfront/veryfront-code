@@ -239,7 +239,9 @@ describe("ext-llm-google/google-request-builder", () => {
           allowedFunctionNames: ["lookup"],
         },
       },
-      generationConfig: { temperature: 0.9 },
+      // Provider options replace generationConfig, but the requested response
+      // format is re-pinned afterwards so an override cannot drop it.
+      generationConfig: { temperature: 0.9, responseMimeType: "application/json" },
       labels: { tenant: "acme" },
       cachedContent: "cachedContents/abc",
       safetySettings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }],
@@ -249,7 +251,6 @@ describe("ext-llm-google/google-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), [
       "presencePenalty",
       "frequencyPenalty",
-      "responseFormat",
     ]);
   });
 

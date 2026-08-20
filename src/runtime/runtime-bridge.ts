@@ -19,7 +19,13 @@ import type {
   EmbeddingRuntime,
   ModelRuntime,
   ModelRuntimeGenerateResult,
+  RuntimeResponseFormat,
 } from "#veryfront/provider/types.ts";
+import {
+  getModelRuntimeId,
+  supportsModelRuntimeStructuredOutput,
+} from "#veryfront/provider/runtime-inspection.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 import type { RuntimeReasoningOption } from "#veryfront/agent/types.ts";
 import { resolveOpenAIReasoningConfig } from "#veryfront/provider/shared/openai-reasoning.ts";
 import { DurableRunEventPersistenceError } from "#veryfront/agent/conversation/private-run-event.ts";
@@ -58,6 +64,7 @@ type GenerateTextOptions = {
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
+  responseFormat?: RuntimeResponseFormat;
   abortSignal?: AbortSignal;
 };
 
@@ -79,6 +86,7 @@ type StreamTextOptions = {
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;
+  responseFormat?: RuntimeResponseFormat;
   includeRawChunks?: boolean;
   abortSignal?: AbortSignal;
 };
@@ -622,10 +630,29 @@ async function resolveDirectTools(
   return resolvedTools.length > 0 ? resolvedTools : undefined;
 }
 
+/**
+ * Reject a requested response format the resolved runtime cannot honor.
+ *
+ * Both generation paths converge on `buildDirectModelOptions`, so this is the
+ * one place where a schema would otherwise be handed to a provider that
+ * silently ignores it and returns prose.
+ */
+function assertStructuredOutputSupported(options: DirectTextOptions): void {
+  const responseFormat = options.responseFormat;
+  if (!responseFormat || responseFormat.type === "text") return;
+  if (supportsModelRuntimeStructuredOutput(options.model)) return;
+  throw NOT_SUPPORTED.create({
+    detail: `Model "${
+      getModelRuntimeId(options.model) ?? "unknown"
+    }" does not support structured output, so the requested response format cannot be applied.`,
+  });
+}
+
 function buildDirectModelOptions(
   options: DirectTextOptions,
   tools: ModelCallTool[] | undefined,
 ): DirectModelOptions {
+  assertStructuredOutputSupported(options);
   return {
     prompt: toRuntimePrompt(
       normalizeSystemMessages(options.system),
@@ -646,6 +673,7 @@ function buildDirectModelOptions(
     ...(options.headers ? { headers: options.headers } : {}),
     ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
     ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+    ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
     ...("includeRawChunks" in options && options.includeRawChunks !== undefined
       ? { includeRawChunks: options.includeRawChunks }
       : {}),

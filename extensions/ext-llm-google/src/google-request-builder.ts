@@ -864,6 +864,25 @@ function resolveGoogleThinkingConfig(
   return config;
 }
 
+/**
+ * Map a framework response format onto Gemini generation config keys.
+ *
+ * Gemini constrains generation with `responseMimeType` plus, for a schema,
+ * `responseSchema`. It has no counterpart for the format name, description, or
+ * strict flag, which are therefore not sent.
+ */
+function buildGoogleStructuredOutputConfig(
+  responseFormat: OpenAICompatibleLanguageOptions["responseFormat"],
+): Record<string, unknown> {
+  if (!responseFormat || responseFormat.type === "text") return {};
+  return {
+    responseMimeType: "application/json",
+    ...(responseFormat.type === "json_schema"
+      ? { responseSchema: unwrapToolInputSchema(responseFormat.schema) }
+      : {}),
+  };
+}
+
 function buildGoogleGenerationConfig(
   options: OpenAICompatibleLanguageOptions,
 ): Record<string, unknown> | undefined {
@@ -878,6 +897,7 @@ function buildGoogleGenerationConfig(
       : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(thinkingConfig ? { thinkingConfig } : {}),
+    ...buildGoogleStructuredOutputConfig(options.responseFormat),
   };
 
   return Object.keys(config).length > 0 ? config : undefined;
@@ -902,15 +922,6 @@ export function buildGoogleGenerateContentRequest(
       provider: "google",
       setting: "frequencyPenalty",
       details: "Gemini generateContent does not accept frequencyPenalty; the value was dropped.",
-    });
-  }
-  if (options.responseFormat && options.responseFormat.type !== "text") {
-    warnings.push({
-      type: "unsupported-setting",
-      provider: "google",
-      setting: "responseFormat",
-      details:
-        "Gemini uses generationConfig.responseMimeType + responseSchema for structured outputs, which is a separate surface and not yet wired through this option.",
     });
   }
 
@@ -939,5 +950,11 @@ export function buildGoogleGenerateContentRequest(
   };
 
   Object.assign(body, readProviderOptions(options.providerOptions, "google", providerName));
+  // Provider options replace `generationConfig` wholesale, so re-pin the
+  // runtime-owned structured-output keys the caller asked for.
+  const structuredOutput = buildGoogleStructuredOutputConfig(options.responseFormat);
+  if (Object.keys(structuredOutput).length > 0) {
+    body.generationConfig = { ...body.generationConfig, ...structuredOutput };
+  }
   return body;
 }

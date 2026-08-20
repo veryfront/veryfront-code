@@ -69,6 +69,7 @@ import {
 } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import { resolveAgentSystem } from "./effective-agent-system.ts";
+import { resolveAgentOutputSchema, type ResolvedAgentOutputSchema } from "../output-schema.ts";
 import {
   captureStreamedToolCallInput,
   collectFinalStreamToolResults,
@@ -1185,6 +1186,16 @@ export class AgentRuntime {
   }
 
   /**
+   * Resolve the schema that constrains this request.
+   *
+   * A per-call schema replaces the configured one; without either, the agent
+   * is unconstrained.
+   */
+  private resolveOutputSchema(override: unknown): ResolvedAgentOutputSchema | undefined {
+    return resolveAgentOutputSchema(override ?? this.config.outputSchema, this.id);
+  }
+
+  /**
    * Generate a response (non-streaming)
    */
   async generate(
@@ -1196,9 +1207,11 @@ export class AgentRuntime {
     options?: {
       toolReplacements?: AgentGenerateToolReplacements;
       retainSkillLoaderTools?: boolean;
+      outputSchema?: unknown;
     },
   ): Promise<AgentResponse> {
     throwIfAborted(abortSignal);
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
     const runRuntimeContext = captureAgentRunRuntimeContext();
     const transport = await this.resolveModelTransport(context, modelOverride, "generate");
     const requestedModel = transport.requestedModel;
@@ -1254,6 +1267,7 @@ export class AgentRuntime {
                 options?.retainSkillLoaderTools,
               ),
               abortSignal,
+              outputSchema,
             )
           ),
       );
@@ -1275,8 +1289,10 @@ export class AgentRuntime {
     modelOverride?: string,
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
+    options?: { outputSchema?: unknown },
   ): Promise<ReadableStream<Uint8Array>> {
     const runRuntimeContext = captureAgentRunRuntimeContext();
+    const outputSchema = this.resolveOutputSchema(options?.outputSchema);
     setOtelActiveSpanAttributes({
       "run.started_at_utc": runRuntimeContext.runStartedAtUtc,
       "run.current_date_utc": runRuntimeContext.currentDateUtc,
@@ -1390,6 +1406,7 @@ export class AgentRuntime {
                   maxOutputTokensOverride,
                   streamAbortSignal,
                   requestedModel,
+                  outputSchema,
                 )
               ),
           );
@@ -1459,6 +1476,7 @@ export class AgentRuntime {
     temperatureModelString?: string,
     toolReplacements?: AgentGenerateToolReplacements,
     abortSignal?: AbortSignal,
+    outputSchema?: ResolvedAgentOutputSchema,
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
@@ -1636,6 +1654,7 @@ export class AgentRuntime {
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
             ...(reasoning ? { reasoning } : {}),
+            ...(outputSchema ? { responseFormat: outputSchema.responseFormat } : {}),
             abortSignal,
           });
           setSpanAttributes(span, buildRuntimeUsageTraceAttributes(result.usage));
@@ -1738,6 +1757,7 @@ export class AgentRuntime {
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
           return {
             text: response.text,
+            ...(outputSchema ? { object: await outputSchema.parseOutput(response.text) } : {}),
             messages: currentMessages,
             toolCalls,
             status: this.status,
@@ -2077,8 +2097,10 @@ export class AgentRuntime {
       setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
 
       const lastMsg = currentMessages[currentMessages.length - 1];
+      const finalText = lastMsg ? getTextFromParts(lastMsg.parts) : "";
       return {
-        text: lastMsg ? getTextFromParts(lastMsg.parts) : "",
+        text: finalText,
+        ...(outputSchema ? { object: await outputSchema.parseOutput(finalText) } : {}),
         messages: currentMessages,
         toolCalls,
         status: this.status,
@@ -2118,6 +2140,7 @@ export class AgentRuntime {
     maxOutputTokensOverride?: number,
     abortSignal?: AbortSignal,
     temperatureModelString?: string,
+    outputSchema?: ResolvedAgentOutputSchema,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const maxSteps = this.computeMaxSteps(maxAgentSteps);
@@ -2270,6 +2293,7 @@ export class AgentRuntime {
           ...(headers ? { headers } : {}),
           ...(providerOptions ? { providerOptions } : {}),
           ...(reasoning ? { reasoning } : {}),
+          ...(outputSchema ? { responseFormat: outputSchema.responseFormat } : {}),
           abortSignal: streamSignal,
         })
       );
@@ -3087,6 +3111,7 @@ export class AgentRuntime {
 
     return {
       text: latestAssistantText,
+      ...(outputSchema ? { object: await outputSchema.parseOutput(latestAssistantText) } : {}),
       messages: currentMessages,
       toolCalls,
       status: "completed",

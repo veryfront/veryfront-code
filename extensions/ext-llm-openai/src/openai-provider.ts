@@ -1055,6 +1055,7 @@ export function createOpenAIModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: { structuredOutput: true },
     doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIChatCompletionsUrl(config.baseURL);
       const warnings = createWarningCollector();
@@ -1142,6 +1143,7 @@ export function createOpenAIResponsesRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: { structuredOutput: true },
     doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getOpenAIResponsesUrl(config.baseURL);
       const warnings = createWarningCollector();
