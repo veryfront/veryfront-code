@@ -274,6 +274,30 @@ Use JSONL when each example should be reviewed as a single line:
 dataset: datasets.jsonl("datasets/research.jsonl");
 ```
 
+### Grading text that was not produced by an agent
+
+`judges.llm.rubric()` grades an agent's answer to a task by default, and sends
+the task input alongside the answer. When the graded value was not produced in
+response to that input -- a stored document, a labelled corpus, a reply written
+earlier -- that framing works against you: the judge sees the same string as
+both the question and the answer and reads it as an agent that echoed its prompt
+instead of doing the work.
+
+Pass `framing: "text"` for those cases:
+
+```ts
+metrics.judge.rubric({
+  rubric: PROFESSIONALISM_RUBRIC,
+  judge: judges.llm.rubric({ framing: "text" }),
+});
+```
+
+Under `"text"` framing the judge is told the value was not produced in response
+to a task, the value is sent once as `text` rather than twice as `input` and
+`answer`, and the reference is omitted. The prompt-injection rules are the same
+in both framings. The default is unchanged, so existing evals grade exactly as
+before.
+
 ## Metrics
 
 Use deterministic metrics for stable requirements:
