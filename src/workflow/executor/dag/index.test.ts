@@ -963,7 +963,7 @@ describe("DAGExecutor", () => {
   });
 
   describe("run-scoped step hooks", () => {
-    it("threads the run id from ownership down to the step hooks", async () => {
+    it("threads the durable run id down to the step hooks with worker ownership", async () => {
       const seen: Array<[string, string | undefined]> = [];
       class RunIdCapturingExecutor extends StepExecutor {
         override execute(
@@ -980,12 +980,62 @@ describe("DAGExecutor", () => {
       const exec = new DAGExecutor({ stepExecutor: new RunIdCapturingExecutor() });
       const nodes: WorkflowNode[] = [{ id: "only", config: { type: "step" } as any }];
 
-      await exec.execute(nodes, createTestRun(), undefined, undefined, {
+      await exec.execute(nodes, createTestRun({ id: "run-42" }), undefined, undefined, {
         runId: "run-42",
         workerId: "worker-1",
       });
 
       assertEquals(seen, [["only", "run-42"]]);
+    });
+
+    it("threads the durable run id without worker ownership", async () => {
+      const seen: Array<[string, string | undefined]> = [];
+      class RunIdCapturingExecutor extends StepExecutor {
+        override execute(
+          node: WorkflowNode,
+          _context: WorkflowContext,
+          _abortSignal?: AbortSignal,
+          runId?: string,
+        ): Promise<StepResult> {
+          seen.push([node.id, runId]);
+          return Promise.resolve({ success: true, output: node.id, executionTime: 1 });
+        }
+      }
+
+      const exec = new DAGExecutor({ stepExecutor: new RunIdCapturingExecutor() });
+      const nodes: WorkflowNode[] = [{ id: "only", config: { type: "step" } as any }];
+
+      await exec.execute(nodes, createTestRun({ id: "durable-run" }));
+
+      assertEquals(seen, [["only", "durable-run"]]);
+    });
+
+    it("threads the durable run id into child graphs without worker ownership", async () => {
+      const seen: Array<[string, string | undefined]> = [];
+      class RunIdCapturingExecutor extends StepExecutor {
+        override execute(
+          node: WorkflowNode,
+          _context: WorkflowContext,
+          _abortSignal?: AbortSignal,
+          runId?: string,
+        ): Promise<StepResult> {
+          seen.push([node.id, runId]);
+          return Promise.resolve({ success: true, output: node.id, executionTime: 1 });
+        }
+      }
+
+      const exec = new DAGExecutor({ stepExecutor: new RunIdCapturingExecutor() });
+      const nodes: WorkflowNode[] = [{
+        id: "group",
+        config: {
+          type: "parallel",
+          nodes: [{ id: "child", config: { type: "step" } as any }],
+        } as any,
+      }];
+
+      await exec.execute(nodes, createTestRun({ id: "durable-run" }));
+
+      assertEquals(seen, [["child", "durable-run"]]);
     });
   });
 
