@@ -152,6 +152,11 @@ export type AgentSystem = string | ChatSystemMessage[];
 // deno-lint-ignore no-explicit-any -- generic erasure: accepts any concrete Schema<T>
 export type AgentOutputSchema = Schema<any> | JsonSchema;
 
+/** Output type inferred from a request-scoped `outputSchema`. */
+export type InferAgentOutputSchema<TSchema> = TSchema extends Schema<infer TOutput> ? TOutput
+  : TSchema extends JsonSchema ? unknown
+  : never;
+
 /** Configuration used by agent. */
 // deno-lint-ignore no-explicit-any -- generic erasure: interface must accept any concrete AgentConfig instantiation
 export interface AgentConfig<TOutput = any> {
@@ -424,7 +429,9 @@ export interface AgentStreamResult {
 }
 
 /** Request payload accepted by `Agent.generate`. */
-export interface AgentGenerateInput {
+export interface AgentGenerateInput<
+  TOutputSchema extends AgentOutputSchema | undefined = undefined,
+> {
   input: string | Message[];
   context?: Record<string, unknown>;
   /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
@@ -442,11 +449,10 @@ export interface AgentGenerateInput {
   retainSkillLoaderTools?: boolean;
   /**
    * Constrain this request to a schema, overriding `config.outputSchema`.
-   * Omit to apply the configured schema, when there is one. The response type
-   * follows the agent's configured schema; read `object` through the override's
-   * own type when the two differ.
+   * Omit to apply the configured schema, when there is one. When present, the
+   * response type follows this override schema.
    */
-  outputSchema?: AgentOutputSchema;
+  outputSchema?: TOutputSchema;
   /** Abort signal for cooperative cancellation. */
   abortSignal?: AbortSignal;
 }
@@ -482,6 +488,9 @@ export interface Agent<TOutput = any> {
   id: string;
   config: ResolvedAgentConfig<TOutput>;
 
+  generate<TOutputSchema extends AgentOutputSchema>(
+    input: AgentGenerateInput<TOutputSchema> & { outputSchema: TOutputSchema },
+  ): Promise<AgentResponse<InferAgentOutputSchema<TOutputSchema>>>;
   generate(input: AgentGenerateInput): Promise<AgentResponse<TOutput>>;
 
   stream(input: AgentStreamInput): Promise<AgentStreamResult>;

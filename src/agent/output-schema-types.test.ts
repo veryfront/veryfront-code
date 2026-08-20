@@ -40,12 +40,15 @@ async function unchangedWithoutSchema(): Promise<void> {
 
 async function perCallSchemaIsAccepted(): Promise<void> {
   // A per-call schema of any output type is accepted regardless of the agent's
-  // configured one; the response type follows the configured schema.
+  // configured one; the response type follows the per-call schema.
   const weather = agent({ system: "You report weather.", outputSchema: temperatureSchema });
   const response = await weather.generate({ input: "Berlin?", outputSchema: headlineSchema });
 
+  const headline: string = response.object.headline;
+  // @ts-expect-error The configured schema does not leak into override results.
   const city: string = response.object.city;
 
+  void headline;
   void city;
 }
 

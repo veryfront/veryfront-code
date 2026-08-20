@@ -254,6 +254,44 @@ describe("ext-llm-google/google-request-builder", () => {
     ]);
   });
 
+  it("pins structured JSON Schema after provider generationConfig overrides", () => {
+    const schema = {
+      type: "object",
+      $defs: {
+        forecast: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      },
+      $ref: "#/$defs/forecast",
+    };
+
+    const body = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Forecast" }] }],
+        responseFormat: { type: "json_schema", name: "Forecast", schema },
+        providerOptions: {
+          google: {
+            generationConfig: {
+              temperature: 0.9,
+              responseMimeType: "text/plain",
+              responseJsonSchema: { type: "string" },
+            },
+          },
+        },
+      },
+      createWarningCollector(),
+    );
+
+    assertEquals(body.generationConfig, {
+      temperature: 0.9,
+      responseMimeType: "application/json",
+      responseJsonSchema: schema,
+    });
+  });
+
   it("accepts only the explicitly supported Google provider-tool schemas", () => {
     const prompt: RuntimePromptMessage[] = [{
       role: "user",

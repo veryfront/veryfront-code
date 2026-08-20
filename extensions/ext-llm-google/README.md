@@ -208,13 +208,13 @@ See [Gemini safety settings](https://ai.google.dev/gemini-api/docs/safety-settin
 ## Structured Outputs
 
 A response format maps to Gemini generation config keys. `type: "json"` sets
-`responseMimeType` alone; `type: "json_schema"` adds `responseSchema`:
+`responseMimeType` alone; `type: "json_schema"` adds `responseJsonSchema`:
 
 ```json
 {
   "generationConfig": {
     "responseMimeType": "application/json",
-    "responseSchema": { "type": "object" }
+    "responseJsonSchema": { "type": "object" }
   }
 }
 ```

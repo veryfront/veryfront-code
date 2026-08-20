@@ -219,7 +219,7 @@ describe("ext-llm-google/google-provider", () => {
     });
   });
 
-  it("emits Gemini responseMimeType and responseSchema when responseFormat is structured", async () => {
+  it("emits Gemini responseMimeType and responseJsonSchema when responseFormat is structured", async () => {
     let requestedInit: RequestInit | undefined;
 
     const runtime = createGoogleModelRuntime({
@@ -258,7 +258,7 @@ describe("ext-llm-google/google-provider", () => {
 
     const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
     assertEquals(requestBody.generationConfig.responseMimeType, "application/json");
-    assertEquals(requestBody.generationConfig.responseSchema, schema);
+    assertEquals(requestBody.generationConfig.responseJsonSchema, schema);
   });
 
   it("advertises structured output support", () => {

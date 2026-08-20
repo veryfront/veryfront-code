@@ -1,6 +1,7 @@
 import type {
   Agent,
   AgentConfig,
+  AgentGenerateInput,
   AgentMiddleware,
   AgentResponse,
   AgentStreamResult,
@@ -166,6 +167,30 @@ interface AgentInstanceDeps {
 function createAgentInstance(deps: AgentInstanceDeps): Agent {
   const { id, publicConfig, toolsConfig, runtime, shouldAttachAllowedSkillIds } = deps;
   const resolveSkillSnapshot = deps.resolveSkillSnapshot;
+  const generate = ((input: AgentGenerateInput): Promise<AgentResponse> =>
+    withSpan(
+      "agent.factory.generate",
+      () => {
+        const skillSnapshot = resolveSkillSnapshot();
+        return runtime.generate(
+          input.input,
+          withAllowedSkillIdsContext(
+            input.context,
+            skillSnapshot.allowedSkillIds,
+            shouldAttachAllowedSkillIds,
+          ),
+          input.model,
+          input.maxOutputTokens,
+          input.abortSignal,
+          {
+            toolReplacements: input.tools,
+            retainSkillLoaderTools: input.retainSkillLoaderTools,
+            outputSchema: input.outputSchema,
+          },
+        );
+      },
+      { "agent.id": id },
+    )) as Agent["generate"];
 
   return {
     id,
@@ -174,31 +199,7 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
       tools: toolsConfig,
     },
 
-    generate(input): Promise<AgentResponse> {
-      return withSpan(
-        "agent.factory.generate",
-        () => {
-          const skillSnapshot = resolveSkillSnapshot();
-          return runtime.generate(
-            input.input,
-            withAllowedSkillIdsContext(
-              input.context,
-              skillSnapshot.allowedSkillIds,
-              shouldAttachAllowedSkillIds,
-            ),
-            input.model,
-            input.maxOutputTokens,
-            input.abortSignal,
-            {
-              toolReplacements: input.tools,
-              retainSkillLoaderTools: input.retainSkillLoaderTools,
-              outputSchema: input.outputSchema,
-            },
-          );
-        },
-        { "agent.id": id },
-      );
-    },
+    generate,
 
     stream(input): Promise<AgentStreamResult> {
       return withSpan(

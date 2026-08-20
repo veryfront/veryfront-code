@@ -867,9 +867,9 @@ function resolveGoogleThinkingConfig(
 /**
  * Map a framework response format onto Gemini generation config keys.
  *
- * Gemini constrains generation with `responseMimeType` plus, for a schema,
- * `responseSchema`. It has no counterpart for the format name, description, or
- * strict flag, which are therefore not sent.
+ * Gemini constrains generation with `responseMimeType` plus, for arbitrary
+ * JSON Schema documents, `responseJsonSchema`. It has no counterpart for the
+ * format name, description, or strict flag, which are therefore not sent.
  */
 function buildGoogleStructuredOutputConfig(
   responseFormat: OpenAICompatibleLanguageOptions["responseFormat"],
@@ -878,7 +878,7 @@ function buildGoogleStructuredOutputConfig(
   return {
     responseMimeType: "application/json",
     ...(responseFormat.type === "json_schema"
-      ? { responseSchema: unwrapToolInputSchema(responseFormat.schema) }
+      ? { responseJsonSchema: unwrapToolInputSchema(responseFormat.schema) }
       : {}),
   };
 }

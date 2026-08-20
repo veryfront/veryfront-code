@@ -219,4 +219,33 @@ describe("securityMiddleware", () => {
     assertEquals(result.text, "Reach [EMAIL] with the [REDACTED]");
     assertEquals(violations, ["output"]);
   });
+
+  it("filters structured output objects before returning the response", async () => {
+    const middleware = securityMiddleware({
+      output: { blockedPatterns: [/secret/gi], filterPII: true },
+    });
+    const context = createContext({
+      input: "Return contact details.",
+    });
+
+    const result = await middleware(context, async () => ({
+      ...createResponse('{"email":"john@example.com","nested":{"note":"secret"}}'),
+      object: {
+        email: "john@example.com",
+        nested: {
+          note: "secret",
+          untouched: 12,
+        },
+      },
+    }));
+
+    assertEquals(result.text, '{"email":"[EMAIL]","nested":{"note":"[REDACTED]"}}');
+    assertEquals(result.object, {
+      email: "[EMAIL]",
+      nested: {
+        note: "[REDACTED]",
+        untouched: 12,
+      },
+    });
+  });
 });

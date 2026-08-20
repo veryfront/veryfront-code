@@ -379,7 +379,7 @@ with no annotation of your own.
 import { agent } from "veryfront/agent";
 import { defineSchema } from "veryfront/schemas";
 
-const getForecastSchema = defineSchema((v) =>
+export const getForecastSchema = defineSchema((v) =>
   v.object({
     city: v.string(),
     tempC: v.number(),
@@ -395,21 +395,24 @@ export default agent({
 
 ```ts
 import { getAgent } from "veryfront/agent";
+import { getForecastSchema } from "./weather.ts";
 
 const weather = getAgent("weather");
 if (!weather) throw new Error("Agent not found: weather");
 
-const result = await weather.generate({ input: "What is it like in Berlin?" });
+const result = await weather.generate({
+  input: "What is it like in Berlin?",
+  outputSchema: getForecastSchema(),
+});
 
 console.log(result.object.city); // string
 console.log(result.object.tempC); // number
 ```
 
 Pass `outputSchema` to `generate()` or `stream()` to constrain a single request
-instead; a per-call schema replaces the configured one. The response type always
-follows `config.outputSchema`, so read `object` through the override's own type
-when the two differ. A raw JSON Schema object is accepted in both places and is
-sent to the provider unchanged.
+instead; a per-call schema replaces the configured one. `generate()` returns an
+`object` typed from the per-call schema when you pass one. A raw JSON Schema
+object is accepted in both places and is sent to the provider unchanged.
 
 A requested schema is never dropped silently. A model runtime that does not
 support structured output rejects the request, and output that does not parse or
