@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun } from "../runtime.ts";
-import { getV8HeapSizeLimit, type NodeReadSyncFs, testReadStdinByteSyncNode } from "./lifecycle.ts";
+import {
+  getV8HeapSizeLimit,
+  type NodeReadSyncFs,
+  testReadStdinByteSyncNode,
+} from "#veryfront/platform/compat/process/lifecycle.ts";
 
 function errorWithCode(code: string): Error {
   return Object.assign(new Error(code), { code });
@@ -44,7 +48,7 @@ describe("platform/compat/process/lifecycle", () => {
     );
 
     assertEquals(byte, 0x42, "a raw TTY yields EAGAIN until the user types");
-    assertEquals(sleeps.length, 2, "each EAGAIN parks before retrying");
+    assertEquals(sleeps, [5, 5], "each EAGAIN parks 5ms before retrying");
   });
 
   it("reports EOF when a read returns zero bytes", () => {
