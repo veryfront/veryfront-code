@@ -47,6 +47,33 @@ export type HostedServiceRunEventAppendTokenInput = {
   runId: string;
 };
 
+/**
+ * Outcome of verifying an internal run-event append token.
+ *
+ * `integrationTools` carries the server-resolved integration tool grant. It is
+ * read from the signed token rather than the request body, so a caller cannot
+ * widen its own grant by editing what it posts.
+ */
+export type HostedServiceRunEventAppendTokenResult = {
+  verified: boolean;
+  integrationTools?: readonly string[];
+};
+
+/**
+ * Verifiers may return a bare boolean; the richer result is optional so existing
+ * host implementations keep working unchanged.
+ */
+export type HostedServiceRunEventAppendTokenVerification =
+  | boolean
+  | HostedServiceRunEventAppendTokenResult;
+
+/** Normalize either verifier shape into the richer result. */
+export function toRunEventAppendTokenResult(
+  verification: HostedServiceRunEventAppendTokenVerification,
+): HostedServiceRunEventAppendTokenResult {
+  return typeof verification === "boolean" ? { verified: verification } : verification;
+}
+
 /** Error shape for hosted service jwt. */
 export type HostedServiceJwtError = {
   statusCode: number;
@@ -145,7 +172,7 @@ export type HostedServiceAuth = {
   verifyJwt: (token: string) => Promise<HostedServiceJwtResult>;
   verifyRunEventAppendToken: (
     input: HostedServiceRunEventAppendTokenInput,
-  ) => Promise<boolean>;
+  ) => Promise<HostedServiceRunEventAppendTokenVerification>;
   verifyProjectAccess: (
     projectId: string,
     token: string,
@@ -418,17 +445,17 @@ export function createHostedServiceAuth(
 
   async function verifyRunEventAppendToken(
     input: HostedServiceRunEventAppendTokenInput,
-  ): Promise<boolean> {
+  ): Promise<HostedServiceRunEventAppendTokenResult> {
     return await trace("auth.verifyRunEventAppendToken", async () => {
       const config = options.getConfig();
       if (!config.OAUTH_PUBLIC_KEY || !config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID) {
-        return false;
+        return { verified: false };
       }
 
       try {
         const authProvider = await getAuthProvider(options);
         if (!authProvider) {
-          return false;
+          return { verified: false };
         }
 
         const payload = await authProvider.verifyWithPublicKey(
@@ -437,7 +464,7 @@ export function createHostedServiceAuth(
           { algorithms: ["RS256"] },
         ) as TokenPayload;
 
-        return payload.actorType === "service_account" &&
+        const verified = payload.actorType === "service_account" &&
           payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
           typeof payload.serviceAccountId === "string" &&
           payload.userId === payload.serviceAccountId &&
@@ -445,11 +472,21 @@ export function createHostedServiceAuth(
           payload.projectId === input.projectId &&
           payload.runId === input.runId &&
           hasExactRunEventWriterScopes(payload);
+
+        if (!verified) {
+          return { verified: false };
+        }
+
+        const integrationTools = (payload as { integrationTools?: unknown }).integrationTools;
+        return {
+          verified: true,
+          ...(Array.isArray(integrationTools) ? { integrationTools } : {}),
+        } as HostedServiceRunEventAppendTokenResult;
       } catch (error) {
         options.logger?.debug?.("Run-event append token verification failed", {
           error: error instanceof Error ? error.message : String(error),
         });
-        return false;
+        return { verified: false };
       }
     });
   }

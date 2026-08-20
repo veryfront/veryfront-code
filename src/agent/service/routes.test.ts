@@ -100,7 +100,7 @@ function createRouteSet(input: {
     token: string;
     projectId: string;
     runId: string;
-  }) => Promise<boolean>;
+  }) => Promise<boolean | { verified: boolean; integrationTools?: readonly string[] }>;
   startDetachedExecution?: (
     input: HostedAgentServiceDetachedExecutionInput<{ executionId: string }>,
   ) => Promise<void>;
@@ -682,4 +682,144 @@ Deno.test("agent service routes cancel AG-UI runs", async () => {
   });
 
   assertEquals(response.status, 204);
+});
+
+it("grants durable-chat runs the integration tools carried by the verified token", async () => {
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: () =>
+      Promise.resolve({
+        verified: true,
+        integrationTools: ["outlook__list_emails", "outlook__send_email"],
+      }),
+  });
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.serverResolvedIntegrationToolNames, [
+    "outlook__list_emails",
+    "outlook__send_email",
+  ]);
+  // The body remains untrusted even though the grant arrived.
+  assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
+});
+
+it("ignores an integration tool grant forged in the durable-chat body", async () => {
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve({ verified: true }),
+  });
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+        forwardedProps: {
+          runtimeOverrides: {
+            serverResolvedIntegrationTools: ["attacker__delete_everything"],
+          },
+        },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.serverResolvedIntegrationToolNames, undefined);
+  assertEquals(
+    JSON.stringify(preparedRequests[0]).includes("attacker__delete_everything"),
+    false,
+  );
+});
+
+it("drops malformed names from a grant without discarding the rest", async () => {
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: () =>
+      Promise.resolve({
+        verified: true,
+        integrationTools: [
+          "outlook__list_emails",
+          "not-an-integration-tool",
+          " outlook__padded ",
+          "outlook__list_emails",
+          "gmail__list_emails",
+        ],
+      }),
+  });
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/runs",
+      {
+        messages: [],
+        context: {
+          conversationId: "00000000-0000-4000-8000-000000000001",
+          projectId: "00000000-0000-4000-8000-000000000005",
+          branchId: null,
+        },
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "00000000-0000-4000-8000-000000000002",
+        },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.serverResolvedIntegrationToolNames, [
+    "outlook__list_emails",
+    "gmail__list_emails",
+  ]);
+});
+
+it("carries no grant when no run-event token is presented", async () => {
+  const { routeSet, preparedRequests } = createRouteSet();
+
+  const response = await routeSet.handleDurableChatRunExecuteRequest({
+    request: createAuthenticatedRequest("/api/runs", {
+      messages: [],
+      context: {
+        conversationId: "00000000-0000-4000-8000-000000000001",
+        projectId: "00000000-0000-4000-8000-000000000005",
+        branchId: null,
+      },
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "00000000-0000-4000-8000-000000000002",
+      },
+    }),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.serverResolvedIntegrationToolNames, undefined);
 });
