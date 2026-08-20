@@ -51,7 +51,10 @@ export function retryTelemetryErrorType(error: Error): string {
   if (isVeryfrontError(error)) return `VeryfrontError:${error.status}`;
 
   const code = (error as { code?: unknown }).code;
-  if (typeof code === "string" && RETRYABLE_CODE_RE.test(code)) return code;
+  if (typeof code === "string") {
+    const match = RETRYABLE_CODE_RE.exec(code);
+    if (match?.[1]) return match[1];
+  }
 
   return SAFE_ERROR_NAMES.has(error.name) ? error.name : "Error";
 }
