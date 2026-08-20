@@ -83,6 +83,51 @@ describe("provider/model-registry", () => {
     assertEquals(shared.provider, "openai");
   });
 
+  describe("missing credential diagnostics", () => {
+    it("names the unservable model and the credentials that are configured", () => {
+      const secret = "sk-ant-do-not-leak-me";
+      setEnv("ANTHROPIC_API_KEY", secret);
+
+      const error = assertThrows(() => resolveModel("openai/gpt-5.4-nano")) as Error;
+
+      assertEquals(error.message.includes("OPENAI_API_KEY is not set"), true);
+      // The model that could not be served, so the reader does not have to
+      // guess which of several providers failed.
+      assertEquals(error.message.includes('"openai/gpt-5.4-nano"'), true);
+      // What *is* configured -- names only.
+      assertEquals(
+        error.message.includes("Configured provider credentials: ANTHROPIC_API_KEY"),
+        true,
+      );
+      assertEquals(error.message.includes(secret), false);
+    });
+
+    it("reports the configured Google credential alias without exposing its value", () => {
+      const secret = "AIza-do-not-leak-me";
+      setEnv("GOOGLE_API_KEY", secret);
+
+      const error = assertThrows(() => resolveModel("openai/gpt-5.4-nano")) as Error;
+
+      assertEquals(error.message.includes("OPENAI_API_KEY is not set"), true);
+      assertEquals(
+        error.message.includes("Configured provider credentials: GOOGLE_API_KEY"),
+        true,
+      );
+      assertEquals(error.message.includes("GOOGLE_GENERATIVE_AI_API_KEY"), false);
+      assertEquals(error.message.includes(secret), false);
+    });
+
+    it("says so plainly when nothing is configured", () => {
+      const error = assertThrows(() => resolveModel("anthropic/claude-haiku-4-5")) as Error;
+
+      assertEquals(error.message.includes("ANTHROPIC_API_KEY is not set"), true);
+      assertEquals(
+        error.message.includes("No built-in provider credentials are configured"),
+        true,
+      );
+    });
+  });
+
   it("resolves local models without credentials or an explicit registration", () => {
     assertEquals(hasModelProvider("local"), true);
 
