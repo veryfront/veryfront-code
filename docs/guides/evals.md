@@ -286,9 +286,29 @@ instead of doing the work.
 Pass `framing: "text"` for those cases:
 
 ```ts
-metrics.judge.rubric({
-  rubric: PROFESSIONALISM_RUBRIC,
-  judge: judges.llm.rubric({ framing: "text" }),
+// evals/support-replies.eval.ts
+import { datasets, evalTool, judges, metrics } from "veryfront/eval";
+
+const PROFESSIONALISM_RUBRIC =
+  "The text must be polite, specific, concise, and free of internal jargon.";
+
+export default evalTool({
+  name: "Support reply professionalism",
+  target: "tool:return_saved_reply",
+  dataset: datasets.inline([
+    {
+      id: "billing-refund-reply",
+      input: "Hello, I checked the duplicate charge and started a refund.",
+      metadata: { locale: "en" },
+    },
+  ]),
+  input: (example) => example.input,
+  metrics: [
+    metrics.judge.rubric({
+      rubric: PROFESSIONALISM_RUBRIC,
+      judge: judges.llm.rubric({ framing: "text" }),
+    }),
+  ],
 });
 ```
 
