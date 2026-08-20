@@ -28,6 +28,7 @@ import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
+import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
 import {
@@ -376,60 +377,67 @@ export class WorkflowExecutor {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
-    await executeWorkflowRunControl({
-      backend: this.config.backend,
-      run,
-      expectedWorkerId,
-      enableLocking: this.config.enableLocking,
-      lockDuration: this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION,
-      heartbeatInterval: this.config.heartbeatInterval ?? WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
-      waitForCancellationUpdate: (runId) => this.waitForCancellationUpdate(runId),
-      waitForCancellationGrace: (operation) => this.waitForCancellationGrace(operation),
-      registerController: (runId, controller) => {
-        this.activeRunControllers.set(runId, controller);
-      },
-      clearController: (runId, controller) => {
-        if (this.activeRunControllers.get(runId) === controller) {
-          this.activeRunControllers.delete(runId);
-        }
-      },
-      isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
-      execute: ({ controller, signal, ownership }) => {
-        const nodes = this.resolveNodes(workflow, run.context);
-        const runWithTenantContext: WorkflowRun = run._tenant
-          ? {
-            ...run,
-            context: { ...run.context, _tenant: run._tenant },
+    // The run span is the trace root for this execution. A run that pauses and later
+    // resumes starts a new trace; `workflow.run_id` is what stitches them together.
+    await withSpan("workflow.run", async () => {
+      await executeWorkflowRunControl({
+        backend: this.config.backend,
+        run,
+        expectedWorkerId,
+        enableLocking: this.config.enableLocking,
+        lockDuration: this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION,
+        heartbeatInterval: this.config.heartbeatInterval ?? WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
+        waitForCancellationUpdate: (runId) => this.waitForCancellationUpdate(runId),
+        waitForCancellationGrace: (operation) => this.waitForCancellationGrace(operation),
+        registerController: (runId, controller) => {
+          this.activeRunControllers.set(runId, controller);
+        },
+        clearController: (runId, controller) => {
+          if (this.activeRunControllers.get(runId) === controller) {
+            this.activeRunControllers.delete(runId);
           }
-          : run;
+        },
+        isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
+        execute: ({ controller, signal, ownership }) => {
+          const nodes = this.resolveNodes(workflow, run.context);
+          const runWithTenantContext: WorkflowRun = run._tenant
+            ? {
+              ...run,
+              context: { ...run.context, _tenant: run._tenant },
+            }
+            : run;
 
-        return runWithWorkflowTenant(run._tenant, () =>
-          this.executeWithTimeout(
-            () =>
-              this.dagExecutor.execute(
-                nodes,
-                runWithTenantContext,
-                startFromNode,
-                signal,
-                ownership,
-              ),
-            workflow.timeout,
-            controller,
-          ));
-      },
-      onStart: (startedRun) => {
-        this.config.onStart?.(startedRun);
-      },
-      onComplete: async (finalRun) => {
-        workflow.outputSchema?.parse(finalRun.output);
-        await workflow.onComplete?.(finalRun.output, finalRun.context);
-        this.config.onComplete?.(finalRun);
-      },
-      onError: async (errorRun, error, context) => {
-        await workflow.onError?.(error, context);
-        this.config.onError?.(errorRun, error);
-      },
-      onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+          return runWithWorkflowTenant(run._tenant, () =>
+            this.executeWithTimeout(
+              () =>
+                this.dagExecutor.execute(
+                  nodes,
+                  runWithTenantContext,
+                  startFromNode,
+                  signal,
+                  ownership,
+                ),
+              workflow.timeout,
+              controller,
+            ));
+        },
+        onStart: (startedRun) => {
+          this.config.onStart?.(startedRun);
+        },
+        onComplete: async (finalRun) => {
+          workflow.outputSchema?.parse(finalRun.output);
+          await workflow.onComplete?.(finalRun.output, finalRun.context);
+          this.config.onComplete?.(finalRun);
+        },
+        onError: async (errorRun, error, context) => {
+          await workflow.onError?.(error, context);
+          this.config.onError?.(errorRun, error);
+        },
+        onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+      });
+    }, {
+      "workflow.id": run.workflowId,
+      "workflow.run_id": run.id,
     });
   }
 

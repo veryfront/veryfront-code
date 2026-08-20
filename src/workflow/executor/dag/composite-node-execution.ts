@@ -6,6 +6,10 @@ import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import { createSetContextPatch } from "./context-patch.ts";
 import { calculateRetryDelay, isRetryableWorkflowError } from "../retry-policy.ts";
+import {
+  addActiveSpanEvent,
+  setActiveSpanAttributes,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
 
@@ -17,6 +21,21 @@ interface CompositeNodeExecutionInput {
 }
 
 const nonCooperativeErrors = new WeakSet<Error>();
+
+/** Keeps a failed attempt visible: one node span otherwise hides every retry it contains. */
+function recordCompositeRetry(
+  nodeId: string,
+  attempt: number,
+  retry: RetryConfig | undefined,
+  error: Error,
+): void {
+  addActiveSpanEvent("workflow.node.retry", {
+    "workflow.node.id": nodeId,
+    "workflow.node.attempt": attempt,
+    "workflow.node.retry_delay_ms": calculateRetryDelay(attempt, retry),
+    "workflow.node.error": error.message,
+  });
+}
 
 export async function executeCompositeNodeWithPolicy(
   input: CompositeNodeExecutionInput,
@@ -44,23 +63,32 @@ export async function executeCompositeNodeWithPolicy(
       );
       const attemptedResult = withAttempt(result, attempt);
 
-      if (attemptedResult.state.status !== "failed") return attemptedResult;
+      if (attemptedResult.state.status !== "failed") {
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
+        return attemptedResult;
+      }
 
       const error = new Error(
         attemptedResult.state.error ?? `Composite node "${node.id}" failed`,
       );
-      if (attempt === maxAttempts || !isRetryableError(error, retry)) return attemptedResult;
+      if (attempt === maxAttempts || !isRetryableError(error, retry)) {
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
+        return attemptedResult;
+      }
 
+      recordCompositeRetry(node.id, attempt, retry, error);
       await sleep(calculateRetryDelay(attempt, retry), parentSignal);
     } catch (caught) {
       parentSignal?.throwIfAborted();
       const error = ensureError(caught);
 
       if (attempt < maxAttempts && isRetryableError(error, retry)) {
+        recordCompositeRetry(node.id, attempt, retry, error);
         await sleep(calculateRetryDelay(attempt, retry), parentSignal);
         continue;
       }
 
+      setActiveSpanAttributes({ "workflow.node.attempts": attempt });
       return {
         state: {
           nodeId: node.id,

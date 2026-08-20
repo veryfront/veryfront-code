@@ -73,3 +73,26 @@ In shared Veryfront runtimes, these variables are platform-owned host env vars. 
 
 - **net `*`:** OTLP exporter reaches the configured collector.
 - **env:** reads the `OTEL_*` variables listed above.
+
+## Workflow spans and map fan-out
+
+With this extension registered, the workflow executor emits a `workflow.run` span per
+execution and a `workflow.node <id>` span per node, and agent spans nest beneath the node
+that produced them.
+
+Node spans are named after the node id so a trace reads at a glance. Generated child nodes
+carry generated ids — `<map>_0`, `<map>_1`, … — so a `map` over a large collection produces
+both one span per item and one distinct span _name_ per item. Two consequences worth
+planning for:
+
+- **Span volume.** A map over 10,000 items yields at least 10,000 node spans in a single
+  trace, before any agent spans nested beneath them. The framework applies no cap; use the
+  batch span processor's queue settings (`OTEL_BSP_MAX_QUEUE_SIZE`,
+  `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`) or collector-side tail sampling to bound it.
+- **Name cardinality.** Backends that aggregate by span name — for example Tempo's metrics
+  generator — will see one series per item. Drop or rewrite `workflow.node` names at the
+  collector if that matters for your backend.
+
+Runs are traced per execution attempt. A run that pauses at a wait node or a pending
+approval and later resumes produces a _new_ trace; every span carries `workflow.run_id`,
+so filtering on that attribute reassembles the whole run across executions.
