@@ -170,9 +170,15 @@ export type HostedServiceAuth = {
   ) => Promise<HostedServiceAuthenticatedRequest | Response>;
   getTokenFromRequest: typeof getHostedServiceTokenFromRequest;
   verifyJwt: (token: string) => Promise<HostedServiceJwtResult>;
+  /**
+   * Always reports the richer result. The permissive
+   * {@link HostedServiceRunEventAppendTokenVerification} union is for callers
+   * that accept a host-supplied verifier, not for this implementation's own
+   * output — narrowing it here keeps `.verified` readable without a cast.
+   */
   verifyRunEventAppendToken: (
     input: HostedServiceRunEventAppendTokenInput,
-  ) => Promise<HostedServiceRunEventAppendTokenVerification>;
+  ) => Promise<HostedServiceRunEventAppendTokenResult>;
   verifyProjectAccess: (
     projectId: string,
     token: string,
