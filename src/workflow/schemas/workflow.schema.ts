@@ -185,6 +185,8 @@ export const getApprovalDecisionSchema = defineSchema((v) =>
     approved: v.boolean(),
     approver: v.string(),
     comment: v.string().optional(),
+    /** Structured answer, validated against the wait node's responseSchema. */
+    data: v.unknown().optional(),
   })
 );
 

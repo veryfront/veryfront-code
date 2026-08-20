@@ -9,9 +9,11 @@ import type {
   PendingApproval,
   RunFilter,
   WorkflowDefinition,
+  WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
 } from "../types.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
@@ -42,12 +44,15 @@ export class WorkflowClient {
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private debug: boolean;
+  /** Wait-node response schemas, keyed "<workflowId>::<nodeId>". */
+  private approvalSchemas = new Map<string, Schema<unknown>>();
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
     this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
 
     const userOnWaiting = config.executor?.onWaiting;
+    const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
 
     this.executor = new WorkflowExecutor({
       backend: this.backend,
@@ -93,13 +98,64 @@ export class WorkflowClient {
       executor: this.executor,
       debug: this.debug,
       ...config.approval,
+      responseSchemaResolver: async (input) => {
+        const userSchema = await userResponseSchemaResolver?.(input);
+        if (userSchema) return userSchema;
+
+        return this.approvalSchemas.get(`${input.run.workflowId}::${input.approval.nodeId}`);
+      },
     });
   }
 
   register(workflow: Workflow | WorkflowDefinition): void {
     const definition = "definition" in workflow ? workflow.definition : workflow;
     this.executor.register(definition);
+    this.indexApprovalSchemas(definition);
     logger.debug("Registered workflow", { workflowId: definition.id });
+  }
+
+  /**
+   * Record every wait node's `responseSchema` under "<workflowId>::<nodeId>".
+   *
+   * Schemas are live objects and never reach the run record, so a decision is
+   * validated against the registered definition. Node ids are already
+   * arm-qualified by the DSL, so they match what an approval is keyed by.
+   *
+   * A workflow or loop whose `steps` is a function is not walked: the node list
+   * depends on runtime input/iteration state, so no schema can be resolved ahead
+   * of a decision and such nodes are accepted unvalidated.
+   */
+  private indexApprovalSchemas(definition: WorkflowDefinition): void {
+    const keyPrefix = `${definition.id}::`;
+    for (const key of this.approvalSchemas.keys()) {
+      if (key.startsWith(keyPrefix)) {
+        this.approvalSchemas.delete(key);
+      }
+    }
+
+    if (!Array.isArray(definition.steps)) return;
+
+    const visit = (nodes: readonly WorkflowNode[]): void => {
+      for (const node of nodes) {
+        const config = node.config as {
+          type?: string;
+          responseSchema?: Schema<unknown>;
+          nodes?: WorkflowNode[];
+          then?: WorkflowNode[];
+          else?: WorkflowNode[];
+          steps?: WorkflowNode[] | ((...args: never[]) => WorkflowNode[]);
+        };
+        if (config.type === "wait" && config.responseSchema) {
+          this.approvalSchemas.set(`${definition.id}::${node.id}`, config.responseSchema);
+        }
+        if (Array.isArray(config.nodes)) visit(config.nodes);
+        if (Array.isArray(config.then)) visit(config.then);
+        if (Array.isArray(config.else)) visit(config.else);
+        if (Array.isArray(config.steps)) visit(config.steps);
+      }
+    };
+
+    visit(definition.steps);
   }
 
   registerAll(workflows: Array<Workflow | WorkflowDefinition>): void {
@@ -145,12 +201,24 @@ export class WorkflowClient {
     return this.approvalManager.getPendingApprovals(runId);
   }
 
-  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.approvalManager.approve(runId, approvalId, approver, comment);
+  async approve(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return await this.approvalManager.approve(runId, approvalId, approver, comment, data);
   }
 
-  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.approvalManager.reject(runId, approvalId, approver, comment);
+  async reject(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return await this.approvalManager.reject(runId, approvalId, approver, comment, data);
   }
 
   listAllPendingApprovals(filter?: {

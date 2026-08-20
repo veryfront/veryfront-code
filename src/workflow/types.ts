@@ -219,6 +219,13 @@ export interface WaitNodeConfig extends BaseNodeConfig {
    */
   approvers?: string[];
   eventName?: string;
+  /**
+   * Shape a human's structured answer must satisfy. Validated when the decision
+   * is submitted, so a non-conformant answer is refused rather than persisted.
+   * Held in the registered definition rather than the run record -- a schema is
+   * not serializable.
+   */
+  responseSchema?: Schema<unknown>;
 }
 
 /**

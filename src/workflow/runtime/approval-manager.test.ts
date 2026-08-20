@@ -6,6 +6,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { PendingApproval, WaitNodeConfig, WorkflowContext, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -40,6 +41,32 @@ class ReclaimDuringDecisionBackend extends MemoryBackend {
       expectedWorkerId,
       patch,
     );
+  }
+}
+
+class DecisionDuringSaveBackend extends MemoryBackend {
+  manager?: ApprovalManager;
+  decisionError?: unknown;
+
+  override async savePendingApproval(
+    runId: string,
+    approval: PendingApproval,
+  ): Promise<void> {
+    await super.savePendingApproval(runId, approval);
+
+    try {
+      await this.manager?.approve(runId, approval.id, "reviewer", undefined, {
+        confirmed: "yes",
+      });
+    } catch (error) {
+      this.decisionError = error;
+    }
+  }
+}
+
+class RejectOwnerBoundApprovalSaveBackend extends MemoryBackend {
+  override savePendingApprovalIfStatusAndWorker(): Promise<boolean> {
+    return Promise.reject(new Error("approval save failed"));
   }
 }
 
@@ -277,6 +304,39 @@ describe("ApprovalManager", () => {
       assertEquals(await backend.getPendingApprovals(run.id), []);
     });
 
+    it("drops an owner-bound approval schema when the save rejects", async () => {
+      backend = new RejectOwnerBoundApprovalSaveBackend();
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const run = createTestRun("run-owner-bound-save-reject", {
+        status: "waiting",
+        workerId: "run-execution:current-owner",
+      });
+      await backend.createRun(run);
+
+      await assertRejects(
+        () =>
+          manager.createApproval(
+            run,
+            "review-node",
+            {
+              type: "wait",
+              waitType: "approval",
+              message: "Please approve",
+              responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+            },
+            run.context,
+          ),
+        Error,
+        "approval save failed",
+      );
+
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        0,
+      );
+      assertEquals(await backend.getPendingApprovals(run.id), []);
+    });
+
     it("persists approval with computed expiresAt and resolved payload", async () => {
       manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
 
@@ -361,6 +421,151 @@ describe("ApprovalManager", () => {
   });
 
   describe("processDecision", () => {
+    it("rejects invalid structured approval data before persisting a direct approval", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-direct-invalid-data";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) =>
+            v.object({ correctedName: v.string(), confirmed: v.boolean() })
+          )(),
+        },
+        createContext(runId),
+      );
+
+      await assertRejects(() =>
+        manager.approve(runId, request.approvalId, "reviewer", undefined, {
+          correctedName: 42,
+        })
+      );
+
+      const pending = await backend.getPendingApprovals(runId);
+      assertEquals(pending.length, 1);
+      assertEquals(pending[0]?.status, "pending");
+    });
+
+    it("rejects omitted structured approval data when the response schema requires it", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-direct-missing-data";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+
+      await assertRejects(() => manager.approve(runId, request.approvalId, "reviewer"));
+
+      const pending = await backend.getPendingApprovals(runId);
+      assertEquals(pending.length, 1);
+      assertEquals(pending[0]?.status, "pending");
+    });
+
+    it("registers a direct approval schema before the persisted approval can be decided", async () => {
+      const racingBackend = new DecisionDuringSaveBackend();
+      backend = racingBackend;
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      racingBackend.manager = manager;
+      const runId = "run-direct-schema-race";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+
+      assertExists(racingBackend.decisionError);
+      const pending = await backend.getPendingApprovals(runId);
+      assertEquals(pending.length, 1);
+      assertEquals(pending[0]?.id, request.approvalId);
+      assertEquals(pending[0]?.status, "pending");
+    });
+
+    it("drops a direct approval schema after a decision is persisted", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-direct-schema-cleanup";
+      await backend.createRun(createTestRun(runId));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        1,
+      );
+
+      await manager.approve(runId, request.approvalId, "reviewer", undefined, {
+        confirmed: true,
+      });
+
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        0,
+      );
+    });
+
+    it("drops a direct approval schema after expiration is persisted", async () => {
+      manager = new ApprovalManager({ backend, expirationCheckInterval: 0 });
+      const runId = "run-expired-schema-cleanup";
+      await backend.createRun(createTestRun(runId, { status: "waiting" }));
+
+      const request = await manager.createApproval(
+        await backend.getRun(runId) as WorkflowRun,
+        "review",
+        {
+          type: "wait",
+          waitType: "approval",
+          message: "Please approve",
+          timeout: "1ms",
+          responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+        },
+        createContext(runId),
+      );
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        1,
+      );
+
+      assertExists(await backend.getPendingApproval(runId, request.approvalId));
+      await new Promise((resolve) => setTimeout(resolve, 5));
+
+      await manager.checkExpiredApprovals();
+
+      assertEquals(
+        (manager as unknown as { responseSchemas: Map<string, unknown> }).responseSchemas.size,
+        0,
+      );
+    });
+
     it("resumes an owner-bound run with the same worker ID", async () => {
       const resumeCalls: unknown[][] = [];
       const executor = {

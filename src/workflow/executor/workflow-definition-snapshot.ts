@@ -81,6 +81,7 @@ const CONFIG_KEYS = {
     "payload",
     "approvers",
     "eventName",
+    "responseSchema",
     INTERNAL_WAIT_KIND_FIELD,
   ]),
   subWorkflow: new Set([...COMMON_CONFIG_KEYS, "workflow", "input", "output"]),
@@ -900,11 +901,23 @@ function captureNodeConfig(
       }
       const payload = fields.get("payload");
       if (typeof payload === "function") assertFunction(payload, `${label} payload builder`);
+      // Carried by reference, like a definition-level inputSchema: a schema is a
+      // live object, not durable state, and is only consulted while the
+      // definition that declared it is registered.
+      const responseSchema = fields.get("responseSchema");
+      if (
+        responseSchema !== undefined &&
+        (typeof responseSchema !== "object" || responseSchema === null ||
+          typeof (responseSchema as { parse?: unknown }).parse !== "function")
+      ) {
+        fail(`${label} responseSchema must be a schema`);
+      }
       return objectFreeze({
         type: "wait" as const,
         ...common,
         waitType,
         message,
+        ...(responseSchema === undefined ? {} : { responseSchema }),
         payload: typeof payload === "function" || payload === undefined
           ? payload
           : staticValue(payload, "payload"),
