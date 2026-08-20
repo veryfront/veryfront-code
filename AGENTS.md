@@ -30,10 +30,12 @@ veryfront mcp
 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 \
   NODE_ENV=production LOG_FORMAT=text \
   deno test --preload=src/testing/preload.ts --no-check --allow-all \
+  --deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai \
   --unstable-worker-options --unstable-net
 
 # Unit tests only, parallel, excluding integration suites
 deno test --preload=src/testing/preload.ts --no-check --allow-all --parallel \
+  --deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai \
   '--ignore=tests,src/workflow/__tests__,cli/commands/*.integration.test.ts'
 ```
 
