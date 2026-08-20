@@ -1025,6 +1025,7 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "inner-wait");
+      assertExists(result.nodeStates["inner-wait"]!.input);
     });
 
     it("still reports a top-level wait as itself", async () => {
@@ -1036,6 +1037,53 @@ describe("DAGExecutor", () => {
 
       assertEquals(result.waiting, true);
       assertEquals(result.waitingNode, "top-wait");
+    });
+
+    it("re-enters an enclosing composite after a nested wait is approved", async () => {
+      const order: string[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        order.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [nestedWait],
+          } as any,
+        },
+        { id: "after", config: { type: "step" } as any },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "inner-wait");
+      assertEquals(first.nodeStates["gate"]!.status, "running");
+
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            "inner-wait": {
+              ...first.nodeStates["inner-wait"]!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+          context: first.context,
+        }),
+      );
+
+      assertEquals(second.completed, true);
+      assertEquals(order, ["after"]);
+      assertEquals(second.nodeStates["gate"]!.status, "completed");
+      assertEquals(second.nodeStates["after"]!.status, "completed");
     });
   });
 

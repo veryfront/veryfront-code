@@ -56,6 +56,8 @@ import {
   mergeContextPatches,
 } from "./context-patch.ts";
 
+const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
+
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
 
@@ -116,6 +118,18 @@ export class DAGExecutor {
     }
 
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
+    if (!startFromNode && run.status === "waiting") {
+      for (const [nodeId, degree] of inDegree) {
+        if (degree !== 0 || ready.includes(nodeId)) continue;
+        const state = nodeStates[nodeId];
+        const node = nodeMap.get(nodeId);
+        if (
+          state?.status === "running" && node && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)
+        ) {
+          ready.push(nodeId);
+        }
+      }
+    }
 
     while (ready.length > 0) {
       abortSignal?.throwIfAborted();
@@ -423,7 +437,15 @@ export class DAGExecutor {
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
           execute: (attemptSignal) =>
-            this.executeSubWorkflowNode(node, config, context, rootRunId, attemptSignal, ownership),
+            this.executeSubWorkflowNode(
+              node,
+              config,
+              context,
+              rootRunId,
+              nodeStates,
+              attemptSignal,
+              ownership,
+            ),
         });
       case "loop":
         return executeCompositeNodeWithPolicy({
@@ -529,7 +551,7 @@ export class DAGExecutor {
     // The outer batch commits this snapshot only if the composite eventually
     // completes or waits; a final failed state discards it in full.
     applyContextPatch(context, result.contextPatch);
-    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+    applyRecordPatch(nodeStates, createRecordPatch({}, result.nodeStates));
 
     const state: NodeState = {
       nodeId: node.id,
@@ -666,6 +688,7 @@ export class DAGExecutor {
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
     rootRunId: string,
+    nodeStates: Record<string, NodeState>,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
@@ -720,6 +743,8 @@ export class DAGExecutor {
       ownership,
     );
     abortSignal?.throwIfAborted();
+
+    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
     let finalOutput: unknown = result.context;
     if (result.completed && config.output) {
