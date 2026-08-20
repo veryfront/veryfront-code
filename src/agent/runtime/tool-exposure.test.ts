@@ -230,6 +230,31 @@ it("tool search scores fallback terms by selectivity after a phrase miss", () =>
   );
 });
 
+it("tool search treats a common verb as filler when the meaningful term has no matches", () => {
+  const catalog = [
+    definition("list_reports", "List project reports"),
+    definition("list_tasks", "List project tasks"),
+    definition("list_users", "List project users"),
+    definition("create_report", "Create a project report"),
+    definition("archive_report", "Archive a project report"),
+    definition("send_notification", "Send a project notification"),
+  ];
+
+  assertEquals(
+    searchToolExposure({
+      query: "list emails",
+      authorized: catalog,
+      state: createToolExposureState(),
+    }),
+    {
+      matches: [],
+      resultCount: 0,
+      loadedCount: 0,
+      miss: true,
+    },
+  );
+});
+
 it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
   const search = createToolSearchDefinition();
   const querySchema = (search.parameters as {
