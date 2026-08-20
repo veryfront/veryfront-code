@@ -13,6 +13,7 @@
  */
 import * as React from "react";
 import { flushSync } from "react-dom";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
@@ -162,6 +163,9 @@ function triggers(host: HTMLElement): HTMLElement[] {
   return Array.from(host.querySelectorAll<HTMLElement>("nav ul li button"));
 }
 
+/** Comfortably longer than the component's 100ms close delay. */
+const CLOSE_SETTLE_MS = 300;
+
 describe("NavigationMenu behaviour", () => {
   it("renders a nav landmark with its list, items and collapsed triggers", () => {
     const { host, unmount } = render(<Fixture />);
@@ -298,17 +302,23 @@ describe("NavigationMenu behaviour", () => {
         "leaving the trigger does not close the panel immediately",
       );
       await pointerEnter(panel);
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Proving a negative, so this has to be a real wait: comfortably longer
+      // than the component's close delay, and asserting the panel survived it.
+      await new Promise((resolve) => setTimeout(resolve, CLOSE_SETTLE_MS));
       assert(
         host.querySelector('[data-slot="navigation-menu-content"]'),
         "entering the panel cancels the pending close",
       );
 
       await pointerLeave(panel);
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      assert(
-        host.querySelector('[data-slot="navigation-menu-content"]') == null,
-        "the panel closes after the pointer leaves the coordinated region",
+      // Poll rather than sleeping past the close delay. A fixed sleep races the
+      // component's timer under a loaded parallel suite: too short and the
+      // assertion fails, and either way the test can finish with that timer
+      // still pending, which trips the leak sanitizer. Waiting for the observable
+      // outcome guarantees the timer has fired before teardown.
+      await waitFor(
+        () => host.querySelector('[data-slot="navigation-menu-content"]') == null,
+        { interval: 10, message: "panel did not close after the pointer left the region" },
       );
     } finally {
       unmount();
