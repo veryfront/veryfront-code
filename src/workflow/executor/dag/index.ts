@@ -38,7 +38,11 @@ import type {
 import { deriveNodeStatus, shouldCheckpoint } from "./utils.ts";
 import { buildGraph, getReadyNodes, hasCycle, updateInDegreesForCompletedNodes } from "./graph.ts";
 import { executeLoopNodeStrategy } from "./loop-node-strategy.ts";
-import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  setActiveSpanAttributes,
+  setActiveSpanErrorStatus,
+  withSpan,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import { executeCompositeNodeWithPolicy } from "./composite-node-execution.ts";
@@ -291,7 +295,24 @@ export class DAGExecutor {
 
     return await withSpan(
       `workflow.node ${nodeId}`,
-      () => this.dispatchNode(node, context, nodeStates, rootRunId, abortSignal, ownership),
+      async () => {
+        const result = await this.dispatchNode(
+          node,
+          context,
+          nodeStates,
+          rootRunId,
+          abortSignal,
+          ownership,
+        );
+        // A failing node returns a failed state rather than throwing, so the span's own
+        // catch never runs. Without this the span stays UNSET and a failed run is
+        // indistinguishable from a successful one in any trace backend.
+        setActiveSpanAttributes({ "workflow.node.status": result.state.status });
+        if (result.state.status === "failed") {
+          setActiveSpanErrorStatus(new Error(result.state.error ?? `Node "${nodeId}" failed`));
+        }
+        return result;
+      },
       {
         "workflow.run_id": rootRunId,
         "workflow.node.id": nodeId,

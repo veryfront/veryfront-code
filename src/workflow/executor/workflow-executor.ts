@@ -28,7 +28,7 @@ import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { setActiveSpanErrorStatus, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
 import {
@@ -377,8 +377,10 @@ export class WorkflowExecutor {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
-    // The run span is the trace root for this execution. A run that pauses and later
-    // resumes starts a new trace; `workflow.run_id` is what stitches them together.
+    // One span per execution. It is a trace root only when nothing traces the caller;
+    // started from an instrumented request or webhook handler it joins that trace
+    // instead. Either way a run that pauses and resumes spans more than one trace, so
+    // `workflow.run_id` -- not trace identity -- is what stitches a run together.
     await withSpan("workflow.run", async () => {
       await executeWorkflowRunControl({
         backend: this.config.backend,
@@ -430,6 +432,9 @@ export class WorkflowExecutor {
           this.config.onComplete?.(finalRun);
         },
         onError: async (errorRun, error, context) => {
+          // Run failures arrive through this callback rather than being thrown past the
+          // span, so the span's own catch never sees them.
+          setActiveSpanErrorStatus(error);
           await workflow.onError?.(error, context);
           this.config.onError?.(errorRun, error);
         },

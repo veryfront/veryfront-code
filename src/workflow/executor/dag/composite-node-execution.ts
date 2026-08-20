@@ -26,13 +26,13 @@ const nonCooperativeErrors = new WeakSet<Error>();
 function recordCompositeRetry(
   nodeId: string,
   attempt: number,
-  retry: RetryConfig | undefined,
+  delayMs: number,
   error: Error,
 ): void {
   addActiveSpanEvent("workflow.node.retry", {
     "workflow.node.id": nodeId,
     "workflow.node.attempt": attempt,
-    "workflow.node.retry_delay_ms": calculateRetryDelay(attempt, retry),
+    "workflow.node.retry_delay_ms": delayMs,
     "workflow.node.error": error.message,
   });
 }
@@ -76,15 +76,19 @@ export async function executeCompositeNodeWithPolicy(
         return attemptedResult;
       }
 
-      recordCompositeRetry(node.id, attempt, retry, error);
-      await sleep(calculateRetryDelay(attempt, retry), parentSignal);
+      // calculateRetryDelay applies random jitter, so it must be drawn once: calling it
+      // again for telemetry would report a delay that was never slept.
+      const delay = calculateRetryDelay(attempt, retry);
+      recordCompositeRetry(node.id, attempt, delay, error);
+      await sleep(delay, parentSignal);
     } catch (caught) {
       parentSignal?.throwIfAborted();
       const error = ensureError(caught);
 
       if (attempt < maxAttempts && isRetryableError(error, retry)) {
-        recordCompositeRetry(node.id, attempt, retry, error);
-        await sleep(calculateRetryDelay(attempt, retry), parentSignal);
+        const delay = calculateRetryDelay(attempt, retry);
+        recordCompositeRetry(node.id, attempt, delay, error);
+        await sleep(delay, parentSignal);
         continue;
       }
 

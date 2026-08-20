@@ -81,8 +81,9 @@ execution and a `workflow.node <id>` span per node, and agent spans nest beneath
 that produced them.
 
 Node spans are named after the node id so a trace reads at a glance. Generated child nodes
-carry generated ids — `<map>_0`, `<map>_1`, … — so a `map` over a large collection produces
-both one span per item and one distinct span _name_ per item. Two consequences worth
+carry generated ids — `<map>_0`, `<map>_1`, … for map items and `<loop>_iter_0`,
+`<loop>_iter_1`, … for loop iterations — so a `map` over a large collection, or a long
+`loop`, produces both one span per child and one distinct span _name_ per child. Two consequences worth
 planning for:
 
 - **Span volume.** A map over 10,000 items yields at least 10,000 node spans in a single
@@ -94,5 +95,15 @@ planning for:
   collector if that matters for your backend.
 
 Runs are traced per execution attempt. A run that pauses at a wait node or a pending
-approval and later resumes produces a _new_ trace; every span carries `workflow.run_id`,
-so filtering on that attribute reassembles the whole run across executions.
+approval and later resumes produces a _separate_ trace from its first execution; every span
+carries `workflow.run_id`, so filtering on that attribute reassembles the whole run across
+executions.
+
+`workflow.run` is a trace root only when nothing traces the caller. Started from an
+instrumented HTTP handler, webhook, or approval callback it becomes a child of that
+request's span and joins its trace. That is usually what you want — the run appears under
+the request that triggered it — but note the request span typically finishes before the run
+does, because execution is dispatched without being awaited.
+
+Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
+ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work.

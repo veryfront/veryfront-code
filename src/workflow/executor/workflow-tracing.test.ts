@@ -21,6 +21,7 @@ import {
   setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalTracerProvider,
+  SpanStatusCode,
 } from "#veryfront/observability/tracing/api-shim.ts";
 
 /**
@@ -109,6 +110,8 @@ describe("workflow/executor tracing", () => {
 
       assertEquals(parentIdOf(innerSpan), nodeSpan.spanContext().spanId);
       assertEquals(parentIdOf(nodeSpan), runSpan.spanContext().spanId);
+      // Root here only because this test starts the run with no ambient span. See the
+      // ambient-caller test below for the general case.
       assertEquals(parentIdOf(runSpan), undefined);
 
       for (const span of [runSpan, nodeSpan, innerSpan]) {
@@ -316,6 +319,16 @@ describe("workflow/executor tracing", () => {
             `${span.name} leaked step payload into a span attribute`,
           );
         }
+        // Retry events carry an error message, the one free-form string this adds.
+        for (const event of span.events) {
+          for (const value of Object.values(event.attributes ?? {})) {
+            assertEquals(
+              String(value).includes(secret),
+              false,
+              `${span.name} leaked step payload into the ${event.name} event`,
+            );
+          }
+        }
       }
     } finally {
       await tracing.dispose();
@@ -335,6 +348,9 @@ describe("workflow/executor tracing", () => {
     await handle.settled();
     const result = await handle.status();
     assertEquals(result.status, "completed");
+    // No provider is installed, so there is nothing to export and nothing to assert
+    // against beyond the run behaving exactly as it did before instrumentation.
+    assertEquals(result.output !== undefined, true);
   });
 
   it("imports the same withSpan the agent runtime uses", async () => {
@@ -353,11 +369,124 @@ describe("workflow/executor tracing", () => {
 
     for (const relative of ["./dag/index.ts", "./workflow-executor.ts", "./step-executor.ts"]) {
       const source = await Deno.readTextFile(new URL(relative, import.meta.url));
+      const importsTracing =
+        /import\s*\{[^}]*\}\s*from\s*"#veryfront\/observability\/tracing\/otlp-setup\.ts"/
+          .test(source);
       assertEquals(
-        source.includes('from "#veryfront/observability/tracing/otlp-setup.ts"'),
+        importsTracing,
         true,
         `${relative} must trace through otlp-setup so agent spans nest under workflow nodes`,
       );
+    }
+  });
+
+  it("marks a failed node and its run as errored on the span", async () => {
+    const tracing = installRealTracing();
+    try {
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "failing-workflow",
+          steps: [
+            step("boom", {
+              tool: createTool("boom", () => {
+                throw new Error("kaboom-detail");
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("failing-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const nodeSpan = byName(spans, "workflow.node boom");
+      const runSpan = byName(spans, "workflow.run");
+      assertExists(nodeSpan);
+      assertExists(runSpan);
+
+      // A node fails by RETURNING a failed state, so withSpan's catch never runs. Without
+      // an explicit status these spans stay UNSET and no backend can surface the failure.
+      assertEquals(nodeSpan.attributes["workflow.node.status"], "failed");
+      assertEquals(nodeSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(runSpan.status.code, SpanStatusCode.ERROR);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("records retry telemetry for composite nodes, not only steps", async () => {
+    const tracing = installRealTracing();
+    try {
+      let attempts = 0;
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "composite-retry-workflow",
+          steps: [
+            map("each", {
+              items: ["only"],
+              retry: { maxAttempts: 2, backoff: "fixed", initialDelay: 1 },
+              processor: step("item", {
+                tool: createTool("item", () => {
+                  attempts += 1;
+                  if (attempts === 1) throw new Error("ECONNRESET");
+                  return { ok: true };
+                }),
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("composite-retry-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const mapSpan = byName(tracing.exporter.getFinishedSpans(), "workflow.node each");
+      assertExists(mapSpan);
+      assertEquals(mapSpan.attributes["workflow.node.attempts"], 2);
+
+      const retryEvent = mapSpan.events.find((event) => event.name === "workflow.node.retry");
+      assertExists(retryEvent, "composite retries must be recorded, not only step retries");
+      assertEquals(retryEvent.attributes?.["workflow.node.attempt"], 1);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("parents the run span to an ambient caller span when one is active", async () => {
+    const tracing = installRealTracing();
+    try {
+      const { withSpan } = await import("#veryfront/observability/tracing/otlp-setup.ts");
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "ambient-workflow",
+          steps: [step("only", { tool: createTool("only", () => ({ ok: true })) })],
+        }).definition,
+      );
+
+      await withSpan("http.request", async () => {
+        const handle = await executor.start("ambient-workflow", {});
+        await handle.settled();
+      });
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const caller = byName(spans, "http.request");
+      const runSpan = byName(spans, "workflow.run");
+      assertExists(caller);
+      assertExists(runSpan);
+
+      // The run span is a trace ROOT only when nothing traces the caller. Started from a
+      // traced request it joins that trace instead, which is why `workflow.run_id` and not
+      // trace identity is what correlates a run.
+      assertEquals(parentIdOf(runSpan), caller.spanContext().spanId);
+    } finally {
+      await tracing.dispose();
     }
   });
 });
