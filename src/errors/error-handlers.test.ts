@@ -318,13 +318,11 @@ describe("error-handlers", () => {
 
     it("uses the captured Error constructor for timeout reasons", async () => {
       const NativeError = Error;
-      let replacementConstructions = 0;
-      class ReplacementError extends NativeError {
-        constructor(message?: string) {
-          super(message);
-          replacementConstructions++;
-        }
-      }
+      class ReplacementError extends NativeError {}
+      // Swapping a global built-in stays in effect across the awaits below, and
+      // the suite runs other tests in this isolate meanwhile. Assert only on the
+      // value this call produced -- counting constructions process-wide would
+      // also count every unrelated Error built inside the same window.
       globalThis.Error = ReplacementError as ErrorConstructor;
 
       try {
@@ -338,7 +336,7 @@ describe("error-handlers", () => {
           )
         );
 
-        assertEquals(replacementConstructions, 0);
+        assertEquals(thrown instanceof ReplacementError, false);
         assertInstanceOf(thrown, NativeError);
         assertEquals(thrown.name, "AbortError");
       } finally {
