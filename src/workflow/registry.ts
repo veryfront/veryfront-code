@@ -14,6 +14,7 @@ import {
 
 const objectFreeze = Object.freeze;
 
+/** Metadata for one node in a registered workflow graph. */
 export interface NodeInfo {
   id: string;
   type: string;
@@ -23,7 +24,7 @@ export interface NodeInfo {
   tool?: string;
   /** Node IDs this node depends on */
   dependsOn?: readonly string[];
-  /** Child node IDs (for parallel/branch nodes) */
+  /** Child node IDs for composite nodes such as parallel, branch, and static loop nodes. */
   children?: readonly string[];
   /** Description from wait/approval nodes */
   message?: string;
@@ -31,6 +32,7 @@ export interface NodeInfo {
   description?: string;
 }
 
+/** Public metadata captured for a registered workflow. */
 export interface WorkflowMetadata {
   id: string;
   description?: string;
@@ -419,16 +421,20 @@ export class WorkflowRegistryClass {
   }
 }
 
+/** Project-scoped registry for workflow metadata and definitions. */
 export const workflowRegistry = new WorkflowRegistryClass();
 
+/** Register a workflow definition in the current project scope. */
 export function registerWorkflow(workflow: Workflow | WorkflowDefinition): void {
   workflowRegistry.register(workflow);
 }
 
+/** Get metadata for a registered workflow by ID. */
 export function getWorkflow(id: string): WorkflowMetadata | undefined {
   return workflowRegistry.get(id);
 }
 
+/** List registered workflow IDs for the current project scope. */
 export function getAllWorkflowIds(): string[] {
   return workflowRegistry.getAllIds();
 }
