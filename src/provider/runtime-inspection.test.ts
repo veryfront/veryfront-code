@@ -6,6 +6,7 @@ import {
   getModelRuntimeId,
   getModelRuntimeProvider,
   isLocalModelRuntime,
+  supportsModelRuntimeStructuredOutput,
   supportsModelRuntimeToolCalling,
 } from "./runtime-inspection.ts";
 
@@ -125,6 +126,64 @@ describe("provider/runtime-inspection", () => {
         runtimeCapabilities: { value: { toolCalling: true } },
       })),
       true,
+    );
+  });
+
+  it("treats an unadvertised structured-output capability as unsupported", () => {
+    assertEquals(supportsModelRuntimeStructuredOutput(runtimeWith({})), false);
+    assertEquals(
+      supportsModelRuntimeStructuredOutput(runtimeWith({
+        runtimeCapabilities: { value: { toolCalling: true } },
+      })),
+      false,
+    );
+    assertEquals(
+      supportsModelRuntimeStructuredOutput(runtimeWith({
+        runtimeCapabilities: { value: { structuredOutput: true } },
+      })),
+      true,
+    );
+    assertEquals(
+      supportsModelRuntimeStructuredOutput(runtimeWith({
+        runtimeCapabilities: { value: { structuredOutput: false } },
+      })),
+      false,
+    );
+  });
+
+  it("honors structured-output capability variants", () => {
+    const model = runtimeWith({
+      runtimeCapabilities: { value: { structuredOutput: ["json_schema"] } },
+    });
+
+    assertEquals(supportsModelRuntimeStructuredOutput(model), true);
+    assertEquals(
+      supportsModelRuntimeStructuredOutput(model, {
+        type: "json_schema",
+        name: "Result",
+        schema: { type: "object" },
+      }),
+      true,
+    );
+    assertEquals(supportsModelRuntimeStructuredOutput(model, { type: "json" }), false);
+  });
+
+  it("rejects malformed structured-output capability metadata", () => {
+    assertThrows(
+      () =>
+        supportsModelRuntimeStructuredOutput(runtimeWith({
+          runtimeCapabilities: { value: { structuredOutput: "sometimes" } },
+        })),
+      TypeError,
+      "must be a boolean or an array",
+    );
+    assertThrows(
+      () =>
+        supportsModelRuntimeStructuredOutput(runtimeWith({
+          runtimeCapabilities: { value: { structuredOutput: ["yaml"] } },
+        })),
+      TypeError,
+      "must be json or json_schema",
     );
   });
 

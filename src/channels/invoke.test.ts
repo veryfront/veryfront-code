@@ -21,6 +21,14 @@ import {
 
 const encoder = new TextEncoder();
 
+type AgentGenerateFixture = (input: Parameters<Agent["generate"]>[0]) => Promise<AgentResponse>;
+
+function createGenerateStub(generate: AgentGenerateFixture): Agent["generate"] {
+  return (async (input: Parameters<Agent["generate"]>[0]) => {
+    return await generate(input);
+  }) as Agent["generate"];
+}
+
 async function sha256Base64url(body: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(body));
   return base64urlEncodeBytes(new Uint8Array(digest));
@@ -138,13 +146,13 @@ function createAgentResponse(
 
 function createAgent(overrides: {
   id?: string;
-  generate?: Agent["generate"];
+  generate?: AgentGenerateFixture;
   clearMemory?: Agent["clearMemory"];
 } = {}): Agent {
   return {
     id: overrides.id ?? "agent-1",
     config: {} as Agent["config"],
-    generate: overrides.generate ?? (() => Promise.resolve(createAgentResponse())),
+    generate: createGenerateStub(overrides.generate ?? (async () => createAgentResponse())),
     stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
     respond: async () => new Response(),
     getMemory: () => ({} as never),

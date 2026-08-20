@@ -126,33 +126,35 @@ Options accepted by parallel.
 
 | Name                   | Description                                                                                         | Source                                                                                                       |
 | ---------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `agentStep`            | Create a workflow step that runs an agent.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L56)                 |
+| `agentStep`            | Create a workflow step that runs an agent.                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L57)                 |
 | `branch`               | Create a conditional branch node.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L27)               |
 | `createWorkflowClient` | Create workflow client.                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L251)     |
 | `dag`                  | Create a directed workflow graph.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L96)             |
-| `delay`                | Create a simple delay/sleep node.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L73)                 |
+| `delay`                | Create a simple delay/sleep node.                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L75)                 |
 | `dependsOn`            | Declare workflow step dependencies.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L123)            |
-| `doWhile`              | Create a do-while workflow loop.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L103)                |
-| `generateId`           | Generate a unique workflow ID                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L625)                   |
+| `doWhile`              | Create a do-while workflow loop.                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L105)                |
+| `generateId`           | Generate a unique workflow ID                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L631)                   |
+| `getAllWorkflowIds`    | List registered workflow IDs for the current project scope.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L438)                |
+| `getWorkflow`          | Get metadata for a registered workflow by ID.                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L433)                |
 | `getWorkflowTenant`    | Get the current workflow tenant context. Returns undefined if not executing within a workflow step. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/step-executor.ts#L56)   |
 | `hasWorkerSupport`     | Check whether worker support is present.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L265)          |
-| `loop`                 | Create a loop workflow step.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L56)                 |
+| `loop`                 | Create a loop workflow step.                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L57)                 |
 | `map`                  | Create a mapped workflow step.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/map.ts#L24)                  |
 | `parallel`             | Create a parallel node for concurrent execution of multiple steps.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L21)             |
-| `parseDuration`        | Parse duration string to milliseconds                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L471)                   |
+| `parseDuration`        | Parse duration string to milliseconds                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L477)                   |
 | `sequence`             | Create a sequential workflow definition.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L82)             |
 | `step`                 | Create a workflow step definition.                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L25)                 |
 | `subWorkflow`          | Create a sub-workflow node for nested execution.                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/sub-workflow.ts#L19)         |
-| `times`                | Create a fixed-count workflow loop.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L121)                |
-| `toolStep`             | Create a workflow step that runs a tool.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L65)                 |
-| `unless`               | Create a branch that only executes if condition is false.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L61)               |
+| `times`                | Create a fixed-count workflow loop.                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L123)                |
+| `toolStep`             | Create a workflow step that runs a tool.                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L66)                 |
+| `unless`               | Create a branch that only executes if condition is false.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L62)               |
 | `useApproval`          | Manage workflow approval interactions.                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-approval.ts#L30)       |
 | `useWorkflow`          | React hook for workflow.                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-workflow.ts#L42)       |
 | `useWorkflowList`      | List and filter workflow runs.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-workflow-list.ts#L36)  |
 | `useWorkflowStart`     | React hook for workflow start.                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-workflow-start.ts#L23) |
 | `waitForApproval`      | Create a wait-for-approval node. Pauses until human approves/rejects.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L22)                 |
-| `waitForEvent`         | Create a wait-for-event node. Pauses until external event is received.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L51)                 |
-| `when`                 | Create a branch that only executes if condition is true (no else).                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L52)               |
+| `waitForEvent`         | Create a wait-for-event node. Pauses until external event is received.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L52)                 |
+| `when`                 | Create a branch that only executes if condition is true (no else).                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L53)               |
 | `workflow`             | Create a workflow definition.                                                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L45)             |
 
 ### Classes
@@ -170,9 +172,10 @@ Options accepted by parallel.
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
 | `BackendConfig`           | Configuration used by backend.                                                                                                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L57)             |
 | `BranchOptions`           | Options accepted by branch.                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L12)                 |
-| `CapturedTenantContext`   | Captured tenant context for multi-tenant workflow execution. Allows tools and framework utilities to access the current tenant without explicit parameter passing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L322)                     |
+| `CapturedTenantContext`   | Captured tenant context for multi-tenant workflow execution. Allows tools and framework utilities to access the current tenant without explicit parameter passing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L328)                     |
 | `LoopOptions`             | Options accepted by loop.                                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/loop.ts#L20)                   |
 | `MapOptions`              | Options accepted by map.                                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/map.ts#L13)                    |
+| `NodeInfo`                | Metadata for one node in a registered workflow graph.                                                                                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L18)                   |
 | `ParallelOptions`         | Options accepted by parallel.                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L12)               |
 | `RedisAdapter`            | Standardized Redis Adapter Interface Normalizes differences between Deno and Node Redis clients                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/adapters/redis/interface.ts#L5)    |
 | `RedisBackendConfig`      | Redis backend configuration                                                                                                                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/redis/types.ts#L22)       |
@@ -187,26 +190,28 @@ Options accepted by parallel.
 | `UseWorkflowStartOptions` | Options accepted by use workflow start.                                                                                                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-workflow-start.ts#L6)    |
 | `UseWorkflowStartResult`  | Result returned from use workflow start.                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/react/use-workflow-start.ts#L14)   |
 | `WaitForApprovalOptions`  | Options accepted by wait for approval.                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L7)                    |
-| `WaitForEventOptions`     | Options accepted by wait for event.                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L43)                   |
-| `Workflow`                | Workflow instance                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L311)                     |
+| `WaitForEventOptions`     | Options accepted by wait for event.                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/wait.ts#L44)                   |
+| `Workflow`                | Workflow instance                                                                                                                                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L317)                     |
 | `WorkflowBackend`         | Public API contract for workflow backend.                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L72)             |
 | `WorkflowClientConfig`    | Configuration used by workflow client.                                                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L30)        |
 | `WorkflowContext`         | Workflow context containing structured-cloneable input and node outputs.                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L55)                      |
-| `WorkflowDefinition`      | Workflow definition                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L291)                     |
+| `WorkflowDefinition`      | Workflow definition                                                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L297)                     |
 | `WorkflowExecutorConfig`  | Workflow executor configuration                                                                                                                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L62) |
 | `WorkflowHandle`          | Controller for a running workflow.                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L94) |
-| `WorkflowNode`            | Workflow node                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L282)                     |
-| `WorkflowNodeConfig`      | Union of all workflow node configurations                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L270)                     |
+| `WorkflowMetadata`        | Public metadata captured for a registered workflow.                                                                                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L36)                   |
+| `WorkflowNode`            | Workflow node                                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L288)                     |
+| `WorkflowNodeConfig`      | Union of all workflow node configurations                                                                                                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L276)                     |
 | `WorkflowOptions`         | Options accepted by workflow.                                                                                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L23)               |
-| `WorkflowRun`             | Workflow run state                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L342)                     |
+| `WorkflowRun`             | Workflow run state                                                                                                                                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L348)                     |
 | `WorkflowRunUpdate`       | Run state that may change after the immutable run snapshot is created.                                                                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L13)             |
 | `WorkflowStatus`          | Public API contract for workflow status.                                                                                                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L253)   |
 
 ### Constants
 
-| Name  | Description                                                   | Source                                                                                   |
-| ----- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `api` | Context-aware API that automatically uses the current tenant. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api.ts#L114) |
+| Name               | Description                                                    | Source                                                                                        |
+| ------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `api`              | Context-aware API that automatically uses the current tenant.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api.ts#L114)      |
+| `workflowRegistry` | Project-scoped registry for workflow metadata and definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L425) |
 
 ## Deep imports
 
@@ -480,6 +485,33 @@ import {
 | `DiscoveredWorkflow`       | Discovered workflow info       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L38) |
 | `WorkflowDiscoveryOptions` | Options for workflow discovery | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L55) |
 | `WorkflowDiscoveryResult`  | Result of workflow discovery   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/discovery/workflow-discovery.ts#L78) |
+
+### `veryfront/workflow/registry`
+
+```ts
+import { getAllWorkflowIds, getWorkflow, registerWorkflow } from "veryfront/workflow/registry";
+```
+
+#### Functions
+
+| Name                | Description                                                  | Source                                                                                        |
+| ------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `getAllWorkflowIds` | List registered workflow IDs for the current project scope.  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L438) |
+| `getWorkflow`       | Get metadata for a registered workflow by ID.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L433) |
+| `registerWorkflow`  | Register a workflow definition in the current project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L428) |
+
+#### Types
+
+| Name               | Description                                           | Source                                                                                       |
+| ------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `NodeInfo`         | Metadata for one node in a registered workflow graph. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L18) |
+| `WorkflowMetadata` | Public metadata captured for a registered workflow.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L36) |
+
+#### Constants
+
+| Name               | Description                                                    | Source                                                                                        |
+| ------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `workflowRegistry` | Project-scoped registry for workflow metadata and definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L425) |
 
 ### `veryfront/workflow/worker`
 

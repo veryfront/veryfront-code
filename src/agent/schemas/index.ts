@@ -9,6 +9,7 @@ export {
   type AgentContext,
   type AgentResponse,
   type AgentStatus,
+  type BaseAgentResponse,
   type EdgeConfig,
   getAgentContextSchema,
   getAgentResponseSchema,

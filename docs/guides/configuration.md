@@ -205,6 +205,15 @@ Notes:
 - Eval, task, trigger, and workflow definitions with filenames containing
   `.test.` or `.spec.` are ignored during discovery. Rename production
   definitions that use those filename segments before upgrading.
+- Discovery prefers a valid default export, then falls back to valid named
+  exports from the same module. A tool needs an `execute` function, an agent
+  needs an agent definition, and so on. A plain helper module sitting in a
+  discovery directory is not registered as a primitive.
+- Discovery still **imports** every candidate file in those directories in order
+  to inspect its default export, so any module-level side effects run at startup
+  even when nothing is registered. Keep shared helpers outside the discovered
+  directories, or narrow `paths` to the subdirectories that hold real
+  definitions.
 
 ### AI providers and MCP
 

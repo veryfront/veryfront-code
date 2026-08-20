@@ -4,6 +4,7 @@
 
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { Memory } from "./memory/memory-interface.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
@@ -13,6 +14,7 @@ export type {
   AgentContext,
   AgentResponse,
   AgentStatus,
+  BaseAgentResponse,
   EdgeConfig,
   MemoryConfig,
   Message,
@@ -141,8 +143,23 @@ export type AgentMcpServerConfig = AgentHttpMcpServerConfig | AgentVeryfrontMcpS
 /** System instructions accepted by an agent runtime. */
 export type AgentSystem = string | ChatSystemMessage[];
 
+/**
+ * Schema accepted by `outputSchema`, in either supported form.
+ *
+ * Erased over the schema's output type so a per-call override can be handed to
+ * an agent of any configured output type.
+ */
+// deno-lint-ignore no-explicit-any -- generic erasure: accepts any concrete Schema<T>
+export type AgentOutputSchema = Schema<any> | JsonSchema;
+
+/** Output type inferred from a request-scoped `outputSchema`. */
+export type InferAgentOutputSchema<TSchema> = TSchema extends Schema<infer TOutput> ? TOutput
+  : TSchema extends JsonSchema ? unknown
+  : never;
+
 /** Configuration used by agent. */
-export interface AgentConfig {
+// deno-lint-ignore no-explicit-any -- generic erasure: interface must accept any concrete AgentConfig instantiation
+export interface AgentConfig<TOutput = any> {
   id?: string;
   /** Human-readable display name for registry and control-plane listings. */
   name?: string;
@@ -213,6 +230,17 @@ export interface AgentConfig {
   /** Remote MCP servers available to this agent. */
   mcpServers?: AgentMcpServerConfig[];
   maxSteps?: number;
+  /**
+   * Constrain every response to a schema, produced via `defineSchema((v) => …)`
+   * (or any `SchemaValidator`-backed builder), or a raw JSON Schema object.
+   *
+   * The schema is mapped to the selected provider's native structured-output
+   * field, and the model's text is parsed back into `response.object`. A model
+   * runtime that does not support structured output rejects the request rather
+   * than dropping the schema. Raw JSON Schema is validated locally only when
+   * the registered validator extension can compile JSON Schema.
+   */
+  outputSchema?: Schema<TOutput> | JsonSchema;
   /** Sampling temperature for model generation. Defaults to 0. */
   temperature?: number;
   /** Provider-neutral reasoning / thinking configuration for hosted runtimes. */
@@ -275,7 +303,8 @@ export interface AgentConfig {
 }
 
 /** Configuration used by resolved agent. */
-export type ResolvedAgentConfig = AgentConfig & { model: ModelString };
+// deno-lint-ignore no-explicit-any -- generic erasure: mirrors AgentConfig
+export type ResolvedAgentConfig<TOutput = any> = AgentConfig<TOutput> & { model: ModelString };
 
 /** Request payload for model transport. */
 export interface ModelTransportRequest {
@@ -399,44 +428,72 @@ export interface AgentStreamResult {
   }): Response;
 }
 
+/** Request payload accepted by `Agent.generate`. */
+export interface AgentGenerateInput<
+  TOutputSchema extends AgentOutputSchema | undefined = undefined,
+> {
+  input: string | Message[];
+  context?: Record<string, unknown>;
+  /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
+  model?: ModelString;
+  /** Override the maximum model output tokens for this request. */
+  maxOutputTokens?: number;
+  /**
+   * Replace this agent's configured tools for this generate request only.
+   * When present, only these tools are advertised and executable.
+   */
+  tools?: AgentGenerateToolReplacements;
+  /**
+   * @internal Retain framework skill loader tools while replacement tools are active.
+   */
+  retainSkillLoaderTools?: boolean;
+  /**
+   * Constrain this request to a schema, overriding `config.outputSchema`.
+   * Omit to apply the configured schema, when there is one. When present, the
+   * response type follows this override schema.
+   */
+  outputSchema?: TOutputSchema;
+  /** Abort signal for cooperative cancellation. */
+  abortSignal?: AbortSignal;
+}
+
+/** Request payload accepted by `Agent.stream`. */
+export interface AgentStreamInput {
+  input?: string;
+  messages?: Message[];
+  context?: Record<string, unknown>;
+  /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
+  model?: ModelString;
+  /** Override the maximum model output tokens for this request. */
+  maxOutputTokens?: number;
+  onToolCall?: (toolCall: ToolCall) => void;
+  onChunk?: (chunk: string) => void;
+  /**
+   * Receives the completed response, including the parsed `object` when an
+   * `outputSchema` applies. The payload is the erased response type; use
+   * `generate()` when the parsed value needs to arrive typed.
+   */
+  onFinish?: (response: AgentResponse) => void;
+  /**
+   * Constrain this request to a schema, overriding `config.outputSchema`.
+   * Omit to apply the configured schema, when there is one.
+   */
+  outputSchema?: AgentOutputSchema;
+  abortSignal?: AbortSignal;
+}
+
 /** Public API contract for agent. */
-export interface Agent {
+// deno-lint-ignore no-explicit-any -- generic erasure: interface must accept any concrete Agent instantiation
+export interface Agent<TOutput = any> {
   id: string;
-  config: ResolvedAgentConfig;
+  config: ResolvedAgentConfig<TOutput>;
 
-  generate(input: {
-    input: string | Message[];
-    context?: Record<string, unknown>;
-    /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
-    model?: ModelString;
-    /** Override the maximum model output tokens for this request. */
-    maxOutputTokens?: number;
-    /**
-     * Replace this agent's configured tools for this generate request only.
-     * When present, only these tools are advertised and executable.
-     */
-    tools?: AgentGenerateToolReplacements;
-    /**
-     * @internal Retain framework skill loader tools while replacement tools are active.
-     */
-    retainSkillLoaderTools?: boolean;
-    /** Abort signal for cooperative cancellation. */
-    abortSignal?: AbortSignal;
-  }): Promise<AgentResponse>;
+  generate<TOutputSchema extends AgentOutputSchema>(
+    input: AgentGenerateInput<TOutputSchema> & { outputSchema: TOutputSchema },
+  ): Promise<AgentResponse<InferAgentOutputSchema<TOutputSchema>>>;
+  generate(input: AgentGenerateInput): Promise<AgentResponse<TOutput>>;
 
-  stream(input: {
-    input?: string;
-    messages?: Message[];
-    context?: Record<string, unknown>;
-    /** Override the agent's default model for this request. Must be in `allowedModels` if configured. */
-    model?: ModelString;
-    /** Override the maximum model output tokens for this request. */
-    maxOutputTokens?: number;
-    onToolCall?: (toolCall: ToolCall) => void;
-    onChunk?: (chunk: string) => void;
-    onFinish?: (response: AgentResponse) => void;
-    abortSignal?: AbortSignal;
-  }): Promise<AgentStreamResult>;
+  stream(input: AgentStreamInput): Promise<AgentStreamResult>;
 
   /** Convert an HTTP request into an AG-UI streaming response for route handlers. */
   respond(request: Request): Promise<Response>;

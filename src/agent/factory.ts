@@ -1,10 +1,13 @@
 import type {
   Agent,
   AgentConfig,
+  AgentGenerateInput,
   AgentMiddleware,
+  AgentOutputSchema,
   AgentResponse,
   AgentStreamResult,
   AgentSystem,
+  InferAgentOutputSchema,
   Message,
   ResolvedAgentConfig,
 } from "./types.ts";
@@ -166,6 +169,30 @@ interface AgentInstanceDeps {
 function createAgentInstance(deps: AgentInstanceDeps): Agent {
   const { id, publicConfig, toolsConfig, runtime, shouldAttachAllowedSkillIds } = deps;
   const resolveSkillSnapshot = deps.resolveSkillSnapshot;
+  const generate = ((input: AgentGenerateInput): Promise<AgentResponse> =>
+    withSpan(
+      "agent.factory.generate",
+      () => {
+        const skillSnapshot = resolveSkillSnapshot();
+        return runtime.generate(
+          input.input,
+          withAllowedSkillIdsContext(
+            input.context,
+            skillSnapshot.allowedSkillIds,
+            shouldAttachAllowedSkillIds,
+          ),
+          input.model,
+          input.maxOutputTokens,
+          input.abortSignal,
+          {
+            toolReplacements: input.tools,
+            retainSkillLoaderTools: input.retainSkillLoaderTools,
+            outputSchema: input.outputSchema,
+          },
+        );
+      },
+      { "agent.id": id },
+    )) as Agent["generate"];
 
   return {
     id,
@@ -174,30 +201,7 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
       tools: toolsConfig,
     },
 
-    generate(input): Promise<AgentResponse> {
-      return withSpan(
-        "agent.factory.generate",
-        () => {
-          const skillSnapshot = resolveSkillSnapshot();
-          return runtime.generate(
-            input.input,
-            withAllowedSkillIdsContext(
-              input.context,
-              skillSnapshot.allowedSkillIds,
-              shouldAttachAllowedSkillIds,
-            ),
-            input.model,
-            input.maxOutputTokens,
-            input.abortSignal,
-            {
-              toolReplacements: input.tools,
-              retainSkillLoaderTools: input.retainSkillLoaderTools,
-            },
-          );
-        },
-        { "agent.id": id },
-      );
-    },
+    generate,
 
     stream(input): Promise<AgentStreamResult> {
       return withSpan(
@@ -229,6 +233,7 @@ function createAgentInstance(deps: AgentInstanceDeps): Agent {
             input.model,
             input.maxOutputTokens,
             input.abortSignal,
+            { outputSchema: input.outputSchema },
           );
 
           return createAgentStreamResult(stream);
@@ -425,8 +430,17 @@ function createAugmentedSystem(input: {
   );
 }
 
-/** Agent helper. */
-export function agent(config: AgentConfig): Agent {
+/**
+ * Agent helper.
+ *
+ * `TOutput` is inferred from `config.outputSchema`, so `response.object` is
+ * typed without an annotation. Agents without one keep no `object`.
+ */
+export function agent<TOutputSchema extends AgentOutputSchema>(
+  config: AgentConfig<InferAgentOutputSchema<TOutputSchema>> & { outputSchema: TOutputSchema },
+): Agent<InferAgentOutputSchema<TOutputSchema>>;
+export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput>;
+export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput> {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
     throw toError(
       createError({

@@ -473,7 +473,7 @@ describe("html/html-injection", () => {
       );
 
       assertEquals(html.includes('id="vf-project-css"'), true);
-      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
     });
 
     it("injects production project stylesheet links for full HTML documents", () => {
@@ -504,7 +504,9 @@ describe("html/html-injection", () => {
         projectStylesheetHref: "/_vf/css/abc123.css",
       });
       assertEquals(deduped.includes("/_vf/css/abc123.css"), false);
-      assertEquals(deduped.includes("styles.css?t="), false);
+      // The markup already links the project stylesheet, so it is left alone
+      // and no second link is injected alongside it.
+      assertEquals(deduped.split("/_vf_styles/styles.css").length - 1, 1);
 
       // Lookalike substrings — data-* attributes, non-link CSS URLs, and the
       // id in ordinary text — must not suppress the required injection.

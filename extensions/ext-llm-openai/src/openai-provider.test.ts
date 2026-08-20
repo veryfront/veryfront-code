@@ -1,4 +1,5 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 // Error classes are shared plumbing — import from the shared barrel so this
 // test stays decoupled from core's runtime-loader internals.
@@ -2058,6 +2059,22 @@ describe("openai-provider", () => {
       });
       assertEquals("service_tier" in (captured ?? {}), false);
       assertEquals("parallel_tool_calls" in (captured ?? {}), false);
+    });
+
+    it("advertises structured output support on both transports", () => {
+      const config = {
+        apiKey: "k",
+        baseURL: "https://example.openai.test/v1",
+        fetch: () => Promise.reject(new Error("not called")),
+      };
+      assertEquals(
+        createOpenAIModelRuntime(config, "gpt-4o-mini").runtimeCapabilities?.structuredOutput,
+        true,
+      );
+      assertEquals(
+        createOpenAIResponsesRuntime(config, "gpt-4o-mini").runtimeCapabilities?.structuredOutput,
+        true,
+      );
     });
 
     it("emits OpenAI response_format json_schema when responseFormat is structured", async () => {

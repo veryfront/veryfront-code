@@ -14,6 +14,7 @@ import {
 
 const objectFreeze = Object.freeze;
 
+/** Metadata for one node in a registered workflow graph. */
 export interface NodeInfo {
   id: string;
   type: string;
@@ -23,12 +24,15 @@ export interface NodeInfo {
   tool?: string;
   /** Node IDs this node depends on */
   dependsOn?: readonly string[];
-  /** Child node IDs (for parallel/branch nodes) */
+  /** Child node IDs for composite nodes such as parallel, branch, and static loop nodes. */
   children?: readonly string[];
   /** Description from wait/approval nodes */
   message?: string;
+  /** Human-readable purpose declared on the node config. */
+  description?: string;
 }
 
+/** Public metadata captured for a registered workflow. */
 export interface WorkflowMetadata {
   id: string;
   description?: string;
@@ -165,10 +169,16 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         agent?: unknown;
         tool?: unknown;
         message?: unknown;
+        description?: unknown;
         nodes?: unknown;
         then?: unknown;
         else?: unknown;
+        steps?: unknown;
       };
+
+      if (typeof config.description === "string") {
+        nodeInfo.description = config.description;
+      }
 
       if (type === "step") {
         const agentValue = config.agent;
@@ -202,6 +212,9 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
       }
       if (Array.isArray(config.else)) {
         children.push(...extractNodeInfo(config.else as WorkflowNode[]));
+      }
+      if (Array.isArray(config.steps)) {
+        children.push(...extractNodeInfo(config.steps as WorkflowNode[]));
       }
 
       if (children.length) nodeInfo.children = objectFreeze(children);
@@ -408,16 +421,20 @@ export class WorkflowRegistryClass {
   }
 }
 
+/** Project-scoped registry for workflow metadata and definitions. */
 export const workflowRegistry = new WorkflowRegistryClass();
 
+/** Register a workflow definition in the current project scope. */
 export function registerWorkflow(workflow: Workflow | WorkflowDefinition): void {
   workflowRegistry.register(workflow);
 }
 
+/** Get metadata for a registered workflow by ID. */
 export function getWorkflow(id: string): WorkflowMetadata | undefined {
   return workflowRegistry.get(id);
 }
 
+/** List registered workflow IDs for the current project scope. */
 export function getAllWorkflowIds(): string[] {
   return workflowRegistry.getAllIds();
 }
