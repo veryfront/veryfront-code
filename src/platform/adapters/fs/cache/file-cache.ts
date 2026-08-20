@@ -520,7 +520,7 @@ export class FileCache {
   }
 
   clear(): void {
-    immutableL1.clear();
+    clearImmutableFileCacheL1();
     this.fallbackCache.clear();
     this.fallbackMemoryUsed = 0;
     this.hits = 0;

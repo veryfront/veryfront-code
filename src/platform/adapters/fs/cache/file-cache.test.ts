@@ -561,6 +561,62 @@ describe("Distributed cache functions", () => {
       }
     });
 
+    it("does not admit backend reads cleared while in flight", async () => {
+      const mod = await import("./file-cache.ts?l1-pending-clear");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let reads = 0;
+      let releaseRead: (() => void) | undefined;
+      const readReleased = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      let markReadStarted: (() => void) | undefined;
+      const readStarted = new Promise<void>((resolve) => {
+        markReadStarted = resolve;
+      });
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: async () => {
+              reads += 1;
+              markReadStarted?.();
+              await readReleased;
+              return JSON.stringify({ value: "content", timestamp: Date.now() });
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+        await runWithCacheBatching(async () => {
+          const pending = cache.getAsync(key);
+          await readStarted;
+          cache.clear();
+          releaseRead?.();
+          await pending;
+        });
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        assertEquals(reads, 2, "a cleared in-flight read must not repopulate L1");
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    });
+
     it("enforces the process-local entry limit by UTF-8 bytes", async () => {
       const mod = await import("./file-cache.ts?l1-utf8-entry-limit");
       const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
