@@ -86,10 +86,26 @@ function installDom(dom: JSDOM): () => void {
     onchange: null,
     dispatchEvent: () => false,
   });
-  g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(0), 0);
-  g.cancelAnimationFrame = (id: number) => clearTimeout(id);
+  // The stub is a real timer, so a frame still queued when the test ends is a
+  // pending timer and trips the leak sanitizer. React can schedule a frame right
+  // up to unmount, so track outstanding frames and drain them on teardown.
+  const pendingFrames = new Set<ReturnType<typeof setTimeout>>();
+  g.requestAnimationFrame = (cb: (t: number) => void) => {
+    const id = setTimeout(() => {
+      pendingFrames.delete(id);
+      cb(0);
+    }, 0);
+    pendingFrames.add(id);
+    return id as unknown as number;
+  };
+  g.cancelAnimationFrame = (id: number) => {
+    pendingFrames.delete(id as unknown as ReturnType<typeof setTimeout>);
+    clearTimeout(id);
+  };
 
   return () => {
+    for (const frame of pendingFrames) clearTimeout(frame);
+    pendingFrames.clear();
     for (const k of keys) g[k] = prev[k];
     dom.window.close();
   };

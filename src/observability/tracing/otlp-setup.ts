@@ -479,6 +479,14 @@ export function setActiveSpanAttributes(
   }
 }
 
+/** Records an event on the currently active span, if there is one. */
+export function addActiveSpanEvent(
+  name: string,
+  attributes?: Record<string, AttributeValue>,
+): void {
+  addSpanEvent(shimTrace.getActiveSpan?.(), name, attributes);
+}
+
 /** Marks the active span as failed. */
 export function setActiveSpanErrorStatus(error: unknown): void {
   const span = shimTrace.getActiveSpan?.();
