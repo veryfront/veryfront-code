@@ -296,6 +296,50 @@ veryfront eval --dataset-base evals
 
 Absolute paths are used as given and ignore the base directory.
 
+### Grading text that was not produced by an agent
+
+`judges.llm.rubric()` grades an agent's answer to a task by default, and sends
+the task input alongside the answer. When the graded value was not produced in
+response to that input -- a stored document, a labelled corpus, a reply written
+earlier -- that framing works against you: the judge sees the same string as
+both the question and the answer and reads it as an agent that echoed its prompt
+instead of doing the work.
+
+Pass `framing: "text"` for those cases:
+
+```ts
+// evals/support-replies.eval.ts
+import { datasets, evalTool, judges, metrics } from "veryfront/eval";
+
+const PROFESSIONALISM_RUBRIC =
+  "The text must be polite, specific, concise, and free of internal jargon.";
+
+export default evalTool({
+  name: "Support reply professionalism",
+  target: "tool:return_saved_reply",
+  dataset: datasets.inline([
+    {
+      id: "billing-refund-reply",
+      input: "Hello, I checked the duplicate charge and started a refund.",
+      metadata: { locale: "en" },
+    },
+  ]),
+  input: (example) => example.input,
+  metrics: [
+    metrics.judge.rubric({
+      rubric: PROFESSIONALISM_RUBRIC,
+      judge: judges.llm.rubric({ framing: "text" }),
+    }),
+  ],
+});
+```
+
+Under `"text"` framing the judge is told the value was not produced in response
+to a task, the value is sent once as `text` rather than twice as `input` and
+`answer`, and the reference is omitted. The prompt-injection rules are the same
+in both framings. The default is unchanged, so existing evals grade exactly as
+before.
+
 ## Metrics
 
 Use deterministic metrics for stable requirements:

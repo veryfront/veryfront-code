@@ -73,3 +73,44 @@ In shared Veryfront runtimes, these variables are platform-owned host env vars. 
 
 - **net `*`:** OTLP exporter reaches the configured collector.
 - **env:** reads the `OTEL_*` variables listed above.
+
+## Workflow spans and map fan-out
+
+With this extension registered, the workflow executor emits a `workflow.run` span per
+execution and a `workflow.node <id>` span per node, and agent spans nest beneath the node
+that produced them.
+
+Node spans are named after the node id so a trace reads at a glance. Generated child nodes
+carry generated ids — `<map>_0`, `<map>_1`, … for map items and `<loop>_iter_0`,
+`<loop>_iter_1`, … for loop iterations — so a `map` over a large collection, or a long
+`loop`, produces both one span per child and one distinct span _name_ per child. Two consequences worth
+planning for:
+
+- **Span volume.** A map over 10,000 items yields at least 10,000 node spans in a single
+  trace, before any agent spans nested beneath them. The framework applies no cap; use the
+  batch span processor's queue settings (`OTEL_BSP_MAX_QUEUE_SIZE`,
+  `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`) or collector-side tail sampling to bound it.
+- **Name cardinality.** Backends that aggregate by span name — for example Tempo's metrics
+  generator — will see one series per item. Drop or rewrite `workflow.node` names at the
+  collector if that matters for your backend.
+
+Runs are traced per execution attempt. A run that pauses at a wait node or a pending
+approval and later resumes produces a _separate_ trace from its first execution; every span
+carries `workflow.run_id`, so filtering on that attribute reassembles the whole run across
+executions.
+
+`workflow.run` is a trace root only when nothing traces the caller. Started from an
+instrumented HTTP handler, webhook, or approval callback it becomes a child of that
+request's span and joins its trace. That is usually what you want — the run appears under
+the request that triggered it — but note the request span typically finishes before the run
+does, because execution is dispatched without being awaited.
+
+Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
+ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work. A cancelled run
+is not a failure: the in-flight node span ends as ERROR carrying the cancellation reason,
+while the `workflow.run` span stays unset, so cancellations do not show up in errored-run
+queries.
+
+Retry attempts of a composite node appear as repeated sibling spans sharing one name. They
+are told apart by status — the attempts that failed are ERROR, the one that succeeded is
+not — and the parent node span carries a `workflow.node.retry` event per retry.

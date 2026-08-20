@@ -22,6 +22,7 @@ import {
   DEFAULT_RETRY_INITIAL_DELAY_MS,
   DEFAULT_RETRY_MAX_DELAY_MS,
   isRetryableWorkflowError,
+  retryTelemetryErrorType,
 } from "./retry-policy.ts";
 import type {
   CapturedTenantContext,
@@ -32,6 +33,10 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { parseDuration, validateRetryConfig } from "../types.ts";
+import {
+  addActiveSpanEvent,
+  setActiveSpanAttributes,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
 /**
@@ -200,6 +205,7 @@ export class StepExecutor {
         abortSignal?.throwIfAborted();
 
         abortSignal?.throwIfAborted();
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
         this.config.onStepComplete?.(node.id, output);
 
         return {
@@ -212,10 +218,17 @@ export class StepExecutor {
         lastError = ensureError(error);
 
         if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
-          await sleep(calculateRetryDelay(attempt, retryConfig), abortSignal);
+          const delay = calculateRetryDelay(attempt, retryConfig);
+          addActiveSpanEvent("workflow.node.retry", {
+            "workflow.node.attempt": attempt,
+            "workflow.node.retry_delay_ms": delay,
+            "workflow.node.error_type": retryTelemetryErrorType(lastError),
+          });
+          await sleep(delay, abortSignal);
           continue;
         }
 
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
         this.config.onStepError?.(node.id, lastError);
 
         return {
