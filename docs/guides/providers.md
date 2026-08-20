@@ -341,10 +341,6 @@ agent({
 });
 ```
 
-Veryfront combines adjacent system layers into one ordered instruction for
-OpenAI-compatible Chat Completions. This preserves the authored system prompt
-and server runtime context for models that accept only one system message.
-
 LM Studio does not require a token unless you enable authentication, but
 Veryfront still requires a non-empty `OPENAI_API_KEY`. See
 [LM Studio OpenAI compatibility](https://lmstudio.ai/docs/developer/openai-compat).
