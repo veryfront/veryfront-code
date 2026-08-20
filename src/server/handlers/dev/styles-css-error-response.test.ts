@@ -162,6 +162,7 @@ describe("server/handlers/dev/styles-css error responses", () => {
     const css = await response.text();
 
     assertEquals(response.status, 200);
+    assertEquals(response.headers.get("cache-control"), "no-cache, no-store, must-revalidate");
     // The failure must reach the page, not just the comment block.
     assert(
       activeRules(css).length > 0,

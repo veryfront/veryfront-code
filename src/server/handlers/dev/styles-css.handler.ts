@@ -51,6 +51,7 @@ type StyleArtifactSelectorContext = Omit<ResolveStyleArtifactInput, "styleProfil
 
 /** Longest diagnostic text embedded in a served stylesheet. */
 const MAX_DIAGNOSTIC_LENGTH = 2_000;
+const SUCCESSFUL_CSS_CACHE = { maxAge: 0, mustRevalidate: true } as const;
 
 /**
  * Neutralize the only sequence that can terminate a CSS comment (a star
@@ -155,7 +156,7 @@ export class StylesCSSHandler extends BaseHandler {
 
     try {
       return await this.withProxyContext(ctx, async () => {
-        const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
+        const responseBuilder = this.createResponseBuilder(ctx).withCache(SUCCESSFUL_CSS_CACHE);
         const projectScope = ctx.projectSlug ?? ctx.projectDir;
         const styleProfile = createStyleScopeProfile(ctx.config);
         const contentContext = this.getContentContext(ctx);
