@@ -554,7 +554,7 @@ describe("WorkflowClient", () => {
         type: "function",
         description: "Capture workflow tool context",
         inputSchema: defineSchema((v) => v.object({}).passthrough())(),
-        execute: (_input, context) => {
+        execute: async (_input, context) => {
           capturedContext = context;
           return {
             projectSlug: context?.projectSlug,
