@@ -59,6 +59,7 @@ import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { SSRCircuitBreaker } from "./ssr-circuit-breaker.ts";
 import {
   cachedCodeUsesResolvedDependencies,
+  type DependencyTransformCacheOptions,
   SSRDependencyValidator,
 } from "./ssr-dependency-validator.ts";
 import { preflightLocalImports } from "./preflight-imports.ts";
@@ -376,8 +377,15 @@ export class SSRModuleLoader {
   constructor(private options: SSRModuleLoaderOptions) {
     this.cache = new SSRCacheManager(options);
     this.depValidator = new SSRDependencyValidator(
-      (filePath, source, depth, dependencyHashCache, signal) =>
-        this.transformWithDependencies(filePath, source, depth, dependencyHashCache, signal),
+      (filePath, source, depth, dependencyHashCache, signal, cacheOptions) =>
+        this.transformWithDependencies(
+          filePath,
+          source,
+          depth,
+          dependencyHashCache,
+          signal,
+          cacheOptions,
+        ),
       (crossImport, signal) => this.transformCrossProjectImport(crossImport, signal),
       options.adapter,
       options.projectDir,
@@ -673,6 +681,7 @@ export class SSRModuleLoader {
               0,
               retryDependencyHashCache,
               this.options.signal,
+              { skipDistributedCache: true, skipMdxPathCache: true },
             );
             this.throwMissingDependencies(filePath);
             const mod = await this.importModuleFromCacheEntry(filePath, fileName, retryCacheEntry);
@@ -723,12 +732,21 @@ export class SSRModuleLoader {
     depth: number = 0,
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
     signal?: AbortSignal,
+    options?: DependencyTransformCacheOptions,
   ): Promise<ModuleCacheEntry> {
     const fileName = filePath.split("/").pop() || filePath;
 
     return withSpan(
       SpanNames.SSR_TRANSFORM_DEPENDENCIES,
-      () => this.doTransformWithDependencies(filePath, source, depth, dependencyHashCache, signal),
+      () =>
+        this.doTransformWithDependencies(
+          filePath,
+          source,
+          depth,
+          dependencyHashCache,
+          signal,
+          options,
+        ),
       {
         "ssr.file": fileName,
         "ssr.depth": depth,
@@ -742,6 +760,7 @@ export class SSRModuleLoader {
     depth: number = 0,
     dependencyHashCache: DependencyHashCache = createDependencyHashCache(),
     observerSignal?: AbortSignal,
+    options?: DependencyTransformCacheOptions,
   ): Promise<ModuleCacheEntry> {
     throwIfAborted(observerSignal);
     if (depth > MAX_TRANSFORM_DEPTH) {
@@ -792,7 +811,7 @@ export class SSRModuleLoader {
       }
     }
 
-    if (isSSRDistributedCacheEnabled()) {
+    if (!options?.skipDistributedCache && isSSRDistributedCacheEnabled()) {
       const redisCode = await getFromRedis(contentCacheKey);
       if (redisCode) {
         const isValidRedisCode = await this.cache.validateCachedCode(
@@ -841,7 +860,7 @@ export class SSRModuleLoader {
       }
     }
 
-    if (this.options.projectId && this.options.contentSourceId) {
+    if (!options?.skipMdxPathCache && this.options.projectId && this.options.contentSourceId) {
       const mdxCacheDir = getMdxEsmSsrCacheDir(
         this.options.projectId,
         this.options.contentSourceId,
@@ -1020,6 +1039,7 @@ export class SSRModuleLoader {
             localFs,
             dependencyHashCache,
             sharedSignal,
+            options,
           );
           const crossProjectPaths = await this.depValidator.processCrossProjectImports(
             parseResult.crossProjectImports,
