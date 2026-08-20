@@ -962,6 +962,93 @@ describe("DAGExecutor", () => {
     });
   });
 
+  describe("loop node sibling isolation", () => {
+    it("does not re-execute a step declared before the loop", async () => {
+      const executed: string[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        executed.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+
+      const nodes: WorkflowNode[] = [
+        { id: "before", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "the-loop",
+          dependsOn: ["before"],
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => loop.iteration < 2,
+            steps: [{ id: "inner", config: { type: "step" } as any }],
+          } as any,
+        },
+        { id: "after", dependsOn: ["the-loop"], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      // A loop iteration patches the parent's node states against its own child
+      // graph only. Diffing that against the parent map would report every
+      // completed sibling as deleted, which re-schedules them.
+      assertEquals(executed.filter((id) => id === "before").length, 1);
+      assertEquals(executed, ["before", "inner", "inner", "after"]);
+    });
+
+    it("keeps a preceding sibling's node state after the loop completes", async () => {
+      const nodes: WorkflowNode[] = [
+        { id: "before", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "the-loop",
+          dependsOn: ["before"],
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => loop.iteration < 1,
+            steps: [{ id: "inner", config: { type: "step" } as any }],
+          } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertExists(result.nodeStates["before"]);
+      assertEquals(result.nodeStates["before"]!.status, "completed");
+      assertExists(result.nodeStates["inner"]);
+    });
+
+    it("keeps a preceding sibling's node state when the loop suspends on a wait", async () => {
+      const nodes: WorkflowNode[] = [
+        { id: "before", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "the-loop",
+          dependsOn: ["before"],
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: () => true,
+            steps: [
+              { id: "inner", dependsOn: [], config: { type: "step" } as any },
+              {
+                id: "inner-wait",
+                dependsOn: ["inner"],
+                config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertExists(result.nodeStates["before"]);
+      assertEquals(result.nodeStates["before"]!.status, "completed");
+    });
+  });
+
   describe("loop resume (H9)", () => {
     it("should not re-run completed steps of an in-flight loop iteration on resume", async () => {
       let incrRuns = 0;
