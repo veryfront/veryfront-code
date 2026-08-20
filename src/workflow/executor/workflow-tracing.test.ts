@@ -62,6 +62,25 @@ function byName(spans: readonly ReadableSpan[], name: string): ReadableSpan | un
   return spans.find((candidate) => candidate.name === name);
 }
 
+function assertSpanDoesNotContain(spans: readonly ReadableSpan[], value: string): void {
+  for (const span of spans) {
+    assertEquals(
+      (span.status.message ?? "").includes(value),
+      false,
+      `${span.name} leaked sensitive text into its span status`,
+    );
+    for (const event of span.events) {
+      for (const attributeValue of Object.values(event.attributes ?? {})) {
+        assertEquals(
+          String(attributeValue).includes(value),
+          false,
+          `${span.name} leaked sensitive text into the ${event.name} event`,
+        );
+      }
+    }
+  }
+}
+
 function createTool(id: string, execute: () => unknown | Promise<unknown>): Tool {
   return {
     id,
@@ -716,6 +735,70 @@ describe("workflow/executor tracing", () => {
     }
   });
 
+  it("keeps escaped node callback errors off the node span", async () => {
+    const tracing = installRealTracing();
+    try {
+      const personal = "skip-secret@example.com";
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "leaky-skip-error-workflow",
+          steps: [
+            step("guarded", {
+              skip: () => {
+                throw new Error(`skip failed for ${personal}`);
+              },
+              tool: createTool("guarded", () => ({ ok: true })),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("leaky-skip-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const nodeSpan = byName(spans, "workflow.node guarded");
+      assertExists(nodeSpan);
+      assertEquals(nodeSpan.status.code, SpanStatusCode.ERROR);
+      assertSpanDoesNotContain(spans, personal);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("keeps rethrown run failures and raw network codes off the run span", async () => {
+    const tracing = installRealTracing();
+    try {
+      const personal = "run-secret@example.com";
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "leaky-run-error-workflow",
+          steps: () => {
+            const error = new Error("completion failed");
+            (error as { code?: string }).code = `ECONNRESET:${personal}`;
+            throw error;
+          },
+        }).definition,
+      );
+
+      const handle = await executor.start("leaky-run-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const runSpan = byName(spans, "workflow.run");
+      assertExists(runSpan);
+      assertEquals(runSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(runSpan.status.message, "ECONNRESET");
+      assertSpanDoesNotContain(spans, personal);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
   it("keeps a thrown error's message off the span status and recorded exception", async () => {
     const tracing = installRealTracing();
     try {
@@ -752,22 +835,7 @@ describe("workflow/executor tracing", () => {
       assertEquals(nodeSpan.status.code, SpanStatusCode.ERROR);
       assertEquals(runSpan.status.code, SpanStatusCode.ERROR);
 
-      for (const span of spans) {
-        assertEquals(
-          (span.status.message ?? "").includes(personal),
-          false,
-          `${span.name} leaked the error message into its span status`,
-        );
-        for (const event of span.events) {
-          for (const value of Object.values(event.attributes ?? {})) {
-            assertEquals(
-              String(value).includes(personal),
-              false,
-              `${span.name} leaked the error message into the ${event.name} event`,
-            );
-          }
-        }
-      }
+      assertSpanDoesNotContain(spans, personal);
     } finally {
       await tracing.dispose();
     }

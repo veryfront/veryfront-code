@@ -286,6 +286,7 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
 
 export type WithSpanOptions = {
   kind?: SpanKind;
+  errorStatus?: (error: unknown) => unknown;
 };
 
 /** Applies span. */
@@ -305,7 +306,7 @@ export async function withSpan<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, error);
+    setSpanErrorStatus(span, options?.errorStatus ? options.errorStatus(error) : error);
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -333,7 +334,7 @@ export function withSpanSync<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, error);
+    setSpanErrorStatus(span, options?.errorStatus ? options.errorStatus(error) : error);
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");

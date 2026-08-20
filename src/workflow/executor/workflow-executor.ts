@@ -6,6 +6,7 @@
 
 import { logger as baseLogger, sleep } from "#veryfront/utils";
 import {
+  ensureError,
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
@@ -446,6 +447,8 @@ export class WorkflowExecutor {
     }, {
       "workflow.id": run.workflowId,
       "workflow.run_id": run.id,
+    }, {
+      errorStatus: (error) => new Error(retryTelemetryErrorType(ensureError(error))),
     });
   }
 

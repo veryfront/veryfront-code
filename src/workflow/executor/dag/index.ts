@@ -322,6 +322,9 @@ export class DAGExecutor {
         "workflow.node.id": nodeId,
         "workflow.node.type": node.config.type,
       },
+      {
+        errorStatus: () => new Error(`Node "${nodeId}" failed`),
+      },
     );
   }
 
