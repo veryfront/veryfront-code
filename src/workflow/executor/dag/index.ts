@@ -729,7 +729,7 @@ export class DAGExecutor {
         workflowId: workflowDef.id,
         status: "running",
         input,
-        nodeStates: {},
+        nodeStates: { ...nodeStates },
         currentNodes: [],
         context: { input },
         checkpoints: [],
