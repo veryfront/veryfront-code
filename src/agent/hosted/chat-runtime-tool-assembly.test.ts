@@ -920,65 +920,64 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifa
 });
 
 describe("augmentVeryfrontApiMcpServerPolicy", () => {
-
-it("augmentVeryfrontApiMcpServerPolicy widens only the veryfront-api allowlist", () => {
-  const servers = [
-    {
-      kind: "veryfront-api" as const,
-      toolPolicy: { allow: ["get_integration", "outlook__upload_attachment"] },
-    },
-    {
-      kind: "veryfront-studio" as const,
-      toolPolicy: { allow: ["studio_read"] },
-    },
-  ];
-
-  const augmented = augmentVeryfrontApiMcpServerPolicy(servers, [
-    "outlook__list_emails",
-  ]);
-
-  assertEquals(augmented?.[0]?.toolPolicy?.allow, [
-    "get_integration",
-    "outlook__upload_attachment",
-    "outlook__list_emails",
-  ]);
-  // The Studio server is untouched.
-  assertEquals(augmented?.[1]?.toolPolicy?.allow, ["studio_read"]);
-  // The hard-coded attachment helper keeps working.
-  assertEquals(
-    augmented?.[0]?.toolPolicy?.allow?.includes("outlook__upload_attachment"),
-    true,
-  );
-});
-
-it("augmentVeryfrontApiMcpServerPolicy never overrides an explicit deny", () => {
-  const servers = [
-    {
-      kind: "veryfront-api" as const,
-      toolPolicy: {
-        allow: ["get_integration"],
-        deny: ["outlook__send_email"],
+  it("augmentVeryfrontApiMcpServerPolicy widens only the veryfront-api allowlist", () => {
+    const servers = [
+      {
+        kind: "veryfront-api" as const,
+        toolPolicy: { allow: ["get_integration", "outlook__upload_attachment"] },
       },
-    },
-  ];
+      {
+        kind: "veryfront-studio" as const,
+        toolPolicy: { allow: ["studio_read"] },
+      },
+    ];
 
-  const augmented = augmentVeryfrontApiMcpServerPolicy(servers, [
-    "outlook__list_emails",
-    "outlook__send_email",
-  ]);
+    const augmented = augmentVeryfrontApiMcpServerPolicy(servers, [
+      "outlook__list_emails",
+    ]);
 
-  assertEquals(augmented?.[0]?.toolPolicy?.allow, [
-    "get_integration",
-    "outlook__list_emails",
-  ]);
-});
+    assertEquals(augmented?.[0]?.toolPolicy?.allow, [
+      "get_integration",
+      "outlook__upload_attachment",
+      "outlook__list_emails",
+    ]);
+    // The Studio server is untouched.
+    assertEquals(augmented?.[1]?.toolPolicy?.allow, ["studio_read"]);
+    // The hard-coded attachment helper keeps working.
+    assertEquals(
+      augmented?.[0]?.toolPolicy?.allow?.includes("outlook__upload_attachment"),
+      true,
+    );
+  });
 
-it("augmentVeryfrontApiMcpServerPolicy leaves servers alone without a grant", () => {
-  const servers = [
-    { kind: "veryfront-api" as const, toolPolicy: { allow: ["get_integration"] } },
-  ];
+  it("augmentVeryfrontApiMcpServerPolicy never overrides an explicit deny", () => {
+    const servers = [
+      {
+        kind: "veryfront-api" as const,
+        toolPolicy: {
+          allow: ["get_integration"],
+          deny: ["outlook__send_email"],
+        },
+      },
+    ];
 
-  assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, []), servers);
-  assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, undefined), servers);
-});
+    const augmented = augmentVeryfrontApiMcpServerPolicy(servers, [
+      "outlook__list_emails",
+      "outlook__send_email",
+    ]);
+
+    assertEquals(augmented?.[0]?.toolPolicy?.allow, [
+      "get_integration",
+      "outlook__list_emails",
+    ]);
+  });
+
+  it("augmentVeryfrontApiMcpServerPolicy leaves servers alone without a grant", () => {
+    const servers = [
+      { kind: "veryfront-api" as const, toolPolicy: { allow: ["get_integration"] } },
+    ];
+
+    assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, []), servers);
+    assertEquals(augmentVeryfrontApiMcpServerPolicy(servers, undefined), servers);
+  });
 });

@@ -254,9 +254,7 @@ function stripUnverifiedServerResolvedForwardedProps(
     Object.hasOwn(runtimeOverrides, "serverResolvedIntegrationTools")
   ) {
     const sanitizedRuntimeOverrides = Object.fromEntries(
-      Object.entries(runtimeOverrides).filter(([key]) =>
-        key !== "serverResolvedIntegrationTools"
-      ),
+      Object.entries(runtimeOverrides).filter(([key]) => key !== "serverResolvedIntegrationTools"),
     );
     if (Object.keys(sanitizedRuntimeOverrides).length > 0) {
       sanitized.runtimeOverrides = sanitizedRuntimeOverrides;
