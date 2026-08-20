@@ -228,7 +228,11 @@ function incompatibleProviderReplayError(subject: "calls" | "results"): TypeErro
   );
 }
 
-/** Convert runtime prompt messages into OpenAI-compatible chat messages. */
+/**
+ * Convert runtime prompt messages into OpenAI-compatible chat messages.
+ * Adjacent non-empty system layers become one ordered instruction so strict
+ * Chat Completions providers receive a compatible message sequence.
+ */
 export function toOpenAICompatibleMessages(
   prompt: readonly ModelRuntimePromptMessage[],
 ): OpenAICompatibleChatMessage[] {
@@ -236,9 +240,18 @@ export function toOpenAICompatibleMessages(
 
   for (const message of prompt) {
     switch (message.role) {
-      case "system":
-        messages.push({ role: "system", content: message.content });
+      case "system": {
+        if (message.content.trim().length === 0) {
+          break;
+        }
+        const previous = messages.at(-1);
+        if (previous?.role === "system") {
+          previous.content = `${previous.content}\n\n${message.content}`;
+        } else {
+          messages.push({ role: "system", content: message.content });
+        }
         break;
+      }
       case "user":
         messages.push({ role: "user", content: toOpenAICompatibleUserContent(message.content) });
         break;
