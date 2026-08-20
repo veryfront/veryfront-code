@@ -203,11 +203,11 @@ export default agent({
 });
 ```
 
-| Model                  | Approximate download |
-| ---------------------- | -------------------- |
-| `local/qwen3.5-0.8b`   | 900 MB               |
-| `local/gemma4-e2b-it`  | 1.8 GB               |
-| `local/gemma4-e4b-it`  | 6 GB                 |
+| Model                 | Approximate download |
+| --------------------- | -------------------- |
+| `local/qwen3.5-0.8b`  | 900 MB               |
+| `local/gemma4-e2b-it` | 1.8 GB               |
+| `local/gemma4-e4b-it` | 6 GB                 |
 
 The selected model is downloaded and cached on first use. If the runtime cannot
 load ONNX, the chat handler returns a `503` setup error. Veryfront never starts
@@ -335,8 +335,15 @@ export VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS="http://localhost:1234"
 Use an ID returned by `/v1/models`. For example:
 
 ```ts
-agent({ model: "openai/qwen2.5-7b-instruct" });
+agent({
+  model: "openai/qwen2.5-7b-instruct",
+  system: "You are a helpful local assistant.",
+});
 ```
+
+Veryfront combines adjacent system layers into one ordered instruction for
+OpenAI-compatible Chat Completions. This preserves the authored system prompt
+and server runtime context for models that accept only one system message.
 
 LM Studio does not require a token unless you enable authentication, but
 Veryfront still requires a non-empty `OPENAI_API_KEY`. See

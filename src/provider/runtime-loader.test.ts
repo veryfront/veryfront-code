@@ -103,6 +103,73 @@ function readRequestBody(init: RequestInit | undefined): string | null {
 }
 
 describe("provider/runtime-loader", () => {
+  it("merges adjacent system layers for OpenAI-compatible providers", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "system",
+        content: "You are a helpful local assistant.",
+      }, {
+        role: "system",
+        content: "<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+      }, {
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }]),
+      [{
+        role: "system",
+        content:
+          "You are a helpful local assistant.\n\n<runtime_context>current_date_utc: 2026-08-20</runtime_context>",
+      }, {
+        role: "user",
+        content: "Hello",
+      }],
+    );
+  });
+
+  it("omits empty system layers without adding blank separators", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "system",
+        content: "Base instructions",
+      }, {
+        role: "system",
+        content: "",
+      }, {
+        role: "system",
+        content: "Runtime context",
+      }]),
+      [{
+        role: "system",
+        content: "Base instructions\n\nRuntime context",
+      }],
+    );
+  });
+
+  it("does not merge system messages across conversation roles", () => {
+    assertEquals(
+      toOpenAICompatibleMessages([{
+        role: "system",
+        content: "Initial instructions",
+      }, {
+        role: "user",
+        content: [{ type: "text", text: "Hello" }],
+      }, {
+        role: "system",
+        content: "Follow-up instructions",
+      }]),
+      [{
+        role: "system",
+        content: "Initial instructions",
+      }, {
+        role: "user",
+        content: "Hello",
+      }, {
+        role: "system",
+        content: "Follow-up instructions",
+      }],
+    );
+  });
+
   it("serializes tool-call arguments as JSON objects without changing string tool results", () => {
     assertEquals(
       toOpenAICompatibleMessages([{
