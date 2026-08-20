@@ -102,6 +102,21 @@ describe("provider/model-registry", () => {
       assertEquals(error.message.includes(secret), false);
     });
 
+    it("reports the configured Google credential alias without exposing its value", () => {
+      const secret = "AIza-do-not-leak-me";
+      setEnv("GOOGLE_API_KEY", secret);
+
+      const error = assertThrows(() => resolveModel("openai/gpt-5.4-nano")) as Error;
+
+      assertEquals(error.message.includes("OPENAI_API_KEY is not set"), true);
+      assertEquals(
+        error.message.includes("Configured provider credentials: GOOGLE_API_KEY"),
+        true,
+      );
+      assertEquals(error.message.includes("GOOGLE_GENERATIVE_AI_API_KEY"), false);
+      assertEquals(error.message.includes(secret), false);
+    });
+
     it("says so plainly when nothing is configured", () => {
       const error = assertThrows(() => resolveModel("anthropic/claude-haiku-4-5")) as Error;
 

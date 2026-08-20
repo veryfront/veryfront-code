@@ -16,6 +16,7 @@
 import { createError, toError } from "#veryfront/errors";
 import {
   getAnthropicEnvConfig,
+  getGoogleGenAICredentialEnvName,
   getGoogleGenAIEnvConfig,
   getMistralEnvConfig,
   getOpenAIEnvConfig,
@@ -165,7 +166,8 @@ function autoInitializeFromEnv(): void {
     const configured: string[] = [];
     if (getOpenAIEnvConfig().apiKey) configured.push("OPENAI_API_KEY");
     if (getAnthropicEnvConfig().apiKey) configured.push("ANTHROPIC_API_KEY");
-    if (getGoogleGenAIEnvConfig().apiKey) configured.push("GOOGLE_GENERATIVE_AI_API_KEY");
+    const googleCredential = getGoogleGenAICredentialEnvName();
+    if (googleCredential) configured.push(googleCredential);
     if (getMistralEnvConfig().apiKey) configured.push("MISTRAL_API_KEY");
     return configured;
   }
