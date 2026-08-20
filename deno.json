@@ -106,7 +106,7 @@
     "./channels/invoke": "./src/channels/invoke.ts",
     "./tool": "./src/tool/index.ts",
     "./workflow": "./src/workflow/index.ts",
-    "./workflow/registry": "./src/workflow/registry.ts",
+    "./workflow/registry": "./src/workflow/registry-public.ts",
     "./workflow/blob": "./src/workflow/blob/index.ts",
     "./workflow/worker": "./src/workflow/worker/index.ts",
     "./workflow/claude-code": "./src/workflow/claude-code/index.ts",

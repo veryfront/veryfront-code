@@ -6,6 +6,7 @@ import { ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS } from "#veryfront/errors/safe-diagno
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
 import { workflowRegistry as publicWorkflowRegistry } from "./index.ts";
 import type { NodeInfo, WorkflowMetadata } from "./index.ts";
+import * as publicWorkflowRegistrySubpath from "veryfront/workflow/registry";
 import { waitForApproval } from "./dsl/wait.ts";
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { MAX_WORKFLOW_DEFINITION_DEPTH, MAX_WORKFLOW_DEFINITION_NODES } from "./limits.ts";
@@ -13,6 +14,7 @@ import { workflow } from "./dsl/workflow.ts";
 import { step } from "./dsl/step.ts";
 import { parallel } from "./dsl/parallel.ts";
 import { branch } from "./dsl/branch.ts";
+import { loop } from "./dsl/loop.ts";
 import { captureWorkflowDefinition } from "./executor/workflow-definition-snapshot.ts";
 
 function node(id: string, type: string): WorkflowNode {
@@ -862,6 +864,13 @@ describe("workflow graph metadata as a public surface", () => {
     assertEquals(nodes.map((n) => n.id), ["only"]);
   });
 
+  it("keeps framework-only registry internals out of the public subpath", () => {
+    assertEquals("registerWorkflow" in publicWorkflowRegistrySubpath, true);
+    assertEquals("workflowRegistry" in publicWorkflowRegistrySubpath, true);
+    assertEquals("WorkflowRegistryClass" in publicWorkflowRegistrySubpath, false);
+    assertEquals("workflowRegistryInternal" in publicWorkflowRegistrySubpath, false);
+  });
+
   it("reports composite child ids exactly as the executor keys them", () => {
     registerWorkflow(
       workflow({
@@ -911,5 +920,56 @@ describe("workflow graph metadata as a public surface", () => {
     assertEquals(byId.get("verify")!.description, "Check the claim against the record");
     assertEquals(byId.get("fan-out")!.description, "Run the independent checks together");
     assertEquals(byId.get("fan-out/child")!.description, undefined);
+  });
+
+  it("includes static loop children in graph metadata", () => {
+    registerWorkflow(
+      workflow({
+        id: "static-loop-metadata",
+        steps: [
+          loop("review-loop", {
+            while: () => false,
+            maxIterations: 1,
+            description: "Loop over known review checks",
+            steps: [
+              step("check", {
+                tool: "reviewer",
+                description: "Check one review item",
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("static-loop-metadata");
+    assertExists(metadata);
+    assertEquals(metadata.nodes.map((n) => n.id), ["check", "review-loop"]);
+    const byId = new Map(metadata.nodes.map((n) => [n.id, n]));
+    assertEquals(byId.get("review-loop")!.children, ["check"]);
+    assertEquals(byId.get("review-loop")!.description, "Loop over known review checks");
+    assertEquals(byId.get("check")!.description, "Check one review item");
+  });
+
+  it("marks dynamic loop children as unavailable in graph metadata", () => {
+    registerWorkflow(
+      workflow({
+        id: "dynamic-loop-metadata",
+        steps: [
+          loop("dynamic-loop", {
+            while: () => false,
+            maxIterations: 1,
+            steps: () => [step("runtime-only", { tool: "runtime-tool" })],
+          }),
+        ],
+      }),
+    );
+
+    const metadata = publicWorkflowRegistry.get("dynamic-loop-metadata");
+    assertExists(metadata);
+    assertEquals(metadata.nodes.map((n) => n.id), ["dynamic-loop"]);
+    assertEquals(metadata.nodes[0]!.children, undefined);
+    assertEquals(metadata.nodeTypes, ["loop"]);
+    assertEquals(metadata.toolRefs, []);
   });
 });

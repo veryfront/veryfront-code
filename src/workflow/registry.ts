@@ -171,6 +171,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         nodes?: unknown;
         then?: unknown;
         else?: unknown;
+        steps?: unknown;
       };
 
       if (typeof config.description === "string") {
@@ -209,6 +210,9 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
       }
       if (Array.isArray(config.else)) {
         children.push(...extractNodeInfo(config.else as WorkflowNode[]));
+      }
+      if (Array.isArray(config.steps)) {
+        children.push(...extractNodeInfo(config.steps as WorkflowNode[]));
       }
 
       if (children.length) nodeInfo.children = objectFreeze(children);
