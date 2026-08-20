@@ -136,7 +136,6 @@ export class ApprovalManager {
     // prevents a delayed onWaiting callback from notifying or appending after a
     // replacement worker has claimed the run.
     const ownerBound = run.workerId !== undefined;
-    let persisted = false;
     if (ownerBound) {
       const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
       const saved = saveOwned
@@ -156,7 +155,6 @@ export class ApprovalManager {
           detail: "Workflow execution ownership changed before approval persistence",
         });
       }
-      persisted = true;
     }
 
     try {
@@ -183,9 +181,8 @@ export class ApprovalManager {
       // delivery error is included in the initial append.
       try {
         await this.config.backend.savePendingApproval(run.id, approval);
-        persisted = true;
       } catch (error) {
-        if (!persisted && responseSchemaKey) {
+        if (responseSchemaKey) {
           this.responseSchemas.delete(responseSchemaKey);
         }
         throw error;
