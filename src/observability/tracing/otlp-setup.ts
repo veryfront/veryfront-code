@@ -289,6 +289,18 @@ export type WithSpanOptions = {
   errorStatus?: (error: unknown) => unknown;
 };
 
+function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): unknown {
+  if (!options?.errorStatus) return error;
+  let statusError: unknown = error;
+  runTelemetryOperation(
+    () => {
+      statusError = options.errorStatus?.(error) ?? error;
+    },
+    "Failed to derive span error status",
+  );
+  return statusError;
+}
+
 /** Applies span. */
 export async function withSpan<T>(
   name: string,
@@ -306,7 +318,7 @@ export async function withSpan<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, options?.errorStatus ? options.errorStatus(error) : error);
+    setSpanErrorStatus(span, spanErrorStatus(error, options));
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -334,7 +346,7 @@ export function withSpanSync<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, options?.errorStatus ? options.errorStatus(error) : error);
+    setSpanErrorStatus(span, spanErrorStatus(error, options));
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
