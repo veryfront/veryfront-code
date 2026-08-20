@@ -564,6 +564,7 @@ export function createGoogleModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
+    runtimeCapabilities: { structuredOutput: true },
     _reconcileProviderMetadata(
       input: {
         providerMetadata: Record<string, unknown>;
