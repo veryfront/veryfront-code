@@ -204,7 +204,9 @@ export class DAGExecutor {
         nodeStates[nodeId] = nodeResult.state;
 
         if (nodeResult.waiting) {
-          if (!outcome) outcome = { kind: "waiting", nodeId };
+          // A composite reports the child that actually suspended. Falling back
+          // to this node covers a top-level wait, which is its own waiting node.
+          if (!outcome) outcome = { kind: "waiting", nodeId: nodeResult.waitingNode ?? nodeId };
           continue;
         }
 
@@ -545,6 +547,7 @@ export class DAGExecutor {
       state,
       contextPatch: result.contextPatch,
       waiting: result.waiting,
+      waitingNode: result.waitingNode,
     };
   }
 
@@ -622,6 +625,7 @@ export class DAGExecutor {
       state,
       contextPatch: result.contextPatch,
       waiting: result.waiting,
+      waitingNode: result.waitingNode,
     };
   }
 
@@ -739,6 +743,7 @@ export class DAGExecutor {
       state,
       contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
       waiting: result.waiting,
+      waitingNode: result.waitingNode,
     };
   }
 

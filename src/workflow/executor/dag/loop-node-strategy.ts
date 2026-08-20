@@ -134,6 +134,7 @@ export async function executeLoopNodeStrategy(
           }),
         ),
         waiting: true,
+        waitingNode: result.waitingNode,
       };
     }
 

@@ -769,15 +769,18 @@ describe("DAGExecutor", () => {
       });
       const first = await exec.execute(nodes, run);
       assertEquals(first.waiting, true);
-      // The composite node is the waiting node reported to the executor.
-      assertEquals(first.waitingNode, "par1");
+      // The node that actually suspended is reported, not its enclosing
+      // composite -- an approval is built from that node's `input`.
+      assertEquals(first.waitingNode, "p-wait");
       assertEquals(stepARuns, 1);
       assertEquals(first.nodeStates["p-step"]!.status, "completed");
       assertEquals(Object.hasOwn(first.context, "removed"), false);
 
       // Resume: mark the wait node completed (approval granted) and re-run with
-      // the accumulated nodeStates from the first run. The real executor resumes
-      // by passing the waiting node id as startFromNode.
+      // the accumulated nodeStates from the first run. The real executor derives
+      // startFromNode from the checkpoint (CheckpointManager.findNextNode scans
+      // the top-level nodes), so it is always a top-level id -- never the
+      // reported waiting node.
       const resumedStates = {
         ...first.nodeStates,
         "p-wait": {
@@ -962,6 +965,80 @@ describe("DAGExecutor", () => {
     });
   });
 
+  describe("nested wait reporting", () => {
+    const nestedWait = {
+      id: "inner-wait",
+      config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+    };
+
+    it("reports the inner node when a wait is nested in a branch", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [nestedWait],
+          } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      // The approval is built from nodeStates[waitingNode].input, and a
+      // composite's state carries no input -- so reporting the composite means
+      // no approval is ever created.
+      assertEquals(result.waitingNode, "inner-wait");
+      assertExists(result.nodeStates["inner-wait"]!.input);
+    });
+
+    it("reports the inner node when a wait is nested in a parallel", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "group",
+          dependsOn: [],
+          config: { type: "parallel", nodes: [nestedWait] } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "inner-wait");
+    });
+
+    it("reports the inner node when a wait is nested in a sub-workflow", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "sub",
+          dependsOn: [],
+          config: {
+            type: "subWorkflow",
+            workflow: { id: "child", steps: [nestedWait] },
+          } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "inner-wait");
+    });
+
+    it("still reports a top-level wait as itself", async () => {
+      const nodes: WorkflowNode[] = [
+        { id: "top-wait", dependsOn: [], config: nestedWait.config },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "top-wait");
+    });
+  });
+
   describe("loop resume (H9)", () => {
     it("should not re-run completed steps of an in-flight loop iteration on resume", async () => {
       let incrRuns = 0;
@@ -995,7 +1072,7 @@ describe("DAGExecutor", () => {
       const run = createTestRun();
       const first = await exec.execute(nodes, run);
       assertEquals(first.waiting, true);
-      assertEquals(first.waitingNode, "loop1");
+      assertEquals(first.waitingNode, "l-wait");
       assertEquals(incrRuns, 1);
       assertEquals(first.nodeStates["l-incr"]!.status, "completed");
 
