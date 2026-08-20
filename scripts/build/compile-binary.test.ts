@@ -374,7 +374,9 @@ it("proxy release verifies lock freshness and publishes an exact SBOM", async ()
 });
 
 it("release binaries carry the numbered RC version", async () => {
-  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const workflow = await Deno.readTextFile(
+    new URL("../../.github/workflows/cicd.yml", import.meta.url),
+  );
   const jobStart = workflow.indexOf("  build-binaries:");
   const jobEnd = workflow.indexOf("\n  prerelease:", jobStart);
   const buildBinariesJob = workflow.slice(jobStart, jobEnd);

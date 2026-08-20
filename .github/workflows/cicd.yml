@@ -594,7 +594,7 @@ jobs:
 
   # ============================================
   # CD: Build Binaries (main only)
-  # Version comes directly from deno.json
+  # Stable versions come from deno.json. RC versions append the workflow run number.
   # ============================================
 
   tests-proxy-binary:
