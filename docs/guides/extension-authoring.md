@@ -293,7 +293,7 @@ describe("my-cache contract", () => {
 Run the tests:
 
 ```bash
-deno task test:file extensions/my-cache/src/
+deno test --no-check --allow-all extensions/my-cache/src/
 ```
 
 ## Package the extension
@@ -327,7 +327,7 @@ Use semver for releases. Treat contract shape changes as breaking changes.
 ## Verify it worked
 
 1. Run `veryfront extension validate extensions/my-cache`.
-2. Run `deno task test:file extensions/my-cache/src/`.
+2. Run `deno test --no-check --allow-all extensions/my-cache/src/`.
 3. Add the factory to `veryfront.config.ts` and restart `veryfront dev`.
 4. Confirm the dev log lists the extension under its declared name.
 5. Resolve the contract from app code and confirm it uses the extension's
