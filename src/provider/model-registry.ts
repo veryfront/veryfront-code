@@ -155,6 +155,44 @@ function autoInitializeFromEnv(): void {
   if (autoInitialized) return;
   autoInitialized = true;
 
+  /**
+   * Names of the built-in provider credentials that are currently configured.
+   *
+   * Names only, never values: this string is embedded in an error message that
+   * gets logged, so it must never be able to leak a key.
+   */
+  function configuredProviderCredentials(): string[] {
+    const configured: string[] = [];
+    if (getOpenAIEnvConfig().apiKey) configured.push("OPENAI_API_KEY");
+    if (getAnthropicEnvConfig().apiKey) configured.push("ANTHROPIC_API_KEY");
+    if (getGoogleGenAIEnvConfig().apiKey) configured.push("GOOGLE_GENERATIVE_AI_API_KEY");
+    if (getMistralEnvConfig().apiKey) configured.push("MISTRAL_API_KEY");
+    return configured;
+  }
+
+  /**
+   * Message for a model whose provider has no credential configured.
+   *
+   * Names the model that could not be served and what *is* configured, so the
+   * reader does not have to guess which of several providers the failure came
+   * from. Only credential names appear, never values.
+   */
+  function missingCredentialMessage(
+    envVar: string,
+    provider: string,
+    modelId: string,
+  ): string {
+    const configured = configuredProviderCredentials();
+    const available = configured.length > 0
+      ? `Configured provider credentials: ${configured.join(", ")}.`
+      : "No built-in provider credentials are configured.";
+
+    return `${envVar} is not set, so model "${provider}/${modelId}" cannot be served. ` +
+      `${available} ` +
+      `Set ${envVar}, choose a model from a configured provider, ` +
+      `or register a custom provider with registerModelProvider().`;
+  }
+
   // Register lazy factories that resolve credentials per-request.
   // createOpenAI/createAnthropic/createGoogleGenerativeAI are lightweight
   // constructors (no network calls), so instantiating per-resolution is fine.
@@ -165,8 +203,7 @@ function autoInitializeFromEnv(): void {
       throw toError(
         createError({
           type: "config",
-          message:
-            "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          message: missingCredentialMessage("OPENAI_API_KEY", "openai", id),
         }),
       );
     }
@@ -195,8 +232,7 @@ function autoInitializeFromEnv(): void {
       throw toError(
         createError({
           type: "config",
-          message:
-            "ANTHROPIC_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          message: missingCredentialMessage("ANTHROPIC_API_KEY", "anthropic", id),
         }),
       );
     }
@@ -224,8 +260,11 @@ function autoInitializeFromEnv(): void {
       throw toError(
         createError({
           type: "config",
-          message:
-            "GOOGLE_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY) not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          message: missingCredentialMessage(
+            "GOOGLE_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY)",
+            "google",
+            id,
+          ),
         }),
       );
     }
@@ -256,8 +295,7 @@ function autoInitializeFromEnv(): void {
       throw toError(
         createError({
           type: "config",
-          message:
-            "MISTRAL_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+          message: missingCredentialMessage("MISTRAL_API_KEY", "mistral", id),
         }),
       );
     }
