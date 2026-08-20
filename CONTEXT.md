@@ -103,10 +103,12 @@ the mapping.
 ## Workflow Run Identity
 
 A **run** is one backend-persisted execution record of a workflow definition, identified by
-the id `WorkflowHandle.runId` returns. It survives across processes, and it may be _executed_
+the ID `WorkflowHandle.runId` returns. It survives across processes, and it may be _executed_
 more than once: a run that pauses at a wait node or a pending approval is resumed later as a
-fresh execution of the same run. Composite nodes muddy the word — `parallel`, `branch` and
-`subWorkflow` each construct a second record of the same shape while executing their children,
-with a generated id that is never persisted and cannot be looked up. Only the root persisted
-id identifies a run to anything outside the process, so callers, the backends and
+fresh execution of the same run. Composite nodes muddy the word: `parallel`, `branch`, `map`,
+`loop`, and `subWorkflow` construct local `WorkflowRun`-shaped records while executing their
+children. The `parallel`, `branch`, and `map` record IDs derive from the composite node ID;
+`loop` record IDs derive from the node ID and iteration; `subWorkflow` record IDs add a
+generated component. None of those local records are persisted or available for lookup. Only
+the root persisted ID identifies a run outside the process, so callers, the backends, and
 observability all key on it.
