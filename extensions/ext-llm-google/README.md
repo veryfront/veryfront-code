@@ -221,7 +221,7 @@ A response format maps to Gemini generation config keys. `type: "json"` sets
 
 Gemini has no counterpart for the format name, description, or strict flag, so
 those are not sent. Provider options replace `generationConfig` wholesale, and
-these two keys are re-applied afterwards so an override cannot drop the schema.
+these two keys are re-applied afterward so an override cannot drop the schema.
 
 ## Provider Options
 

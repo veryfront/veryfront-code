@@ -5,11 +5,14 @@
  * executes; the contract is checked by `lint:test-typecheck`.
  */
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import type { JsonSchema } from "#veryfront/extensions/schema/json-schema.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent, AgentResponse } from "./types.ts";
 import { agent } from "./factory.ts";
 
 declare const temperatureSchema: Schema<{ city: string; tempC: number }>;
 declare const headlineSchema: Schema<{ headline: string }>;
+declare const rawJsonSchema: JsonSchema;
 
 async function inferredFromConfiguredSchema(): Promise<void> {
   const weather = agent({ system: "You report weather.", outputSchema: temperatureSchema });
@@ -52,6 +55,21 @@ async function perCallSchemaIsAccepted(): Promise<void> {
   void city;
 }
 
+async function rawJsonSchemaKeepsObjectUnknown(): Promise<void> {
+  const weather = agent({
+    system: "You report weather.",
+    outputSchema: rawJsonSchema,
+  });
+  const response = await weather.generate({ input: "Berlin?" });
+
+  const object: unknown = response.object;
+  // @ts-expect-error Raw JSON Schema preserves the object but cannot infer fields.
+  const city: string = response.object.city;
+
+  void object;
+  void city;
+}
+
 function erasedSlotsAcceptEveryInstantiation(): void {
   const typed = agent({ system: "You report weather.", outputSchema: temperatureSchema });
   const plain = agent({ system: "You report weather." });
@@ -73,7 +91,24 @@ function erasedSlotsAcceptEveryInstantiation(): void {
   void legacy;
 }
 
-void inferredFromConfiguredSchema;
-void unchangedWithoutSchema;
-void perCallSchemaIsAccepted;
-void erasedSlotsAcceptEveryInstantiation;
+describe("agent output-schema type contract", () => {
+  it("infers configured schemas", () => {
+    void inferredFromConfiguredSchema;
+  });
+
+  it("keeps agents without schemas unchanged", () => {
+    void unchangedWithoutSchema;
+  });
+
+  it("follows per-call schemas", () => {
+    void perCallSchemaIsAccepted;
+  });
+
+  it("keeps raw JSON Schema objects as unknown", () => {
+    void rawJsonSchemaKeepsObjectUnknown;
+  });
+
+  it("keeps erased agent slots assignable", () => {
+    void erasedSlotsAcceptEveryInstantiation;
+  });
+});

@@ -3,9 +3,11 @@ import type {
   AgentConfig,
   AgentGenerateInput,
   AgentMiddleware,
+  AgentOutputSchema,
   AgentResponse,
   AgentStreamResult,
   AgentSystem,
+  InferAgentOutputSchema,
   Message,
   ResolvedAgentConfig,
 } from "./types.ts";
@@ -434,6 +436,10 @@ function createAugmentedSystem(input: {
  * `TOutput` is inferred from `config.outputSchema`, so `response.object` is
  * typed without an annotation. Agents without one keep no `object`.
  */
+export function agent<TOutputSchema extends AgentOutputSchema>(
+  config: AgentConfig<InferAgentOutputSchema<TOutputSchema>> & { outputSchema: TOutputSchema },
+): Agent<InferAgentOutputSchema<TOutputSchema>>;
+export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput>;
 export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput> {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
     throw toError(

@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
 import type { AgentContext, AgentResponse } from "../../types.ts";
+import { attachOutputSchemaParser, resolveAgentOutputSchema } from "../../output-schema.ts";
 import {
   COMMON_BLOCKED_PATTERNS,
   InputValidator,
@@ -247,5 +249,31 @@ describe("securityMiddleware", () => {
         untouched: 12,
       },
     });
+  });
+
+  it("rejects a filtered structured object that no longer matches its output schema", async () => {
+    const middleware = securityMiddleware({
+      output: { filterPII: true },
+    });
+    const context = createContext({
+      input: "Return contact details.",
+    });
+    const outputSchema = resolveAgentOutputSchema(
+      defineSchema((v) => v.object({ email: v.string().email() }))(),
+      "agent",
+    );
+
+    const error = await assertRejects(() =>
+      middleware(
+        context,
+        async () =>
+          attachOutputSchemaParser({
+            ...createResponse('{"email":"john@example.com"}'),
+            object: { email: "john@example.com" },
+          }, outputSchema),
+      )
+    );
+
+    assertStringIncludes((error as Error).message, "failed outputSchema validation");
   });
 });

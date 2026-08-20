@@ -954,7 +954,11 @@ export function buildGoogleGenerateContentRequest(
   // runtime-owned structured-output keys the caller asked for.
   const structuredOutput = buildGoogleStructuredOutputConfig(options.responseFormat);
   if (Object.keys(structuredOutput).length > 0) {
-    body.generationConfig = { ...body.generationConfig, ...structuredOutput };
+    const generationConfig = { ...(readRecord(body.generationConfig) ?? {}) };
+    if ("responseJsonSchema" in structuredOutput) {
+      delete generationConfig.responseSchema;
+    }
+    body.generationConfig = { ...generationConfig, ...structuredOutput };
   }
   return body;
 }

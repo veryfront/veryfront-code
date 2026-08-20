@@ -277,6 +277,7 @@ describe("ext-llm-google/google-request-builder", () => {
             generationConfig: {
               temperature: 0.9,
               responseMimeType: "text/plain",
+              responseSchema: { type: "object", properties: {} },
               responseJsonSchema: { type: "string" },
             },
           },
@@ -287,6 +288,29 @@ describe("ext-llm-google/google-request-builder", () => {
 
     assertEquals(body.generationConfig, {
       temperature: 0.9,
+      responseMimeType: "application/json",
+      responseJsonSchema: schema,
+    });
+  });
+
+  it("normalizes provider generationConfig before pinning structured output", () => {
+    const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+
+    const body = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Status" }] }],
+        responseFormat: { type: "json_schema", name: "Status", schema },
+        providerOptions: {
+          google: {
+            generationConfig: ["bad", "shape"],
+          },
+        },
+      },
+      createWarningCollector(),
+    );
+
+    assertEquals(body.generationConfig, {
       responseMimeType: "application/json",
       responseJsonSchema: schema,
     });

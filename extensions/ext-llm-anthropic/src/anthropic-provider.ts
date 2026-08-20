@@ -483,7 +483,9 @@ export function createAnthropicModelRuntime(
     modelId,
     specificationVersion: "v3",
     supportedUrls: {},
-    runtimeCapabilities: { structuredOutput: true },
+    runtimeCapabilities: {
+      structuredOutput: supportsAnthropicStructuredOutput(modelId) ? ["json_schema"] : false,
+    },
     async doGenerate(options: OpenAICompatibleLanguageOptions) {
       const url = getAnthropicMessagesUrl(config.baseURL);
       const warnings = createWarningCollector();
@@ -696,6 +698,11 @@ export function createAnthropicModelRuntime(
       };
     },
   };
+}
+
+function supportsAnthropicStructuredOutput(modelId: string): boolean {
+  return /^claude-(?:fable-5|mythos-5|mythos-preview|haiku-4-5|sonnet-(?:4-[56]|5)|opus-(?:4-[5-8]|5))(?:-|$)/i
+    .test(modelId);
 }
 
 export class AnthropicProvider implements LLMProvider {

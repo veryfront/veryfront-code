@@ -3756,13 +3756,19 @@ describe("anthropic-provider", () => {
       assertEquals(body!.output_config, { format: { type: "json_schema", schema } });
     });
 
-    it("advertises structured output support", () => {
-      const runtime = createAnthropicModelRuntime({
+    it("advertises JSON Schema structured output only for supported model families", () => {
+      const supported = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-5-20250929");
+      const unsupported = createAnthropicModelRuntime({
         apiKey: "k",
         baseURL: "https://example.anthropic.test/v1",
         fetch: () => Promise.resolve(okResponse()),
       }, "claude-sonnet-4-20250514");
-      assertEquals(runtime.runtimeCapabilities?.structuredOutput, true);
+      assertEquals(supported.runtimeCapabilities?.structuredOutput, ["json_schema"]);
+      assertEquals(unsupported.runtimeCapabilities?.structuredOutput, false);
     });
   });
 

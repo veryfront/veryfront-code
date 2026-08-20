@@ -151,6 +151,23 @@ describe("provider/runtime-inspection", () => {
     );
   });
 
+  it("honors structured-output capability variants", () => {
+    const model = runtimeWith({
+      runtimeCapabilities: { value: { structuredOutput: ["json_schema"] } },
+    });
+
+    assertEquals(supportsModelRuntimeStructuredOutput(model), true);
+    assertEquals(
+      supportsModelRuntimeStructuredOutput(model, {
+        type: "json_schema",
+        name: "Result",
+        schema: { type: "object" },
+      }),
+      true,
+    );
+    assertEquals(supportsModelRuntimeStructuredOutput(model, { type: "json" }), false);
+  });
+
   it("rejects malformed structured-output capability metadata", () => {
     assertThrows(
       () =>
@@ -158,7 +175,15 @@ describe("provider/runtime-inspection", () => {
           runtimeCapabilities: { value: { structuredOutput: "sometimes" } },
         })),
       TypeError,
-      "must be a boolean",
+      "must be a boolean or an array",
+    );
+    assertThrows(
+      () =>
+        supportsModelRuntimeStructuredOutput(runtimeWith({
+          runtimeCapabilities: { value: { structuredOutput: ["yaml"] } },
+        })),
+      TypeError,
+      "must be json or json_schema",
     );
   });
 

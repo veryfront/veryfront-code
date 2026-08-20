@@ -23,7 +23,7 @@ import {
   schemaToJsonSchema,
   tryCompileJsonSchemaValidator,
 } from "#veryfront/schemas/json-schema.ts";
-import { createError, getErrorMessage, toError } from "#veryfront/errors";
+import { AGENT_ERROR, getErrorMessage } from "#veryfront/errors";
 
 /**
  * Response-format name sent to providers that require one.
@@ -40,8 +40,30 @@ export interface ResolvedAgentOutputSchema {
   parseOutput(text: string): Promise<unknown>;
 }
 
+const OUTPUT_SCHEMA_PARSER = Symbol("veryfront.agent.outputSchemaParser");
+
 function outputSchemaError(agentId: string, message: string): never {
-  throw toError(createError({ type: "agent", message: `Agent "${agentId}" ${message}` }));
+  throw AGENT_ERROR.create({ detail: `Agent "${agentId}" ${message}` });
+}
+
+export function attachOutputSchemaParser<TResponse extends object>(
+  response: TResponse,
+  outputSchema: ResolvedAgentOutputSchema | undefined,
+): TResponse {
+  if (!outputSchema) return response;
+  Object.defineProperty(response, OUTPUT_SCHEMA_PARSER, {
+    value: outputSchema.parseOutput.bind(outputSchema),
+    enumerable: false,
+    configurable: false,
+  });
+  return response;
+}
+
+export function getOutputSchemaParser(
+  response: object,
+): ((text: string) => Promise<unknown>) | undefined {
+  const value = (response as { [OUTPUT_SCHEMA_PARSER]?: unknown })[OUTPUT_SCHEMA_PARSER];
+  return typeof value === "function" ? value as (text: string) => Promise<unknown> : undefined;
 }
 
 function formatValidationIssues(issues: readonly JsonSchemaValidationIssue[]): string {
@@ -86,10 +108,10 @@ export function resolveAgentOutputSchema(
     }
     return {
       responseFormat: buildResponseFormat(jsonSchema),
-      parseOutput(text: string): Promise<unknown> {
+      async parseOutput(text: string): Promise<unknown> {
         const value = parseOutputJson(text, agentId);
         try {
-          return Promise.resolve(Reflect.apply(parse, schema, [value]));
+          return await Reflect.apply(parse, schema, [value]);
         } catch (error) {
           outputSchemaError(
             agentId,

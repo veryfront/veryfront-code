@@ -1,5 +1,6 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { getOutputSchemaParser } from "../../output-schema.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -362,6 +363,11 @@ export function securityMiddleware(
 
     const objectFiltering = await filterStructuredOutputValue(result.object, outputFilter);
     reportViolations(objectFiltering.violations, config.onViolation);
+    const parseOutput = getOutputSchemaParser(result);
+    if (parseOutput) {
+      const object = await parseOutput(outputFiltering.filtered);
+      return { ...result, text: outputFiltering.filtered, object };
+    }
 
     return { ...result, text: outputFiltering.filtered, object: objectFiltering.value };
   };

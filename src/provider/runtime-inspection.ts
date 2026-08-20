@@ -1,4 +1,8 @@
-import type { ModelRuntime } from "./types.ts";
+import type {
+  ModelRuntime,
+  RuntimeResponseFormat,
+  RuntimeStructuredOutputVariant,
+} from "./types.ts";
 
 export function getModelRuntimeId(model: ModelRuntime): string | undefined {
   const modelId = model.modelId;
@@ -52,7 +56,19 @@ export function supportsModelRuntimeToolCalling(model: ModelRuntime): boolean {
  * requested schema fails loudly instead of being dropped on the way to a
  * provider that would ignore it.
  */
-export function supportsModelRuntimeStructuredOutput(model: ModelRuntime): boolean {
+function assertStructuredOutputVariant(
+  value: unknown,
+): asserts value is RuntimeStructuredOutputVariant {
+  if (value === "json" || value === "json_schema") return;
+  throw new TypeError(
+    "Model runtime structuredOutput capability variants must be json or json_schema",
+  );
+}
+
+export function supportsModelRuntimeStructuredOutput(
+  model: ModelRuntime,
+  responseFormat?: RuntimeResponseFormat,
+): boolean {
   const capabilities = model.runtimeCapabilities;
   if (capabilities === undefined) return false;
   if (typeof capabilities !== "object" || capabilities === null) {
@@ -60,8 +76,15 @@ export function supportsModelRuntimeStructuredOutput(model: ModelRuntime): boole
   }
   const structuredOutput = capabilities.structuredOutput;
   if (structuredOutput === undefined) return false;
-  if (typeof structuredOutput !== "boolean") {
-    throw new TypeError("Model runtime structuredOutput capability must be a boolean");
+  if (typeof structuredOutput === "boolean") return structuredOutput;
+  if (!Array.isArray(structuredOutput)) {
+    throw new TypeError(
+      "Model runtime structuredOutput capability must be a boolean or an array",
+    );
   }
-  return structuredOutput;
+  for (const variant of structuredOutput) {
+    assertStructuredOutputVariant(variant);
+  }
+  if (!responseFormat || responseFormat.type === "text") return structuredOutput.length > 0;
+  return structuredOutput.includes(responseFormat.type);
 }

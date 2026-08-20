@@ -69,10 +69,6 @@ function onlyRequestedFormat(
   return calls[0]?.responseFormat;
 }
 
-async function drain(stream: ReadableStream<Uint8Array>): Promise<void> {
-  await new Response(stream).text();
-}
-
 describe("agent output schema", () => {
   beforeEach(() => {
     agentRegistry.clearAll();
@@ -261,10 +257,38 @@ describe("agent output schema", () => {
           finished = response.object;
         },
       });
-      await drain(result.toDataStreamResponse().body!);
+      const body = await result.toDataStreamResponse().text();
 
       assertEquals(onlyRequestedFormat(calls)?.type, "json_schema");
       assertEquals(finished, { city: "Berlin", tempC: 12 });
+      assertStringIncludes(body, '"type":"message-finish"');
+      assertStringIncludes(body, '"object":{"city":"Berlin","tempC":12}');
+    });
+
+    it("should emit an error event when streamed output is not parseable", async () => {
+      const calls: ModelRuntimeCallOptions[] = [];
+      const model = createRecordingModel("Twelve degrees in Berlin.", calls);
+      const weather = agent({
+        id: "weather-stream-unparsable",
+        system: "You report weather.",
+        outputSchema: getTemperatureSchema(),
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+
+      let onFinishCalled = false;
+      const result = await weather.stream({
+        input: "Berlin?",
+        onFinish: () => {
+          onFinishCalled = true;
+        },
+      });
+      const body = await result.toDataStreamResponse().text();
+
+      assertEquals(onlyRequestedFormat(calls)?.type, "json_schema");
+      assertStringIncludes(body, '"type":"text-delta"');
+      assertStringIncludes(body, '"type":"error"');
+      assertStringIncludes(body, "is not valid JSON for its outputSchema");
+      assertEquals(onFinishCalled, false);
     });
   });
 });

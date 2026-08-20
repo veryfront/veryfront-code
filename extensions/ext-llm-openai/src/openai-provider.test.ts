@@ -1,4 +1,5 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 // Error classes are shared plumbing — import from the shared barrel so this
 // test stays decoupled from core's runtime-loader internals.

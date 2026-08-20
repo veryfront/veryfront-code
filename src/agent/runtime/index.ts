@@ -69,7 +69,11 @@ import {
 } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 import { resolveAgentSystem } from "./effective-agent-system.ts";
-import { resolveAgentOutputSchema, type ResolvedAgentOutputSchema } from "../output-schema.ts";
+import {
+  attachOutputSchemaParser,
+  resolveAgentOutputSchema,
+  type ResolvedAgentOutputSchema,
+} from "../output-schema.ts";
 import {
   captureStreamedToolCallInput,
   collectFinalStreamToolResults,
@@ -1421,6 +1425,9 @@ export class AgentRuntime {
             type: "message-finish",
             ...(finishReason ? { finishReason } : {}),
             ...(finishUsage ? { totalUsage: finishUsage } : {}),
+            ...("object" in response && response.object !== undefined
+              ? { object: response.object }
+              : {}),
           });
           closeSSEStream(controller);
         } catch (error) {
@@ -1755,7 +1762,7 @@ export class AgentRuntime {
           this.status = "completed";
           addSpanEvent(loopSpan, "loop_complete");
           setSpanAttributes(loopSpan, buildRuntimeUsageTraceAttributes(totalUsage));
-          return {
+          return attachOutputSchemaParser({
             text: response.text,
             ...(outputSchema ? { object: await outputSchema.parseOutput(response.text) } : {}),
             messages: currentMessages,
@@ -1766,7 +1773,7 @@ export class AgentRuntime {
               runRuntimeContext,
               response.finishReason ? { finishReason: response.finishReason } : undefined,
             ),
-          };
+          }, outputSchema);
         }
 
         this.status = "tool_execution";
@@ -2098,9 +2105,9 @@ export class AgentRuntime {
 
       const lastMsg = currentMessages[currentMessages.length - 1];
       const finalText = lastMsg ? getTextFromParts(lastMsg.parts) : "";
-      return {
+      return attachOutputSchemaParser({
         text: finalText,
-        ...(outputSchema ? { object: await outputSchema.parseOutput(finalText) } : {}),
+        ...await tryParseMaxStepsOutput(finalText, outputSchema),
         messages: currentMessages,
         toolCalls,
         status: this.status,
@@ -2108,7 +2115,7 @@ export class AgentRuntime {
         metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
           warning: `Max steps (${maxSteps}) reached`,
         }),
-      };
+      }, outputSchema);
     });
   }
 
@@ -3109,7 +3116,7 @@ export class AgentRuntime {
       this.status = "thinking";
     }
 
-    return {
+    return attachOutputSchemaParser({
       text: latestAssistantText,
       ...(outputSchema ? { object: await outputSchema.parseOutput(latestAssistantText) } : {}),
       messages: currentMessages,
@@ -3120,7 +3127,7 @@ export class AgentRuntime {
         runRuntimeContext,
         finalFinishReason ? { finishReason: finalFinishReason } : undefined,
       ),
-    };
+    }, outputSchema);
   }
 
   /**
@@ -3239,6 +3246,18 @@ type ProviderMetadataReconciler = (input: {
   providerMetadata: Record<string, unknown>;
   suppressedToolCalls: readonly { id: string; name: string }[];
 }) => Record<string, unknown> | undefined;
+
+async function tryParseMaxStepsOutput(
+  finalText: string,
+  outputSchema: ResolvedAgentOutputSchema | undefined,
+): Promise<{ object: unknown } | Record<string, never>> {
+  if (!outputSchema || finalText.trim().length === 0) return {};
+  try {
+    return { object: await outputSchema.parseOutput(finalText) };
+  } catch {
+    return {};
+  }
+}
 
 function reconcileSuppressedProviderMetadata(
   modelRuntime: ModelRuntime,

@@ -640,11 +640,11 @@ async function resolveDirectTools(
 function assertStructuredOutputSupported(options: DirectTextOptions): void {
   const responseFormat = options.responseFormat;
   if (!responseFormat || responseFormat.type === "text") return;
-  if (supportsModelRuntimeStructuredOutput(options.model)) return;
+  if (supportsModelRuntimeStructuredOutput(options.model, responseFormat)) return;
   throw NOT_SUPPORTED.create({
     detail: `Model "${
       getModelRuntimeId(options.model) ?? "unknown"
-    }" does not support structured output, so the requested response format cannot be applied.`,
+    }" does not support structured output format "${responseFormat.type}", so it cannot be applied.`,
   });
 }
 
