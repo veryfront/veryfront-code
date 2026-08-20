@@ -309,7 +309,11 @@ export class DAGExecutor {
         // indistinguishable from a successful one in any trace backend.
         setActiveSpanAttributes({ "workflow.node.status": result.state.status });
         if (result.state.status === "failed") {
-          setActiveSpanErrorStatus(new Error(result.state.error ?? `Node "${nodeId}" failed`));
+          // The failure must be visible to errored-span queries, but the node's error
+          // text is user-supplied and can carry customer data -- the same reason retry
+          // events carry a classification rather than a message. Identify the node, not
+          // the failure text; the detail stays in the run record and the logs.
+          setActiveSpanErrorStatus(new Error(`Node "${nodeId}" failed`));
         }
         return result;
       },

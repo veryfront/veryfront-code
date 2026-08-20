@@ -715,4 +715,61 @@ describe("workflow/executor tracing", () => {
       await tracing.dispose();
     }
   });
+
+  it("keeps a thrown error's message off the span status and recorded exception", async () => {
+    const tracing = installRealTracing();
+    try {
+      // The attribute sanitiser is key-name driven: it redacts key-shaped tokens but
+      // passes ordinary prose through. A live OTLP export showed a customer email
+      // reaching the wire via status.message and exception.message on both the node and
+      // run spans, which span-attribute assertions alone never covered.
+      const personal = "bob@example.com";
+      const executor = new WorkflowExecutor({ backend: new MemoryBackend(), enableLocking: false });
+      executor.register(
+        workflow({
+          id: "leaky-error-workflow",
+          steps: [
+            step("publish", {
+              tool: createTool("publish", () => {
+                throw new Error(`publish failed for account ${personal}`);
+              }),
+            }),
+          ],
+        }).definition,
+      );
+
+      const handle = await executor.start("leaky-error-workflow", {});
+      await handle.settled();
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      const nodeSpan = byName(spans, "workflow.node publish");
+      const runSpan = byName(spans, "workflow.run");
+      assertExists(nodeSpan);
+      assertExists(runSpan);
+
+      // Still visible to errored-span queries.
+      assertEquals(nodeSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(runSpan.status.code, SpanStatusCode.ERROR);
+
+      for (const span of spans) {
+        assertEquals(
+          (span.status.message ?? "").includes(personal),
+          false,
+          `${span.name} leaked the error message into its span status`,
+        );
+        for (const event of span.events) {
+          for (const value of Object.values(event.attributes ?? {})) {
+            assertEquals(
+              String(value).includes(personal),
+              false,
+              `${span.name} leaked the error message into the ${event.name} event`,
+            );
+          }
+        }
+      }
+    } finally {
+      await tracing.dispose();
+    }
+  });
 });
