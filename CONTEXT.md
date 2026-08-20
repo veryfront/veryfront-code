@@ -99,3 +99,14 @@ Replay Reconciliation which tool occurrences are authoritative, maps each role's
 parts into provider content, and settles into one `ProviderModelMessage[]`.
 Message preparation and the compatibility layer are callers; neither re-derives
 the mapping.
+
+## Workflow Run Identity
+
+A **run** is one backend-persisted execution record of a workflow definition, identified by
+the id `WorkflowHandle.runId` returns. It survives across processes, and it may be _executed_
+more than once: a run that pauses at a wait node or a pending approval is resumed later as a
+fresh execution of the same run. Composite nodes muddy the word — `parallel`, `branch` and
+`subWorkflow` each construct a second record of the same shape while executing their children,
+with a generated id that is never persisted and cannot be looked up. Only the root persisted
+id identifies a run to anything outside the process, so callers, the backends and
+observability all key on it.
