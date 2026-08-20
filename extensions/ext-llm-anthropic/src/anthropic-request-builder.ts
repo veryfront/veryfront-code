@@ -2482,6 +2482,9 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
   };
 
   apply(objectAssign, Object, [body, rawProviderOptions]);
+  if (outputConfig) {
+    body.output_config = outputConfig;
+  }
   if (thinkingBudget !== undefined || providerThinkingBudget !== undefined) {
     body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
   }

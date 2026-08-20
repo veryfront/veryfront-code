@@ -3727,6 +3727,35 @@ describe("anthropic-provider", () => {
       assertEquals(settings(result), []);
     });
 
+    it("keeps requested output_config ahead of raw provider options", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          captured = JSON.parse(readRequestBody(init) ?? "{}");
+          return Promise.resolve(okResponse());
+        },
+      }, "claude-sonnet-4-20250514");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      };
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        providerOptions: {
+          anthropic: {
+            output_config: { format: { type: "text" } },
+          },
+        },
+        responseFormat: { type: "json_schema", name: "Person", schema },
+      });
+
+      const body = captured as { output_config?: unknown } | null;
+      assertEquals(body!.output_config, { format: { type: "json_schema", schema } });
+    });
+
     it("advertises structured output support", () => {
       const runtime = createAnthropicModelRuntime({
         apiKey: "k",

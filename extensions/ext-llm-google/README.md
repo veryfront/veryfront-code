@@ -211,7 +211,12 @@ A response format maps to Gemini generation config keys. `type: "json"` sets
 `responseMimeType` alone; `type: "json_schema"` adds `responseSchema`:
 
 ```json
-{ "generationConfig": { "responseMimeType": "application/json", "responseSchema": { "type": "object" } } }
+{
+  "generationConfig": {
+    "responseMimeType": "application/json",
+    "responseSchema": { "type": "object" }
+  }
+}
 ```
 
 Gemini has no counterpart for the format name, description, or strict flag, so
@@ -256,10 +261,10 @@ When `requestLabels` is set, it takes precedence. Otherwise, `userId` is sent as
 
 The following settings emit `unsupported-setting` warnings and are silently dropped:
 
-| Setting            | Reason                                                                                              |
-| ------------------ | --------------------------------------------------------------------------------------------------- |
-| `presencePenalty`  | Gemini `generateContent` does not accept presence penalty.                                          |
-| `frequencyPenalty` | Gemini `generateContent` does not accept frequency penalty.                                         |
+| Setting            | Reason                                                      |
+| ------------------ | ----------------------------------------------------------- |
+| `presencePenalty`  | Gemini `generateContent` does not accept presence penalty.  |
+| `frequencyPenalty` | Gemini `generateContent` does not accept frequency penalty. |
 
 ## Error Handling
 
