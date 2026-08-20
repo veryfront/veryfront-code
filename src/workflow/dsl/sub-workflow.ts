@@ -27,6 +27,7 @@ export function subWorkflow(id: string, options: SubWorkflowOptions): WorkflowNo
 
   const config: SubWorkflowNodeConfig = {
     type: "subWorkflow",
+    description: options.description,
     workflow: options.workflow,
     checkpoint: options.checkpoint,
     retry: options.retry,

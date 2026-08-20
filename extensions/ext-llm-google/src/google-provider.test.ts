@@ -219,6 +219,57 @@ describe("ext-llm-google/google-provider", () => {
     });
   });
 
+  it("emits Gemini responseMimeType and responseJsonSchema when responseFormat is structured", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              candidates: [{
+                content: { role: "model", parts: [{ text: "{}" }] },
+                finishReason: "STOP",
+              }],
+              usageMetadata: {
+                promptTokenCount: 1,
+                candidatesTokenCount: 1,
+                totalTokenCount: 2,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "gemini-2.0-flash");
+
+    const schema = {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    };
+    await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      responseFormat: { type: "json_schema", name: "Person", schema, strict: true },
+    });
+
+    const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
+    assertEquals(requestBody.generationConfig.responseMimeType, "application/json");
+    assertEquals(requestBody.generationConfig.responseJsonSchema, schema);
+  });
+
+  it("advertises structured output support", () => {
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: () => Promise.reject(new Error("not called")),
+    }, "gemini-2.0-flash");
+    assertEquals(runtime.runtimeCapabilities?.structuredOutput, true);
+  });
+
   it("sends image URL user parts as Google fileData content", async () => {
     let requestedInit: RequestInit | undefined;
 

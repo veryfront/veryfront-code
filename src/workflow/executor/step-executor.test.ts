@@ -289,3 +289,49 @@ describe("StepExecutor timeout isolation", () => {
     assertEquals(signals.every((signal) => signal?.aborted), true);
   });
 });
+
+describe("StepExecutor run scoping", () => {
+  it("passes the run id to every step lifecycle hook", async () => {
+    const started: Array<[string, string | undefined]> = [];
+    const completed: Array<[string, string | undefined]> = [];
+
+    const executor = new StepExecutor({
+      toolRegistry: {
+        get: () => ({
+          id: "echo",
+          execute: () => ({ ok: true }),
+        }),
+      } as never,
+      onStepStart: (nodeId, _input, runId) => started.push([nodeId, runId]),
+      onStepComplete: (nodeId, _output, runId) => completed.push([nodeId, runId]),
+    });
+
+    const node = { id: "s1", config: { type: "step", tool: "echo" } } as never;
+    await executor.execute(node, { input: {} } as never, undefined, "run-abc");
+
+    assertEquals(started, [["s1", "run-abc"]]);
+    assertEquals(completed, [["s1", "run-abc"]]);
+  });
+
+  it("reports the run id for a failing step", async () => {
+    const errors: Array<[string, string | undefined]> = [];
+
+    const executor = new StepExecutor({
+      toolRegistry: {
+        get: () => ({
+          id: "boom",
+          execute: () => {
+            throw new Error("nope");
+          },
+        }),
+      } as never,
+      onStepError: (nodeId, _error, runId) => errors.push([nodeId, runId]),
+    });
+
+    const node = { id: "s2", config: { type: "step", tool: "boom" } } as never;
+    const result = await executor.execute(node, { input: {} } as never, undefined, "run-xyz");
+
+    assertEquals(result.success, false);
+    assertEquals(errors, [["s2", "run-xyz"]]);
+  });
+});

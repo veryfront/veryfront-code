@@ -10,6 +10,10 @@ import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import { createGoogleModelRuntime } from "../../../extensions/ext-llm-google/src/google-provider.ts";
 import { reconcileGoogleProviderMetadata } from "../../../extensions/ext-llm-google/src/google-thought-signatures.ts";
 
+function readRequestBody(init: unknown): string {
+  return String((init as { body?: unknown } | undefined)?.body);
+}
+
 const providerMetadata = {
   google: {
     rawAssistantParts: [{
@@ -279,7 +283,7 @@ describe("agent provider metadata continuation", () => {
       apiKey: "test-google-key",
       baseURL: "https://example.google.test/v1beta",
       fetch: (_input, init) => {
-        requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        requestBodies.push(JSON.parse(readRequestBody(init)) as Record<string, unknown>);
         const responseParts = requestBodies.length === 1
           ? [
             encoder.encode(
@@ -504,7 +508,7 @@ describe("agent provider metadata continuation", () => {
       apiKey: "test-google-key",
       baseURL: "https://example.google.test/v1beta",
       fetch: (_input, init) => {
-        requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        requestBodies.push(JSON.parse(readRequestBody(init)) as Record<string, unknown>);
         const responseParts = requestBodies.length === 1
           ? [
             encoder.encode(
@@ -682,7 +686,7 @@ describe("agent provider metadata continuation", () => {
       apiKey: "test-google-key",
       baseURL: "https://example.google.test/v1beta",
       fetch: (_input, init) => {
-        requestBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        requestBodies.push(JSON.parse(readRequestBody(init)) as Record<string, unknown>);
         const responseParts = requestBodies.length === 1
           ? [
             encoder.encode(

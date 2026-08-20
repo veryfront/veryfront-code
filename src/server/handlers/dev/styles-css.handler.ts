@@ -9,6 +9,8 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
+import { hasMatchingEtag } from "../utils/etag.ts";
+import { hashCSS } from "#veryfront/html/styles-builder/css-identity.ts";
 import {
   acquireCSSGenerationSession,
   type CSSGenerationSession,
@@ -49,6 +51,7 @@ type StyleArtifactSelectorContext = Omit<ResolveStyleArtifactInput, "styleProfil
 
 /** Longest diagnostic text embedded in a served stylesheet. */
 const MAX_DIAGNOSTIC_LENGTH = 2_000;
+const SUCCESSFUL_CSS_CACHE = { maxAge: 0, mustRevalidate: true } as const;
 
 /**
  * Neutralize the only sequence that can terminate a CSS comment (a star
@@ -126,12 +129,34 @@ export class StylesCSSHandler extends BaseHandler {
     enabled: () => true,
   };
 
+  /**
+   * Serve a generated stylesheet with a validator.
+   *
+   * The route is `Cache-Control: no-cache`, so the browser revalidates before
+   * every use. Without an ETag that revalidation is a full download; with one it
+   * is a 304. This is the only place a CSS body becomes a response, so the
+   * validator is attached here rather than at each call site.
+   */
+  private respondCSS(
+    builder: ReturnType<BaseHandler["createResponseBuilder"]>,
+    req: Request,
+    css: string,
+  ): HandlerResult {
+    const etag = `"${hashCSS(css)}"`;
+    if (hasMatchingEtag(req, etag)) {
+      return this.respond(builder.notModified(etag));
+    }
+    return this.respond(
+      builder.withETag(etag).withContentType("text/css; charset=utf-8", css, HTTP_OK),
+    );
+  }
+
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
 
     try {
       return await this.withProxyContext(ctx, async () => {
-        const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
+        const responseBuilder = this.createResponseBuilder(ctx).withCache(SUCCESSFUL_CSS_CACHE);
         const projectScope = ctx.projectSlug ?? ctx.projectDir;
         const styleProfile = createStyleScopeProfile(ctx.config);
         const contentContext = this.getContentContext(ctx);
@@ -209,9 +234,7 @@ export class StylesCSSHandler extends BaseHandler {
               cssHash: prepared.hash,
             });
 
-            return this.respond(
-              responseBuilder.withContentType("text/css; charset=utf-8", prepared.css, HTTP_OK),
-            );
+            return this.respondCSS(responseBuilder, req, prepared.css);
           }
         }
 
@@ -233,9 +256,7 @@ export class StylesCSSHandler extends BaseHandler {
             cssHash: remotePrepared.hash,
           });
 
-          return this.respond(
-            responseBuilder.withContentType("text/css; charset=utf-8", remotePrepared.css, HTTP_OK),
-          );
+          return this.respondCSS(responseBuilder, req, remotePrepared.css);
         }
 
         let result: GeneratedStylesResult;
@@ -294,9 +315,7 @@ export class StylesCSSHandler extends BaseHandler {
           );
         }
 
-        return this.respond(
-          responseBuilder.withContentType("text/css; charset=utf-8", result.css, HTTP_OK),
-        );
+        return this.respondCSS(responseBuilder, req, result.css);
       });
     } catch (error) {
       // Ensure the handler never throws: an uncaught error causes the route registry

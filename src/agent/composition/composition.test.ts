@@ -20,6 +20,14 @@ import { parseInvokeAgentStreamValue } from "#veryfront/chat/invoke-agent-stream
 
 const BRIDGE_KEYS = ["__vfGetAgent", "__vfRegisterAgent", "__vfGetAllAgentIds"] as const;
 
+type AgentGenerateFixture = (input: Parameters<Agent["generate"]>[0]) => Promise<AgentResponse>;
+
+function createGenerateStub(generate: AgentGenerateFixture): Agent["generate"] {
+  return (async (input: Parameters<Agent["generate"]>[0]) => {
+    return await generate(input);
+  }) as Agent["generate"];
+}
+
 describe("globalThis agent registry bridges", () => {
   it("should tolerate repeated module evaluation", async () => {
     await import("./composition.ts?duplicate-agent-bridge-test");
@@ -114,7 +122,7 @@ function createMinimalAgent(id: string): Agent {
       model: "anthropic/claude-sonnet-4-6",
       system: "Test agent",
     },
-    generate: () => Promise.resolve(response),
+    generate: createGenerateStub(async () => response),
     async stream(input): Promise<AgentStreamResult> {
       input.onFinish?.(response);
       return {
@@ -157,10 +165,10 @@ describe("agentAsTool", () => {
         model: "anthropic/claude-sonnet-4-6",
         system: "Child agent",
       },
-      async generate() {
+      generate: createGenerateStub(async () => {
         generated = true;
         return childResponse;
-      },
+      }),
       async stream(input): Promise<AgentStreamResult> {
         streamedInput = input.input;
         input.onFinish?.(childResponse);

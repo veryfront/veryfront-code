@@ -4,9 +4,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
+import { DAGExecutor } from "./dag/index.ts";
 import { map, parallel, step, subWorkflow, workflow } from "../dsl/index.ts";
+import { StepExecutor } from "./step-executor.ts";
 import { WorkflowExecutor } from "./workflow-executor.ts";
-import type { WorkflowRun } from "../types.ts";
+import type { WorkflowNode, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import * as otelApi from "npm:@opentelemetry/api@1.9.1";
 import { AsyncLocalStorageContextManager } from "npm:@opentelemetry/context-async-hooks@2.9.0";
@@ -207,6 +209,63 @@ describe("workflow/executor tracing", () => {
       assertExists(nested.attributes["workflow.sub_run_id"]);
       // The synthetic sub-run id must never masquerade as the run id.
       assertEquals(nested.attributes["workflow.sub_run_id"] === rootRunId, false);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("keeps DAG child trace run id separate from the lifecycle hook run id", async () => {
+    const tracing = installRealTracing();
+    try {
+      const hookRunIds: Array<string | undefined> = [];
+      const dag = new DAGExecutor({
+        stepExecutor: new StepExecutor({
+          toolRegistry: {
+            get: () => createTool("child", () => ({ ok: true })),
+          },
+          onStepStart: (_nodeId, _input, runId) => hookRunIds.push(runId),
+        }),
+      });
+      const nodes: WorkflowNode[] = [step("child", { tool: "child" })];
+      const syntheticRun: WorkflowRun = {
+        id: "synthetic-child-run",
+        workflowId: "trace-run-id-regression",
+        status: "running",
+        input: {},
+        context: { input: {} },
+        nodeStates: {},
+        currentNodes: [],
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+      };
+
+      await (dag as unknown as {
+        executeUnwrapped(
+          nodes: WorkflowNode[],
+          run: WorkflowRun,
+          rootRunId: string,
+          startFromNode?: string,
+          abortSignal?: AbortSignal,
+          ownership?: unknown,
+          executionRunId?: string,
+        ): Promise<unknown>;
+      }).executeUnwrapped(
+        nodes,
+        syntheticRun,
+        "durable-root-run",
+        undefined,
+        undefined,
+        undefined,
+        "durable-hook-run",
+      );
+      await tracing.provider.forceFlush();
+
+      const nodeSpan = byName(tracing.exporter.getFinishedSpans(), "workflow.node child");
+      assertExists(nodeSpan);
+      assertEquals(nodeSpan.attributes["workflow.run_id"], "durable-root-run");
+      assertEquals(hookRunIds, ["durable-hook-run"]);
     } finally {
       await tracing.dispose();
     }

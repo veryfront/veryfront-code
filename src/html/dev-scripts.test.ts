@@ -14,7 +14,7 @@ describe("html/dev-scripts", () => {
     it("returns the preview utility stylesheet link", () => {
       const link = getPreviewStylesheetLink();
       assertEquals(link.includes('id="vf-project-css"'), true);
-      assertEquals(link.includes("/_vf_styles/styles.css?t="), true);
+      assertEquals(link.includes('/_vf_styles/styles.css"'), true);
     });
   });
 

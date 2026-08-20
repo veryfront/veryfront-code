@@ -167,6 +167,8 @@ export type RuntimeResponseFormat =
     strict?: boolean;
   };
 
+export type RuntimeStructuredOutputVariant = Exclude<RuntimeResponseFormat["type"], "text">;
+
 /**
  * Canonical request contract passed to `ModelRuntime` generation hooks.
  *
@@ -205,8 +207,14 @@ export interface ModelRuntimeCapabilities {
    * legacy behavior: false for legacy local runtimes and true otherwise.
    */
   readonly toolCalling?: boolean;
-  /** Whether the runtime accepts JSON or JSON-schema response formats. */
-  readonly structuredOutput?: boolean;
+  /**
+   * Whether the runtime accepts structured response formats.
+   *
+   * `true` means every provider-neutral structured variant is accepted. An
+   * array narrows support to specific variants, for providers that support
+   * JSON Schema but not schemaless JSON mode.
+   */
+  readonly structuredOutput?: boolean | readonly RuntimeStructuredOutputVariant[];
 }
 
 /** Public API contract for model runtime. */

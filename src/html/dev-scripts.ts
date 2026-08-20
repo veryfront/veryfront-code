@@ -2,7 +2,14 @@ import { buildNonceAttribute } from "./html-escape.ts";
 import { PROJECT_STYLESHEET_ID } from "./project-stylesheet-ids.ts";
 
 export function getPreviewStylesheetLink(): string {
-  return `<link id="${PROJECT_STYLESHEET_ID}" rel="stylesheet" href="/_vf_styles/styles.css?t=${Date.now()}">`;
+  // Deliberately a stable URL. The route serves this stylesheet with
+  // `Cache-Control: no-cache` plus an ETag, so the browser already revalidates
+  // before every use and gets a 304 when nothing changed. A per-render
+  // cache-busting query defeats that: each render asks for a URL the cache has
+  // never seen, forcing a full download of a blocking stylesheet on every page
+  // view. Dev reloads stay fresh through the same revalidation, and the HMR
+  // client re-points this link explicitly when styles change.
+  return `<link id="${PROJECT_STYLESHEET_ID}" rel="stylesheet" href="/_vf_styles/styles.css">`;
 }
 
 export function getDevStyles(nonce?: string): string {

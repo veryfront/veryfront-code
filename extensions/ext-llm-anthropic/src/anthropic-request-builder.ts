@@ -153,6 +153,7 @@ type AnthropicCompatibleRequest = {
   stop_sequences?: string[];
   tools?: Array<Record<string, unknown>>;
   tool_choice?: unknown;
+  output_config?: { format: Record<string, unknown> };
   [key: string]: unknown;
 };
 
@@ -2210,6 +2211,38 @@ function getAnthropicModelCapabilities(
   return { maxOutputTokens: 4096, isKnownModel: false };
 }
 
+/**
+ * Map a framework response format onto Anthropic `output_config`.
+ *
+ * The Messages API constrains generation with
+ * `output_config.format = { type: "json_schema", schema }`. There is no
+ * schemaless JSON mode, so `{ type: "json" }` is reported as dropped rather
+ * than approximated.
+ */
+function buildAnthropicOutputConfig(
+  responseFormat: ModelRuntimeCallOptions["responseFormat"],
+  warnings: WarningCollector,
+): { format: Record<string, unknown> } | undefined {
+  if (!responseFormat || responseFormat.type === "text") return undefined;
+  if (responseFormat.type === "json") {
+    warnings.push({
+      type: "unsupported-setting",
+      provider: "anthropic",
+      setting: "responseFormat",
+      details:
+        "Anthropic output_config requires a schema; schemaless JSON mode is unavailable. Pass a json_schema response format instead.",
+    });
+    return undefined;
+  }
+
+  return {
+    format: {
+      type: "json_schema",
+      schema: unwrapToolInputSchema(responseFormat.schema),
+    },
+  };
+}
+
 function resolveAnthropicMaxTokens(
   modelId: string,
   callerMaxOutputTokens: number | undefined,
@@ -2410,15 +2443,7 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
         "Dropped because Anthropic rejects sampling params when extended thinking is enabled.",
     });
   }
-  if (options.responseFormat && options.responseFormat.type !== "text") {
-    warnings.push({
-      type: "unsupported-setting",
-      provider: "anthropic",
-      setting: "responseFormat",
-      details:
-        "Anthropic Messages API does not have a structured-output response_format equivalent. Use a tool with the schema as input_schema instead.",
-    });
-  }
+  const outputConfig = buildAnthropicOutputConfig(options.responseFormat, warnings);
 
   const baseMaxTokens = resolveAnthropicMaxTokens(modelId, options.maxOutputTokens);
   const maxTokens = thinkingEnabled
@@ -2453,9 +2478,13 @@ export function buildAnthropicMessagesRequestWithCorrelationState(
       : {}),
     ...(mcpConfiguration ? { mcp_servers: mcpConfiguration.servers } : {}),
     ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
+    ...(outputConfig ? { output_config: outputConfig } : {}),
   };
 
   apply(objectAssign, Object, [body, rawProviderOptions]);
+  if (outputConfig) {
+    body.output_config = outputConfig;
+  }
   if (thinkingBudget !== undefined || providerThinkingBudget !== undefined) {
     body.thinking = { type: "enabled", budget_tokens: effectiveThinkingBudget };
   }

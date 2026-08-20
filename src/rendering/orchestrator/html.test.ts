@@ -624,7 +624,7 @@ describe("HTMLGenerator helpers", () => {
       }));
 
       assertEquals(html.includes('id="vf-project-css"'), true);
-      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
     });
 
     it("uses configured preview rendering for full HTML when the request omits it", async () => {
@@ -636,7 +636,7 @@ describe("HTMLGenerator helpers", () => {
       const html = await generator.generateFullHTML(createHTMLContext());
 
       assertEquals(html.includes('id="vf-project-css"'), true);
-      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
     });
 
     it("does not activate production CSS when a legacy request omits its environment", async () => {
@@ -1359,7 +1359,7 @@ describe("HTMLGenerator helpers", () => {
       const html = await new Response(responseStream).text();
 
       assertEquals(html.includes('id="vf-project-css"'), true);
-      assertEquals(html.includes("/_vf_styles/styles.css?t="), true);
+      assertEquals(html.includes('/_vf_styles/styles.css"'), true);
     });
 
     it("keeps production project stylesheet links for streamed full-document pages", async () => {
