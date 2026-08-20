@@ -13,6 +13,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import { dependsOn, workflow } from "../dsl/workflow.ts";
 import { step } from "../dsl/step.ts";
 import { branch } from "../dsl/branch.ts";
+import { subWorkflow } from "../dsl/sub-workflow.ts";
 import { waitForApproval } from "../dsl/wait.ts";
 import type { PendingApproval, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -83,6 +84,32 @@ describe("WorkflowClient", () => {
           condition: () => true,
           then: [waitForApproval("nested-review", { message: "Please review" })],
         }),
+        dependsOn(
+          step("publish", {
+            tool: createMockTool("publish-after-nested-approval", { published: true }),
+          }),
+          "review-gate",
+        ),
+      ],
+    });
+
+    const subWorkflowApprovalWorkflow = workflow({
+      id: "sub-workflow-nested-approval-workflow",
+      steps: [
+        subWorkflow("child-workflow", {
+          workflow: workflow({
+            id: "child-approval-workflow",
+            steps: [
+              waitForApproval("child-review", { message: "Review child workflow" }),
+            ],
+          }).definition,
+        }),
+        dependsOn(
+          step("publish-child", {
+            tool: createMockTool("publish-after-sub-workflow-approval", { published: "child" }),
+          }),
+          "child-workflow",
+        ),
       ],
     });
 
@@ -118,6 +145,45 @@ describe("WorkflowClient", () => {
       await client.approve(handle.runId, approval.id, "reviewer");
 
       assertEquals(await backend.getPendingApprovals(handle.runId), []);
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(run.status, "completed");
+      assertEquals(run.nodeStates["review-gate"]!.status, "completed");
+      assertEquals(run.nodeStates["publish"]!.status, "completed");
+      const output = run.output as Record<string, unknown>;
+      assertEquals(output.publish, { published: true });
+      assertEquals(
+        (output["review-gate/then/nested-review"] as { approved?: boolean }).approved,
+        true,
+      );
+    });
+
+    it("creates and resolves a pending approval nested in a sub-workflow", async () => {
+      client.register(subWorkflowApprovalWorkflow);
+
+      const handle = await client.start("sub-workflow-nested-approval-workflow", {});
+      await handle.settled();
+
+      const waitingRun = await backend.getRun(handle.runId);
+      assertExists(waitingRun);
+      assertEquals(waitingRun.status, "waiting");
+      assertEquals(waitingRun.currentNodes, ["child-review"]);
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.nodeId, "child-review");
+      assertEquals(approval.message, "Review child workflow");
+
+      await client.approve(handle.runId, approval.id, "reviewer");
+
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(run.status, "completed");
+      assertEquals(run.nodeStates["child-workflow"]!.status, "completed");
+      assertEquals(run.nodeStates["publish-child"]!.status, "completed");
+      const output = run.output as Record<string, unknown>;
+      assertEquals(output["publish-child"], { published: "child" });
     });
   });
 
@@ -257,7 +323,7 @@ describe("WorkflowClient", () => {
         type: "function",
         description: "Capture workflow tool context",
         inputSchema: defineSchema((v) => v.object({}).passthrough())(),
-        execute: (_input, context) => {
+        execute: async (_input, context) => {
           capturedContext = context;
           return {
             projectSlug: context?.projectSlug,
