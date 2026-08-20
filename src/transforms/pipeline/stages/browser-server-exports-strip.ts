@@ -129,6 +129,22 @@ function nodeName(value: unknown): string | null {
   return typeof name === "string" ? name : null;
 }
 
+function exportName(value: unknown): string | null {
+  return isNode(value) ? (stringLiteralText(value) ?? nodeName(value)) : null;
+}
+
+function mayNameServerOnlyExport(code: string): boolean {
+  if (!/\bexport\b/.test(code)) return false;
+  if (SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return true;
+
+  // String-literal export names can escape any character in the hook name:
+  // `export { loadIt as "get\u0053erverData" }`. Parse any module with a
+  // string-literal export name and let `exportName` normalize the AST value.
+  // This keeps ordinary non-export modules on the old no-parse path without
+  // trusting raw source text as proof that no server-only export exists.
+  return /\bexport\s*(?:\*\s+as|{[\s\S]*?\bas)\s+["']/.test(code);
+}
+
 function bodyOf(ast: ASTNode): Node[] {
   const program = (ast as { program?: unknown }).program;
   const source: Node = isNode(program) ? program : ast;
@@ -229,13 +245,14 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
     for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
       if (!isNode(specifier)) continue;
       if (specifier.exportKind === "type") continue;
-      if (!isHook(nodeName(specifier.exported))) continue;
+      const exported = exportName(specifier.exported);
+      if (!isHook(exported)) continue;
 
       // `export { x as getServerData } from "./loader"` never binds `x` here,
       // so there is no body to empty and the module it points at is still
       // pulled into the graph.
       if (isNode(statement.source)) {
-        unhandled.push(`export { … as ${nodeName(specifier.exported)} } from …`);
+        unhandled.push(`export { … as ${exported} } from …`);
         continue;
       }
 
@@ -1407,8 +1424,8 @@ export async function stripServerOnlyExports(
   code: string,
   filePath?: string,
 ): Promise<string> {
-  // Cheap pre-check: no mention of a hook means no parse.
-  if (!SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return code;
+  // Cheap pre-check: no plausible server-only export shape means no parse.
+  if (!mayNameServerOnlyExport(code)) return code;
 
   const parser = tryResolve<CodeParser>("CodeParser");
   if (!parser) {

@@ -164,6 +164,35 @@ describe("browser-server-exports-strip", () => {
       assertNotIncludes(result, "../lib/uses-crypto.js");
     });
 
+    it("empties a hook exported under an escaped string-literal alias", async () => {
+      const code = [
+        `import { hashOf } from "../lib/uses-crypto.js";`,
+        `const API_KEY = "sk-live-example";`,
+        `function loadIt() { return hashOf(API_KEY); }`,
+        `export { loadIt as "get\\u0053erverData" };`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "hashOf");
+      assertNotIncludes(result, "sk-live-example");
+      assertNotIncludes(result, "../lib/uses-crypto.js");
+    });
+
+    it("empties a hook exported under a direct string-literal alias", async () => {
+      const code = [
+        `import { hashOf } from "../lib/uses-crypto.js";`,
+        `function loadIt() { return hashOf("secret"); }`,
+        `export { loadIt as "getServerData" };`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "hashOf");
+      assertNotIncludes(result, "secret");
+      assertNotIncludes(result, "../lib/uses-crypto.js");
+    });
+
     it("empties a hook declared before a separate export clause", async () => {
       const code = [
         `function getStaticData() { return readSecret(); }`,
@@ -263,6 +292,14 @@ describe("browser-server-exports-strip", () => {
 
     it("fails the build when a hook is re-exported from another module", async () => {
       const code = `export { loadIt as getServerData } from "./loader.ts";`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
+    it("fails the build when an escaped string-literal hook is namespace re-exported", async () => {
+      const code = `export * as "get\\u0053erverData" from "./loader.ts";`;
 
       const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
 
