@@ -13,6 +13,7 @@ describe("embedding", () => {
     globalThis.fetch = originalFetch;
     deleteEnv("GOOGLE_API_KEY");
     deleteEnv("GOOGLE_GENERATIVE_AI_API_KEY");
+    deleteEnv("GOOGLE_GEMINI_BASE_URL");
     clearEmbeddingProviders();
   });
 
@@ -98,5 +99,31 @@ describe("embedding", () => {
     assertEquals(guardedCalls, 1);
     assertEquals(replacedGlobalCalls, 0);
     assertEquals(requestedApiKey, "google-test-key");
+  });
+
+  it("sends Google embedding requests to GOOGLE_GEMINI_BASE_URL", async () => {
+    // The chat path is covered in model-registry.test.ts. Embeddings resolve
+    // through a separate registration in embedding/resolve.ts, which had the
+    // same hardcoded endpoint, so it needs its own assertion.
+    ensureBuiltinLLMProviders();
+    setEnv("GOOGLE_API_KEY", "google-test-key");
+    setEnv("GOOGLE_GEMINI_BASE_URL", "https://example.com/gemini/v1beta");
+    let requestedUrl = "";
+
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      requestedUrl = new Request(input, init).url;
+      return Response.json({
+        embedding: { values: [0.5] },
+        usageMetadata: { promptTokenCount: 1 },
+      });
+    }) as typeof fetch;
+
+    const embedder = embedding({ model: "google/gemini-embedding-001" });
+    assertEquals(await embedder.embed("hello"), [0.5]);
+    assertEquals(
+      requestedUrl.startsWith("https://example.com/gemini/v1beta/"),
+      true,
+      requestedUrl,
+    );
   });
 });
