@@ -1,6 +1,7 @@
 import { getEnv, setEnv } from "veryfront/platform/env";
 import { cliLogger } from "veryfront/utils/logger";
 import denoConfig from "../../../deno.json" with { type: "json" };
+import { ensureCliSchemaValidator } from "../../shared/default-contracts.ts";
 import { isJsonMode } from "../../shared/json-output.ts";
 import { bold, brand, dim } from "../../ui/colors.ts";
 import {
@@ -50,6 +51,15 @@ export async function runStandaloneProxyRuntime(
   const bindAddress = getEnv("HOST") || "0.0.0.0";
   showProxyHeader();
   cliLogger.info(`Starting proxy server on ${bindAddress}:${port}`);
+
+  // The proxy verifies control-plane dispatch signatures (deployment routing
+  // invalidation among them), and claim parsing goes through a
+  // SchemaValidator-backed schema. Nothing else on this path registers one:
+  // `activateStandaloneProxyExtensions` only composes the infrastructure
+  // providers selected by CACHE_TYPE/REDIS_URL. Without this the proxy answers
+  // every signed request 401 before any signature is checked, so it must run
+  // before the runtime that serves those requests is imported.
+  await ensureCliSchemaValidator();
 
   const activateExtensions = dependencies.activateExtensions ??
     activateStandaloneProxyExtensions;

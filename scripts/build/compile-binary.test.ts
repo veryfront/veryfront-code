@@ -226,6 +226,10 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
       "ext-redis",
       "ext-observability-opentelemetry",
       "ext-observability-sentry",
+      // Anchors the SchemaValidator the proxy needs to verify control-plane
+      // dispatch signatures. It is reached only through a dynamic first-party
+      // import, which `deno compile` cannot trace.
+      "ext-schema-zod",
     ]
   ) {
     const extensionImportIndex = entrypoint.indexOf(
