@@ -126,5 +126,6 @@ export async function executeMapNodeStrategy(
     state,
     contextPatch: createSetContextPatch(result.completed ? { [node.id]: outputs } : {}),
     waiting: result.waiting,
+    waitingNode: result.waitingNode,
   };
 }
