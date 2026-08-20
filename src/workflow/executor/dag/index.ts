@@ -142,8 +142,8 @@ export class DAGExecutor {
             nodeMap.get(nodeId)!,
             contextSnapshots[i]!,
             nodeStateSnapshots[i]!,
-            executionRunId,
             rootRunId,
+            executionRunId,
             abortSignal,
             ownership,
           )
@@ -366,9 +366,9 @@ export class DAGExecutor {
               context,
               nodeStates,
               rootRunId,
+              executionRunId,
               attemptSignal,
               ownership,
-              executionRunId,
             ),
         });
       case "map":
@@ -388,10 +388,10 @@ export class DAGExecutor {
                     nodes,
                     run,
                     rootRunId,
+                    executionRunId,
                     options,
                     attemptSignal,
                     ownership,
-                    executionRunId,
                   ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
@@ -421,9 +421,9 @@ export class DAGExecutor {
               context,
               nodeStates,
               rootRunId,
+              executionRunId,
               attemptSignal,
               ownership,
-              executionRunId,
             );
           },
         });
@@ -441,9 +441,9 @@ export class DAGExecutor {
               config,
               context,
               rootRunId,
+              executionRunId,
               attemptSignal,
               ownership,
-              executionRunId,
             ),
         });
       case "loop":
@@ -463,10 +463,10 @@ export class DAGExecutor {
                     nodes,
                     run,
                     rootRunId,
+                    executionRunId,
                     undefined,
                     attemptSignal,
                     ownership,
-                    executionRunId,
                   ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
@@ -522,9 +522,9 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     rootRunId: string,
+    executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
-    executionRunId?: string,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -587,9 +587,9 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     rootRunId: string,
+    executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
-    executionRunId?: string,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -696,9 +696,9 @@ export class DAGExecutor {
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
     rootRunId: string,
+    executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
-    executionRunId?: string,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -811,10 +811,10 @@ export class DAGExecutor {
     nodes: WorkflowNode[],
     run: WorkflowRun,
     rootRunId: string,
+    executionRunId: string,
     options?: ChildGraphExecutionOptions,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
-    executionRunId = run.id,
   ): Promise<DAGInternalExecutionResult> {
     if (!options?.maxConcurrency) {
       return await this.executeUnwrapped(
