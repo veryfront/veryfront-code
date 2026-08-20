@@ -20,6 +20,7 @@ export function waitForApproval(id: string, options: WaitForApprovalOptions = {}
     id,
     config: {
       type: "wait",
+      description: options.description,
       waitType: "approval",
       message: options.message ?? "Approval required",
       payload: options.payload,
@@ -52,6 +53,7 @@ export function waitForEvent(id: string, options: WaitForEventOptions): Workflow
     id,
     config: {
       type: "wait",
+      description: options.description,
       waitType: "event",
       eventName: options.eventName,
       timeout: options.timeout,

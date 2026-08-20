@@ -62,7 +62,14 @@ const RETRY_KEYS = new Set([
   "backoff",
   "retryIf",
 ]);
-const COMMON_CONFIG_KEYS = ["type", "checkpoint", "retry", "timeout", "skip"] as const;
+const COMMON_CONFIG_KEYS = [
+  "type",
+  "description",
+  "checkpoint",
+  "retry",
+  "timeout",
+  "skip",
+] as const;
 const CONFIG_KEYS = {
   step: new Set([...COMMON_CONFIG_KEYS, "agent", "tool", "input"]),
   parallel: new Set([...COMMON_CONFIG_KEYS, "nodes", "strategy"]),
@@ -747,6 +754,10 @@ function captureDependencies(value: unknown, label: string): string[] | undefine
 }
 
 function captureCommonConfig(fields: ExactRecord, label: string) {
+  const description = fields.get("description");
+  // Bounded like every other captured text field: a node description is
+  // surfaced through workflow metadata and must not become an unbounded sink.
+  if (description !== undefined) assertString(description, `${label} description`);
   const checkpoint = fields.get("checkpoint");
   if (checkpoint !== undefined && typeof checkpoint !== "boolean") {
     fail(`${label} checkpoint must be a boolean`);
@@ -756,6 +767,7 @@ function captureCommonConfig(fields: ExactRecord, label: string) {
   const timeout = fields.get("timeout");
   if (timeout !== undefined) assertDurationValue(timeout, `${label} timeout`, true);
   return {
+    ...(description === undefined ? {} : { description: description as string }),
     checkpoint: checkpoint as boolean | undefined,
     retry: captureRetryConfig(fields.get("retry"), label),
     timeout: timeout as string | number | undefined,
