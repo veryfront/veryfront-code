@@ -962,6 +962,33 @@ describe("DAGExecutor", () => {
     });
   });
 
+  describe("run-scoped step hooks", () => {
+    it("threads the run id from ownership down to the step hooks", async () => {
+      const seen: Array<[string, string | undefined]> = [];
+      class RunIdCapturingExecutor extends StepExecutor {
+        override execute(
+          node: WorkflowNode,
+          _context: WorkflowContext,
+          _abortSignal?: AbortSignal,
+          runId?: string,
+        ): Promise<StepResult> {
+          seen.push([node.id, runId]);
+          return Promise.resolve({ success: true, output: node.id, executionTime: 1 });
+        }
+      }
+
+      const exec = new DAGExecutor({ stepExecutor: new RunIdCapturingExecutor() });
+      const nodes: WorkflowNode[] = [{ id: "only", config: { type: "step" } as any }];
+
+      await exec.execute(nodes, createTestRun(), undefined, undefined, {
+        runId: "run-42",
+        workerId: "worker-1",
+      });
+
+      assertEquals(seen, [["only", "run-42"]]);
+    });
+  });
+
   describe("loop resume (H9)", () => {
     it("should not re-run completed steps of an in-flight loop iteration on resume", async () => {
       let incrRuns = 0;

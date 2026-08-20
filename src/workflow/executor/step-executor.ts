@@ -136,9 +136,15 @@ export interface StepExecutorConfig {
   /** Max milliseconds to wait for an aborted step to settle before detaching it (default: 1000) */
   cancellationGracePeriod?: number;
   blobStorage?: BlobStorage;
-  onStepStart?: (nodeId: string, input: unknown) => void;
-  onStepComplete?: (nodeId: string, output: unknown) => void;
-  onStepError?: (nodeId: string, error: Error) => void;
+  /**
+   * Step lifecycle hooks. `runId` scopes the event to one run: without it a
+   * progress channel built on these hooks is process-global and two concurrent
+   * runs interleave with no way to tell them apart. It is optional because a
+   * StepExecutor can be driven outside a run (tests, ad-hoc execution).
+   */
+  onStepStart?: (nodeId: string, input: unknown, runId?: string) => void;
+  onStepComplete?: (nodeId: string, output: unknown, runId?: string) => void;
+  onStepError?: (nodeId: string, error: Error, runId?: string) => void;
 }
 
 export interface StepResult {
@@ -160,6 +166,7 @@ export class StepExecutor {
     node: WorkflowNode,
     context: WorkflowContext,
     abortSignal?: AbortSignal,
+    runId?: string,
   ): Promise<StepResult> {
     const startTime = Date.now();
     const config = node.config as StepNodeConfig;
@@ -189,7 +196,7 @@ export class StepExecutor {
         const output = await runWithWorkflowTenant(tenant, async () => {
           const resolvedInput = await this.resolveInput(config.input, context);
           abortSignal?.throwIfAborted();
-          this.config.onStepStart?.(node.id, resolvedInput);
+          this.config.onStepStart?.(node.id, resolvedInput, runId);
 
           const timeout = config.timeout
             ? parseDuration(config.timeout)
@@ -206,7 +213,7 @@ export class StepExecutor {
 
         abortSignal?.throwIfAborted();
         setActiveSpanAttributes({ "workflow.node.attempts": attempt });
-        this.config.onStepComplete?.(node.id, output);
+        this.config.onStepComplete?.(node.id, output, runId);
 
         return {
           success: true,
@@ -229,7 +236,7 @@ export class StepExecutor {
         }
 
         setActiveSpanAttributes({ "workflow.node.attempts": attempt });
-        this.config.onStepError?.(node.id, lastError);
+        this.config.onStepError?.(node.id, lastError, runId);
 
         return {
           success: false,

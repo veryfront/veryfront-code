@@ -348,7 +348,7 @@ export class DAGExecutor {
 
     switch (config.type) {
       case "step":
-        return this.executeStepNode(node, context, abortSignal);
+        return this.executeStepNode(node, context, abortSignal, ownership);
       case "parallel":
         return executeCompositeNodeWithPolicy({
           node,
@@ -462,8 +462,14 @@ export class DAGExecutor {
     node: WorkflowNode,
     context: WorkflowContext,
     abortSignal?: AbortSignal,
+    ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
-    const result = await this.config.stepExecutor.execute(node, context, abortSignal);
+    const result = await this.config.stepExecutor.execute(
+      node,
+      context,
+      abortSignal,
+      ownership?.runId,
+    );
     abortSignal?.throwIfAborted();
 
     const state: NodeState = {
