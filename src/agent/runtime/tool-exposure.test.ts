@@ -230,6 +230,41 @@ it("tool search scores fallback terms by selectivity after a phrase miss", () =>
   );
 });
 
+it("tool search misses when a common verb is the only match in a realistic catalog", () => {
+  const realisticCatalog = [
+    ...Array.from(
+      { length: 30 },
+      (_, index) =>
+        definition(
+          `list_catalog_${String(index).padStart(3, "0")}`,
+          `List catalog item ${String(index).padStart(3, "0")}`,
+        ),
+    ),
+    ...Array.from(
+      { length: 100 },
+      (_, index) =>
+        definition(
+          `catalog_tool_${String(index + 30).padStart(3, "0")}`,
+          "Catalog tool",
+        ),
+    ),
+  ];
+
+  assertEquals(
+    searchToolExposure({
+      query: "list emails",
+      authorized: realisticCatalog,
+      state: createToolExposureState(),
+    }),
+    {
+      matches: [],
+      resultCount: 0,
+      loadedCount: 0,
+      miss: true,
+    },
+  );
+});
+
 it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
   const search = createToolSearchDefinition();
   const querySchema = (search.parameters as {

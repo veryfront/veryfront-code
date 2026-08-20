@@ -27,14 +27,6 @@ const TOOL_SEARCH_FIELD_WEIGHTS: Record<ToolSearchMatchField, number> = {
   description: 2,
   parameterDescription: 1,
 };
-/**
- * A term matching more than half the catalog carries no information about which
- * tool the caller meant. `log(2)` is exactly the inverse-document-frequency of a
- * term present in half the candidates, so it is the point where a term stops
- * discriminating. Below it a term may still contribute score, but it can never
- * be the sole reason a candidate is returned.
- */
-const TOOL_SEARCH_MIN_SELECTIVE_IDF = Math.LN2;
 const TOOL_SEARCH_QUERY_MAX_BYTES = 256;
 const TOOL_SEARCH_CANDIDATE_LIMIT = 4_096;
 const TOOL_SEARCH_NAME_MAX_BYTES = 256;
@@ -401,23 +393,28 @@ function scoreToolExposureTerms(
     }
     return {
       term,
+      documentFrequency,
       inverseDocumentFrequency: documentFrequency === 0
         ? 0
         : Math.log((total + 1) / (documentFrequency + 0.5)),
     };
   });
+  const averageDocumentFrequency = weightedTerms.reduce(
+    (sum, { documentFrequency }) => sum + documentFrequency,
+    0,
+  ) / weightedTerms.length;
 
   const scored: { score: number; match: ToolSearchMatch }[] = [];
   for (const candidate of candidates) {
     let score = 0;
     let matchedTermCount = 0;
     let matchedSelectiveTerm = false;
-    for (const { term, inverseDocumentFrequency } of weightedTerms) {
+    for (const { term, documentFrequency, inverseDocumentFrequency } of weightedTerms) {
       const field = getMatchedField(term, candidate);
       if (field === null) continue;
       matchedTermCount += 1;
       score += inverseDocumentFrequency * TOOL_SEARCH_FIELD_WEIGHTS[field];
-      if (inverseDocumentFrequency >= TOOL_SEARCH_MIN_SELECTIVE_IDF) matchedSelectiveTerm = true;
+      if (documentFrequency <= averageDocumentFrequency) matchedSelectiveTerm = true;
     }
     // Selectivity suppresses filler, which only means anything when there is
     // something better to prefer. A candidate matching *every* term is not filler
