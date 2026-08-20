@@ -29,6 +29,11 @@ export interface ResolvedCachedDependencies {
   crossProjectPaths: Map<string, string>;
 }
 
+export interface DependencyTransformCacheOptions {
+  skipDistributedCache?: boolean;
+  skipMdxPathCache?: boolean;
+}
+
 /**
  * Whether cached transformed code points at every dependency output produced
  * from the current source tree.
@@ -98,6 +103,7 @@ export class SSRDependencyValidator {
       depth: number,
       dependencyHashCache: DependencyHashCache,
       signal?: AbortSignal,
+      options?: DependencyTransformCacheOptions,
     ) => Promise<ModuleCacheEntry>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
@@ -246,6 +252,7 @@ export class SSRDependencyValidator {
     localFs: ReturnType<typeof createFileSystem>,
     dependencyHashCache: DependencyHashCache,
     signal?: AbortSignal,
+    options?: DependencyTransformCacheOptions,
   ): Promise<Map<string, string>> {
     throwIfAborted(signal);
     const importPathMap = new Map<string, string>();
@@ -263,6 +270,7 @@ export class SSRDependencyValidator {
               depth + 1,
               dependencyHashCache,
               signal,
+              options,
             );
 
             importPathMap.set(imp.specifier, depEntry.tempPath);
