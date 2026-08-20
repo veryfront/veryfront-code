@@ -135,6 +135,25 @@ describe("agent output schema", () => {
       assertEquals(response.object.tempC, 12);
     });
 
+    it("should apply default output filtering to structured objects", async () => {
+      const calls: ModelRuntimeCallOptions[] = [];
+      const model = createRecordingModel(
+        '{"city":"john@example.com","tempC":12}',
+        calls,
+      );
+      const weather = agent({
+        id: "weather-generate-filtered-object",
+        system: "You report weather.",
+        outputSchema: getTemperatureSchema(),
+        resolveModelTransport: () => Promise.resolve({ model }),
+      });
+
+      const response = await weather.generate({ input: "Berlin?" });
+
+      assertEquals(response.text, '{"city":"[EMAIL]","tempC":12}');
+      assertEquals(response.object, { city: "[EMAIL]", tempC: 12 });
+    });
+
     it("should leave an agent without a schema unchanged", async () => {
       const calls: ModelRuntimeCallOptions[] = [];
       const model = createRecordingModel("Twelve degrees.", calls);

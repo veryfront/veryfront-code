@@ -394,11 +394,13 @@ export default agent({
 ```
 
 ```ts
-import { getAgent } from "veryfront/agent";
+import { agent } from "veryfront/agent";
 import { getForecastSchema } from "./weather.ts";
 
-const weather = getAgent("weather");
-if (!weather) throw new Error("Agent not found: weather");
+const weather = agent({
+  id: "weather",
+  system: "You report weather.",
+});
 
 const result = await weather.generate({
   input: "What is it like in Berlin?",
