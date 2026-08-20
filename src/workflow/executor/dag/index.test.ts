@@ -1047,6 +1047,32 @@ describe("DAGExecutor", () => {
       assertExists(result.nodeStates["before"]);
       assertEquals(result.nodeStates["before"]!.status, "completed");
     });
+
+    it("removes child node states from previous dynamic loop iterations", async () => {
+      const nodes: WorkflowNode[] = [
+        {
+          id: "the-loop",
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => loop.iteration < 2,
+            steps: (_context: WorkflowContext, loop: LoopExecutionContext) => [
+              {
+                id: loop.iteration === 0 ? "old-child" : "current-child",
+                config: { type: "step" } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["old-child"], undefined);
+      assertExists(result.nodeStates["current-child"]);
+      assertEquals(result.nodeStates["current-child"]!.status, "completed");
+    });
   });
 
   describe("loop resume (H9)", () => {
