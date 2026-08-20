@@ -60,3 +60,12 @@ export const MAX_REMOTE_INTEGRATION_TOOL_SCHEMA_BYTES = 16_384;
 
 /** Prevent recursively consumed provider schemas from approaching stack limits. */
 export const MAX_REMOTE_INTEGRATION_TOOL_SCHEMA_DEPTH = 64;
+
+/**
+ * Maximum server-resolved integration tool names carried in one run grant.
+ *
+ * The grant travels as a claim on the run-event writer token, so this bound is
+ * what keeps the request header inside the few-kilobyte budget that ingress
+ * proxies enforce. It mirrors the control plane's own cap.
+ */
+export const MAX_GRANTED_INTEGRATION_TOOL_NAMES = 100;

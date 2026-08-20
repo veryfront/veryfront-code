@@ -244,22 +244,25 @@ describe("agent/agent-service-auth", () => {
       }),
     });
 
+    // The verifier reports the token's claims rather than a bare boolean, so
+    // a caller can read the integration grant it carries. The binding itself is
+    // unchanged: `verified` is true only for the exact project and run.
     assertEquals(
-      await auth.verifyRunEventAppendToken({
+      (await auth.verifyRunEventAppendToken({
         token: fixture.token,
         projectId: "11111111-1111-4111-8111-111111111111",
         runId: "run_1",
-      }),
+      })).verified,
       true,
     );
-    assertEquals(
-      await auth.verifyRunEventAppendToken({
-        token: fixture.token,
-        projectId: "11111111-1111-4111-8111-111111111111",
-        runId: "run_other",
-      }),
-      false,
-    );
+    const wrongRun = await auth.verifyRunEventAppendToken({
+      token: fixture.token,
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_other",
+    });
+    assertEquals(wrongRun.verified, false);
+    // A rejected token must not leak a grant to the caller either.
+    assertEquals(wrongRun.integrationTools, undefined);
   });
 
   it("temporarily accepts the exact route-only v1 writer credential", async () => {
@@ -280,11 +283,11 @@ describe("agent/agent-service-auth", () => {
     });
 
     assertEquals(
-      await auth.verifyRunEventAppendToken({
+      (await auth.verifyRunEventAppendToken({
         token: fixture.token,
         projectId: v1Payload.projectId,
         runId: v1Payload.runId,
-      }),
+      })).verified,
       true,
     );
   });
@@ -363,14 +366,13 @@ describe("agent/agent-service-auth", () => {
           VERYFRONT_API_URL: "https://api.example.test",
         }),
       });
-      assertEquals(
-        await auth.verifyRunEventAppendToken({
-          token: fixture.token,
-          projectId: "11111111-1111-4111-8111-111111111111",
-          runId: "run_1",
-        }),
-        false,
-      );
+      const rejected = await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "run_1",
+      });
+      assertEquals(rejected.verified, false);
+      assertEquals(rejected.integrationTools, undefined);
     }
   });
 

@@ -131,6 +131,11 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   maxSteps?: number;
   maxOutputTokens?: number;
   allowedTools?: string[];
+  /**
+   * Integration tools the control plane resolved for this run. Verified before
+   * it reaches here, and used only to widen the Veryfront API MCP allowlist.
+   */
+  serverResolvedIntegrationToolNames?: readonly string[];
   /** Provider-native selection kept separate from local and MCP tool bindings. */
   allowedProviderTools?: string[];
   /** Preserve skill runtime infrastructure for a config-derived empty tool selector. */

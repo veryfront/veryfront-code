@@ -124,6 +124,8 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
   /** Trusted checkpoint resolved after hosted service authentication. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified integration tool grant for this run, resolved by the control plane. */
+  serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
   resolveModelId: (modelId: string | undefined) => string | undefined;
@@ -268,6 +270,8 @@ export type HostedChatExecutionPreparationInput<
   contextBudget?: HostedChatContextBudgetOptions;
   /** Trusted checkpoint resolved by the authenticated hosted service. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** Verified integration tool grant for this run, resolved by the control plane. */
+  serverResolvedIntegrationToolNames?: readonly string[];
   /** Service-owned authorization ceiling for Framework host tools. */
   hostToolPolicy?: HostedHostToolPolicy;
 };
@@ -425,6 +429,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
       ...(input.serverResolvedToolExposureCheckpoint
         ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
+        : {}),
+      ...(input.serverResolvedIntegrationToolNames?.length
+        ? { serverResolvedIntegrationToolNames: input.serverResolvedIntegrationToolNames }
         : {}),
       ...(input.request.allowDelegation !== undefined
         ? { allowDelegation: input.request.allowDelegation }
