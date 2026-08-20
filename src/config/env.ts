@@ -103,8 +103,16 @@ export function getAnthropicEnvConfig(): {
 
 export function getGoogleGenAIEnvConfig(): {
   apiKey?: string;
+  baseURL?: string;
 } {
-  return { apiKey: getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY") };
+  return {
+    apiKey: getEnv("GOOGLE_API_KEY") || getEnv("GOOGLE_GENERATIVE_AI_API_KEY"),
+    // GOOGLE_GEMINI_BASE_URL is the name Google's own gemini-cli uses for a
+    // custom Gemini Developer API endpoint (proxy or regional). Vertex AI is a
+    // different backend, not a base URL override: it has its own URL shape and
+    // uses ADC rather than an API key.
+    baseURL: getEnv("GOOGLE_GEMINI_BASE_URL") || undefined,
+  };
 }
 
 export function getMistralEnvConfig(): {
