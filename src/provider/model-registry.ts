@@ -234,7 +234,11 @@ function autoInitializeFromEnv(): void {
     if (provider) {
       return provider.createModel(id, {
         credential: config.apiKey,
-        fetch: createOriginBoundOutboundFetch(DEFAULT_GOOGLE_BASE_URL),
+        baseURL: config.baseURL,
+        // The outbound fetch is origin-bound, so it has to track the same base
+        // URL the request builders use. Pinning it to the default would reject
+        // every request to a custom endpoint.
+        fetch: createOriginBoundOutboundFetch(config.baseURL ?? DEFAULT_GOOGLE_BASE_URL),
       });
     }
     throw toError(

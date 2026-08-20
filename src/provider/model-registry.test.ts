@@ -19,6 +19,7 @@ const MODEL_REGISTRY_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
   "GOOGLE_API_KEY",
   "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GOOGLE_GEMINI_BASE_URL",
   "MISTRAL_API_KEY",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_PROJECT_SLUG",
@@ -348,6 +349,41 @@ describe("provider/model-registry", () => {
     assertStrictEquals(prepareThis, runtime);
     assertStrictEquals(prepareSignal, abortController.signal);
     await ensureModelReady(testRuntime("plain", "model"));
+  });
+
+  it("routes env-backed Google models through GOOGLE_GEMINI_BASE_URL", async () => {
+    // The outbound fetch is origin-bound. If it stayed pinned to the default
+    // Google origin while the request builders used the custom one, every call
+    // to a proxy or regional endpoint would be rejected before it was sent.
+    setEnv("GOOGLE_API_KEY", "AIza-test");
+    setEnv("GOOGLE_GEMINI_BASE_URL", "https://example.com/gemini/v1beta");
+    let requestedUrl = "";
+
+    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requestedUrl = request.url;
+      return new Response(
+        JSON.stringify({
+          candidates: [{
+            content: { role: "model", parts: [{ text: "ok" }] },
+            finishReason: "STOP",
+          }],
+          usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 1, totalTokenCount: 3 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const runtime = resolveModel("google/gemini-3.5-flash");
+    await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+
+    assertEquals(
+      requestedUrl.startsWith("https://example.com/gemini/v1beta/"),
+      true,
+      requestedUrl,
+    );
   });
 
   it("routes env-backed OpenAI reasoning models with tools through Responses", async () => {
