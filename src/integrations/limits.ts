@@ -25,6 +25,12 @@ export const MAX_INTEGRATION_API_ERROR_RESPONSE_BYTES = 4 * 1024;
 /** Maximum number of remote tool definitions admitted atomically. */
 export const MAX_REMOTE_INTEGRATION_TOOL_DEFINITIONS = 1_000;
 
+/** Maximum exact catalog tool grants admitted into one local integration source. */
+export const MAX_LOCAL_INTEGRATION_TOOLS = 256;
+
+/** Maximum canonical environment-variable name accepted from local catalog metadata. */
+export const MAX_LOCAL_INTEGRATION_CREDENTIAL_NAME_LENGTH = 128;
+
 /** Maximum caller or environment credential length admitted into an HTTP header. */
 export const MAX_REMOTE_INTEGRATION_API_TOKEN_LENGTH = 16_384;
 
@@ -54,3 +60,12 @@ export const MAX_REMOTE_INTEGRATION_TOOL_SCHEMA_BYTES = 16_384;
 
 /** Prevent recursively consumed provider schemas from approaching stack limits. */
 export const MAX_REMOTE_INTEGRATION_TOOL_SCHEMA_DEPTH = 64;
+
+/**
+ * Maximum server-resolved integration tool names carried in one run grant.
+ *
+ * The grant travels as a claim on the run-event writer token, so this bound is
+ * what keeps the request header inside the few-kilobyte budget that ingress
+ * proxies enforce. It mirrors the control plane's own cap.
+ */
+export const MAX_GRANTED_INTEGRATION_TOOL_NAMES = 100;

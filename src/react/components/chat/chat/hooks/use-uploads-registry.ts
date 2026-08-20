@@ -39,8 +39,6 @@ export interface UseAttachmentsOptions {
    * removes. Usually {@link createChatUploadHandler}'s route. @default "/api/uploads"
    */
   url?: string;
-  /** @deprecated Renamed to `url`. */
-  api?: string;
   /** localStorage key for the persisted list. @default "vf-uploads" */
   storageKey?: string;
   /** Extra headers sent with upload / delete requests. */
@@ -354,8 +352,7 @@ export function useAttachments(
   options: UseAttachmentsOptions = {},
 ): UseAttachmentsResult & UseAttachmentsStorageState & UseAttachmentsRequestState {
   const { storageKey = "vf-uploads", headers } = options;
-  // `url` is canonical; `api` is the deprecated alias.
-  const endpoint = options.url ?? options.api ?? "/api/uploads";
+  const endpoint = options.url ?? "/api/uploads";
   const headersKey = stableHeadersKey(headers);
   const headersRef = React.useRef(headers);
   useIsomorphicLayoutEffect(() => {
@@ -747,16 +744,3 @@ export function useAttachments(
     refresh,
   };
 }
-
-/**
- * @deprecated Renamed to {@link useAttachments}. The registry is the headless
- * attachments primitive; the new name matches the `Attachment*` components.
- * Kept as an alias for back-compat.
- */
-export const useUploadsRegistry = useAttachments;
-
-/** @deprecated Renamed to {@link UseAttachmentsOptions}. */
-export type UseUploadsRegistryOptions = UseAttachmentsOptions;
-
-/** @deprecated Renamed to {@link UseAttachmentsResult}. */
-export type UseUploadsRegistryResult = UseAttachmentsResult;

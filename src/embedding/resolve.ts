@@ -83,7 +83,8 @@ function autoInitializeFromEnv(): void {
       if (provider?.createEmbedding) {
         return provider.createEmbedding(id, {
           credential: config.apiKey,
-          fetch: createOriginBoundOutboundFetch(DEFAULT_GOOGLE_BASE_URL),
+          baseURL: config.baseURL,
+          fetch: createOriginBoundOutboundFetch(config.baseURL ?? DEFAULT_GOOGLE_BASE_URL),
         });
       }
       throw toError(

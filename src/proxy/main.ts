@@ -91,6 +91,7 @@ import {
   ProxyRequestDrainTracker,
 } from "./request-drain.ts";
 import {
+  createProxyRoutingInvalidationRejectionThrottle,
   handleProxyRoutingInvalidationRequest,
   PROXY_ROUTING_INVALIDATION_PATH,
 } from "./routing-invalidation.ts";
@@ -252,6 +253,12 @@ if (isProduction() && !routingInvalidationBus) {
     "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
   );
 }
+
+// The invalidation endpoint answers on the same public listener as ordinary
+// traffic and has no source-IP guard, so anyone can drive its rejection path.
+// Coalescing keeps a flood from becoming an equal flood of proxy log writes;
+// the first rejection of each class still warns immediately.
+const routingInvalidationRejectionThrottle = createProxyRoutingInvalidationRejectionThrottle();
 
 // Validate configuration on startup
 const missingCredentials = proxyHandler.validateConfig();
@@ -738,7 +745,9 @@ async function router(req: Request): Promise<Response> {
       response = await handleWebSocketUpgrade(req, url);
     } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
       response = await handleProxyRoutingInvalidationRequest(req, {
+        logger: proxyLogger,
         publisher: routingInvalidationBus,
+        rejectionThrottle: routingInvalidationRejectionThrottle,
       });
     } else if (url.pathname === "/_proxy/stats") {
       response = Object.keys(proxyHandler.localProjects).length === 0

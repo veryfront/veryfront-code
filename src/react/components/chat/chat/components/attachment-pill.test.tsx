@@ -61,10 +61,12 @@ describe("AttachmentPill — composability contract", () => {
     );
   });
 
-  it("accepts a per-sub-component icon override on .Remove", () => {
+  it("accepts a per-sub-component icon override as .Remove children", () => {
     const html = renderToString(
       <AttachmentPill attachment={readyFile} onRemove={() => undefined}>
-        <AttachmentPill.Remove icon={<span data-testid="custom-remove">x</span>} />
+        <AttachmentPill.Remove>
+          <span data-testid="custom-remove">x</span>
+        </AttachmentPill.Remove>
       </AttachmentPill>,
     );
     assertStringIncludes(html, "custom-remove");

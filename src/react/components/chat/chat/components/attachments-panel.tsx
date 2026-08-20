@@ -408,8 +408,6 @@ export interface AttachmentsPanelItemRemoveProps {
   /** Replace the default glyph. The canonical path (RFC 2980: a leaf renders its
    * default icon when childless; pass children to replace it). */
   children?: React.ReactNode;
-  /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
-  icon?: React.ReactNode;
   /** React 19: ref is a regular prop (threaded to the button). */
   ref?: React.Ref<HTMLButtonElement>;
 }
@@ -419,7 +417,7 @@ export interface AttachmentsPanelItemRemoveProps {
  * `onRemoveUpload` for this item. Renders nothing when no remove handler is set.
  */
 function AttachmentsPanelItemRemove(
-  { className, children, icon, ref }: AttachmentsPanelItemRemoveProps,
+  { className, children, ref }: AttachmentsPanelItemRemoveProps,
 ): React.JSX.Element | null {
   const { attachment } = useAttachmentPill();
   const { onRemoveUpload } = useAttachmentsPanel();
@@ -435,7 +433,7 @@ function AttachmentsPanelItemRemove(
       aria-label={`Remove ${attachment.name}`}
       className={cn("shrink-0", className)}
     >
-      {children ?? icon ?? <TrashIcon />}
+      {children ?? <TrashIcon />}
     </Button>
   );
 }

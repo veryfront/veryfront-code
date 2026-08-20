@@ -17,7 +17,11 @@ import {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
 } from "../hosted/chat-request-parser.ts";
 import { executeHostedDurableChatRun } from "../hosted/durable-chat-run-start.ts";
-import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "./auth.ts";
+import {
+  type HostedServiceAuthenticatedRequest,
+  HostedServiceAuthError,
+  type HostedServiceRunEventAppendTokenVerification,
+} from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import { isResponseLike } from "./response-like.ts";
@@ -112,7 +116,7 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
     token: string;
     projectId: string;
     runId: string;
-  }) => Promise<boolean>;
+  }) => Promise<HostedServiceRunEventAppendTokenVerification>;
   tracker: DetachedRunTracker<AgUiResumeValue>;
   prepareExecution: (req: ParsedHostedChatRequest) => Promise<TExecution>;
   streamExecutionToAgUiResponse: (

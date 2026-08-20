@@ -663,7 +663,9 @@ describe("ToolCall — composability contract", () => {
   it("injects a slot: Trigger accepts a custom icon", () => {
     const html = renderToString(
       <ToolCall tool={cardTool}>
-        <ToolCall.Trigger icon={<span>MY_ICON</span>} />
+        <ToolCall.Trigger>
+          <span>MY_ICON</span>
+        </ToolCall.Trigger>
       </ToolCall>,
     );
     assertStringIncludes(html, "MY_ICON");

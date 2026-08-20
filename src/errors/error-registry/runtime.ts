@@ -65,6 +65,30 @@ export const MIDDLEWARE_ERROR = defineError({
   suggestion: "Check middleware function for errors",
 });
 
+export const LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE = defineError({
+  slug: "local-integration-credential-unavailable",
+  category: "RUNTIME",
+  status: 503,
+  title: "Local integration credential is unavailable",
+  suggestion: "Check the local credential provider and retry",
+});
+
+export const LOCAL_INTEGRATION_REQUEST_FAILED = defineError({
+  slug: "local-integration-request-failed",
+  category: "RUNTIME",
+  status: 502,
+  title: "Local integration request failed",
+  suggestion: "Check the provider status and local integration configuration, then retry",
+});
+
+export const LOCAL_INTEGRATION_RESPONSE_INVALID = defineError({
+  slug: "local-integration-response-invalid",
+  category: "RUNTIME",
+  status: 502,
+  title: "Local integration response is invalid",
+  suggestion: "Check the provider response contract and retry",
+});
+
 /** Trigger target (task or workflow) not found during local run */
 export const TRIGGER_TARGET_NOT_FOUND = defineError({
   slug: "trigger-target-not-found",
@@ -103,6 +127,9 @@ export const RUNTIME_REGISTRY = {
   "page-not-found": PAGE_NOT_FOUND,
   "api-error": API_ERROR,
   "middleware-error": MIDDLEWARE_ERROR,
+  "local-integration-credential-unavailable": LOCAL_INTEGRATION_CREDENTIAL_UNAVAILABLE,
+  "local-integration-request-failed": LOCAL_INTEGRATION_REQUEST_FAILED,
+  "local-integration-response-invalid": LOCAL_INTEGRATION_RESPONSE_INVALID,
   "trigger-target-not-found": TRIGGER_TARGET_NOT_FOUND,
   "trigger-execution-failed": TRIGGER_EXECUTION_FAILED,
   "trigger-not-supported": TRIGGER_NOT_SUPPORTED,

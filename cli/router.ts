@@ -58,10 +58,13 @@ const commands: Record<string, CommandLoader> = {
   "schedule": async () => (await import("./commands/schedule/handler.ts")).handleScheduleCommand,
   "schedules": async () => (await import("./commands/schedules/handler.ts")).handleSchedulesCommand,
   "login": async () => async (args) => {
-    const { parseLoginMethod, parseProvider } = await import("./auth/utils.ts");
-    const provider = parseProvider(args);
+    const { hasProviderFlag, parseLoginMethod, reportRemovedProviderFlag } = await import(
+      "./auth/utils.ts"
+    );
     const method = parseLoginMethod(args);
-    if (isJsonMode() && (provider || method)) {
+    // --json keeps its structured usage error, including for the removed
+    // --provider flag: machine-readable output must never become prose.
+    if (isJsonMode() && (hasProviderFlag(args) || method)) {
       await outputCliJsonError("login", {
         code: "USAGE_ERROR",
         slug: "invalid-arguments",
@@ -71,31 +74,17 @@ const commands: Record<string, CommandLoader> = {
       exitProcess(2);
       return;
     }
-    // Every branch reports failure the same way: exit non-zero so scripts can
-    // tell a failed login from a successful one, whichever credential was asked for.
-    if (provider === "anthropic") {
-      const { loginAnthropic } = await import("./auth/providers/anthropic.ts");
-      if (!await loginAnthropic()) exitProcess(1);
-      return;
-    }
-    if (provider === "openai") {
-      const { loginOpenAI } = await import("./auth/providers/openai.ts");
-      if (!await loginOpenAI(args["base-url"] as string | undefined)) exitProcess(1);
+    if (await reportRemovedProviderFlag("login", args)) {
+      exitProcess(2);
       return;
     }
     const { login } = await import("./auth/index.ts");
     if (!await login(method)) exitProcess(1);
   },
   "logout": async () => async (args) => {
-    const { parseProvider } = await import("./auth/utils.ts");
-    const provider = parseProvider(args);
-    if (provider) {
-      const { deleteProviderToken } = await import(
-        "./auth/provider-store.ts"
-      );
-      await deleteProviderToken(provider);
-      const { logSuccess } = await import("./utils/index.ts");
-      logSuccess(`${provider} API key removed`);
+    const { reportRemovedProviderFlag } = await import("./auth/utils.ts");
+    if (await reportRemovedProviderFlag("logout", args)) {
+      exitProcess(2);
       return;
     }
     const { logout } = await import("./auth/index.ts");

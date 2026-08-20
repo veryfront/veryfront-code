@@ -100,6 +100,11 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
   mcpServers?: readonly AgentServiceMcpServerConfig[];
+  /**
+   * Integration tools the control plane resolved for this run, already verified
+   * upstream. They widen the Veryfront API MCP allowlist for this run only.
+   */
+  serverResolvedIntegrationToolNames?: readonly string[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   allowedProviderToolNames?: HostedChatRuntimeAllowedToolNames;
@@ -129,6 +134,41 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   /** Exact project-source restriction applied before tool inventory is exposed. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
 };
+
+/**
+ * Widen the Veryfront API MCP server's allowlist with a run's server-resolved
+ * integration tools.
+ *
+ * The product policy that hosts ship is a static allowlist, so a project's
+ * connected integration tools are absent from it by construction. This adds
+ * exactly the names the control plane resolved for this run, and only to the
+ * `veryfront-api` server. A server that denies a name keeps denying it, and an
+ * unrestricted server (no `allow`) is left alone because it already permits
+ * everything.
+ */
+export function augmentVeryfrontApiMcpServerPolicy(
+  mcpServers: readonly AgentServiceMcpServerConfig[] | undefined,
+  integrationToolNames: readonly string[] | undefined,
+): readonly AgentServiceMcpServerConfig[] | undefined {
+  if (!mcpServers || !integrationToolNames || integrationToolNames.length === 0) {
+    return mcpServers;
+  }
+
+  return mcpServers.map((server) => {
+    if (server.kind !== "veryfront-api" || !server.toolPolicy?.allow) {
+      return server;
+    }
+    const denied = new Set(server.toolPolicy.deny ?? []);
+    const allow = new Set(server.toolPolicy.allow);
+    for (const toolName of integrationToolNames) {
+      if (!denied.has(toolName)) allow.add(toolName);
+    }
+    return {
+      ...server,
+      toolPolicy: { ...server.toolPolicy, allow: [...allow] },
+    };
+  });
+}
 
 function applyHostedHostToolPolicy(
   tools: HostToolSet,
@@ -322,7 +362,10 @@ export async function prepareHostedChatRuntimeToolAssembly<
     authToken: input.taskContext.authToken,
     apiMcpUrl: input.apiMcpUrl,
     studioMcpUrl: input.studioMcpUrl,
-    mcpServers: input.mcpServers,
+    mcpServers: augmentVeryfrontApiMcpServerPolicy(
+      input.mcpServers,
+      input.serverResolvedIntegrationToolNames,
+    ),
     clientProfile: input.taskContext.clientProfile,
     createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
     defaultProjectId: () => activeProjectId(input.taskContext),

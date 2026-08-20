@@ -12,12 +12,13 @@ account for scheduled or project-owned automation.
 
 - A Salesforce administrator for the target org.
 - A Veryfront project with Salesforce tools declared in an agent.
-- The hosted Veryfront API for per-user OAuth, or the local Salesforce service
-  account source for self-hosted execution. The generic runtime does not
-  scaffold Salesforce OAuth routes. An embedding host that supplies another
-  Salesforce adapter must declare
+- The hosted Veryfront API for per-user OAuth, which supplies the Salesforce
+  provider adapter. The generic runtime does not scaffold Salesforce OAuth
+  routes. An embedding host that supplies its own Salesforce adapter must declare
   `VERYFRONT_HOST_ADAPTER_INTEGRATIONS=salesforce` to expose the connector
   catalog. This does not enable generic Salesforce scaffolding.
+- For account-free local service-account execution, a Veryfront Code project
+  and Salesforce service-account credentials in its environment.
 
 ## Connect a Salesforce user
 
@@ -79,6 +80,36 @@ All three variables are required. If any service-account variable is missing,
 Veryfront fails closed and does not fall back to a human OAuth connection for
 non-interactive runs. Rotate the consumer secret in Salesforce and update the
 project environment variable through the approved secret-management workflow.
+
+### Run Salesforce locally
+
+Create an exact-grant local source, load its tools, and pass them to an agent:
+
+```ts
+import { agent } from "veryfront/agent";
+import { createLocalIntegrationToolSource } from "veryfront/integrations";
+import { loadRemoteToolsFromSource } from "veryfront/tool";
+
+const source = createLocalIntegrationToolSource({
+  tools: ["salesforce__find_customer"],
+});
+const integrationTools = await loadRemoteToolsFromSource(source);
+
+export default agent({
+  system: "Use Salesforce when the user asks about a customer.",
+  tools: integrationTools,
+});
+```
+
+This path needs no Veryfront account, project token, or hosted integration API.
+It reads the three service-account variables from the active project environment,
+exchanges them at the configured Salesforce My Domain, and sends the resulting
+bearer token only to that org's returned My Domain instance. Raw credentials and
+tokens never enter the tool definition, model prompt, arguments, logs, or URLs.
+
+Local Salesforce execution supports the catalog's fixed REST tools and the
+client-credentials service account only. Keep using managed execution for a
+Salesforce user's authorization-code OAuth connection.
 
 For a local or self-hosted project, create a source with
 `createSalesforceServiceAccountToolSource` from `veryfront/integrations`, then

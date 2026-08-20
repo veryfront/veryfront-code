@@ -411,6 +411,59 @@ export function promptSync(message?: string): string | null {
   return globalThis.prompt(message ?? "") ?? null;
 }
 
+/** @internal Minimal `node:fs` surface used for synchronous stdin reads. */
+export interface NodeReadSyncFs {
+  readSync(
+    fd: number,
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: null,
+  ): number;
+}
+
+const STDIN_FD = 0;
+
+/** How long to park before re-reading a raw TTY that has no byte ready yet. */
+const STDIN_EAGAIN_SLEEP_MS = 5;
+
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    // SharedArrayBuffer is unavailable under some sandboxes; spin instead.
+  }
+}
+
+/**
+ * @internal Exported for tests: the Node branch of {@link readStdinByteSync}.
+ *
+ * libuv puts a raw-mode TTY in non-blocking mode, so `readSync` throws EAGAIN
+ * every time the user has not typed yet. That means "nothing ready", not EOF —
+ * treating it as EOF ends the read before a single keystroke arrives.
+ */
+export function testReadStdinByteSyncNode(
+  fs: NodeReadSyncFs,
+  buf: Uint8Array,
+  sleep: (ms: number) => void = sleepSync,
+): number | null {
+  while (true) {
+    try {
+      const n = fs.readSync(STDIN_FD, buf, 0, 1, null);
+      return n ? buf[0] ?? null : null;
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code === "EAGAIN") {
+        sleep(STDIN_EAGAIN_SLEEP_MS);
+        continue;
+      }
+      // Windows reports a closed stdin as EOF. Any other error leaves us with
+      // no way to read a byte, and null is how this reader says "stop".
+      return null;
+    }
+  }
+}
+
 /**
  * Read a single byte from stdin synchronously.
  * Requires raw mode to be enabled for character-by-character reading.
@@ -438,5 +491,16 @@ export function readStdinByteSync(): number | null {
     return null;
   }
 
-  return null;
+  // Node: `node:fs` is resolved lazily so this module stays importable in
+  // runtimes without it. getBuiltinModule needs Node 22.3+, which the npm
+  // CLI entrypoint already requires before loading the bundled JS.
+  const getBuiltinModule = (runtimeProcess as
+    | { getBuiltinModule?: (specifier: string) => unknown }
+    | null)?.getBuiltinModule;
+  if (typeof getBuiltinModule !== "function") return null;
+
+  const fs = getBuiltinModule.call(runtimeProcess, "node:fs") as NodeReadSyncFs | undefined;
+  if (typeof fs?.readSync !== "function") return null;
+
+  return testReadStdinByteSyncNode(fs, buf);
 }

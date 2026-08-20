@@ -9,8 +9,6 @@ export interface AgentOption {
   name: string;
   /** Avatar image URL (matches `AgentMetadata.avatarUrl`); initials shown when absent/null. */
   avatarUrl?: string | null;
-  /** @deprecated Use `avatarUrl`. */
-  avatarSrc?: string;
   /** Dims the row and blocks selection. */
   disabled?: boolean;
 }

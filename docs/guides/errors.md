@@ -74,6 +74,20 @@ Configuration validation failed.
 - **HTTP status:** 400
 - **What to do:** Check configuration values against requirements
 
+### local-integration-config-invalid
+
+Invalid local integration configuration.
+
+- **HTTP status:** 400
+- **What to do:** Use exact catalog tool IDs and supported local credential and endpoint contracts
+
+### local-integration-credentials-missing
+
+Local integration credentials are missing.
+
+- **HTTP status:** 400
+- **What to do:** Set the named environment variables or configure a credential provider
+
 ### webhook-config-invalid
 
 Invalid webhook configuration.
@@ -229,6 +243,27 @@ Middleware execution error.
 
 - **HTTP status:** 500
 - **What to do:** Check middleware function for errors
+
+### local-integration-credential-unavailable
+
+Local integration credential is unavailable.
+
+- **HTTP status:** 503
+- **What to do:** Check the local credential provider and retry
+
+### local-integration-request-failed
+
+Local integration request failed.
+
+- **HTTP status:** 502
+- **What to do:** Check the provider status and local integration configuration, then retry
+
+### local-integration-response-invalid
+
+Local integration response is invalid.
+
+- **HTTP status:** 502
+- **What to do:** Check the provider response contract and retry
 
 ### trigger-target-not-found
 
@@ -540,6 +575,13 @@ SSR output limit exceeded.
 - **HTTP status:** 500
 - **What to do:** Reduce the rendered HTML size or split the response into smaller pages
 
+### local-integration-request-invalid
+
+Local integration request is invalid.
+
+- **HTTP status:** 400
+- **What to do:** Pass only the documented tool arguments with their declared JSON types
+
 ## Development tooling
 
 Raised by the local development workflow.
@@ -755,6 +797,13 @@ Durable run event persistence failed.
 
 - **HTTP status:** 500
 - **What to do:** Correct invalid or oversized event data, or retry after durable event storage recovers
+
+### default-model-credential-mismatch
+
+Default model has no matching provider credential.
+
+- **HTTP status:** 400
+- **What to do:** Set the agent's model to a provider you have a key for, or use model: "auto"
 
 ## General
 

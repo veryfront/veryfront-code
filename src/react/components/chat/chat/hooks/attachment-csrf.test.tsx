@@ -226,7 +226,7 @@ describe("chat attachment CSRF", () => {
     const restoreDom = installDom();
     loadDocumentCookie();
     const edge = installXhrCsrfEdge();
-    const view = renderUpload({ api: "/api/uploads" });
+    const view = renderUpload({ url: "/api/uploads" });
     try {
       view.upload().upload([new File(["a"], "a.txt", { type: "text/plain" })]);
       await waitFor(() => edge.statuses.has("POST /api/uploads"));
@@ -243,7 +243,7 @@ describe("chat attachment CSRF", () => {
     const restoreDom = installDom();
     loadDocumentCookie();
     const edge = installXhrCsrfEdge();
-    const view = renderUpload({ api: "https://uploads.example.net/api/uploads" });
+    const view = renderUpload({ url: "https://uploads.example.net/api/uploads" });
     try {
       view.upload().upload([new File(["a"], "a.txt", { type: "text/plain" })]);
       await waitFor(() => edge.tokens.size > 0);

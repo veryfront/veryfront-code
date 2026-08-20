@@ -14,6 +14,13 @@ interface ClientCallCounts {
   listAllFiles: number;
   getFileContent: number;
   listFiles: number;
+  /**
+   * Every request that hits `GET /projects/{slug}/files` -- the full listing
+   * (`listAllFiles`) and each pattern probe (`listFiles`) alike. This is the
+   * number the production trace counts, so it is the number a render budget
+   * has to be expressed in.
+   */
+  listingRequests: number;
 }
 
 /**
@@ -28,6 +35,7 @@ function stubClient(
     listAllFiles: 0,
     getFileContent: 0,
     listFiles: 0,
+    listingRequests: 0,
   };
 
   const client = adapter.getClient() as unknown as {
@@ -39,6 +47,7 @@ function stubClient(
 
   client.listAllFiles = () => {
     counts.listAllFiles++;
+    counts.listingRequests++;
     return Promise.resolve(files.map((file) => ({ ...file })));
   };
   client.getFileContent = (path: string) => {
@@ -53,15 +62,34 @@ function stubClient(
     if (!file) return Promise.reject(new Error(`404 Not Found: ${path}`));
     return Promise.resolve(new TextEncoder().encode(file.content));
   };
-  client.listFiles = () => {
+  client.listFiles = (options?: { pattern?: string }) => {
     counts.listFiles++;
-    return Promise.resolve({ files: [] });
+    counts.listingRequests++;
+    const pattern = options?.pattern;
+    if (!pattern) return Promise.resolve({ files: files.map((file) => ({ ...file })) });
+    const matcher = new RegExp(
+      `^${
+        pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")
+      }$`,
+    );
+    return Promise.resolve({
+      files: files.filter((file) => matcher.test(file.path)).map((file) => ({ ...file })),
+    });
   };
 
   return counts;
 }
 
-function createDraftAdapter(files: StubFile[], cacheEnabled = true): {
+/**
+ * @param recoverableSnapshot Give the client a project id so the adapter's
+ * branch-miss snapshot recovery can actually run. Production previews always
+ * have one, so leaving it off hides every listing refetch that recovery costs.
+ */
+function createDraftAdapter(
+  files: StubFile[],
+  cacheEnabled = true,
+  recoverableSnapshot = false,
+): {
   adapter: VeryfrontFSAdapter;
   counts: ClientCallCounts;
 } {
@@ -74,6 +102,11 @@ function createDraftAdapter(files: StubFile[], cacheEnabled = true): {
     },
   });
   const counts = stubClient(adapter, files);
+
+  if (recoverableSnapshot) {
+    (adapter.getClient() as unknown as { getProjectId: () => string }).getProjectId = () =>
+      "project-123";
+  }
 
   adapter.setContentContext({
     sourceType: "branch",
@@ -666,6 +699,247 @@ describe("file list fan-out (issue inbox#32)", () => {
       await adapter.readTextFile("pages/index.tsx"),
       "export default 'v2';",
       "a queued replacement must keep the generation from when it was requested",
+    );
+  });
+
+  it("answers a preview root render's module probes from the single listing fetch", async () => {
+    // A default project's module graph, exactly as the listing returns it.
+    const modulePaths = [
+      "app/layout",
+      "pages/index",
+      "components/Welcome",
+      "components/app",
+      "components/Header",
+      "components/Footer",
+      "styles/globals",
+    ];
+    const files: StubFile[] = modulePaths.map((modulePath) => ({
+      path: `${modulePath}.tsx`,
+      content: `export const source = "${modulePath}";`,
+    }));
+    const { adapter, counts } = createDraftAdapter(files, true, true);
+
+    // `mdx.load_module_esm` -> `mdx.fetch_module` asks for every import
+    // specifier once per candidate extension. None of these spellings exist,
+    // and the listing this render already fetched says so.
+    const probedExtensions = [".js", ".jsx", ".ts", ".md", ".mdx"];
+    for (const modulePath of modulePaths) {
+      for (const extension of probedExtensions) {
+        assertEquals(
+          await adapter.exists(`${modulePath}${extension}`),
+          false,
+          `${modulePath}${extension} is not in the listing`,
+        );
+      }
+    }
+
+    // Freshness is unchanged: the listing still answers the real modules.
+    for (const file of files) {
+      assertEquals(await adapter.readTextFile(file.path), file.content);
+    }
+
+    assertEquals(
+      counts.listingRequests,
+      1,
+      "a preview root render must cost exactly one file-listing request",
+    );
+  });
+
+  it("stops trusting the listing for absent paths once a poke lands", async () => {
+    const files: StubFile[] = [
+      { path: "pages/index.tsx", content: "export default function Home() {}" },
+    ];
+    const { adapter, counts } = createDraftAdapter(files, true, true);
+
+    assertEquals(
+      await adapter.exists("components/Welcome.tsx"),
+      false,
+      "the file does not exist yet, and the listing is authoritative about that",
+    );
+    assertEquals(counts.listingRequests, 1, "the absent path must not cost a probe");
+
+    // The user creates the file; the WebSocket poke replaces the snapshot.
+    files.push({ path: "components/Welcome.tsx", content: "export const Welcome = 1;" });
+    const context = adapter.getContentContext();
+    if (!context) throw new Error("content context required");
+    const internals = adapter as unknown as {
+      replaceSourceSnapshot: (
+        cacheKey: string,
+        snapshotFiles: Array<{ path: string; content?: string }>,
+      ) => Promise<void>;
+    };
+    await internals.replaceSourceSnapshot(
+      buildFileListCacheKey(context),
+      files.map((file) => ({ ...file })),
+    );
+
+    assertEquals(
+      await adapter.exists("components/Welcome.tsx"),
+      true,
+      "a poked snapshot must retire the previous listing's authority, not serve its absence",
+    );
+    assertEquals(
+      await adapter.readTextFile("components/Welcome.tsx"),
+      "export const Welcome = 1;",
+      "the new file must be readable immediately after the poke",
+    );
+  });
+
+  it("still falls back to the API when no listing is available at all", async () => {
+    const { adapter } = createDraftAdapter([], true, true);
+
+    // No listing can be fetched, so nothing is authoritative: a miss must fall
+    // through to the API rather than being reported absent on no evidence.
+    const client = adapter.getClient() as unknown as {
+      listAllFiles: () => Promise<Array<{ path: string }>>;
+      searchFiles: (pattern: string) => Promise<Array<{ path: string }>>;
+    };
+    client.listAllFiles = () => Promise.reject(new Error("listing unavailable"));
+    let searched = 0;
+    client.searchFiles = (pattern: string) => {
+      searched++;
+      return Promise.resolve(
+        pattern === "components/Late.*" ? [{ path: "components/Late.tsx" }] : [],
+      );
+    };
+
+    assertEquals(
+      await adapter.resolveFile("components/Late"),
+      "components/Late.tsx",
+      "without any listing the API search must still run",
+    );
+    assertEquals(searched > 0, true, "the API fallback must not be disabled unconditionally");
+  });
+  it("still recovers a branch miss when the index is not authoritative", async () => {
+    // The fan-out gate disables snapshot recovery while the index can answer.
+    // Raised in review: nothing pinned that recovery still works when it
+    // cannot — i.e. that the gate narrows the path rather than closing it.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter, counts } = createDraftAdapter(files, true, true);
+
+    const before = counts.listFiles;
+    assertEquals(await adapter.resolveFile("app/added-later"), null);
+    assertEquals(
+      counts.listFiles > before,
+      true,
+      "a recoverable snapshot must still refresh when the index cannot answer",
+    );
+  });
+
+  it("lets index authority expire so a missed poke cannot wedge recovery shut", async () => {
+    // INDEX_AUTHORITY_LIMIT_MS is the only thing bounding a MISSED poke: a poke
+    // that never arrives would otherwise leave the gate closed forever against
+    // a listing that predates the edit.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter } = createDraftAdapter(files, true, true);
+    await adapter.resolveFile("app/page");
+
+    const statOps = (adapter as unknown as {
+      statOps: { isIndexAuthoritative(): boolean; indexBuiltAt: number };
+    }).statOps;
+    assertEquals(statOps.isIndexAuthoritative(), true, "fresh index answers authoritatively");
+
+    // Age the index past the window rather than sleeping through it.
+    statOps.indexBuiltAt = Date.now() - (5 * 60 * 1000 + 1);
+    assertEquals(
+      statOps.isIndexAuthoritative(),
+      false,
+      "authority must lapse so recovery turns back on without a poke",
+    );
+  });
+
+  it("renews index authority when an expired refresh finds the snapshot unchanged", async () => {
+    // The expiry above is a safety valve, not a budget: crossing it must cost
+    // ONE re-check, not one per probe. A preview open longer than the window
+    // whose refresh keeps confirming "nothing changed" must not slide back
+    // into the per-probe fan-out this whole change exists to remove.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter, counts } = createDraftAdapter(files, true, true);
+
+    // A preview that has been open a while: the listing is warm and a snapshot
+    // has been recorded, so later refreshes have a baseline to compare against
+    // and can come back unchanged.
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+    await adapter.refreshSourceSnapshot("test-warmup");
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+
+    const statOps = (adapter as unknown as {
+      statOps: { isIndexAuthoritative(): boolean; indexBuiltAt: number };
+    }).statOps;
+    assertEquals(statOps.isIndexAuthoritative(), true, "the warm index answers authoritatively");
+
+    // Five idle minutes pass. Age the index rather than sleeping through it.
+    statOps.indexBuiltAt = Date.now() - (5 * 60 * 1000 + 1);
+
+    // The first probe past the window re-checks the API, as designed.
+    const beforeFirstMiss = counts.listingRequests;
+    assertEquals(await adapter.exists("components/Missing-one.tsx"), false);
+    assertEquals(
+      counts.listingRequests > beforeFirstMiss,
+      true,
+      "the first probe past the window must re-check the listing against the API",
+    );
+
+    // That re-check confirmed the listing, so the index built from it describes
+    // the current snapshot again. Every later probe must be answered from it.
+    const afterFirstMiss = counts.listingRequests;
+    assertEquals(await adapter.exists("components/Missing-two.tsx"), false);
+    assertEquals(
+      counts.listingRequests,
+      afterFirstMiss,
+      "an unchanged refresh must renew index authority, not leave each later probe to re-check",
+    );
+  });
+
+  it("still sees an edit whose poke was missed once the renewed window lapses", async () => {
+    // The other half of the renewal: it must not turn "unchanged once" into
+    // "never re-check again". Each renewal buys exactly one more window, and
+    // an edit that arrives without a poke must be picked up when that lapses.
+    const files: StubFile[] = [{ path: "app/page.tsx", content: "export default () => null;" }];
+    const { adapter } = createDraftAdapter(files, true, true);
+
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+    await adapter.refreshSourceSnapshot("test-warmup");
+    assertEquals(await adapter.exists("app/page.tsx"), true);
+
+    const statOps = (adapter as unknown as {
+      statOps: { isIndexAuthoritative(): boolean; indexBuiltAt: number };
+    }).statOps;
+    const expire = () => {
+      statOps.indexBuiltAt = Date.now() - (5 * 60 * 1000 + 1);
+    };
+
+    // Window one lapses against an unchanged listing, so authority is renewed.
+    // Probe a path unrelated to the edit below: a path that misses while the
+    // window is open is memoised as a recent recovery failure, which would
+    // suppress the recovery this test is here to observe.
+    expire();
+    assertEquals(await adapter.exists("components/Unrelated.tsx"), false);
+    assertEquals(
+      statOps.isIndexAuthoritative(),
+      true,
+      "the confirming refresh renews the window",
+    );
+
+    // The user now creates the file and the poke never reaches us.
+    files.push({ path: "components/Welcome.tsx", content: "export const Welcome = 1;" });
+    assertEquals(
+      await adapter.exists("components/Welcome.tsx"),
+      false,
+      "inside the renewed window the index still answers from the confirmed listing",
+    );
+
+    // Window two lapses. The renewal bought a window, not immunity.
+    expire();
+    assertEquals(
+      await adapter.exists("components/Welcome.tsx"),
+      true,
+      "a missed poke must still surface once the renewed window expires",
+    );
+    assertEquals(
+      await adapter.readTextFile("components/Welcome.tsx"),
+      "export const Welcome = 1;",
+      "the recovered snapshot must serve the missed file's content",
     );
   });
 });

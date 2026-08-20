@@ -18,7 +18,7 @@ const CACHE_SAVE_ACTION =
 const MAX_SETUP_MINUTES = 5;
 const MAX_CACHE_SETUP_MINUTES = 10;
 const CACHE_PRODUCER_JOB = "tests";
-const CHROMIUM_STEP_MINUTES = 15;
+const CHROMIUM_STEP_MINUTES = 20;
 const CHROMIUM_OVERHEAD_MARGIN_SECONDS = 120;
 /**
  * How long an upstream outage on the two REQUIRED Deno downloads must be
