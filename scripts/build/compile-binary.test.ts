@@ -373,6 +373,37 @@ it("proxy release verifies lock freshness and publishes an exact SBOM", async ()
   }
 });
 
+it("release binaries carry the numbered RC version", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+  const jobStart = workflow.indexOf("  build-binaries:");
+  const jobEnd = workflow.indexOf("\n  prerelease:", jobStart);
+  const buildBinariesJob = workflow.slice(jobStart, jobEnd);
+
+  assertEquals(
+    buildBinariesJob.includes("needs: [version-check]"),
+    true,
+    "binary builds need the release version detected by version-check",
+  );
+  assertEquals(
+    buildBinariesJob.includes("Prepare RC build version"),
+    true,
+    "RC binaries must inject the numbered publish version before compiling",
+  );
+  assertEquals(
+    buildBinariesJob.includes(
+      "VERSION: ${{ needs.version-check.outputs.version }}.${{ github.run_number }}",
+    ),
+    true,
+    "binary and npm artifacts must use the same numbered RC version",
+  );
+  assertEquals(
+    buildBinariesJob.indexOf("Prepare RC build version") <
+      buildBinariesJob.indexOf("Prepare build dependencies"),
+    true,
+    "the RC version must be injected before generators bundle it",
+  );
+});
+
 it("local build matrix includes both Linux proxy architectures", async () => {
   const buildScript = await Deno.readTextFile("scripts/build/build-all.js");
 
