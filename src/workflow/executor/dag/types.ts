@@ -50,4 +50,11 @@ export interface NodeExecutionResult {
   state: NodeState;
   contextPatch: ContextPatch;
   waiting: boolean;
+  /**
+   * The node that actually suspended, when this node is a composite whose child
+   * graph is waiting. An approval is built from `nodeStates[waitingNode].input`,
+   * and a composite's own state has no `input`, so reporting the composite
+   * instead of its inner wait means no approval is ever created.
+   */
+  waitingNode?: string;
 }
