@@ -8,7 +8,7 @@ const logger = agentLogger.component("workflow-context");
 const MAX_REPORTED_PATHS = 5;
 
 /**
- * How deep the walk descends before handing the value back to `JSON.stringify`.
+ * @internal How deep the walk descends before handing the value back to JSON.
  *
  * This walk recurses and `JSON.stringify` does not, so a value nested a few
  * thousand levels deep exhausts the stack here while JSON encodes it without
@@ -17,7 +17,7 @@ const MAX_REPORTED_PATHS = 5;
  * this depth the diagnostic is dropped rather than the run: the value is
  * encoded the way the backend encoded it before this check existed.
  */
-const MAX_TRAVERSAL_DEPTH = 1000;
+export const MAX_TRAVERSAL_DEPTH = 1000;
 
 /** Ends a walk that ran past `MAX_TRAVERSAL_DEPTH`. Never leaves this module. */
 const TRAVERSAL_TOO_DEEP = new Error("workflow value nested deeper than the walk follows");

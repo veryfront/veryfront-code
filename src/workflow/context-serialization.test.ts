@@ -9,7 +9,18 @@ import {
   setLogLevel,
 } from "#veryfront/utils/logger/index.ts";
 import type { WorkflowContext } from "./types.ts";
-import { serializeWorkflowContext, serializeWorkflowJson } from "./context-serialization.ts";
+import {
+  MAX_TRAVERSAL_DEPTH,
+  serializeWorkflowContext,
+  serializeWorkflowJson,
+} from "./context-serialization.ts";
+
+// Deep enough that the walk stops and hands the value to `JSON.stringify`, and
+// no deeper. `JSON.stringify` is itself stack bound, and how deep it reaches
+// varies by engine and by the stack a test runner leaves it, so a fixed large
+// depth tests the host rather than this module. Deriving it from the constant
+// also keeps these tests from going quiet if the limit is ever raised.
+const PAST_THE_WALK = MAX_TRAVERSAL_DEPTH + 25;
 
 const jsonRawSupport = JSON as typeof JSON & {
   rawJSON(source: string): unknown;
@@ -362,29 +373,42 @@ describe("serializeWorkflowContext", () => {
   });
 
   describe("values larger than a diagnostic can describe", () => {
-    it("encodes a value nested deeper than the walk follows", () => {
-      // The walk recurses and `JSON.stringify` does not, so a value nested this
-      // deep persisted fine before this check existed. Failing it now with
-      // `Maximum call stack size exceeded` raised from inside the backend is
-      // the exact error the check was written to replace.
-      let deep: unknown = 1;
-      for (let index = 0; index < 5000; index++) deep = { n: deep };
+    it("hands a value deeper than the walk follows back to JSON.stringify", () => {
+      // The walk recurses far more heavily than `JSON.stringify`, so past a few
+      // thousand levels it died with `Maximum call stack size exceeded` raised
+      // from inside the backend, on a value that persisted fine before this
+      // check existed. That is the error class the check exists to replace.
+      //
+      // The `Date` at the bottom is what proves the walk actually stopped: it
+      // is a lossy value, so a walk that reached it would report it. Asserting
+      // the stack overflow itself would test the host, since how deep the walk
+      // and `JSON.stringify` each reach depends on the engine and the stack a
+      // test runner leaves them.
+      let deep: unknown = { when: new Date(0) };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
 
-      assertEquals(
-        serializeWorkflowContext(contextWith(deep)),
-        JSON.stringify({ input: {}, step: deep }),
-      );
+      let serialized = "";
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(contextWith(deep));
+      });
+
+      assertEquals(warnings, []);
+      assertEquals(serialized, JSON.stringify({ input: {}, step: deep }));
     });
 
     it("still names a fatal value found above the depth it stops at", () => {
-      let deep: unknown = 1;
-      for (let index = 0; index < 5000; index++) deep = { n: deep };
+      // What the walk found on the way down still holds. What sits below the
+      // depth it follows does not get named, which is why the deep BigInt is
+      // absent from the message while the shallow one is not.
+      let deep: unknown = 2n;
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
 
       const error = assertThrows(() =>
         serializeWorkflowContext(contextWith({ shallow: 1n, deep }))
       );
 
       assertEquals((error as Error).message.includes("context.step.shallow"), true);
+      assertEquals((error as Error).message.includes(".n.n"), false);
     });
 
     it("counts every hole in a sparse array without keeping one entry each", () => {
@@ -511,7 +535,13 @@ describe("serializeWorkflowContext", () => {
         Object.setPrototypeOf(value, Generated.prototype);
       }
       if (shape >= 0.2 && shape < 0.26) {
-        Object.defineProperty(value, "toJSON", { value: () => ({ replaced: true }) });
+        // Enumerable on purpose. JavaScriptCore skips a non-enumerable own
+        // `toJSON` that V8 calls, so generating one would compare two engines
+        // against each other rather than this module against its own host.
+        Object.defineProperty(value, "toJSON", {
+          value: () => ({ replaced: true }),
+          enumerable: true,
+        });
       }
       if (shape >= 0.26 && shape < 0.3) {
         Object.defineProperty(value, "lazy", { enumerable: true, get: () => 42 });
