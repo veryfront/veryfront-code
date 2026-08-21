@@ -63,6 +63,11 @@ describe("guide content contracts", () => {
       .map((match) => match[1] ?? "");
 
     assert(called.length > 0, "expected the guide to show at least one API call");
+    assertStringIncludes(
+      guide,
+      "await handle.settled();",
+      "the verification route must still return failed and cancelled run state for inspection",
+    );
 
     for (const path of called) {
       const wanted = toSegments(path);
