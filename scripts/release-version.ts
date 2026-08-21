@@ -21,6 +21,14 @@ export function bumpDenoJsonVersion(source: string, newVersion: string): string 
 	return source.replace(versionField, `$1${newVersion}$2`);
 }
 
+/** Replace runtime version assignments, including prerelease source versions. */
+export function bumpVersionAssignments(source: string, newVersion: string): string {
+	return source.replace(
+		/(const VERSION|VERYFRONT_VERSION) = "[^"]+";/g,
+		`$1 = "${newVersion}";`,
+	);
+}
+
 /** Resolve a stable release version from either a stable or prerelease source. */
 export function getNewVersion(currentVersion: string, type: string): string {
 	if (/^\d+\.\d+\.\d+$/.test(type)) {

@@ -8,7 +8,11 @@
  */
 
 import { createFileSystem } from "../src/platform/compat/fs.ts";
-import { bumpDenoJsonVersion, getNewVersion } from "./release-version.ts";
+import {
+  bumpDenoJsonVersion,
+  bumpVersionAssignments,
+  getNewVersion,
+} from "./release-version.ts";
 import { exit, getArgs } from "../src/platform/compat/process.ts";
 import { promptUser } from "../cli/utils/index.ts";
 
@@ -176,10 +180,8 @@ async function updateTemplates(newVersion: string) {
 				const regex1 = /veryfront:\s*"[\^~]?[\d\.]+",/g;
 				const regex2 = /"veryfront":\s*"npm:veryfront@[\^~]?[\d\.]+"/g;
 				const regex3 = /"veryfront\/":\s*"npm:veryfront@[\^~]?[\d\.]+\/"/g;
-				const regex4 = /const VERSION = "[\d\.]+";/;
-				const regex5 = /VERYFRONT_VERSION = "[\d\.]+";/;
 
-				let newContent = content;
+				let newContent = bumpVersionAssignments(content, newVersion);
 				if (regex1.test(newContent)) {
 					newContent = newContent.replace(regex1, `veryfront: "^${newVersion}",`);
 				}
@@ -195,19 +197,6 @@ async function updateTemplates(newVersion: string) {
 						`"veryfront/": "npm:veryfront@^${newVersion}/"`,
 					);
 				}
-				if (regex4.test(newContent)) {
-					newContent = newContent.replace(
-						regex4,
-						`const VERSION = "${newVersion}";`,
-					);
-				}
-				if (regex5.test(newContent)) {
-					newContent = newContent.replace(
-						regex5,
-						`VERYFRONT_VERSION = "${newVersion}";`,
-					);
-				}
-
 				if (newContent !== content) {
 					if (DRY_RUN) {
 						console.log(`  [DRY RUN] Would update ${filePath}`);
