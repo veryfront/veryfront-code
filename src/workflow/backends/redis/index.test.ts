@@ -11,6 +11,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
 import { RedisBackend } from "./index.ts";
 import type { RedisAdapter } from "#veryfront/platform/adapters/redis/index.ts";
 import type { PendingApproval, WorkflowRun } from "../../types.ts";
@@ -24,6 +25,9 @@ import type {
 } from "../../worker/executors/types.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
+const jsonRawSupport = JSON as typeof JSON & {
+  rawJSON(source: string): unknown;
+};
 
 class MockRedisAdapter implements RedisAdapter {
   store = new Map<string, string>();
@@ -606,6 +610,48 @@ describe("RedisBackend", () => {
       assertEquals(retrieved?._tenant?.projectSlug, "acme");
       assertEquals(retrieved?._tenant?.token, "vf_token");
     });
+
+    it("reports an invalid duplicated input through the workflow serializer", async () => {
+      const input = { total: 1n };
+      const run = createTestRun("run-invalid-input", {
+        input,
+        context: { input },
+      });
+
+      await assertRejects(
+        () => backend.createRun(run),
+        Error,
+        "context.input.total",
+      );
+      assertEquals(await backend.getRun(run.id), null);
+    });
+
+    it("does not warn about framework-owned node timestamps", async () => {
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          warnings.push(entry);
+        }
+      });
+
+      try {
+        await backend.createRun(createTestRun("run-node-timestamps", {
+          nodeStates: {
+            step: {
+              nodeId: "step",
+              status: "completed",
+              attempt: 1,
+              startedAt: new Date("2025-01-01T00:00:00Z"),
+              completedAt: new Date("2025-01-01T00:00:01Z"),
+            },
+          },
+        }));
+      } finally {
+        unsubscribe();
+      }
+
+      assertEquals(warnings, []);
+    });
   });
 
   describe("updateRun", () => {
@@ -626,6 +672,25 @@ describe("RedisBackend", () => {
 
       const updated = await backend.getRun("run-u2");
       assertEquals(updated?.output, { value: 42 });
+    });
+
+    it("reports an invalid duplicated output through the workflow serializer", async () => {
+      const runId = "run-invalid-output";
+      const output = { total: 1n };
+      await backend.createRun(createTestRun(runId));
+
+      await assertRejects(
+        () =>
+          backend.updateRun(runId, {
+            output,
+            context: { input: {}, step: output },
+          }),
+        Error,
+        "context.step.total",
+      );
+      const stored = await backend.getRun(runId);
+      assertEquals(stored?.output, undefined);
+      assertEquals(stored?.context, { input: { topic: "test" } });
     });
 
     it("clears optional run fields when a patch explicitly sets undefined", async () => {
@@ -952,6 +1017,38 @@ describe("RedisBackend", () => {
       assertEquals(latest.nodeId, "step1");
     });
 
+    it("reports an invalid context before saving a checkpoint", async () => {
+      const runId = "run-cp-invalid-context";
+
+      await assertRejects(
+        () =>
+          backend.saveCheckpoint(runId, {
+            id: "cp-invalid",
+            nodeId: "step",
+            timestamp: new Date(),
+            context: { input: {}, step: { total: 1n } },
+            nodeStates: {},
+          }),
+        Error,
+        "checkpoint.context.step.total",
+      );
+      assertEquals(await backend.getCheckpoints(runId), []);
+    });
+
+    it("preserves raw JSON tokens in checkpoint context", async () => {
+      const runId = "run-cp-raw-json";
+      await backend.saveCheckpoint(runId, {
+        id: "cp-raw-json",
+        nodeId: "step",
+        timestamp: new Date(),
+        context: { input: {}, step: jsonRawSupport.rawJSON("-0") },
+        nodeStates: {},
+      });
+
+      const checkpoint = await backend.getLatestCheckpoint(runId);
+      assertEquals(Object.is(checkpoint?.context.step, -0), true);
+    });
+
     it("should return null when no checkpoints", async () => {
       assertEquals(await backend.getLatestCheckpoint("no-such"), null);
     });
@@ -1028,6 +1125,35 @@ describe("RedisBackend", () => {
         true,
       );
       assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
+
+    it("reports an invalid context before saving an owner-fenced checkpoint", async () => {
+      const runId = "run-cp-owned-invalid-context";
+      await backend.createRun(createTestRun(runId, {
+        status: "running",
+        workerId: "worker-current",
+      }));
+
+      const operation = backend.saveCheckpointIfStatusAndWorker(
+        runId,
+        runId,
+        ["running"],
+        "worker-current",
+        {
+          id: "cp-owned-invalid",
+          nodeId: "step",
+          timestamp: new Date(),
+          context: { input: {}, step: { total: 1n } },
+          nodeStates: {},
+        },
+      );
+
+      await assertRejects(
+        () => operation,
+        Error,
+        "checkpoint.context.step.total",
+      );
+      assertEquals(await backend.getCheckpoints(runId), []);
     });
 
     it("bounds owned checkpoint history without mutating it after a failed fence", async () => {

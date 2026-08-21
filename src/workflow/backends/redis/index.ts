@@ -18,6 +18,7 @@ import type {
 } from "../../types.ts";
 import { assertWorkflowRunUpdate, type WorkflowBackend, type WorkflowRunUpdate } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
+import { prepareWorkflowJson, serializeWorkflowContext } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
@@ -309,6 +310,7 @@ export class RedisBackend implements WorkflowBackend {
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
     const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+    const context = serializeWorkflowContext(run.context, run.id);
     return {
       id: run.id,
       workflowId: run.workflowId,
@@ -321,7 +323,7 @@ export class RedisBackend implements WorkflowBackend {
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
       nodeStates: JSON.stringify(run.nodeStates),
       currentNodes: JSON.stringify(run.currentNodes),
-      context: JSON.stringify(run.context),
+      context,
       error: run.error ? JSON.stringify(run.error) : "",
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() || "",
@@ -331,6 +333,9 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private serializeRunPatch(patch: WorkflowRunUpdate): Record<string, string> {
+    const context = patch.context !== undefined
+      ? serializeWorkflowContext(patch.context)
+      : undefined;
     const fields: Record<string, string> = {};
     if (Object.hasOwn(patch, "workerId")) fields.workerId = patch.workerId ?? "";
     if (Object.hasOwn(patch, "output")) {
@@ -338,7 +343,7 @@ export class RedisBackend implements WorkflowBackend {
     }
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
-    if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
+    if (context !== undefined) fields.context = context;
     if (Object.hasOwn(patch, "error")) {
       fields.error = patch.error ? JSON.stringify(patch.error) : "";
     }
@@ -352,6 +357,19 @@ export class RedisBackend implements WorkflowBackend {
       fields.completedAt = patch.completedAt?.toISOString() ?? "";
     }
     return fields;
+  }
+
+  private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
+    const { normalized: context } = prepareWorkflowJson(
+      checkpoint.context,
+      "checkpoint.context",
+      runId,
+    );
+    return JSON.stringify({
+      ...checkpoint,
+      context,
+      timestamp: checkpoint.timestamp.toISOString(),
+    });
   }
 
   private serializeApproval(approval: PendingApproval): string {
@@ -739,25 +757,25 @@ export class RedisBackend implements WorkflowBackend {
       APPEND_RETAINED_LIST_SCRIPT,
       [this.checkpointsKey(runId)],
       [
-        JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+        this.serializeCheckpoint(runId, checkpoint),
         String(MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES),
       ],
     );
   }
 
-  saveCheckpointIfStatusAndWorker(
+  async saveCheckpointIfStatusAndWorker(
     storageRunId: string,
     ownershipRunId: string,
     expectedStatuses: WorkflowStatus[],
     expectedWorkerId: string,
     checkpoint: Checkpoint,
   ): Promise<boolean> {
-    return this.appendIfStatusAndWorker(
+    return await this.appendIfStatusAndWorker(
       ownershipRunId,
       expectedStatuses,
       expectedWorkerId,
       this.checkpointsKey(storageRunId),
-      JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+      this.serializeCheckpoint(storageRunId, checkpoint),
       MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
     );
   }

@@ -50,7 +50,14 @@ import type {
 } from "./schemas/index.ts";
 
 /**
- * Workflow context containing structured-cloneable input and node outputs.
+ * Workflow context containing JSON-representable input and node outputs.
+ *
+ * A run that suspends is persisted as JSON, so anything a step writes here has
+ * to survive `JSON.stringify` unchanged. A `Date`, `Map`, or class instance
+ * does not: it is readable in memory and comes back as something else after a
+ * resume, which makes the type a later step sees depend on whether the run
+ * happened to pause. `serializeWorkflowContext` enforces this at the
+ * persistence boundary.
  */
 export interface WorkflowContext {
   input: unknown;
