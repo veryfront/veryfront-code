@@ -1277,6 +1277,144 @@ describe("DAGExecutor", () => {
     });
   });
 
+  describe("recovery from a worker that died mid-node", () => {
+    it("re-runs a step left in running state, rather than stranding it", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: { type: "step" } as any },
+        { id: "second", dependsOn: ["first"], config: { type: "step" } as any },
+      ];
+
+      // What a dead worker leaves behind: the node it was executing is recorded
+      // as running and never reaches a terminal state.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          first: { nodeId: "first", status: "completed", output: "first", attempt: 1 },
+          second: { nodeId: "second", status: "running", attempt: 1, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      assertEquals(executed, ["second"]);
+      assertEquals(result.nodeStates["second"]!.status, "completed");
+    });
+
+    it("counts the interrupted attempt, so a crash loop cannot run forever", async () => {
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map([["flaky", { success: false, error: "died again" }]]),
+        ),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "flaky",
+          dependsOn: [],
+          config: { type: "step", retry: { maxAttempts: 2 } } as any,
+        },
+      ];
+
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          flaky: { nodeId: "flaky", status: "running", attempt: 2, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      // Exhausted rather than retried indefinitely.
+      assertEquals(result.completed, false);
+      assertEquals(result.nodeStates["flaky"]!.status, "failed");
+    });
+
+    it("leaves a wait parked on its decision alone", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "approve",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "m" } as any,
+        },
+      ];
+
+      // Nothing executes while a wait is parked, so there is no interrupted
+      // attempt to recover -- re-running it would raise a second approval for a
+      // decision already pending. A loop or branch child graph hits this too:
+      // its synthetic run is always "running" even while its wait is parked.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          approve: {
+            nodeId: "approve",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date(),
+            input: { type: "approval", message: "m" },
+          },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(executed, []);
+      assertEquals(result.nodeStates["approve"]!.status, "running");
+    });
+
+    it("leaves a composite parked on a nested wait alone", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [
+              { id: "inner", dependsOn: [], config: { type: "step" } as any },
+              {
+                id: "inner-wait",
+                dependsOn: ["inner"],
+                config: { type: "wait", waitType: "approval", message: "m" } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(executed, ["inner"]);
+      // The composite is recorded as running while its child waits. That is a
+      // parked run, not a dead worker, and must not restart the branch.
+      assertEquals(first.nodeStates["gate"]!.status, "running");
+    });
+  });
+
   describe("loop resume (H9)", () => {
     it("should not re-run completed steps of an in-flight loop iteration on resume", async () => {
       let incrRuns = 0;

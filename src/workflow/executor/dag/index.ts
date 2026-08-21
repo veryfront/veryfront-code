@@ -119,16 +119,37 @@ export class DAGExecutor {
     }
 
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
-    if (!startFromNode && run.status === "waiting") {
+    if (!startFromNode) {
+      // A node recorded as running means different things depending on why the
+      // run stopped, and the two must not be confused.
+      //
+      // A waiting run parked deliberately: the running node is a composite whose
+      // child is on a human decision. Re-enter it so the child resumes.
+      //
+      // Any other run reaching here is recovering from a worker that died
+      // mid-node. Nothing will ever write that node a terminal state, and
+      // getReadyNodes does not consider it ready, so leaving it be strands the
+      // run. Re-run it. That matches what already happens when a worker dies
+      // before writing any state at all -- the node looks untouched and runs
+      // again -- except that the recorded attempt now bounds the retries.
+      const resumingWait = run.status === "waiting";
       for (const [nodeId, degree] of inDegree) {
         if (degree !== 0 || ready.includes(nodeId)) continue;
         const state = nodeStates[nodeId];
+        if (state?.status !== "running") continue;
         const node = nodeMap.get(nodeId);
-        if (
-          state?.status === "running" && node && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)
-        ) {
-          ready.push(nodeId);
+        if (!node) continue;
+        if (resumingWait) {
+          if (RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) ready.push(nodeId);
+          continue;
         }
+        // A wait recorded as running is parked on its decision, never a dead
+        // worker: nothing executes while it waits, so there is nothing to
+        // recover. Re-running it would re-raise an approval that already exists.
+        // This also matters inside a loop or branch child graph, whose synthetic
+        // run is always "running" even while its wait is parked.
+        if (node.config.type === "wait") continue;
+        ready.push(nodeId);
       }
     }
 
