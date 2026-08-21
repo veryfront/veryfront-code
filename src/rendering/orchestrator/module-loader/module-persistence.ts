@@ -61,6 +61,7 @@ function publishModulePathCacheSave(cacheDir: string): void {
 }
 
 export async function drainModulePathCacheSaves(): Promise<void> {
+  // Quiesce module persistence callers before using this as a shutdown barrier.
   while (pendingModulePathCacheSaves.size > 0) {
     await Promise.all([...pendingModulePathCacheSaves]);
   }
