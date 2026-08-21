@@ -285,6 +285,51 @@ export class WorkflowExecutor {
     );
   }
 
+  /**
+   * Retry a failed workflow run from its failed node state.
+   */
+  async retry(runId: string): Promise<void> {
+    const run = await this.config.backend.getRun(runId);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    if (run.status !== "failed") {
+      throw ORCHESTRATION_ERROR.create({
+        status: 409,
+        detail: `Cannot retry workflow run "${runId}": current status is "${run.status}". ` +
+          `Only failed runs can be retried.`,
+      });
+    }
+
+    const executionWorkerId = supportsExecutionOwnership(this.config.backend)
+      ? `run-execution:${generateId("exec")}`
+      : undefined;
+    const reactivated = await updateRunIfStatus(
+      this.config.backend,
+      runId,
+      ["failed"],
+      {
+        status: "pending",
+        currentNodes: [],
+        workerId: executionWorkerId,
+        error: undefined,
+        output: undefined,
+        completedAt: undefined,
+        heartbeatAt: undefined,
+      },
+    );
+    if (!reactivated) {
+      throw ORCHESTRATION_ERROR.create({
+        status: 409,
+        detail: `Cannot retry workflow run "${runId}": status changed before retry started.`,
+      });
+    }
+
+    await runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => this.executeAsync(runId, undefined, executionWorkerId),
+    );
+  }
+
   private async resumeRun(
     run: WorkflowRun,
     fromCheckpoint?: string,

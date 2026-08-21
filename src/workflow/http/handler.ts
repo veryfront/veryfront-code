@@ -22,7 +22,7 @@
 import { isVeryfrontError } from "#veryfront/errors";
 import type { WorkflowClient } from "../api/index.ts";
 import { ApprovalDecisionSchema, RunFilterSchema } from "../schemas/index.ts";
-import type { ApprovalDecision, RunFilter } from "../types.ts";
+import type { ApprovalDecision, RunFilter, WorkflowContext, WorkflowRun } from "../types.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
 export interface WorkflowHandlerOptions {
@@ -133,6 +133,25 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   return body as Record<string, unknown>;
 }
 
+function withoutInternalContext(
+  context: Record<string, unknown>,
+): WorkflowContext {
+  const projected = { ...context };
+  delete projected.env;
+  delete projected._tenant;
+  delete projected._loop;
+  return projected as WorkflowContext;
+}
+
+function publicRun(run: WorkflowRun): WorkflowRun {
+  const projected = structuredClone(run);
+  delete projected._tenant;
+  delete projected._runtimeStateVersion;
+  delete projected._workflowProjection;
+  projected.context = withoutInternalContext(projected.context);
+  return projected;
+}
+
 /**
  * Build the HTTP routes the workflow hooks call.
  *
@@ -161,7 +180,7 @@ export function createWorkflowHandler(
         const cursor = filter.limit && runs.length === filter.limit
           ? String(offset + runs.length)
           : undefined;
-        return Response.json({ runs, cursor });
+        return Response.json({ runs: runs.map(publicRun), cursor });
       }
 
       if (segments.length === 2 && first === "runs" && runId) {
@@ -174,7 +193,7 @@ export function createWorkflowHandler(
         // so the projection has to put them back or a paused workflow never
         // surfaces its approval. The durable fix belongs in the run record.
         const pendingApprovals = await client.getPendingApprovals(runId);
-        return Response.json({ ...run, pendingApprovals });
+        return Response.json({ ...publicRun(run), pendingApprovals });
       }
 
       if (
@@ -210,10 +229,8 @@ export function createWorkflowHandler(
       }
 
       if (segments.length === 3 && first === "runs" && second && third === "retry") {
-        // `resume` is the client's re-entry point for a run that stopped early;
-        // the hook calls it "retry".
-        await client.resume(second);
-        return Response.json({ runId: second, status: "resumed" });
+        await client.retry(second);
+        return Response.json({ runId: second, status: "retrying" });
       }
 
       if (

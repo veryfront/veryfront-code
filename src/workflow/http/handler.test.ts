@@ -32,6 +32,21 @@ function passthroughTool(id: string): Tool {
   };
 }
 
+function failOnceTool(id: string): Tool {
+  let calls = 0;
+  return {
+    id,
+    type: "function",
+    description: `Fail-once test tool: ${id}`,
+    inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+    execute: () => {
+      calls++;
+      if (calls === 1) throw new Error("first attempt failed");
+      return Promise.resolve({ ok: true });
+    },
+  };
+}
+
 function get(path: string): Request {
   return new Request(`http://localhost:3000${path}`);
 }
@@ -52,7 +67,7 @@ function postRaw(path: string, body: string): Request {
   });
 }
 
-describe("createWorkflowHandler", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("createWorkflowHandler", () => {
   let client: WorkflowClient;
   let handlers: ReturnType<typeof createWorkflowHandler>;
 
@@ -103,13 +118,24 @@ describe("createWorkflowHandler", { sanitizeOps: false, sanitizeResources: false
   });
 
   it("serves the run that useWorkflow polls, with the fields it reads", async () => {
-    const runId = await startRun();
+    const previousInjectedEnv = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+    let runId: string;
+    try {
+      Deno.env.set("VERYFRONT_TASK_ENV_JSON", JSON.stringify({ SECRETISH: "redacted" }));
+      runId = await startRun();
+    } finally {
+      if (previousInjectedEnv === undefined) Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+      else Deno.env.set("VERYFRONT_TASK_ENV_JSON", previousInjectedEnv);
+    }
 
     const response = await handlers.GET(get(`/api/workflows/runs/${runId}`));
     expect(response.status).toBe(200);
 
     const run = await response.json() as Record<string, unknown>;
     expect(run.id).toBe(runId);
+    const context = run.context as Record<string, unknown>;
+    expect(context.env).toBeUndefined();
+    expect(run._tenant).toBeUndefined();
     // useWorkflow derives status, progress and approvals from exactly these.
     expect(run.status).toBeDefined();
     expect(run.nodeStates).toBeDefined();
@@ -132,6 +158,7 @@ describe("createWorkflowHandler", { sanitizeOps: false, sanitizeResources: false
     const body = await response.json() as { runs?: Array<{ id: string }> };
     expect(Array.isArray(body.runs)).toBe(true);
     expect(body.runs?.some((run) => run.id === runId)).toBe(true);
+    expect((body.runs?.[0] as Record<string, unknown> | undefined)?._tenant).toBeUndefined();
   });
 
   /** Start a run that is still going, so there is something to act on. */
@@ -164,6 +191,27 @@ describe("createWorkflowHandler", { sanitizeOps: false, sanitizeResources: false
     expect(response.status).toBe(409);
     const body = await response.json() as { message?: string };
     expect(body.message).toContain("cancelled");
+  });
+
+  it("retries a failed run instead of using paused-run resume", async () => {
+    client.register(
+      workflow({ id: "fails-once", steps: [step("flaky", { tool: failOnceTool("flaky") })] }),
+    );
+
+    const started = await handlers.POST(post("/api/workflows/fails-once/start", { input: {} }));
+    const { runId } = await started.json() as { runId: string };
+    await until(
+      async () => (await client.getRun(runId))?.status === "failed",
+      `run ${runId} to fail`,
+    );
+
+    const response = await handlers.POST(post(`/api/workflows/runs/${runId}/retry`));
+
+    expect(response.status).toBe(200);
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to complete after retry`,
+    );
   });
 
   it("serves and resolves an approval where useApproval looks for it", async () => {

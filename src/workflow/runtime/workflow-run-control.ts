@@ -747,6 +747,7 @@ async function completeRun(
       output,
       context: publicContext,
       nodeStates: result.nodeStates,
+      error: undefined,
       completedAt: new Date(),
     },
     expectedWorkerId,

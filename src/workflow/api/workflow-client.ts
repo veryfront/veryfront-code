@@ -174,6 +174,10 @@ export class WorkflowClient {
     return this.executor.resume(runId, undefined, expectedWorkerId);
   }
 
+  retry(runId: string): Promise<void> {
+    return this.executor.retry(runId);
+  }
+
   cancel(runId: string): Promise<void> {
     return this.executor.cancel(runId);
   }
