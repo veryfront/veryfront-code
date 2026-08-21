@@ -120,6 +120,16 @@ export interface CacheBackend {
    */
   delByPattern?(pattern: string): Promise<number>;
 
+  /**
+   * Identity of the endpoint, credential, and project this backend would
+   * authorise a read with right now. A caller that holds values in a
+   * process-local store scopes them on this identity, so two credentials or
+   * two projects can never share an entry. Returns null when the authority
+   * cannot be resolved, which must disable that store rather than fall back to
+   * a shared scope. The identity never contains the credential itself.
+   */
+  resolveAuthorityScope?(): string | null;
+
   /** Current number of entries (for memory backend) */
   readonly size?: number;
 }

@@ -9,7 +9,14 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module cache/backend.test
  */
 
-import { assertEquals, assertExists, assertMatch, assertRejects } from "#std/assert";
+import {
+  assertEquals,
+  assertExists,
+  assertMatch,
+  assertNotEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#std/assert";
 import {
   _resetShimForTests,
   type AttributeValue,
@@ -460,6 +467,52 @@ Deno.test("ApiCacheBackend type property", async () => {
 
   const cache = new ApiCacheBackend({});
   assertEquals(cache.type, "api");
+});
+
+Deno.test("ApiCacheBackend has no authority scope without a credential", async () => {
+  const { ApiCacheBackend } = await importBackend();
+
+  const cache = new ApiCacheBackend({});
+  assertEquals(cache.resolveAuthorityScope(), null);
+});
+
+Deno.test("ApiCacheBackend scopes its authority without exposing the credential", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  let token = "secret-token-a";
+  let projectSlug = "project-a";
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({ token, projectSlug }),
+  };
+
+  try {
+    const cache = new ApiCacheBackend({});
+    const scope = cache.resolveAuthorityScope();
+    assertExists(scope);
+    assertEquals(scope.includes(token), false, "a scope must never carry the bearer token");
+    assertMatch(scope, /^api:https:\/\/api\.veryfront\.com:/);
+    assertStringIncludes(scope, "project-a");
+    assertEquals(cache.resolveAuthorityScope(), scope, "the same authority must be stable");
+
+    token = "secret-token-b";
+    assertNotEquals(
+      cache.resolveAuthorityScope(),
+      scope,
+      "two credentials must not share a scope",
+    );
+
+    token = "secret-token-a";
+    projectSlug = "project-b";
+    assertNotEquals(
+      cache.resolveAuthorityScope(),
+      scope,
+      "two projects must not share a scope",
+    );
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+  }
 });
 
 Deno.test("ApiCacheBackend enforces exact bounded decoded values", async () => {
