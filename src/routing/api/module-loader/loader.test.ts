@@ -179,6 +179,82 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
+  it("reuses an unchanged bundled route module too", async () => {
+    // A route that cannot be resolved by Deno alone falls back to bundling, and
+    // that path builds its module from generated source rather than the file on
+    // disk. It has to keep state across loads for the same reason the direct
+    // path does, or module state resets per request for any project using an
+    // alias import.
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "counter.ts"),
+      `let count = 0;\nexport const bump = () => ++count;`,
+    );
+
+    const modulePath = join(projectDir, "pages", "api", "counted.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { bump } from "@/lib/counter.ts";`,
+        `export function GET() { return new Response(String(bump())); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+    const load = () => loadHandlerModule({ projectDir, modulePath, adapter, config });
+
+    const first = await load();
+    const second = await load();
+
+    assertEquals(await (await first?.GET?.(new Request("http://x")))?.text(), "1");
+    assertEquals(
+      await (await second?.GET?.(new Request("http://x")))?.text(),
+      "2",
+      "a bundled route must reuse its module when the generated source is unchanged",
+    );
+  });
+
+  it("rebuilds a bundled route module when its source changes", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+    const modulePath = join(projectDir, "pages", "api", "edited.ts");
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+
+    await fs.writeTextFile(
+      join(projectDir, "pages", "api", "value.ts"),
+      `export const value = "before";`,
+    );
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "@/pages/api/value.ts";`,
+        `export function GET() { return new Response(value); }`,
+      ].join("\n"),
+    );
+
+    const before = await loadHandlerModule({ projectDir, modulePath, adapter, config });
+    assertEquals(await (await before?.GET?.(new Request("http://x")))?.text(), "before");
+
+    await fs.writeTextFile(
+      join(projectDir, "pages", "api", "value.ts"),
+      `export const value = "after";`,
+    );
+
+    const after = await loadHandlerModule({ projectDir, modulePath, adapter, config });
+    assertEquals(
+      await (await after?.GET?.(new Request("http://x")))?.text(),
+      "after",
+      "a bundled route must not keep serving a stale module after its source changes",
+    );
+  });
+
   it("rejects host loading without an explicit capability before evaluation", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "untrusted-handler.ts");
