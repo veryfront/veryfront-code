@@ -2307,10 +2307,22 @@ function closeObjectSchemas(schema: unknown): unknown {
     result[key] = value;
   }
 
-  if (source.type === "object" && !("additionalProperties" in source)) {
+  if (isObjectTyped(source.type) && !("additionalProperties" in source)) {
     result.additionalProperties = false;
   }
   return result;
+}
+
+/**
+ * Whether a schema declares the object type.
+ *
+ * `JsonSchema.type` accepts an array as well as a single name, and the array
+ * form is how a nullable object is written by hand:
+ * `{ type: ["object", "null"], properties: {...} }`. Matching only the exact
+ * string would leave that branch open and let Anthropic reject it.
+ */
+function isObjectTyped(type: unknown): boolean {
+  return type === "object" || (Array.isArray(type) && type.includes("object"));
 }
 
 function resolveAnthropicMaxTokens(

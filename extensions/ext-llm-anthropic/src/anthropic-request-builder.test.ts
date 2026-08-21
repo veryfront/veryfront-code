@@ -4906,6 +4906,29 @@ describe("anthropic output_config schema closure", () => {
     assertEquals(branches[1]!.additionalProperties, undefined);
   });
 
+  it("closes a schema whose type array includes object", () => {
+    // `{ type: ["object", "null"] }` is the hand-written nullable form, and
+    // JsonSchema.type accepts an array. Matching only the exact string would
+    // leave this branch open for Anthropic to reject.
+    const schema = buildWithOutputSchema({
+      type: ["object", "null"],
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    });
+
+    assertEquals(schema.additionalProperties, false);
+  });
+
+  it("leaves a non-object type array alone", () => {
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { value: { type: ["string", "null"] } },
+    });
+
+    const value = (schema.properties as Record<string, Record<string, unknown>>).value;
+    assertEquals(Object.hasOwn(value, "additionalProperties"), false);
+  });
+
   it("leaves a record's additionalProperties schema intact", () => {
     // `v.record()` emits additionalProperties as a *schema*, not a boolean.
     // Overwriting it with `false` would silently turn a map into a closed empty
