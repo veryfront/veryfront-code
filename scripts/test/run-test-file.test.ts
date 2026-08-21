@@ -54,6 +54,9 @@ describe("buildTestFileCommandArgs leak tracing", () => {
     // These leaks are load-dependent and do not reproduce on demand. Without
     // the flag the run reports only "run again with --trace-leaks", advice that
     // cannot be taken for a failure that will not recur.
-    assertEquals(buildTestFileCommandArgs(["a.test.ts"]).includes("--trace-leaks"), true);
+    assertEquals(
+      buildTestFileCommandArgs(["a.test.ts"]).includes("--trace-leaks"),
+      true,
+    );
   });
 });

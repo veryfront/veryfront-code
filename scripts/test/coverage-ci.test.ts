@@ -26,6 +26,9 @@ describe("buildDenoTestCommandArgs leak tracing", () => {
     // These leaks are load-dependent and do not reproduce on demand. Without
     // the flag the run reports only "run again with --trace-leaks", advice that
     // cannot be taken for a failure that will not recur.
-    assert(buildDenoTestCommandArgs({ coverageDir: "cov", files: ["a.test.ts"] }).includes("--trace-leaks"));
+    assert(
+      buildDenoTestCommandArgs({ coverageDir: "cov", files: ["a.test.ts"] })
+        .includes("--trace-leaks"),
+    );
   });
 });
