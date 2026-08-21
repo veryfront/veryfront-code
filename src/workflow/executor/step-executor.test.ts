@@ -335,3 +335,96 @@ describe("StepExecutor run scoping", () => {
     assertEquals(errors, [["s2", "run-xyz"]]);
   });
 });
+
+describe("StepExecutor agent structured output", () => {
+  /** An agent whose `generate()` returns `response`, as the real runtime does. */
+  function makeAgentStepNode(response: Record<string, unknown>): WorkflowNode {
+    return step("extract", {
+      agent: {
+        id: "extractor",
+        generate: () => Promise.resolve(response),
+        // deno-lint-ignore no-explicit-any
+      } as any,
+    });
+  }
+
+  it("forwards the validated object from an agent declaring an outputSchema", async () => {
+    const node = makeAgentStepNode({
+      text: '{"name":"Max"}',
+      object: { name: "Max" },
+      status: "completed",
+      usage: { totalTokens: 7 },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(result.success, true);
+    // A later step reads `context.extract.object`; dropping it here makes the
+    // agent's structured output unreachable from inside a workflow.
+    assertEquals((result.output as { object?: unknown }).object, { name: "Max" });
+  });
+
+  it("still forwards the other response fields alongside the object", async () => {
+    const toolCalls = [{ id: "c1", name: "lookup", args: {} }];
+    const node = makeAgentStepNode({
+      text: '{"name":"Max"}',
+      object: { name: "Max" },
+      toolCalls,
+      status: "completed",
+      usage: { totalTokens: 7 },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(result.output, {
+      text: '{"name":"Max"}',
+      toolCalls,
+      status: "completed",
+      usage: { totalTokens: 7 },
+      object: { name: "Max" },
+    });
+  });
+
+  it("survives a durable round-trip unchanged", async () => {
+    // The durable path persists workflow context with JSON.stringify, which
+    // drops undefined-valued keys. If the stored output carried any, the same
+    // run would present one shape in memory and another after a pause/resume.
+    const node = makeAgentStepNode({
+      text: "hi",
+      toolCalls: undefined,
+      object: undefined,
+      status: "completed",
+      usage: undefined,
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(result.output, JSON.parse(JSON.stringify(result.output)));
+  });
+
+  it("omits response fields the agent did not produce", async () => {
+    // Not just `object`: `toolCalls` and `usage` were stored as present-but-
+    // undefined keys, so `"usage" in ctx.step` answered differently before and
+    // after a resume.
+    const node = makeAgentStepNode({ text: "hi", status: "completed" });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(Object.keys(result.output as object), ["text", "status"]);
+  });
+
+  it("omits the object key entirely for an agent with no outputSchema", async () => {
+    const node = makeAgentStepNode({
+      text: "plain text",
+      status: "completed",
+      usage: { totalTokens: 3 },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    // Absent, not present-and-undefined, so a schemaless agent's output gains
+    // no key and the fields it did produce are untouched.
+    assertEquals(Object.hasOwn(result.output as object, "object"), false);
+    assertEquals((result.output as { usage?: unknown }).usage, { totalTokens: 3 });
+  });
+});
