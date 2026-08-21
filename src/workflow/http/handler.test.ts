@@ -1,10 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing/deno-compat.ts";
 import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { PendingApproval } from "../types.ts";
+import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
 import { step, waitForApproval, workflow } from "../dsl/index.ts";
@@ -16,6 +17,12 @@ class CountingMemoryBackend extends MemoryBackend {
   override getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     this.pendingApprovalReads++;
     return super.getPendingApprovals(runId);
+  }
+}
+
+class ExplodingMemoryBackend extends MemoryBackend {
+  override listRuns(_filter: RunFilter): Promise<WorkflowRun[]> {
+    return Promise.reject(new Error("sensitive backend detail"));
   }
 }
 
@@ -117,14 +124,10 @@ describe("createWorkflowHandler", () => {
   }
 
   async function startRunWithInjectedEnv(): Promise<string> {
-    const previousInjectedEnv = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
-    try {
-      Deno.env.set("VERYFRONT_TASK_ENV_JSON", JSON.stringify({ SECRETISH: "redacted" }));
-      return await startRun();
-    } finally {
-      if (previousInjectedEnv === undefined) Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
-      else Deno.env.set("VERYFRONT_TASK_ENV_JSON", previousInjectedEnv);
-    }
+    return await withEnv(
+      { VERYFRONT_TASK_ENV_JSON: JSON.stringify({ SECRETISH: "redacted" }) },
+      startRun,
+    );
   }
 
   it("starts a workflow at the path useWorkflowStart posts to", async () => {
@@ -136,6 +139,33 @@ describe("createWorkflowHandler", () => {
     // useWorkflowStart reads `runId` (falling back to `id`) off this body.
     const body = await response.json() as { runId?: string };
     expect(typeof body.runId).toBe("string");
+  });
+
+  it("decodes an encoded workflow ID before lookup", async () => {
+    const workflowId = "encoded workflow";
+    client.register(
+      workflow({ id: workflowId, steps: [step("only", { tool: passthroughTool("encoded") })] }),
+    );
+
+    const response = await handlers.POST(
+      post(`/api/workflows/${encodeURIComponent(workflowId)}/start`, { input: {} }),
+    );
+
+    expect(response.status).toBe(200);
+    const { runId } = await response.json() as { runId: string };
+    await until(
+      async () => (await client.getRun(runId))?.status === "completed",
+      `run ${runId} to finish`,
+    );
+  });
+
+  it("rejects malformed route encoding", async () => {
+    const response = await handlers.POST(
+      post("/api/workflows/%E0%A4%A/start", { input: {} }),
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).message).toBe("Invalid workflow route encoding");
   });
 
   it("serves the run that useWorkflow polls, with the fields it reads", async () => {
@@ -341,6 +371,20 @@ describe("createWorkflowHandler", () => {
 
     expect(response.status).toBe(400);
     expect((await response.json()).message).toContain("JSON");
+  });
+
+  it("does not expose unknown exception messages", async () => {
+    await client.destroy();
+    client = createWorkflowClient({
+      backend: new ExplodingMemoryBackend({ debug: false }),
+      debug: false,
+    });
+    handlers = createWorkflowHandler(client);
+
+    const response = await handlers.GET(get("/api/workflows/runs"));
+
+    expect(response.status).toBe(500);
+    expect((await response.json()).message).toBe("Internal workflow handler error");
   });
 
   it("rejects invalid run-list filters", async () => {

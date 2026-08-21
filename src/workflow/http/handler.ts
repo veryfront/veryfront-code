@@ -50,7 +50,13 @@ const DEFAULT_BASE_PATH = "/api/workflows";
 class WorkflowRequestError extends Error {}
 
 function toSegments(path: string): string[] {
-  return path.split("/").filter(Boolean);
+  return path.split("/").filter(Boolean).map((segment) => {
+    try {
+      return decodeURIComponent(segment);
+    } catch {
+      throw new WorkflowRequestError("Invalid workflow route encoding");
+    }
+  });
 }
 
 /**
@@ -88,7 +94,7 @@ async function answering(work: () => Promise<Response>): Promise<Response> {
   } catch (error) {
     if (error instanceof WorkflowRequestError) return problem(error.message, 400);
     if (isVeryfrontError(error)) return problem(error.message, error.status);
-    return problem(error instanceof Error ? error.message : String(error), 500);
+    return problem("Internal workflow handler error", 500);
   }
 }
 
