@@ -78,7 +78,18 @@ export class DAGExecutor {
   ): Promise<DAGExecutionResult> {
     const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
       run,
-      () => this.executeUnwrapped(nodes, run, run.id, startFromNode, abortSignal, ownership),
+      () =>
+        this.executeUnwrapped(
+          nodes,
+          run,
+          run.id,
+          // The only run record with an authoritative status. Everything below
+          // executes against synthetic ones.
+          run.status === "waiting",
+          startFromNode,
+          abortSignal,
+          ownership,
+        ),
     );
     return result;
   }
@@ -93,6 +104,14 @@ export class DAGExecutor {
      * from `run`.
      */
     rootRunId: string,
+    /**
+     * Whether this execution resumes a run parked on a human decision. Read
+     * from the root run's status and threaded for the same reason as
+     * `rootRunId`: a composite's child graph runs against a synthetic record
+     * that always reports `running`, so a child inferring this from `run` would
+     * read every approval resume as a crash.
+     */
+    resumingWait: boolean,
     startFromNode?: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
@@ -121,10 +140,15 @@ export class DAGExecutor {
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
     if (!startFromNode) {
       // A node recorded as running means different things depending on why the
-      // run stopped, and the two must not be confused.
+      // run stopped, and the two must not be confused. `resumingWait` says
+      // which, and it comes from the root run rather than from `run`: a child
+      // graph's record is synthetic and reports `running` whatever the real run
+      // is doing, so reading it here charged every nested approval resume as a
+      // crash.
       //
       // A waiting run parked deliberately: the running node is a composite whose
-      // child is on a human decision. Re-enter it so the child resumes.
+      // child is on a human decision. Re-enter it so the child resumes, and
+      // charge nothing. Nobody was interrupted.
       //
       // Any other run reaching here is recovering from a worker that died
       // mid-node. Nothing will ever write that node a terminal state, and
@@ -132,7 +156,6 @@ export class DAGExecutor {
       // run. Re-run it. That matches what already happens when a worker dies
       // before writing any state at all -- the node looks untouched and runs
       // again -- except that the recorded attempt now bounds the retries.
-      const resumingWait = run.status === "waiting";
       // Only the top-level run has a row in the backend to write. Composites
       // execute their children against synthetic runs (`${node.id}_parallel`,
       // `_branch`, `_iter_N`) whose node states are a different keyspace: a loop
@@ -243,6 +266,7 @@ export class DAGExecutor {
             contextSnapshots[i]!,
             nodeStateSnapshots[i]!,
             rootRunId,
+            resumingWait,
             executionRunId,
             abortSignal,
             ownership,
@@ -385,6 +409,7 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     rootRunId: string,
+    resumingWait: boolean,
     executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
@@ -406,6 +431,7 @@ export class DAGExecutor {
           context,
           nodeStates,
           rootRunId,
+          resumingWait,
           executionRunId,
           abortSignal,
           ownership,
@@ -440,6 +466,7 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     rootRunId: string,
+    resumingWait: boolean,
     executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
@@ -475,6 +502,7 @@ export class DAGExecutor {
               context,
               nodeStates,
               rootRunId,
+              resumingWait,
               executionRunId,
               attemptSignal,
               ownership,
@@ -497,6 +525,7 @@ export class DAGExecutor {
                     nodes,
                     run,
                     rootRunId,
+                    resumingWait,
                     executionRunId,
                     options,
                     attemptSignal,
@@ -530,6 +559,7 @@ export class DAGExecutor {
               context,
               nodeStates,
               rootRunId,
+              resumingWait,
               executionRunId,
               attemptSignal,
               ownership,
@@ -550,6 +580,7 @@ export class DAGExecutor {
               config,
               context,
               rootRunId,
+              resumingWait,
               executionRunId,
               nodeStates,
               attemptSignal,
@@ -573,6 +604,7 @@ export class DAGExecutor {
                     nodes,
                     run,
                     rootRunId,
+                    resumingWait,
                     executionRunId,
                     undefined,
                     attemptSignal,
@@ -632,6 +664,7 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     rootRunId: string,
+    resumingWait: boolean,
     executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
@@ -657,6 +690,7 @@ export class DAGExecutor {
         sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
       rootRunId,
+      resumingWait,
       undefined,
       abortSignal,
       ownership,
@@ -698,6 +732,7 @@ export class DAGExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
     rootRunId: string,
+    resumingWait: boolean,
     executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
@@ -738,6 +773,7 @@ export class DAGExecutor {
         sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
       rootRunId,
+      resumingWait,
       undefined,
       abortSignal,
       ownership,
@@ -808,6 +844,7 @@ export class DAGExecutor {
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
     rootRunId: string,
+    resumingWait: boolean,
     executionRunId: string,
     nodeStates: Record<string, NodeState>,
     abortSignal?: AbortSignal,
@@ -859,6 +896,7 @@ export class DAGExecutor {
         sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
       rootRunId,
+      resumingWait,
       undefined,
       abortSignal,
       ownership,
@@ -927,6 +965,7 @@ export class DAGExecutor {
     nodes: WorkflowNode[],
     run: WorkflowRun,
     rootRunId: string,
+    resumingWait: boolean,
     executionRunId: string,
     options?: ChildGraphExecutionOptions,
     abortSignal?: AbortSignal,
@@ -937,6 +976,7 @@ export class DAGExecutor {
         nodes,
         run,
         rootRunId,
+        resumingWait,
         undefined,
         abortSignal,
         ownership,
@@ -956,6 +996,7 @@ export class DAGExecutor {
       nodes,
       run,
       rootRunId,
+      resumingWait,
       undefined,
       abortSignal,
       ownership,

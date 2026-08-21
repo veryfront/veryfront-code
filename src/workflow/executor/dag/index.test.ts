@@ -18,6 +18,7 @@ import { DAGExecutor } from "./index.ts";
 import type {
   Checkpoint,
   LoopExecutionContext,
+  NodeState,
   WorkflowContext,
   WorkflowNode,
   WorkflowRun,
@@ -1625,6 +1626,155 @@ describe("DAGExecutor", () => {
       // The composite is recorded as running while its child waits. That is a
       // parked run, not a dead worker, and must not restart the branch.
       assertEquals(first.nodeStates["gate"]!.status, "running");
+    });
+  });
+
+  describe("recovery budget accounting across a nested approval", () => {
+    // A composite holding the approval, plus a sibling approval of its own. One
+    // node runs per batch, so the composite is queued behind the sibling and
+    // whatever the resume recorded for it survives into the next resume.
+    function nestedApprovalNodes(): WorkflowNode[] {
+      return [
+        {
+          id: "outer",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [
+              {
+                id: "mid",
+                dependsOn: [],
+                config: {
+                  type: "parallel",
+                  nodes: [
+                    {
+                      id: "inner",
+                      dependsOn: [],
+                      config: {
+                        type: "parallel",
+                        nodes: [
+                          {
+                            id: "inner-wait",
+                            dependsOn: [],
+                            config: { type: "wait", waitType: "approval", message: "m" },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                id: "sibling-wait",
+                dependsOn: [],
+                config: { type: "wait", waitType: "approval", message: "m" },
+              },
+            ],
+          } as any,
+        },
+      ];
+    }
+
+    function approve(
+      states: Record<string, NodeState>,
+      nodeId: string,
+    ): Record<string, NodeState> {
+      return {
+        ...states,
+        [nodeId]: { ...states[nodeId]!, status: "completed", completedAt: new Date() },
+      };
+    }
+
+    it("does not spend a nested composite's recovery budget on an approval resume", async () => {
+      const exec = new DAGExecutor({ maxConcurrency: 1, stepExecutor: createMockStepExecutor() });
+
+      const first = await exec.execute(nestedApprovalNodes(), createTestRun());
+      assertEquals(first.waitingNode, "inner-wait");
+      assertEquals(first.nodeStates["mid"]!.attempt, 1);
+
+      const second = await exec.execute(
+        nestedApprovalNodes(),
+        createTestRun({
+          status: "waiting",
+          nodeStates: approve(first.nodeStates, "inner-wait"),
+          context: first.context,
+        }),
+      );
+
+      assertEquals(second.waitingNode, "sibling-wait");
+      // The run was parked on a human decision, not abandoned by a dead worker.
+      // Re-entering the composite so its child resumes is not a recovery, and
+      // must not spend the budget that exists for crashes.
+      assertEquals(second.nodeStates["mid"]!.attempt, 1);
+    });
+
+    it("survives repeated approvals instead of failing a node nobody interrupted", async () => {
+      const exec = new DAGExecutor({ maxConcurrency: 1, stepExecutor: createMockStepExecutor() });
+
+      const first = await exec.execute(nestedApprovalNodes(), createTestRun());
+      assertEquals(first.waitingNode, "inner-wait");
+
+      const second = await exec.execute(
+        nestedApprovalNodes(),
+        createTestRun({
+          status: "waiting",
+          nodeStates: approve(first.nodeStates, "inner-wait"),
+          context: first.context,
+        }),
+      );
+      assertEquals(second.waitingNode, "sibling-wait");
+
+      const third = await exec.execute(
+        nestedApprovalNodes(),
+        createTestRun({
+          status: "waiting",
+          nodeStates: approve(second.nodeStates, "sibling-wait"),
+          context: second.context,
+        }),
+      );
+
+      assertEquals(third.error, undefined);
+      assertEquals(third.completed, true);
+      assertEquals(third.nodeStates["mid"]!.status, "completed");
+      assertEquals(third.nodeStates["inner"]!.status, "completed");
+      assertEquals(third.nodeStates["outer"]!.status, "completed");
+    });
+
+    it("still bounds recovery for a node a dead worker left running inside a composite", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "outer",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [{ id: "leaf", dependsOn: [], config: { type: "step" } }],
+          } as any,
+        },
+      ];
+
+      // A running run, so a node recorded running is an interrupted attempt.
+      // The leaf already spent its one recovery, so it must not run again.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          outer: { nodeId: "outer", status: "running", attempt: 1, startedAt: new Date() },
+          leaf: { nodeId: "leaf", status: "running", attempt: 2, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(executed, []);
+      assertEquals(result.completed, false);
+      assertEquals(result.nodeStates["leaf"]!.status, "failed");
     });
   });
 
