@@ -168,6 +168,17 @@ export class DAGExecutor {
           continue;
         }
         nodeStates[nodeId] = { ...state, attempt: attempts + 1 };
+        const recovered = await this.config.onRecoveryScheduled?.({
+          runId: rootRunId,
+          nodeId,
+          nodeStates: structuredClone(nodeStates),
+          ownership,
+        });
+        if (recovered === false) {
+          throw ORCHESTRATION_ERROR.create({
+            detail: `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+          });
+        }
         ready.push(nodeId);
       }
 

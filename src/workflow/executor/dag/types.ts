@@ -7,7 +7,7 @@
  */
 
 import type { NodeState, WaitNodeConfig, WorkflowContext } from "../../types.ts";
-import type { CheckpointManager } from "../checkpoint-manager.ts";
+import type { CheckpointManager, CheckpointOwnership } from "../checkpoint-manager.ts";
 import type { StepExecutor } from "../step-executor.ts";
 
 /** Internal set/delete operations emitted by one node execution. */
@@ -23,6 +23,12 @@ export interface DAGExecutorConfig {
   onNodeStart?: (nodeId: string) => void;
   onNodeComplete?: (nodeId: string, state: NodeState) => void;
   onWaiting?: (nodeId: string, waitConfig: WaitNodeConfig) => void;
+  onRecoveryScheduled?: (input: {
+    runId: string;
+    nodeId: string;
+    nodeStates: Record<string, NodeState>;
+    ownership?: CheckpointOwnership;
+  }) => Promise<boolean | void> | boolean | void;
   /** Max milliseconds to wait for an aborted composite attempt to settle (default: 1000) */
   cancellationGracePeriod?: number;
   debug?: boolean;

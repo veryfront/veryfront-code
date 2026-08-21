@@ -1280,11 +1280,15 @@ describe("DAGExecutor", () => {
   describe("recovery from a worker that died mid-node", () => {
     it("re-runs a step left in running state, rather than stranding it", async () => {
       const executed: string[] = [];
+      const persistedAttempts: number[] = [];
       const exec = new DAGExecutor({
         stepExecutor: new MockStepExecutor(new Map(), (node) => {
           executed.push(node.id);
           return { success: true, output: node.id, executionTime: 1 };
         }),
+        onRecoveryScheduled: ({ nodeId, nodeStates }) => {
+          persistedAttempts.push(nodeStates[nodeId]?.attempt ?? 0);
+        },
       });
 
       const nodes: WorkflowNode[] = [
@@ -1305,8 +1309,42 @@ describe("DAGExecutor", () => {
       const result = await exec.execute(nodes, run);
 
       assertEquals(result.completed, true);
+      assertEquals(persistedAttempts, [2]);
       assertEquals(executed, ["second"]);
       assertEquals(result.nodeStates["second"]!.status, "completed");
+    });
+
+    it("does not re-run recovered work when recovery state cannot be persisted", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onRecoveryScheduled: () => false,
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
+      ];
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          "side-effect": {
+            nodeId: "side-effect",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date(),
+          },
+        },
+      });
+
+      await assertRejects(
+        () => exec.execute(nodes, run),
+        Error,
+        "execution ownership changed",
+      );
+      assertEquals(executed, []);
     });
 
     it("never re-runs a node whose retry budget was already spent", async () => {
