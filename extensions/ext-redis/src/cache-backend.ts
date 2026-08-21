@@ -438,7 +438,7 @@ export interface RedisCacheBackendOptions {
 export { isRedisConfigured };
 
 export class RedisCacheBackend implements CacheBackend {
-  readonly type = "distributed" as const;
+  readonly type = "redis" as const;
   declare getWithRevision?: RevisionedCacheBackend["getWithRevision"];
   declare compareExchange?: RevisionedCacheBackend["compareExchange"];
   private readonly keyPrefix: string;

@@ -73,9 +73,10 @@ describe("configSchema", () => {
   });
 
   it("keeps image asset-pipeline schema constraints aligned with runtime", () => {
+    const formats: ("webp" | "png")[] = ["webp", "png"];
     const images = {
       projectDir: Deno.cwd(),
-      formats: ["webp", "png"],
+      formats,
       sizes: [320, 640],
       quality: 85,
       inputDir: "public",

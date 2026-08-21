@@ -2,7 +2,12 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { JsonSchema, Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import type {
+  InferSchema,
+  JsonSchema,
+  Schema,
+  SchemaValidator,
+} from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
 import { compileJsonSchemaValidator, tryCompileJsonSchemaValidator } from "./json-schema.ts";
 import { createRuntimeJsonSchema } from "#veryfront/agent/runtime/runtime-tool-builder.ts";
@@ -111,6 +116,42 @@ describe("defineSchema", () => {
     const getObjectSchema = defineSchema((v) => v.object({ name: nameSchema }));
 
     assertEquals(getObjectSchema().parse({ name: "Veryfront" }), { name: "Veryfront" });
+  });
+
+  it("preserves inline enum literal unions without const assertions", () => {
+    reset();
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
+
+    const getIssueSchema = defineSchema((v) =>
+      v.object({
+        category: v.enum(["bug", "billing"]),
+        existing: v.enum(["open", "closed"] as const),
+      })
+    );
+
+    type Issue = InferSchema<ReturnType<typeof getIssueSchema>>;
+    const bug: Issue["category"] = "bug";
+    const billing: Issue["category"] = "billing";
+    const open: Issue["existing"] = "open";
+    const closed: Issue["existing"] = "closed";
+    // @ts-expect-error Enum output must reject values outside the declared set.
+    const invalidCategory: Issue["category"] = "feature";
+    // @ts-expect-error Existing const-asserted enums must keep their literal union.
+    const invalidExisting: Issue["existing"] = "archived";
+    void invalidCategory;
+    void invalidExisting;
+
+    const schema = getIssueSchema();
+    assertEquals(schema.parse({ category: bug, existing: open }), {
+      category: "bug",
+      existing: "open",
+    });
+    assertEquals(schema.parse({ category: billing, existing: closed }), {
+      category: "billing",
+      existing: "closed",
+    });
+    assertEquals(schema.safeParse({ category: "feature", existing: open }).success, false);
+    assertEquals(schema.safeParse({ category: bug, existing: "archived" }).success, false);
   });
 
   it("fails clearly when the registered adapter cannot compile raw JSON Schema", () => {

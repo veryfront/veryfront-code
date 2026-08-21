@@ -43,6 +43,14 @@ function formatIssues(issues: Array<{ path: string[]; message: string }>): strin
   return issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
 }
 
+function parsedArgsWithRawValue(
+  args: ParsedArgs,
+  key: string,
+  value: unknown,
+): ParsedArgs {
+  return Object.assign(args, { [key]: value });
+}
+
 describe("cli/command-definitions integrity", () => {
   it("should have all expected commands", () => {
     const expectedCommands = [
@@ -561,7 +569,7 @@ describe("cli/router helpers", () => {
       setJsonMode(true);
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid", json: true } as ParsedArgs,
+          parsedArgsWithRawValue({ _: ["serve"], json: true }, "mode", "invalid"),
         );
         assertEquals(code, 2);
         assertEquals(consoleOutput.length, 1);
@@ -584,7 +592,7 @@ describe("cli/router helpers", () => {
       Deno.env.set("VERYFRONT_NO_UPDATE_CHECK", "1");
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid" } as ParsedArgs,
+          parsedArgsWithRawValue({ _: ["serve"] }, "mode", "invalid"),
         );
         assertEquals(code, 2);
         assertEquals(consoleErrorOutput.some((line) => line.includes("✗")), true);
