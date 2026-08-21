@@ -119,16 +119,102 @@ export class DAGExecutor {
     }
 
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
-    if (!startFromNode && run.status === "waiting") {
+    if (!startFromNode) {
+      // A node recorded as running means different things depending on why the
+      // run stopped, and the two must not be confused.
+      //
+      // A waiting run parked deliberately: the running node is a composite whose
+      // child is on a human decision. Re-enter it so the child resumes.
+      //
+      // Any other run reaching here is recovering from a worker that died
+      // mid-node. Nothing will ever write that node a terminal state, and
+      // getReadyNodes does not consider it ready, so leaving it be strands the
+      // run. Re-run it. That matches what already happens when a worker dies
+      // before writing any state at all -- the node looks untouched and runs
+      // again -- except that the recorded attempt now bounds the retries.
+      const resumingWait = run.status === "waiting";
+      // Only the top-level run has a row in the backend to write. Composites
+      // execute their children against synthetic runs (`${node.id}_parallel`,
+      // `_branch`, `_iter_N`) whose node states are a different keyspace: a loop
+      // iteration's run carries only that iteration's children. Persisting one
+      // of those under the real run id would replace the run's whole node-state
+      // map with an iteration-local fragment, stranding every completed
+      // top-level node as pending and re-running the workflow from the start --
+      // the duplicate side effect this recovery path exists to prevent.
+      // Child recoveries are persisted by the parent when it returns.
+      const isDurableRun = run.id === rootRunId;
+      const exhausted: Array<{ nodeId: string; attempts: number; maxAttempts: number }> = [];
       for (const [nodeId, degree] of inDegree) {
         if (degree !== 0 || ready.includes(nodeId)) continue;
         const state = nodeStates[nodeId];
+        if (state?.status !== "running") continue;
         const node = nodeMap.get(nodeId);
-        if (
-          state?.status === "running" && node && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)
-        ) {
-          ready.push(nodeId);
+        if (!node) continue;
+        if (resumingWait) {
+          if (RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) ready.push(nodeId);
+          continue;
         }
+        // A wait recorded as running is parked on its decision, never a dead
+        // worker: nothing executes while it waits, so there is nothing to
+        // recover. Re-running it would re-raise an approval that already exists.
+        // This also matters inside a loop or branch child graph, whose synthetic
+        // run is always "running" even while its wait is parked.
+        if (node.config.type === "wait") continue;
+
+        // The step executor restarts its own retry loop at 1 and overwrites the
+        // recorded attempt, so it cannot bound anything across worker deaths.
+        // Count them here instead, or repeated crashes re-run the node forever
+        // and duplicate whatever side effect it performs.
+        //
+        // An interrupted attempt never finished, so it does not consume the
+        // node's retry budget outright -- a default node still gets recovered
+        // once. What it does consume is one recovery: the count below is
+        // written back before scheduling, and nothing overwrites it if the
+        // worker dies again, so the next resume sees a higher number.
+        const maxAttempts = node.config.retry?.maxAttempts ?? 1;
+        const attempts = state.attempt ?? 0;
+        if (attempts > maxAttempts) {
+          exhausted.push({ nodeId, attempts, maxAttempts });
+          continue;
+        }
+        nodeStates[nodeId] = { ...state, attempt: attempts + 1 };
+        if (isDurableRun) {
+          const recovered = await this.config.onRecoveryScheduled?.({
+            runId: rootRunId,
+            nodeId,
+            nodeStates: structuredClone(nodeStates),
+            ownership,
+          });
+          if (recovered === false) {
+            throw ORCHESTRATION_ERROR.create({
+              detail:
+                `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+            });
+          }
+        }
+        ready.push(nodeId);
+      }
+
+      if (exhausted.length > 0) {
+        const first = exhausted[0]!;
+        for (const { nodeId, attempts, maxAttempts } of exhausted) {
+          nodeStates[nodeId] = {
+            ...nodeStates[nodeId]!,
+            status: "failed",
+            error:
+              `Interrupted after ${attempts} of ${maxAttempts} attempt(s); retry budget exhausted`,
+            completedAt: new Date(),
+          };
+        }
+        return {
+          completed: false,
+          waiting: false,
+          context,
+          nodeStates,
+          contextPatch,
+          error: `Node "${first.nodeId}" was interrupted after ${first.attempts} of ` +
+            `${first.maxAttempts} attempt(s); retry budget exhausted`,
+        };
       }
     }
 
