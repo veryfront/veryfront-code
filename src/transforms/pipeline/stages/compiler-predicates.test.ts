@@ -26,6 +26,7 @@
  * | `importedBindings`' type-specifier skip | type-only elision, same family |
  * | `compilerNameHelperBindings` | esbuild's `keepNames` helper shape |
  * | `SOURCE_MAP_SUFFIX` in the strip | esbuild's sourcemap comment |
+ * | `mayNameServerOnlyExport` | the export names esbuild reads off the module |
  *
  * Three rules in this stage are deliberately not here, each for a different
  * reason.
@@ -43,7 +44,10 @@
  *   covered by `keeps a jsx pragma that sits above a removed import`.
  * - `SERVER_ONLY_EXPORTS` and `isKnownDroppableSource` are framework policy.
  *   Nothing outside this repository owns the rule, so there is nothing to be
- *   differential against.
+ *   differential against. The SET of hook names is policy; deciding whether a
+ *   module exports one of them is not, and that half has its own oracle below.
+ *   Keep the two apart: conflating them is how a raw-text gate that could not
+ *   see an escaped export name went unnoticed.
  *
  * @module transforms/pipeline/stages/compiler-predicates.test
  */
@@ -61,6 +65,7 @@ import {
   jsxPragmaBindings,
   moduleReferenceWalkers,
   pragmaRootBinding,
+  SERVER_ONLY_EXPORTS,
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
 import { runPipeline } from "../index.ts";
@@ -623,6 +628,262 @@ describe("compiler predicates, measured differentially", () => {
       const stripped = await stripServerOnlyExports(code, "page.js");
 
       assertEquals(stripped.includes("sourceMappingURL="), false);
+    });
+  });
+
+  /* ------------------------------------------------------------------- *
+   * Oracle 5: which names does the artifact actually export?             *
+   * ------------------------------------------------------------------- */
+
+  describe("the exports this pass acts on against the exports the artifact has", () => {
+    /**
+     * The closing case for this stage's one remaining raw-text decision.
+     *
+     * `SERVER_ONLY_EXPORTS` is the SET of hook names, and that set is framework
+     * policy with no differential partner. Deciding whether a module exports
+     * one of them is a different question, and it is a parser rule the compiler
+     * answers exactly. Every other fixture here reads a predicate's verdict off
+     * the artifact. This one asks the artifact which names the module exports,
+     * then asks whether the pass emptied the same set.
+     *
+     * A fixture that asserts one spelling only pins that spelling. Set equality
+     * against the compiler fails for any spelling, including ones nobody has
+     * thought of, which is the whole reason the gate must not read raw text.
+     */
+
+    const HOOK_NAMES: readonly string[] = SERVER_ONLY_EXPORTS;
+
+    function programBody(ast: ASTNode): Node[] {
+      const program = (ast as { program?: unknown }).program;
+      const source: Node = isNode(program) ? program : (ast as unknown as Node);
+      const body = source.body;
+      return Array.isArray(body) ? body.filter(isNode) : [];
+    }
+
+    function nodesIn(value: unknown): Node[] {
+      return Array.isArray(value) ? value.filter(isNode) : [];
+    }
+
+    /** An export or binding name with any escape already normalized by the parser. */
+    function nameOf(value: unknown): string | null {
+      if (!isNode(value)) return null;
+      if (value.type === "StringLiteral" && typeof value.value === "string") return value.value;
+      return typeof value.name === "string" ? value.name : null;
+    }
+
+    /** Every exported name in `body`, paired with the local binding it reads. */
+    function exportedNames(body: Node[]): Array<{ exported: string; local: string | null }> {
+      const names: Array<{ exported: string; local: string | null }> = [];
+
+      for (const statement of body) {
+        if (statement.type !== "ExportNamedDeclaration") continue;
+        if (statement.exportKind === "type") continue;
+
+        for (const specifier of nodesIn(statement.specifiers)) {
+          const exported = nameOf(specifier.exported);
+          if (exported) names.push({ exported, local: nameOf(specifier.local) });
+        }
+
+        const declaration = statement.declaration;
+        if (!isNode(declaration)) continue;
+
+        const direct = nameOf(declaration.id);
+        if (direct) names.push({ exported: direct, local: direct });
+
+        for (const declarator of nodesIn(declaration.declarations)) {
+          const name = nameOf(declarator.id);
+          if (name) names.push({ exported: name, local: name });
+        }
+      }
+
+      return names;
+    }
+
+    /** The hook names in `names`, deduplicated and ordered so sets compare. */
+    function hooksIn(names: string[]): string[] {
+      return [...new Set(names.filter((name) => HOOK_NAMES.includes(name)))].sort();
+    }
+
+    /** Whether `node` holds the `throw new Error("server-only")` stub. */
+    function isStub(node: Node): boolean {
+      let found = false;
+      walk(node, (child) => {
+        if (child.type === "StringLiteral" && child.value === "server-only") found = true;
+      });
+      return found;
+    }
+
+    /** Every top-level binding in `statement`, paired with the value bound. */
+    function boundValues(statement: Node): Array<[string, Node]> {
+      const declaration =
+        statement.type === "ExportNamedDeclaration" && isNode(statement.declaration)
+          ? statement.declaration
+          : statement;
+      const bound: Array<[string, Node]> = [];
+
+      const direct = nameOf(declaration.id);
+      if (direct) bound.push([direct, declaration]);
+
+      for (const declarator of nodesIn(declaration.declarations)) {
+        const name = nameOf(declarator.id);
+        if (name && isNode(declarator.init)) bound.push([name, declarator.init]);
+      }
+
+      return bound;
+    }
+
+    /**
+     * The hook-named exports the compiled artifact has. This is the oracle: it
+     * is esbuild's own answer, so no spelling in the authored source can hide a
+     * name from it.
+     */
+    async function artifactHookExports(source: string, loader: "tsx" | "js"): Promise<string[]> {
+      const { code } = await transform(source, { ...COMPILE_OPTIONS, loader });
+      const ast = await parser().parse({ code, filePath: "artifact.js" });
+      return hooksIn(exportedNames(programBody(ast)).map((entry) => entry.exported));
+    }
+
+    /** The hook-named exports this pass emptied, read off the pass's output. */
+    async function strippedHookExports(source: string, filePath: string): Promise<string[]> {
+      const output = await stripServerOnlyExports(source, filePath);
+      const ast = await parser().parse({ code: output, filePath });
+      const body = programBody(ast);
+
+      const stubbed = new Set<string>();
+      for (const statement of body) {
+        for (const [name, value] of boundValues(statement)) {
+          if (isStub(value)) stubbed.add(name);
+        }
+      }
+
+      return hooksIn(
+        exportedNames(body)
+          .filter((entry) => entry.local !== null && stubbed.has(entry.local))
+          .map((entry) => entry.exported),
+      );
+    }
+
+    const SECRET = `const KEY = getEnv("SERVER_ONLY_HOOK_SOURCE");`;
+    const PREAMBLE = [`import { getEnv } from "veryfront";`, SECRET].join("\n");
+    const LOADER = `async function loadIt() { return { props: { k: KEY } }; }`;
+    const PAGE = `export default function Page() { return null; }`;
+
+    /**
+     * One authored module per way the language lets you spell an export name.
+     *
+     * The escaped spellings are written with a literal backslash so the module
+     * text carries the escape, which is the whole point: the raw text never
+     * contains the substring `getServerData`.
+     */
+    const SPELLINGS: Array<
+      { label: string; file: string; loader: "tsx" | "js"; hidden: boolean; source: string }
+    > = [
+      {
+        label: "a plain declaration",
+        file: "plain-declaration.tsx",
+        loader: "tsx",
+        hidden: false,
+        source: [
+          PREAMBLE,
+          `export async function getServerData() { return { props: { k: KEY } }; }`,
+          PAGE,
+        ].join("\n"),
+      },
+      {
+        label: "a plain export clause",
+        file: "plain-clause.tsx",
+        loader: "tsx",
+        hidden: false,
+        source: [PREAMBLE, LOADER, `export { loadIt as getServerData };`, PAGE].join("\n"),
+      },
+      {
+        label: "a string-literal export name",
+        file: "string-name.tsx",
+        loader: "tsx",
+        hidden: false,
+        source: [PREAMBLE, LOADER, `export { loadIt as "getServerData" };`, PAGE].join("\n"),
+      },
+      {
+        label: "an escaped identifier in an export clause",
+        file: "escaped-clause.tsx",
+        loader: "tsx",
+        hidden: true,
+        source: [PREAMBLE, LOADER, `export { loadIt as get\\u0053erverData };`, PAGE].join("\n"),
+      },
+      {
+        label: "an escaped identifier on the declaration",
+        file: "escaped-declaration.tsx",
+        loader: "tsx",
+        hidden: true,
+        source: [
+          PREAMBLE,
+          `export async function get\\u0053erverData() { return { props: { k: KEY } }; }`,
+          PAGE,
+        ].join("\n"),
+      },
+      {
+        label: "an escaped identifier in an export clause, on a .js module",
+        file: "escaped-clause.js",
+        loader: "js",
+        hidden: true,
+        source: [PREAMBLE, LOADER, `export { loadIt as get\\u0053erverData };`, PAGE].join("\n"),
+      },
+      {
+        label: "an escaped string-literal name with no space after as",
+        file: "escaped-string-name.tsx",
+        loader: "tsx",
+        hidden: true,
+        source: [PREAMBLE, LOADER, `export{loadIt as"get\\u0053erverData"};`, PAGE].join("\n"),
+      },
+      {
+        label: "a string-literal name split by a line continuation",
+        file: "continued-string-name.tsx",
+        loader: "tsx",
+        hidden: true,
+        source: [PREAMBLE, LOADER, `export{loadIt as"get\\`, `ServerData"};`, PAGE].join("\n"),
+      },
+      {
+        label: "a second hook alongside the first",
+        file: "two-hooks.tsx",
+        loader: "tsx",
+        hidden: true,
+        source: [
+          PREAMBLE,
+          LOADER,
+          `export { loadIt as get\\u0053erverData };`,
+          `export async function getStaticPaths() { return { paths: [KEY] }; }`,
+          PAGE,
+        ].join("\n"),
+      },
+      {
+        label: "no hook export at all",
+        file: "no-hook.tsx",
+        loader: "tsx",
+        hidden: false,
+        source: [PREAMBLE, LOADER, `export { loadIt as loadSomething };`, PAGE].join("\n"),
+      },
+    ];
+
+    for (const spelling of SPELLINGS) {
+      it(`acts on exactly the hook exports the artifact has, given ${spelling.label}`, async () => {
+        const expected = await artifactHookExports(spelling.source, spelling.loader);
+        const acted = await strippedHookExports(spelling.source, spelling.file);
+
+        assertEquals(acted, expected, spelling.source);
+      });
+    }
+
+    // The fixtures above prove nothing unless the hidden spellings really are
+    // hidden. A `\u` escape that this test file resolved at its own parse time
+    // would spell the hook name in the raw source and pass for the wrong
+    // reason, which is exactly the failure the whole block exists to catch.
+    it("writes the hidden spellings so the raw text never spells the hook name", () => {
+      const hidden = SPELLINGS.filter((spelling) => spelling.hidden);
+
+      assertEquals(hidden.length, 6);
+      for (const spelling of hidden) {
+        assertEquals(spelling.source.includes("getServerData"), false, spelling.file);
+      }
     });
   });
 
