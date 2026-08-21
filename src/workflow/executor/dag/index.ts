@@ -787,10 +787,14 @@ export class DAGExecutor {
     const state: NodeState = {
       nodeId: node.id,
       status: "running",
+      // Absent optional fields are left out rather than written as `undefined`.
+      // A suspended loop stores its child states in the context, where JSON
+      // drops those keys, so writing them had the persistence check report the
+      // framework's own empty fields as user-authored lossy values.
       input: {
         type: config.waitType,
-        message: config.message,
-        payload,
+        ...(config.message !== undefined ? { message: config.message } : {}),
+        ...(payload !== undefined ? { payload } : {}),
       },
       attempt: 1,
       startedAt: new Date(),

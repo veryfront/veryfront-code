@@ -398,8 +398,17 @@ function formatPaths(samples: readonly UnrepresentableValue[], total: number): s
  *   `Date`, decided by whether the run happened to pause.
  *
  * Durable backends serialize context before its duplicate run projections, so
- * this check decides the diagnostic without treating framework-owned metadata
- * such as node timestamps as user-authored lossy values.
+ * this check decides the diagnostic rather than the anonymous error a later
+ * field would raise on the same value.
+ *
+ * Scope, stated plainly because the ordering above is easy to read as more:
+ * only `context` is checked. A run's `input`, `output`, `nodeStates`,
+ * `currentNodes`, and `error` are encoded directly, so nothing here inspects
+ * them. That is deliberate for now: `nodeStates` carries a `Date` on every
+ * node, so checking it would report the framework's own timestamps on every
+ * run. Anything the framework writes into `context` has to obey the same rule
+ * it asks of a step, which is why the loop encodes its child node states
+ * rather than being exempted from the check.
  */
 /** @internal Prepare the exact JSON value and encoded string for durable storage. */
 export function prepareWorkflowJson(

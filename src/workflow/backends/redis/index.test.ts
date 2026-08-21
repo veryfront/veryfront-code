@@ -626,7 +626,13 @@ describe("RedisBackend", () => {
       assertEquals(await backend.getRun(run.id), null);
     });
 
-    it("does not warn about framework-owned node timestamps", async () => {
+    it("names the run when a patch persists a lossy value", async () => {
+      // Creation usually writes only `input`. Patches write the accumulated
+      // node outputs, so a patch is where a warning actually fires, and it
+      // used to arrive with no run to attribute it to.
+      const runId = "run-patch-warning";
+      await backend.createRun(createTestRun(runId));
+
       const warnings: LogEntry[] = [];
       const unsubscribe = __subscribeLogRecordEmitter((entry) => {
         if (entry.level === "warn" && entry.component === "workflow-context") {
@@ -635,22 +641,17 @@ describe("RedisBackend", () => {
       });
 
       try {
-        await backend.createRun(createTestRun("run-node-timestamps", {
-          nodeStates: {
-            step: {
-              nodeId: "step",
-              status: "completed",
-              attempt: 1,
-              startedAt: new Date("2025-01-01T00:00:00Z"),
-              completedAt: new Date("2025-01-01T00:00:01Z"),
-            },
-          },
-        }));
+        await backend.updateRun(runId, {
+          context: { input: {}, step: { when: new Date("2026-01-01T00:00:00Z") } },
+        });
       } finally {
         unsubscribe();
       }
 
-      assertEquals(warnings, []);
+      assertEquals(warnings.length, 1);
+      // The logger promotes the run id to its own field rather than leaving it
+      // in the free-form context, so that is where it has to be asserted.
+      assertEquals(warnings[0]?.run_id, runId);
     });
   });
 
