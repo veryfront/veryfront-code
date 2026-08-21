@@ -332,15 +332,25 @@ export class RedisBackend implements WorkflowBackend {
 
   private serializeRunPatch(patch: WorkflowRunUpdate): Record<string, string> {
     const fields: Record<string, string> = {};
-    if (patch.workerId !== undefined) fields.workerId = patch.workerId ?? "";
-    if (patch.output !== undefined) fields.output = JSON.stringify(patch.output);
+    if (Object.hasOwn(patch, "workerId")) fields.workerId = patch.workerId ?? "";
+    if (Object.hasOwn(patch, "output")) {
+      fields.output = patch.output !== undefined ? JSON.stringify(patch.output) : "";
+    }
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
-    if (patch.error !== undefined) fields.error = JSON.stringify(patch.error);
-    if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
-    if (patch.heartbeatAt !== undefined) fields.heartbeatAt = patch.heartbeatAt.toISOString();
-    if (patch.completedAt !== undefined) fields.completedAt = patch.completedAt.toISOString();
+    if (Object.hasOwn(patch, "error")) {
+      fields.error = patch.error ? JSON.stringify(patch.error) : "";
+    }
+    if (Object.hasOwn(patch, "startedAt")) {
+      fields.startedAt = patch.startedAt?.toISOString() ?? "";
+    }
+    if (Object.hasOwn(patch, "heartbeatAt")) {
+      fields.heartbeatAt = patch.heartbeatAt?.toISOString() ?? "";
+    }
+    if (Object.hasOwn(patch, "completedAt")) {
+      fields.completedAt = patch.completedAt?.toISOString() ?? "";
+    }
     return fields;
   }
 

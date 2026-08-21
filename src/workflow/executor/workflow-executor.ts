@@ -293,6 +293,54 @@ export class WorkflowExecutor {
     );
   }
 
+  /**
+   * Retry a failed workflow run from its failed node state.
+   */
+  async retry(runId: string): Promise<void> {
+    const run = await this.config.backend.getRun(runId);
+    if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
+
+    if (run.status !== "failed") {
+      throw ORCHESTRATION_ERROR.create({
+        status: 409,
+        detail: `Cannot retry workflow run "${runId}": current status is "${run.status}". ` +
+          `Only failed runs can be retried.`,
+      });
+    }
+
+    const executionWorkerId = supportsExecutionOwnership(this.config.backend)
+      ? `run-execution:${generateId("exec")}`
+      : undefined;
+    const reactivated = await updateRunIfStatus(
+      this.config.backend,
+      runId,
+      ["failed"],
+      {
+        status: "pending",
+        currentNodes: [],
+        workerId: executionWorkerId,
+        error: undefined,
+        output: undefined,
+        completedAt: undefined,
+        heartbeatAt: undefined,
+      },
+    );
+    if (!reactivated) {
+      throw ORCHESTRATION_ERROR.create({
+        status: 409,
+        detail: `Cannot retry workflow run "${runId}": status changed before retry started.`,
+      });
+    }
+
+    const settled = runWithWorkflowSourceIntegrationPolicy(
+      run,
+      () => this.executeAsync(runId, undefined, executionWorkerId),
+    );
+    settled.catch((error) => {
+      logger.error("Workflow retry failed", { runId }, error);
+    });
+  }
+
   private async resumeRun(
     run: WorkflowRun,
     fromCheckpoint?: string,
@@ -302,6 +350,10 @@ export class WorkflowExecutor {
 
     if (run.status !== "waiting" && run.status !== "pending" && run.status !== "running") {
       throw ORCHESTRATION_ERROR.create({
+        // Asking to resume a run that already finished is the caller being out
+        // of date, not the orchestrator failing. Surfaced over HTTP it has to
+        // read as a conflict, or a stale retry button reports a server error.
+        status: 409,
         detail: `Cannot resume workflow run "${runId}": current status is "${run.status}". ` +
           `Only runs in "waiting", "pending", or "running" status can be resumed.`,
       });
