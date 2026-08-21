@@ -46,26 +46,39 @@ export function runningDenoVersion(): string {
   return Deno.version.deno;
 }
 
-if (import.meta.main) {
-  const pinned = await readPinnedDenoVersion();
-  const running = runningDenoVersion();
+/**
+ * The message to show when the running Deno is not the pinned one, or null when
+ * it matches.
+ *
+ * Split out from the entry point so the mismatch path is testable without
+ * spawning a subprocess or pretending to be another Deno.
+ */
+export function denoVersionMismatchMessage(
+  running: string,
+  pinned: string,
+): string | null {
+  if (running === pinned) return null;
+  return (
+    `Deno ${running} is running, but this repository pins ${pinned}.\n` +
+    `\n` +
+    `Generated files embed line numbers and padded columns, so a different\n` +
+    `Deno rewrites them even when nothing changed. Committing that output\n` +
+    `breaks CI for everyone else.\n` +
+    `\n` +
+    `Switch to the pinned version, whichever way you manage toolchains:\n` +
+    `  mise install          # reads .tool-versions\n` +
+    `  asdf install          # reads .tool-versions\n` +
+    `  deno upgrade ${pinned}   # replaces the deno on your PATH\n`
+  );
+}
 
-  if (running !== pinned) {
-    console.error(
-      `Deno ${running} is running, but this repository pins ${pinned}.\n` +
-        `\n` +
-        `Generated files embed line numbers and padded columns, so a different\n` +
-        `Deno rewrites them even when nothing changed. Committing that output\n` +
-        `breaks CI for everyone else.\n` +
-        `\n` +
-        `Install the pinned version (asdf and mise both read .tool-versions):\n` +
-        `  mise install       # or: asdf install\n` +
-        `\n` +
-        `Or run the generator with a pinned binary first on PATH:\n` +
-        `  curl -sL -o deno.zip https://github.com/denoland/deno/releases/download/v${pinned}/deno-$(uname -m)-apple-darwin.zip\n` +
-        `  unzip -oq deno.zip && chmod +x deno\n` +
-        `  PATH="$PWD:$PATH" ./deno task docs\n`,
-    );
+if (import.meta.main) {
+  const message = denoVersionMismatchMessage(
+    runningDenoVersion(),
+    await readPinnedDenoVersion(),
+  );
+  if (message) {
+    console.error(message);
     Deno.exit(1);
   }
 }
