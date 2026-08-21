@@ -5,7 +5,15 @@ import { parseDuration, validateRetryConfig } from "../../types.ts";
 import type { NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
 import { createSetContextPatch } from "./context-patch.ts";
-import { calculateRetryDelay, isRetryableWorkflowError } from "../retry-policy.ts";
+import {
+  calculateRetryDelay,
+  isRetryableWorkflowError,
+  retryTelemetryErrorType,
+} from "../retry-policy.ts";
+import {
+  addActiveSpanEvent,
+  setActiveSpanAttributes,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 
 const DEFAULT_CANCELLATION_GRACE_PERIOD_MS = 1_000;
 
@@ -17,6 +25,21 @@ interface CompositeNodeExecutionInput {
 }
 
 const nonCooperativeErrors = new WeakSet<Error>();
+
+/** Keeps a failed attempt visible: one node span otherwise hides every retry it contains. */
+function recordCompositeRetry(
+  nodeId: string,
+  attempt: number,
+  delayMs: number,
+  error: Error,
+): void {
+  addActiveSpanEvent("workflow.node.retry", {
+    "workflow.node.id": nodeId,
+    "workflow.node.attempt": attempt,
+    "workflow.node.retry_delay_ms": delayMs,
+    "workflow.node.error_type": retryTelemetryErrorType(error),
+  });
+}
 
 export async function executeCompositeNodeWithPolicy(
   input: CompositeNodeExecutionInput,
@@ -44,23 +67,36 @@ export async function executeCompositeNodeWithPolicy(
       );
       const attemptedResult = withAttempt(result, attempt);
 
-      if (attemptedResult.state.status !== "failed") return attemptedResult;
+      if (attemptedResult.state.status !== "failed") {
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
+        return attemptedResult;
+      }
 
       const error = new Error(
         attemptedResult.state.error ?? `Composite node "${node.id}" failed`,
       );
-      if (attempt === maxAttempts || !isRetryableError(error, retry)) return attemptedResult;
+      if (attempt === maxAttempts || !isRetryableError(error, retry)) {
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
+        return attemptedResult;
+      }
 
-      await sleep(calculateRetryDelay(attempt, retry), parentSignal);
+      // calculateRetryDelay applies random jitter, so it must be drawn once: calling it
+      // again for telemetry would report a delay that was never slept.
+      const delay = calculateRetryDelay(attempt, retry);
+      recordCompositeRetry(node.id, attempt, delay, error);
+      await sleep(delay, parentSignal);
     } catch (caught) {
       parentSignal?.throwIfAborted();
       const error = ensureError(caught);
 
       if (attempt < maxAttempts && isRetryableError(error, retry)) {
-        await sleep(calculateRetryDelay(attempt, retry), parentSignal);
+        const delay = calculateRetryDelay(attempt, retry);
+        recordCompositeRetry(node.id, attempt, delay, error);
+        await sleep(delay, parentSignal);
         continue;
       }
 
+      setActiveSpanAttributes({ "workflow.node.attempts": attempt });
       return {
         state: {
           nodeId: node.id,

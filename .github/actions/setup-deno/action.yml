@@ -196,10 +196,6 @@ runs:
         echo "${deno_dir}" >> "${GITHUB_PATH}"
         "${deno_bin}" --version
 
-    - name: Generate template manifest
-      shell: bash
-      run: deno run -A scripts/build/generate-templates-manifest.ts && deno fmt templates/manifest.json
-
     - name: Warm Redis module cache
       if: inputs.warm-redis-cache == 'true' && steps.deno-cache.outputs.cache-hit != 'true'
       shell: bash

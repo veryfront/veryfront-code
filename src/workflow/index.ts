@@ -103,6 +103,16 @@ export { RedisBackend } from "./backends/redis.ts";
 export type { RedisAdapter, RedisBackendConfig } from "./backends/redis.ts";
 
 // =============================================================================
+// Graph metadata
+//
+// The same node/agent/tool description the dev dashboard renders. Node ids match
+// the keys the executor writes into `run.nodeStates`, including composite
+// children, so a project can join metadata to run state to build its own view.
+// =============================================================================
+export { getAllWorkflowIds, getWorkflow, workflowRegistry } from "./registry.ts";
+export type { NodeInfo, WorkflowMetadata } from "./registry.ts";
+
+// =============================================================================
 // Client API
 // =============================================================================
 export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
@@ -144,3 +154,9 @@ export { getWorkflowTenant } from "./executor/step-executor.ts";
 // Context-Aware API
 // =============================================================================
 export { api } from "./api.ts";
+
+// =============================================================================
+// HTTP surface for the React hooks
+// =============================================================================
+export { createWorkflowHandler } from "./http/handler.ts";
+export type { WorkflowHandlerOptions, WorkflowHandlers } from "./http/handler.ts";

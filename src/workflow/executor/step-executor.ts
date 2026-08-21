@@ -22,6 +22,7 @@ import {
   DEFAULT_RETRY_INITIAL_DELAY_MS,
   DEFAULT_RETRY_MAX_DELAY_MS,
   isRetryableWorkflowError,
+  retryTelemetryErrorType,
 } from "./retry-policy.ts";
 import type {
   CapturedTenantContext,
@@ -32,6 +33,10 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { parseDuration, validateRetryConfig } from "../types.ts";
+import {
+  addActiveSpanEvent,
+  setActiveSpanAttributes,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
 /**
@@ -131,9 +136,15 @@ export interface StepExecutorConfig {
   /** Max milliseconds to wait for an aborted step to settle before detaching it (default: 1000) */
   cancellationGracePeriod?: number;
   blobStorage?: BlobStorage;
-  onStepStart?: (nodeId: string, input: unknown) => void;
-  onStepComplete?: (nodeId: string, output: unknown) => void;
-  onStepError?: (nodeId: string, error: Error) => void;
+  /**
+   * Step lifecycle hooks. `runId` scopes the event to one run: without it a
+   * progress channel built on these hooks is process-global and two concurrent
+   * runs interleave with no way to tell them apart. It is optional because a
+   * StepExecutor can be driven outside a run (tests, ad-hoc execution).
+   */
+  onStepStart?: (nodeId: string, input: unknown, runId?: string) => void;
+  onStepComplete?: (nodeId: string, output: unknown, runId?: string) => void;
+  onStepError?: (nodeId: string, error: Error, runId?: string) => void;
 }
 
 export interface StepResult {
@@ -141,6 +152,30 @@ export interface StepResult {
   output?: unknown;
   error?: string;
   executionTime: number;
+}
+
+/**
+ * Build a step's stored output, keeping only the fields that actually have a
+ * value.
+ *
+ * A step's output is written into workflow context, and the durable path
+ * persists that context with `JSON.stringify`, which drops every
+ * `undefined`-valued key. A response field that is absent -- `toolCalls` and
+ * `usage` on a schemaless agent, `object` on one whose schema parsed to
+ * `undefined` -- would therefore exist as a key in memory and be gone after a
+ * pause/resume, so the same run would present two different context shapes
+ * depending on whether it ever suspended.
+ *
+ * Emitting only defined fields collapses that to one shape: what a step reads
+ * in memory is exactly what survives a durable round-trip. Reading an absent
+ * field still yields `undefined`, so this is invisible to `ctx.step.usage`; it
+ * only makes `"usage" in ctx.step` and `Object.keys(ctx.step)` mean the same
+ * thing on both paths.
+ */
+function buildAgentStepOutput(fields: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  );
 }
 
 export class StepExecutor {
@@ -155,6 +190,7 @@ export class StepExecutor {
     node: WorkflowNode,
     context: WorkflowContext,
     abortSignal?: AbortSignal,
+    runId?: string,
   ): Promise<StepResult> {
     const startTime = Date.now();
     const config = node.config as StepNodeConfig;
@@ -184,7 +220,7 @@ export class StepExecutor {
         const output = await runWithWorkflowTenant(tenant, async () => {
           const resolvedInput = await this.resolveInput(config.input, context);
           abortSignal?.throwIfAborted();
-          this.config.onStepStart?.(node.id, resolvedInput);
+          this.config.onStepStart?.(node.id, resolvedInput, runId);
 
           const timeout = config.timeout
             ? parseDuration(config.timeout)
@@ -200,7 +236,8 @@ export class StepExecutor {
         abortSignal?.throwIfAborted();
 
         abortSignal?.throwIfAborted();
-        this.config.onStepComplete?.(node.id, output);
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
+        this.config.onStepComplete?.(node.id, output, runId);
 
         return {
           success: true,
@@ -212,11 +249,18 @@ export class StepExecutor {
         lastError = ensureError(error);
 
         if (attempt < maxAttempts && this.isRetryableError(lastError, retryConfig)) {
-          await sleep(calculateRetryDelay(attempt, retryConfig), abortSignal);
+          const delay = calculateRetryDelay(attempt, retryConfig);
+          addActiveSpanEvent("workflow.node.retry", {
+            "workflow.node.attempt": attempt,
+            "workflow.node.retry_delay_ms": delay,
+            "workflow.node.error_type": retryTelemetryErrorType(lastError),
+          });
+          await sleep(delay, abortSignal);
           continue;
         }
 
-        this.config.onStepError?.(node.id, lastError);
+        setActiveSpanAttributes({ "workflow.node.attempts": attempt });
+        this.config.onStepError?.(node.id, lastError, runId);
 
         return {
           success: false,
@@ -342,12 +386,17 @@ export class StepExecutor {
     });
     abortSignal?.throwIfAborted();
 
-    return {
+    // `object` is the validated structured output from the agent's
+    // `outputSchema`, already parsed by `generate()`. Omitting it here was
+    // silent: a later step reading `context.<nodeId>.object` got `undefined`
+    // with no error, making `outputSchema` unusable from inside a workflow.
+    return buildAgentStepOutput({
       text: response.text,
       toolCalls: response.toolCalls,
       status: response.status,
       usage: response.usage,
-    };
+      object: response.object,
+    });
   }
 
   private async executeTool(

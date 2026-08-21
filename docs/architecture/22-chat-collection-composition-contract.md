@@ -85,7 +85,7 @@ owns only the internal composition and verification boundary.
 Run these checks after changing a participating collection or its context:
 
 ```bash
-deno test --allow-all src/react/components/chat/chat/collections.contract.test.tsx
+deno task test:file src/react/components/chat/chat/collections.contract.test.tsx
 deno task lint:chat-ratchets
 deno task typecheck:consumer
 ```

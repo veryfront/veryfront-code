@@ -16,6 +16,8 @@ interface LcovLineRecord {
 }
 
 const UNIT_COVERAGE_ROOTS = ["src", "cli", "templates"];
+const PROVIDER_EGRESS_DENY_NET =
+  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
 const UNIT_COVERAGE_ENV = {
   DENO_TESTING: "1",
   VF_DISABLE_LRU_INTERVAL: "1",
@@ -77,7 +79,11 @@ export function buildDenoTestCommandArgs(
     "--preload=src/testing/preload.ts",
     "--no-check",
     "--parallel",
+    // Leaks here are load-dependent and do not reproduce on demand, so the
+    // first failure has to carry the stack rather than advise a rerun.
+    "--trace-leaks",
     "--allow-all",
+    PROVIDER_EGRESS_DENY_NET,
     "--v8-flags=--max-old-space-size=8192",
     `--coverage=${options.coverageDir}`,
     "--coverage-raw-data-only",

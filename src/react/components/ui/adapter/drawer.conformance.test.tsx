@@ -13,46 +13,14 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { Drawer, DrawerClose, DrawerContent, DrawerTitle, DrawerTrigger } from "../drawer.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { Slot } from "../slot.tsx";
 import type { DrawerParts } from "./contract.ts";
 
-class ResizeObserverStub {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
-}
-
 function installDom(dom: JSDOM): () => void {
-  const w = dom.window as unknown as Record<string, unknown>;
-  const g = globalThis as unknown as Record<string, unknown>;
-  const keys = [
-    "document",
-    "window",
-    "navigator",
-    "HTMLElement",
-    "Node",
-    "Element",
-    "MouseEvent",
-    "getComputedStyle",
-    "ResizeObserver",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-  ];
-  const prev: Record<string, unknown> = {};
-  for (const k of keys) prev[k] = g[k];
-  for (const k of keys) g[k] = w[k];
-  g.document = w.document;
-  g.window = w;
-  g.getComputedStyle = (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w);
-  g.ResizeObserver = ResizeObserverStub;
-  g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(0), 0);
-  g.cancelAnimationFrame = (id: number) => clearTimeout(id);
-  return () => {
-    for (const k of keys) g[k] = prev[k];
-    dom.window.close();
-  };
+  return installComponentDom(dom);
 }
 
 function render(el: React.ReactElement): { doc: Document; unmount: () => void } {

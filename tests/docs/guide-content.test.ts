@@ -42,6 +42,51 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("only tells workflow readers to call routes the same guide creates", async () => {
+    // A guide that curls an endpoint it never builds is unrunnable end to end,
+    // and the reader cannot tell the missing route from their own mistake. The
+    // framework serves no /api/workflows/** handler, so every localhost path
+    // this guide calls has to come from a route file the guide itself shows.
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows.md", repoRoot),
+    );
+
+    const toSegments = (path: string) =>
+      path.split("/").filter(Boolean).map((segment) =>
+        segment.startsWith("$") || segment.startsWith("[") ? "*" : segment
+      );
+
+    const created = [...guide.matchAll(/(?:app\/api\/[^\s"'`]*?)\/route\.ts/g)]
+      .map((match) => toSegments((match[0] ?? "").replace(/^app/, "").replace(/\/route\.ts$/, "")));
+
+    const called = [...guide.matchAll(/http:\/\/localhost:\d+(\/api\/[^\s"'`)]*)/g)]
+      .map((match) => match[1] ?? "");
+
+    assert(called.length > 0, "expected the guide to show at least one API call");
+    assertStringIncludes(
+      guide,
+      "await handle.settled();",
+      "the verification route must still return failed and cancelled run state for inspection",
+    );
+
+    for (const path of called) {
+      const wanted = toSegments(path);
+      const served = created.some((route) =>
+        route.length === wanted.length &&
+        route.every((segment, index) =>
+          segment === "*" || wanted[index] === "*" || segment === wanted[index]
+        )
+      );
+      assert(
+        served,
+        `docs/guides/workflows.md calls ${path} but never shows the route that serves it. ` +
+          `Routes the guide creates: ${
+            created.map((route) => "/" + route.join("/")).join(", ") || "(none)"
+          }`,
+      );
+    }
+  });
+
   it("presents open source, self-hosted, and managed paths as first-class options", async () => {
     const overview = await Deno.readTextFile(
       new URL("docs/getting-started/index.md", repoRoot),

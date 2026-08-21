@@ -62,6 +62,10 @@ export async function executeLoopNodeStrategy(
     resumeIteration = existingLoopState.iteration;
   }
 
+  let exposedIterationNodeStates: Record<string, NodeState> = resumeIterationNodeStates
+    ? { ...resumeIterationNodeStates }
+    : {};
+
   while (iteration < config.maxIterations) {
     runtime.abortSignal?.throwIfAborted();
     const loopContext: LoopExecutionContext = {
@@ -86,9 +90,11 @@ export async function executeLoopNodeStrategy(
     runtime.abortSignal?.throwIfAborted();
 
     // On resume, rehydrate the in-flight iteration's child node states so its
-    // already-completed steps are skipped instead of re-executed (H9).
+    // already-completed steps are skipped instead of re-executed (H9),
+    // reconciled against the run's own map so the node that was just resolved
+    // is not replayed as still pending.
     const iterationNodeStates = resumeIteration === iteration && resumeIterationNodeStates
-      ? { ...resumeIterationNodeStates }
+      ? reconcileIterationNodeStates(resumeIterationNodeStates, nodeStates)
       : {};
     // Only rehydrate once; subsequent iterations start fresh.
     resumeIterationNodeStates = undefined;
@@ -109,7 +115,14 @@ export async function executeLoopNodeStrategy(
     runtime.abortSignal?.throwIfAborted();
 
     if (result.waiting) {
-      applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+      // Diff the iteration against its own starting state, never against the
+      // parent's map. `result.nodeStates` holds this iteration's children only,
+      // so diffing the parent against it reports every completed sibling as
+      // deleted -- which removes their state and gets them re-scheduled.
+      applyRecordPatch(
+        nodeStates,
+        createRecordPatch(exposedIterationNodeStates, result.nodeStates),
+      );
 
       const state: NodeState = {
         nodeId: node.id,
@@ -134,6 +147,7 @@ export async function executeLoopNodeStrategy(
           }),
         ),
         waiting: true,
+        waitingNode: result.waitingNode,
       };
     }
 
@@ -145,7 +159,8 @@ export async function executeLoopNodeStrategy(
 
     previousResults.push(result.context);
     applyContextPatch(context, result.contextPatch);
-    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+    applyRecordPatch(nodeStates, createRecordPatch(exposedIterationNodeStates, result.nodeStates));
+    exposedIterationNodeStates = { ...result.nodeStates };
 
     if (config.delay && iteration < config.maxIterations - 1) {
       const delayMs = typeof config.delay === "number" ? config.delay : parseDuration(config.delay);
@@ -203,4 +218,31 @@ export async function executeLoopNodeStrategy(
     }),
     waiting: false,
   };
+}
+
+/**
+ * Overlay the run's authoritative node states onto a resumed iteration's
+ * snapshot.
+ *
+ * The snapshot is frozen at the moment the loop suspended. Whatever resolves
+ * the wait afterwards -- an approval decision, a signal -- patches the run's
+ * own `nodeStates` and then resumes; it has no idea the loop is holding a
+ * private copy. Replaying the iteration from that copy leaves the wait node
+ * `running`, so `getReadyNodes` excludes it, the step depending on it never
+ * becomes ready, and the child graph reports completion having scheduled
+ * nothing -- losing the step silently while the iteration looks successful.
+ *
+ * The run's map wins for every node it also knows about. Nodes it has never
+ * heard of stay as the snapshot left them, so this cannot pull a sibling from
+ * outside the loop into the iteration's graph.
+ */
+function reconcileIterationNodeStates(
+  snapshot: Record<string, NodeState>,
+  runNodeStates: Record<string, NodeState>,
+): Record<string, NodeState> {
+  const reconciled: Record<string, NodeState> = { ...snapshot };
+  for (const [nodeId, state] of Object.entries(runNodeStates)) {
+    if (nodeId in reconciled) reconciled[nodeId] = state;
+  }
+  return reconciled;
 }

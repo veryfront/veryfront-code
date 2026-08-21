@@ -1,4 +1,8 @@
-import type { ModelRuntime } from "./types.ts";
+import type {
+  ModelRuntime,
+  RuntimeResponseFormat,
+  RuntimeStructuredOutputVariant,
+} from "./types.ts";
 
 export function getModelRuntimeId(model: ModelRuntime): string | undefined {
   const modelId = model.modelId;
@@ -42,4 +46,45 @@ export function supportsModelRuntimeToolCalling(model: ModelRuntime): boolean {
     throw new TypeError("Model runtime toolCalling capability must be a boolean");
   }
   return toolCalling;
+}
+
+/**
+ * Return whether a runtime accepts JSON or JSON-schema response formats.
+ *
+ * Unlike tool calling there is no historical behavior to preserve: a runtime
+ * that never advertised the capability is treated as unsupported, so a
+ * requested schema fails loudly instead of being dropped on the way to a
+ * provider that would ignore it.
+ */
+function assertStructuredOutputVariant(
+  value: unknown,
+): asserts value is RuntimeStructuredOutputVariant {
+  if (value === "json" || value === "json_schema") return;
+  throw new TypeError(
+    "Model runtime structuredOutput capability variants must be json or json_schema",
+  );
+}
+
+export function supportsModelRuntimeStructuredOutput(
+  model: ModelRuntime,
+  responseFormat?: RuntimeResponseFormat,
+): boolean {
+  const capabilities = model.runtimeCapabilities;
+  if (capabilities === undefined) return false;
+  if (typeof capabilities !== "object" || capabilities === null) {
+    throw new TypeError("Model runtime capabilities must be an object");
+  }
+  const structuredOutput = capabilities.structuredOutput;
+  if (structuredOutput === undefined) return false;
+  if (typeof structuredOutput === "boolean") return structuredOutput;
+  if (!Array.isArray(structuredOutput)) {
+    throw new TypeError(
+      "Model runtime structuredOutput capability must be a boolean or an array",
+    );
+  }
+  for (const variant of structuredOutput) {
+    assertStructuredOutputVariant(variant);
+  }
+  if (!responseFormat || responseFormat.type === "text") return structuredOutput.length > 0;
+  return structuredOutput.includes(responseFormat.type);
 }

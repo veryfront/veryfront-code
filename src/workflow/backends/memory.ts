@@ -76,9 +76,14 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  getRun(runId: string): Promise<WorkflowRun | null> {
+  async getRun(runId: string): Promise<WorkflowRun | null> {
     const run = this.runs.get(runId);
-    return Promise.resolve(run ? structuredClone(run) : null);
+    if (!run) return null;
+
+    return {
+      ...structuredClone(run),
+      pendingApprovals: await this.getPendingApprovals(runId),
+    };
   }
 
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void> {

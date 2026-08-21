@@ -28,8 +28,16 @@ import { executeAppRoute } from "../route-executor.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { APIRoute, AppRouteContext, AppRouteHandler } from "./types.ts";
 
 const fs = createFileSystem();
+const appRouteContext: AppRouteContext = { params: {}, env: {} };
+
+async function getText(route: APIRoute | null): Promise<string | undefined> {
+  const handler = route?.GET as AppRouteHandler | undefined;
+  const response = await handler?.(new Request("http://x"), appRouteContext);
+  return await response?.text();
+}
 
 function loadHandlerModule(options: LoadModuleOptions) {
   return loadHandlerModuleRaw({
@@ -119,6 +127,172 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     });
 
     assertEquals(typeof route?.GET, "function");
+  });
+
+  it("reuses an unchanged route module so module state survives between requests", async () => {
+    // Every request routes through loadHandlerModule. If each load mints a new
+    // module instance, module-level state (clients, caches, pools) silently
+    // resets between requests in dev while persisting in production.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "stateful-handler.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      `let count = 0;\nexport const GET = () => new Response(String(++count));`,
+    );
+
+    const load = () =>
+      loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined });
+
+    const first = await load();
+    const second = await load();
+
+    assertEquals(await getText(first), "1");
+    assertEquals(
+      await getText(second),
+      "2",
+      "a second load of an unchanged file must reuse the module, not reset its state",
+    );
+  });
+
+  it("picks up an edited route module instead of serving the cached one", async () => {
+    // The counterpart to reuse: editing a route must still take effect without
+    // restarting the dev server.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "edited-handler.ts");
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("before");`);
+    const before = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(before), "before");
+
+    // Move mtime forward so the edit is distinguishable on coarse filesystems.
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("after");`);
+    await Deno.utime(modulePath, new Date(), new Date(Date.now() + 2000));
+
+    const after = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(after),
+      "after",
+      "an edited route must not keep serving the previously loaded module",
+    );
+  });
+
+  it("picks up same-size edits when the route mtime does not change", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "same-mtime-handler.ts");
+    const observableTime = new Date(1_700_000_000_000);
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("one");`);
+    await Deno.utime(modulePath, observableTime, observableTime);
+
+    const before = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(before), "one");
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("two");`);
+    await Deno.utime(modulePath, observableTime, observableTime);
+
+    const after = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(after),
+      "two",
+      "same-size edits with the same observable mtime must still reload",
+    );
+  });
+
+  it("reuses an unchanged bundled route module too", async () => {
+    // A route that cannot be resolved by Deno alone falls back to bundling, and
+    // that path builds its module from generated source rather than the file on
+    // disk. It has to keep state across loads for the same reason the direct
+    // path does, or module state resets per request for any project using an
+    // alias import.
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "lib"), { recursive: true });
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+
+    await fs.writeTextFile(
+      join(projectDir, "lib", "counter.ts"),
+      `let count = 0;\nexport const bump = () => ++count;`,
+    );
+
+    const modulePath = join(projectDir, "pages", "api", "counted.ts");
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { bump } from "@/lib/counter.ts";`,
+        `export function GET() { return new Response(String(bump())); }`,
+      ].join("\n"),
+    );
+
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+    const load = () => loadHandlerModule({ projectDir, modulePath, adapter, config });
+
+    const first = await load();
+    const second = await load();
+
+    assertEquals(await getText(first), "1");
+    assertEquals(
+      await getText(second),
+      "2",
+      "a bundled route must reuse its module when the generated source is unchanged",
+    );
+  });
+
+  it("rebuilds a bundled route module when its source changes", async () => {
+    const projectDir = await makeTempDir();
+    await fs.mkdir(join(projectDir, "pages", "api"), { recursive: true });
+    const modulePath = join(projectDir, "pages", "api", "edited.ts");
+    const config: VeryfrontConfig = {
+      resolve: { importMap: { imports: { "@/": "./" } } },
+    };
+
+    await fs.writeTextFile(
+      join(projectDir, "pages", "api", "value.ts"),
+      `export const value = "before";`,
+    );
+    await fs.writeTextFile(
+      modulePath,
+      [
+        `import { value } from "@/pages/api/value.ts";`,
+        `export function GET() { return new Response(value); }`,
+      ].join("\n"),
+    );
+
+    const before = await loadHandlerModule({ projectDir, modulePath, adapter, config });
+    assertEquals(await getText(before), "before");
+
+    await fs.writeTextFile(
+      join(projectDir, "pages", "api", "value.ts"),
+      `export const value = "after";`,
+    );
+
+    const after = await loadHandlerModule({ projectDir, modulePath, adapter, config });
+    assertEquals(
+      await getText(after),
+      "after",
+      "a bundled route must not keep serving a stale module after its source changes",
+    );
   });
 
   it("rejects host loading without an explicit capability before evaluation", async () => {

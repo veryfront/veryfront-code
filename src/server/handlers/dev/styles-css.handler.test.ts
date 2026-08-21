@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import {
@@ -198,6 +198,96 @@ describe("server/handlers/dev/styles-css.handler", () => {
       if (previousEngine !== undefined) {
         register(CSSOptimizationEngineName, previousEngine);
       }
+    }
+  });
+
+  it("serves successful CSS with a revalidating cache policy and ETag", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-cyan-500">Hello</div>',
+      }],
+      null,
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const etag = result.response!.headers.get("etag");
+
+      assertEquals(result.response!.status, 200);
+      assertExists(etag);
+      assertEquals(
+        result.response!.headers.get("cache-control"),
+        "public, max-age=0, must-revalidate",
+      );
+      assertEquals(result.response!.headers.get("cache-control")?.includes("no-store"), false);
+      assertEquals(result.response!.headers.get("pragma"), null);
+      assertEquals(result.response!.headers.get("expires"), null);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("returns not modified when a successful CSS ETag matches", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-cyan-500">Hello</div>',
+      }],
+      null,
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const first = await handler.handle(req, ctx);
+      const etag = first.response!.headers.get("etag");
+      assertExists(etag);
+
+      const second = await handler.handle(
+        new Request("http://localhost/_vf_styles/styles.css", {
+          headers: { "if-none-match": etag },
+        }),
+        ctx,
+      );
+
+      assertEquals(second.response!.status, 304);
+      assertEquals(second.response!.headers.get("etag"), etag);
+      assertEquals(
+        second.response!.headers.get("cache-control"),
+        "public, max-age=0, must-revalidate",
+      );
+      assertEquals(second.response!.headers.get("cache-control")?.includes("no-store"), false);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
     }
   });
 

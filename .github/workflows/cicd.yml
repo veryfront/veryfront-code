@@ -594,7 +594,7 @@ jobs:
 
   # ============================================
   # CD: Build Binaries (main only)
-  # Version comes directly from deno.json
+  # Stable versions come from deno.json. RC versions append the workflow run number.
   # ============================================
 
   tests-proxy-binary:
@@ -646,6 +646,7 @@ jobs:
 
   build-binaries:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.ref == 'refs/heads/main' }}
+    needs: [version-check]
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
@@ -693,6 +694,12 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
+
+      - name: Prepare RC build version
+        if: needs.version-check.outputs.is_stable == 'false'
+        env:
+          VERSION: ${{ needs.version-check.outputs.version }}.${{ github.run_number }}
+        run: deno run -A scripts/ci/prepare-rc-build.ts
 
       # Caches npm packages from the registry. A truncated response
       # ("error reading a body from connection") fails the whole leg, so retry

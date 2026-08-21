@@ -27,17 +27,29 @@ veryfront schema --json
 veryfront mcp
 
 # Run the full test suite
-VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 \
-  NODE_ENV=production LOG_FORMAT=text \
-  deno test --preload=src/testing/preload.ts --no-check --allow-all \
-  --unstable-worker-options --unstable-net
+deno task test
 
 # Unit tests only, parallel, excluding integration suites
-deno test --preload=src/testing/preload.ts --no-check --allow-all --parallel \
-  '--ignore=tests,src/workflow/__tests__,cli/commands/*.integration.test.ts'
+deno task test:unit
+
+# A single file or directory
+deno task test:file src/workflow/executor/dag/index.test.ts
 ```
 
-For targeted changes, run the narrowest relevant `deno test` command first, then broaden only when the change touches shared runtime, public APIs, or cross-cutting behavior.
+For targeted changes, run the narrowest relevant task first (`deno task test:file <path>`), then
+broaden only when the change touches shared runtime, public APIs, or cross-cutting behavior.
+
+This repository pins its Deno version in `.tool-versions`, and `mise` or `asdf`
+will select it automatically. Match it before regenerating anything: generated
+files embed declaration line numbers in padded columns, so a different Deno
+rewrites them even when nothing changed, and committing that output turns CI red
+for everyone. `deno task docs` refuses to run on the wrong version rather than
+producing a plausible-looking diff.
+
+Use these tasks rather than a hand-written `deno test` command. They set `DENO_TESTING=1` and
+deny network access to the LLM provider origins. Without both, a test that stubs
+`globalThis.fetch` is ignored by the outbound fetch guard (`src/security/http/outbound-fetch.ts`)
+and issues a real request to a live provider, failing with a confusing 401 or 405.
 
 ## Public copy rules
 

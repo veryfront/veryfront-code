@@ -367,6 +367,54 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(await backend.getLatestCheckpoint(run.id), null);
   });
 
+  it("persists recovered running-node attempts before re-running side effects", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "owner-fenced-recovery-attempt",
+        steps: [
+          step("side-effect", {
+            tool: createTool("side-effect", async () => {
+              started.resolve();
+              await release.promise;
+              return { ok: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("owner-fenced-recovery-attempt"),
+      status: "running" as const,
+      workerId: "run-execution:old-owner",
+      nodeStates: {
+        "side-effect": {
+          nodeId: "side-effect",
+          status: "running" as const,
+          attempt: 1,
+          startedAt: new Date(),
+        },
+      },
+    };
+    await backend.createRun(run);
+
+    const execution = executor.resume(run.id, undefined, run.workerId);
+    await started.promise;
+
+    const persistedWhileRunning = await backend.getRun(run.id);
+    assertExists(persistedWhileRunning);
+    assertEquals(persistedWhileRunning.status, "running");
+    assertEquals(persistedWhileRunning.workerId, "run-execution:old-owner");
+    assertEquals(persistedWhileRunning.nodeStates["side-effect"]?.attempt, 2);
+    assertEquals(persistedWhileRunning.nodeStates["side-effect"]?.status, "running");
+
+    release.resolve();
+    await execution;
+  });
+
   it("releases a waiting run lock before its async callback settles", async () => {
     using time = new FakeTime();
     const backend = new MemoryBackend();

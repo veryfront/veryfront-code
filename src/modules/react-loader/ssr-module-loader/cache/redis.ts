@@ -24,6 +24,41 @@ const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   getCacheBaseDir,
 );
 
+/**
+ * Background cache writes started by the render path.
+ *
+ * A transform publishes to the distributed cache without blocking the render on
+ * it, which leaves the write running with nobody holding its promise. Tracking
+ * those promises keeps the fire-and-forget deliberate rather than unobservable:
+ * a caller that is about to tear down the cache directory -- a test, or a
+ * shutdown path -- can wait for the disk to settle instead of racing it.
+ *
+ * Racing it is not harmless. The write fails mid-flight when its directory
+ * disappears, and the failure lands in a cleanup path that is still running
+ * after its owner has gone.
+ */
+const backgroundWrites = new Set<Promise<unknown>>();
+
+/** Register a write started without an owner awaiting it. */
+export function trackBackgroundWrite(write: Promise<unknown>): void {
+  backgroundWrites.add(write);
+  void write.catch(() => {}).finally(() => {
+    backgroundWrites.delete(write);
+  });
+}
+
+/**
+ * Wait for every tracked background write to settle.
+ *
+ * Loops because a settling write can register another one; the set is empty
+ * only when nothing is left in flight.
+ */
+export async function drainBackgroundWrites(): Promise<void> {
+  while (backgroundWrites.size > 0) {
+    await Promise.allSettled([...backgroundWrites]);
+  }
+}
+
 let distributedCacheEnabled = false;
 
 /** Initialize distributed caching for SSR modules */

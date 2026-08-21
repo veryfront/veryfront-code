@@ -6,6 +6,7 @@ import type {
   WorkflowContext,
   WorkflowRun,
 } from "../types.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { generateId, parseDuration } from "../types.ts";
 import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowExecutor } from "../executor/workflow-executor.ts";
@@ -28,6 +29,15 @@ export type ApprovalNotifier = (
   run: WorkflowRun,
 ) => Promise<void>;
 
+export interface ApprovalResponseSchemaResolverInput {
+  run: WorkflowRun;
+  approval: PendingApproval;
+}
+
+export type ApprovalResponseSchemaResolver = (
+  input: ApprovalResponseSchemaResolverInput,
+) => Schema<unknown> | undefined | Promise<Schema<unknown> | undefined>;
+
 export interface ApprovalManagerConfig {
   /** Backend for persistence */
   backend: WorkflowBackend;
@@ -35,6 +45,8 @@ export interface ApprovalManagerConfig {
   executor?: WorkflowExecutor;
   /** Notification callback */
   notifier?: ApprovalNotifier;
+  /** Resolve a wait node response schema for persisted approvals. */
+  responseSchemaResolver?: ApprovalResponseSchemaResolver;
   /** Check expired approvals interval (ms) */
   expirationCheckInterval?: number;
   /** Enable debug logging */
@@ -67,6 +79,7 @@ export class ApprovalManager {
   private config: ApprovalManagerConfig;
   private expirationTimer?: ReturnType<typeof setInterval>;
   private destroyed = false;
+  private responseSchemas = new Map<string, Schema<unknown>>();
 
   constructor(config: ApprovalManagerConfig) {
     this.config = {
@@ -112,22 +125,40 @@ export class ApprovalManager {
       runId: run.id,
     });
 
+    const responseSchemaKey = waitConfig.responseSchema
+      ? this.responseSchemaKey(run.id, approval.id)
+      : undefined;
+    if (responseSchemaKey && waitConfig.responseSchema) {
+      this.responseSchemas.set(responseSchemaKey, waitConfig.responseSchema);
+    }
+
     // Worker-owned approvals are reserved atomically before notification. This
     // prevents a delayed onWaiting callback from notifying or appending after a
     // replacement worker has claimed the run.
     const ownerBound = run.workerId !== undefined;
     if (ownerBound) {
       const saveOwned = this.config.backend.savePendingApprovalIfStatusAndWorker;
-      const saved = saveOwned
-        ? await saveOwned.call(
-          this.config.backend,
-          run.id,
-          ["waiting"],
-          run.workerId!,
-          approval,
-        )
-        : false;
+      let saved: boolean;
+      try {
+        saved = saveOwned
+          ? await saveOwned.call(
+            this.config.backend,
+            run.id,
+            ["waiting"],
+            run.workerId!,
+            approval,
+          )
+          : false;
+      } catch (error) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
+        throw error;
+      }
       if (!saved) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
         throw ORCHESTRATION_ERROR.create({
           detail: "Workflow execution ownership changed before approval persistence",
         });
@@ -156,7 +187,14 @@ export class ApprovalManager {
     } else {
       // Preserve direct/ownerless behavior: resolve notification first so its
       // delivery error is included in the initial append.
-      await this.config.backend.savePendingApproval(run.id, approval);
+      try {
+        await this.config.backend.savePendingApproval(run.id, approval);
+      } catch (error) {
+        if (responseSchemaKey) {
+          this.responseSchemas.delete(responseSchemaKey);
+        }
+        throw error;
+      }
     }
 
     return {
@@ -186,6 +224,43 @@ export class ApprovalManager {
   /** Get all pending approvals for a run */
   getPendingApprovals(runId: string): Promise<PendingApproval[]> {
     return this.config.backend.getPendingApprovals(runId);
+  }
+
+  private responseSchemaKey(runId: string, approvalId: string): string {
+    return `${runId}::${approvalId}`;
+  }
+
+  private async resolveResponseSchema(
+    runId: string,
+    approval: PendingApproval,
+  ): Promise<Schema<unknown> | undefined> {
+    const localSchema = this.responseSchemas.get(this.responseSchemaKey(runId, approval.id));
+    if (localSchema) return localSchema;
+
+    if (!this.config.responseSchemaResolver) return undefined;
+
+    const run = await this.config.backend.getRun(runId);
+    if (!run) return undefined;
+
+    return await this.config.responseSchemaResolver({ run, approval });
+  }
+
+  private async validateDecisionData(
+    runId: string,
+    approval: PendingApproval,
+    decision: ApprovalDecision,
+  ): Promise<void> {
+    const schema = await this.resolveResponseSchema(runId, approval);
+    if (!schema) return;
+
+    try {
+      schema.parse(decision.data);
+    } catch (error) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Approval "${approval.id}" data does not match the wait node's responseSchema: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 
   /** Process an approval decision */
@@ -222,6 +297,8 @@ export class ApprovalManager {
       throw PERMISSION_DENIED.create({ detail: "Not authorized to approve this request" });
     }
 
+    await this.validateDecisionData(runId, approval, decision);
+
     // Authoritative gate: the backend applies the decision only while the
     // approval is still pending and reports whether it won the race. If another
     // decision resolved this approval first, `applied` is false and we must not
@@ -230,6 +307,7 @@ export class ApprovalManager {
     if (applied === false) {
       throw INVALID_ARGUMENT.create({ detail: `Approval already processed: ${approvalId}` });
     }
+    this.responseSchemas.delete(this.responseSchemaKey(runId, approvalId));
 
     // The approval decision is already durable. Reconcile it onto whichever
     // worker owns the run now, retrying if ownership changes between the read,
@@ -266,22 +344,36 @@ export class ApprovalManager {
     approver: string,
     approved: boolean,
     comment?: string,
+    data?: unknown,
   ): Promise<void> {
     return this.processDecision(runId, approvalId, {
       approved,
       approver,
       comment,
+      ...(data === undefined ? {} : { data }),
     });
   }
 
   /** Approve an approval request */
-  approve(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.submitDecision(runId, approvalId, approver, true, comment);
+  approve(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, true, comment, data);
   }
 
   /** Reject an approval request */
-  reject(runId: string, approvalId: string, approver: string, comment?: string): Promise<void> {
-    return this.submitDecision(runId, approvalId, approver, false, comment);
+  reject(
+    runId: string,
+    approvalId: string,
+    approver: string,
+    comment?: string,
+    data?: unknown,
+  ): Promise<void> {
+    return this.submitDecision(runId, approvalId, approver, false, comment, data);
   }
 
   /** List all pending approvals across workflows */
@@ -337,6 +429,7 @@ export class ApprovalManager {
       if (expired === false) {
         continue;
       }
+      this.responseSchemas.delete(this.responseSchemaKey(runId, approval.id));
 
       await updateRunIfStatus(this.config.backend, runId, ["pending", "running", "waiting"], {
         status: "failed",
