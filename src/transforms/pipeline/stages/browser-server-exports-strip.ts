@@ -4654,7 +4654,7 @@ function setBody(ast: ASTNode, body: Node[]): void {
 const REMEDY = {
   /** The hook is exported in a form with no local declaration to empty. */
   declareDirectly: "Declare the hook directly (`export async function getServerData() {…}`) " +
-    "so the framework can strip it from the client build.",
+    "so Veryfront can strip it from the client build.",
   /** The hook is fine; a value it shares with client code is the problem. */
   separateTheValue: "Move the shared value into a module the hook imports, or read it from code " +
     "the browser reaches so it is intentionally part of the client bundle.",
