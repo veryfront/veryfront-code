@@ -883,7 +883,7 @@ describe("npm supply-chain policy", () => {
       "scripts/build/build-npm-dnt.ts",
     );
     const extensionSource = await Deno.readTextFile(
-      "scripts/build/build-npm-extension-packages.ts",
+      new URL("build-npm-extension-packages.ts", import.meta.url),
     );
 
     assertEquals(rootSource.includes("timers:"), false);
