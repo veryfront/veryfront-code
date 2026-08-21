@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import {
@@ -11,22 +11,43 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
-import {
-  getModulePathCache,
-  saveModulePathCache,
-} from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
+import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   buildMdxEsmPathCacheKey,
   MDX_MODULE_DEV_COMPILE_VARIANT,
   UNRESOLVED_IMPORTS_SIDECAR_SUFFIX,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import {
+  drainModulePathCacheSaves,
   persistTransformedModule,
   readPersistedUnresolvedSpecifiers,
+  setModulePathCacheSaveForTesting,
   transformedModuleHasDefaultExport,
 } from "./module-persistence.ts";
 
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("module-loader/module-persistence", () => {
+  const restoreSaveHooks: Array<() => void> = [];
+
+  afterEach(async () => {
+    await drainModulePathCacheSaves();
+    for (const restore of restoreSaveHooks.splice(0).reverse()) restore();
+    await drainModulePathCacheSaves();
+  });
+
   it("writes transformed code, registers MDX path-cache, and updates module cache", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
@@ -148,7 +169,7 @@ describe("module-loader/module-persistence", () => {
       });
 
       // persistTransformedModule publishes the index write without awaiting it.
-      await saveModulePathCache(tmpDir);
+      await drainModulePathCacheSaves();
       assertEquals(
         await readTextFile(developmentPath),
         "export const compiledFor = 'development';",
@@ -172,6 +193,240 @@ describe("module-loader/module-persistence", () => {
       assertEquals(pathCache.get(developmentKey), developmentPath);
       assertEquals(pathCache.get(productionKey), productionPath);
     } finally {
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("keeps path-cache save off the critical path and drains a successful save", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/nonblocking.ts");
+    const moduleCache = new Map<string, string>();
+    const saveStarted = deferred();
+    const releaseSave = deferred();
+    let saveCompleted = false;
+
+    restoreSaveHooks.push(setModulePathCacheSaveForTesting(async (cacheDir) => {
+      assertEquals(cacheDir, tmpDir);
+      saveStarted.resolve();
+      await releaseSave.promise;
+      saveCompleted = true;
+    }));
+
+    try {
+      const result = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const nonblocking = true;",
+        localAdapter,
+        moduleCache,
+        cacheKey: "nonblocking",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+      });
+
+      await saveStarted.promise;
+      assertEquals(saveCompleted, false);
+      assertEquals(moduleCache.get("nonblocking"), result);
+
+      let drained = false;
+      const drain = drainModulePathCacheSaves().then(() => {
+        drained = true;
+      });
+      await Promise.resolve();
+      assertEquals(drained, false);
+
+      releaseSave.resolve();
+      await drain;
+      assertEquals(saveCompleted, true);
+      assertEquals(drained, true);
+    } finally {
+      releaseSave.resolve();
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("drains failed path-cache saves without surfacing an unhandled rejection", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/failing-save.ts");
+    const moduleCache = new Map<string, string>();
+    let saveCalls = 0;
+
+    restoreSaveHooks.push(setModulePathCacheSaveForTesting(() => {
+      saveCalls++;
+      return Promise.reject(new Error("synthetic save failure"));
+    }));
+
+    try {
+      await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: "export const failing = true;",
+        localAdapter,
+        moduleCache,
+        cacheKey: "failing-save",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+      });
+
+      await drainModulePathCacheSaves();
+      await drainModulePathCacheSaves();
+      assertEquals(saveCalls, 1);
+      assertEquals(moduleCache.has("failing-save"), true);
+    } finally {
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("drains multiple concurrent path-cache saves", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const moduleCache = new Map<string, string>();
+    const releases = [deferred(), deferred(), deferred()];
+    let saveCalls = 0;
+
+    restoreSaveHooks.push(setModulePathCacheSaveForTesting(async () => {
+      const release = releases[saveCalls++];
+      assert(release, "unexpected save call");
+      await release.promise;
+    }));
+
+    try {
+      const persists = [0, 1, 2].map((index) =>
+        persistTransformedModule({
+          filePath: join(projectDir, `app/concurrent-${index}.ts`),
+          projectDir,
+          tmpDir,
+          transformedCode: `export const concurrent = ${index};`,
+          localAdapter,
+          moduleCache,
+          cacheKey: `concurrent-${index}`,
+          contentSourceId: "preview-main",
+          reactVersion: "19.1.1",
+        })
+      );
+      await Promise.all(persists);
+      await Promise.resolve();
+      assertEquals(saveCalls, 3);
+
+      let drained = false;
+      const drain = drainModulePathCacheSaves().then(() => {
+        drained = true;
+      });
+      await Promise.resolve();
+      assertEquals(drained, false);
+
+      releases[0].resolve();
+      await Promise.resolve();
+      assertEquals(drained, false);
+      releases[1].resolve();
+      releases[2].resolve();
+      await drain;
+      assertEquals(drained, true);
+    } finally {
+      for (const release of releases) release.resolve();
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("drains a path-cache save started while an earlier save is draining", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const moduleCache = new Map<string, string>();
+    const firstRelease = deferred();
+    const secondStarted = deferred();
+    const secondRelease = deferred();
+    let saveCalls = 0;
+
+    restoreSaveHooks.push(setModulePathCacheSaveForTesting(async () => {
+      saveCalls++;
+      if (saveCalls === 1) {
+        await firstRelease.promise;
+        await persistTransformedModule({
+          filePath: join(projectDir, "app/second-during-drain.ts"),
+          projectDir,
+          tmpDir,
+          transformedCode: "export const second = true;",
+          localAdapter,
+          moduleCache,
+          cacheKey: "second-during-drain",
+          contentSourceId: "preview-main",
+          reactVersion: "19.1.1",
+        });
+        return;
+      }
+      secondStarted.resolve();
+      await secondRelease.promise;
+    }));
+
+    try {
+      await persistTransformedModule({
+        filePath: join(projectDir, "app/first-during-drain.ts"),
+        projectDir,
+        tmpDir,
+        transformedCode: "export const first = true;",
+        localAdapter,
+        moduleCache,
+        cacheKey: "first-during-drain",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+      });
+
+      let drained = false;
+      const drain = drainModulePathCacheSaves().then(() => {
+        drained = true;
+      });
+      await Promise.resolve();
+      firstRelease.resolve();
+      await secondStarted.promise;
+      await Promise.resolve();
+      assertEquals(drained, false);
+
+      secondRelease.resolve();
+      await drain;
+      assertEquals(drained, true);
+      assertEquals(saveCalls, 2);
+    } finally {
+      firstRelease.resolve();
+      secondRelease.resolve();
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("lets teardown cleanup drain a pending path-cache save", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const releaseSave = deferred();
+
+    restoreSaveHooks.push(setModulePathCacheSaveForTesting(() => releaseSave.promise));
+
+    try {
+      await persistTransformedModule({
+        filePath: join(projectDir, "app/teardown.ts"),
+        projectDir,
+        tmpDir,
+        transformedCode: "export const teardown = true;",
+        localAdapter,
+        moduleCache: new Map<string, string>(),
+        cacheKey: "teardown",
+        contentSourceId: "preview-main",
+        reactVersion: "19.1.1",
+      });
+    } finally {
+      releaseSave.resolve();
       await remove(projectDir, { recursive: true }).catch(() => undefined);
       await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }

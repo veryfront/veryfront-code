@@ -29,6 +29,11 @@ const MAX_CREATED_DIRS = 5_000;
 /** Cache for created directories to avoid repeated mkdir calls (LRU-style). */
 const createdDirs = new Set<string>();
 
+type ModulePathCacheSave = (cacheDir: string) => Promise<void>;
+
+const pendingModulePathCacheSaves = new Set<Promise<void>>();
+let modulePathCacheSave: ModulePathCacheSave = saveModulePathCache;
+
 /** Prune oldest entries when cache exceeds limit. */
 function pruneCreatedDirs(): void {
   if (createdDirs.size <= MAX_CREATED_DIRS) return;
@@ -41,6 +46,35 @@ function pruneCreatedDirs(): void {
     createdDirs.delete(dir);
     deleted++;
   }
+}
+
+function publishModulePathCacheSave(cacheDir: string): void {
+  let save: Promise<void>;
+  save = Promise.resolve()
+    .then(() => modulePathCacheSave(cacheDir))
+    .catch((err) => {
+      logger.debug("Failed to save module cache", { error: String(err) });
+    })
+    .finally(() => {
+      pendingModulePathCacheSaves.delete(save);
+    });
+  pendingModulePathCacheSaves.add(save);
+}
+
+export async function drainModulePathCacheSaves(): Promise<void> {
+  while (pendingModulePathCacheSaves.size > 0) {
+    await Promise.all([...pendingModulePathCacheSaves]);
+  }
+}
+
+export function setModulePathCacheSaveForTesting(
+  save: ModulePathCacheSave,
+): () => void {
+  const previous = modulePathCacheSave;
+  modulePathCacheSave = save;
+  return () => {
+    modulePathCacheSave = previous;
+  };
 }
 
 async function ensureDir(
@@ -605,9 +639,7 @@ export async function persistTransformedModule(
         const cache = await getModulePathCache(input.tmpDir);
         cache.set(mdxCacheKey, tempFilePath);
 
-        saveModulePathCache(input.tmpDir).catch((err) => {
-          logger.debug("Failed to save module cache", { error: String(err) });
-        });
+        publishModulePathCacheSave(input.tmpDir);
 
         logger.debug("Registered module in MDX-ESM cache", {
           file: input.filePath.slice(-40),
