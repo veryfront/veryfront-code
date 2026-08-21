@@ -1,7 +1,7 @@
 ---
 title: "veryfront/metrics"
 description: "Runtime/application metric hooks for project code."
-order: 19
+order: 20
 ---
 
 ## Import

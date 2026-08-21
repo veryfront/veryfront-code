@@ -1,7 +1,7 @@
 ---
 title: "veryfront/markdown"
 description: "Dependency-free Markdown source presentation for React. Core renders escaped source explicitly. Semantic Markdown is an optional capability supplied by a trusted extension through `MarkdownRendererProvider` or the per-component `renderer` prop."
-order: 16
+order: 17
 ---
 
 ## Import
