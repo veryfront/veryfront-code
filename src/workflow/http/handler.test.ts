@@ -466,11 +466,12 @@ describe("createWorkflowHandler", () => {
       // returns, so it must not widen what that endpoint exposes.
       return startRun().then(async (runId) => {
         const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
-        const [[, snapshotFrame]] = await readStream(response);
+        const snapshotFrame = (await readStream(response))[0]?.[1];
+        expect(snapshotFrame).toBeDefined();
 
         const detail = await (await handlers.GET(get(`/api/workflows/runs/${runId}`))).json();
 
-        expect(Object.keys(snapshotFrame).sort()).toEqual(
+        expect(Object.keys(snapshotFrame ?? {}).sort()).toEqual(
           Object.keys(detail as Record<string, unknown>).sort(),
         );
       });
