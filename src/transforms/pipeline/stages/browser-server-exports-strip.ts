@@ -72,7 +72,8 @@ import {
 } from "./reference-classification.ts";
 
 /** Exports that only ever execute on the server. */
-const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
+/** The hook names this pass empties. Exported so tests read the real policy. */
+export const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
 
 // This pass runs on pre-compile source, so no compiler map exists yet. A map
 // directive can still be present in checked-in build output. Once a hook is
@@ -133,16 +134,31 @@ function exportName(value: unknown): string | null {
   return isNode(value) ? (stringLiteralText(value) ?? nodeName(value)) : null;
 }
 
+/**
+ * Whether `code` could name a server-only export. This only decides whether to
+ * parse, so it stays cheap, but it has to be sound in one direction: a false
+ * negative ships the hook, the secret it closes over and its server imports to
+ * the browser, and no later stage gets a second chance.
+ *
+ * Soundness comes from the grammar rather than from a list of spellings. An
+ * exported name is an IdentifierName or a StringLiteral, and in both the only
+ * way to write a character as anything other than itself is an escape sequence,
+ * which always starts with a backslash. A module whose text holds no backslash
+ * therefore spells every name it exports verbatim, and the substring test above
+ * settles it. Any backslash at all and this parses instead, which lets
+ * `exportName` read the name the way the runtime will.
+ *
+ * The `export` test is sound for the same reason: a reserved word written with
+ * an escape is a syntax error, so `export` cannot hide either.
+ *
+ * Do not narrow this to the escape forms someone has thought of. Reading raw
+ * source for a name the parser normalizes is what let
+ * `export { loadIt as get\u0053erverData }` through.
+ */
 function mayNameServerOnlyExport(code: string): boolean {
   if (!/\bexport\b/.test(code)) return false;
   if (SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return true;
-
-  // String-literal export names can escape any character in the hook name:
-  // `export { loadIt as "get\u0053erverData" }`. Parse any module with a
-  // string-literal export name and let `exportName` normalize the AST value.
-  // This keeps ordinary non-export modules on the old no-parse path without
-  // trusting raw source text as proof that no server-only export exists.
-  return /\bexport\s*(?:\*\s+as|{[\s\S]*?\bas)\s+["']/.test(code);
+  return code.includes("\\");
 }
 
 function bodyOf(ast: ASTNode): Node[] {
