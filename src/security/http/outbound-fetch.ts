@@ -56,20 +56,9 @@ function getTrustedHostTransport(): OutboundFetchTransport {
     return outboundFetchTransportForTests;
   }
 
-  if (getHostEnv("DENO_TESTING") !== "1") {
-    // Omitting pinnedFetch is deliberate: Node and Bun then use the native
-    // address-pinned transport, while Deno uses its pinned SOCKS client.
-    return { fetch: capturedHostFetch };
-  }
-
-  // Tests explicitly opt into their current deterministic fetch replacement.
-  // The pinned seam receives only addresses that the egress guard validated,
-  // and production never selects this transport.
-  const fetchImpl = globalThis.fetch.bind(globalThis);
-  return {
-    fetch: fetchImpl,
-    pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
-  };
+  // Omitting pinnedFetch is deliberate: Node and Bun then use the native
+  // address-pinned transport, while Deno uses its pinned SOCKS client.
+  return { fetch: capturedHostFetch };
 }
 
 async function fetchWithHostTransport(
@@ -241,16 +230,33 @@ export function createOutboundFetchBoundary(
   });
 }
 
+/**
+ * Point the host transport at `transport` until the returned function is called.
+ *
+ * For suites that install a stub in `beforeEach` and tear it down in
+ * `afterEach`, where there is no single callback to scope. Prefer
+ * `__runWithOutboundFetchTransportForTests` when there is one -- it cannot be
+ * left installed by an early return.
+ */
+export function __installOutboundFetchTransportForTests(
+  transport: OutboundFetchTransport,
+): () => void {
+  const previous = outboundFetchTransportForTests;
+  outboundFetchTransportForTests = snapshotOutboundFetchTransport(transport);
+  return () => {
+    outboundFetchTransportForTests = previous;
+  };
+}
+
 export async function __runWithOutboundFetchTransportForTests<T>(
   transport: OutboundFetchTransport,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const previous = outboundFetchTransportForTests;
-  outboundFetchTransportForTests = snapshotOutboundFetchTransport(transport);
+  const restore = __installOutboundFetchTransportForTests(transport);
   try {
     return await fn();
   } finally {
-    outboundFetchTransportForTests = previous;
+    restore();
   }
 }
 

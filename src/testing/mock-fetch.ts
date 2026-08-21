@@ -1,4 +1,7 @@
-import { __runWithOutboundFetchTransportForTests } from "#veryfront/security/http/outbound-fetch.ts";
+import {
+  __installOutboundFetchTransportForTests,
+  __runWithOutboundFetchTransportForTests,
+} from "#veryfront/security/http/outbound-fetch.ts";
 
 type FetchMock = typeof globalThis.fetch | undefined;
 
@@ -88,4 +91,53 @@ export async function withMockFetch<T>(
       release();
     }
   }
+}
+
+/**
+ * Install `mockFetch` as both the ambient `globalThis.fetch` and the host
+ * outbound transport, until `restoreMockFetch` puts them back.
+ *
+ * Assigning `globalThis.fetch` alone controls only code that calls `fetch`
+ * directly. Anything routed through `guardedOutboundFetch` reads the host
+ * transport instead and would reach the real network, so both move together
+ * here or neither does.
+ *
+ * Prefer `withMockFetch` where the stub has a single callback to scope. This
+ * pair exists for suites that install per test and tear down in `afterEach`,
+ * where there is no callback to wrap.
+ */
+export function installMockFetch(mockFetch: typeof globalThis.fetch): void {
+  const restoreTransport = __installOutboundFetchTransportForTests({
+    fetch: mockFetch,
+    pinnedFetch: (url, _addresses, init) => mockFetch(url, init),
+  });
+  // Only the first install records the pristine state, so a test that swaps its
+  // stub mid-way still restores to the real transport rather than to its own
+  // earlier stub.
+  installedMockFetch ??= { fetch: globalThis.fetch, restoreTransport };
+  defineGlobalFetch(mockFetch);
+}
+
+/**
+ * Restore the ambient fetch and outbound transport that were in place before
+ * the first `installMockFetch`. Safe to call when nothing is installed.
+ */
+export function restoreMockFetch(): void {
+  const installed = installedMockFetch;
+  if (!installed) return;
+  installedMockFetch = undefined;
+  installed.restoreTransport();
+  defineGlobalFetch(installed.fetch);
+}
+
+let installedMockFetch:
+  | { fetch: typeof globalThis.fetch; restoreTransport: () => void }
+  | undefined;
+
+function defineGlobalFetch(value: typeof globalThis.fetch): void {
+  Object.defineProperty(globalThis, "fetch", {
+    value,
+    configurable: true,
+    writable: true,
+  });
 }
