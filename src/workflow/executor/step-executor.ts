@@ -367,6 +367,12 @@ export class StepExecutor {
       toolCalls: response.toolCalls,
       status: response.status,
       usage: response.usage,
+      // `generate()` has already parsed and validated this against the agent's
+      // `outputSchema`. Dropping it here is silent: a later step reading
+      // `context.<nodeId>.object` gets `undefined` with no error, which makes
+      // `outputSchema` unusable from inside a workflow. Spread conditionally so
+      // a schemaless agent's output shape gains no `object` key.
+      ...(response.object !== undefined ? { object: response.object } : {}),
     };
   }
 

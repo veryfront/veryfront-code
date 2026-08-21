@@ -335,3 +335,67 @@ describe("StepExecutor run scoping", () => {
     assertEquals(errors, [["s2", "run-xyz"]]);
   });
 });
+
+describe("StepExecutor agent structured output", () => {
+  /** An agent whose `generate()` returns `response`, as the real runtime does. */
+  function makeAgentStepNode(response: Record<string, unknown>): WorkflowNode {
+    return step("extract", {
+      agent: {
+        id: "extractor",
+        generate: () => Promise.resolve(response),
+        // deno-lint-ignore no-explicit-any
+      } as any,
+    });
+  }
+
+  it("forwards the validated object from an agent declaring an outputSchema", async () => {
+    const node = makeAgentStepNode({
+      text: '{"name":"Max"}',
+      object: { name: "Max" },
+      status: "completed",
+      usage: { totalTokens: 7 },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(result.success, true);
+    // A later step reads `context.extract.object`; dropping it here makes the
+    // agent's structured output unreachable from inside a workflow.
+    assertEquals((result.output as { object?: unknown }).object, { name: "Max" });
+  });
+
+  it("still forwards the other response fields alongside the object", async () => {
+    const toolCalls = [{ id: "c1", name: "lookup", args: {} }];
+    const node = makeAgentStepNode({
+      text: '{"name":"Max"}',
+      object: { name: "Max" },
+      toolCalls,
+      status: "completed",
+      usage: { totalTokens: 7 },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(result.output, {
+      text: '{"name":"Max"}',
+      toolCalls,
+      status: "completed",
+      usage: { totalTokens: 7 },
+      object: { name: "Max" },
+    });
+  });
+
+  it("omits the object key entirely for an agent with no outputSchema", async () => {
+    const node = makeAgentStepNode({
+      text: "plain text",
+      status: "completed",
+      usage: { totalTokens: 3 },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    // Absent, not present-and-undefined: a schemaless agent's output shape is
+    // unchanged, so `"object" in context.extract` stays a usable signal.
+    assertEquals(Object.hasOwn(result.output as object, "object"), false);
+  });
+});
