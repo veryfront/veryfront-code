@@ -212,8 +212,49 @@ providerOptions: {
 A `json_schema` response format maps to Anthropic `output_config`:
 
 ```json
-{ "output_config": { "format": { "type": "json_schema", "schema": { "type": "object" } } } }
+{
+  "output_config": {
+    "format": {
+      "type": "json_schema",
+      "schema": { "type": "object", "properties": {}, "additionalProperties": false }
+    }
+  }
+}
 ```
+
+Anthropic rejects an object-typed schema that does not explicitly set
+`additionalProperties: false`, independently of the framework's own `strict`
+flag:
+
+```text
+output_config.format.schema: For 'object' type, 'additionalProperties'
+must be explicitly set to false
+```
+
+The builder satisfies that itself, filling in `additionalProperties: false` on
+every object subschema that left it unset -- including nested properties, array
+items, and `anyOf`/`oneOf` branches -- so a
+`defineSchema((v) => v.object({ ... }))()` whose properties are all required
+works without `.strict()`.
+
+Three shapes are deliberately left open:
+
+- **`allOf` branches.** `additionalProperties` only ever sees the `properties`
+  of the schema object carrying it, so closing branches that each declare part
+  of the same object makes every branch reject the others' properties, and the
+  composition accepts nothing at all. Branches are walked for objects nested
+  inside them, but are not closed themselves.
+- **An `additionalProperties` you declared yourself**, which is left exactly as
+  declared.
+- **Open records.** `v.record()` emits `additionalProperties` as a schema
+  rather than `false`, and Anthropic has no way to express an open object in
+  structured output, so it rejects these either way.
+
+Closing an object is necessary, but it is not the only constraint Anthropic
+places on a structured-output schema -- notably, a schema with `.optional()`
+properties can still be rejected. Where a field may be absent, prefer a
+required property that accepts null (`v.string().nullable()`) over an optional
+one.
 
 ### Container
 

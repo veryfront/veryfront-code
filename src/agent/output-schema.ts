@@ -162,6 +162,11 @@ export function resolveAgentOutputSchema(
  * property to be required and `additionalProperties: false`, which a schema
  * with optional fields does not satisfy, and a rejected request is worse than a
  * locally validated one.
+ *
+ * This governs the framework-level flag only. A provider that requires
+ * `additionalProperties: false` regardless of this flag satisfies it in its own
+ * request builder rather than narrowing what callers may declare here -- see
+ * `closeObjectSchemas` in `extensions/ext-llm-anthropic`.
  */
 function buildResponseFormat(schema: JsonSchema): RuntimeResponseFormat {
   return { type: "json_schema", name: RESPONSE_FORMAT_NAME, schema };

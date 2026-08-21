@@ -4793,3 +4793,341 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     );
   });
 });
+
+describe("anthropic output_config schema closure", () => {
+  /** Build a request carrying `schema` as the json_schema response format. */
+  function buildWithOutputSchema(schema: unknown): Record<string, unknown> {
+    const warnings: unknown[] = [];
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5-20251001",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: { type: "json_schema", name: "output", schema },
+        // deno-lint-ignore no-explicit-any
+      } as any,
+      false,
+      // deno-lint-ignore no-explicit-any
+      warnings as any,
+    );
+    return (body.output_config as { format: { schema: Record<string, unknown> } }).format.schema;
+  }
+
+  it("closes a top-level object schema that left additionalProperties unset", () => {
+    // Anthropic rejects this schema with a 400 unless additionalProperties is
+    // explicitly false, even though every property is already required.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    });
+
+    assertEquals(schema.additionalProperties, false);
+  });
+
+  it("closes nested object properties", () => {
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        user: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+      },
+      required: ["user"],
+    });
+
+    const user = (schema.properties as Record<string, Record<string, unknown>>).user!;
+    assertEquals(user.additionalProperties, false);
+  });
+
+  it("closes object schemas inside array items", () => {
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        rows: { type: "array", items: { type: "object", properties: { id: { type: "string" } } } },
+      },
+    });
+
+    const rows = (schema.properties as Record<string, Record<string, unknown>>).rows!;
+    assertEquals((rows.items as Record<string, unknown>).additionalProperties, false);
+  });
+
+  it("closes object schemas inside composition keywords", () => {
+    const schema = buildWithOutputSchema({
+      anyOf: [
+        { type: "object", properties: { a: { type: "string" } } },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    });
+
+    const branches = schema.anyOf as Record<string, unknown>[];
+    assertEquals(branches[0]!.additionalProperties, false);
+    assertEquals(branches[1]!.additionalProperties, false);
+  });
+
+  it("does not close allOf branches, which describe one instance together", () => {
+    // `additionalProperties` only sees the `properties` of the schema object
+    // carrying it, so closing both branches makes each reject the other's
+    // property and `{ a, b }` satisfies neither.
+    const schema = buildWithOutputSchema({
+      allOf: [
+        { type: "object", properties: { a: { type: "string" } } },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    });
+
+    const branches = schema.allOf as Record<string, unknown>[];
+    assertEquals(Object.hasOwn(branches[0]!, "additionalProperties"), false);
+    assertEquals(Object.hasOwn(branches[1]!, "additionalProperties"), false);
+  });
+
+  it("still closes objects nested inside an allOf branch", () => {
+    // Only the branch itself participates in the composition. An object under
+    // a branch's `properties` is an ordinary standalone schema.
+    const schema = buildWithOutputSchema({
+      allOf: [
+        {
+          type: "object",
+          properties: { user: { type: "object", properties: { name: { type: "string" } } } },
+        },
+      ],
+    });
+
+    const branch = (schema.allOf as Record<string, unknown>[])[0]!;
+    const user = (branch.properties as Record<string, Record<string, unknown>>).user!;
+    assertEquals(user.additionalProperties, false);
+    assertEquals(Object.hasOwn(branch, "additionalProperties"), false);
+  });
+
+  it("closes object subschemas under every schema-bearing keyword", () => {
+    // These are all accepted JSON Schema keywords (src/schemas/schema-input.ts),
+    // so a raw outputSchema can put an object under any of them. A walk that
+    // skips one leaves that object open for Anthropic to reject.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      dependentSchemas: { name: { type: "object", properties: { via: { type: "string" } } } },
+      unevaluatedProperties: { type: "object", properties: { extra: { type: "string" } } },
+      contentSchema: { type: "object", properties: { body: { type: "string" } } },
+    });
+
+    for (const keyword of ["unevaluatedProperties", "contentSchema"]) {
+      assertEquals(
+        (schema[keyword] as Record<string, unknown>).additionalProperties,
+        false,
+        keyword,
+      );
+    }
+    const dependent = (schema.dependentSchemas as Record<string, Record<string, unknown>>).name!;
+    assertEquals(dependent.additionalProperties, false);
+  });
+
+  it("closes an object declaring additionalProperties as undefined", () => {
+    // An explicit `undefined` survives the walk but not JSON, so honoring its
+    // presence would emit exactly the open schema Anthropic rejects.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: undefined,
+    });
+
+    assertEquals(schema.additionalProperties, false);
+  });
+
+  it("leaves an allOf branch target open, so the composition stays satisfiable", () => {
+    // Closing both definitions makes `{ a, b }` fail the first on `b` and the
+    // second on `a`, so the composition accepts nothing at all. The branch
+    // objects carry only a `$ref`, so the meaning sits at the target.
+    const schema = buildWithOutputSchema({
+      $defs: {
+        A: { type: "object", properties: { a: { type: "string" } } },
+        B: { type: "object", properties: { b: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }],
+    });
+
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs.A!, "additionalProperties"), false);
+    assertEquals(Object.hasOwn(defs.B!, "additionalProperties"), false);
+  });
+
+  it("leaves a draft-07 definitions target of an allOf branch open", () => {
+    const schema = buildWithOutputSchema({
+      definitions: {
+        A: { type: "object", properties: { a: { type: "string" } } },
+        B: { type: "object", properties: { b: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/definitions/A" }, { $ref: "#/definitions/B" }],
+    });
+
+    const defs = schema.definitions as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs.A!, "additionalProperties"), false);
+    assertEquals(Object.hasOwn(defs.B!, "additionalProperties"), false);
+  });
+
+  it("still closes a definition no allOf branch references", () => {
+    // Only the referenced target is opened. Everything else keeps its closure,
+    // which is the whole point of the pass.
+    const schema = buildWithOutputSchema({
+      $defs: {
+        A: { type: "object", properties: { a: { type: "string" } } },
+        Unrelated: { type: "object", properties: { u: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/$defs/A" }],
+    });
+
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs.A!, "additionalProperties"), false);
+    assertEquals(defs.Unrelated!.additionalProperties, false);
+  });
+
+  it("opens an allOf branch target named with an escaped pointer token", () => {
+    // RFC 6901 escapes `/` as `~1`, so a definition name carrying one only
+    // matches when the walk encodes the token the same way.
+    const schema = buildWithOutputSchema({
+      $defs: {
+        "a/b": { type: "object", properties: { a: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/$defs/a~1b" }],
+    });
+
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs["a/b"]!, "additionalProperties"), false);
+  });
+
+  it("does not close a $ref holder, whose properties live elsewhere", () => {
+    // `additionalProperties` only sees the `properties` of the schema object
+    // carrying it. A `$ref` declares none of its own, so closing it rejects
+    // every property the target defines -- a valid schema turned into one that
+    // validates nothing.
+    const schema = buildWithOutputSchema({
+      $defs: { Person: { type: "object", properties: { name: { type: "string" } } } },
+      $ref: "#/$defs/Person",
+      type: "object",
+    });
+
+    assertEquals(Object.hasOwn(schema, "additionalProperties"), false);
+    const person = (schema.$defs as Record<string, Record<string, unknown>>).Person!;
+    assertEquals(person.additionalProperties, false);
+  });
+
+  it("keeps traversing when Set and Array intrinsics are replaced", () => {
+    // This module captures its intrinsics on purpose (see the top of the file).
+    // A walker calling through the live prototypes can be silently disabled by
+    // a patched `Set.prototype.has`, leaving every nested object open.
+    const nativeHas = Set.prototype.has;
+    const nativeIsArray = Array.isArray;
+    try {
+      Set.prototype.has = () => false;
+      Array.isArray = ((_value: unknown) => false) as unknown as typeof Array.isArray;
+
+      const schema = buildWithOutputSchema({
+        type: "object",
+        properties: {
+          user: { type: "object", properties: { name: { type: "string" } } },
+        },
+      });
+
+      const user = (schema.properties as Record<string, Record<string, unknown>>).user!;
+      assertEquals(user.additionalProperties, false);
+      assertEquals(schema.additionalProperties, false);
+    } finally {
+      Set.prototype.has = nativeHas;
+      Array.isArray = nativeIsArray;
+    }
+  });
+
+  it("leaves an explicitly declared additionalProperties alone", () => {
+    // Rewriting an explicit declaration would silently change the contract the
+    // caller asked for. Anthropic still rejects it, which is the caller's call.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: true,
+    });
+
+    assertEquals(schema.additionalProperties, true);
+  });
+
+  it("does not mutate the caller's schema object", () => {
+    // The schema is owned by the agent and reused across providers and calls,
+    // so closing it for Anthropic must not leak into anyone else's request.
+    const original = { type: "object", properties: { name: { type: "string" } } };
+    buildWithOutputSchema(original);
+
+    assertEquals(Object.hasOwn(original, "additionalProperties"), false);
+  });
+
+  it("closes the object branch of a nullable object", () => {
+    // `.nullable()` emits an anyOf of the object and null, which is the shape
+    // the schema emitter really produces -- not a bare object.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        user: {
+          anyOf: [
+            { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+            { type: "null" },
+          ],
+        },
+      },
+      required: ["user"],
+    });
+
+    const branches = (schema.properties as Record<string, Record<string, unknown>>)
+      .user!.anyOf as Record<string, unknown>[];
+    assertEquals(branches[0]!.additionalProperties, false);
+    assertEquals(branches[1]!.additionalProperties, undefined);
+  });
+
+  it("closes a schema whose type array includes object", () => {
+    // `{ type: ["object", "null"] }` is the hand-written nullable form, and
+    // JsonSchema.type accepts an array. Matching only the exact string would
+    // leave this branch open for Anthropic to reject.
+    const schema = buildWithOutputSchema({
+      type: ["object", "null"],
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    });
+
+    assertEquals(schema.additionalProperties, false);
+  });
+
+  it("leaves a non-object type array alone", () => {
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { value: { type: ["string", "null"] } },
+    });
+
+    const value = (schema.properties as Record<string, Record<string, unknown>>).value!;
+    assertEquals(Object.hasOwn(value, "additionalProperties"), false);
+  });
+
+  it("leaves a record's additionalProperties schema intact", () => {
+    // `v.record()` emits additionalProperties as a *schema*, not a boolean.
+    // Overwriting it with `false` would silently turn a map into a closed empty
+    // object. Anthropic rejects open records either way, which is the honest
+    // outcome; #3922 makes that rejection legible.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { meta: { type: "object", additionalProperties: { type: "string" } } },
+      required: ["meta"],
+    });
+
+    const meta = (schema.properties as Record<string, Record<string, unknown>>).meta!;
+    assertEquals(meta.additionalProperties, { type: "string" });
+    assertEquals(schema.additionalProperties, false);
+  });
+
+  it("does not rewrite non-schema values that merely look like schemas", () => {
+    // `default` holds a literal value, not a subschema. Recursing into it would
+    // corrupt the declared default.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        config: { type: "string", default: { type: "object", properties: {} } },
+      },
+    });
+
+    const config = (schema.properties as Record<string, Record<string, unknown>>).config!;
+    assertEquals(config.default, { type: "object", properties: {} });
+  });
+});

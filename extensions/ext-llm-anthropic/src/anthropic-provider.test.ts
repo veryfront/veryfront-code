@@ -3723,7 +3723,11 @@ describe("anthropic-provider", () => {
         responseFormat: { type: "json_schema", name: "Person", schema, strict: true },
       });
       const body = captured as { output_config?: unknown } | null;
-      assertEquals(body!.output_config, { format: { type: "json_schema", schema } });
+      // The schema is closed on the way out: Anthropic rejects an object schema
+      // that does not explicitly set additionalProperties: false.
+      assertEquals(body!.output_config, {
+        format: { type: "json_schema", schema: { ...schema, additionalProperties: false } },
+      });
       assertEquals(settings(result), []);
     });
 
@@ -3753,7 +3757,11 @@ describe("anthropic-provider", () => {
       });
 
       const body = captured as { output_config?: unknown } | null;
-      assertEquals(body!.output_config, { format: { type: "json_schema", schema } });
+      // The schema is closed on the way out: Anthropic rejects an object schema
+      // that does not explicitly set additionalProperties: false.
+      assertEquals(body!.output_config, {
+        format: { type: "json_schema", schema: { ...schema, additionalProperties: false } },
+      });
     });
 
     it("advertises JSON Schema structured output only for supported model families", () => {
