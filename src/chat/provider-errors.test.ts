@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseProviderError } from "./provider-errors.ts";
+import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 
 describe("chat/provider-errors", () => {
   it("parses gateway problem JSON strings and direct provider problem objects", () => {
@@ -384,6 +385,53 @@ describe("chat/provider-errors", () => {
         ),
         { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
       );
+    });
+
+    describe("through the real buildProviderError", () => {
+      function jsonResponse(status: number, body: unknown): Response {
+        return new Response(JSON.stringify(body), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      it("classifies an Anthropic rejection end to end", async () => {
+        // The hand-built responseBody in the tests above bypasses the real
+        // preservation criteria. This one goes through them.
+        const error = await buildProviderError(
+          "anthropic",
+          jsonResponse(400, OPEN_OBJECT_REJECTION),
+        );
+
+        assertEquals(error.message, "Provider request failed with status 400");
+        assertEquals(parseProviderError(error), EXPECTED);
+      });
+
+      it("does not reach a provider whose 400 envelope is not preserved", async () => {
+        // Documents a boundary rather than asserting desired behaviour.
+        // `buildProviderError` preserves a body only for a structured
+        // `invalid_request_error`, and replaces every message with the generic
+        // status text -- so Google's `{error:{code,status,message}}` envelope
+        // arrives with neither a body nor its own wording, and no classifier
+        // downstream can see the rejection. Tracked in #3932.
+        const error = await buildProviderError(
+          "google",
+          jsonResponse(400, {
+            error: {
+              code: 400,
+              status: "INVALID_ARGUMENT",
+              message:
+                "Invalid schema for response_format: 'additionalProperties' is required to be supplied and to be false.",
+            },
+          }),
+        );
+
+        assertEquals(error.message, "Provider request failed with status 400");
+        assertEquals(parseProviderError(error), {
+          code: "EXTERNAL_SERVICE_ERROR",
+          message: "LLM provider service error",
+        });
+      });
     });
 
     it("leaves an unrelated invalid_request_error on the generic path", () => {
