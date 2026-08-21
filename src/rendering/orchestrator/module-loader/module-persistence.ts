@@ -49,8 +49,7 @@ function pruneCreatedDirs(): void {
 }
 
 function publishModulePathCacheSave(cacheDir: string): void {
-  let save: Promise<void>;
-  save = Promise.resolve()
+  const save = Promise.resolve()
     .then(() => modulePathCacheSave(cacheDir))
     .catch((err) => {
       logger.debug("Failed to save module cache", { error: String(err) });
