@@ -45,6 +45,33 @@ entirely, including their top-level side effects. Put client initialization in a
 separate client-referenced module or a bare side-effect import that is not only
 used by a server data hook.
 
+Declare each data hook with its own `function` or `const`. Veryfront cannot strip
+a hook it reaches through a destructuring pattern, so both of these now stop the
+browser build:
+
+```tsx
+// Not supported. Both forms fail the build.
+const { getServerData } = loaders;
+const { load: getServerData } = makeLoaders();
+
+export { getServerData };
+```
+
+A pattern binds no declaration Veryfront can empty, so the loader, its imports,
+and anything it closes over would reach the browser. Veryfront fails the build
+instead of shipping them. Declare the hook in the page and call the helper from
+inside it:
+
+```tsx
+// app/dashboard/page.tsx
+import type { DataContext } from "veryfront";
+import { loaders } from "../server/loaders.ts";
+
+export async function getServerData(ctx: DataContext) {
+  return loaders.getServerData(ctx);
+}
+```
+
 The `props` you return are passed to the page component. To read the same props
 data from a layout or nested component without prop-drilling, use
 `usePageContext().data` (see
