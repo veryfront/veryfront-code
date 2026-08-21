@@ -374,7 +374,26 @@ console.log(result.usage); // Token usage
 ### One-shot calls
 
 For a single call with no tools and no follow-up turn - an extraction, a
-classification, a rewrite - hold the agent to one step and turn skills off:
+classification, a rewrite - you do not need an agent at all. Use `generate`
+from `veryfront/llm`:
+
+```ts
+import { generate } from "veryfront/llm";
+
+const { text } = await generate({
+  model: "anthropic/claude-sonnet-4-6",
+  system: "Extract the invoice total. Reply with the number alone.",
+  input: invoiceText,
+});
+```
+
+It runs one step with no tools, skills or memory, and takes the same
+`outputSchema` an agent does.
+
+Reach for an agent instead when you need the thing itself rather than the
+answer: a registered id other code resolves, tools, memory across turns, or a
+system prompt built at request time. To hold such an agent to a single
+tool-free turn, say so:
 
 ```ts
 const extractor = agent({
@@ -384,8 +403,6 @@ const extractor = agent({
   skills: false,
   maxSteps: 1,
 });
-
-const { text } = await extractor.generate({ input: invoiceText });
 ```
 
 `maxSteps: 1` stops the runtime from taking a second turn it has no use for.
