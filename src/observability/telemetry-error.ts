@@ -17,6 +17,7 @@ import {
   MAX_TELEMETRY_ATTRIBUTE_COUNT,
   MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
 } from "./limits.ts";
+import { isVeryfrontError } from "#veryfront/errors/http-error.ts";
 import {
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
@@ -461,5 +462,55 @@ export function sanitizeErrorForTelemetry(error: unknown): Error {
   } catch (_) {
     // Telemetry is best effort and must never replace the application outcome.
     return createErrorShapedRecord("Unknown error", "Unknown");
+  }
+}
+
+const SAFE_TELEMETRY_ERROR_NAMES = new Set([
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+]);
+
+/**
+ * Node/Deno transient network error codes. Matched as whole tokens against
+ * error.code (or, when a plain Error carries no code, its message). Unlike
+ * "429"/"503"/"timeout", these tokens are specific enough not to appear
+ * incidentally in unrelated error text.
+ */
+const TELEMETRY_ERROR_CODE_RE = /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND)\b/;
+
+/** Whether text names one of the transient network codes above. */
+export function hasTransientErrorCode(text: string): boolean {
+  return TELEMETRY_ERROR_CODE_RE.test(text);
+}
+
+/**
+ * Bounded classification safe to put on a span. Never returns the error's own
+ * message: telemetry leaves the process, and a message carries whatever the
+ * thrower interpolated into it. The detail stays in the logs.
+ *
+ * Accepts `unknown` because a throw is not guaranteed to be an `Error`, and a
+ * bare string reaches `sanitizeErrorForTelemetry` as raw text.
+ */
+export function telemetryErrorType(error: unknown): string {
+  try {
+    if (isVeryfrontError(error)) return `VeryfrontError:${error.status}`;
+    if (!isNativeErrorWithoutHooks(error)) return "Unknown";
+
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") {
+      const match = TELEMETRY_ERROR_CODE_RE.exec(code);
+      if (match?.[1]) return match[1];
+    }
+
+    const name = readNativeErrorNameWithoutHooks(error);
+    return SAFE_TELEMETRY_ERROR_NAMES.has(name) ? name : "Error";
+  } catch (_) {
+    // Classification is best effort and must never change the outcome it reports on.
+    return "Error";
   }
 }

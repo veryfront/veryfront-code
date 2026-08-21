@@ -37,6 +37,7 @@ import {
   sanitizeTelemetryAttributes,
   sanitizeTelemetryAttributeValue,
   sanitizeTelemetryText,
+  telemetryErrorType,
 } from "../telemetry-error.ts";
 import { runAsyncWithContextFallback, runSyncWithContextFallback } from "./context-callback.ts";
 
@@ -286,11 +287,27 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
 
 export type WithSpanOptions = {
   kind?: SpanKind;
+  /**
+   * Maps a thrown error to what the span should report. Supply this to say
+   * something more useful than the default classification, for example naming
+   * the node that failed. Return the error itself to opt a span back into raw
+   * message text.
+   */
   errorStatus?: (error: unknown) => unknown;
 };
 
+/**
+ * Resolve what a failed span reports.
+ *
+ * Fails closed: with no `errorStatus` mapper the span carries a bounded
+ * classification, never the thrown error's own message. Telemetry leaves the
+ * process to a vendor, and a message (plus the stack trace recorded alongside
+ * it) carries whatever the thrower interpolated in. Callers that want detail on
+ * the span say so explicitly; everyone else gets the safe default, including
+ * call sites that do not exist yet.
+ */
 function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): unknown {
-  if (!options?.errorStatus) return error;
+  if (!options?.errorStatus) return boundedSpanError(error);
   let statusError: unknown = error;
   runTelemetryOperation(
     () => {
@@ -299,6 +316,18 @@ function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): 
     "Failed to derive span error status",
   );
   return statusError;
+}
+
+/** A detached error carrying only the classification, so nothing user-supplied escapes. */
+function boundedSpanError(error: unknown): unknown {
+  let bounded: unknown = error;
+  runTelemetryOperation(
+    () => {
+      bounded = new Error(telemetryErrorType(error));
+    },
+    "Failed to classify span error status",
+  );
+  return bounded;
 }
 
 /** Applies span. */

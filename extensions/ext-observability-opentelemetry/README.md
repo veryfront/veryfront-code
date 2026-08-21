@@ -107,10 +107,17 @@ does, because execution is dispatched without being awaited.
 
 Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
 ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work. A cancelled run
-is not a failure: the in-flight node span ends as ERROR carrying the cancellation reason,
-while the `workflow.run` span stays unset, so cancellations do not show up in errored-run
-queries.
+is not a failure: the in-flight node span ends as ERROR reporting `Node "<id>" failed`, while
+the `workflow.run` span stays unset, so cancellations do not show up in errored-run queries.
+Span statuses never carry the underlying error text, on this path or any other: they name the
+node, or a bounded classification such as `ECONNRESET`. The detail stays in the run record and
+the logs.
 
-Retry attempts of a composite node appear as repeated sibling spans sharing one name. They
-are told apart by status — the attempts that failed are ERROR, the one that succeeded is
-not — and the parent node span carries a `workflow.node.retry` event per retry.
+Retry attempts of a composite node appear as repeated sibling spans sharing one name. Status
+tells them apart only when an attempt eventually succeeds: that one is not ERROR while the
+earlier ones are. When the retries exhaust and every attempt fails, the sibling spans are
+identical in name, status and attributes, and only the span id and the timestamps separate
+them. `workflow.node.attempts` does not help either, because it reads `1` on every child: the
+attempt counter lives on the parent composite span, and each child re-runs from scratch
+counting its own attempts from one. The parent node span carries a `workflow.node.retry` event
+per retry, which is the reliable way to count them.
