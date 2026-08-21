@@ -8,7 +8,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { PendingApproval, RunFilter, WorkflowRun } from "../types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
-import { step, waitForApproval, workflow } from "../dsl/index.ts";
+import { sequence, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { createWorkflowHandler } from "./handler.ts";
 
 class CountingMemoryBackend extends MemoryBackend {
@@ -23,6 +23,29 @@ class CountingMemoryBackend extends MemoryBackend {
 class ExplodingMemoryBackend extends MemoryBackend {
   override listRuns(_filter: RunFilter): Promise<WorkflowRun[]> {
     return Promise.reject(new Error("sensitive backend detail"));
+  }
+}
+
+class GatedActivationMemoryBackend extends MemoryBackend {
+  readonly activationRequested = Promise.withResolvers<void>();
+  readonly releaseActivation = Promise.withResolvers<void>();
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.status === "running" && patch.nodeStates === undefined) {
+      this.activationRequested.resolve();
+      await this.releaseActivation.promise;
+    }
+    return await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
   }
 }
 
@@ -411,5 +434,439 @@ describe("createWorkflowHandler", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  describe("run event stream", () => {
+    function replaceObservation(value: unknown): void {
+      Object.defineProperty(client, "observeRunEvents", {
+        configurable: true,
+        value: () => Promise.resolve(value),
+      });
+    }
+
+    /** Read an SSE body to completion, returning `[eventName, data]` pairs. */
+    async function readStream(
+      response: Response,
+    ): Promise<Array<[string, Record<string, unknown>]>> {
+      const text = await response.text();
+      const frames: Array<[string, Record<string, unknown>]> = [];
+      for (const block of text.split("\n\n")) {
+        const name = /^event: (.+)$/m.exec(block)?.[1];
+        const data = /^data: (.+)$/m.exec(block)?.[1];
+        if (name && data) frames.push([name, JSON.parse(data) as Record<string, unknown>]);
+      }
+      return frames;
+    }
+
+    async function readFrame(
+      reader: ReadableStreamDefaultReader<Uint8Array>,
+    ): Promise<string> {
+      const result = await reader.read();
+      expect(result.done).toBe(false);
+      return new TextDecoder().decode(result.value);
+    }
+
+    async function readEvent(
+      reader: ReadableStreamDefaultReader<Uint8Array>,
+    ): Promise<[string, Record<string, unknown>]> {
+      const timeout = Promise.withResolvers<never>();
+      const timeoutId = setTimeout(
+        () => timeout.reject(new Error("Timed out waiting for workflow event")),
+        2_000,
+      );
+      let frame: string;
+      try {
+        frame = await Promise.race([readFrame(reader), timeout.promise]);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      const name = /^event: (.+)$/m.exec(frame)?.[1];
+      const data = /^data: (.+)$/m.exec(frame)?.[1];
+      if (!name || !data) throw new Error(`Invalid SSE frame: ${frame}`);
+      return [name, JSON.parse(data) as Record<string, unknown>];
+    }
+
+    it("streams each sequential step boundary before the next side effect runs", async () => {
+      await client.destroy();
+      const backend = new GatedActivationMemoryBackend({ debug: false });
+      client = createWorkflowClient({ backend, debug: false });
+      handlers = createWorkflowHandler(client);
+      const firstStarted = Promise.withResolvers<void>();
+      const releaseFirst = Promise.withResolvers<void>();
+      const secondStarted = Promise.withResolvers<void>();
+      const releaseSecond = Promise.withResolvers<void>();
+      const controlledTool = (
+        id: string,
+        started: PromiseWithResolvers<void>,
+        release: PromiseWithResolvers<void>,
+      ): Tool => ({
+        id,
+        type: "function",
+        description: `Controlled test tool: ${id}`,
+        inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+        execute: async () => {
+          started.resolve();
+          await release.promise;
+          return { ok: true };
+        },
+      });
+      client.register(
+        workflow({
+          id: "observable-sequence",
+          steps: sequence(
+            step("first", {
+              tool: controlledTool("controlled-first", firstStarted, releaseFirst),
+            }),
+            step("second", {
+              tool: controlledTool("controlled-second", secondStarted, releaseSecond),
+            }),
+          ),
+        }),
+      );
+
+      const handle = await client.start("observable-sequence", {});
+      await backend.activationRequested.promise;
+      const response = await handlers.GET(get(`/api/workflows/runs/${handle.runId}/events`));
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("expected an SSE response body");
+
+      expect((await readEvent(reader))[0]).toBe("snapshot");
+      backend.releaseActivation.resolve();
+      expect(await readEvent(reader)).toEqual([
+        "run.status",
+        { type: "run.status", runId: handle.runId, status: "running" },
+      ]);
+      expect(await readEvent(reader)).toEqual([
+        "step.started",
+        { type: "step.started", runId: handle.runId, nodeId: "first", attempt: 1 },
+      ]);
+      await firstStarted.promise;
+      releaseFirst.resolve();
+      expect(await readEvent(reader)).toEqual([
+        "step.completed",
+        { type: "step.completed", runId: handle.runId, nodeId: "first", attempt: 1 },
+      ]);
+      expect(await readEvent(reader)).toEqual([
+        "step.started",
+        { type: "step.started", runId: handle.runId, nodeId: "second", attempt: 1 },
+      ]);
+      await secondStarted.promise;
+      releaseSecond.resolve();
+      expect(await readEvent(reader)).toEqual([
+        "step.completed",
+        { type: "step.completed", runId: handle.runId, nodeId: "second", attempt: 1 },
+      ]);
+      expect(await readEvent(reader)).toEqual([
+        "run.status",
+        { type: "run.status", runId: handle.runId, status: "completed" },
+      ]);
+      expect((await reader.read()).done).toBe(true);
+      await handle.settled();
+    });
+
+    it("streams a finished run's snapshot and closes", async () => {
+      // A terminal run has no transitions left. Holding the connection open
+      // would strand the caller waiting for an event that cannot arrive.
+      const runId = await startRun();
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("text/event-stream");
+      expect(response.headers.get("cache-control")).toBe("no-cache, no-transform");
+      expect(response.headers.get("connection")).toBe("keep-alive");
+      expect(response.headers.get("x-accel-buffering")).toBe("no");
+
+      const frames = await readStream(response);
+      expect(frames.length).toBe(1);
+      expect(frames[0]?.[0]).toBe("snapshot");
+      expect(frames[0]?.[1].id).toBe(runId);
+      expect(frames[0]?.[1].status).toBe("completed");
+    });
+
+    it("uses the atomic observation snapshot when a run turns terminal during setup", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      let nextCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial: { ...persisted, status: "cancelled" },
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => {
+              nextCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      expect(frames.map(([name]) => name)).toEqual(["snapshot"]);
+      expect(frames[0]?.[1].status).toBe("cancelled");
+      expect(nextCalls).toBe(0);
+      expect(closeCalls).toBe(1);
+    });
+
+    it("streams transitions written by a separate client sharing the backend", async () => {
+      await client.destroy();
+      const backend = new MemoryBackend({ debug: false });
+      client = createWorkflowClient({ backend, debug: false });
+      handlers = createWorkflowHandler(client);
+      const writer = createWorkflowClient({ backend, debug: false });
+      writer.register(
+        workflow({ id: "shared-slow", steps: [step("only", { tool: slowTool("shared-slow") })] }),
+      );
+      try {
+        const { runId } = await writer.start("shared-slow", {});
+
+        const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+        const collected = readStream(response);
+
+        await writer.cancel(runId);
+
+        const frames = await collected;
+        const names = frames.map(([name]) => name);
+
+        expect(names[0]).toBe("snapshot");
+        expect(names).toContain("run.status");
+
+        const terminal = frames.findLast(([name]) => name === "run.status");
+        expect(terminal?.[1].status).toBe("cancelled");
+        expect(terminal?.[1].runId).toBe(runId);
+      } finally {
+        await writer.destroy();
+      }
+    });
+
+    it("does not leak the run's context through the snapshot", () => {
+      // The snapshot frame is the same projection the run detail endpoint
+      // returns, so it must not widen what that endpoint exposes.
+      return startRun().then(async (runId) => {
+        const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+        const snapshotFrame = (await readStream(response))[0]?.[1];
+        expect(snapshotFrame).toBeDefined();
+
+        const detail = await (await handlers.GET(get(`/api/workflows/runs/${runId}`))).json();
+
+        expect(snapshotFrame).toEqual(detail);
+      });
+    });
+
+    it("404s for a run that does not exist", async () => {
+      const response = await handlers.GET(get("/api/workflows/runs/missing/events"));
+
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-type")).not.toBe("text/event-stream");
+    });
+
+    it("returns a sanitized 501 when the backend cannot observe runs", async () => {
+      replaceObservation({ supported: false, reason: "unsupported" });
+
+      const response = await handlers.GET(get("/api/workflows/runs/anything/events"));
+
+      expect(response.status).toBe(501);
+      expect(response.headers.get("content-type")).not.toBe("text/event-stream");
+      expect(await response.json()).toEqual({
+        message: "Workflow event observation is not supported",
+      });
+    });
+
+    it("cleans up the observation when the response body is cancelled", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = { ...persisted, status: "running" as const };
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => new Promise<IteratorResult<never>>(() => {}),
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      await response.body?.cancel();
+
+      expect(returnCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+    });
+
+    it("cleans up the observation when the request is aborted", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = { ...persisted, status: "running" as const };
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => new Promise<IteratorResult<never>>(() => {}),
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const controller = new AbortController();
+      const request = new Request(
+        `http://localhost:3000/api/workflows/runs/${runId}/events`,
+        { signal: controller.signal },
+      );
+      const response = await handlers.GET(request);
+
+      controller.abort();
+      await until(() => Promise.resolve(closeCalls === 1), "the observation to close");
+
+      expect(returnCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+      await response.body?.cancel().catch(() => {});
+      expect(returnCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+    });
+
+    it("cleans up after sending a terminal status event", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = { ...persisted, status: "running" as const };
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () =>
+              Promise.resolve({
+                value: { type: "run.status", runId, status: "cancelled" },
+                done: false as const,
+              }),
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      expect(frames.map(([name]) => name)).toEqual(["snapshot", "run.status"]);
+      expect(returnCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+    });
+
+    it("sends one sanitized error frame when observation fails after streaming starts", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = { ...persisted, status: "running" as const };
+      let returnCalls = 0;
+      let closeCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.reject(new Error("sensitive observation detail")),
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => {
+          closeCalls++;
+          return Promise.resolve();
+        },
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const frames = await readStream(response);
+
+      expect(frames.map(([name]) => name)).toEqual(["snapshot", "error"]);
+      expect(frames[1]?.[1]).toEqual({
+        code: "workflow_observation_failed",
+        message: "Workflow event observation failed",
+        retryable: true,
+      });
+      expect(JSON.stringify(frames)).not.toContain("sensitive observation detail");
+      expect(returnCalls).toBe(1);
+      expect(closeCalls).toBe(1);
+    });
+
+    it("pulls at most one backend event while the consumer is backpressured", async () => {
+      const runId = await startRun();
+      const persisted = await client.getRun(runId);
+      if (!persisted) throw new Error("expected the run to exist");
+      const initial = { ...persisted, status: "running" as const };
+      const pending = Promise.withResolvers<IteratorResult<never>>();
+      let nextCalls = 0;
+      let returnCalls = 0;
+      replaceObservation({
+        supported: true,
+        initial,
+        events: {
+          [Symbol.asyncIterator]: () => ({
+            next: () => {
+              nextCalls++;
+              return pending.promise;
+            },
+            return: () => {
+              returnCalls++;
+              return Promise.resolve({ value: undefined, done: true as const });
+            },
+          }),
+        },
+        close: () => Promise.resolve(),
+      });
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("expected an SSE response body");
+
+      expect(await readFrame(reader)).toContain("event: snapshot");
+      await until(() => Promise.resolve(nextCalls === 1), "one backend event pull");
+      await delay(20);
+      expect(nextCalls).toBe(1);
+
+      await reader.cancel();
+      expect(returnCalls).toBe(1);
+    });
   });
 });

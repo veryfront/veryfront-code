@@ -241,6 +241,29 @@ export class DAGExecutor {
       const batch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
 
+      const isDurableRun = run.id === scope.rootRunId;
+      const batchStartedAt = new Date();
+      for (const nodeId of batch) {
+        const existing = nodeStates[nodeId];
+        const runningState: NodeState = {
+          ...existing,
+          nodeId,
+          status: "running",
+          attempt: existing?.status === "running" ? existing.attempt : (existing?.attempt ?? 0) + 1,
+          startedAt: existing?.status === "running" && existing.startedAt
+            ? existing.startedAt
+            : batchStartedAt,
+        };
+        delete runningState.completedAt;
+        delete runningState.error;
+        delete runningState.output;
+        nodeStates[nodeId] = runningState;
+      }
+      if (isDurableRun) {
+        await this.publishNodeStates(scope, nodeStates, context);
+        abortSignal?.throwIfAborted();
+      }
+
       // Clone the batch baseline and each node's view deeply. Workflow context
       // is durable, structured-cloneable state, so this matches checkpoint and
       // resume semantics while preventing nested mutation from crossing an
@@ -276,6 +299,7 @@ export class DAGExecutor {
       // the earliest waiting/failed node (preserving index-order precedence) and
       // return only after all states are recorded.
       let outcome: { kind: "waiting" | "failed"; nodeId: string; error?: string } | undefined;
+      const checkpointNodes: string[] = [];
 
       for (let i = 0; i < batch.length; i++) {
         const nodeId = batch[i]!;
@@ -290,7 +314,8 @@ export class DAGExecutor {
             nodeId,
             status: "failed",
             error,
-            attempt: (nodeStates[nodeId]?.attempt ?? 0) + 1,
+            attempt: baseNodeStates[nodeId]!.attempt,
+            startedAt: baseNodeStates[nodeId]!.startedAt,
             completedAt: new Date(),
           };
 
@@ -319,7 +344,11 @@ export class DAGExecutor {
         applyContextPatch(context, isolatedContextPatch);
         contextPatch = mergeContextPatches(contextPatch, isolatedContextPatch);
 
-        nodeStates[nodeId] = nodeResult.state;
+        nodeStates[nodeId] = {
+          ...nodeResult.state,
+          attempt: Math.max(nodeResult.state.attempt, baseNodeStates[nodeId]!.attempt),
+          startedAt: baseNodeStates[nodeId]!.startedAt,
+        };
 
         if (nodeResult.waiting) {
           // A composite reports the child that actually suspended. Falling back
@@ -330,7 +359,7 @@ export class DAGExecutor {
 
         const nodeConfig = nodeMap.get(nodeId);
         if (nodeResult.state.status === "completed" && nodeConfig && shouldCheckpoint(nodeConfig)) {
-          await this.checkpoint(run.id, nodeId, context, nodeStates, scope.ownership);
+          checkpointNodes.push(nodeId);
         }
 
         if (nodeResult.state.status === "failed") {
@@ -349,6 +378,14 @@ export class DAGExecutor {
             inDegree.set(dependent, inDegree.get(dependent)! - 1);
           }
         }
+      }
+
+      if (isDurableRun) {
+        await this.publishNodeStates(scope, nodeStates, context);
+        abortSignal?.throwIfAborted();
+      }
+      for (const nodeId of checkpointNodes) {
+        await this.checkpoint(run.id, nodeId, context, nodeStates, scope.ownership);
       }
 
       if (outcome?.kind === "waiting") {
@@ -394,6 +431,24 @@ export class DAGExecutor {
       nodeStates,
       contextPatch,
     };
+  }
+
+  private async publishNodeStates(
+    scope: ExecutionScope,
+    nodeStates: Record<string, NodeState>,
+    context: WorkflowContext,
+  ): Promise<void> {
+    const published = await this.config.onNodeStatesChanged?.({
+      runId: scope.rootRunId,
+      nodeStates: structuredClone(nodeStates),
+      context: structuredClone(context),
+      ownership: scope.ownership,
+    });
+    if (published === false) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow execution ownership changed before node-state persistence",
+      });
+    }
   }
 
   private async executeNode(

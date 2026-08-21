@@ -43,6 +43,115 @@ describe("MemoryBackend", () => {
   });
 
   describe("Run Management", () => {
+    it("observes exact cross-client run transitions in revision order", async () => {
+      const run = createTestRun("run-observed");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      await backend.updateRun(run.id, {
+        status: "waiting",
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            attempt: 1,
+            input: { secret: "input" },
+            output: { secret: "output" },
+          },
+        },
+      });
+      await backend.updateRun(run.id, { status: "running" });
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await iterator.next()).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: { review: { status: "running", attempt: 1 } },
+      });
+      assertEquals((await iterator.next()).value, {
+        revision: 2,
+        status: "running",
+        nodes: { review: { status: "running", attempt: 1 } },
+      });
+      await observation.close();
+    });
+
+    it("delivers the terminal state and then closes the observation", async () => {
+      const run = createTestRun("run-terminal");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+      const iterator = observation.changes[Symbol.asyncIterator]();
+
+      await backend.updateRun(run.id, { status: "completed" });
+
+      assertEquals((await iterator.next()).value?.status, "completed");
+      assertEquals(await iterator.next(), { value: undefined, done: true });
+    });
+
+    it("fails and detaches a slow observer without failing writes", async () => {
+      const run = createTestRun("run-overflow");
+      await backend.createRun(run);
+      const slow = await backend.openRunObservation(run.id);
+      const active = await backend.openRunObservation(run.id);
+      assertExists(slow);
+      assertExists(active);
+      const activeIterator = active.changes[Symbol.asyncIterator]();
+
+      for (let revision = 1; revision <= 66; revision++) {
+        await backend.updateRun(run.id, { heartbeatAt: new Date(revision) });
+        assertEquals((await activeIterator.next()).value?.revision, revision);
+      }
+
+      const iterator = slow.changes[Symbol.asyncIterator]();
+      await assertRejects(() => iterator.next(), Error, "slow observer");
+      await backend.updateRun(run.id, { status: "running" });
+      assertEquals((await activeIterator.next()).value?.status, "running");
+      await active.close();
+    });
+
+    it("closes observations on abort and explicit close", async () => {
+      const run = createTestRun("run-abort");
+      await backend.createRun(run);
+      const controller = new AbortController();
+      const aborted = await backend.openRunObservation(run.id, { signal: controller.signal });
+      const closed = await backend.openRunObservation(run.id);
+      assertExists(aborted);
+      assertExists(closed);
+      controller.abort();
+      await closed.close();
+
+      assertEquals(await aborted.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+      assertEquals(await closed.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+    });
+
+    it("closes observations when the run is deleted or the backend is destroyed", async () => {
+      await backend.createRun(createTestRun("run-delete"));
+      const deleted = await backend.openRunObservation("run-delete");
+      assertExists(deleted);
+      await backend.deleteRun("run-delete");
+      assertEquals(await deleted.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+
+      await backend.createRun(createTestRun("run-destroy"));
+      const destroyed = await backend.openRunObservation("run-destroy");
+      assertExists(destroyed);
+      await backend.destroy();
+      assertEquals(await destroyed.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+    });
+
     it("should create and retrieve a run", async () => {
       await backend.createRun(createTestRun("run-1"));
 

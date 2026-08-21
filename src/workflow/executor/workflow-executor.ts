@@ -42,7 +42,10 @@ import {
   captureWorkflowSourceIntegrationPolicy,
   runWithWorkflowSourceIntegrationPolicy,
 } from "../source-integration-policy.ts";
-import { executeWorkflowRunControl } from "../runtime/workflow-run-control.ts";
+import {
+  executeWorkflowRunControl,
+  toPersistedWorkflowContext,
+} from "../runtime/workflow-run-control.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -167,6 +170,14 @@ export class WorkflowExecutor {
           runId,
           ["running"],
           { nodeStates },
+          ownership?.workerId,
+        ),
+      onNodeStatesChanged: ({ runId, nodeStates, context, ownership }) =>
+        updateRunIfStatus(
+          this.config.backend,
+          runId,
+          ["running"],
+          { nodeStates, context: toPersistedWorkflowContext(context) },
           ownership?.workerId,
         ),
     });

@@ -14,7 +14,8 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import type { WorkflowBackend } from "../backends/types.ts";
+import { hasRunObservationSupport, type WorkflowBackend } from "../backends/types.ts";
+import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
   WorkflowExecutor,
@@ -37,6 +38,11 @@ export interface WorkflowClientConfig {
   /** Enable debug logging */
   debug?: boolean;
 }
+
+/** Supported observation stream or an explicit unsupported-backend result. */
+export type WorkflowRunEventsResult =
+  | ({ supported: true } & WorkflowRunEventObservation)
+  | { supported: false; reason: "unsupported" };
 
 /** Implement workflow client. */
 export class WorkflowClient {
@@ -231,6 +237,19 @@ export class WorkflowClient {
     approver?: string;
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
     return this.approvalManager.listAllPending(filter);
+  }
+
+  /** Open an ordered event observation, or report unsupported custom backends explicitly. */
+  async observeRunEvents(
+    runId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<WorkflowRunEventsResult | null> {
+    if (!hasRunObservationSupport(this.backend)) {
+      return { supported: false, reason: "unsupported" };
+    }
+    const observation = await this.backend.openRunObservation(runId, options);
+    if (!observation) return null;
+    return { supported: true, ...deriveWorkflowRunEventObservation(observation) };
   }
 
   getBackend(): WorkflowBackend {

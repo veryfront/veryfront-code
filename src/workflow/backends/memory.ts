@@ -18,6 +18,8 @@ import {
   assertWorkflowRunUpdate,
   type BackendConfig,
   type WorkflowBackend,
+  type WorkflowRunObservation,
+  type WorkflowRunObservedState,
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
@@ -40,6 +42,69 @@ interface MemoryBackendConfig extends BackendConfig {
 
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
+const RUN_OBSERVATION_QUEUE_SIZE = 64;
+
+class ObservationFeed implements AsyncIterable<WorkflowRunObservedState> {
+  readonly #values: WorkflowRunObservedState[] = [];
+  readonly #waiters: Array<{
+    resolve: (result: IteratorResult<WorkflowRunObservedState>) => void;
+    reject: (error: unknown) => void;
+  }> = [];
+  #closed = false;
+  #error: unknown;
+
+  push(value: WorkflowRunObservedState): boolean {
+    if (this.#closed || this.#error !== undefined) return false;
+    const waiter = this.#waiters.shift();
+    if (waiter) {
+      waiter.resolve({ value, done: false });
+      return true;
+    }
+    if (this.#values.length >= RUN_OBSERVATION_QUEUE_SIZE) {
+      this.fail(new Error("Workflow run slow observer exceeded its bounded queue"));
+      return false;
+    }
+    this.#values.push(value);
+    return true;
+  }
+
+  finish(): void {
+    if (this.#closed || this.#error !== undefined) return;
+    this.#closed = true;
+    for (const waiter of this.#waiters.splice(0)) {
+      waiter.resolve({ value: undefined, done: true });
+    }
+  }
+
+  close(): void {
+    this.#values.length = 0;
+    this.finish();
+  }
+
+  fail(error: unknown): void {
+    if (this.#closed || this.#error !== undefined) return;
+    this.#error = error;
+    this.#values.length = 0;
+    for (const waiter of this.#waiters.splice(0)) waiter.reject(error);
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<WorkflowRunObservedState> {
+    return {
+      next: () => {
+        if (this.#error !== undefined) return Promise.reject(this.#error);
+        const value = this.#values.shift();
+        if (value) return Promise.resolve({ value, done: false });
+        if (this.#closed) return Promise.resolve({ value: undefined, done: true });
+        return new Promise((resolve, reject) => this.#waiters.push({ resolve, reject }));
+      },
+    };
+  }
+}
+
+interface MemoryRunObserver {
+  feed: ObservationFeed;
+  detach(drain?: boolean): void;
+}
 
 /** Implement memory backend. */
 export class MemoryBackend implements WorkflowBackend {
@@ -49,6 +114,8 @@ export class MemoryBackend implements WorkflowBackend {
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
+  private runRevisions = new Map<string, number>();
+  private runObservers = new Map<string, Set<MemoryRunObserver>>();
   private config: MemoryBackendConfig;
 
   constructor(config: MemoryBackendConfig = {}) {
@@ -73,6 +140,7 @@ export class MemoryBackend implements WorkflowBackend {
       return Promise.reject(error);
     }
     this.runs.set(run.id, structuredClone({ ...run, sourceIntegrationPolicy }));
+    this.runRevisions.set(run.id, 0);
     return Promise.resolve();
   }
 
@@ -110,6 +178,7 @@ export class MemoryBackend implements WorkflowBackend {
     };
 
     this.runs.set(runId, updated);
+    this.publishRunObservation(runId, updated);
 
     // Terminal states should drop any stalled claim lease.
     if (patch.status && patch.status !== "running") {
@@ -153,11 +222,95 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   deleteRun(runId: string): Promise<void> {
+    this.closeRunObservers(runId);
     this.runs.delete(runId);
     this.checkpoints.delete(runId);
     this.approvals.delete(runId);
     this.stalledClaims.delete(runId);
+    this.runRevisions.delete(runId);
     return Promise.resolve();
+  }
+
+  openRunObservation(
+    runId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<WorkflowRunObservation | null> {
+    const run = this.runs.get(runId);
+    if (!run) return Promise.resolve(null);
+
+    const feed = new ObservationFeed();
+    let detached = false;
+    const observer: MemoryRunObserver = {
+      feed,
+      detach: (drain = false) => {
+        if (detached) return;
+        detached = true;
+        options.signal?.removeEventListener("abort", abortListener);
+        const observers = this.runObservers.get(runId);
+        observers?.delete(observer);
+        if (observers?.size === 0) this.runObservers.delete(runId);
+        if (drain) feed.finish();
+        else feed.close();
+      },
+    };
+    const abortListener = () => observer.detach();
+    let observers = this.runObservers.get(runId);
+    if (!observers) {
+      observers = new Set();
+      this.runObservers.set(runId, observers);
+    }
+    observers.add(observer);
+    options.signal?.addEventListener("abort", abortListener, { once: true });
+    if (options.signal?.aborted) observer.detach();
+
+    return Promise.resolve({
+      initial: {
+        ...structuredClone(run),
+        pendingApprovals: (this.approvals.get(runId) ?? []).map((approval) =>
+          structuredClone(approval)
+        ),
+      },
+      changes: feed,
+      close: () => {
+        observer.detach();
+        return Promise.resolve();
+      },
+    });
+  }
+
+  private publishRunObservation(runId: string, run: WorkflowRun): void {
+    const revision = (this.runRevisions.get(runId) ?? 0) + 1;
+    this.runRevisions.set(runId, revision);
+    const observers = this.runObservers.get(runId);
+    if (!observers?.size) return;
+    const nodes: WorkflowRunObservedState["nodes"] = {};
+    for (const [nodeId, node] of Object.entries(run.nodeStates ?? {})) {
+      if (!node) continue;
+      nodes[nodeId] = {
+        status: node.status,
+        attempt: node.attempt,
+        ...(node.error !== undefined ? { error: node.error } : {}),
+      };
+    }
+    const state: WorkflowRunObservedState = {
+      revision,
+      status: run.status,
+      nodes,
+      ...(run.error?.message !== undefined ? { runError: run.error.message } : {}),
+    };
+    const terminal = run.status === "completed" || run.status === "failed" ||
+      run.status === "cancelled";
+    for (const observer of [...observers]) {
+      if (!observer.feed.push(structuredClone(state))) {
+        observer.detach();
+      } else if (terminal) {
+        observer.detach(true);
+      }
+    }
+  }
+
+  private closeRunObservers(runId: string): void {
+    for (const observer of [...(this.runObservers.get(runId) ?? [])]) observer.detach();
   }
 
   listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
@@ -541,6 +694,7 @@ export class MemoryBackend implements WorkflowBackend {
     run.startedAt = run.startedAt ?? new Date(now);
     run.heartbeatAt = new Date(now);
     this.runs.set(runId, run);
+    this.publishRunObservation(runId, run);
 
     return Promise.resolve(true);
   }
@@ -592,12 +746,14 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   clear(): Promise<void> {
+    for (const runId of [...this.runObservers.keys()]) this.closeRunObservers(runId);
     this.runs.clear();
     this.checkpoints.clear();
     this.approvals.clear();
     this.queue = [];
     this.locks.clear();
     this.stalledClaims.clear();
+    this.runRevisions.clear();
     return Promise.resolve();
   }
 }
