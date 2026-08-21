@@ -47,6 +47,15 @@ export function getLoaderFromPath(filePath: string): Loader {
   return EXTENSION_LOADERS[ext] ?? "tsx";
 }
 
+/**
+ * Markdown and MDX source is compiled before the generic ESM stages run, so a
+ * diagnostic in those stages points at generated JSX rather than authored
+ * content. Source syntax errors are classified upstream by the content parser.
+ */
+export function isGeneratedContentOutput(filePath: string | undefined): boolean {
+  return filePath?.endsWith(".mdx") === true || filePath?.endsWith(".md") === true;
+}
+
 export function needsTransform(filePath: string): boolean {
   return /\.(tsx?|jsx?|mdx?|md)$/.test(filePath);
 }

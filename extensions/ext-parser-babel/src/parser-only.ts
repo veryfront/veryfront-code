@@ -41,7 +41,7 @@ function pickPlugins(filePath?: string): parser.ParserPlugin[] {
     "classProperties",
     "classPrivateProperties",
     "classPrivateMethods",
-    "decorators-legacy",
+    "decorators",
     "decoratorAutoAccessors",
     "deprecatedImportAssert",
     "dynamicImport",

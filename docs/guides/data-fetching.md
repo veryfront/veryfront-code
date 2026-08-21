@@ -45,6 +45,27 @@ entirely, including their top-level side effects. Put client initialization in a
 separate client-referenced module or a bare side-effect import that is not only
 used by a server data hook.
 
+Declare server data hooks in the page module. Do not re-export a hook from
+another file:
+
+```tsx
+// Do not use this form.
+export { getServerData } from "../server/loaders.ts";
+```
+
+A re-export has no local body for Veryfront to empty, so the browser build
+fails instead of shipping the loader and its transitive server graph. Import the
+server helper and call it from a local hook:
+
+```tsx
+import type { DataContext } from "veryfront";
+import { loadDashboard } from "../server/loaders.ts";
+
+export async function getServerData(ctx: DataContext) {
+  return { props: await loadDashboard(ctx) };
+}
+```
+
 The `props` you return are passed to the page component. To read the same props
 data from a layout or nested component without prop-drilling, use
 `usePageContext().data` (see
