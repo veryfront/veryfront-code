@@ -94,8 +94,14 @@ export type {
 // =============================================================================
 // Backend
 // =============================================================================
-export type { BackendConfig, WorkflowBackend, WorkflowRunUpdate } from "./backends/types.ts";
-export { hasWorkerSupport } from "./backends/types.ts";
+export type {
+  BackendConfig,
+  WorkflowBackend,
+  WorkflowRunObservation,
+  WorkflowRunObservedState,
+  WorkflowRunUpdate,
+} from "./backends/types.ts";
+export { hasRunObservationSupport, hasWorkerSupport } from "./backends/types.ts";
 
 export { MemoryBackend } from "./backends/memory.ts";
 
@@ -116,7 +122,7 @@ export type { NodeInfo, WorkflowMetadata } from "./registry.ts";
 // Client API
 // =============================================================================
 export { createWorkflowClient, WorkflowClient } from "./api/index.ts";
-export type { WorkflowClientConfig } from "./api/index.ts";
+export type { WorkflowClientConfig, WorkflowRunEventsResult } from "./api/index.ts";
 
 // =============================================================================
 // React Hooks (re-exported for convenience)
@@ -160,3 +166,14 @@ export { api } from "./api.ts";
 // =============================================================================
 export { createWorkflowHandler } from "./http/handler.ts";
 export type { WorkflowHandlerOptions, WorkflowHandlers } from "./http/handler.ts";
+export { deriveRunEvents, isTerminalRunStatus, snapshotRun } from "./events.ts";
+export type {
+  RunEventSnapshot,
+  WorkflowRunEvent,
+  WorkflowRunEventObservation,
+  WorkflowRunStatusEvent,
+  WorkflowStepCompletedEvent,
+  WorkflowStepFailedEvent,
+  WorkflowStepSkippedEvent,
+  WorkflowStepStartedEvent,
+} from "./events.ts";

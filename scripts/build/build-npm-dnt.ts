@@ -29,6 +29,7 @@ import {
 	patchDntCryptoShim,
 	patchDntDenoShim,
 } from "./dnt-polyfill.ts";
+import { NPM_DNT_COMPILER_OPTIONS } from "./dnt-compiler-options.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
@@ -86,6 +87,9 @@ await build({
 
 	// ESM only (no CommonJS) - allows top-level await
 	scriptModule: false,
+	// dnt 0.42 enabled declaration maps by default. Preserve that published
+	// artifact contract after 0.43 changed the default to false.
+	declarationMap: true,
 
 	// Skip type checking - runtime compatibility is verified by Deno's type checker
 	// dnt's Node type environment differs significantly from Deno's web-standard types
@@ -107,19 +111,14 @@ await build({
 	// FormData/File/Blob as globals natively, so no shim is needed.
 	shims: {
 		deno: true,
-		// Supported Node releases provide native timers. Keeping the dnt timer shim here turns
-		// Timeout objects into numbers, which prevents unrefTimer() from releasing
-		// framework background intervals in short-lived Node processes.
-		timers: false,
+		// Supported Node releases provide native timers. Do not add a custom timer
+		// shim because numeric timer IDs prevent unrefTimer() from releasing framework
+		// background intervals in short-lived Node processes.
 		crypto: true,
 	},
 
-	// Compiler options for declaration generation
-	compilerOptions: {
-		lib: ["ES2022", "DOM", "DOM.Iterable"],
-		target: "ES2022",
-		skipLibCheck: true,
-	},
+	// Compiler options for declaration generation and JavaScript emission
+	compilerOptions: NPM_DNT_COMPILER_OPTIONS,
 
 	// Map Deno std and type packages to npm equivalents
 	mappings: {

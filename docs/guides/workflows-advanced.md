@@ -126,12 +126,93 @@ The handler covers every path the hooks call:
 | `POST`        | `/{workflowId}/start`                  | `useWorkflowStart` |
 | `GET`         | `/runs`                                | `useWorkflowList`  |
 | `GET`         | `/runs/{runId}`                        | `useWorkflow`      |
+| `GET`         | `/runs/{runId}/events`                 | SSE clients        |
 | `POST`        | `/runs/{runId}/cancel`                 | `useWorkflow`      |
 | `POST`        | `/runs/{runId}/retry`                  | `useWorkflow`      |
 | `GET`, `POST` | `/runs/{runId}/approvals/{approvalId}` | `useApproval`      |
 
 Mounting somewhere else means telling both sides. Pass `basePath` to the handler
 and the matching `apiBase` to every hook.
+
+### Stream run events
+
+Use the SSE route when a dashboard, operator, or CI client needs durable progress
+without polling the run endpoint:
+
+```ts
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+export function observeWorkflowRun(runId: string): EventSource {
+  const events = new EventSource(`/api/workflows/runs/${runId}/events`);
+
+  events.addEventListener("snapshot", (message) => {
+    const run = JSON.parse((message as MessageEvent).data);
+    console.log(run.status, run.nodeStates);
+    if (TERMINAL_RUN_STATUSES.has(run.status)) events.close();
+  });
+
+  for (
+    const name of [
+      "step.started",
+      "step.completed",
+      "step.failed",
+      "step.skipped",
+      "run.status",
+    ]
+  ) {
+    events.addEventListener(name, (message) => {
+      const event = JSON.parse((message as MessageEvent).data);
+      console.log(name, event);
+      if (event.type === "run.status" && TERMINAL_RUN_STATUSES.has(event.status)) {
+        events.close();
+      }
+    });
+  }
+
+  events.addEventListener("error", (event) => {
+    if (event instanceof MessageEvent) {
+      console.error(JSON.parse(event.data));
+      events.close();
+    }
+  });
+
+  return events;
+}
+```
+
+The first frame is always `snapshot`. It uses the same public run projection as
+`GET /runs/{runId}`. Later frames use these shapes:
+
+| Event            | Data                                                                |
+| ---------------- | ------------------------------------------------------------------- |
+| `step.started`   | `{ type: "step.started", runId, nodeId, attempt }`                  |
+| `step.completed` | `{ type: "step.completed", runId, nodeId, attempt }`                |
+| `step.failed`    | `{ type: "step.failed", runId, nodeId, attempt, error? }`           |
+| `step.skipped`   | `{ type: "step.skipped", runId, nodeId }`                           |
+| `run.status`     | `{ type: "run.status", runId, status, error? }`                     |
+| `error`          | `{ code: "workflow_observation_failed", message, retryable: true }` |
+
+Top-level sequential nodes persist `running` before their side effect starts and
+persist their settled state before dependents execute. Parallel nodes start as a
+batch and settle after the batch joins. Top-level composites report their own
+boundaries; synthetic child graphs do not replace the durable root state.
+
+A terminal snapshot closes immediately. A terminal `run.status` frame is the last
+transition frame. Cancelling the response or aborting the request releases the
+backend observation. An observation failure sends the sanitized `error` frame and
+then closes.
+
+Native `EventSource` reconnects automatically when a transport disconnects or a
+successful SSE response reaches EOF. The helper calls `close()` for terminal runs
+to avoid reconnecting to an already-finished run. A transport failure dispatches
+a plain `Event`, which keeps the native reconnect behavior. The server's named
+`error` frame dispatches a `MessageEvent`; the helper closes it so the caller can
+decide when to retry from a fresh snapshot.
+
+A new connection receives a fresh snapshot and future transitions. It does not
+replay transitions that are already represented by that snapshot. A missing run
+returns 404. A custom backend that does not implement atomic run observation
+returns 501.
 
 ## Verify it worked
 

@@ -1,11 +1,10 @@
 /**
- * HTTP surface for the workflow React hooks.
+ * HTTP surface for workflow React hooks and run-event clients.
  *
  * `useWorkflow`, `useWorkflowStart`, `useWorkflowList` and `useApproval` all
  * call a fixed set of paths under their `apiBase` (default `/api/workflows`).
- * Those hooks are the specification for this module: every route below exists
- * because a hook calls it, and every response shape below is the one its caller
- * parses.
+ * Those clients are the specification for this module. Every response shape
+ * below is the one its caller parses.
  *
  * @module workflow/http
  *
@@ -20,8 +19,10 @@
  */
 
 import { isVeryfrontError } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils";
 import type { WorkflowClient } from "../api/index.ts";
 import { ApprovalDecisionSchema, RunFilterSchema } from "../schemas/index.ts";
+import { isTerminalRunStatus, type WorkflowRunEventObservation } from "../events.ts";
 import type {
   ApprovalDecision,
   PendingApproval,
@@ -46,6 +47,7 @@ export interface WorkflowHandlers {
 }
 
 const DEFAULT_BASE_PATH = "/api/workflows";
+const logger = baseLogger.component("workflow-http");
 
 class WorkflowRequestError extends Error {}
 
@@ -177,11 +179,145 @@ function projectRun(
 }
 
 /**
+ * Stream a run's transitions as Server-Sent Events until it reaches a terminal
+ * status or the client disconnects.
+ *
+ * Polling `GET /runs/:id` is the alternative, and it cannot report a
+ * transition that begins and ends inside one interval. A fast step is simply
+ * never seen. This reports every persisted change once, in order.
+ *
+ * The current run is sent first as a `snapshot` event, and the diff baseline
+ * is seeded from that same read. A subscriber therefore starts from a known
+ * state and receives only what happened after it, rather than having to
+ * reconstruct the run from a partial event history it joined midway.
+ */
+function runEventStream(
+  observation: WorkflowRunEventObservation,
+  signal: AbortSignal,
+): Response {
+  const encoder = new TextEncoder();
+  const iterator = observation.events[Symbol.asyncIterator]();
+  let snapshotPending = true;
+  let closed = false;
+  let cleanupPromise: Promise<void> | undefined;
+
+  const cleanup = (): Promise<void> => {
+    if (cleanupPromise) return cleanupPromise;
+    signal.removeEventListener("abort", abort);
+    const returnIterator = (() => {
+      try {
+        return Promise.resolve(iterator.return?.());
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    })();
+    const closeObservation = (() => {
+      try {
+        return Promise.resolve(observation.close());
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    })();
+    cleanupPromise = Promise.allSettled([
+      returnIterator,
+      closeObservation,
+    ]).then(() => {});
+    return cleanupPromise;
+  };
+
+  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
+
+  const close = (): void => {
+    if (closed) return;
+    closed = true;
+    try {
+      streamController?.close();
+    } catch {
+      // The body may already have been cancelled by its consumer.
+    }
+    void cleanup();
+  };
+
+  function abort(): void {
+    close();
+  }
+
+  const encode = (event: string, data: unknown): Uint8Array =>
+    encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+      if (signal.aborted) {
+        close();
+        return;
+      }
+      signal.addEventListener("abort", abort);
+    },
+    async pull(controller) {
+      if (closed) return;
+
+      if (snapshotPending) {
+        snapshotPending = false;
+        controller.enqueue(encode("snapshot", projectRun(observation.initial)));
+        if (isTerminalRunStatus(observation.initial.status)) close();
+        return;
+      }
+
+      try {
+        const next = await iterator.next();
+        if (closed) return;
+        if (next.done) {
+          close();
+          return;
+        }
+
+        controller.enqueue(encode(next.value.type, next.value));
+        if (
+          next.value.type === "run.status" && isTerminalRunStatus(next.value.status)
+        ) close();
+      } catch (error) {
+        if (closed) return;
+        logger.error("Workflow event observation failed", {
+          runId: observation.initial.id,
+        }, error);
+        controller.enqueue(encode("error", {
+          code: "workflow_observation_failed",
+          message: "Workflow event observation failed",
+          retryable: true,
+        }));
+        close();
+      }
+    },
+    cancel() {
+      closed = true;
+      return cleanup();
+    },
+  });
+
+  return new Response(body, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      // Proxies that buffer by default would defeat the point of streaming.
+      "x-accel-buffering": "no",
+    },
+  });
+}
+
+/**
  * Build the HTTP routes the workflow hooks call.
  *
  * Pass the same client the rest of the app starts workflows with. A client
  * created here instead would carry its own in-memory backend and would not see
  * those runs.
+ *
+ * `GET {basePath}/runs/{runId}/events` returns a Server-Sent Events stream. It
+ * sends the current public run as `snapshot`, followed by persisted step and
+ * run-status events, and closes on a terminal run. Missing runs return 404.
+ * Custom backends without atomic run observation return 501. Observation
+ * failures send one sanitized `error` event with `retryable: true`, then close.
  */
 export function createWorkflowHandler(
   client: WorkflowClient,
@@ -211,6 +347,15 @@ export function createWorkflowHandler(
         const run = await client.getRun(runId);
         if (!run) return problem(`No workflow run ${runId}`, 404);
         return Response.json(projectRun(run));
+      }
+
+      if (segments.length === 3 && first === "runs" && runId && third === "events") {
+        const observation = await client.observeRunEvents(runId, { signal: request.signal });
+        if (!observation) return problem(`No workflow run ${runId}`, 404);
+        if (!observation.supported) {
+          return problem("Workflow event observation is not supported", 501);
+        }
+        return runEventStream(observation, request.signal);
       }
 
       if (

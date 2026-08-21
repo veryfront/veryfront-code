@@ -744,7 +744,7 @@ async function completeRun(
     !input.isCurrentExecution(run.id, executionController)
   ) return null;
 
-  const publicContext = toPublicContext(result.context);
+  const publicContext = toPersistedWorkflowContext(result.context);
   const output = determineOutput(publicContext);
   const completed = await updateRunIfStatus(
     backend,
@@ -778,7 +778,7 @@ async function failRun(
   if (currentRun?.status === "cancelled") return false;
   if (!input.isCurrentExecution(run.id, executionController)) return false;
 
-  const publicContext = toPublicContext(result.context);
+  const publicContext = toPersistedWorkflowContext(result.context);
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -811,7 +811,7 @@ async function pauseRun(
     !input.isCurrentExecution(run.id, executionController)
   ) return false;
 
-  const publicContext = toPublicContext(result.context);
+  const publicContext = toPersistedWorkflowContext(result.context);
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -826,7 +826,8 @@ async function pauseRun(
   );
 }
 
-function toPublicContext(context: WorkflowContext): WorkflowContext {
+/** Remove request-only tenant authority before persisting workflow context. */
+export function toPersistedWorkflowContext(context: WorkflowContext): WorkflowContext {
   const { _tenant: _tenant, ...publicContext } = context;
   return publicContext;
 }

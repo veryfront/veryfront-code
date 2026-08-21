@@ -344,10 +344,10 @@ function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): 
 
 /** A detached error carrying only the classification, so nothing user-supplied escapes. */
 function boundedSpanError(error: unknown): unknown {
-  let bounded: unknown = error;
+  let bounded: unknown = sanitizeErrorForTelemetry("Error", "withoutStack");
   runTelemetryOperation(
     () => {
-      bounded = new Error(telemetryErrorType(error));
+      bounded = sanitizeErrorForTelemetry(telemetryErrorType(error), "withoutStack");
     },
     "Failed to classify span error status",
   );

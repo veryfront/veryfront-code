@@ -313,6 +313,45 @@ describe("agent span error redaction", () => {
     }
   });
 
+  it("keeps an unmapped span error bounded when application code replaces Error", async () => {
+    const tracing = installRealTracing();
+    const NativeError = Error;
+    const previousError = Object.getOwnPropertyDescriptor(globalThis, "Error");
+    try {
+      const { withSpan } = await import("#veryfront/observability/tracing/otlp-setup.ts");
+      const needle = "poisoned-global-error@example.com";
+      Object.defineProperty(globalThis, "Error", {
+        configurable: true,
+        value: function Error(): never {
+          throw new NativeError("global Error constructor must not run");
+        },
+        writable: true,
+      });
+
+      await withSpan("probe.poisoned-error-constructor", async () => {
+        throw new NativeError(`failed for ${needle}`);
+      }).catch(() => {});
+      if (previousError) {
+        Object.defineProperty(globalThis, "Error", previousError);
+      }
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
+
+      const span = spans.find((candidate) => candidate.name === "probe.poisoned-error-constructor");
+      assertExists(span);
+      assertEquals(span.status.code, SpanStatusCode.ERROR);
+      assertEquals(span.status.message, "Error");
+    } finally {
+      if (previousError) {
+        Object.defineProperty(globalThis, "Error", previousError);
+      }
+      await tracing.dispose();
+    }
+  });
+
   it("keeps the reporting site's own stack off a span the mapper reclassified", async () => {
     const tracing = installRealTracing();
     try {

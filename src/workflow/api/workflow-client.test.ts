@@ -445,6 +445,59 @@ describe("WorkflowClient", () => {
     });
   });
 
+  describe("observeRunEvents()", () => {
+    it("observes mutations made through a separate client sharing the backend", async () => {
+      const run = {
+        id: "shared-run",
+        workflowId: "test-workflow",
+        status: "pending",
+        input: {},
+        nodeStates: {},
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      } satisfies WorkflowRun;
+      await backend.createRun(run);
+      const observation = await client.observeRunEvents(run.id);
+      assertExists(observation);
+      assertEquals(observation.supported, true);
+      if (!observation.supported) throw new Error("expected observation support");
+      const iterator = observation.events[Symbol.asyncIterator]();
+      const writer = createWorkflowClient({ backend });
+
+      await writer.getBackend().updateRun(run.id, { status: "waiting" });
+      await writer.getBackend().updateRun(run.id, { status: "running" });
+
+      assertEquals((await iterator.next()).value, {
+        type: "run.status",
+        runId: run.id,
+        status: "waiting",
+      });
+      assertEquals((await iterator.next()).value, {
+        type: "run.status",
+        runId: run.id,
+        status: "running",
+      });
+      await observation.close();
+      writer.getApprovalManager().stop();
+    });
+
+    it("returns an explicit unsupported result for a legacy custom backend", async () => {
+      const legacy = new MemoryBackend();
+      Object.defineProperty(legacy, "openRunObservation", { value: undefined });
+      const legacyClient = createWorkflowClient({ backend: legacy });
+
+      assertEquals(await legacyClient.observeRunEvents("anything"), {
+        supported: false,
+        reason: "unsupported",
+      });
+      await legacyClient.destroy();
+    });
+  });
+
   describe("start()", () => {
     it("should start a workflow and return a handle", async () => {
       const handle = await client.start("test-workflow", { topic: "test" });

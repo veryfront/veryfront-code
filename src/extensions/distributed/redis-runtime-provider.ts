@@ -48,6 +48,12 @@ export interface NodeRedisClient {
   lSet(key: string, index: number, value: string): Promise<string | "OK">;
   lLen(key: string): Promise<number>;
   xAdd(key: string, id: string, fields: Record<string, string>): Promise<string>;
+  xRead(
+    streams: Array<{ key: string; id: string }>,
+    options?: { BLOCK?: number; COUNT?: number },
+  ): Promise<
+    Array<{ name: string; messages: Array<{ id: string; message: Record<string, string> }> }> | null
+  >;
   xGroupCreate(
     key: string,
     group: string,

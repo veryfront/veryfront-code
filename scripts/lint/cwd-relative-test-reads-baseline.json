@@ -3,7 +3,7 @@
   "scripts/build/compile-binary.test.ts": 9,
   "scripts/build/npm-dependency-sources.test.ts": 1,
   "scripts/build/npm-extension-package-metadata.test.ts": 6,
-  "scripts/build/npm-package-metadata.test.ts": 22,
+  "scripts/build/npm-package-metadata.test.ts": 21,
   "scripts/build/sentry-runtime-packages.test.ts": 1,
   "scripts/ci/setup-deno-workflow.test.ts": 1,
   "scripts/docs/generate-api-reference.test.ts": 1,

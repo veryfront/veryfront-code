@@ -17,7 +17,7 @@ import {
   MAX_TELEMETRY_ATTRIBUTE_COUNT,
   MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
 } from "./limits.ts";
-import { isVeryfrontError } from "#veryfront/errors/http-error.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import {
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
@@ -74,6 +74,16 @@ function readOwnErrorString(
     return typeof value === "string" ? value : INVALID_ERROR_FIELD;
   } catch (_) {
     return INVALID_ERROR_FIELD;
+  }
+}
+
+function readOwnErrorDataField(error: Error, key: PropertyKey): unknown {
+  try {
+    const descriptor = getOwnPropertyDescriptor(error, key);
+    if (!descriptor || !hasOwn(descriptor, "value")) return undefined;
+    return descriptor.value;
+  } catch (_) {
+    return undefined;
   }
 }
 
@@ -517,10 +527,11 @@ export function hasTransientErrorCode(text: string): boolean {
  */
 export function telemetryErrorType(error: unknown): string {
   try {
-    if (isVeryfrontError(error)) return `VeryfrontError:${error.status}`;
+    const veryfrontError = snapshotVeryfrontError(error);
+    if (veryfrontError) return `VeryfrontError:${veryfrontError.status}`;
     if (!isNativeErrorWithoutHooks(error)) return "Unknown";
 
-    const code = (error as { code?: unknown }).code;
+    const code = readOwnErrorDataField(error, "code");
     if (typeof code === "string") {
       const match = TELEMETRY_ERROR_CODE_RE.exec(code);
       if (match?.[1]) return match[1];

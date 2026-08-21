@@ -21,7 +21,12 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
-import { validateVeryfrontConfig } from "./config.schema.ts";
+import { validateVeryfrontConfig, type VeryfrontConfig } from "./config.schema.ts";
+
+/** Derived from the schema so the test tracks it instead of restating the union. */
+type ImageFormat = NonNullable<
+  NonNullable<NonNullable<VeryfrontConfig["assetPipeline"]>["images"]>["formats"]
+>[number];
 
 describe("configSchema", () => {
   it("validates valid config", () => {
@@ -73,9 +78,10 @@ describe("configSchema", () => {
   });
 
   it("keeps image asset-pipeline schema constraints aligned with runtime", () => {
+    const formats: ImageFormat[] = ["webp", "png"];
     const images = {
       projectDir: Deno.cwd(),
-      formats: ["webp", "png"],
+      formats,
       sizes: [320, 640],
       quality: 85,
       inputDir: "public",
