@@ -106,6 +106,17 @@ describe("createWorkflowHandler", () => {
     return runId;
   }
 
+  async function startRunWithInjectedEnv(): Promise<string> {
+    const previousInjectedEnv = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+    try {
+      Deno.env.set("VERYFRONT_TASK_ENV_JSON", JSON.stringify({ SECRETISH: "redacted" }));
+      return await startRun();
+    } finally {
+      if (previousInjectedEnv === undefined) Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+      else Deno.env.set("VERYFRONT_TASK_ENV_JSON", previousInjectedEnv);
+    }
+  }
+
   it("starts a workflow at the path useWorkflowStart posts to", async () => {
     const response = await handlers.POST(
       post("/api/workflows/pipeline/start", { input: { topic: "x" } }),
@@ -118,15 +129,10 @@ describe("createWorkflowHandler", () => {
   });
 
   it("serves the run that useWorkflow polls, with the fields it reads", async () => {
-    const previousInjectedEnv = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
-    let runId: string;
-    try {
-      Deno.env.set("VERYFRONT_TASK_ENV_JSON", JSON.stringify({ SECRETISH: "redacted" }));
-      runId = await startRun();
-    } finally {
-      if (previousInjectedEnv === undefined) Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
-      else Deno.env.set("VERYFRONT_TASK_ENV_JSON", previousInjectedEnv);
-    }
+    const runId = await startRunWithInjectedEnv();
+    const persisted = await client.getRun(runId);
+    expect(persisted?.context.env?.SECRETISH).toBe("redacted");
+    expect(persisted?.workerId).toBeDefined();
 
     const response = await handlers.GET(get(`/api/workflows/runs/${runId}`));
     expect(response.status).toBe(200);
@@ -136,6 +142,9 @@ describe("createWorkflowHandler", () => {
     const context = run.context as Record<string, unknown>;
     expect(context.env).toBeUndefined();
     expect(run._tenant).toBeUndefined();
+    expect(run.workerId).toBeUndefined();
+    expect(run.heartbeatAt).toBeUndefined();
+    expect(run.checkpoints).toBeUndefined();
     // useWorkflow derives status, progress and approvals from exactly these.
     expect(run.status).toBeDefined();
     expect(run.nodeStates).toBeDefined();
@@ -150,15 +159,19 @@ describe("createWorkflowHandler", () => {
   });
 
   it("lists runs in the envelope useWorkflowList unwraps", async () => {
-    const runId = await startRun();
+    const runId = await startRunWithInjectedEnv();
 
     const response = await handlers.GET(get("/api/workflows/runs?limit=20"));
     expect(response.status).toBe(200);
 
-    const body = await response.json() as { runs?: Array<{ id: string }> };
+    const body = await response.json() as { runs?: Array<Record<string, unknown>> };
     expect(Array.isArray(body.runs)).toBe(true);
     expect(body.runs?.some((run) => run.id === runId)).toBe(true);
-    expect((body.runs?.[0] as Record<string, unknown> | undefined)?._tenant).toBeUndefined();
+    const listed = body.runs?.find((run) => run.id === runId);
+    expect((listed?.context as Record<string, unknown> | undefined)?.env).toBeUndefined();
+    expect(listed?._tenant).toBeUndefined();
+    expect(listed?.workerId).toBeUndefined();
+    expect(listed?.checkpoints).toBeUndefined();
   });
 
   /** Start a run that is still going, so there is something to act on. */
@@ -204,6 +217,12 @@ describe("createWorkflowHandler", () => {
       async () => (await client.getRun(runId))?.status === "failed",
       `run ${runId} to fail`,
     );
+
+    const persisted = await client.getRun(runId);
+    expect(persisted?.error?.stack).toBeDefined();
+    const failedResponse = await handlers.GET(get(`/api/workflows/runs/${runId}`));
+    const failedRun = await failedResponse.json() as Record<string, unknown>;
+    expect((failedRun.error as Record<string, unknown>).stack).toBeUndefined();
 
     const response = await handlers.POST(post(`/api/workflows/runs/${runId}/retry`));
 

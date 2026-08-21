@@ -22,7 +22,13 @@
 import { isVeryfrontError } from "#veryfront/errors";
 import type { WorkflowClient } from "../api/index.ts";
 import { ApprovalDecisionSchema, RunFilterSchema } from "../schemas/index.ts";
-import type { ApprovalDecision, RunFilter, WorkflowContext, WorkflowRun } from "../types.ts";
+import type {
+  ApprovalDecision,
+  PendingApproval,
+  RunFilter,
+  WorkflowContext,
+  WorkflowRun,
+} from "../types.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
 export interface WorkflowHandlerOptions {
@@ -133,23 +139,34 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
   return body as Record<string, unknown>;
 }
 
-function withoutInternalContext(
-  context: Record<string, unknown>,
-): WorkflowContext {
-  const projected = { ...context };
-  delete projected.env;
-  delete projected._tenant;
-  delete projected._loop;
-  return projected as WorkflowContext;
+function projectContext(context: WorkflowContext): WorkflowContext {
+  const { env: _env, _tenant: _tenant, _loop: _loop, ...publicContext } = context;
+  return publicContext as WorkflowContext;
 }
 
-function publicRun(run: WorkflowRun): WorkflowRun {
-  const projected = structuredClone(run);
-  delete projected._tenant;
-  delete projected._runtimeStateVersion;
-  delete projected._workflowProjection;
-  projected.context = withoutInternalContext(projected.context);
-  return projected;
+function projectRun(
+  run: WorkflowRun,
+  pendingApprovals: PendingApproval[] = run.pendingApprovals,
+): Record<string, unknown> {
+  const {
+    _tenant: _tenant,
+    _runtimeStateVersion: _runtimeStateVersion,
+    _workflowProjection: _workflowProjection,
+    checkpoints: _checkpoints,
+    workerId: _workerId,
+    heartbeatAt: _heartbeatAt,
+    error,
+    context,
+    pendingApprovals: _pendingApprovals,
+    ...publicRun
+  } = run;
+
+  return {
+    ...publicRun,
+    context: projectContext(context),
+    pendingApprovals,
+    ...(error ? { error: { message: error.message, nodeId: error.nodeId } } : {}),
+  };
 }
 
 /**
@@ -180,7 +197,7 @@ export function createWorkflowHandler(
         const cursor = filter.limit && runs.length === filter.limit
           ? String(offset + runs.length)
           : undefined;
-        return Response.json({ runs: runs.map(publicRun), cursor });
+        return Response.json({ runs: runs.map((run) => projectRun(run)), cursor });
       }
 
       if (segments.length === 2 && first === "runs" && runId) {
@@ -193,7 +210,7 @@ export function createWorkflowHandler(
         // so the projection has to put them back or a paused workflow never
         // surfaces its approval. The durable fix belongs in the run record.
         const pendingApprovals = await client.getPendingApprovals(runId);
-        return Response.json({ ...publicRun(run), pendingApprovals });
+        return Response.json(projectRun(run, pendingApprovals));
       }
 
       if (

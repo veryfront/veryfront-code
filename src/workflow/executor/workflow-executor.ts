@@ -324,10 +324,13 @@ export class WorkflowExecutor {
       });
     }
 
-    await runWithWorkflowSourceIntegrationPolicy(
+    const settled = runWithWorkflowSourceIntegrationPolicy(
       run,
       () => this.executeAsync(runId, undefined, executionWorkerId),
     );
+    settled.catch((error) => {
+      logger.error("Workflow retry failed", { runId }, error);
+    });
   }
 
   private async resumeRun(
