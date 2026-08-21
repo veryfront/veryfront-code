@@ -103,10 +103,10 @@ default parent-based sampler would let a sampled-out request silently drop the e
 The causal edges survive as span **links** instead. Every `workflow.run` span carries up to
 two, each tagged with `workflow.link.type`:
 
-| `workflow.link.type` | Points at |
-| --- | --- |
-| `caller` | The span that was active when this execution started, when anything traced it |
-| `previous_execution` | This run's previous `workflow.run` span, when it is resuming |
+| `workflow.link.type` | Points at                                                                     |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `caller`             | The span that was active when this execution started, when anything traced it |
+| `previous_execution` | This run's previous `workflow.run` span, when it is resuming                  |
 
 Runs are still traced per execution attempt: a run that pauses at a wait node or a pending
 approval and later resumes produces a _separate_ trace per execution. Those traces are now
