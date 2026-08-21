@@ -169,6 +169,12 @@ describe("SSR module distributed cache on a local dev server", () => {
 
         const afterRestart = await createLoader().loadRawModule(parentPath, parentSource);
         assertEquals((afterRestart.default as () => string)(), "after");
+
+        // A transform publishes to the distributed cache without blocking the
+        // render, so a write can still be in flight here. The `finally` below
+        // deletes the directory it is writing into; without this the write
+        // fails into a cleanup path that outlives the test.
+        await persistent.drainBackgroundWrites();
       });
     } finally {
       await removeTempDirIfPresent(projectDir);
