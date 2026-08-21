@@ -41,97 +41,236 @@ interface UnrepresentableValue {
   readonly fatal: boolean;
 }
 
+/** Object identity tracked while JSON.stringify walks the active value graph. */
+type JsonTraversalReference = object;
+
+interface NormalizedJsonObject {
+  [key: string]: NormalizedJsonValue;
+}
+
+interface RawJsonValue {
+  readonly rawJSON: string;
+}
+
+interface JsonRawSupport {
+  isRawJSON?(value: unknown): value is RawJsonValue;
+}
+
+const jsonRawSupport = JSON as typeof JSON & JsonRawSupport;
+
+type NormalizedJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | NormalizedJsonValue[]
+  | NormalizedJsonObject
+  | RawJsonValue;
+
+const OMIT_JSON_VALUE = Symbol("omit-json-value");
+
 function describe(value: unknown): string {
   if (value === undefined) return "undefined";
   if (typeof value === "bigint") return "BigInt";
   if (typeof value === "function") return "function";
   if (typeof value === "symbol") return "symbol";
   if (typeof value === "number") return Number.isFinite(value) ? "number" : `number (${value})`;
-  const tag = Object.prototype.toString.call(value).slice(8, -1);
-  return tag === "Object" ? (value?.constructor?.name ?? "object") : tag;
+  return "object";
 }
 
-/**
- * Collect every value under `root` that JSON cannot carry unchanged.
- *
- * Traverses the same ground `JSON.stringify` covers, so the report describes
- * what would actually happen to the value rather than what its type suggests.
- */
-function findUnrepresentableValues(root: unknown, label: string): UnrepresentableValue[] {
-  const found: UnrepresentableValue[] = [];
-  const ancestors = new Set<object>();
+/** Whether a value is a plain `{}` object rather than a class instance. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null) return false;
+  if (typeof value !== "object") return false;
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  } catch {
+    return false;
+  }
+}
 
-  const visit = (value: unknown, path: string): void => {
-    if (value === null) return;
+function describeToJsonValue(value: unknown): string {
+  if (typeof value === "bigint") return "BigInt";
+  if (typeof value === "object" && value !== null) {
+    try {
+      Date.prototype.getTime.call(value);
+      return "Date";
+    } catch {
+      // The value is not a Date.
+    }
+  }
+  return "toJSON value";
+}
+
+function toJsonLength(value: unknown): number {
+  // Unary plus uses the specification's ToNumber operation, which rejects a
+  // BigInt directly or returned by an object's primitive conversion.
+  const number = +(value as number);
+  if (Number.isNaN(number) || number <= 0) return 0;
+  if (number === Number.POSITIVE_INFINITY) return Number.MAX_SAFE_INTEGER;
+  return Math.min(Math.floor(number), Number.MAX_SAFE_INTEGER);
+}
+
+interface BoxedJsonPrimitive {
+  readonly value: string | number | boolean | bigint;
+}
+
+/** Probe internal primitive slots without consulting spoofable metadata. */
+function unboxJsonPrimitive(value: JsonTraversalReference): BoxedJsonPrimitive | null {
+  try {
+    return { value: Number.prototype.valueOf.call(value) };
+  } catch {
+    // Try the next boxed primitive brand.
+  }
+  try {
+    return { value: String.prototype.valueOf.call(value) };
+  } catch {
+    // Try the next boxed primitive brand.
+  }
+  try {
+    return { value: Boolean.prototype.valueOf.call(value) };
+  } catch {
+    // Try the next boxed primitive brand.
+  }
+  try {
+    return { value: BigInt.prototype.valueOf.call(value) };
+  } catch {
+    return null;
+  }
+}
+
+/** Serialize once while collecting every value JSON cannot carry unchanged. */
+function serializeAndFindUnrepresentableValues(
+  root: unknown,
+  label: string,
+): {
+  normalized: NormalizedJsonValue | undefined;
+  serialized: string;
+  unrepresentable: UnrepresentableValue[];
+} {
+  const found: UnrepresentableValue[] = [];
+  const active = new Set<JsonTraversalReference>();
+
+  const normalize = (
+    value: unknown,
+    path: string,
+    key: string,
+    applyToJson: boolean,
+  ): NormalizedJsonValue | typeof OMIT_JSON_VALUE => {
+    if (value === null) return null;
 
     const type = typeof value;
-    if (type === "string" || type === "boolean") return;
+    if (
+      type === "object" &&
+      typeof jsonRawSupport.isRawJSON === "function" &&
+      jsonRawSupport.isRawJSON(value)
+    ) {
+      return value as RawJsonValue;
+    }
+    if (
+      applyToJson &&
+      (type === "object" || type === "function" || type === "bigint")
+    ) {
+      const receiver = type === "bigint" ? Object(value) : value as JsonTraversalReference;
+      const toJson = Reflect.get(receiver, "toJSON");
+      if (typeof toJson === "function") {
+        const replacement = Reflect.apply(toJson, value, [key]);
+        found.push({ path, kind: describeToJsonValue(value), fatal: false });
+        return normalize(replacement, path, key, false);
+      }
+    }
+
+    if (type === "string" || type === "boolean") return value as string | boolean;
     if (type === "number") {
-      // NaN and the infinities serialize as null, losing the value.
-      if (!Number.isFinite(value)) found.push({ path, kind: describe(value), fatal: false });
-      return;
+      if (!Number.isFinite(value)) {
+        found.push({ path, kind: describe(value), fatal: false });
+        return null;
+      }
+      return value as number;
     }
     if (type === "bigint") {
       found.push({ path, kind: "BigInt", fatal: true });
-      return;
+      return null;
     }
-    // Dropped outright: an object key disappears, an array slot becomes null.
     if (type === "undefined" || type === "function" || type === "symbol") {
       found.push({ path, kind: describe(value), fatal: false });
-      return;
+      return OMIT_JSON_VALUE;
     }
 
-    const nested = value as Record<string, unknown>;
-    if (ancestors.has(nested)) {
+    const nested = value as JsonTraversalReference;
+    if (active.has(nested)) {
       found.push({ path, kind: "circular reference", fatal: true });
-      return;
+      return null;
     }
 
-    // A value carrying toJSON is replaced by whatever it returns -- a Date
-    // becomes a string, so the type a later step reads is not the type the
-    // step that produced it wrote.
-    if (typeof nested.toJSON === "function") {
-      found.push({ path, kind: describe(nested), fatal: false });
-      return;
-    }
-
-    if (Array.isArray(nested)) {
-      ancestors.add(nested);
-      // Indexed rather than `forEach`, which skips holes. JSON materializes
-      // every hole as `null`, so a sparse array comes back dense and a check
-      // like `0 in value` answers differently after a resume.
-      for (let index = 0; index < nested.length; index++) {
-        if (!Object.hasOwn(nested, index)) {
-          found.push({ path: `${path}[${index}]`, kind: "array hole", fatal: false });
-          continue;
-        }
-        visit(nested[index], `${path}[${index}]`);
+    const isArray = Array.isArray(nested);
+    if (!isArray) {
+      const boxed = unboxJsonPrimitive(nested);
+      if (boxed) {
+        found.push({ path, kind: "boxed primitive", fatal: false });
+        return normalize(boxed.value, path, key, false);
       }
-      ancestors.delete(nested);
-      return;
     }
 
-    // Anything that is not a plain object loses whatever its prototype carried:
-    // a Map and a Set both serialize as `{}`, a class instance as its own
-    // enumerable fields only. Recording that is not the end of the walk --
-    // JSON still encodes those enumerable fields, so a BigInt or a cycle
-    // inside one is every bit as fatal as it would be in a plain object.
-    // Narrowed to a non-null object above, so the prototype read is safe here
-    // and needs no null guard of its own.
-    const prototype = Object.getPrototypeOf(nested);
-    if (prototype !== Object.prototype && prototype !== null) {
-      found.push({ path, kind: describe(nested), fatal: false });
-    }
+    active.add(nested);
+    try {
+      if (isArray) {
+        const result: NormalizedJsonValue[] = [];
+        const length = toJsonLength(Reflect.get(nested, "length"));
+        for (let index = 0; index < length; index++) {
+          const indexKey = String(index);
+          const child = Reflect.get(nested, indexKey);
+          let isHole = false;
+          try {
+            isHole = !Object.hasOwn(nested, indexKey);
+          } catch {
+            // Hole diagnostics are best-effort; the captured value still wins.
+          }
+          if (isHole) {
+            found.push({ path: `${path}[${index}]`, kind: "array hole", fatal: false });
+          }
+          if (isHole && child === undefined) {
+            result.push(null);
+            continue;
+          }
+          const normalized = normalize(
+            child,
+            `${path}[${index}]`,
+            indexKey,
+            true,
+          );
+          result.push(normalized === OMIT_JSON_VALUE ? null : normalized);
+        }
+        return result;
+      }
 
-    ancestors.add(nested);
-    for (const [key, child] of Object.entries(nested)) {
-      visit(child, path ? `${path}.${redactPathSegment(key)}` : redactPathSegment(key));
+      const result: NormalizedJsonObject = Object.create(null);
+      for (const childKey of Object.keys(nested)) {
+        const normalized = normalize(
+          Reflect.get(nested, childKey),
+          `${path}.${redactPathSegment(childKey)}`,
+          childKey,
+          true,
+        );
+        if (normalized !== OMIT_JSON_VALUE) result[childKey] = normalized;
+      }
+      // Prototype diagnostics are best-effort and run after the snapshot is
+      // complete, so hostile metadata traps cannot change persistence output.
+      if (!isPlainObject(nested)) {
+        found.push({ path, kind: describe(nested), fatal: false });
+      }
+      return result;
+    } finally {
+      active.delete(nested);
     }
-    ancestors.delete(nested);
   };
 
-  visit(root, label);
-  return found;
+  const normalized = normalize(root, label, "", true);
+  const normalizedValue = normalized === OMIT_JSON_VALUE ? undefined : normalized;
+  const serialized = JSON.stringify(normalizedValue);
+
+  return { normalized: normalizedValue, serialized, unrepresentable: found };
 }
 
 function formatPaths(values: readonly UnrepresentableValue[]): string {
@@ -160,24 +299,20 @@ function formatPaths(values: readonly UnrepresentableValue[]): string {
  *   alternative is a step reading a `string` where its predecessor wrote a
  *   `Date`, decided by whether the run happened to pause.
  *
- * Every field carrying step-authored values goes through this, not just
- * `context`: the same value reaches `nodeStates`, `output`, and checkpoints,
- * and whichever field is encoded first is the one that decides whether the
- * error is a path-aware one or the native message.
- *
- * Two corners are deliberately left to the native error. The scan reads each
- * property once and `JSON.stringify` reads it again, so a value produced by a
- * side-effectful getter can differ between the two passes; and a custom
- * `toJSON` hook is recorded as lossy without invoking it, so a hook returning
- * a BigInt or a cycle still fails natively. Closing either means encoding from
- * a snapshot this module builds rather than from the caller's object -- a
- * hand-rolled JSON encoder on the persistence path, where a subtle divergence
- * from `JSON.stringify` would corrupt stored data rather than merely blur a
- * diagnostic. Neither corner is a regression: both behave exactly as they did
- * before this check existed.
+ * Durable backends serialize context before its duplicate run projections, so
+ * this check decides the diagnostic without treating framework-owned metadata
+ * such as node timestamps as user-authored lossy values.
  */
-export function serializeWorkflowJson(value: unknown, label: string, runId?: string): string {
-  const unrepresentable = findUnrepresentableValues(value, label);
+/** @internal Prepare the exact JSON value and encoded string for durable storage. */
+export function prepareWorkflowJson(
+  value: unknown,
+  label: string,
+  runId?: string,
+): { normalized: unknown; serialized: string } {
+  const { normalized, serialized, unrepresentable } = serializeAndFindUnrepresentableValues(
+    value,
+    label,
+  );
 
   const fatal = unrepresentable.filter((entry) => entry.fatal);
   if (fatal.length > 0) {
@@ -199,7 +334,11 @@ export function serializeWorkflowJson(value: unknown, label: string, runId?: str
     );
   }
 
-  return JSON.stringify(value);
+  return { normalized, serialized };
+}
+
+export function serializeWorkflowJson(value: unknown, label: string, runId?: string): string {
+  return prepareWorkflowJson(value, label, runId).serialized;
 }
 
 /** Serialize a workflow context for durable storage. */
