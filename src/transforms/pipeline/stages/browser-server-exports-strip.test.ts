@@ -1378,6 +1378,26 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "PageModel");
     });
 
+    it("strips modules with legacy decorator type arguments before compiling browser modules", async () => {
+      const source = [
+        `function logged<T>(value: T) { return value; }`,
+        `const SECRET = "SERVER_ONLY_GENERIC_DECORATOR_SECRET";`,
+        `export async function getServerData() { return { props: { secret: SECRET } }; }`,
+        `@logged<string> export class PageModel {}`,
+        `export default function Page() { return PageModel; }`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/generic-decorator.tsx",
+        "/project",
+        { projectId: "generic-decorator-strip", dev: false, ssr: false },
+      );
+
+      assertNotIncludes(result.code, "SERVER_ONLY_GENERIC_DECORATOR_SECRET");
+      assertStringIncludes(result.code, "PageModel");
+    });
+
     it("does not claim tenant ownership of generated Markdown or MDX parse diagnostics", async () => {
       const source = [
         `export async function getServerData() { return { props: {} }; }`,

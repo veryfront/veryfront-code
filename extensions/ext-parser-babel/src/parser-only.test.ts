@@ -61,6 +61,15 @@ describe("BabelParseOnlyParser", () => {
     assertEquals(ast.type, "File");
   });
 
+  it("parses legacy TypeScript decorator type arguments", async () => {
+    const ast = await parser.parse({
+      code: "@logged<string> export class Store {}",
+      filePath: "store.ts",
+    });
+
+    assertEquals(ast.type, "File");
+  });
+
   it("preserves Babel syntax-error identity and location metadata", async () => {
     let thrown: unknown;
     try {

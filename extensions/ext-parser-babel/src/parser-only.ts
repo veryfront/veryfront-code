@@ -63,12 +63,10 @@ function pickLegacyDecoratorPlugins(filePath?: string): parser.ParserPlugin[] {
   );
 }
 
-function shouldRetryWithLegacyDecorators(error: unknown): boolean {
+function isBabelSyntaxError(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const code = Object.getOwnPropertyDescriptor(error, "code")?.value;
-  const reasonCode = Object.getOwnPropertyDescriptor(error, "reasonCode")?.value;
-  return code === "BABEL_PARSER_SYNTAX_ERROR" &&
-    reasonCode === "UnsupportedParameterDecorator";
+  return code === "BABEL_PARSER_SYNTAX_ERROR";
 }
 
 /**
@@ -88,11 +86,17 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
       try {
         return parser.parse(options.code, parseOptions);
       } catch (error) {
-        if (!shouldRetryWithLegacyDecorators(error)) throw error;
-        return parser.parse(options.code, {
-          ...parseOptions,
-          plugins: pickLegacyDecoratorPlugins(parseablePath(options.filePath)),
-        });
+        if (!isBabelSyntaxError(error)) throw error;
+        try {
+          return parser.parse(options.code, {
+            ...parseOptions,
+            plugins: pickLegacyDecoratorPlugins(parseablePath(options.filePath)),
+          });
+        } catch {
+          // Preserve the primary parser's diagnostic when neither supported
+          // decorator dialect accepts the source.
+          throw error;
+        }
       }
     })();
     const node: { type: string } = ast;
