@@ -4932,6 +4932,67 @@ describe("anthropic output_config schema closure", () => {
     assertEquals(schema.additionalProperties, false);
   });
 
+  it("leaves an allOf branch target open, so the composition stays satisfiable", () => {
+    // Closing both definitions makes `{ a, b }` fail the first on `b` and the
+    // second on `a`, so the composition accepts nothing at all. The branch
+    // objects carry only a `$ref`, so the meaning sits at the target.
+    const schema = buildWithOutputSchema({
+      $defs: {
+        A: { type: "object", properties: { a: { type: "string" } } },
+        B: { type: "object", properties: { b: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }],
+    });
+
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs.A!, "additionalProperties"), false);
+    assertEquals(Object.hasOwn(defs.B!, "additionalProperties"), false);
+  });
+
+  it("leaves a draft-07 definitions target of an allOf branch open", () => {
+    const schema = buildWithOutputSchema({
+      definitions: {
+        A: { type: "object", properties: { a: { type: "string" } } },
+        B: { type: "object", properties: { b: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/definitions/A" }, { $ref: "#/definitions/B" }],
+    });
+
+    const defs = schema.definitions as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs.A!, "additionalProperties"), false);
+    assertEquals(Object.hasOwn(defs.B!, "additionalProperties"), false);
+  });
+
+  it("still closes a definition no allOf branch references", () => {
+    // Only the referenced target is opened. Everything else keeps its closure,
+    // which is the whole point of the pass.
+    const schema = buildWithOutputSchema({
+      $defs: {
+        A: { type: "object", properties: { a: { type: "string" } } },
+        Unrelated: { type: "object", properties: { u: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/$defs/A" }],
+    });
+
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs.A!, "additionalProperties"), false);
+    assertEquals(defs.Unrelated!.additionalProperties, false);
+  });
+
+  it("opens an allOf branch target named with an escaped pointer token", () => {
+    // RFC 6901 escapes `/` as `~1`, so a definition name carrying one only
+    // matches when the walk encodes the token the same way.
+    const schema = buildWithOutputSchema({
+      $defs: {
+        "a/b": { type: "object", properties: { a: { type: "string" } } },
+      },
+      allOf: [{ $ref: "#/$defs/a~1b" }],
+    });
+
+    const defs = schema.$defs as Record<string, Record<string, unknown>>;
+    assertEquals(Object.hasOwn(defs["a/b"]!, "additionalProperties"), false);
+  });
+
   it("does not close a $ref holder, whose properties live elsewhere", () => {
     // `additionalProperties` only sees the `properties` of the schema object
     // carrying it. A `$ref` declares none of its own, so closing it rejects

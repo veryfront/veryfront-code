@@ -2238,7 +2238,7 @@ function buildAnthropicOutputConfig(
   return {
     format: {
       type: "json_schema",
-      schema: closeObjectSchemas(unwrapToolInputSchema(responseFormat.schema)),
+      schema: closeSchemaForOutputConfig(unwrapToolInputSchema(responseFormat.schema)),
     },
   };
 }
@@ -2314,10 +2314,22 @@ const SCHEMA_VALUE_KEYWORDS = new Set([
  * The result is a copy. The schema object belongs to the agent and is reused
  * across providers and calls, so closing it for Anthropic must not mutate it.
  */
-function closeObjectSchemas(schema: unknown, closeSelf = true): unknown {
+function closeObjectSchemas(
+  schema: unknown,
+  closeSelf = true,
+  pointer = "#",
+  openTargets: Set<string> = EMPTY_POINTER_SET,
+): unknown {
   if (ArrayIsArray(schema)) {
     const entries: unknown[] = [];
-    for (const entry of schema) entries[entries.length] = closeObjectSchemas(entry, closeSelf);
+    for (let index = 0; index < schema.length; index += 1) {
+      entries[index] = closeObjectSchemas(
+        schema[index],
+        closeSelf,
+        `${pointer}/${index}`,
+        openTargets,
+      );
+    }
     return entries;
   }
   if (typeof schema !== "object" || schema === null) return schema;
@@ -2327,16 +2339,17 @@ function closeObjectSchemas(schema: unknown, closeSelf = true): unknown {
 
   for (const key of objectKeys(source)) {
     const value = source[key];
+    const keyPointer = `${pointer}/${encodePointerToken(key)}`;
     if (hasSetValue(SCHEMA_MAP_KEYWORDS, key)) {
-      result[key] = closeSchemaMap(value);
+      result[key] = closeSchemaMap(value, keyPointer, openTargets);
       continue;
     }
     if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
-      result[key] = closeObjectSchemas(value, false);
+      result[key] = closeObjectSchemas(value, false, keyPointer, openTargets);
       continue;
     }
     if (hasSetValue(SCHEMA_LIST_KEYWORDS, key) || hasSetValue(SCHEMA_VALUE_KEYWORDS, key)) {
-      result[key] = closeObjectSchemas(value);
+      result[key] = closeObjectSchemas(value, true, keyPointer, openTargets);
       continue;
     }
     result[key] = value;
@@ -2360,15 +2373,93 @@ function closeObjectSchemas(schema: unknown, closeSelf = true): unknown {
   return result;
 }
 
-/** Walk a keyword whose value maps names to subschemas. */
-function closeSchemaMap(value: unknown): unknown {
+/**
+ * Walk a keyword whose value maps names to subschemas.
+ *
+ * A definition reached by a `$ref` that sits directly under `allOf` stays open,
+ * for the reason spelled out on `COMPOSITION_LIST_KEYWORDS`: the branches of an
+ * `allOf` describe one instance together, so closing each of them makes every
+ * branch reject the properties the others declare.
+ */
+function closeSchemaMap(
+  value: unknown,
+  pointer: string,
+  openTargets: Set<string>,
+): unknown {
   if (typeof value !== "object" || value === null || ArrayIsArray(value)) return value;
   const source = value as Record<string, unknown>;
   const result: Record<string, unknown> = {};
   for (const name of objectKeys(source)) {
-    result[name] = closeObjectSchemas(source[name]);
+    const namePointer = `${pointer}/${encodePointerToken(name)}`;
+    result[name] = closeObjectSchemas(
+      source[name],
+      !hasSetValue(openTargets, namePointer),
+      namePointer,
+      openTargets,
+    );
   }
   return result;
+}
+
+/** Shared empty set, so the common walk allocates nothing extra. */
+const EMPTY_POINTER_SET: Set<string> = new Set();
+
+/** Escape a JSON pointer token, per RFC 6901. */
+function encodePointerToken(token: string): string {
+  let escaped = "";
+  for (const char of token) {
+    if (char === "~") escaped += "~0";
+    else if (char === "/") escaped += "~1";
+    else escaped += char;
+  }
+  return escaped;
+}
+
+/**
+ * Close every object in a schema bound for `output_config`.
+ *
+ * Runs a pre-pass first, because a `$ref` used as an `allOf` branch carries the
+ * composition's meaning at its target rather than at the branch itself. The
+ * branch object is left open by the walk, but its target lives under `$defs` or
+ * `definitions`, which the walk would otherwise close. Collecting those
+ * pointers up front lets the walk leave exactly those definitions open.
+ *
+ * A definition referenced from an `allOf` branch and used somewhere else too
+ * stays open in both places. Opening is the safe direction: Anthropic rejects
+ * an open object with a named 400, whereas an over-closed `allOf` is accepted
+ * and then matches nothing, which surfaces as an empty generation.
+ */
+function closeSchemaForOutputConfig(schema: unknown): unknown {
+  const openTargets: Set<string> = new Set();
+  collectAllOfRefTargets(schema, openTargets);
+  return closeObjectSchemas(schema, true, "#", openTargets);
+}
+
+/**
+ * Collect the pointers named by `$ref` branches sitting directly under an
+ * `allOf`, anywhere in the schema. Only local pointers are collected, since a
+ * remote `$ref` names nothing this walk can open.
+ */
+function collectAllOfRefTargets(schema: unknown, out: Set<string>): void {
+  if (ArrayIsArray(schema)) {
+    for (const entry of schema) collectAllOfRefTargets(entry, out);
+    return;
+  }
+  if (typeof schema !== "object" || schema === null) return;
+
+  const source = schema as Record<string, unknown>;
+  for (const key of objectKeys(source)) {
+    const value = source[key];
+    if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
+      const branches = ArrayIsArray(value) ? value : [value];
+      for (const branch of branches) {
+        if (typeof branch !== "object" || branch === null) continue;
+        const ref = (branch as Record<string, unknown>).$ref;
+        if (typeof ref === "string" && ref.startsWith("#/")) out.add(ref);
+      }
+    }
+    collectAllOfRefTargets(value, out);
+  }
 }
 
 /**
