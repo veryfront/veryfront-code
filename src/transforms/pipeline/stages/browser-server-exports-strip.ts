@@ -1091,48 +1091,177 @@ function isNameDescriptor(node: Node | undefined, valueParam: string): boolean {
  * `Object.defineProperty(target, "name", …)` semantics rather than by its
  * minified binding name.
  */
-function compilerNameHelperBindings(body: Node[]): Set<string> {
-  const initializers = new Map<string, Node>();
+function moduleBindingInitializers(body: Node[]): Map<string, Node[]> {
+  const initializers = new Map<string, Node[]>();
   for (const statement of body) {
     if (statement.type !== "VariableDeclaration") continue;
     for (const declarator of Array.isArray(statement.declarations) ? statement.declarations : []) {
       if (!isNode(declarator) || !isNode(declarator.init)) continue;
       const name = nodeName(declarator.id);
-      if (name) initializers.set(name, declarator.init);
+      if (!name) continue;
+      const existing = initializers.get(name);
+      if (existing) existing.push(declarator.init);
+      else initializers.set(name, [declarator.init]);
     }
   }
+  return initializers;
+}
 
-  const definePropertyBindings = new Set<string>();
-  for (const [name, init] of initializers) {
-    if (isObjectDefineProperty(init)) definePropertyBindings.add(name);
+function definePropertyHelperBindings(initializers: Map<string, Node[]>): Set<string> {
+  const bindings = new Set<string>();
+  for (const [name, inits] of initializers) {
+    if (inits.length === 1 && inits.some(isObjectDefineProperty)) bindings.add(name);
+  }
+  return bindings;
+}
+
+function duplicateDefinePropertyHelperBindings(initializers: Map<string, Node[]>): Set<string> {
+  const bindings = new Set<string>();
+  for (const [name, inits] of initializers) {
+    if (inits.length > 1 && inits.some(isObjectDefineProperty)) bindings.add(name);
+  }
+  return bindings;
+}
+
+interface CompilerNameHelperShape {
+  definePropertyBinding: string | null;
+}
+
+function compilerNameHelperShape(init: Node): CompilerNameHelperShape | null {
+  if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") return null;
+  const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
+  if (params.length !== 2) return null;
+  const targetParam = nodeName(params[0]);
+  const valueParam = nodeName(params[1]);
+  if (!targetParam || !valueParam) return null;
+
+  const call = returnedCall(init);
+  if (!call) return null;
+  const callee = isNode(call.callee) ? call.callee : undefined;
+  let definePropertyBinding: string | null;
+  if (isObjectDefineProperty(callee)) {
+    definePropertyBinding = null;
+  } else {
+    if (callee?.type !== "Identifier") return null;
+    const binding = nodeName(callee);
+    if (!binding) return null;
+    definePropertyBinding = binding;
   }
 
+  const args = Array.isArray(call.arguments) ? call.arguments.filter(isNode) : [];
+  if (
+    args.length !== 3 || nodeName(args[0]) !== targetParam ||
+    stringLiteralText(args[1]) !== "name" || !isNameDescriptor(args[2], valueParam)
+  ) {
+    return null;
+  }
+  return { definePropertyBinding };
+}
+
+function isCompilerNameHelperInitializer(
+  init: Node,
+  definePropertyBindings: Set<string>,
+): boolean {
+  const shape = compilerNameHelperShape(init);
+  return shape !== null &&
+    (shape.definePropertyBinding === null ||
+      definePropertyBindings.has(shape.definePropertyBinding));
+}
+
+function compilerNameHelperBindings(body: Node[]): Set<string> {
+  const initializers = moduleBindingInitializers(body);
+  const definePropertyBindings = definePropertyHelperBindings(initializers);
+
   const helpers = new Set<string>();
-  for (const [name, init] of initializers) {
-    if (init.type !== "ArrowFunctionExpression" && init.type !== "FunctionExpression") continue;
-    const params = Array.isArray(init.params) ? init.params.filter(isNode) : [];
-    if (params.length !== 2) continue;
-    const targetParam = nodeName(params[0]);
-    const valueParam = nodeName(params[1]);
-    if (!targetParam || !valueParam) continue;
-
-    const call = returnedCall(init);
-    if (!call) continue;
-    const callee = isNode(call.callee) ? call.callee : undefined;
-    const callsDefineProperty = isObjectDefineProperty(callee) ||
-      (callee?.type === "Identifier" && definePropertyBindings.has(nodeName(callee) ?? ""));
-    if (!callsDefineProperty) continue;
-
-    const args = Array.isArray(call.arguments) ? call.arguments.filter(isNode) : [];
-    if (
-      args.length === 3 && nodeName(args[0]) === targetParam &&
-      stringLiteralText(args[1]) === "name" && isNameDescriptor(args[2], valueParam)
-    ) {
+  for (const [name, inits] of initializers) {
+    if (inits.some((init) => isCompilerNameHelperInitializer(init, definePropertyBindings))) {
       helpers.add(name);
     }
   }
 
   return helpers;
+}
+
+function duplicateCompilerNameHelperBindings(body: Node[]): Set<string> {
+  const initializers = moduleBindingInitializers(body);
+  const definePropertyBindings = definePropertyHelperBindings(initializers);
+  const duplicates = new Set<string>();
+  for (const [name, inits] of initializers) {
+    if (
+      inits.length > 1 &&
+      inits.some((init) => isCompilerNameHelperInitializer(init, definePropertyBindings))
+    ) {
+      duplicates.add(name);
+    }
+  }
+  return duplicates;
+}
+
+function compilerNameHelpersWithDuplicateDefinePropertyAliases(body: Node[]): Map<string, string> {
+  const initializers = moduleBindingInitializers(body);
+  const duplicateAliases = duplicateDefinePropertyHelperBindings(initializers);
+  const helpers = new Map<string, string>();
+  for (const [name, inits] of initializers) {
+    for (const init of inits) {
+      const alias = compilerNameHelperShape(init)?.definePropertyBinding;
+      if (alias && duplicateAliases.has(alias)) helpers.set(name, alias);
+    }
+  }
+  return helpers;
+}
+
+function failOnAmbiguousCompilerNameHelperDuplicates(
+  body: Node[],
+  hookClosure: Set<string>,
+  filePath: string | undefined,
+): void {
+  const duplicates = duplicateCompilerNameHelperBindings(body);
+  const duplicateAliases = compilerNameHelpersWithDuplicateDefinePropertyAliases(body);
+  if (duplicates.size === 0 && duplicateAliases.size === 0) return;
+
+  const candidates: Array<{
+    target: Node;
+    targetName: string;
+    reason: string;
+  }> = [];
+  for (const statement of body) {
+    if (statement.type !== "ExpressionStatement" || !isNode(statement.expression)) continue;
+    const expression = statement.expression;
+    if (expression.type !== "CallExpression" || !isNode(expression.callee)) continue;
+    const calleeName = nodeName(expression.callee);
+    if (!calleeName) continue;
+    const duplicateAlias = duplicateAliases.get(calleeName);
+    if (!duplicates.has(calleeName) && duplicateAlias === undefined) continue;
+
+    const args = Array.isArray(expression.arguments) ? expression.arguments.filter(isNode) : [];
+    const target = args[0];
+    const targetName = nodeName(target);
+    if (!target || args.length !== 2 || !targetName || stringLiteralText(args[1]) === null) {
+      continue;
+    }
+    const reason = duplicateAlias === undefined
+      ? `compiler name helper \`${calleeName}\` is declared more than once`
+      : `compiler name helper \`${calleeName}\` uses defineProperty alias \`${duplicateAlias}\` declared more than once`;
+    candidates.push({ target, targetName, reason });
+  }
+  if (candidates.length === 0) return;
+
+  const excluded = new WeakSet<Node>();
+  for (const decl of moduleScopeDeclarations(body)) {
+    for (const id of decl.bindingIds) excluded.add(id);
+  }
+  for (const registration of compilerNameRegistrations(body)) excluded.add(registration.target);
+  for (const candidate of candidates) excluded.add(candidate.target);
+  const referenced = referencedIdentifiers(body, excluded);
+
+  for (const candidate of candidates) {
+    if (hookClosure.has(candidate.targetName) && !referenced.has(candidate.targetName)) {
+      throw new ServerExportStripError(
+        filePath,
+        candidate.reason,
+      );
+    }
+  }
 }
 
 interface CompilerNameRegistration {
@@ -1178,12 +1307,17 @@ function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
  * fixpoint: removing one binding can leave a helper it was the last user of
  * newly dead *within the closure*.
  */
-function dropUnusedModuleScopeBindings(body: Node[], hookClosure: Set<string>): Node[] {
+function dropUnusedModuleScopeBindings(
+  body: Node[],
+  hookClosure: Set<string>,
+  filePath: string | undefined,
+): Node[] {
   let current = body;
 
   for (;;) {
     const decls = moduleScopeDeclarations(current);
     if (decls.length === 0) return current;
+    failOnAmbiguousCompilerNameHelperDuplicates(current, hookClosure, filePath);
 
     const excluded = new WeakSet<Node>();
     for (const decl of decls) for (const id of decl.bindingIds) excluded.add(id);
@@ -1395,7 +1529,7 @@ export async function stripServerOnlyExports(
   // Drop the module-scope state the emptied hooks were the last user of, then
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
-  const pruned = dropUnusedModuleScopeBindings(body, hookClosure);
+  const pruned = dropUnusedModuleScopeBindings(body, hookClosure, filePath);
   setBody(ast, dropUnusedImportBindings(pruned, hookClosure));
 
   const generated = await parser.generate(ast);
