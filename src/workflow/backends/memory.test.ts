@@ -212,6 +212,24 @@ describe("MemoryBackend", () => {
   });
 
   describe("Approvals", () => {
+    it("should hydrate pending approvals when retrieving a run", async () => {
+      const run = createTestRun("run-with-approval", { status: "waiting" });
+      const approval: PendingApproval = {
+        id: "approval-on-run",
+        nodeId: "review-step",
+        status: "pending",
+        message: "Please review",
+        payload: { data: "test" },
+        requestedAt: new Date(),
+      };
+
+      await backend.createRun(run);
+      await backend.savePendingApproval(run.id, approval);
+
+      const retrieved = await backend.getRun(run.id);
+      assertEquals(retrieved?.pendingApprovals, [approval]);
+    });
+
     it("should save and retrieve pending approvals", async () => {
       const approval: PendingApproval = {
         id: "approval-1",

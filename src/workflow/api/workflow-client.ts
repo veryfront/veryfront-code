@@ -178,6 +178,7 @@ export class WorkflowClient {
     return this.executor.cancel(runId);
   }
 
+  /** Read a run, including the approvals it is currently waiting on. */
   getRun(runId: string): Promise<WorkflowRun | null> {
     return this.backend.getRun(runId);
   }
