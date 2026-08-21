@@ -1,11 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider";
 import { VeryfrontCloudBlobStorage } from "./veryfront-cloud-storage.ts";
 
-const originalFetch = globalThis.fetch;
 const FIXED_NOW = new Date("2026-03-08T12:00:00.000Z");
 
 interface FetchCallRecord {
@@ -51,166 +51,168 @@ function createMockUploadService() {
   const pendingUploads = new Map<string, PendingUpload>();
   const fetchCalls: FetchCallRecord[] = [];
 
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const request = new Request(input, init);
-    const url = new URL(request.url);
-    const method = request.method.toUpperCase();
-    const headers = new Headers(request.headers);
+  installMockFetch(
+    (async (input: string | URL | Request, init?: RequestInit) => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      const method = request.method.toUpperCase();
+      const headers = new Headers(request.headers);
 
-    fetchCalls.push({
-      url: url.toString(),
-      method,
-      headers,
-    });
+      fetchCalls.push({
+        url: url.toString(),
+        method,
+        headers,
+      });
 
-    if (url.origin === "https://93.184.216.34") {
-      const authHeader = headers.get("Authorization");
-      if (!authHeader?.startsWith("Bearer ")) {
-        return new Response("Unauthorized", { status: 401 });
-      }
-
-      const createMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads$/);
-      if (createMatch && method === "GET") {
-        const projectSlug = decodeURIComponent(createMatch[1] ?? "");
-        const prefix = `${projectSlug}:`;
-        const data = [...uploads.keys()]
-          .filter((key) => key.startsWith(prefix))
-          .map((key) => ({ path: key.slice(prefix.length) }));
-        return Response.json({ data });
-      }
-      if (createMatch && method === "POST") {
-        const projectSlug = decodeURIComponent(createMatch[1] ?? "");
-        const body = await request.json() as {
-          file_path: string;
-          content_type?: string;
-          size: number;
-        };
-
-        pendingUploads.set(makeStorageKey(projectSlug, body.file_path), {
-          projectSlug,
-          path: body.file_path,
-          contentType: body.content_type ?? "application/octet-stream",
-          size: body.size,
-        });
-
-        return Response.json({
-          file_upload_url: `https://93.184.216.35/${encodeURIComponent(projectSlug)}/${
-            encodeURIComponent(body.file_path)
-          }`,
-          file_path: `${projectSlug}/${body.file_path}`,
-          upload_id: crypto.randomUUID(),
-          required_headers: {
-            "Content-Type": body.content_type ?? "application/octet-stream",
-          },
-        }, { status: 201 });
-      }
-
-      const downloadMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads\/(.+)\/url$/);
-      if (downloadMatch && method === "GET") {
-        const projectSlug = decodeURIComponent(downloadMatch[1] ?? "");
-        const path = decodeURIComponent(downloadMatch[2] ?? "");
-        const key = makeStorageKey(projectSlug, path);
-        if (!uploads.has(key)) {
-          return new Response("Not found", { status: 404 });
+      if (url.origin === "https://93.184.216.34") {
+        const authHeader = headers.get("Authorization");
+        if (!authHeader?.startsWith("Bearer ")) {
+          return new Response("Unauthorized", { status: 401 });
         }
 
-        return Response.json({
-          signed_url: `https://93.184.216.36/${encodeURIComponent(projectSlug)}/${
-            encodeURIComponent(path)
-          }`,
-          expires_at: new Date(FIXED_NOW.getTime() + 30 * 60 * 1000).toISOString(),
-        });
-      }
+        const createMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads$/);
+        if (createMatch && method === "GET") {
+          const projectSlug = decodeURIComponent(createMatch[1] ?? "");
+          const prefix = `${projectSlug}:`;
+          const data = [...uploads.keys()]
+            .filter((key) => key.startsWith(prefix))
+            .map((key) => ({ path: key.slice(prefix.length) }));
+          return Response.json({ data });
+        }
+        if (createMatch && method === "POST") {
+          const projectSlug = decodeURIComponent(createMatch[1] ?? "");
+          const body = await request.json() as {
+            file_path: string;
+            content_type?: string;
+            size: number;
+          };
 
-      const metadataMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads\/(.+)$/);
-      if (metadataMatch) {
-        const projectSlug = decodeURIComponent(metadataMatch[1] ?? "");
-        const path = decodeURIComponent(metadataMatch[2] ?? "");
-        const key = makeStorageKey(projectSlug, path);
+          pendingUploads.set(makeStorageKey(projectSlug, body.file_path), {
+            projectSlug,
+            path: body.file_path,
+            contentType: body.content_type ?? "application/octet-stream",
+            size: body.size,
+          });
 
-        if (method === "GET") {
-          const upload = uploads.get(key);
-          if (!upload) {
+          return Response.json({
+            file_upload_url: `https://93.184.216.35/${encodeURIComponent(projectSlug)}/${
+              encodeURIComponent(body.file_path)
+            }`,
+            file_path: `${projectSlug}/${body.file_path}`,
+            upload_id: crypto.randomUUID(),
+            required_headers: {
+              "Content-Type": body.content_type ?? "application/octet-stream",
+            },
+          }, { status: 201 });
+        }
+
+        const downloadMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads\/(.+)\/url$/);
+        if (downloadMatch && method === "GET") {
+          const projectSlug = decodeURIComponent(downloadMatch[1] ?? "");
+          const path = decodeURIComponent(downloadMatch[2] ?? "");
+          const key = makeStorageKey(projectSlug, path);
+          if (!uploads.has(key)) {
             return new Response("Not found", { status: 404 });
           }
 
           return Response.json({
-            id: crypto.randomUUID(),
-            path,
-            file_name: path.split("/").pop() ?? path,
-            content_type: upload.contentType,
-            size: upload.bytes.byteLength,
-            url: null,
-            status: "active",
-            visibility: "project",
-            created_at: upload.createdAt,
-            updated_at: upload.createdAt,
-            deleted_at: null,
+            signed_url: `https://93.184.216.36/${encodeURIComponent(projectSlug)}/${
+              encodeURIComponent(path)
+            }`,
+            expires_at: new Date(FIXED_NOW.getTime() + 30 * 60 * 1000).toISOString(),
           });
         }
 
-        if (method === "DELETE") {
-          const existed = uploads.delete(key);
-          return new Response(null, { status: existed ? 204 : 404 });
+        const metadataMatch = url.pathname.match(/^\/projects\/([^/]+)\/uploads\/(.+)$/);
+        if (metadataMatch) {
+          const projectSlug = decodeURIComponent(metadataMatch[1] ?? "");
+          const path = decodeURIComponent(metadataMatch[2] ?? "");
+          const key = makeStorageKey(projectSlug, path);
+
+          if (method === "GET") {
+            const upload = uploads.get(key);
+            if (!upload) {
+              return new Response("Not found", { status: 404 });
+            }
+
+            return Response.json({
+              id: crypto.randomUUID(),
+              path,
+              file_name: path.split("/").pop() ?? path,
+              content_type: upload.contentType,
+              size: upload.bytes.byteLength,
+              url: null,
+              status: "active",
+              visibility: "project",
+              created_at: upload.createdAt,
+              updated_at: upload.createdAt,
+              deleted_at: null,
+            });
+          }
+
+          if (method === "DELETE") {
+            const existed = uploads.delete(key);
+            return new Response(null, { status: existed ? 204 : 404 });
+          }
         }
       }
-    }
 
-    if (url.origin === "https://93.184.216.35" && method === "PUT") {
-      const [, encodedProjectSlug = "", encodedPath = ""] = url.pathname.split("/");
-      const projectSlug = decodeURIComponent(encodedProjectSlug);
-      const path = decodeURIComponent(encodedPath);
-      const key = makeStorageKey(projectSlug, path);
-      const pending = pendingUploads.get(key);
+      if (url.origin === "https://93.184.216.35" && method === "PUT") {
+        const [, encodedProjectSlug = "", encodedPath = ""] = url.pathname.split("/");
+        const projectSlug = decodeURIComponent(encodedProjectSlug);
+        const path = decodeURIComponent(encodedPath);
+        const key = makeStorageKey(projectSlug, path);
+        const pending = pendingUploads.get(key);
 
-      if (!pending) {
-        return new Response("Missing pending upload", { status: 404 });
+        if (!pending) {
+          return new Response("Missing pending upload", { status: 404 });
+        }
+
+        const bytes = new Uint8Array(await request.arrayBuffer());
+        assertEquals(bytes.byteLength, pending.size);
+
+        uploads.set(key, {
+          bytes,
+          contentType: pending.contentType,
+          createdAt: FIXED_NOW.toISOString(),
+        });
+        pendingUploads.delete(key);
+
+        return new Response(null, { status: 200 });
       }
 
-      const bytes = new Uint8Array(await request.arrayBuffer());
-      assertEquals(bytes.byteLength, pending.size);
+      if (url.origin === "https://93.184.216.36" && method === "GET") {
+        const [, encodedProjectSlug = "", encodedPath = ""] = url.pathname.split("/");
+        const projectSlug = decodeURIComponent(encodedProjectSlug);
+        const path = decodeURIComponent(encodedPath);
+        const upload = uploads.get(makeStorageKey(projectSlug, path));
 
-      uploads.set(key, {
-        bytes,
-        contentType: pending.contentType,
-        createdAt: FIXED_NOW.toISOString(),
-      });
-      pendingUploads.delete(key);
+        if (!upload) {
+          return new Response("Not found", { status: 404 });
+        }
 
-      return new Response(null, { status: 200 });
-    }
-
-    if (url.origin === "https://93.184.216.36" && method === "GET") {
-      const [, encodedProjectSlug = "", encodedPath = ""] = url.pathname.split("/");
-      const projectSlug = decodeURIComponent(encodedProjectSlug);
-      const path = decodeURIComponent(encodedPath);
-      const upload = uploads.get(makeStorageKey(projectSlug, path));
-
-      if (!upload) {
-        return new Response("Not found", { status: 404 });
+        return new Response(Uint8Array.from(upload.bytes), {
+          status: 200,
+          headers: { "Content-Type": upload.contentType },
+        });
       }
 
-      return new Response(Uint8Array.from(upload.bytes), {
-        status: 200,
-        headers: { "Content-Type": upload.contentType },
-      });
-    }
-
-    throw new Error(`Unhandled fetch: ${method} ${url.toString()}`);
-  }) as typeof fetch;
+      throw new Error(`Unhandled fetch: ${method} ${url.toString()}`);
+    }) as typeof fetch,
+  );
 
   return {
     uploads,
     fetchCalls,
     restore() {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     },
   };
 }
 
 describe("VeryfrontCloudBlobStorage", () => {
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
   });
 
   it("stores, retrieves, stats, and deletes blobs via project uploads", async () => {
@@ -399,10 +401,12 @@ describe("VeryfrontCloudBlobStorage", () => {
     Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
     Deno.env.set("VERYFRONT_API_TOKEN", "host-token");
     let fetchCalls = 0;
-    globalThis.fetch = (() => {
-      fetchCalls++;
-      return Promise.resolve(new Response("unexpected"));
-    }) as typeof fetch;
+    installMockFetch(
+      (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch,
+    );
 
     try {
       await runWithVeryfrontCloudContext(
@@ -456,25 +460,27 @@ describe("VeryfrontCloudBlobStorage", () => {
 
   it("times out and cancels a stalled signed-download body", async () => {
     let cancelled = false;
-    globalThis.fetch = ((input: string | URL | Request) => {
-      const url = new URL(String(input));
-      if (url.origin === "https://93.184.216.34") {
-        return Promise.resolve(Response.json({
-          signed_url: "https://93.184.216.35/download",
-          expires_at: FIXED_NOW.toISOString(),
-        }));
-      }
-      return Promise.resolve(
-        new Response(
-          new ReadableStream({
-            pull: () => new Promise<void>(() => {}),
-            cancel() {
-              cancelled = true;
-            },
-          }),
-        ),
-      );
-    }) as typeof fetch;
+    installMockFetch(
+      ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.origin === "https://93.184.216.34") {
+          return Promise.resolve(Response.json({
+            signed_url: "https://93.184.216.35/download",
+            expires_at: FIXED_NOW.toISOString(),
+          }));
+        }
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              pull: () => new Promise<void>(() => {}),
+              cancel() {
+                cancelled = true;
+              },
+            }),
+          ),
+        );
+      }) as typeof fetch,
+    );
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_test",
@@ -487,16 +493,18 @@ describe("VeryfrontCloudBlobStorage", () => {
   });
 
   it("rejects oversized signed-download bodies", async () => {
-    globalThis.fetch = ((input: string | URL | Request) => {
-      const url = new URL(String(input));
-      if (url.origin === "https://93.184.216.34") {
-        return Promise.resolve(Response.json({
-          signed_url: "https://93.184.216.35/download",
-          expires_at: FIXED_NOW.toISOString(),
-        }));
-      }
-      return Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4, 5])));
-    }) as typeof fetch;
+    installMockFetch(
+      ((input: string | URL | Request) => {
+        const url = new URL(String(input));
+        if (url.origin === "https://93.184.216.34") {
+          return Promise.resolve(Response.json({
+            signed_url: "https://93.184.216.35/download",
+            expires_at: FIXED_NOW.toISOString(),
+          }));
+        }
+        return Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4, 5])));
+      }) as typeof fetch,
+    );
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_test",
@@ -509,10 +517,12 @@ describe("VeryfrontCloudBlobStorage", () => {
 
   it("rejects known-size uploads before opening a network request", async () => {
     let fetchCalls = 0;
-    globalThis.fetch = (() => {
-      fetchCalls++;
-      return Promise.resolve(new Response("unexpected"));
-    }) as typeof fetch;
+    installMockFetch(
+      (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch,
+    );
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_test",
@@ -539,10 +549,12 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("bounds and cancels streamed upload preprocessing", async () => {
     let cancelled = false;
     let fetchCalls = 0;
-    globalThis.fetch = (() => {
-      fetchCalls++;
-      return Promise.resolve(new Response("unexpected"));
-    }) as typeof fetch;
+    installMockFetch(
+      (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch,
+    );
     const input = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array([1, 2, 3]));
@@ -567,10 +579,12 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("does not await a project stream cancellation that never settles", async () => {
     let cancelCalls = 0;
     let fetchCalls = 0;
-    globalThis.fetch = (() => {
-      fetchCalls++;
-      return Promise.resolve(new Response("unexpected"));
-    }) as typeof fetch;
+    installMockFetch(
+      (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch,
+    );
     const input = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array([1, 2]));
@@ -644,10 +658,12 @@ describe("VeryfrontCloudBlobStorage", () => {
     for (const testCase of cases) {
       let pulls = 0;
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(new Response("unexpected"));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(new Response("unexpected"));
+        }) as typeof fetch,
+      );
       const input = new ReadableStream<Uint8Array>(
         {
           pull(controller) {
@@ -677,10 +693,12 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("times out and cancels a stalled upload stream before network access", async () => {
     let cancelled = false;
     let fetchCalls = 0;
-    globalThis.fetch = (() => {
-      fetchCalls++;
-      return Promise.resolve(new Response("unexpected"));
-    }) as typeof fetch;
+    installMockFetch(
+      (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      }) as typeof fetch,
+    );
     const input = new ReadableStream<Uint8Array>({
       pull: () => new Promise<void>(() => {}),
       cancel() {

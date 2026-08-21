@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {
   assertEquals,
@@ -10,7 +11,6 @@ import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithVeryfrontCloudContext } from "#veryfront/provider";
 import { createRunsClient, VeryfrontRunsClient } from "./runs-client.ts";
 
-const originalFetch = globalThis.fetch;
 let fetchCalls: Array<{ url: string; init?: RequestInit }> = [];
 let fetchResponses: Array<Response | (() => Response)> = [];
 
@@ -20,21 +20,24 @@ const scheduleId = "33333333-3333-4333-8333-333333333333";
 function mockFetch(responses: Array<Response | (() => Response)>): void {
   fetchCalls = [];
   fetchResponses = [...responses];
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = typeof input === "string"
-      ? input
-      : input instanceof URL
-      ? input.toString()
-      : input.url;
-    fetchCalls.push({ url, init });
+  restoreMockFetch();
+  installMockFetch(
+    (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string"
+        ? input
+        : input instanceof URL
+        ? input.toString()
+        : input.url;
+      fetchCalls.push({ url, init });
 
-    const next = fetchResponses.shift();
-    if (!next) {
-      throw new Error(`No mock response for ${url}`);
-    }
+      const next = fetchResponses.shift();
+      if (!next) {
+        throw new Error(`No mock response for ${url}`);
+      }
 
-    return typeof next === "function" ? next() : next;
-  }) as typeof fetch;
+      return typeof next === "function" ? next() : next;
+    }) as typeof fetch,
+  );
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -126,7 +129,7 @@ describe("VeryfrontRunsClient", () => {
   });
 
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     clearRunsEnv();
   });
 

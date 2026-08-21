@@ -15,7 +15,12 @@ import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-serve
 import { getRuntimeSourceIntegrationPolicy } from "#veryfront/agent/runtime/runtime-tool-config.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  installMockFetch,
+  observeFetchRequestInit,
+  restoreMockFetch,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
@@ -779,54 +784,55 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedTools: unknown;
     let capturedAllowedRemoteTools: string[] | undefined;
     let platformMcpFetchCalls = 0;
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    globalThis.fetch = ((url, init) => {
-      if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
-        platformMcpFetchCalls += 1;
-        assertEquals(
-          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-          "Bearer request-scoped-user-token",
-        );
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: "veryfront-platform-mcp:tools:list",
-              result: {
-                tools: [
-                  {
-                    name: "search_knowledge",
-                    description: "Search project knowledge",
-                    inputSchema: { type: "object", properties: {} },
-                  },
-                  {
-                    name: "get_file",
-                    description: "Read a project file",
-                    inputSchema: { type: "object", properties: {} },
-                  },
-                ],
-              },
+    installMockFetch(
+      ((url, init) => {
+        if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+          platformMcpFetchCalls += 1;
+          assertEquals(
+            new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+            "Bearer request-scoped-user-token",
+          );
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: "veryfront-platform-mcp:tools:list",
+                result: {
+                  tools: [
+                    {
+                      name: "search_knowledge",
+                      description: "Search project knowledge",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                    {
+                      name: "get_file",
+                      description: "Read a project file",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/environments`) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ data: [] }), {
+              headers: { "content-type": "application/json" },
             }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+          );
+        }
 
-      if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/projects/demo-project/environments`) {
-        return Promise.resolve(
-          new Response(JSON.stringify({ data: [] }), {
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      }
-
-      return Promise.reject(new Error(`unexpected fetch: ${url}`));
-    }) as typeof fetch;
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
 
     try {
       const handler = createTestAgentStreamHandler({
@@ -911,7 +917,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["get_file", "search_knowledge"]);
       assertEquals(platformMcpFetchCalls, 1);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -1276,41 +1282,42 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("auto-exposes Studio MCP tools for trusted Studio project-agent requests", async () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
-    const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
     Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
-    globalThis.fetch = ((url, init) => {
-      assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
-      const headers = new Headers(observeFetchRequestInit(init).headers);
-      assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
-      assertEquals(headers.get("x-project-id"), "proj-1");
-      assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
+    installMockFetch(
+      ((url, init) => {
+        assertEquals(String(url), TEST_PUBLIC_STUDIO_MCP_URL);
+        const headers = new Headers(observeFetchRequestInit(init).headers);
+        assertEquals(headers.get("authorization"), "Bearer request-scoped-user-token");
+        assertEquals(headers.get("x-project-id"), "proj-1");
+        assertEquals(headers.get("x-conversation-id"), "10000000-1000-4000-8000-100000000001");
 
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: "studio-mcp:tools:list",
-            result: {
-              tools: [
-                {
-                  name: "studio_todo_write",
-                  description: "Write the assistant task list",
-                  inputSchema: { type: "object", properties: {} },
-                },
-                {
-                  name: "studio_panel_control",
-                  description: "Control Studio panels",
-                  inputSchema: { type: "object", properties: {} },
-                },
-              ],
-            },
-          }),
-          { headers: { "content-type": "application/json" } },
-        ),
-      );
-    }) as typeof fetch;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "studio-mcp:tools:list",
+              result: {
+                tools: [
+                  {
+                    name: "studio_todo_write",
+                    description: "Write the assistant task list",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                  {
+                    name: "studio_panel_control",
+                    description: "Control Studio panels",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
 
     try {
       const handler = createTestAgentStreamHandler({
@@ -1383,7 +1390,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
       assertEquals(capturedRemoteToolNames, ["studio_todo_write", "studio_panel_control"]);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
       else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
     }
@@ -1393,16 +1400,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let studioMcpFetchCalls = 0;
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteSourceCount = -1;
-    const originalFetch = globalThis.fetch;
     const originalStudioMcpUrl = Deno.env.get("VERYFRONT_STUDIO_MCP_URL");
 
     Deno.env.set("VERYFRONT_STUDIO_MCP_URL", TEST_PUBLIC_STUDIO_MCP_URL);
-    globalThis.fetch = ((url) => {
-      if (String(url) === TEST_PUBLIC_STUDIO_MCP_URL) {
-        studioMcpFetchCalls += 1;
-      }
-      return Promise.resolve(new Response(null, { status: 503 }));
-    }) as typeof fetch;
+    installMockFetch(
+      ((url) => {
+        if (String(url) === TEST_PUBLIC_STUDIO_MCP_URL) {
+          studioMcpFetchCalls += 1;
+        }
+        return Promise.resolve(new Response(null, { status: 503 }));
+      }) as typeof fetch,
+    );
 
     try {
       const handler = createTestAgentStreamHandler({
@@ -1484,7 +1492,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(capturedAllowedRemoteTools, ["studio_todo_write"]);
       assertEquals(capturedRemoteSourceCount, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalStudioMcpUrl === undefined) Deno.env.delete("VERYFRONT_STUDIO_MCP_URL");
       else Deno.env.set("VERYFRONT_STUDIO_MCP_URL", originalStudioMcpUrl);
     }
@@ -1554,14 +1562,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("does not probe platform MCP for boolean tools already supplied by the run", async () => {
     let fetchCalls = 0;
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => {
+    installMockFetch(async () => {
       fetchCalls += 1;
       return new Response(JSON.stringify({ tools: [] }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
-    };
+    });
 
     try {
       const handler = createTestAgentStreamHandler({
@@ -1618,13 +1625,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.status, 200);
       assertEquals(fetchCalls, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("fails closed when platform MCP is opted out or discovery fails", async () => {
-    const originalFetch = globalThis.fetch;
-
     try {
       for (
         const testCase of [
@@ -1645,13 +1650,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
         let mcpFetchCalls = 0;
         let capturedAllowedRemoteTools: string[] | undefined;
         let capturedRemoteSourceCount = -1;
-        globalThis.fetch = ((url) => {
-          if (String(url).endsWith("/mcp")) {
-            mcpFetchCalls += 1;
-            return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
-          }
-          return Promise.resolve(new Response(null, { status: 503 }));
-        }) as typeof fetch;
+        installMockFetch(
+          ((url) => {
+            if (String(url).endsWith("/mcp")) {
+              mcpFetchCalls += 1;
+              return Promise.reject(new Error(`${testCase.name} discovery unavailable`));
+            }
+            return Promise.resolve(new Response(null, { status: 503 }));
+          }) as typeof fetch,
+        );
 
         const handler = createTestAgentStreamHandler({
           ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
@@ -1725,7 +1732,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         assertEquals(capturedRemoteSourceCount, 0);
       }
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
@@ -1733,63 +1740,64 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedAllowedRemoteTools: string[] | undefined;
     let capturedRemoteToolNames: string[] = [];
     let capturedToolArguments: Record<string, unknown> | undefined;
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    globalThis.fetch = ((url, init) => {
-      assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
-      assertEquals(
-        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-        "Bearer request-scoped-user-token",
-      );
-      const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
-        id: string;
-        method: string;
-        params?: { arguments?: Record<string, unknown> };
-      };
-      if (request.method === "tools/call") {
-        capturedToolArguments = request.params?.arguments;
+    installMockFetch(
+      ((url, init) => {
+        assertEquals(String(url), `${TEST_PUBLIC_API_ORIGIN}/mcp`);
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
+        );
+        const request = JSON.parse(String(observeFetchRequestInit(init).body)) as {
+          id: string;
+          method: string;
+          params?: { arguments?: Record<string, unknown> };
+        };
+        if (request.method === "tools/call") {
+          capturedToolArguments = request.params?.arguments;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
         return Promise.resolve(
           new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { content: [] } }),
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                tools: [
+                  {
+                    name: "list_uploads",
+                    description: "List uploads",
+                    inputSchema: {
+                      type: "object",
+                      properties: {
+                        project_reference: { type: "string" },
+                        limit: { type: "number" },
+                      },
+                      required: ["project_reference"],
+                    },
+                  },
+                  {
+                    name: "delete_upload",
+                    description: "Delete upload",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            }),
             { headers: { "content-type": "application/json" } },
           ),
         );
-      }
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: request.id,
-            result: {
-              tools: [
-                {
-                  name: "list_uploads",
-                  description: "List uploads",
-                  inputSchema: {
-                    type: "object",
-                    properties: {
-                      project_reference: { type: "string" },
-                      limit: { type: "number" },
-                    },
-                    required: ["project_reference"],
-                  },
-                },
-                {
-                  name: "delete_upload",
-                  description: "Delete upload",
-                  inputSchema: { type: "object", properties: {} },
-                },
-              ],
-            },
-          }),
-          { headers: { "content-type": "application/json" } },
-        ),
-      );
-    }) as typeof fetch;
+      }) as typeof fetch,
+    );
 
     try {
       const handler = createTestAgentStreamHandler({
@@ -1877,7 +1885,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         limit: 10,
       });
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -1967,97 +1975,98 @@ describe("server/handlers/request/agent-stream.handler", () => {
       proxyToken: "run-scoped-token",
       projectSlug: "support-agent-fork",
     };
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_URL", TEST_PUBLIC_API_ORIGIN);
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    globalThis.fetch = ((url, init) => {
-      fetchUrls.push(String(url));
-      assertEquals(
-        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-        "Bearer request-scoped-user-token",
-      );
-
-      if (String(url).endsWith("/projects/support-agent-fork/environments")) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [
-                { id: "env-staging", name: "staging", protected: true },
-                {
-                  id: "10000000-1000-4000-8000-100000000097",
-                  name: "production",
-                  protected: false,
-                  active_release_id: "release-production",
-                },
-              ],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
-
-      if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
+    installMockFetch(
+      ((url, init) => {
+        fetchUrls.push(String(url));
         assertEquals(
-          String(url).includes(
-            "environment_id=10000000-1000-4000-8000-100000000097",
-          ),
-          true,
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
         );
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [
-                { key: "CUSTOM_PROJECT_ENV", value: "project-value" },
-                { key: "VERYFRONT_API_TOKEN", value: "unsafe-project-token" },
-                { key: "VERYFRONT_API_URL", value: "https://evil.example" },
-                { key: "VERYFRONT_PROJECT_SLUG", value: "wrong-project" },
-                {
-                  key: "OTEL_EXPORTER_OTLP_ENDPOINT",
-                  value: "https://tenant-collector.example/otlp",
-                },
-                { key: "OTEL_RESOURCE_ATTRIBUTES", value: "tenant.secret=do-not-export" },
-              ],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
 
-      if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
-        capturedMcpRequest = {
-          url: String(url),
-          authorization: new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-        };
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: "veryfront-platform-mcp:tools:list",
-              result: {
-                tools: [
+        if (String(url).endsWith("/projects/support-agent-fork/environments")) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  { id: "env-staging", name: "staging", protected: true },
                   {
-                    name: "search_knowledge",
-                    description: "Search knowledge",
-                    inputSchema: { type: "object", properties: {} },
-                  },
-                  {
-                    name: "list_projects",
-                    description: "List projects",
-                    inputSchema: { type: "object", properties: {} },
+                    id: "10000000-1000-4000-8000-100000000097",
+                    name: "production",
+                    protected: false,
+                    active_release_id: "release-production",
                   },
                 ],
-              },
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
 
-      return Promise.reject(new Error(`unexpected fetch: ${url}`));
-    }) as typeof fetch;
+        if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
+          assertEquals(
+            String(url).includes(
+              "environment_id=10000000-1000-4000-8000-100000000097",
+            ),
+            true,
+          );
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  { key: "CUSTOM_PROJECT_ENV", value: "project-value" },
+                  { key: "VERYFRONT_API_TOKEN", value: "unsafe-project-token" },
+                  { key: "VERYFRONT_API_URL", value: "https://evil.example" },
+                  { key: "VERYFRONT_PROJECT_SLUG", value: "wrong-project" },
+                  {
+                    key: "OTEL_EXPORTER_OTLP_ENDPOINT",
+                    value: "https://tenant-collector.example/otlp",
+                  },
+                  { key: "OTEL_RESOURCE_ATTRIBUTES", value: "tenant.secret=do-not-export" },
+                ],
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        if (String(url) === `${TEST_PUBLIC_API_ORIGIN}/mcp`) {
+          capturedMcpRequest = {
+            url: String(url),
+            authorization: new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          };
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: "veryfront-platform-mcp:tools:list",
+                result: {
+                  tools: [
+                    {
+                      name: "search_knowledge",
+                      description: "Search knowledge",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                    {
+                      name: "list_projects",
+                      description: "List projects",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
 
     let result;
     try {
@@ -2073,7 +2082,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ctx,
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -2111,39 +2120,40 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const targetEnvironmentId = "10000000-1000-4000-8000-100000000088";
     let capturedProjectEnv: string | undefined;
     const fetchUrls: string[] = [];
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
 
     Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
     Deno.env.delete("VERYFRONT_API_BASE_URL");
-    globalThis.fetch = ((url, init) => {
-      const urlString = String(url);
-      fetchUrls.push(urlString);
-      assertEquals(
-        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-        "Bearer request-scoped-user-token",
-      );
-      if (urlString === "https://api.veryfront.org/projects/demo-project/environments") {
-        return Promise.resolve(Response.json({
-          data: [{
-            id: targetEnvironmentId,
-            name: "staging",
-            active_release_id: "release-staging",
-          }],
-        }));
-      }
-      assertEquals(
-        urlString,
-        `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
-      );
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({ data: [{ key: "TARGET_ENV_VALUE", value: "staging-value" }] }),
-          { headers: { "content-type": "application/json" } },
-        ),
-      );
-    }) as typeof fetch;
+    installMockFetch(
+      ((url, init) => {
+        const urlString = String(url);
+        fetchUrls.push(urlString);
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
+        );
+        if (urlString === "https://api.veryfront.org/projects/demo-project/environments") {
+          return Promise.resolve(Response.json({
+            data: [{
+              id: targetEnvironmentId,
+              name: "staging",
+              active_release_id: "release-staging",
+            }],
+          }));
+        }
+        assertEquals(
+          urlString,
+          `https://api.veryfront.org/projects/demo-project/environment-variables?environment_id=${targetEnvironmentId}&limit=100`,
+        );
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ data: [{ key: "TARGET_ENV_VALUE", value: "staging-value" }] }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }) as typeof fetch,
+    );
 
     const agent = createAgentWithConfig("assistant-1", {
       system: () => `target=${getEnv("TARGET_ENV_VALUE")}`,
@@ -2210,7 +2220,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -2298,79 +2308,80 @@ describe("server/handlers/request/agent-stream.handler", () => {
       proxyToken: "run-scoped-token",
       projectSlug: "base-url-agent-fork",
     };
-    const originalFetch = globalThis.fetch;
     const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_URL", "https://1.1.1.1/unused-fallback");
     Deno.env.set("VERYFRONT_API_BASE_URL", apiBaseUrl);
-    globalThis.fetch = ((url, init) => {
-      fetchUrls.push(String(url));
-      assertEquals(
-        new Headers(observeFetchRequestInit(init).headers).get("authorization"),
-        "Bearer request-scoped-user-token",
-      );
+    installMockFetch(
+      ((url, init) => {
+        fetchUrls.push(String(url));
+        assertEquals(
+          new Headers(observeFetchRequestInit(init).headers).get("authorization"),
+          "Bearer request-scoped-user-token",
+        );
 
-      if (String(url) === `${canonicalApiOrigin}/mcp`) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: "veryfront-platform-mcp:tools:list",
-              result: {
-                tools: [
+        if (String(url) === `${canonicalApiOrigin}/mcp`) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: "veryfront-platform-mcp:tools:list",
+                result: {
+                  tools: [
+                    {
+                      name: "list_projects",
+                      description: "List projects",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+
+        if (String(url) === `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
                   {
-                    name: "list_projects",
-                    description: "List projects",
-                    inputSchema: { type: "object", properties: {} },
+                    id: "10000000-1000-4000-8000-100000000096",
+                    name: "production",
+                    protected: false,
+                    active_release_id: "release-production",
                   },
                 ],
-              },
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
 
-      if (String(url) === `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [
-                {
-                  id: "10000000-1000-4000-8000-100000000096",
-                  name: "production",
-                  protected: false,
-                  active_release_id: "release-production",
-                },
-              ],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
+        if (
+          String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
+        ) {
+          assertEquals(
+            String(url).includes(
+              "environment_id=10000000-1000-4000-8000-100000000096",
+            ),
+            true,
+          );
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [{ key: "CUSTOM_PROJECT_ENV", value: "project-value-from-base-url" }],
+              }),
+              { headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
 
-      if (
-        String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
-      ) {
-        assertEquals(
-          String(url).includes(
-            "environment_id=10000000-1000-4000-8000-100000000096",
-          ),
-          true,
-        );
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              data: [{ key: "CUSTOM_PROJECT_ENV", value: "project-value-from-base-url" }],
-            }),
-            { headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
-
-      return Promise.reject(new Error(`unexpected fetch: ${url}`));
-    }) as typeof fetch;
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
 
     let result;
     try {
@@ -2386,7 +2397,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         ctx,
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
       if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
       else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
       if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
@@ -2940,13 +2951,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("fails closed with typed authorization semantics when named env lookup is denied", async () => {
-    const originalFetch = globalThis.fetch;
     let discoveryCalls = 0;
     let redirect: RequestRedirect | undefined;
-    globalThis.fetch = ((_input, init) => {
-      redirect = observeFetchRequestInit(init).redirect;
-      return Promise.resolve(new Response(null, { status: 403 }));
-    }) as typeof fetch;
+    installMockFetch(
+      ((_input, init) => {
+        redirect = observeFetchRequestInit(init).redirect;
+        return Promise.resolve(new Response(null, { status: 403 }));
+      }) as typeof fetch,
+    );
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
@@ -2995,30 +3007,31 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(discoveryCalls, 0);
       assertEquals(redirect, "error");
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("rejects a stale named environment source before loading project secrets", async () => {
-    const originalFetch = globalThis.fetch;
     let discoveryCalls = 0;
     let environmentVariableCalls = 0;
-    globalThis.fetch = ((input) => {
-      const url = String(input);
-      if (url.endsWith("/projects/support-agent-fork/environments")) {
-        return Promise.resolve(Response.json({
-          data: [{
-            id: "10000000-1000-4000-8000-100000000098",
-            name: "staging",
-            active_release_id: "release-new",
-          }],
-        }));
-      }
-      if (url.includes("/environment-variables?")) {
-        environmentVariableCalls += 1;
-      }
-      return Promise.reject(new Error(`unexpected fetch: ${url}`));
-    }) as typeof fetch;
+    installMockFetch(
+      ((input) => {
+        const url = String(input);
+        if (url.endsWith("/projects/support-agent-fork/environments")) {
+          return Promise.resolve(Response.json({
+            data: [{
+              id: "10000000-1000-4000-8000-100000000098",
+              name: "staging",
+              active_release_id: "release-new",
+            }],
+          }));
+        }
+        if (url.includes("/environment-variables?")) {
+          environmentVariableCalls += 1;
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      }) as typeof fetch,
+    );
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
@@ -3064,17 +3077,18 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(environmentVariableCalls, 0);
       assertEquals(discoveryCalls, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
   it("does not discover or inject production secrets for a branch source", async () => {
-    const originalFetch = globalThis.fetch;
     let fetchCalls = 0;
-    globalThis.fetch = (() => {
-      fetchCalls += 1;
-      return Promise.reject(new Error("branch source must not fetch an environment"));
-    }) as typeof fetch;
+    installMockFetch(
+      (() => {
+        fetchCalls += 1;
+        return Promise.reject(new Error("branch source must not fetch an environment"));
+      }) as typeof fetch,
+    );
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
       getAgent: () => undefined,
@@ -3105,7 +3119,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       assertEquals(result.response.status, 404);
       assertEquals(fetchCalls, 0);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreMockFetch();
     }
   });
 
