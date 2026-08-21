@@ -41,6 +41,7 @@ import {
   isSSRDistributedCacheEnabled,
   releaseTransformSlot,
   setInRedis,
+  trackBackgroundWrite,
   tryAcquireTransformSlot,
 } from "./cache/index.ts";
 import type { ModuleCacheEntry, SSRModuleLoaderOptions } from "./types.ts";
@@ -1156,14 +1157,20 @@ export class SSRModuleLoader {
             ...(isSSRDistributedCacheEnabled()
               ? {
                 publishDistributed: () => {
-                  void setInRedis(contentCacheKey, transformed, {
-                    isProduction: this.cache.isProductionContentSource(),
-                  }).catch((error) => {
-                    logger.debug("Distributed cache set failed", {
-                      key: contentCacheKey,
-                      error,
-                    });
-                  });
+                  // Deliberately not awaited: a render must not block on a cache
+                  // write. Tracked so the write is still reachable -- otherwise
+                  // it outlives its cache directory and fails into a cleanup
+                  // path nobody is waiting on.
+                  trackBackgroundWrite(
+                    setInRedis(contentCacheKey, transformed, {
+                      isProduction: this.cache.isProductionContentSource(),
+                    }).catch((error) => {
+                      logger.debug("Distributed cache set failed", {
+                        key: contentCacheKey,
+                        error,
+                      });
+                    }),
+                  );
                 },
               }
               : {}),
