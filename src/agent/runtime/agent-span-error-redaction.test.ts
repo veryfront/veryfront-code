@@ -81,6 +81,55 @@ function assertNoSpanCarries(spans: readonly ReadableSpan[], needle: string): vo
   }
 }
 
+/**
+ * The absolute path this checkout sits at, in both spellings a stack frame uses:
+ * Deno writes `file:///...` URLs, Bun and Node write bare paths. Checking only
+ * one of them would make this whole file pass under the runtime that uses the
+ * other while a stack went out on the wire.
+ */
+const CHECKOUT_ROOTS = [
+  new URL("../../../", import.meta.url).href,
+  new URL("../../../", import.meta.url).pathname,
+];
+
+function namesThisCheckout(value: unknown): boolean {
+  const text = String(value ?? "");
+  return CHECKOUT_ROOTS.some((root) => text.includes(root));
+}
+
+/**
+ * No span may export a stack trace the telemetry layer built.
+ *
+ * `exception.stacktrace` is named explicitly because that is the field
+ * `recordException` derives from whatever error it is handed, and it is filled
+ * in for the caller rather than written by one, so it is the easiest of the
+ * four surfaces to leave uncovered. The path check runs over every field as
+ * well, since a stack is a leak wherever it ends up.
+ */
+function assertNoSpanCarriesAStack(spans: readonly ReadableSpan[]): void {
+  for (const span of spans) {
+    const fields: [string, unknown][] = [["status.message", span.status.message]];
+    for (const [key, value] of Object.entries(span.attributes)) fields.push([key, value]);
+    for (const event of span.events) {
+      assertEquals(
+        event.attributes?.["exception.stacktrace"],
+        undefined,
+        `${span.name} exported an exception.stacktrace on its ${event.name} event`,
+      );
+      for (const [key, value] of Object.entries(event.attributes ?? {})) {
+        fields.push([`${event.name}.${key}`, value]);
+      }
+    }
+    for (const [field, value] of fields) {
+      assertEquals(
+        namesThisCheckout(value),
+        false,
+        `${span.name} leaked a local filesystem path into ${field}`,
+      );
+    }
+  }
+}
+
 function erroredSpans(spans: readonly ReadableSpan[], name: string): ReadableSpan[] {
   return spans.filter((span) => span.name === name && span.status.code === SpanStatusCode.ERROR);
 }
@@ -155,6 +204,7 @@ describe("agent span error redaction", () => {
       const spans = tracing.exporter.getFinishedSpans();
 
       assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
 
       // The failure must still be visible to errored-span queries.
       const failed = erroredSpans(spans, "agent.tool_execute");
@@ -186,6 +236,7 @@ describe("agent span error redaction", () => {
       const spans = tracing.exporter.getFinishedSpans();
 
       assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
       assertEquals(
         erroredSpans(spans, "agent.tool_execute").length > 0,
         true,
@@ -219,6 +270,7 @@ describe("agent span error redaction", () => {
       const spans = tracing.exporter.getFinishedSpans();
 
       assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
 
       // Every span in the stack reports the failure, bounded.
       for (const name of ["agent.generate_text", "agent.execution_loop", "agent.generate"]) {
@@ -249,12 +301,76 @@ describe("agent span error redaction", () => {
 
       const spans = tracing.exporter.getFinishedSpans();
       assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
 
       const span = spans.find((candidate) => candidate.name === "probe.unmapped");
       assertExists(span);
       assertEquals(span.status.code, SpanStatusCode.ERROR);
       // The bounded classification still distinguishes a network failure.
       assertEquals(span.status.message, "ECONNRESET");
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("keeps the reporting site's own stack off a span the mapper reclassified", async () => {
+    const tracing = installRealTracing();
+    try {
+      // What both real mappers in this repo do: build a new error naming the
+      // unit that failed. It reads as bounded, but `recordException` derives
+      // `exception.stacktrace` from it, so the frames of the module that built
+      // it, and the absolute path of every file in them, would go on the wire.
+      const { withSpan } = await import("#veryfront/observability/tracing/otlp-setup.ts");
+
+      await withSpan(
+        "probe.reclassified",
+        async () => {
+          throw new Error("failed for reclassified@example.com");
+        },
+        {},
+        { errorStatus: () => new Error('Node "checkout" failed') },
+      ).catch(() => {});
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      assertNoSpanCarries(spans, "reclassified@example.com");
+      assertNoSpanCarriesAStack(spans);
+
+      // The mapper's message is the point of the mapper, so it survives.
+      const span = spans.find((candidate) => candidate.name === "probe.reclassified");
+      assertExists(span);
+      assertEquals(span.status.message, 'Node "checkout" failed');
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("falls back to the classification when a mapper returns nothing", async () => {
+    const tracing = installRealTracing();
+    try {
+      // A mapper that opts out for some errors must not opt those errors into
+      // the raw text by accident.
+      const { withSpan } = await import("#veryfront/observability/tracing/otlp-setup.ts");
+      const needle = "unmapped-fallback@example.com";
+
+      await withSpan(
+        "probe.mapper-declined",
+        async () => {
+          throw new TypeError(`failed for ${needle}`);
+        },
+        {},
+        { errorStatus: () => undefined },
+      ).catch(() => {});
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
+
+      const span = spans.find((candidate) => candidate.name === "probe.mapper-declined");
+      assertExists(span);
+      assertEquals(span.status.code, SpanStatusCode.ERROR);
+      assertEquals(span.status.message, "TypeError");
     } finally {
       await tracing.dispose();
     }
@@ -280,6 +396,15 @@ describe("agent span error redaction", () => {
       const span = tracing.exporter.getFinishedSpans().find((c) => c.name === "probe.opted-in");
       assertExists(span);
       assertEquals(span.status.message, "deliberately visible");
+      // Handing the thrown error straight back opts in to its stack too. This
+      // is the one case that keeps one, so pin it: a fix that simply deleted
+      // every stack would pass the tests above and fail here. It doubles as the
+      // canary for `namesThisCheckout`, since it is the only assertion that
+      // needs the predicate to MATCH. If a runtime ever formats stack frames in
+      // a third way, this fails rather than quietly blinding the checks above.
+      const stack = span.events[0]?.attributes?.["exception.stacktrace"];
+      assertEquals(typeof stack, "string");
+      assertEquals(namesThisCheckout(stack), true);
     } finally {
       await tracing.dispose();
     }

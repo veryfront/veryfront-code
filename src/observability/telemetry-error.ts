@@ -432,14 +432,33 @@ export function sanitizeStructuredTelemetryData<T>(value: T): T {
 }
 
 /**
+ * Whether a telemetry snapshot keeps the source error's stack.
+ *
+ * `withStack` is for an error that actually unwound through the region being
+ * reported on: its frames describe the failure. `withoutStack` is for an error
+ * built at the reporting site to classify a failure it did not itself raise.
+ * Those frames describe the reporting code, they carry the absolute paths of
+ * whichever machine ran it, and they say nothing about what went wrong, so they
+ * must not leave the process.
+ */
+export type TelemetryErrorDetail = "withStack" | "withoutStack";
+
+/**
  * Create an error safe to send to telemetry backends without mutating or
  * replacing the application error that will be returned to the caller.
  *
  * Native errors are classified through a hook-free runtime brand check. Older
  * supported runtimes use the platform compatibility implementation instead of
  * the unsafe `instanceof` fallback that executes Proxy traps.
+ *
+ * Pass `"withoutStack"` when `error` stands in for the failure rather than
+ * being it. The snapshot then has no `stack` at all, which is what keeps
+ * `recordException` from exporting an `exception.stacktrace`.
  */
-export function sanitizeErrorForTelemetry(error: unknown): Error {
+export function sanitizeErrorForTelemetry(
+  error: unknown,
+  detail: TelemetryErrorDetail = "withStack",
+): Error {
   try {
     const isError = isNativeErrorWithoutHooks(error);
     const source = isError ? error : undefined;
@@ -453,7 +472,7 @@ export function sanitizeErrorForTelemetry(error: unknown): Error {
         LOG_PREVIEW_MAX_LENGTH_CHARS,
       )
       : "Unknown";
-    const sourceStack = source ? readNativeErrorStack(source) : undefined;
+    const sourceStack = source && detail === "withStack" ? readNativeErrorStack(source) : undefined;
     const stack = sourceStack === undefined
       ? undefined
       : sanitizeTelemetryText(sourceStack, MAX_STRING_DISPLAY_LENGTH);
