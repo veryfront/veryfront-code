@@ -55,71 +55,163 @@ function isNode(value: unknown): value is Node {
     typeof (value as Node).type === "string";
 }
 
-function walk(node: unknown, visit: (node: Node) => void): void {
-  if (!isNode(node)) return;
-  visit(node);
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+  "ObjectMethod",
+  "ClassMethod",
+]);
+
+function eachChild(
+  node: Node,
+  visit: (child: unknown, key: string) => void,
+): void {
   for (const [key, value] of Object.entries(node)) {
     if (key === "loc" || key === "start" || key === "end") continue;
     if (Array.isArray(value)) {
-      for (const item of value) walk(item, visit);
+      for (const item of value) visit(item, key);
       continue;
     }
-    if (typeof value === "object" && value !== null) walk(value, visit);
+    if (typeof value === "object" && value !== null) visit(value, key);
   }
 }
 
-function subtreeBindsReact(node: unknown): boolean {
-  let found = false;
-  walk(node, (current) => {
-    if (current.type === "Identifier" && current.name === "React") found = true;
-  });
-  return found;
+/** Every identifier name inside a binding pattern, however destructured. */
+function patternNames(node: unknown, out: Set<string>): void {
+  if (!isNode(node)) return;
+  if (node.type === "Identifier" && typeof node.name === "string") {
+    out.add(node.name);
+  }
+  eachChild(node, (child) => patternNames(child, out));
+}
+
+function scopeBody(node: Node): unknown[] {
+  if (node.type === "Program" || node.type === "BlockStatement") {
+    return Array.isArray(node.body) ? node.body : [];
+  }
+  if (FUNCTION_TYPES.has(node.type)) {
+    const body = node.body;
+    if (
+      isNode(body) && body.type === "BlockStatement" && Array.isArray(body.body)
+    ) {
+      return body.body;
+    }
+  }
+  return [];
+}
+
+function addImportedNames(statement: Node, names: Set<string>): void {
+  if (statement.importKind === "type") return;
+  const specifiers = Array.isArray(statement.specifiers)
+    ? statement.specifiers
+    : [];
+  for (const raw of specifiers) {
+    if (!isNode(raw) || raw.importKind === "type") continue;
+    const local = raw.local;
+    if (isNode(local) && typeof local.name === "string") names.add(local.name);
+  }
 }
 
 /**
- * True when `node` introduces a `React` binding.
+ * Names this scope declares itself: parameters, imports, and the declarations
+ * directly inside its body.
  *
- * Declarator ids and parameters are searched as subtrees so a destructured
- * binding counts — `const [{ renderToString }, React] = await Promise.all(…)`
- * in the snippet renderer is a real binding and must not be re-imported over.
- * A type-only import is not a binding: it is erased before the JSX lowering
- * runs, which is one of the two ways this bug reached npm.
+ * Nested scopes are deliberately not descended into. A name declared inside a
+ * nested function does not bind here, and treating it as though it did is what
+ * lets a free reference escape — see `findFreeReactReference`.
  */
-function bindsReact(node: Node): boolean {
-  if (node.type === "ImportDeclaration") {
-    if (node.importKind === "type") return false;
-    const specifiers = Array.isArray(node.specifiers) ? node.specifiers : [];
-    return specifiers.some((entry) => {
-      if (!isNode(entry) || entry.importKind === "type") return false;
-      const local = entry.local;
-      return isNode(local) && local.type === "Identifier" &&
-        local.name === "React";
-    });
+function declaredNames(node: Node): Set<string> {
+  const names = new Set<string>();
+
+  if (FUNCTION_TYPES.has(node.type)) {
+    for (const param of Array.isArray(node.params) ? node.params : []) {
+      patternNames(param, names);
+    }
+    const id = node.id;
+    if (isNode(id) && typeof id.name === "string") names.add(id.name);
   }
 
-  if (node.type === "VariableDeclarator") return subtreeBindsReact(node.id);
+  if (node.type === "CatchClause") patternNames(node.param, names);
 
-  if (
-    node.type === "FunctionDeclaration" || node.type === "ClassDeclaration" ||
-    node.type === "FunctionExpression" ||
-    node.type === "ArrowFunctionExpression"
-  ) {
-    if (subtreeBindsReact(node.id)) return true;
-    const params = Array.isArray(node.params) ? node.params : [];
-    return params.some((param) => subtreeBindsReact(param));
+  for (const entry of scopeBody(node)) {
+    if (!isNode(entry)) continue;
+
+    if (entry.type === "ImportDeclaration") {
+      addImportedNames(entry, names);
+      continue;
+    }
+
+    // `export const X = …` and `export function X()` declare X locally too.
+    const statement = entry.type === "ExportNamedDeclaration" ||
+        entry.type === "ExportDefaultDeclaration"
+      ? entry.declaration
+      : entry;
+    if (!isNode(statement)) continue;
+
+    if (statement.type === "VariableDeclaration") {
+      const declarations = Array.isArray(statement.declarations)
+        ? statement.declarations
+        : [];
+      for (const declarator of declarations) {
+        if (isNode(declarator)) patternNames(declarator.id, names);
+      }
+      continue;
+    }
+
+    if (
+      statement.type === "FunctionDeclaration" ||
+      statement.type === "ClassDeclaration"
+    ) {
+      const id = statement.id;
+      if (isNode(id) && typeof id.name === "string") names.add(id.name);
+    }
   }
 
-  return false;
+  return names;
 }
 
 /**
- * Returns the 1-based line of the first free `React` reference in `source`, or
- * `undefined` when the module has a binding or never mentions `React`.
+ * True when this `React` identifier names something rather than reads it: an
+ * import\'s local name, a declared name, a non-computed member property
+ * (`foo.React`), or a non-computed object key (`{ React: 1 }`).
+ */
+function isNameNotReference(parent: Node, key: string): boolean {
+  if (key === "local" || key === "id") return true;
+  if (
+    (parent.type === "MemberExpression" ||
+      parent.type === "OptionalMemberExpression") &&
+    key === "property" &&
+    parent.computed !== true
+  ) {
+    return true;
+  }
+  return (parent.type === "ObjectProperty" || parent.type === "ObjectMethod") &&
+    key === "key" && parent.computed !== true;
+}
+
+/**
+ * Returns the 1-based line of the first `React` reference in `source` that
+ * nothing binds, or `undefined` when the module is fine.
  *
- * The check is parsed, not matched: `React.createElement` inside a string
- * literal or a comment is not a reference. The published package carries both —
- * `esm-module-loader/constants.js` holds the esbuild factory names as strings,
- * and the dev-ui extension embeds a whole browser bundle as one JSON string.
+ * Two things make this more than a search for `React.createElement`.
+ *
+ * It is parsed, not matched, so `React.createElement` inside a string literal
+ * or a comment is not a reference. The published package carries both:
+ * `esm-module-loader/constants.js` exports the esbuild factory names as
+ * strings, and the dev-ui extension embeds a whole browser bundle as one JSON
+ * string.
+ *
+ * And it is scope-aware in both directions. A module-scope binding satisfies
+ * the whole file, since that is exactly what the rewrite would add. A binding
+ * anywhere else only shadows references inside its own scope: `snippet-
+ * renderer.js` binds React with `const [{ renderToString }, React] = await
+ * Promise.all(…)` inside one function, which must not be taken to excuse a
+ * free reference at module scope elsewhere in the same file.
+ *
+ * Any read of `React` counts, not just a member access, so
+ * `React?.createElement`, `React["createElement"]` and a bare `React` passed as
+ * a value are all caught.
  */
 export function findFreeReactReference(
   source: string,
@@ -136,23 +228,43 @@ export function findFreeReactReference(
     );
   }
 
-  let bound = false;
-  let firstReference: number | undefined;
+  if (!isNode(ast)) return undefined;
+  const program = isNode(ast.program) ? ast.program : ast;
+  if (declaredNames(program).has("React")) return undefined;
 
-  walk(ast, (current) => {
-    if (bindsReact(current)) bound = true;
-    if (current.type !== "MemberExpression") return;
-    const object = current.object;
-    if (!isNode(object) || object.type !== "Identifier") return;
-    if (object.name !== "React") return;
-    const line = (current.loc as { start?: { line?: number } } | undefined)
-      ?.start?.line ?? 1;
-    if (firstReference === undefined || line < firstReference) {
-      firstReference = line;
+  let firstFree: number | undefined;
+
+  const visit = (
+    node: unknown,
+    parent: Node | undefined,
+    key: string,
+    shadowed: boolean,
+  ): void => {
+    if (!isNode(node)) return;
+
+    const opensScope = node.type === "BlockStatement" ||
+      node.type === "CatchClause" || FUNCTION_TYPES.has(node.type);
+    const inShadow = shadowed ||
+      (opensScope && declaredNames(node).has("React"));
+
+    if (
+      !inShadow && node.type === "Identifier" && node.name === "React" &&
+      parent && !isNameNotReference(parent, key)
+    ) {
+      const line =
+        (node.loc as { start?: { line?: number } } | undefined)?.start?.line ??
+          1;
+      if (firstFree === undefined || line < firstFree) firstFree = line;
     }
-  });
 
-  return bound ? undefined : firstReference;
+    eachChild(
+      node,
+      (child, childKey) => visit(child, node, childKey, inShadow),
+    );
+  };
+
+  visit(ast, undefined, "", false);
+  return firstFree;
 }
 
 /** `source` with the React namespace import prepended. */

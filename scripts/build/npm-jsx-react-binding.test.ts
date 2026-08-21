@@ -93,6 +93,77 @@ describe("findFreeReactReference", () => {
     assertEquals(findFreeReactReference(source), undefined);
   });
 
+  // A binding only shadows its own scope. `snippet-renderer.js` binds React
+  // inside one function; that must not excuse a free reference at module scope
+  // elsewhere in the same file, or the module ships and throws.
+  it("flags a module-scope reference that a function-local React does not bind", () => {
+    const source = [
+      'export const Card = (props) => React.createElement("div", props);',
+      "async function render() {",
+      "    const [{ renderToString }, React] = await Promise.all([",
+      '        import("react-dom/server"),',
+      '        import("react"),',
+      "    ]);",
+      '    return renderToString(React.createElement("span"));',
+      "}",
+    ].join("\n");
+
+    assertEquals(findFreeReactReference(source), 1);
+  });
+
+  it("flags a reference a nested block's binding does not reach", () => {
+    const source = [
+      'React.createElement("div");',
+      "{",
+      "    const React = globalThis.React;",
+      '    React.createElement("span");',
+      "}",
+    ].join("\n");
+
+    assertEquals(findFreeReactReference(source), 1);
+  });
+
+  it("does not flag a reference a parameter binds", () => {
+    const source = [
+      "export function mount(React) {",
+      "    return function inner() {",
+      '        return React.createElement("div");',
+      "    };",
+      "}",
+    ].join("\n");
+
+    assertEquals(findFreeReactReference(source), undefined);
+  });
+
+  // Any read counts, not just `React.x` — the classic factory is what dnt emits
+  // today, but a free `React` is a ReferenceError whatever shape it takes.
+  it("flags an optional member access", () => {
+    assertEquals(
+      findFreeReactReference('export const a = React?.createElement("div");'),
+      1,
+    );
+  });
+
+  it("flags a computed member access", () => {
+    assertEquals(
+      findFreeReactReference('export const a = React["createElement"]("div");'),
+      1,
+    );
+  });
+
+  it("flags a bare React passed as a value", () => {
+    assertEquals(findFreeReactReference("register(React);"), 1);
+  });
+
+  it("does not flag React as a property or an object key", () => {
+    const source = [
+      "export const key = { React: 1 };",
+      "export const read = namespace.React;",
+    ].join("\n");
+
+    assertEquals(findFreeReactReference(source), undefined);
+  });
+
   it("names the file when a module cannot be parsed", () => {
     const error = (() => {
       try {
