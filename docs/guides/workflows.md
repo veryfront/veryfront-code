@@ -357,7 +357,7 @@ workflows.register(contentPipeline);
 export async function POST(request: Request) {
   const input = await request.json();
   const handle = await workflows.start("content-pipeline", input);
-  await handle.result();
+  await handle.settled();
 
   const run = await workflows.getRun(handle.runId);
   return Response.json({ status: run?.status, nodeStates: run?.nodeStates });
