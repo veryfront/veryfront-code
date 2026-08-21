@@ -1,6 +1,10 @@
 import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { bumpDenoJsonVersion, getNewVersion } from "./release-version.ts";
+import {
+  bumpDenoJsonVersion,
+  bumpVersionAssignments,
+  getNewVersion,
+} from "./release-version.ts";
 
 // A deno.json shaped like the real one: an inline array is what re-serialising
 // used to reflow, so it has to survive a bump untouched.
@@ -78,6 +82,25 @@ describe("scripts/release", () => {
         () => getNewVersion("0.1.1246-rc!", "patch"),
         Error,
         "Invalid current version format",
+      );
+    });
+  });
+
+  describe("bumpVersionAssignments", () => {
+    it("promotes RC constants to the stable version", () => {
+      assertEquals(
+        bumpVersionAssignments(
+          'export const VERSION = "0.1.1246-rc";\n',
+          "0.1.1246",
+        ),
+        'export const VERSION = "0.1.1246";\n',
+      );
+      assertEquals(
+        bumpVersionAssignments(
+          'export const VERYFRONT_VERSION = "0.1.1246-rc.42";\n',
+          "0.1.1246",
+        ),
+        'export const VERYFRONT_VERSION = "0.1.1246";\n',
       );
     });
   });
