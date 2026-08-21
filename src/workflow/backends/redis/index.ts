@@ -310,6 +310,9 @@ export class RedisBackend implements WorkflowBackend {
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
     const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+    // Encoded before the fields below, on purpose. A step's return value reaches
+    // `input`, `output`, and `nodeStates` as well, and those are encoded by
+    // `JSON.stringify`, so whichever runs first decides the error a caller sees.
     const context = serializeWorkflowContext(run.context, run.id);
     return {
       id: run.id,
@@ -333,6 +336,9 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private serializeRunPatch(patch: WorkflowRunUpdate): Record<string, string> {
+    // Encoded before the fields below for the same reason as in `serializeRun`:
+    // `output` and `nodeStates` carry the same step values, and the field that
+    // is encoded first decides the error a caller sees.
     const context = patch.context !== undefined
       ? serializeWorkflowContext(patch.context)
       : undefined;
@@ -360,6 +366,8 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
+    // Checked before the rest of the checkpoint is encoded below, so a value
+    // JSON refuses is named by its path rather than by the native error.
     const { normalized: context } = prepareWorkflowJson(
       checkpoint.context,
       "checkpoint.context",
