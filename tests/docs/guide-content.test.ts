@@ -102,9 +102,17 @@ describe("guide content contracts", () => {
     );
     assertStringIncludes(
       guide,
-      'event.type === "run.status" && TERMINAL_RUN_STATUSES.has(event.status)',
+      `if (event.type === "run.status" && TERMINAL_RUN_STATUSES.has(event.status)) {
+        events.close();
+      }`,
     );
-    assertStringIncludes(guide, "event instanceof MessageEvent");
+    assertStringIncludes(
+      guide,
+      `if (event instanceof MessageEvent) {
+      console.error(JSON.parse(event.data));
+      events.close();
+    }`,
+    );
     assertStringIncludes(guide, "Native `EventSource` reconnects automatically");
 
     for (
