@@ -880,7 +880,7 @@ describe("npm supply-chain policy", () => {
 
   it("uses native Node timers so root imports can release background intervals", async () => {
     const rootSource = await Deno.readTextFile(
-      "scripts/build/build-npm-dnt.ts",
+      new URL("build-npm-dnt.ts", import.meta.url),
     );
     const extensionSource = await Deno.readTextFile(
       new URL("build-npm-extension-packages.ts", import.meta.url),
