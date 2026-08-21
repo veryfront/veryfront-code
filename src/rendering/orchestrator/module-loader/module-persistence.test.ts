@@ -40,10 +40,14 @@ function deferred<T = void>(): {
 }
 
 describe("module-loader/module-persistence", () => {
+  const beforeDrainCleanups: Array<() => void> = [];
+  const afterDrainAssertions: Array<() => void> = [];
   const restoreSaveHooks: Array<() => void> = [];
 
   afterEach(async () => {
+    for (const cleanup of beforeDrainCleanups.splice(0).reverse()) cleanup();
     await drainModulePathCacheSaves();
+    for (const assertion of afterDrainAssertions.splice(0).reverse()) assertion();
     for (const restore of restoreSaveHooks.splice(0).reverse()) restore();
     await drainModulePathCacheSaves();
   });
@@ -291,11 +295,11 @@ describe("module-loader/module-persistence", () => {
     const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const moduleCache = new Map<string, string>();
-    const releases = [deferred(), deferred(), deferred()];
+    const releases = [deferred(), deferred(), deferred()] as const;
     let saveCalls = 0;
 
     restoreSaveHooks.push(setModulePathCacheSaveForTesting(async () => {
-      const release = releases[saveCalls++];
+      const release = releases[saveCalls++ as 0 | 1 | 2];
       assert(release, "unexpected save call");
       await release.promise;
     }));
@@ -410,8 +414,22 @@ describe("module-loader/module-persistence", () => {
     const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
     const localAdapter = await getLocalAdapter();
     const releaseSave = deferred();
+    let saveCompleted = false;
+    let cleanupRan = false;
 
-    restoreSaveHooks.push(setModulePathCacheSaveForTesting(() => releaseSave.promise));
+    restoreSaveHooks.push(setModulePathCacheSaveForTesting(async () => {
+      await releaseSave.promise;
+      saveCompleted = true;
+    }));
+    beforeDrainCleanups.push(() => {
+      assertEquals(saveCompleted, false);
+      releaseSave.resolve();
+      cleanupRan = true;
+    });
+    afterDrainAssertions.push(() => {
+      assertEquals(cleanupRan, true);
+      assertEquals(saveCompleted, true);
+    });
 
     try {
       await persistTransformedModule({
@@ -426,7 +444,6 @@ describe("module-loader/module-persistence", () => {
         reactVersion: "19.1.1",
       });
     } finally {
-      releaseSave.resolve();
       await remove(projectDir, { recursive: true }).catch(() => undefined);
       await remove(tmpDir, { recursive: true }).catch(() => undefined);
     }
