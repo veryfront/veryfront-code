@@ -21,6 +21,30 @@
  * report a step that never happened, and a run executing elsewhere emits
  * nothing at all.
  *
+ * ## Granularity is bounded by what the engine persists
+ *
+ * These events are only as fine-grained as the run's own writes, and today the
+ * engine writes node states **at pause and completion boundaries, not while a
+ * step is executing**. Measured against `MemoryBackend`:
+ *
+ * ```
+ * mid-run   status=running   currentNodes=[]         nodeStates=[]
+ * paused    status=waiting   currentNodes=[review]   nodeStates=[a=completed, review=running]
+ * finished  status=completed currentNodes=[]         nodeStates=[a=completed, b=completed]
+ * ```
+ *
+ * So a run that executes three steps and finishes emits its three
+ * `step.completed` events together with `run.status`, not one per step as each
+ * lands, and `step.started` is seen mainly for a wait node, which persists as
+ * `running` when the run parks. What is reliably incremental is the run's own
+ * status, including every pause and resume.
+ *
+ * This module is deliberately not the place to fix that. Widening it means
+ * persisting a node state when a step begins, which is a change to the
+ * executor's write path with its own durability and contention questions.
+ * Derivation here already reports whatever the engine records, so it gets
+ * finer-grained for free the day the engine does.
+ *
  * @module workflow/events
  */
 
