@@ -38,6 +38,41 @@ describe("guardedOutboundFetch", () => {
     assertEquals(captured?.url, "https://93.184.216.34/rag/documents");
   });
 
+  it("ignores a hand-assigned globalThis.fetch rather than failing open to it", async () => {
+    // The old ambient path honoured this assignment, but only when DENO_TESTING
+    // was set four modules away. Forgetting the flag did not break loudly -- it
+    // reached the internet. There is now no flag and no ambient path: an
+    // assignment controls direct fetch callers and nothing else, so a test that
+    // stubs it and expects a canned response fails on its own terms instead of
+    // egressing to a third party.
+    let ambientCalls = 0;
+    const originalFetch = globalThis.fetch;
+    Object.defineProperty(globalThis, "fetch", {
+      value: () => {
+        ambientCalls++;
+        return Promise.resolve(Response.json({ ambient: true }));
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      const response = await withMockFetch(
+        () => Promise.resolve(Response.json({ seam: true })),
+        () => guardedOutboundFetch("https://93.184.216.34/rag/documents"),
+      );
+
+      assertEquals(await response.json(), { seam: true });
+      assertEquals(ambientCalls, 0);
+    } finally {
+      Object.defineProperty(globalThis, "fetch", {
+        value: originalFetch,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
   it("rejects loopback and cloud metadata before invoking fetch", async () => {
     let calls = 0;
     const fetchImpl: typeof fetch = () => {

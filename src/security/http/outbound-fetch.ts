@@ -238,6 +238,27 @@ export function createOutboundFetchBoundary(
  * `__runWithOutboundFetchTransportForTests` when there is one -- it cannot be
  * left installed by an early return.
  */
+/**
+ * Route outbound requests through the captured host `fetch` without address
+ * pinning, for the duration of a test process.
+ *
+ * Deno's pinned path uses its SOCKS client, which holds a connection open past
+ * the end of a test and trips the resource sanitiser. Tests that genuinely
+ * reach the network want the plain transport; production never does. Installed
+ * once from `src/testing/preload.ts`, where it is visible, rather than inferred
+ * from an environment variable inside this module.
+ *
+ * This is not a stub: it is the real host `fetch`, captured before tenant code
+ * could replace it, so it cannot silently honour an ambient
+ * `globalThis.fetch` assignment the way the old `DENO_TESTING` branch did.
+ */
+export function __installUnpinnedHostTransportForTests(): () => void {
+  return __installOutboundFetchTransportForTests({
+    fetch: capturedHostFetch,
+    pinnedFetch: (url, _addresses, init) => capturedHostFetch(url, init),
+  });
+}
+
 export function __installOutboundFetchTransportForTests(
   transport: OutboundFetchTransport,
 ): () => void {

@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   assertEquals,
   assertInstanceOf,
@@ -26,7 +27,6 @@ import {
 } from "./handler.ts";
 
 const originalExit = Deno.exit;
-const originalFetch = globalThis.fetch;
 const originalConsoleLog = console.log;
 const environmentNames = [
   "VERYFRONT_API_URL",
@@ -131,7 +131,7 @@ describe("schedule command", () => {
     // for it outside a turn would yank it from whichever test file holds it now.
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     console.log = originalConsoleLog;
     setJsonMode(false);
     restoreEnvironment();
@@ -194,20 +194,22 @@ describe("schedule command", () => {
       _resetEnvironmentConfig();
       setJsonMode(true);
       console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
-      globalThis.fetch = (async (
-        input: string | URL | Request,
-        init?: RequestInit,
-      ) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-        requests.push({ url, init });
-        const response = responses.shift();
-        if (!response) throw new Error(`Unexpected request: ${url}`);
-        return response;
-      }) as typeof fetch;
+      installMockFetch(
+        (async (
+          input: string | URL | Request,
+          init?: RequestInit,
+        ) => {
+          const url = typeof input === "string"
+            ? input
+            : input instanceof URL
+            ? input.toString()
+            : input.url;
+          requests.push({ url, init });
+          const response = responses.shift();
+          if (!response) throw new Error(`Unexpected request: ${url}`);
+          return response;
+        }) as typeof fetch,
+      );
       // deno-lint-ignore no-explicit-any
       (Deno as any).exit = (code = 0) => {
         throw new ExitSentinel(code);
