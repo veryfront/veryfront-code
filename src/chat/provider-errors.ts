@@ -29,7 +29,7 @@ const MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR = {
 const OUTPUT_SCHEMA_NOT_CLOSED_ERROR = {
   code: "OUTPUT_SCHEMA_NOT_CLOSED",
   message:
-    "The model rejected the output schema because an object in it allows additional properties. " +
+    "The provider rejected the output schema because an object in it allows additional properties. " +
     "Set additionalProperties: false on that object -- add .strict() if the outputSchema was " +
     "built with defineSchema(), or set the property directly on a raw JSON Schema.",
 } as const;
@@ -426,6 +426,13 @@ function parseProviderErrorInner(
     const normalizedMessage = message.toLowerCase();
     if (isAssistantPrefillUnsupportedMessage(message)) {
       return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+    }
+    // Also matched here, not only on the structured-body path: the same
+    // rejection reaches this function as a bare `Error` whenever the body was
+    // never preserved -- an unparsed shape, a truncated read, or a provider
+    // whose envelope carries no `invalid_request_error` type at all.
+    if (isOpenObjectSchemaRejection(message)) {
+      return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
     }
     if (isProviderBillingMessage(normalizedMessage)) {
       return AI_PROVIDER_BILLING_ERROR;
