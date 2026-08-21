@@ -84,16 +84,17 @@ export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
         /\.(?:cjs|js)$/.test(filePath),
       plugins: pickPlugins(parseablePath(options.filePath)),
     };
-    let ast: parser.ParseResult<parser.File>;
-    try {
-      ast = parser.parse(options.code, parseOptions);
-    } catch (error) {
-      if (!shouldRetryWithLegacyDecorators(error)) throw error;
-      ast = parser.parse(options.code, {
-        ...parseOptions,
-        plugins: pickLegacyDecoratorPlugins(parseablePath(options.filePath)),
-      });
-    }
+    const ast = (() => {
+      try {
+        return parser.parse(options.code, parseOptions);
+      } catch (error) {
+        if (!shouldRetryWithLegacyDecorators(error)) throw error;
+        return parser.parse(options.code, {
+          ...parseOptions,
+          plugins: pickLegacyDecoratorPlugins(parseablePath(options.filePath)),
+        });
+      }
+    })();
     const node: { type: string } = ast;
     return Promise.resolve(node as ASTNode);
   }
