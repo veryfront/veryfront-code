@@ -190,10 +190,18 @@ describe("tool/remote-mcp", () => {
     assertEquals(error.message, "Invalid trusted endpoint");
   });
 
-  it("normalizes non-Error caller abort reasons", async () => {
+  it("rejects an already-aborted caller without invoking transport", async () => {
+    let transportCalls = 0;
     const controller = new AbortController();
     controller.abort("caller stopped");
-    const source = createRemoteMCPToolSource({
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["https://93.184.216.34"],
+      requestFetch: async () => {
+        transportCalls++;
+        throw new Error("transport should not run");
+      },
+    });
+    const source = createSource({
       id: "docs",
       endpoint: "https://93.184.216.34",
     });
@@ -203,6 +211,7 @@ describe("tool/remote-mcp", () => {
       Error,
       "Remote MCP request was aborted",
     );
+    assertEquals(transportCalls, 0);
   });
 
   it("rejects internal MCP endpoints before invoking the configured transport", async () => {

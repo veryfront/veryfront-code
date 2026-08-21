@@ -757,6 +757,7 @@ async function postJsonRpc(
   const requestScope = createRequestSignalScope(callerSignal);
 
   try {
+    requestScope.signal.throwIfAborted();
     const response = await requestFetch(endpoint, {
       method: "POST",
       headers,
