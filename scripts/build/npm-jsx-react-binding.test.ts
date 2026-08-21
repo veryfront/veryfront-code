@@ -64,7 +64,7 @@ describe("findFreeReactReference", () => {
     assertEquals(findFreeReactReference(source), undefined);
   });
 
-  it("passes a React taken as a parameter", () => {
+  it("passes a reference the enclosing function's parameter binds", () => {
     const source =
       'export function mount(React) { React.createElement("div"); }';
 
@@ -87,7 +87,7 @@ describe("findFreeReactReference", () => {
     assertEquals(findFreeReactReference(source), undefined);
   });
 
-  it("ignores a React-prefixed identifier that is not a member access", () => {
+  it("ignores an identifier that merely begins with React", () => {
     const source = "export const ReactVersion = 19;";
 
     assertEquals(findFreeReactReference(source), undefined);
@@ -262,7 +262,7 @@ describe("normalizeNpmJsxReactBinding", () => {
     });
   });
 
-  it("leaves a module that already binds React by other means alone", async () => {
+  it("leaves a module whose module-scope binding is not an import", async () => {
     // A binding the rewrite cannot satisfy: the module shadows `React` with an
     // import of its own name, so prepending another one would be a duplicate
     // declaration rather than a fix. Detection must not claim success here.
