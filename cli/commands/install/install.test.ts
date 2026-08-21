@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installTargets, parseTargetFlag } from "./install.ts";
-import type { AIToolId } from "./types.ts";
+import { type AIToolId, AIToolIdSchema } from "./types.ts";
 import {
   exists,
   makeTempDir,
@@ -51,7 +51,7 @@ describe("parseTargetFlag", () => {
     const targets = parseTargetFlag("cursor,invalid,claude-code");
     assertEquals(targets.includes("cursor"), true);
     assertEquals(targets.includes("claude-code"), true);
-    assertEquals(targets.includes("invalid" as never), false);
+    assertEquals(AIToolIdSchema.safeParse("invalid").success, false);
     assertEquals(targets.length, 2);
   });
 
