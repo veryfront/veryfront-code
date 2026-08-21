@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ChildRunExecutionResult } from "../child-run/execution-snapshot.ts";
+import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
+import type {
+  ChildRunExecutionResult,
+  ChildRunExecutionSnapshot,
+} from "../child-run/execution-snapshot.ts";
 import {
   HOSTED_CHILD_FINALIZATION_FAILED_CODE,
   type HostedChildLifecycleAdapter,
@@ -9,7 +13,9 @@ import {
   runHostedChildLifecycle,
   shouldSkipHostedChildTerminalPersistence,
 } from "./child-lifecycle.ts";
+import { handleHostedChildForkFailure } from "./child-fork-stream-execution.ts";
 import { HostedChildTerminalStateError } from "./child-status.ts";
+import { getHostedStreamErrorText } from "./stream-terminal-error.ts";
 
 describe("agent/hosted-child-lifecycle", () => {
   it("identifies externally persisted terminal states", () => {
@@ -697,5 +703,69 @@ describe("agent/hosted-child-lifecycle", () => {
       terminalErrorMessage:
         "Hosted child run run-1 became completed before local execution finished",
     });
+  });
+
+  it("keeps a child run's schema rejection classified across the run boundary", async () => {
+    // The child run boundary is the route the plain-message matcher in
+    // `resolveKnownProviderTerminalError` exists for, so walk it end to end
+    // with the real helpers on both sides instead of a hand-built error.
+    const providerError = await buildProviderError(
+      "anthropic",
+      new Response(
+        JSON.stringify({
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            message:
+              "output_config.format.schema: For 'object' type, 'additionalProperties' must be explicitly set to false",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    // Child side. The stream error becomes text (what the runtime's `onError`
+    // does), and `handleHostedChildForkFailure` copies that text into the
+    // failure snapshot. Nothing structured survives the hop, so the message is
+    // all the parent gets.
+    const snapshots: ChildRunExecutionSnapshot[] = [];
+    const childResult = await handleHostedChildForkFailure({
+      error: new Error(getHostedStreamErrorText(providerError)),
+      description: "Summarize the repo",
+      kind: "invoke_agent",
+      finalText: "",
+      toolCalls: [],
+      toolResults: [],
+      startTime: Date.now(),
+      onSettled: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+    });
+
+    assertEquals(
+      (snapshots[0]?.error ?? "").includes("output_config.format.schema"),
+      false,
+      "the parent gets our curated wording, not the provider's raw rejection",
+    );
+
+    // Parent side. The lifecycle rebuilds the snapshot string as a bare
+    // `HostedChildExecutionFailure` and re-classifies it.
+    const result = await runHostedChildExecutionLifecycle({
+      adapter: {},
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => Promise.resolve(childResult),
+      getExecutionSnapshot: () => snapshots[0] ?? null,
+    });
+
+    assertEquals(result.status, "failed");
+    // The round trip survives only because the curated message still names
+    // both things the matcher keys on. Rewording it, dropping the message from
+    // the snapshot, or rebuilding the failure without it all land here as
+    // INVOKE_AGENT_FAILED, which is what this assertion catches.
+    assertEquals(
+      result.terminalState.terminalErrorCode,
+      "OUTPUT_SCHEMA_NOT_CLOSED",
+      "a child run's schema rejection stays classified after crossing the boundary",
+    );
   });
 });

@@ -8,8 +8,6 @@ import {
   resolveKnownProviderTerminalError,
   resolveStreamOutcome,
 } from "./stream-outcome.ts";
-import { getHostedStreamErrorText } from "../hosted/stream-terminal-error.ts";
-import { buildProviderError } from "#veryfront/provider/runtime-loader/provider-http.ts";
 import type { StreamLifecyclePhase, StreamSnapshot } from "./lifecycle/types.ts";
 
 describe("agent/stream-outcome", () => {
@@ -78,49 +76,6 @@ describe("agent/stream-outcome", () => {
       const resolved = resolveKnownProviderTerminalError(error);
       assertEquals(resolved?.code, "PROJECT_SCHEMA_ERROR");
       assertEquals(typeof resolved?.message, "string");
-    });
-
-    it("keeps a child run's schema rejection classified across the run boundary", async () => {
-      // The route the plain-message matcher exists for, walked end to end with
-      // the real functions rather than a hand-built error.
-      //
-      // A child run's failure crosses back to its parent as a bare string:
-      // child-fork-stream-execution.ts reads `error.message` into the failure
-      // snapshot, and child-lifecycle.ts rebuilds it as
-      // `new HostedChildExecutionFailure(snapshot.error)` before handing it
-      // here. Nothing structured survives that hop, so the message is all the
-      // parent has left to classify.
-      const providerError = await buildProviderError(
-        "anthropic",
-        new Response(
-          JSON.stringify({
-            type: "error",
-            error: {
-              type: "invalid_request_error",
-              message:
-                "output_config.format.schema: For 'object' type, 'additionalProperties' must be explicitly set to false",
-            },
-          }),
-          { status: 400, headers: { "content-type": "application/json" } },
-        ),
-      );
-
-      // Child side: the text the child reports for that failure.
-      const childErrorText = getHostedStreamErrorText(providerError);
-      // The curated wording, not the provider's, so no request content leaves
-      // the child even though the text is about to become a plain message.
-      assertEquals(childErrorText.includes("output_config.format.schema"), false);
-
-      // Parent side: the same text, rebuilt as a bare Error.
-      const resolved = resolveKnownProviderTerminalError(new Error(childErrorText));
-      assertEquals(resolved?.code, "OUTPUT_SCHEMA_NOT_CLOSED");
-
-      // The round trip works because the curated message still names the two
-      // things the matcher keys on. Rewording it without keeping both silently
-      // drops the child back to a generic execution failure, which is what
-      // this assertion is here to catch.
-      assertEquals(childErrorText.toLowerCase().includes("additionalproperties"), true);
-      assertEquals(childErrorText.toLowerCase().includes("output schema"), true);
     });
   });
 });
