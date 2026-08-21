@@ -516,6 +516,28 @@ import { getAllWorkflowIds, getWorkflow, registerWorkflow } from "veryfront/work
 | ------------------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | `workflowRegistry` | Project-scoped registry for workflow metadata and definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/registry.ts#L425) |
 
+### `veryfront/workflow/testing`
+
+Test primitives for driving a workflow end to end. Testing a workflow means waiting for something asynchronous and durable to reach a state, and every test that does it has written the same loop: `typescript while (Date.now() - start < timeout) { if ((await client.getRun(runId))?.status === "completed") break; await delay(50); }` That loop is where workflow tests go wrong. A bare `await delay(n)` passes on a fast machine and flakes on a loaded one; a poll with no deadline hangs the suite instead of failing it; and a timeout that reports only "timed out" sends the author back to add logging to find out what the run was actually doing. Every harness method here polls to a deadline and, on expiry, throws with the run's status, its pending approvals and its per-node states - the information you would otherwise have gone looking for. Approvals are addressed by **node id**, not approval id. A test author knows they wrote `waitForApproval("review")`; the approval's generated id is something they have to dig out of the run first. ## What this does not do There is no `advanceTime`. The executor schedules timed waits with real `setTimeout` and takes no clock, so fast-forwarding one would mean faking global timers for the whole process. A workflow that sleeps for an hour still sleeps for an hour here. Testing that honestly needs a clock seam in the executor, which is a change to the executor rather than a helper this module can provide.
+
+```ts
+import { startWorkflowTest } from "veryfront/workflow/testing";
+```
+
+#### Functions
+
+| Name                | Description                                           | Source                                                                                       |
+| ------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `startWorkflowTest` | Start a workflow and return a harness for driving it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/testing.ts#L190) |
+
+#### Types
+
+| Name                       | Description                        | Source                                                                                      |
+| -------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `ApprovalDecisionOptions`  | Options for resolving an approval. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/testing.ts#L89) |
+| `StartWorkflowTestOptions` | Options for `startWorkflowTest`.   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/testing.ts#L74) |
+| `WorkflowTestHarness`      | A running workflow under test.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/testing.ts#L98) |
+
 ### `veryfront/workflow/worker`
 
 Workflow worker module Provides distributed workflow execution support. Two execution profiles are available: 1. **WorkflowWorker** - In-process polling worker - Polls for stalled workflows and resumes them - Good for trusted code or single-tenant deployments - Simple setup, lower overhead 2. **WorkflowRunManager + ProcessRunExecutor** - Local process execution - Spawns child processes for each workflow - Good for local development without K8s/Docker A workflow run can be backed by a run executor without introducing another user-visible execution type.

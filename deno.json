@@ -108,6 +108,7 @@
     "./workflow": "./src/workflow/index.ts",
     "./workflow/registry": "./src/workflow/registry-public.ts",
     "./workflow/blob": "./src/workflow/blob/index.ts",
+    "./workflow/testing": "./src/workflow/testing.ts",
     "./workflow/worker": "./src/workflow/worker/index.ts",
     "./workflow/claude-code": "./src/workflow/claude-code/index.ts",
     "./workflow/claude-code/types": "./src/workflow/claude-code/types.ts",
