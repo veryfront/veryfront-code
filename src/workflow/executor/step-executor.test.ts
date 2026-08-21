@@ -385,6 +385,24 @@ describe("StepExecutor agent structured output", () => {
     });
   });
 
+  it("keeps a structured output whose schema transformed it to undefined", async () => {
+    // The runtime sets `object` iff an outputSchema is configured, so presence
+    // -- not definedness -- is what separates a structured response from a
+    // schemaless one. A schema using the supported `transform()` operation can
+    // legitimately yield `undefined`, and that is not the same as no schema.
+    const node = makeAgentStepNode({
+      text: "null",
+      object: undefined,
+      status: "completed",
+      usage: { totalTokens: 2 },
+    });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(Object.hasOwn(result.output as object, "object"), true);
+    assertEquals((result.output as { object?: unknown }).object, undefined);
+  });
+
   it("omits the object key entirely for an agent with no outputSchema", async () => {
     const node = makeAgentStepNode({
       text: "plain text",

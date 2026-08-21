@@ -370,9 +370,13 @@ export class StepExecutor {
       // `generate()` has already parsed and validated this against the agent's
       // `outputSchema`. Dropping it here is silent: a later step reading
       // `context.<nodeId>.object` gets `undefined` with no error, which makes
-      // `outputSchema` unusable from inside a workflow. Spread conditionally so
-      // a schemaless agent's output shape gains no `object` key.
-      ...(response.object !== undefined ? { object: response.object } : {}),
+      // `outputSchema` unusable from inside a workflow.
+      //
+      // Keyed on presence, not on value, to mirror how the runtime sets it:
+      // `...(outputSchema ? { object: await outputSchema.parseOutput(text) } : {})`.
+      // A schema whose `transform()` yields `undefined` is a real structured
+      // output and must survive; only a schemaless agent has no key at all.
+      ...("object" in response ? { object: response.object } : {}),
     };
   }
 
