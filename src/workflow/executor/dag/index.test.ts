@@ -12,7 +12,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module ai/workflow/executor/dag/index.test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { DAGExecutor } from "./index.ts";
 import type {
@@ -1715,6 +1720,90 @@ describe("DAGExecutor", () => {
       );
       assertEquals(third.error, undefined);
       assertEquals(third.completed, true);
+    });
+
+    it("recovers an interrupted step on a wait resume instead of skipping it", async () => {
+      // Parked and interrupted are not exclusive. A worker can die with a step
+      // in flight while a sibling wait is parked, leaving the run "waiting"
+      // with that step still recorded running. Treating the whole resume as
+      // "nothing to recover" strands it -- and with nothing left ready the
+      // graph reports completion, so the workflow finishes having silently
+      // skipped a side effect.
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "m" } as any,
+        },
+        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            gate: { nodeId: "gate", status: "completed", attempt: 1, completedAt: new Date() },
+            "side-effect": {
+              nodeId: "side-effect",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(executed, ["side-effect"]);
+      assertEquals(result.nodeStates["side-effect"]!.status, "completed");
+    });
+
+    it("never reports completion while an interrupted step is out of budget", async () => {
+      // The same shape once the budget is gone. Failing loudly is the only
+      // honest answer; reporting success would drop the step on the floor.
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "m" } as any,
+        },
+        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            gate: { nodeId: "gate", status: "completed", attempt: 1, completedAt: new Date() },
+            "side-effect": {
+              nodeId: "side-effect",
+              status: "running",
+              attempt: 2,
+              startedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertEquals(executed, []);
+      assertStringIncludes(result.error ?? "", "retry budget exhausted");
     });
 
     it("still recovers a nested node when the worker died mid-run", async () => {

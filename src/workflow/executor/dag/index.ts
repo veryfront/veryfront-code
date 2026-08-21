@@ -157,8 +157,11 @@ export class DAGExecutor {
         if (state?.status !== "running") continue;
         const node = nodeMap.get(nodeId);
         if (!node) continue;
-        if (resumingWait) {
-          if (RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) ready.push(nodeId);
+        // A composite recorded running on a wait resume encloses the decision.
+        // Re-enter it so the child resumes; nothing crashed, so it spends no
+        // recovery budget.
+        if (resumingWait && RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) {
+          ready.push(nodeId);
           continue;
         }
         // A wait recorded as running is parked on its decision, never a dead
@@ -167,6 +170,14 @@ export class DAGExecutor {
         // This also matters inside a loop or branch child graph, whose synthetic
         // run is always "running" even while its wait is parked.
         if (node.config.type === "wait") continue;
+
+        // Anything else recorded running falls through to recovery even on a
+        // wait resume. Parked and interrupted are not exclusive: a worker can
+        // die with a step in flight, leave a sibling wait parked, and the run
+        // then reaches "waiting" with that step still marked running. Treating
+        // the whole resume as "nothing to recover" strands it -- and because
+        // nothing is left ready, the graph reports completion and the workflow
+        // finishes having silently skipped it.
 
         // The step executor restarts its own retry loop at 1 and overwrites the
         // recorded attempt, so it cannot bound anything across worker deaths.
