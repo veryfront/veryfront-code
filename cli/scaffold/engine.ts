@@ -195,7 +195,7 @@ function resolveInput(input: ScaffoldInput): ResolvedScaffoldInput {
 }
 
 function stripApiPrefix(slug: string): string {
-  return slug.replace(/^api\//, "");
+  return slug === "api" ? "" : slug.replace(/^api\//, "");
 }
 
 function joinPagesFile(base: string, slug: string, extension: ".mdx" | ".ts"): string {

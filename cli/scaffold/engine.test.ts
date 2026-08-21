@@ -33,6 +33,10 @@ describe("scaffold engine", () => {
       "/project/app/api/users/[id]/route.ts",
     );
     assertEquals(
+      planScaffold({ projectDir, type: "api", name: "api" }).files[0]?.path,
+      "/project/app/api/route.ts",
+    );
+    assertEquals(
       planScaffold({ projectDir, type: "layout", name: "admin" }).files[0]?.path,
       "/project/app/admin/layout.tsx",
     );
@@ -49,6 +53,10 @@ describe("scaffold engine", () => {
     assertEquals(
       planScaffold({ projectDir, router, type: "api", name: "users/[id]" }).files[0]?.path,
       "/project/pages/api/users/[id].ts",
+    );
+    assertEquals(
+      planScaffold({ projectDir, router, type: "api", name: "api" }).files[0]?.path,
+      "/project/pages/api/index.ts",
     );
     assertEquals(
       planScaffold({ projectDir, router, type: "layout", name: "main" }).files[0]?.path,
