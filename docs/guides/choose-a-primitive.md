@@ -29,23 +29,23 @@ clear and prevents overlapping agents, workflows, runs, and integrations.
 
 ## Decision rules
 
-| Primitive     | Use for                                                                                      | Do not use for                                                                     |
-| ------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| App route     | A browser, HTTP client, or webhook needs an entry point.                                     | The work should outlive the request or be reused outside routing.                  |
-| Agent         | The model must decide, explain, call tools, use memory, or stream a response.                | The work follows fixed control flow and can be a function, task, or workflow step. |
-| One-shot call | Extraction, classification, summarizing, or routing needs one model call and a typed result. | The model must call tools, take several steps, or remember earlier turns.          |
-| Tool          | An agent or workflow needs a typed operation such as search, lookup, write, or transform.    | The operation has multiple long-running states or human approval steps.            |
-| Skill         | An agent needs reusable instructions, references, scripts, and assets.                       | The work needs executable behavior or durable process state.                       |
-| Prompt        | An assistant needs reusable instruction text.                                                | The project needs to execute code or read data.                                    |
-| Resource      | An assistant needs readable project context.                                                 | The operation changes state or starts work.                                        |
-| Eval          | You need repeatable agent quality checks, datasets, metrics, and reports.                    | You need code assertions without model execution.                                  |
-| Task          | You own a reusable background function in `tasks/`.                                          | The user needs conversational reasoning or streaming output.                       |
-| Workflow      | The process has ordered steps, parallel branches, retries, or human review.                  | A single agent response or one background function is enough.                      |
-| Run           | You need durable execution, scheduling, batch status, or run history.                        | The work can finish inside a request without durability.                           |
-| Integration   | You need provider metadata, OAuth, tokens, or remote integration tools.                      | A local custom API call is enough and no shared connector behavior is needed.      |
-| MCP server    | External assistants or MCP clients need tools, prompts, or resources.                        | The capability is only used inside one Veryfront app route.                        |
-| Sandbox       | Code or shell work needs isolation from the app process.                                     | The code can run safely in your own trusted runtime.                               |
-| Extension     | A capability should be packaged and reused across projects.                                  | The code belongs to one app and can stay local.                                    |
+| Primitive           | Use for                                                                                      | Do not use for                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| App route           | A browser, HTTP client, or webhook needs an entry point.                                     | The work should outlive the request or be reused outside routing.                  |
+| Agent               | The model must decide, explain, call tools, use memory, or stream a response.                | The work follows fixed control flow and can be a function, task, or workflow step. |
+| One-shot model call | Extraction, classification, summarizing, or routing needs one model call and a typed result. | The model must call tools, take several steps, or remember earlier turns.          |
+| Tool                | An agent or workflow needs a typed operation such as search, lookup, write, or transform.    | The operation has multiple long-running states or human approval steps.            |
+| Skill               | An agent needs reusable instructions, references, scripts, and assets.                       | The work needs executable behavior or durable process state.                       |
+| Prompt              | An assistant needs reusable instruction text.                                                | The project needs to execute code or read data.                                    |
+| Resource            | An assistant needs readable project context.                                                 | The operation changes state or starts work.                                        |
+| Eval                | You need repeatable agent quality checks, datasets, metrics, and reports.                    | You need code assertions without model execution.                                  |
+| Task                | You own a reusable background function in `tasks/`.                                          | The user needs conversational reasoning or streaming output.                       |
+| Workflow            | The process has ordered steps, parallel branches, retries, or human review.                  | A single agent response or one background function is enough.                      |
+| Run                 | You need durable execution, scheduling, batch status, or run history.                        | The work can finish inside a request without durability.                           |
+| Integration         | You need provider metadata, OAuth, tokens, or remote integration tools.                      | A local custom API call is enough and no shared connector behavior is needed.      |
+| MCP server          | External assistants or MCP clients need tools, prompts, or resources.                        | The capability is only used inside one Veryfront app route.                        |
+| Sandbox             | Code or shell work needs isolation from the app process.                                     | The code can run safely in your own trusted runtime.                               |
+| Extension           | A capability should be packaged and reused across projects.                                  | The code belongs to one app and can stay local.                                    |
 
 ## Common pairings
 
@@ -71,7 +71,7 @@ the matching guide:
 - If the guide's first example solves your shape, continue there.
 - If you need two or more primitives, start with the one that owns the triggering event.
 - When choosing between `Task` and `Run`, remember that a task defines the work and a run executes it durably.
-- When choosing between a one-shot call and an `Agent`, remember that `generate()` from
+- When choosing between a one-shot model call and an `Agent`, remember that `generate()` from
   [`veryfront/llm`](../api-reference/veryfront/llm.md) makes one request with no tools, no steps,
   and no memory. Reach for an `Agent` as soon as you need any of those.
 
