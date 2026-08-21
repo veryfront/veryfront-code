@@ -121,14 +121,14 @@ those runs.
 
 The handler covers every path the hooks call:
 
-| Method | Path | Hook |
-| ------ | ---- | ---- |
-| `POST` | `/{workflowId}/start` | `useWorkflowStart` |
-| `GET` | `/runs` | `useWorkflowList` |
-| `GET` | `/runs/{runId}` | `useWorkflow` |
-| `POST` | `/runs/{runId}/cancel` | `useWorkflow` |
-| `POST` | `/runs/{runId}/retry` | `useWorkflow` |
-| `GET`, `POST` | `/runs/{runId}/approvals/{approvalId}` | `useApproval` |
+| Method        | Path                                   | Hook               |
+| ------------- | -------------------------------------- | ------------------ |
+| `POST`        | `/{workflowId}/start`                  | `useWorkflowStart` |
+| `GET`         | `/runs`                                | `useWorkflowList`  |
+| `GET`         | `/runs/{runId}`                        | `useWorkflow`      |
+| `POST`        | `/runs/{runId}/cancel`                 | `useWorkflow`      |
+| `POST`        | `/runs/{runId}/retry`                  | `useWorkflow`      |
+| `GET`, `POST` | `/runs/{runId}/approvals/{approvalId}` | `useApproval`      |
 
 Mounting somewhere else means telling both sides. Pass `basePath` to the handler
 and the matching `apiBase` to every hook.
@@ -141,11 +141,11 @@ shows the loop body executing once per iteration. The final run status reaches
 `completed` after the condition flips.
 
 For blob storage, configure an adapter, run a workflow that writes a large
-artifact, and confirm the storage backend received it. The step output should
+artifact, and ensure the storage backend received it. The step output should
 reference a blob handle rather than the inline payload.
 
 For React hooks, mount the handler as shown above, render the dashboard
-component, select **Run Pipeline**, and confirm the status string moves through
+component, select **Run Pipeline**, and ensure the status string moves through
 `running` to `completed` while individual `nodeStates` entries update. A status
 that never leaves its initial value usually means the hook routes are not
 mounted, so every poll is answering 404.

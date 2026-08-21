@@ -21,7 +21,8 @@
 
 import { isVeryfrontError } from "#veryfront/errors";
 import type { WorkflowClient } from "../api/index.ts";
-import type { ApprovalDecision, RunFilter, WorkflowStatus } from "../types.ts";
+import { ApprovalDecisionSchema, RunFilterSchema } from "../schemas/index.ts";
+import type { ApprovalDecision, RunFilter } from "../types.ts";
 
 /** Options for {@linkcode createWorkflowHandler}. */
 export interface WorkflowHandlerOptions {
@@ -39,6 +40,8 @@ export interface WorkflowHandlers {
 }
 
 const DEFAULT_BASE_PATH = "/api/workflows";
+
+class WorkflowRequestError extends Error {}
 
 function toSegments(path: string): string[] {
   return path.split("/").filter(Boolean);
@@ -77,20 +80,21 @@ async function answering(work: () => Promise<Response>): Promise<Response> {
   try {
     return await work();
   } catch (error) {
+    if (error instanceof WorkflowRequestError) return problem(error.message, 400);
     if (isVeryfrontError(error)) return problem(error.message, error.status);
     return problem(error instanceof Error ? error.message : String(error), 500);
   }
 }
 
 /** Parse the list filter that useWorkflowList encodes into the query string. */
-function readFilter(url: URL): RunFilter & { offset?: number } {
+function readFilter(url: URL): RunFilter {
   const params = url.searchParams;
-  const filter: RunFilter & { offset?: number } = {};
+  const filter: Record<string, unknown> = {};
 
   const workflowId = params.get("workflowId");
   if (workflowId) filter.workflowId = workflowId;
 
-  const statuses = params.getAll("status") as WorkflowStatus[];
+  const statuses = params.getAll("status");
   if (statuses.length === 1) filter.status = statuses[0];
   else if (statuses.length > 1) filter.status = statuses;
 
@@ -100,25 +104,33 @@ function readFilter(url: URL): RunFilter & { offset?: number } {
   const createdBefore = params.get("createdBefore");
   if (createdBefore) filter.createdBefore = new Date(createdBefore);
 
-  const limit = Number(params.get("limit"));
-  if (Number.isInteger(limit) && limit > 0) filter.limit = limit;
+  const limit = params.get("limit");
+  if (limit !== null) filter.limit = Number(limit);
 
   // The hook round-trips an opaque `cursor`; this backend paginates by offset,
   // so the cursor is the offset. Keeping it opaque on the wire leaves room to
   // change that without touching the hook.
-  const cursor = Number(params.get("cursor"));
-  if (Number.isInteger(cursor) && cursor > 0) filter.offset = cursor;
+  const cursor = params.get("cursor");
+  if (cursor !== null) filter.offset = Number(cursor);
 
-  return filter;
+  try {
+    return RunFilterSchema.parse(filter);
+  } catch {
+    throw new WorkflowRequestError("Invalid workflow run filter");
+  }
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
+  let body: unknown;
   try {
-    const body = await request.json();
-    return body && typeof body === "object" ? body as Record<string, unknown> : {};
+    body = await request.json();
   } catch {
-    return {};
+    throw new WorkflowRequestError("Request body must contain valid JSON");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new WorkflowRequestError("Request body must be a JSON object");
+  }
+  return body as Record<string, unknown>;
 }
 
 /**
@@ -142,7 +154,7 @@ export function createWorkflowHandler(
 
       const [first, runId, third, approvalId] = segments;
 
-      if (first === "runs" && !runId) {
+      if (segments.length === 1 && first === "runs") {
         const filter = readFilter(url);
         const runs = await client.listRuns(filter);
         const offset = filter.offset ?? 0;
@@ -152,7 +164,7 @@ export function createWorkflowHandler(
         return Response.json({ runs, cursor });
       }
 
-      if (first === "runs" && runId && !third) {
+      if (segments.length === 2 && first === "runs" && runId) {
         const run = await client.getRun(runId);
         if (!run) return problem(`No workflow run ${runId}`, 404);
 
@@ -165,7 +177,9 @@ export function createWorkflowHandler(
         return Response.json({ ...run, pendingApprovals });
       }
 
-      if (first === "runs" && runId && third === "approvals" && approvalId) {
+      if (
+        segments.length === 4 && first === "runs" && runId && third === "approvals" && approvalId
+      ) {
         const approvals = await client.getPendingApprovals(runId);
         const approval = approvals.find((candidate) => candidate.id === approvalId);
         if (!approval) return problem(`No approval ${approvalId} on run ${runId}`, 404);
@@ -184,34 +198,52 @@ export function createWorkflowHandler(
 
       const [first, second, third, approvalId] = segments;
 
-      if (first && first !== "runs" && second === "start") {
+      if (segments.length === 2 && first && first !== "runs" && second === "start") {
         const body = await readJson(request);
         const handle = await client.start(first, body.input);
         return Response.json({ runId: handle.runId });
       }
 
-      if (first === "runs" && second && third === "cancel") {
+      if (segments.length === 3 && first === "runs" && second && third === "cancel") {
         await client.cancel(second);
         return Response.json({ runId: second, status: "cancelled" });
       }
 
-      if (first === "runs" && second && third === "retry") {
+      if (segments.length === 3 && first === "runs" && second && third === "retry") {
         // `resume` is the client's re-entry point for a run that stopped early;
         // the hook calls it "retry".
         await client.resume(second);
         return Response.json({ runId: second, status: "resumed" });
       }
 
-      if (first === "runs" && second && third === "approvals" && approvalId) {
-        const decision = await readJson(request) as unknown as ApprovalDecision;
-        if (typeof decision?.approved !== "boolean") {
-          return problem("An approval decision needs an `approved` boolean", 400);
+      if (
+        segments.length === 4 && first === "runs" && second && third === "approvals" && approvalId
+      ) {
+        let decision: ApprovalDecision;
+        try {
+          decision = ApprovalDecisionSchema.parse(await readJson(request));
+        } catch (error) {
+          if (error instanceof WorkflowRequestError) throw error;
+          throw new WorkflowRequestError(
+            "An approval decision needs an `approved` boolean and an `approver` string",
+          );
         }
 
-        const approver = decision.approver ?? "unknown";
         const resolved = decision.approved
-          ? await client.approve(second, approvalId, approver, decision.comment, decision.data)
-          : await client.reject(second, approvalId, approver, decision.comment, decision.data);
+          ? await client.approve(
+            second,
+            approvalId,
+            decision.approver,
+            decision.comment,
+            decision.data,
+          )
+          : await client.reject(
+            second,
+            approvalId,
+            decision.approver,
+            decision.comment,
+            decision.data,
+          );
 
         return Response.json({ approvalId, approved: decision.approved, result: resolved ?? null });
       }

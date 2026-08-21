@@ -44,6 +44,14 @@ function post(path: string, body?: unknown): Request {
   });
 }
 
+function postRaw(path: string, body: string): Request {
+  return new Request(`http://localhost:3000${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+}
+
 describe("createWorkflowHandler", { sanitizeOps: false, sanitizeResources: false }, () => {
   let client: WorkflowClient;
   let handlers: ReturnType<typeof createWorkflowHandler>;
@@ -222,5 +230,43 @@ describe("createWorkflowHandler", { sanitizeOps: false, sanitizeResources: false
   it("does not answer for a path outside its mount point", async () => {
     const response = await handlers.GET(get("/api/something-else/runs"));
     expect(response.status).toBe(404);
+  });
+
+  it("rejects trailing segments outside the hook route contract", async () => {
+    const started = await handlers.POST(post("/api/workflows/pipeline/start/extra", { input: {} }));
+    expect(started.status).toBe(404);
+
+    const runId = await startRun();
+    const fetched = await handlers.GET(get(`/api/workflows/runs/${runId}/extra`));
+    expect(fetched.status).toBe(404);
+  });
+
+  it("rejects malformed request JSON", async () => {
+    const response = await handlers.POST(postRaw("/api/workflows/pipeline/start", "{"));
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).message).toContain("JSON");
+  });
+
+  it("rejects invalid run-list filters", async () => {
+    const invalidStatus = await handlers.GET(get("/api/workflows/runs?status=not-a-status"));
+    expect(invalidStatus.status).toBe(400);
+
+    const invalidDate = await handlers.GET(get("/api/workflows/runs?createdAfter=not-a-date"));
+    expect(invalidDate.status).toBe(400);
+
+    const invalidLimit = await handlers.GET(get("/api/workflows/runs?limit=1001"));
+    expect(invalidLimit.status).toBe(400);
+  });
+
+  it("rejects an invalid approval decision shape", async () => {
+    const response = await handlers.POST(
+      post("/api/workflows/runs/run-id/approvals/approval-id", {
+        approved: true,
+        approver: 42,
+      }),
+    );
+
+    expect(response.status).toBe(400);
   });
 });
