@@ -3,6 +3,7 @@ import type { ModelRuntime } from "#veryfront/provider";
 import type { AgentConfig, AgentSystem, Message } from "../types.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { filterToolsForSkill, type SkillToolAvailability } from "#veryfront/skill/allowed-tools.ts";
+import { resolveSkillToolDisposition } from "../skill-tool-disposition.ts";
 import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
@@ -162,8 +163,17 @@ export function withIntegrationToolDiscoveryStatus(
     : [...basePrompt, { role: "system", content: statusBlock }];
 }
 
-function shouldIncludeSkillTools(config: AgentConfig): boolean {
-  return config.skills !== false && (!Array.isArray(config.skills) || config.skills.length > 0);
+/**
+ * An agent with a concrete tool map had this decided at construction, where the
+ * skill tools were attached or not. `tools: true` draws from the registry on
+ * every step instead, so the same rule has to be applied here or a bare agent
+ * keeps `load_skill` on one path and loses it on the other.
+ *
+ * Asking per step also means this path picks up skills registered after the
+ * agent was constructed.
+ */
+function shouldIncludeSkillTools(config: AgentConfig, agentId: string | undefined): boolean {
+  return resolveSkillToolDisposition(config, agentId) === "inject";
 }
 
 function getTrustedAllowedSkillIds(
@@ -211,7 +221,7 @@ export async function prepareAgentRuntimeStep(
   let tools = input.supportsToolCalling
     ? await input.getAvailableTools(input.config.tools, {
       callerAgentId: input.agentId,
-      includeSkillTools: shouldIncludeSkillTools(input.config),
+      includeSkillTools: shouldIncludeSkillTools(input.config, input.agentId),
       allowedRemoteToolNames: input.allowedRemoteToolNames,
       forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
       remoteToolSources: input.remoteToolSources,
