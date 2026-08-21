@@ -160,7 +160,7 @@ async function loadModule(args: {
   const fileExistsLocally = await fs.exists(modulePath);
   if (fileExistsLocally) {
     try {
-      return await loadTSModuleDirect(modulePath);
+      return await loadTSModuleDirect(modulePath, await moduleRevision(fs, modulePath));
     } catch (error) {
       // A direct import shares the dev server's runtime context, which is what
       // makes auto-discovery (agentRegistry and friends) work — but it leaves
@@ -207,8 +207,30 @@ export function isSpecifierResolutionError(error: unknown): boolean {
   return SPECIFIER_RESOLUTION_MESSAGE.test(error.message.trimStart());
 }
 
-function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
-  const cacheBuster = `?v=${Date.now()}`;
+/**
+ * Cache key for a route module's current contents.
+ *
+ * Every request loads its route through here, so keying on the clock would mint
+ * a new module per request: module-level state (clients, caches, pools) would
+ * reset between requests in dev while persisting in production, with no error
+ * to show for it. Keying on mtime keeps an edit hot-reloading while letting an
+ * untouched route keep the module it already has.
+ *
+ * A filesystem that cannot report mtime falls back to the clock, which is no
+ * worse than reloading every time.
+ */
+async function moduleRevision(fs: FileSystem, modulePath: string): Promise<string> {
+  try {
+    const { mtime } = await fs.stat(modulePath);
+    if (mtime) return String(mtime.getTime());
+  } catch {
+    // An unstattable path still has to load; fall through to the clock.
+  }
+  return String(Date.now());
+}
+
+function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRoute> {
+  const cacheBuster = `?v=${revision}`;
   const url = modulePath.startsWith("file://")
     ? `${modulePath}${cacheBuster}`
     : `file://${modulePath}${cacheBuster}`;

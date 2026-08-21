@@ -121,6 +121,64 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
+  it("reuses an unchanged route module so module state survives between requests", async () => {
+    // Every request routes through loadHandlerModule. If each load mints a new
+    // module instance, module-level state (clients, caches, pools) silently
+    // resets between requests in dev while persisting in production.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "stateful-handler.ts");
+
+    await fs.writeTextFile(
+      modulePath,
+      `let count = 0;\nexport const GET = () => new Response(String(++count));`,
+    );
+
+    const load = () =>
+      loadHandlerModule({ projectDir: tmpDir, modulePath, adapter, config: undefined });
+
+    const first = await load();
+    const second = await load();
+
+    assertEquals(await (await first?.GET?.(new Request("http://x")))?.text(), "1");
+    assertEquals(
+      await (await second?.GET?.(new Request("http://x")))?.text(),
+      "2",
+      "a second load of an unchanged file must reuse the module, not reset its state",
+    );
+  });
+
+  it("picks up an edited route module instead of serving the cached one", async () => {
+    // The counterpart to reuse: editing a route must still take effect without
+    // restarting the dev server.
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "edited-handler.ts");
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("before");`);
+    const before = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await (await before?.GET?.(new Request("http://x")))?.text(), "before");
+
+    // Move mtime forward so the edit is distinguishable on coarse filesystems.
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("after");`);
+    await Deno.utime(modulePath, new Date(), new Date(Date.now() + 2000));
+
+    const after = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await (await after?.GET?.(new Request("http://x")))?.text(),
+      "after",
+      "an edited route must not keep serving the previously loaded module",
+    );
+  });
+
   it("rejects host loading without an explicit capability before evaluation", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "untrusted-handler.ts");
