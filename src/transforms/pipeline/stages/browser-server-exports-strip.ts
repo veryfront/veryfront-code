@@ -335,6 +335,25 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
     }
   }
 
+  // `import Loader = require("./server")` binds a hook's local name without
+  // being a function or variable declaration. `emptyServerOnlyHooks` has
+  // nothing to stub, so it reports no change and the caller returns the source
+  // untouched -- shipping the server module and its whole graph to the browser,
+  // which is the exact failure this pass exists to prevent. Rejecting is the
+  // same fail-closed answer the shapes above get, and it is louder than a
+  // silent pass-through.
+  //
+  // Reachable only since this pass moved ahead of `compilePlugin`: running
+  // after compile, esbuild had already lowered the alias to a `const` that the
+  // variable-declaration path stubbed.
+  for (const statement of body) {
+    if (statement.type !== "TSImportEqualsDeclaration") continue;
+    const name = nodeName(statement.id);
+    if (name && (locals.has(name) || (statement.isExport === true && isHook(name)))) {
+      unhandled.push(`import ${name} = require(…)`);
+    }
+  }
+
   return { locals, unhandled };
 }
 

@@ -298,6 +298,41 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes((error as Error).message, "getServerData");
     });
 
+    it("fails the build when a hook aliases an import-equals binding", async () => {
+      // Reachable only since this pass moved ahead of compilePlugin. Running
+      // after compile, esbuild had lowered the alias to a `const` the variable
+      // path stubbed; running before it, the declaration is a
+      // TSImportEqualsDeclaration that `emptyServerOnlyHooks` cannot stub, so
+      // without this the source passed through untouched and shipped
+      // `require("./server")` -- and the server graph -- to the browser.
+      const code = `import Loader = require("./server");\nexport { Loader as getServerData };`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "Loader");
+      assertStringIncludes((error as Error).message, "pages/x.tsx");
+    });
+
+    it("fails the build when a hook is itself an exported import-equals", async () => {
+      const code = `export import getServerData = require("./server");`;
+
+      const error = await assertRejects(() => stripServerOnlyExports(code, "pages/x.tsx"));
+
+      assertStringIncludes((error as Error).message, "getServerData");
+    });
+
+    it("still strips when an unrelated import-equals shares the module", async () => {
+      // The rejection is scoped to import-equals bindings a hook resolves to.
+      // An unrelated one must not fail a build the pass can handle.
+      const code =
+        `import Unrelated = require("./other");\nexport async function getServerData() { return { a: 1 }; }\nexport default function Page() { return Unrelated; }`;
+
+      const stripped = await stripServerOnlyExports(code, "pages/x.tsx");
+
+      assertNotIncludes(stripped, "return { a: 1 }");
+      assertStringIncludes(stripped, "Unrelated");
+    });
+
     it("fails the build when an escaped string-literal hook is namespace re-exported", async () => {
       const code = `export * as "get\\u0053erverData" from "./loader.ts";`;
 
