@@ -20,6 +20,9 @@ export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
     "test",
     ...configArgs,
     "--no-check",
+    // Leaks here are load-dependent and do not reproduce on demand, so the
+    // first failure has to carry the stack rather than advise a rerun.
+    "--trace-leaks",
     "--allow-all",
     PROVIDER_EGRESS_DENY_NET,
     "--unstable-worker-options",
