@@ -27,11 +27,19 @@ import { generate } from "veryfront/llm";
 import { defineSchema } from "veryfront/schemas";
 
 const { object } = await generate({
-  input: "Berlin is 12 degrees today.",
-  outputSchema: defineSchema((v) => v.object({ city: v.string(), tempC: v.number() }))(),
+  input: "The checkout button does nothing on mobile Safari.",
+  system: "Classify the support ticket.",
+  outputSchema: defineSchema((v) =>
+    v.object({
+      category: v.enum(["bug", "billing", "feature"] as const),
+      reasoning: v.string(),
+      confidence: v.number().min(0).max(100),
+    })
+  )(),
 });
 
-object.city; // string
+object.category; // "bug" | "billing" | "feature"
+object.confidence; // number, 0-100
 ```
 
 ### Choosing a model
@@ -52,10 +60,10 @@ const { text } = await generate({
 
 | Name       | Description                                                   | Source                                                                               |
 | ---------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `generate` | Run a single model call without registering a reusable agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts#L71) |
+| `generate` | Run a single model call without registering a reusable agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts#L77) |
 
 ### Types
 
 | Name            | Description                     | Source                                                                               |
 | --------------- | ------------------------------- | ------------------------------------------------------------------------------------ |
-| `GenerateInput` | Request accepted by `generate`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts#L50) |
+| `GenerateInput` | Request accepted by `generate`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts#L56) |
