@@ -28,8 +28,16 @@ import { executeAppRoute } from "../route-executor.ts";
 import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import type { APIRoute, AppRouteContext, AppRouteHandler } from "./types.ts";
 
 const fs = createFileSystem();
+const appRouteContext: AppRouteContext = { params: {}, env: {} };
+
+async function getText(route: APIRoute | null): Promise<string | undefined> {
+  const handler = route?.GET as AppRouteHandler | undefined;
+  const response = await handler?.(new Request("http://x"), appRouteContext);
+  return await response?.text();
+}
 
 function loadHandlerModule(options: LoadModuleOptions) {
   return loadHandlerModuleRaw({
@@ -139,9 +147,9 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     const first = await load();
     const second = await load();
 
-    assertEquals(await (await first?.GET?.(new Request("http://x")))?.text(), "1");
+    assertEquals(await getText(first), "1");
     assertEquals(
-      await (await second?.GET?.(new Request("http://x")))?.text(),
+      await getText(second),
       "2",
       "a second load of an unchanged file must reuse the module, not reset its state",
     );
@@ -160,7 +168,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       adapter,
       config: undefined,
     });
-    assertEquals(await (await before?.GET?.(new Request("http://x")))?.text(), "before");
+    assertEquals(await getText(before), "before");
 
     // Move mtime forward so the edit is distinguishable on coarse filesystems.
     await fs.writeTextFile(modulePath, `export const GET = () => new Response("after");`);
@@ -173,9 +181,41 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       config: undefined,
     });
     assertEquals(
-      await (await after?.GET?.(new Request("http://x")))?.text(),
+      await getText(after),
       "after",
       "an edited route must not keep serving the previously loaded module",
+    );
+  });
+
+  it("picks up same-size edits when the route mtime does not change", async () => {
+    const tmpDir = await makeTempDir();
+    const modulePath = join(tmpDir, "same-mtime-handler.ts");
+    const observableTime = new Date(1_700_000_000_000);
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("one");`);
+    await Deno.utime(modulePath, observableTime, observableTime);
+
+    const before = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(await getText(before), "one");
+
+    await fs.writeTextFile(modulePath, `export const GET = () => new Response("two");`);
+    await Deno.utime(modulePath, observableTime, observableTime);
+
+    const after = await loadHandlerModule({
+      projectDir: tmpDir,
+      modulePath,
+      adapter,
+      config: undefined,
+    });
+    assertEquals(
+      await getText(after),
+      "two",
+      "same-size edits with the same observable mtime must still reload",
     );
   });
 
@@ -211,9 +251,9 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     const first = await load();
     const second = await load();
 
-    assertEquals(await (await first?.GET?.(new Request("http://x")))?.text(), "1");
+    assertEquals(await getText(first), "1");
     assertEquals(
-      await (await second?.GET?.(new Request("http://x")))?.text(),
+      await getText(second),
       "2",
       "a bundled route must reuse its module when the generated source is unchanged",
     );
@@ -240,7 +280,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
 
     const before = await loadHandlerModule({ projectDir, modulePath, adapter, config });
-    assertEquals(await (await before?.GET?.(new Request("http://x")))?.text(), "before");
+    assertEquals(await getText(before), "before");
 
     await fs.writeTextFile(
       join(projectDir, "pages", "api", "value.ts"),
@@ -249,7 +289,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 
     const after = await loadHandlerModule({ projectDir, modulePath, adapter, config });
     assertEquals(
-      await (await after?.GET?.(new Request("http://x")))?.text(),
+      await getText(after),
       "after",
       "a bundled route must not keep serving a stale module after its source changes",
     );
