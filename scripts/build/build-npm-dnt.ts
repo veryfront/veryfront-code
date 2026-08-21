@@ -32,6 +32,7 @@ import {
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { assertNpmRuntimeHelperContract } from "./npm-runtime-helper-contract.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
+import { normalizeNpmJsxReactBinding } from "./npm-jsx-react-binding.ts";
 import { NPM_NODE_ENGINE } from "./runtime-support.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
@@ -198,6 +199,18 @@ await build({
 
 	// Post-build steps
 	async postBuild() {
+		// Before anything else reads the emit: dnt lowers JSX to the classic
+		// `React.createElement`, which this repo's sources are not written for.
+		// See npm-jsx-react-binding.ts.
+		const jsxPatched = await normalizeNpmJsxReactBinding("./npm/esm");
+		if (jsxPatched.length > 0) {
+			console.log(
+				`Gave ${jsxPatched.length} emitted module(s) a React binding:\n  ${
+					jsxPatched.join("\n  ")
+				}`,
+			);
+		}
+
 		await assertNpmRuntimeHelperContract("./npm/esm", PUBLISHED_RUNTIME_HELPERS);
 
 		const pkgPath = "./npm/package.json";

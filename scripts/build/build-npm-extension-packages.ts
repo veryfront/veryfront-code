@@ -5,6 +5,7 @@ import {
   patchDntCryptoShim,
   patchDntDenoShim,
 } from "./dnt-polyfill.ts";
+import { normalizeNpmJsxReactBinding } from "./npm-jsx-react-binding.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpecs,
@@ -80,6 +81,10 @@ async function buildExtensionPackage(
       mappings: spec.dntMappings,
       package: spec.packageJson,
       async postBuild() {
+        // Extension packages get the same classic JSX lowering as the root
+        // package. See npm-jsx-react-binding.ts.
+        await normalizeNpmJsxReactBinding(`${outDir}/esm`);
+
         const pkgPath = `${outDir}/package.json`;
         const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
         normalizeExtensionPackageJson({
