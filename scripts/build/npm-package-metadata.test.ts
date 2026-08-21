@@ -879,12 +879,17 @@ describe("npm supply-chain policy", () => {
   });
 
   it("uses native Node timers so root imports can release background intervals", async () => {
-    const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+    const rootSource = await Deno.readTextFile(
+      "scripts/build/build-npm-dnt.ts",
+    );
+    const extensionSource = await Deno.readTextFile(
+      "scripts/build/build-npm-extension-packages.ts",
+    );
 
-    assertStringIncludes(source, "timers: false");
-    assertEquals(source.includes("timers: true"), false);
-    assertStringIncludes(source, 'VF_DISABLE_LRU_INTERVAL: "0"');
-    assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
+    assertEquals(rootSource.includes("timers:"), false);
+    assertEquals(extensionSource.includes("timers:"), false);
+    assertStringIncludes(rootSource, 'VF_DISABLE_LRU_INTERVAL: "0"');
+    assertStringIncludes(rootSource, "await verifyNpmRootImportLifecycle();");
   });
 
   it("exercises the root-bundled MLflow exporter in the npm lifecycle probe", async () => {

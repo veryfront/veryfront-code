@@ -5,6 +5,7 @@ import {
   patchDntCryptoShim,
   patchDntDenoShim,
 } from "./dnt-polyfill.ts";
+import { NPM_DNT_COMPILER_OPTIONS } from "./dnt-compiler-options.ts";
 import {
   bareImportPackageNames,
   createExtensionPackageSpecs,
@@ -65,18 +66,14 @@ async function buildExtensionPackage(
       outDir,
       test: false,
       scriptModule: false,
+      declarationMap: true,
       typeCheck: false,
       skipNpmInstall: true,
       shims: {
         deno: true,
-        timers: true,
         crypto: true,
       },
-      compilerOptions: {
-        lib: ["ES2022", "DOM", "DOM.Iterable"],
-        target: "ES2022",
-        skipLibCheck: true,
-      },
+      compilerOptions: NPM_DNT_COMPILER_OPTIONS,
       mappings: spec.dntMappings,
       package: spec.packageJson,
       async postBuild() {
