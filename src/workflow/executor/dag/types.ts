@@ -61,7 +61,7 @@ export interface DAGExecutorConfig {
    *
    * `currentNodes` names the top-level nodes the run is occupied with at that
    * boundary: the whole batch as it enters, and only the nodes still running
-   * (a parked wait, or a composite enclosing one) once it settles.
+   * (a parked wait, or a composite enclosing one) or failed once it settles.
    */
   onNodeStatesChanged?: (input: {
     runId: string;
