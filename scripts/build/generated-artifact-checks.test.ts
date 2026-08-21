@@ -18,7 +18,11 @@
  * chain, so a unit added without a `--check` counterpart still fails here.
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { UNITS } from "./run-generate.ts";
 
@@ -69,6 +73,14 @@ for (const unit of UNITS) {
 const checks = scriptInvocations(expandTask("generate:manifests:check"));
 
 describe("generated artifact checks", () => {
+  it("runs before source typechecking", () => {
+    assertStringIncludes(
+      String(tasks.typecheck),
+      "deno task generate:manifests:check && deno check",
+      "typecheck must fail on stale generated artifacts before source checking starts",
+    );
+  });
+
   it("runs at least one generator", () => {
     // Guards against a parsing change quietly emptying both sides and making
     // every assertion below vacuous.
@@ -120,5 +132,38 @@ describe("generated artifact checks", () => {
       [],
       `checked but never generated: ${orphaned.join(", ")}`,
     );
+  });
+
+  it("fails on compressed template manifest drift without rewriting it", async () => {
+    const path = new URL("../../templates/manifest.generated.ts", import.meta.url);
+    const original = await Deno.readTextFile(path);
+    const drifted = original.replace(
+      "COMPRESSED_TEMPLATE_MANIFEST_BASE64",
+      "DRIFTED_TEMPLATE_MANIFEST_BASE64",
+    );
+    assert(drifted !== original, "test fixture must alter the generated manifest");
+
+    await Deno.writeTextFile(path, drifted);
+    try {
+      const result = await new Deno.Command("bash", {
+        args: [
+          "-lc",
+          "deno run -A scripts/build/generate-templates-manifest.ts --check",
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assert(result.code !== 0, "manifest drift must fail the freshness check");
+      const stderr = new TextDecoder().decode(result.stderr);
+      assertStringIncludes(stderr, "templates/manifest.generated.ts is stale");
+      assertEquals(
+        await Deno.readTextFile(path),
+        drifted,
+        "the freshness check must not rewrite the committed manifest",
+      );
+    } finally {
+      await Deno.writeTextFile(path, original);
+    }
   });
 });

@@ -675,6 +675,15 @@ describe("setup-deno CI contract", () => {
     );
     assert(redisWarm && dependencyWarm, "both warm-cache steps must exist");
 
+    const templateManifestGenerator = steps.find((step) =>
+      String(step.run ?? "").includes("generate-templates-manifest.ts")
+    );
+    assertEquals(
+      templateManifestGenerator,
+      undefined,
+      "setup-deno must not regenerate committed template manifests before CI checks drift",
+    );
+
     for (
       const [name, step, deadline, expectedCondition] of [
         [
