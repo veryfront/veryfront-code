@@ -164,6 +164,14 @@ export class WorkflowExecutor {
           { nodeStates },
           ownership?.workerId,
         ),
+      onNodeStatesChanged: ({ runId, nodeStates, ownership }) =>
+        updateRunIfStatus(
+          this.config.backend,
+          runId,
+          ["running"],
+          { nodeStates },
+          ownership?.workerId,
+        ),
     });
 
     const bs = this.config.blobStorage;

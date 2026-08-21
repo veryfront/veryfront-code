@@ -56,6 +56,12 @@ export interface DAGExecutorConfig {
     nodeStates: Record<string, NodeState>;
     ownership?: CheckpointOwnership;
   }) => Promise<boolean | void> | boolean | void;
+  /** Persist one root-run node-state boundary before execution can advance. */
+  onNodeStatesChanged?: (input: {
+    runId: string;
+    nodeStates: Record<string, NodeState>;
+    ownership?: CheckpointOwnership;
+  }) => Promise<boolean | void> | boolean | void;
   /** Max milliseconds to wait for an aborted composite attempt to settle (default: 1000) */
   cancellationGracePeriod?: number;
   debug?: boolean;

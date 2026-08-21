@@ -1402,6 +1402,70 @@ describe("DAGExecutor", () => {
     });
   });
 
+  describe("durable node-state boundaries", () => {
+    it("publishes root nodes as running before side effects and settled afterward", async () => {
+      const observations: Array<Record<string, NodeState>> = [];
+      const executed: string[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        const latest = observations.at(-1);
+        assertExists(latest);
+        assertEquals(latest.outer?.status, "running");
+        executed.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({
+        stepExecutor: trackingExecutor,
+        onNodeStatesChanged: ({ nodeStates }) => {
+          observations.push(structuredClone(nodeStates));
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "outer",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [{ id: "inner", dependsOn: [], config: { type: "step" } }],
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(executed, ["inner"]);
+      assertEquals(observations.length, 2);
+      assertEquals(Object.keys(observations[0]!).sort(), ["outer"]);
+      assertEquals(Object.keys(observations[1]!).sort(), ["inner", "outer"]);
+      assertEquals(observations[0]!.outer?.status, "running");
+      assertEquals(observations[1]!.outer?.status, "completed");
+      assertEquals(observations[1]!.outer?.attempt, observations[0]!.outer?.attempt);
+      assertEquals(observations[1]!.outer?.startedAt, observations[0]!.outer?.startedAt);
+    });
+
+    it("does not execute a side effect when the running boundary loses ownership", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onNodeStatesChanged: () => false,
+      });
+
+      await assertRejects(
+        () =>
+          exec.execute(
+            [{ id: "side-effect", dependsOn: [], config: { type: "step" } as any }],
+            createTestRun(),
+          ),
+        Error,
+        "execution ownership changed",
+      );
+      assertEquals(executed, []);
+    });
+  });
+
   describe("recovery from a worker that died mid-node", () => {
     it("re-runs a step left in running state, rather than stranding it", async () => {
       const executed: string[] = [];

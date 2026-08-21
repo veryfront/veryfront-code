@@ -132,6 +132,25 @@ class FailingOwnerHeartbeatBackend extends MemoryBackend {
   }
 }
 
+class RejectingNodeStateBoundaryBackend extends MemoryBackend {
+  override updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: Partial<WorkflowRun>,
+  ): Promise<boolean> {
+    if (patch.nodeStates !== undefined && patch.status === undefined) {
+      return Promise.resolve(false);
+    }
+    return super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+  }
+}
+
 class CancelOnLockHandoffBackend extends MemoryBackend {
   override async releaseLock(runId: string, lockId?: string): Promise<void> {
     await super.releaseLock(runId, lockId);
@@ -332,6 +351,39 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(persisted.status, "running");
     assertEquals(persisted.workerId, "run-execution:new-owner");
     assertEquals(persisted.output, undefined);
+  });
+
+  it("does not execute a step when its running boundary loses ownership", async () => {
+    const backend = new RejectingNodeStateBoundaryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let executions = 0;
+    executor.register(
+      workflow({
+        id: "owner-fenced-node-start",
+        steps: [
+          step("side-effect", {
+            tool: createTool("side-effect", () => {
+              executions++;
+              return { stale: true };
+            }),
+          }),
+        ],
+      }).definition,
+    );
+    const run = {
+      ...createRun("owner-fenced-node-start"),
+      status: "running" as const,
+      workerId: "run-execution:old-owner",
+    };
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.resume(run.id, undefined, run.workerId),
+      Error,
+      "execution ownership changed",
+    );
+
+    assertEquals(executions, 0);
   });
 
   it("does not save a checkpoint after worker ownership changes", async () => {
