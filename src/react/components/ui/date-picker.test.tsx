@@ -18,9 +18,9 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { DatePicker, DatePickerContent, DatePickerTrigger } from "./date-picker.tsx";
 
-import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 // ---------------------------------------------------------------------------
 // jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) that Popover's Floating needs.

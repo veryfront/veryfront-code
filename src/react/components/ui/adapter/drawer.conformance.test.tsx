@@ -13,12 +13,12 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { Drawer, DrawerClose, DrawerContent, DrawerTitle, DrawerTrigger } from "../drawer.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import { Slot } from "../slot.tsx";
 import type { DrawerParts } from "./contract.ts";
 
-import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 function installDom(dom: JSDOM): () => void {
   return installComponentDom(dom);
 }

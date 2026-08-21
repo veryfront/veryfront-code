@@ -11,10 +11,10 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 
 import { Field, FieldControl, FieldDescription, FieldError, FieldLabel } from "./field.tsx";
 
-import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 // ---------------------------------------------------------------------------
 // jsdom harness (from conformance.test.tsx) - fresh DOM per render, with the
 // browser-API stubs effect-driven components expect.
