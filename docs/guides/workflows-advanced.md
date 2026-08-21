@@ -201,8 +201,9 @@ The same boundaries keep `currentNodes` on the run current. While a run is
 `running` it names the batch in flight, so a run that stops making progress
 shows which step it is on from its persisted state alone. While the run is
 `waiting` it names the node the run is parked on, which can be a child of a
-composite. It is empty once the run completes. A failed or cancelled run keeps
-the last recorded value, so it still names the step it was on.
+composite. It is empty once the run completes. A failed run names the node it
+failed on, and a cancelled run keeps the last recorded value, so both still name
+the step the run was on.
 
 A terminal snapshot closes immediately. A terminal `run.status` frame is the last
 transition frame. Cancelling the response or aborting the request releases the

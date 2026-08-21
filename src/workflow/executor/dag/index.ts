@@ -381,11 +381,16 @@ export class DAGExecutor {
       }
 
       if (isDurableRun) {
-        // A settled node is no longer current. One still recorded running is
-        // parked (a wait, or a composite enclosing one) and stays current so a
-        // paused run names what it is parked on.
-        const stillRunning = batch.filter((nodeId) => nodeStates[nodeId]?.status === "running");
-        await this.publishNodeStates(scope, nodeStates, context, stillRunning);
+        // A node that completed or was skipped is no longer current. One still
+        // recorded running is parked (a wait, or a composite enclosing one) and
+        // stays current so a paused run names what it is parked on. A failed
+        // node stays current too: the run is about to fail on it, and the
+        // terminal record must still name where it stopped.
+        const stillCurrent = batch.filter((nodeId) => {
+          const status = nodeStates[nodeId]?.status;
+          return status === "running" || status === "failed";
+        });
+        await this.publishNodeStates(scope, nodeStates, context, stillCurrent);
         abortSignal?.throwIfAborted();
       }
       for (const nodeId of checkpointNodes) {

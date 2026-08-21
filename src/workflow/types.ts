@@ -364,9 +364,9 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   /**
    * Nodes the run is occupied with right now: the top-level batch it is
    * executing while `running`, the node it is parked on while `waiting` (which
-   * can be a child of a composite), and empty once it completes. A failed or
-   * cancelled run keeps the last recorded value, so it still names the step it
-   * was on.
+   * can be a child of a composite), and empty once it completes. A failed run
+   * names the node it failed on, and a cancelled run keeps the last recorded
+   * value, so both still name the step the run was on.
    */
   currentNodes: string[];
   context: WorkflowContext;

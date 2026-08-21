@@ -767,6 +767,35 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(completed?.currentNodes, []);
   });
 
+  it("names the failed step in currentNodes when a step error fails the run", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "current-nodes-on-failure",
+        steps: [
+          step("prepare", { tool: createTool("prepare", () => ({ ready: true })) }),
+          dependsOn(
+            step("boom", {
+              tool: createTool("boom", () => {
+                throw new Error("step exploded");
+              }),
+            }),
+            "prepare",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("current-nodes-on-failure", {});
+    await handle.settled();
+    const failed = await backend.getRun(handle.runId);
+    assertEquals(failed?.status, "failed");
+    assertEquals(failed?.nodeStates.prepare?.status, "completed");
+    assertEquals(failed?.nodeStates.boom?.status, "failed");
+    assertEquals(failed?.currentNodes, ["boom"]);
+  });
+
   it("clears currentNodes when a run resumed from its final wait completes", async () => {
     const backend = new MemoryBackend();
     const approvalId = "approval-final-wait";
