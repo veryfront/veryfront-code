@@ -239,17 +239,23 @@ describe("provider/veryfront-cloud", () => {
         "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
       ],
     );
+    // gpt-5.4 and gpt-5.5 are reasoning-capable, so they carry the documented
+    // default effort. This used to arrive as undefined, but only because the
+    // agent was never genuinely tool-less: three skill tools were injected into
+    // every agent, and a bare agent could not reach the tool-less path at all.
     assertEquals(
       capturedRequests.map(({ body }) => body.reasoning_effort),
-      [undefined, undefined],
+      ["medium", "medium"],
     );
+    // An agent that declares no skills, in a project with none, no longer
+    // advertises a tool that could only answer "no such skill".
     assertEquals(
       capturedRequests.map(({ body }) =>
         (body.tools as Array<{ function?: { name?: string } }> | undefined)?.some(
           (tool) => tool.function?.name === "load_skill",
         )
       ),
-      [true, true],
+      [undefined, undefined],
     );
     assertEquals(
       capturedRequests.map(({ body }) => ({
