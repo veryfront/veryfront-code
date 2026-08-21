@@ -252,6 +252,51 @@ function isProviderBillingMessage(normalizedMessage: string): boolean {
   return mentionsProviderApi && mentionsProviderCredits && mentionsProviderBilling;
 }
 
+/**
+ * Google's canonical `google.rpc.Code` for a request the API rejected as
+ * malformed. Its envelope is `{error:{code,status,message}}` and carries no
+ * `type` at all, so without this the whole curated mapping below -- billing,
+ * assistant prefill, output schema, context length -- is unreachable for
+ * Google, and every one of its 400s reports as a generic service error
+ * whatever actually went wrong.
+ *
+ * Mirrored by the preservation criteria in
+ * `src/provider/runtime-loader/provider-http.ts`, which decides whether the
+ * body reaches this function at all.
+ */
+const GOOGLE_INVALID_ARGUMENT_STATUS = "INVALID_ARGUMENT";
+
+/** Whether an error record says the request itself was rejected as invalid. */
+function isInvalidRequestEnvelope(body: Record<string, unknown>): boolean {
+  return body.type === "invalid_request_error" ||
+    body.status === GOOGLE_INVALID_ARGUMENT_STATUS;
+}
+
+/**
+ * Maps the wording of a rejected request onto a curated error.
+ *
+ * Shared by every envelope that carries that meaning, whichever key it uses to
+ * say so, so a provider is reachable by all of these mappings or none of them
+ * -- never the per-mapping patchwork that made the same rejection legible from
+ * Anthropic and opaque from Google.
+ */
+function classifyInvalidRequestMessage(message: string): ParsedProviderError | null {
+  const normalizedMessage = message.toLowerCase();
+  if (isProviderBillingMessage(normalizedMessage)) {
+    return AI_PROVIDER_BILLING_ERROR;
+  }
+  if (isAssistantPrefillUnsupportedMessage(message)) {
+    return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+  }
+  if (isOpenObjectSchemaRejection(message)) {
+    return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
+  }
+  if (normalizedMessage.includes("too long")) {
+    return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+  }
+  return null;
+}
+
 function parseKnownProviderBody(
   body: unknown,
   seen: WeakSet<object> = new WeakSet(),
@@ -310,19 +355,10 @@ function parseKnownProviderBody(
     };
   }
 
-  if (body.type === "invalid_request_error" && typeof body.message === "string") {
-    const normalizedMessage = body.message.toLowerCase();
-    if (isProviderBillingMessage(normalizedMessage)) {
-      return AI_PROVIDER_BILLING_ERROR;
-    }
-    if (isAssistantPrefillUnsupportedMessage(body.message)) {
-      return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
-    }
-    if (isOpenObjectSchemaRejection(body.message)) {
-      return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
-    }
-    if (normalizedMessage.includes("too long")) {
-      return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+  if (typeof body.message === "string" && isInvalidRequestEnvelope(body)) {
+    const classified = classifyInvalidRequestMessage(body.message);
+    if (classified) {
+      return classified;
     }
   }
 
