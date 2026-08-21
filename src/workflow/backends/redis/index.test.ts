@@ -787,6 +787,31 @@ describe("RedisBackend", () => {
       });
     });
 
+    it("fails an observation when another backend deletes the run", async () => {
+      const run = createTestRun("run-observed-delete");
+      await backend.createRun(run);
+      const controller = new AbortController();
+      const observation = await backend.openRunObservation(run.id, {
+        signal: controller.signal,
+      });
+      assertExists(observation);
+      const writer = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      await writer.deleteRun(run.id);
+
+      const timeoutId = setTimeout(() => controller.abort(), 100);
+      let error: unknown;
+      try {
+        await observation.changes[Symbol.asyncIterator]().next();
+      } catch (cause) {
+        error = cause;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      assertExists(error);
+      assertEquals((error as Error).message, "Workflow run observation failed");
+    });
+
     it("stores new runs in a schema-versioned custom-prefix namespace", async () => {
       await backend.createRun(createTestRun("run-versioned-namespace"));
 

@@ -1443,6 +1443,96 @@ describe("DAGExecutor", () => {
       assertEquals(observations[1]!.outer?.startedAt, observations[0]!.outer?.startedAt);
     });
 
+    it("publishes completed node state with the context produced by that node", async () => {
+      const boundaries: Array<{
+        nodeStates: Record<string, NodeState>;
+        context?: WorkflowContext;
+      }> = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(
+          new Map([
+            ["first", { success: true, output: "first-output" }],
+            ["second", { success: true, output: "second-output" }],
+          ]),
+        ),
+        onNodeStatesChanged: (input) => {
+          boundaries.push(structuredClone(input));
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: { type: "step" } as any },
+        { id: "second", dependsOn: ["first"], config: { type: "step" } as any },
+      ];
+
+      await exec.execute(nodes, createTestRun());
+
+      const firstSettled = boundaries.find((boundary) =>
+        boundary.nodeStates.first?.status === "completed" &&
+        boundary.nodeStates.second === undefined
+      );
+      assertExists(firstSettled);
+      assertEquals(firstSettled.context?.first, "first-output");
+      const secondRunning = boundaries.find((boundary) =>
+        boundary.nodeStates.second?.status === "running"
+      );
+      assertEquals(secondRunning?.context?.first, "first-output");
+    });
+
+    it("resumes dependents from a completed boundary with its matching context", async () => {
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: { type: "step" } as any },
+        { id: "second", dependsOn: ["first"], config: { type: "step" } as any },
+      ];
+      let persisted: {
+        nodeStates: Record<string, NodeState>;
+        context: WorkflowContext;
+      } | undefined;
+      let firstExecutions = 0;
+      const crashing = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          if (node.id === "first") firstExecutions++;
+          return { success: true, output: `${node.id}-output`, executionTime: 1 };
+        }),
+        onNodeStatesChanged: (input) => {
+          if (
+            input.nodeStates.first?.status === "completed" &&
+            input.nodeStates.second === undefined
+          ) {
+            persisted = structuredClone(input);
+            throw new Error("simulated worker crash after durable boundary");
+          }
+        },
+      });
+
+      await assertRejects(
+        () => crashing.execute(nodes, createTestRun()),
+        Error,
+        "simulated worker crash",
+      );
+      assertExists(persisted);
+      assertEquals(persisted.context.first, "first-output");
+
+      let secondInput: unknown;
+      const resumed = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node, context) => {
+          if (node.id === "first") firstExecutions++;
+          if (node.id === "second") secondInput = context.first;
+          return { success: true, output: `${node.id}-output`, executionTime: 1 };
+        }),
+      });
+      const result = await resumed.execute(
+        nodes,
+        createTestRun({
+          nodeStates: persisted.nodeStates,
+          context: persisted.context,
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(firstExecutions, 1);
+      assertEquals(secondInput, "first-output");
+    });
+
     it("does not execute a side effect when the running boundary loses ownership", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({

@@ -1359,6 +1359,7 @@ export class RedisBackend implements WorkflowBackend {
     options.signal?.addEventListener("abort", close, { once: true });
     if (options.signal?.aborted) close();
 
+    const runKey = this.runKey(runId);
     const streamKey = this.runObservationKey(runId);
     const changes: AsyncIterable<WorkflowRunObservedState> = {
       [Symbol.asyncIterator]: async function* () {
@@ -1380,6 +1381,13 @@ export class RedisBackend implements WorkflowBackend {
             }
             const messages = streams[0]?.messages ?? [];
             if (messages.length === 0) {
+              try {
+                if (await client.exists(runKey) === 0) {
+                  throw new Error("Workflow run observation failed");
+                }
+              } catch {
+                throw new Error("Workflow run observation failed");
+              }
               await waitForObservationPoll(controller.signal);
               continue;
             }

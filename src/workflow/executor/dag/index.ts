@@ -260,7 +260,7 @@ export class DAGExecutor {
         nodeStates[nodeId] = runningState;
       }
       if (isDurableRun) {
-        await this.publishNodeStates(scope, nodeStates);
+        await this.publishNodeStates(scope, nodeStates, context);
         abortSignal?.throwIfAborted();
       }
 
@@ -381,7 +381,7 @@ export class DAGExecutor {
       }
 
       if (isDurableRun) {
-        await this.publishNodeStates(scope, nodeStates);
+        await this.publishNodeStates(scope, nodeStates, context);
         abortSignal?.throwIfAborted();
       }
       for (const nodeId of checkpointNodes) {
@@ -436,10 +436,12 @@ export class DAGExecutor {
   private async publishNodeStates(
     scope: ExecutionScope,
     nodeStates: Record<string, NodeState>,
+    context: WorkflowContext,
   ): Promise<void> {
     const published = await this.config.onNodeStatesChanged?.({
       runId: scope.rootRunId,
       nodeStates: structuredClone(nodeStates),
+      context: structuredClone(context),
       ownership: scope.ownership,
     });
     if (published === false) {

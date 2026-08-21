@@ -126,12 +126,72 @@ The handler covers every path the hooks call:
 | `POST`        | `/{workflowId}/start`                  | `useWorkflowStart` |
 | `GET`         | `/runs`                                | `useWorkflowList`  |
 | `GET`         | `/runs/{runId}`                        | `useWorkflow`      |
+| `GET`         | `/runs/{runId}/events`                 | SSE clients        |
 | `POST`        | `/runs/{runId}/cancel`                 | `useWorkflow`      |
 | `POST`        | `/runs/{runId}/retry`                  | `useWorkflow`      |
 | `GET`, `POST` | `/runs/{runId}/approvals/{approvalId}` | `useApproval`      |
 
 Mounting somewhere else means telling both sides. Pass `basePath` to the handler
 and the matching `apiBase` to every hook.
+
+### Stream run events
+
+Use the SSE route when a dashboard, operator, or CI client needs durable progress
+without polling the run endpoint:
+
+```ts
+export function observeWorkflowRun(runId: string): EventSource {
+  const events = new EventSource(`/api/workflows/runs/${runId}/events`);
+
+  events.addEventListener("snapshot", (message) => {
+    const run = JSON.parse((message as MessageEvent).data);
+    console.log(run.status, run.nodeStates);
+  });
+
+  for (
+    const name of [
+      "step.started",
+      "step.completed",
+      "step.failed",
+      "step.skipped",
+      "run.status",
+    ]
+  ) {
+    events.addEventListener(name, (message) => {
+      console.log(name, JSON.parse((message as MessageEvent).data));
+    });
+  }
+
+  return events;
+}
+```
+
+The first frame is always `snapshot`. It uses the same public run projection as
+`GET /runs/{runId}`. Later frames use these shapes:
+
+| Event            | Data                                                                |
+| ---------------- | ------------------------------------------------------------------- |
+| `step.started`   | `{ runId, nodeId, attempt }`                                        |
+| `step.completed` | `{ runId, nodeId, attempt }`                                        |
+| `step.failed`    | `{ runId, nodeId, attempt, error? }`                                |
+| `step.skipped`   | `{ runId, nodeId }`                                                 |
+| `run.status`     | `{ runId, status, error? }`                                         |
+| `error`          | `{ code: "workflow_observation_failed", message, retryable: true }` |
+
+Top-level sequential nodes persist `running` before their side effect starts and
+persist their settled state before dependents execute. Parallel nodes start as a
+batch and settle after the batch joins. Top-level composites report their own
+boundaries; synthetic child graphs do not replace the durable root state.
+
+A terminal snapshot closes immediately. A terminal `run.status` frame is the last
+transition frame. Cancelling the response or aborting the request releases the
+backend observation. An observation failure sends the sanitized `error` frame and
+then closes.
+
+A new connection receives a fresh snapshot and future transitions. It does not
+replay transitions that are already represented by that snapshot. A missing run
+returns 404. A custom backend that does not implement atomic run observation
+returns 501.
 
 ## Verify it worked
 

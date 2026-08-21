@@ -1,11 +1,10 @@
 /**
- * HTTP surface for the workflow React hooks.
+ * HTTP surface for workflow React hooks and run-event clients.
  *
  * `useWorkflow`, `useWorkflowStart`, `useWorkflowList` and `useApproval` all
  * call a fixed set of paths under their `apiBase` (default `/api/workflows`).
- * Those hooks are the specification for this module: every route below exists
- * because a hook calls it, and every response shape below is the one its caller
- * parses.
+ * Those clients are the specification for this module. Every response shape
+ * below is the one its caller parses.
  *
  * @module workflow/http
  *
@@ -313,6 +312,12 @@ function runEventStream(
  * Pass the same client the rest of the app starts workflows with. A client
  * created here instead would carry its own in-memory backend and would not see
  * those runs.
+ *
+ * `GET {basePath}/runs/{runId}/events` returns a Server-Sent Events stream. It
+ * sends the current public run as `snapshot`, followed by persisted step and
+ * run-status events, and closes on a terminal run. Missing runs return 404.
+ * Custom backends without atomic run observation return 501. Observation
+ * failures send one sanitized `error` event with `retryable: true`, then close.
  */
 export function createWorkflowHandler(
   client: WorkflowClient,
