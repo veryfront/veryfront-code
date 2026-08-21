@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { jiraConfig } from "./atlassian.ts";
@@ -21,9 +22,8 @@ async function captureExchange(
     [config.clientSecretEnvVar]: "client-secret",
   };
   const provider = new OAuthProvider(config, (key) => credentials[key]);
-  const original = globalThis.fetch;
   let captured: CapturedTokenRequest | undefined;
-  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+  const stub = ((input: string | URL | Request, init?: RequestInit) => {
     captured = {
       url: input instanceof Request ? input.url : String(input),
       headers: new Headers(init?.headers),
@@ -32,16 +32,14 @@ async function captureExchange(
     return Promise.resolve(Response.json(responseBody));
   }) as typeof fetch;
 
-  try {
+  return await withMockFetch(stub, async () => {
     const result = await provider.exchangeCode({
       code: "authorization-code",
       redirectUri: "https://app.test/oauth/callback",
     });
     assert(captured, "expected a token request");
     return { request: captured, result };
-  } finally {
-    globalThis.fetch = original;
-  }
+  });
 }
 
 describe("built-in OAuth provider wire contracts", () => {

@@ -32,16 +32,9 @@ it("createRuntimeAgentFromMarkdownDefinition binds scoped delegate tools", () =>
   });
 
   const tools = runtimeAgent.config.tools as Record<string, unknown> | undefined;
-  assertEquals(
-    Object.keys(tools ?? {}).sort(),
-    [
-      "agent_researcher",
-      "agent_writer",
-      "execute_skill_script",
-      "load_skill",
-      "load_skill_reference",
-    ],
-  );
+  // Delegates only: no skills are registered, so the skill tools are not
+  // attached to an agent that never declared any.
+  assertEquals(Object.keys(tools ?? {}).sort(), ["agent_researcher", "agent_writer"]);
   assertEquals(runtimeAgent.config.delegates, ["writer", "researcher"]);
 });
 

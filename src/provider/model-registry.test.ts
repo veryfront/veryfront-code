@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -61,10 +62,8 @@ function testRuntime(provider: string, modelId: string): ModelRuntime {
 }
 
 describe("provider/model-registry", () => {
-  const originalFetch = globalThis.fetch;
-
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     clearModelRegistryEnv();
     clearModelProviders();
   });
@@ -404,20 +403,22 @@ describe("provider/model-registry", () => {
     setEnv("GOOGLE_GEMINI_BASE_URL", "https://example.com/gemini/v1beta");
     let requestedUrl = "";
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      const request = new Request(input, init);
-      requestedUrl = request.url;
-      return new Response(
-        JSON.stringify({
-          candidates: [{
-            content: { role: "model", parts: [{ text: "ok" }] },
-            finishReason: "STOP",
-          }],
-          usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 1, totalTokenCount: 3 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }) as typeof fetch;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requestedUrl = request.url;
+        return new Response(
+          JSON.stringify({
+            candidates: [{
+              content: { role: "model", parts: [{ text: "ok" }] },
+              finishReason: "STOP",
+            }],
+            usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 1, totalTokenCount: 3 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch,
+    );
 
     const runtime = resolveModel("google/gemini-3.5-flash");
     await runtime.doGenerate({
@@ -436,28 +437,30 @@ describe("provider/model-registry", () => {
     let requestedUrl = "";
     let requestedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      const request = new Request(input, init);
-      requestedUrl = request.url;
-      requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requestedUrl = request.url;
+        requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
 
-      return new Response(
-        JSON.stringify({
-          id: "resp_lookup",
-          object: "response",
-          status: "completed",
-          output: [{
-            id: "msg_lookup",
-            type: "message",
-            role: "assistant",
+        return new Response(
+          JSON.stringify({
+            id: "resp_lookup",
+            object: "response",
             status: "completed",
-            content: [{ type: "output_text", text: "Found order." }],
-          }],
-          usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }) as typeof fetch;
+            output: [{
+              id: "msg_lookup",
+              type: "message",
+              role: "assistant",
+              status: "completed",
+              content: [{ type: "output_text", text: "Found order." }],
+            }],
+            usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch,
+    );
 
     const runtime = resolveModel("openai/gpt-5.4-nano");
     const result = await runtime.doGenerate({
@@ -495,27 +498,29 @@ describe("provider/model-registry", () => {
     setEnv("OPENAI_API_KEY", "sk-test-openai");
     let requestedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      const request = new Request(input, init);
-      requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
 
-      return new Response(
-        JSON.stringify({
-          id: "resp_reasoning",
-          object: "response",
-          status: "completed",
-          output: [{
-            id: "msg_reasoning",
-            type: "message",
-            role: "assistant",
+        return new Response(
+          JSON.stringify({
+            id: "resp_reasoning",
+            object: "response",
             status: "completed",
-            content: [{ type: "output_text", text: "Done." }],
-          }],
-          usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }) as typeof fetch;
+            output: [{
+              id: "msg_reasoning",
+              type: "message",
+              role: "assistant",
+              status: "completed",
+              content: [{ type: "output_text", text: "Done." }],
+            }],
+            usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch,
+    );
 
     const runtime = resolveModel("openai/gpt-5.4-nano");
     await runtime.doGenerate({
@@ -534,27 +539,29 @@ describe("provider/model-registry", () => {
     setEnv("OPENAI_API_KEY", "sk-test-openai");
     let requestedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      const request = new Request(input, init);
-      requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requestedBody = JSON.parse(await request.text()) as Record<string, unknown>;
 
-      return new Response(
-        JSON.stringify({
-          id: "resp_options",
-          object: "response",
-          status: "completed",
-          output: [{
-            id: "msg_options",
-            type: "message",
-            role: "assistant",
+        return new Response(
+          JSON.stringify({
+            id: "resp_options",
+            object: "response",
             status: "completed",
-            content: [{ type: "output_text", text: "Done." }],
-          }],
-          usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }) as typeof fetch;
+            output: [{
+              id: "msg_options",
+              type: "message",
+              role: "assistant",
+              status: "completed",
+              content: [{ type: "output_text", text: "Done." }],
+            }],
+            usage: { input_tokens: 4, output_tokens: 2, total_tokens: 6 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }) as typeof fetch,
+    );
 
     const runtime = resolveModel("openai/gpt-5.4-nano");
     await runtime.doGenerate({

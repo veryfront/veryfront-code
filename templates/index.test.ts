@@ -504,12 +504,6 @@ describe("templates", () => {
         `${template} should pass its generated agent id to Chat`,
       );
     }
-
-    const featureChat = await Deno.readTextFile(
-      new URL("./features/ai/files/app/chat/page.tsx", import.meta.url),
-    );
-    assertEquals(featureChat.includes("useChat"), false);
-    assertEquals(featureChat.includes('agentId="assistant"'), true);
   });
 
   it("keeps docs-agent on the shared chat shell and uploads components", async () => {
@@ -1027,7 +1021,6 @@ describe("templates", () => {
   it("does not depend on the global JSX namespace in template files", async () => {
     const checkedRoots = [
       new URL("./files/", import.meta.url),
-      new URL("./features/", import.meta.url),
       new URL("./integrations/", import.meta.url),
     ];
     const offenders: string[] = [];

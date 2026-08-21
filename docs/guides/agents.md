@@ -95,6 +95,10 @@ Research the question and cite every claim.
 - Omit `skills` or use `skills: true` to advertise and authorize every skill
   visible to the agent. Use `skills: []` to advertise none and to authorize no
   project or configured skill for `load_skill`.
+- The difference between omitting `skills` and `skills: true` shows only when a
+  project has no skills at all. An agent that omitted it gets no skill tools,
+  because there is nothing for them to load. `skills: true` is a declaration,
+  so the tools stay whatever the registry holds.
 - `tools: true` - every currently scoped tool is authorized, while non-bootstrap
   schemas are deferred behind `tool_search` until the agent searches for them.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
@@ -366,6 +370,45 @@ console.log(result.text); // The agent's response
 console.log(result.toolCalls); // Tools the agent called
 console.log(result.usage); // Token usage
 ```
+
+### One-shot calls
+
+For a single call with no tools and no follow-up turn - an extraction, a
+classification, a rewrite - you do not need an agent at all. Use `generate`
+from `veryfront/llm`:
+
+```ts
+import { generate } from "veryfront/llm";
+
+const { text } = await generate({
+  model: "anthropic/claude-sonnet-4-6",
+  system: "Extract the invoice total. Reply with the number alone.",
+  input: invoiceText,
+});
+```
+
+It runs one step with no tools, skills or memory, and takes the same
+`outputSchema` an agent does.
+
+Reach for an agent instead when you need the thing itself rather than the
+answer: a registered id other code resolves, tools, memory across turns, or a
+system prompt built at request time. To hold such an agent to a single
+tool-free turn, say so:
+
+```ts
+const extractor = agent({
+  id: "extractor",
+  model: "anthropic/claude-sonnet-4-6",
+  system: "Extract the invoice total. Reply with the number alone.",
+  skills: false,
+  maxSteps: 1,
+});
+```
+
+`maxSteps: 1` stops the runtime from taking a second turn it has no use for.
+`skills: false` removes the `load_skill` family from the request in a project
+that does have skills - an agent with one job should not be offered a catalog
+it will never open.
 
 ## Structured output
 

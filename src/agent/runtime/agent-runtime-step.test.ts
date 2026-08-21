@@ -405,6 +405,9 @@ describe("agent/runtime-step", () => {
       model: "auto",
       system: "Base system",
       tools: true,
+      // Declared, so the skill tools are expected regardless of what the
+      // registry holds in this test.
+      skills: true,
       __vfToolLoadingMode: "eager",
     } as AgentConfig;
     const capturedContexts: ToolExecutionContext[] = [];

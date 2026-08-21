@@ -46,25 +46,6 @@ export const STARTER_TEMPLATE_NAMES = [
   "saas-starter",
 ] as const satisfies readonly TemplateName[];
 
-export type FeatureName = "ai" | "auth" | "workflows" | "mdx" | "redis" | "blob";
-
-export interface FeatureConfig {
-  name: FeatureName;
-  description: string;
-  requires?: FeatureName[];
-  conflicts?: FeatureName[];
-  dependencies?: Record<string, string>;
-  devDependencies?: Record<string, string>;
-  envVars?: EnvVarConfig[];
-  configMerge?: Record<string, unknown>;
-  tips?: string[];
-}
-
-export interface ResolvedFeature {
-  config: FeatureConfig;
-  files: TemplateFile[];
-}
-
 export interface ResolvedIntegration {
   config: IntegrationConfig;
   files: TemplateFile[];

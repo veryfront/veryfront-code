@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { agent } from "#veryfront/agent";
@@ -43,10 +44,8 @@ function setCloudBootstrap(): void {
 }
 
 describe("provider/veryfront-cloud", () => {
-  const originalFetch = globalThis.fetch;
-
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     clearCloudEnv();
     clearModelProviders();
     clearEmbeddingProviders();
@@ -139,29 +138,31 @@ describe("provider/veryfront-cloud", () => {
     let capturedRequest: Request | undefined;
     let capturedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      const request = new Request(input, init);
-      capturedRequest = request;
-      capturedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedRequest = request;
+        capturedBody = JSON.parse(await request.text()) as Record<string, unknown>;
 
-      return new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(
-              encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
-            );
-            controller.enqueue(
-              encoder.encode(
-                'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3,"veryfront":{"billable_input_tokens":2,"billable_output_tokens":1,"provider_input_cost_usd":0.0004,"provider_output_cost_usd":0.0006,"provider_cost_usd":0.001,"veryfront_input_charge_usd":0.001,"veryfront_output_charge_usd":0.0015,"veryfront_charge_usd":0.0025,"cost_source":"gateway","billing_mode":"deferred","usage_capture_status":"complete"}}}\n\n',
-              ),
-            );
-            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            controller.close();
-          },
-        }),
-        { status: 200, headers: { "content-type": "text/event-stream" } },
-      );
-    }) as typeof fetch;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+              );
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3,"veryfront":{"billable_input_tokens":2,"billable_output_tokens":1,"provider_input_cost_usd":0.0004,"provider_output_cost_usd":0.0006,"provider_cost_usd":0.001,"veryfront_input_charge_usd":0.001,"veryfront_output_charge_usd":0.0015,"veryfront_charge_usd":0.0025,"cost_source":"gateway","billing_mode":"deferred","usage_capture_status":"complete"}}}\n\n',
+                ),
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
 
     const assistant = agent({
       model: "veryfront-cloud/openai/gpt-test",
@@ -202,25 +203,27 @@ describe("provider/veryfront-cloud", () => {
     const encoder = new TextEncoder();
     const capturedRequests: Array<{ url: string; body: Record<string, unknown> }> = [];
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      const request = new Request(input, init);
-      capturedRequests.push({
-        url: request.url,
-        body: JSON.parse(await request.text()) as Record<string, unknown>,
-      });
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedRequests.push({
+          url: request.url,
+          body: JSON.parse(await request.text()) as Record<string, unknown>,
+        });
 
-      return new Response(
-        readableStreamFrom([
-          encoder.encode(
-            'data: {"prompt_filter_results":[{"prompt_index":0,"content_filter_results":{}}],"choices":[]}\n\n',
-          ),
-          encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
-          encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
-          encoder.encode("data: [DONE]\n\n"),
-        ]),
-        { status: 200, headers: { "content-type": "text/event-stream" } },
-      );
-    }) as typeof fetch;
+        return new Response(
+          readableStreamFrom([
+            encoder.encode(
+              'data: {"prompt_filter_results":[{"prompt_index":0,"content_filter_results":{}}],"choices":[]}\n\n',
+            ),
+            encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+            encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
+            encoder.encode("data: [DONE]\n\n"),
+          ]),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }) as typeof fetch,
+    );
 
     for (const modelId of ["gpt-5.4", "gpt-5.5"]) {
       const assistant = agent({
@@ -239,17 +242,23 @@ describe("provider/veryfront-cloud", () => {
         "https://api.veryfront.com/ai/gateway/openai/v1/chat/completions",
       ],
     );
+    // gpt-5.4 and gpt-5.5 are reasoning-capable, so they carry the documented
+    // default effort. This used to arrive as undefined, but only because the
+    // agent was never genuinely tool-less: three skill tools were injected into
+    // every agent, and a bare agent could not reach the tool-less path at all.
     assertEquals(
       capturedRequests.map(({ body }) => body.reasoning_effort),
-      [undefined, undefined],
+      ["medium", "medium"],
     );
+    // An agent that declares no skills, in a project with none, no longer
+    // advertises a tool that could only answer "no such skill".
     assertEquals(
       capturedRequests.map(({ body }) =>
         (body.tools as Array<{ function?: { name?: string } }> | undefined)?.some(
           (tool) => tool.function?.name === "load_skill",
         )
       ),
-      [true, true],
+      [undefined, undefined],
     );
     assertEquals(
       capturedRequests.map(({ body }) => ({
@@ -269,51 +278,53 @@ describe("provider/veryfront-cloud", () => {
     let capturedRequest: Request | undefined;
     let capturedBody: Record<string, unknown> | undefined;
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      const request = new Request(input, init);
-      capturedRequest = request;
-      capturedBody = JSON.parse(await request.text()) as Record<string, unknown>;
-      const requestUrl = request.url;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        const request = new Request(input, init);
+        capturedRequest = request;
+        capturedBody = JSON.parse(await request.text()) as Record<string, unknown>;
+        const requestUrl = request.url;
 
-      if (requestUrl.endsWith("/responses")) {
+        if (requestUrl.endsWith("/responses")) {
+          return new Response(
+            readableStreamFrom([
+              encoder.encode(
+                'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"summary_index":0,"delta":"Thinking."}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"Thinking."}]}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"content_index":0,"delta":"Hello"}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello"}]}}\n\n',
+              ),
+              encoder.encode(
+                'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}\n\n',
+              ),
+              encoder.encode("data: [DONE]\n\n"),
+            ]),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          );
+        }
+
         return new Response(
           readableStreamFrom([
-            encoder.encode(
-              'data: {"type":"response.output_item.added","item":{"id":"rs_1","type":"reasoning"}}\n\n',
-            ),
-            encoder.encode(
-              'data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":0,"summary_index":0,"delta":"Thinking."}\n\n',
-            ),
-            encoder.encode(
-              'data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"Thinking."}]}}\n\n',
-            ),
-            encoder.encode(
-              'data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"in_progress","content":[]}}\n\n',
-            ),
-            encoder.encode(
-              'data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"content_index":0,"delta":"Hello"}\n\n',
-            ),
-            encoder.encode(
-              'data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello"}]}}\n\n',
-            ),
-            encoder.encode(
-              'data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}\n\n',
-            ),
+            encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
+            encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
             encoder.encode("data: [DONE]\n\n"),
           ]),
           { status: 200, headers: { "content-type": "text/event-stream" } },
         );
-      }
-
-      return new Response(
-        readableStreamFrom([
-          encoder.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'),
-          encoder.encode('data: {"choices":[{"finish_reason":"stop"}]}\n\n'),
-          encoder.encode("data: [DONE]\n\n"),
-        ]),
-        { status: 200, headers: { "content-type": "text/event-stream" } },
-      );
-    }) as typeof fetch;
+      }) as typeof fetch,
+    );
 
     const assistant = agent({
       model: "veryfront-cloud/openai/gpt-5.4-nano",

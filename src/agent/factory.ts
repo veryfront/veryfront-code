@@ -20,6 +20,10 @@ import {
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import {
+  resolveSkillToolDisposition,
+  type SkillToolDisposition,
+} from "./skill-tool-disposition.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
 import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
 import {
@@ -104,10 +108,6 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "load_skill_reference", create: createLoadSkillReferenceTool },
   { id: "execute_skill_script", create: createExecuteSkillScriptTool },
 ] as const;
-
-function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
-  return skills === false || (Array.isArray(skills) && skills.length === 0);
-}
 
 /**
  * Projects a registered skill onto the runtime skill shape the shared skills
@@ -314,10 +314,13 @@ function resolveToolsConfiguration(input: {
   config: AgentConfig;
   id: string;
   delegates: string[] | undefined;
-  exposeSkillTools: boolean;
-  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "allowedSkillIds">;
+  skillTools: SkillToolDisposition;
+  resolveSkillSnapshot: () => Pick<
+    ResolvedSkillSelectorSnapshot<Skill>,
+    "allowedSkillIds" | "definitions"
+  >;
 }): AgentConfig["tools"] {
-  const { config, id, delegates, exposeSkillTools, resolveSkillSnapshot } = input;
+  const { config, id, delegates, skillTools, resolveSkillSnapshot } = input;
   let merged = config.tools;
 
   ensureBuiltinSchemaValidator();
@@ -335,7 +338,12 @@ function resolveToolsConfiguration(input: {
       configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
     }
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (!exposeSkillTools) {
+      if (skillTools === "disable") {
+        delete configuredTools[registration.id];
+        continue;
+      }
+
+      if (skillTools === "omit") {
         delete configuredTools[registration.id];
         continue;
       }
@@ -496,12 +504,11 @@ function createAgent<TOutput = never>(
 
   registerConfiguredLocalTools(config);
 
-  const shouldExposeSkillTools = !isExplicitNoneSkillSelector(config.skills);
   const mergedToolsConfig = resolveToolsConfiguration({
     config,
     id,
     delegates,
-    exposeSkillTools: shouldExposeSkillTools,
+    skillTools: resolveSkillToolDisposition(config, id),
     resolveSkillSnapshot,
   });
 

@@ -115,6 +115,21 @@ describe("llm/generate", () => {
     }
   });
 
+  it("redacts a blocked value in both text and object", async () => {
+    const stub = stubProvider('{"city":"ada@example.com"}');
+    try {
+      const result = await generate({
+        input: "where",
+        model: "stub/stub",
+        outputSchema: SCHEMA,
+      });
+      assertEquals(result.text, '{"city":"[EMAIL]"}');
+      assertEquals(result.object, { city: "[EMAIL]" });
+    } finally {
+      stub.dispose();
+    }
+  });
+
   it("omits object when no schema is requested", async () => {
     const stub = stubProvider("plain");
     try {

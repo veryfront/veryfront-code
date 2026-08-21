@@ -1,9 +1,26 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import {
+  __resetLoggerConfigForTests,
+  __subscribeLogRecordEmitter,
+  type LogEntry,
+  LogLevel,
+  setLogLevel,
+} from "#veryfront/utils/logger/index.ts";
 import type { WorkflowContext } from "./types.ts";
-import { serializeWorkflowContext, serializeWorkflowJson } from "./context-serialization.ts";
+import {
+  MAX_TRAVERSAL_DEPTH,
+  serializeWorkflowContext,
+  serializeWorkflowJson,
+} from "./context-serialization.ts";
+
+// Deep enough that the walk stops and hands the value to `JSON.stringify`, and
+// no deeper. `JSON.stringify` is itself stack bound, and how deep it reaches
+// varies by engine and by the stack a test runner leaves it, so a fixed large
+// depth tests the host rather than this module. Deriving it from the constant
+// also keeps these tests from going quiet if the limit is ever raised.
+const PAST_THE_WALK = MAX_TRAVERSAL_DEPTH + 25;
 
 const jsonRawSupport = JSON as typeof JSON & {
   rawJSON(source: string): unknown;
@@ -236,6 +253,48 @@ describe("serializeWorkflowContext", () => {
     assertEquals(JSON.parse(serialized).step, { total: 7 });
   });
 
+  it("converts a boxed primitive the way JSON converts it, through the object", () => {
+    // JSON puts a Number box through ToNumber, which asks the object, so a
+    // replaced prototype leaves it with no `valueOf` to reach and JSON writes
+    // null. Reading the slot instead would persist a 7 JSON never wrote.
+    const boxed = Object.setPrototypeOf(new Number(7), Object.prototype);
+
+    const serialized = serializeWorkflowContext(contextWith({ total: boxed }));
+
+    assertEquals(JSON.parse(serialized).step, JSON.parse(JSON.stringify({ total: boxed })));
+    assertEquals(JSON.parse(serialized).step.total, null);
+  });
+
+  it("refuses a boxed Number whose valueOf returns a BigInt, as JSON does", () => {
+    // `Number()` accepts a BigInt that JSON's `ToNumber` refuses, so converting
+    // with it would quietly coerce this to 2 and persist a number JSON would
+    // have thrown on. The conversion has to be the operation JSON performs, not
+    // one that merely looks like it.
+    const boxed = Object.assign(new Number(1), { valueOf: () => 2n });
+
+    assertThrows(() => serializeWorkflowContext(contextWith({ total: boxed })), TypeError);
+  });
+
+  it("does not probe primitive slots on an ordinary object", () => {
+    // Each probe throws on a miss and a context is mostly objects that miss
+    // every one, so probing all of them spent several thrown exceptions per
+    // object on the path every persisted run takes.
+    const originalValueOf = Number.prototype.valueOf;
+    let probes = 0;
+    Number.prototype.valueOf = function (this: number) {
+      probes++;
+      return originalValueOf.call(this);
+    };
+
+    try {
+      serializeWorkflowContext(contextWith({ rows: [{ id: 1 }, { id: 2 }] }));
+    } finally {
+      Number.prototype.valueOf = originalValueOf;
+    }
+
+    assertEquals(probes, 0);
+  });
+
   it("does not trust a spoofed boxed-primitive tag", () => {
     const serialized = serializeWorkflowContext(contextWith({
       value: 7,
@@ -321,6 +380,250 @@ describe("serializeWorkflowContext", () => {
 
     assertEquals(JSON.parse(nested).step, 123);
     assertEquals(root, "456");
+  });
+
+  describe("values larger than a diagnostic can describe", () => {
+    it("hands a value deeper than the walk follows back to JSON.stringify", () => {
+      // The walk recurses far more heavily than `JSON.stringify`, so past a few
+      // thousand levels it died with `Maximum call stack size exceeded` raised
+      // from inside the backend, on a value that persisted fine before this
+      // check existed. That is the error class the check exists to replace.
+      //
+      // The `Date` at the bottom is what proves the walk actually stopped: it
+      // is a lossy value, so a walk that reached it would report it. Asserting
+      // the stack overflow itself would test the host, since how deep the walk
+      // and `JSON.stringify` each reach depends on the engine and the stack a
+      // test runner leaves them.
+      let deep: unknown = { when: new Date(0) };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      let serialized = "";
+      const warnings = captureWorkflowWarnings(() => {
+        serialized = serializeWorkflowContext(contextWith(deep));
+      });
+
+      assertEquals(warnings, []);
+      assertEquals(serialized, JSON.stringify({ input: {}, step: deep }));
+    });
+
+    it("still names a fatal value found above the depth it stops at", () => {
+      // What the walk found on the way down still holds. What sits below the
+      // depth it follows does not get named, which is why the deep BigInt is
+      // absent from the message while the shallow one is not.
+      let deep: unknown = 2n;
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+
+      const error = assertThrows(() =>
+        serializeWorkflowContext(contextWith({ shallow: 1n, deep }))
+      );
+
+      assertEquals((error as Error).message.includes("context.step.shallow"), true);
+      assertEquals((error as Error).message.includes(".n.n"), false);
+    });
+
+    it("reads a hook above the depth cutoff exactly once", () => {
+      // Handing the whole root back to `JSON.stringify` would re-run every
+      // getter and `toJSON` the walk had already run on the way down, and a
+      // hook that answers differently the second time would then persist a
+      // value this check never saw. Only the subtree below the cutoff is left
+      // to JSON, so nothing above it is read twice.
+      let reads = 0;
+      let deep: unknown = { leaf: 1 };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+      // The getter is keyed before the deep value on purpose. Keyed after it,
+      // the walk would stop before ever reaching the getter and read it once
+      // even when restarting from the root, so the test would prove nothing.
+      const output: Record<string, unknown> = {};
+      Object.defineProperty(output, "counted", {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return reads;
+        },
+      });
+      output.deep = deep;
+
+      const serialized = serializeWorkflowContext(contextWith(output));
+
+      assertEquals(reads, 1);
+      assertEquals(JSON.parse(serialized).step.counted, 1);
+    });
+
+    it("counts every hole in a sparse array without keeping one entry each", () => {
+      // Only MAX_REPORTED_PATHS paths ever reach a message, so keeping an entry
+      // per hole would spend memory proportional to the payload on the
+      // persistence path and show none of it.
+      const sparse: unknown[] = [];
+      sparse.length = 500_000;
+
+      const before = process.memoryUsage().heapUsed;
+      const warnings = captureWorkflowWarnings(() => {
+        serializeWorkflowContext(contextWith({ rows: sparse }));
+      });
+      const retained = process.memoryUsage().heapUsed - before;
+      const paths = String(warnings[0]?.context?.paths);
+
+      assertEquals(paths.includes("context.step.rows[0] (array hole)"), true);
+      assertEquals(paths.includes("and 499995 more"), true);
+      assertEquals(retained < 50_000_000, true);
+    });
+  });
+
+  describe("agreement with JSON.stringify", () => {
+    // This module walks the value itself instead of delegating, so it can drift
+    // from `JSON.stringify`, and a drift does not blur a diagnostic: it writes
+    // into durable storage something JSON never wrote. The generator below is
+    // seeded, so a failing seed rebuilds the value that broke.
+    const SAMPLE_STRINGS: readonly [string, ...string[]] = [
+      "",
+      "a",
+      "he\u0301",
+      "\ud83d\ude00",
+      "\ud800",
+      '"\\\n\t',
+      "__proto__",
+    ];
+    const SAMPLE_NUMBERS: readonly [number, ...number[]] = [
+      0,
+      -0,
+      1,
+      -1,
+      1e21,
+      1e-7,
+      5e-324,
+      Number.MAX_SAFE_INTEGER,
+      0.1,
+    ];
+    const SAMPLE_KEYS: readonly [string, ...string[]] = [
+      "a",
+      "b",
+      "toJSON",
+      "__proto__",
+      "constructor",
+      "0",
+      "length",
+      "u@x.com",
+    ];
+
+    function seededRandom(seed: number): () => number {
+      let state = seed;
+      return () => {
+        state = (state + 0x6D2B79F5) | 0;
+        let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+        mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+        return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function pick<T>(random: () => number, values: readonly [T, ...T[]]): T {
+      return values[Math.floor(random() * values.length)] ?? values[0];
+    }
+
+    function generateLeaf(random: () => number): unknown {
+      const choice = random();
+      if (choice < 0.2) return pick(random, SAMPLE_STRINGS);
+      if (choice < 0.45) return pick(random, SAMPLE_NUMBERS);
+      if (choice < 0.55) return random() < 0.5;
+      if (choice < 0.65) return null;
+      if (choice < 0.72) return undefined;
+      if (choice < 0.77) return new Date(Math.floor(random() * 1e12));
+      if (choice < 0.81) return () => 1;
+      if (choice < 0.84) return Symbol("generated");
+      if (choice < 0.87) return new Map([["k", 1]]);
+      if (choice < 0.9) return new Set([1, 2]);
+      if (choice < 0.93) return new Number(random() * 10);
+      if (choice < 0.96) return new String("boxed");
+      if (choice < 0.98) return new Boolean(true);
+      return /generated/g;
+    }
+
+    function generateArray(random: () => number, depth: number): unknown[] {
+      const values: unknown[] = [];
+      const length = Math.floor(random() * 4);
+      for (let index = 0; index < length; index++) {
+        // A hole, which JSON materializes as null.
+        if (random() < 0.2) values.length += 1;
+        else values.push(generateValue(random, depth - 1));
+      }
+      return values;
+    }
+
+    function generateObject(random: () => number, depth: number): object {
+      const shape = random();
+      const value: Record<string, unknown> = shape < 0.12 ? Object.create(null) : {};
+      const keys = Math.floor(random() * 4);
+      for (let index = 0; index < keys; index++) {
+        const key = pick(random, SAMPLE_KEYS);
+        const child = generateValue(random, depth - 1);
+        // A callable `toJSON` is generated deliberately below, not by accident.
+        if (key === "toJSON" && typeof child === "function") continue;
+        if (random() < 0.12) {
+          Object.defineProperty(value, key, {
+            value: child,
+            enumerable: random() < 0.5,
+            writable: true,
+            configurable: true,
+          });
+        } else {
+          value[key] = child;
+        }
+      }
+      if (shape >= 0.12 && shape < 0.2) {
+        class Generated {}
+        Object.setPrototypeOf(value, Generated.prototype);
+      }
+      if (shape >= 0.2 && shape < 0.26) {
+        // Enumerable on purpose. JavaScriptCore skips a non-enumerable own
+        // `toJSON` that V8 calls, so generating one would compare two engines
+        // against each other rather than this module against its own host.
+        Object.defineProperty(value, "toJSON", {
+          value: () => ({ replaced: true }),
+          enumerable: true,
+        });
+      }
+      if (shape >= 0.26 && shape < 0.3) {
+        Object.defineProperty(value, "lazy", { enumerable: true, get: () => 42 });
+      }
+      return value;
+    }
+
+    function generateValue(random: () => number, depth: number): unknown {
+      const choice = random();
+      if (depth <= 0 || choice < 0.22) return generateLeaf(random);
+      return choice < 0.6 ? generateArray(random, depth) : generateObject(random, depth);
+    }
+
+    it("encodes generated values exactly as JSON.stringify encodes them", () => {
+      // Every lossy value found warns, and the generator makes thousands, so
+      // the level is lowered for the loop rather than flooding the run output.
+      setLogLevel(LogLevel.ERROR);
+      const divergences: string[] = [];
+      try {
+        for (let seed = 0; seed < 3000; seed++) {
+          let expected: string;
+          try {
+            expected = JSON.stringify(generateValue(seededRandom(seed), 4));
+          } catch {
+            // JSON refuses this value outright, which the fatal cases cover.
+            continue;
+          }
+          let actual: string;
+          try {
+            actual = serializeWorkflowJson(generateValue(seededRandom(seed), 4), "root");
+          } catch (error) {
+            divergences.push(`seed ${seed} threw ${(error as Error).message}`);
+            continue;
+          }
+          if (actual !== expected) {
+            divergences.push(`seed ${seed}: got ${actual}, wanted ${expected}`);
+          }
+        }
+      } finally {
+        __resetLoggerConfigForTests();
+      }
+
+      assertEquals(divergences.slice(0, 5), []);
+    });
   });
 
   it("does not mistake a repeated value for a cycle", () => {

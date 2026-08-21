@@ -102,7 +102,6 @@ async function createTemplateManifestFixture(): Promise<string> {
     const path of [
       "templates/files/example",
       "templates/integrations",
-      "templates/features",
       "templates/ai-rules",
     ]
   ) {

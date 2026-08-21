@@ -64,7 +64,6 @@ function baseRequest(parentDir: string): CreateProjectRequest {
     parentDir,
     template: "minimal",
     runtime: "node",
-    features: [],
     integrations: [],
     environmentValues: {},
     conflictPolicy: "fail",
@@ -336,18 +335,18 @@ describe("createProject", () => {
     }
   });
 
-  it("returns feature tips assembled from selected features", async () => {
+  it("returns the setup tips assembled from selected integrations", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-tips-" });
 
     try {
       const result = await createProject({
         ...baseRequest(parentDir),
-        name: "feature-tips",
-        features: ["ai"],
+        name: "setup-tips",
+        integrations: ["github"],
       });
 
       assertEquals(
-        result.featureTips.includes("The AG-UI endpoint is available at /api/ag-ui"),
+        result.setupTips.includes("Visit /setup for guided OAuth app setup"),
         true,
       );
     } finally {
@@ -505,24 +504,26 @@ describe("createProject", () => {
 });
 
 describe("cli/project-creation MDX extension declaration", () => {
-  // Raised in review on #3783. `firstPartyExtensions` came only from the
-  // template config, but the `mdx` feature adds app/docs/*.mdx on top of ANY
-  // template — so `--template ai-agent --features mdx` scaffolded MDX routes
-  // with no extension declared, and every one of them failed at runtime.
-  it("declares ext-content-mdx when the mdx feature is selected on a non-mdx template", async () => {
+  // Raised in review on #3783: `firstPartyExtensions` came only from the
+  // template config, so any path that put an `.mdx` file into a project the
+  // config knew nothing about scaffolded MDX routes with no extension
+  // declared, and every one of them failed at runtime.
+  //
+  // The `mdx` feature was that path, and it is gone (#3797). The rule it
+  // motivated is not: `withMdxExtension` derives the declaration from the
+  // assembled file set, so a template that ships `.mdx` is covered whether or
+  // not its config remembers to say so. `minimal` is the case that exists
+  // today -- it ships `app/about/page.mdx`.
+  it("declares ext-content-mdx for a template that ships an .mdx file", async () => {
     const scaffold = await materializeScaffold({
-      template: "ai-agent",
-      features: ["mdx"],
-      projectName: "mdx-feature-probe",
+      template: "minimal",
+      projectName: "mdx-file-probe",
     });
 
-    // The mdx feature scaffolds no files: it sets `mdx.enabled` and tips the
-    // user to author `.mdx` themselves. Selecting it still has to declare the
-    // extension, or following that tip fails at runtime.
     assertEquals(
-      scaffold.files.filter((file) => file.path.endsWith(".mdx")).length,
-      0,
-      "the mdx feature is config-and-tips only; update this if it starts shipping files",
+      scaffold.files.some((file) => file.path.endsWith(".mdx")),
+      true,
+      "this test is only meaningful while the template still ships an .mdx file",
     );
 
     const packageJson = JSON.parse(

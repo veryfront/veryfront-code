@@ -27,10 +27,81 @@ interface ExecuteLoopNodeStrategyInput {
   abortSignal?: AbortSignal;
 }
 
+/**
+ * A `NodeState` in the shape that survives the context's JSON round trip.
+ *
+ * `WorkflowContext` is JSON-representable by contract, and `NodeState` is not:
+ * `startedAt` and `completedAt` are `Date`. Writing them into the context puts
+ * a value there that `JSON.stringify` rewrites, so a resumed iteration read
+ * back a string where the suspending one wrote a `Date`, and the persistence
+ * check reported the framework's own timestamps as user-authored lossy values.
+ *
+ * The encoded bytes are unchanged: `JSON.stringify` already produced these
+ * strings. What changes is that the loop now writes them itself, so the value
+ * in memory matches the value after a resume either way.
+ */
+type PersistedNodeState =
+  & Omit<NodeState, "startedAt" | "completedAt">
+  & {
+    startedAt?: string;
+    completedAt?: string;
+  };
+
 interface PersistedLoopState {
   iteration: number;
   previousResults: unknown[];
-  iterationNodeStates?: Record<string, NodeState>;
+  iterationNodeStates?: Record<string, PersistedNodeState>;
+}
+
+/**
+ * @internal Encode child node states so the context holds nothing JSON rewrites.
+ *
+ * Absent optional fields are dropped rather than written as `undefined`, which
+ * JSON removes anyway. Keeping them would have the check report the framework's
+ * own empty fields as lossy. `input` and `output` are copied through untouched:
+ * they hold step values, and a step writing something JSON cannot carry is
+ * exactly what the check exists to report.
+ */
+export function toPersistedNodeStates(
+  states: Record<string, NodeState>,
+): Record<string, PersistedNodeState> {
+  const persisted: Record<string, PersistedNodeState> = {};
+  for (const [nodeId, state] of Object.entries(states)) {
+    persisted[nodeId] = {
+      nodeId: state.nodeId,
+      status: state.status,
+      attempt: state.attempt,
+      ...(state.input !== undefined ? { input: state.input } : {}),
+      ...(state.output !== undefined ? { output: state.output } : {}),
+      ...(state.error !== undefined ? { error: state.error } : {}),
+      ...(state.startedAt ? { startedAt: state.startedAt.toISOString() } : {}),
+      ...(state.completedAt ? { completedAt: state.completedAt.toISOString() } : {}),
+    };
+  }
+  return persisted;
+}
+
+/**
+ * Restore child node states read back from the context.
+ *
+ * A run that suspended before this encoding existed holds the same strings,
+ * because `JSON.stringify` is what wrote them, so no migration is needed. This
+ * is also what makes a resumed iteration see the same types an in-memory one
+ * sees, rather than a `Date` on one path and a string on the other.
+ */
+function fromPersistedNodeStates(
+  states: Record<string, PersistedNodeState>,
+): Record<string, NodeState> {
+  const restored: Record<string, NodeState> = {};
+  for (const [nodeId, state] of Object.entries(states)) {
+    const { startedAt, completedAt, ...rest } = state;
+    restored[nodeId] = {
+      ...rest,
+      ...(startedAt ? { startedAt: new Date(startedAt) } : {}),
+      ...(completedAt ? { completedAt: new Date(completedAt) } : {}),
+    };
+  }
+  return restored;
 }
 
 export async function executeLoopNodeStrategy(
@@ -58,7 +129,8 @@ export async function executeLoopNodeStrategy(
   if (existingLoopState) {
     iteration = existingLoopState.iteration;
     previousResults.push(...existingLoopState.previousResults);
-    resumeIterationNodeStates = existingLoopState.iterationNodeStates;
+    resumeIterationNodeStates = existingLoopState.iterationNodeStates &&
+      fromPersistedNodeStates(existingLoopState.iterationNodeStates);
     resumeIteration = existingLoopState.iteration;
   }
 
@@ -142,7 +214,7 @@ export async function executeLoopNodeStrategy(
               previousResults,
               // Persist the in-flight iteration's child states so completed
               // steps are not re-executed when this iteration resumes (H9).
-              iterationNodeStates: result.nodeStates,
+              iterationNodeStates: toPersistedNodeStates(result.nodeStates),
             },
           }),
         ),
