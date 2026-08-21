@@ -353,6 +353,7 @@ describe("agent span error redaction", () => {
       assertEquals(span.status.code, SpanStatusCode.ERROR);
       // The bounded classification still distinguishes a network failure.
       assertEquals(span.status.message, "ECONNRESET");
+      assertEquals(span.events[0]?.attributes?.["exception.type"], "ECONNRESET");
     } finally {
       await tracing.dispose();
     }

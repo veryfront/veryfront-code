@@ -470,6 +470,7 @@ export type TelemetryErrorDetail = "withStack" | "withoutStack";
 export function sanitizeErrorForTelemetry(
   error: unknown,
   detail: TelemetryErrorDetail = "withStack",
+  safeName?: string,
 ): Error {
   try {
     const isError = isNativeErrorWithoutHooks(error);
@@ -483,7 +484,9 @@ export function sanitizeErrorForTelemetry(
         readNativeErrorNameWithoutHooks(source),
         LOG_PREVIEW_MAX_LENGTH_CHARS,
       )
-      : "Unknown";
+      : safeName === undefined
+      ? "Unknown"
+      : sanitizeTelemetryText(safeName, LOG_PREVIEW_MAX_LENGTH_CHARS);
     const sourceStack = source && detail === "withStack" ? readNativeErrorStack(source) : undefined;
     const stack = sourceStack === undefined
       ? undefined
