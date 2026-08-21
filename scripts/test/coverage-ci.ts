@@ -16,6 +16,8 @@ interface LcovLineRecord {
 }
 
 const UNIT_COVERAGE_ROOTS = ["src", "cli", "templates"];
+const PROVIDER_EGRESS_DENY_NET =
+  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
 const UNIT_COVERAGE_ENV = {
   DENO_TESTING: "1",
   VF_DISABLE_LRU_INTERVAL: "1",
@@ -78,6 +80,7 @@ export function buildDenoTestCommandArgs(
     "--no-check",
     "--parallel",
     "--allow-all",
+    PROVIDER_EGRESS_DENY_NET,
     "--v8-flags=--max-old-space-size=8192",
     `--coverage=${options.coverageDir}`,
     "--coverage-raw-data-only",

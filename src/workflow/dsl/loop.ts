@@ -39,6 +39,7 @@ export interface LoopOptions extends Omit<BaseNodeConfig, "checkpoint"> {
 
 export interface LoopNodeConfig {
   type: "loop";
+  description?: string;
   while: LoopOptions["while"];
   steps: LoopOptions["steps"];
   maxIterations: number;
@@ -84,6 +85,7 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
     id,
     config: {
       type: "loop",
+      description: options.description,
       while: options.while,
       steps: options.steps,
       maxIterations,

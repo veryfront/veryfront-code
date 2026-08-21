@@ -6,6 +6,7 @@
 
 import { logger as baseLogger, sleep } from "#veryfront/utils";
 import {
+  ensureError,
   INVALID_ARGUMENT,
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
@@ -28,6 +29,8 @@ import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
+import { retryTelemetryErrorType } from "./retry-policy.ts";
+import { setActiveSpanErrorStatus, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
 import {
@@ -376,60 +379,76 @@ export class WorkflowExecutor {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
-    await executeWorkflowRunControl({
-      backend: this.config.backend,
-      run,
-      expectedWorkerId,
-      enableLocking: this.config.enableLocking,
-      lockDuration: this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION,
-      heartbeatInterval: this.config.heartbeatInterval ?? WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
-      waitForCancellationUpdate: (runId) => this.waitForCancellationUpdate(runId),
-      waitForCancellationGrace: (operation) => this.waitForCancellationGrace(operation),
-      registerController: (runId, controller) => {
-        this.activeRunControllers.set(runId, controller);
-      },
-      clearController: (runId, controller) => {
-        if (this.activeRunControllers.get(runId) === controller) {
-          this.activeRunControllers.delete(runId);
-        }
-      },
-      isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
-      execute: ({ controller, signal, ownership }) => {
-        const nodes = this.resolveNodes(workflow, run.context);
-        const runWithTenantContext: WorkflowRun = run._tenant
-          ? {
-            ...run,
-            context: { ...run.context, _tenant: run._tenant },
+    // One span per execution. It is a trace root only when nothing traces the caller;
+    // started from an instrumented request or webhook handler it joins that trace
+    // instead. Either way a run that pauses and resumes spans more than one trace, so
+    // `workflow.run_id` -- not trace identity -- is what stitches a run together.
+    await withSpan("workflow.run", async () => {
+      await executeWorkflowRunControl({
+        backend: this.config.backend,
+        run,
+        expectedWorkerId,
+        enableLocking: this.config.enableLocking,
+        lockDuration: this.config.lockDuration ?? WorkflowExecutor.DEFAULT_LOCK_DURATION,
+        heartbeatInterval: this.config.heartbeatInterval ?? WorkflowExecutor.HEARTBEAT_INTERVAL_MS,
+        waitForCancellationUpdate: (runId) => this.waitForCancellationUpdate(runId),
+        waitForCancellationGrace: (operation) => this.waitForCancellationGrace(operation),
+        registerController: (runId, controller) => {
+          this.activeRunControllers.set(runId, controller);
+        },
+        clearController: (runId, controller) => {
+          if (this.activeRunControllers.get(runId) === controller) {
+            this.activeRunControllers.delete(runId);
           }
-          : run;
+        },
+        isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
+        execute: ({ controller, signal, ownership }) => {
+          const nodes = this.resolveNodes(workflow, run.context);
+          const runWithTenantContext: WorkflowRun = run._tenant
+            ? {
+              ...run,
+              context: { ...run.context, _tenant: run._tenant },
+            }
+            : run;
 
-        return runWithWorkflowTenant(run._tenant, () =>
-          this.executeWithTimeout(
-            () =>
-              this.dagExecutor.execute(
-                nodes,
-                runWithTenantContext,
-                startFromNode,
-                signal,
-                ownership,
-              ),
-            workflow.timeout,
-            controller,
-          ));
-      },
-      onStart: (startedRun) => {
-        this.config.onStart?.(startedRun);
-      },
-      onComplete: async (finalRun) => {
-        workflow.outputSchema?.parse(finalRun.output);
-        await workflow.onComplete?.(finalRun.output, finalRun.context);
-        this.config.onComplete?.(finalRun);
-      },
-      onError: async (errorRun, error, context) => {
-        await workflow.onError?.(error, context);
-        this.config.onError?.(errorRun, error);
-      },
-      onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+          return runWithWorkflowTenant(run._tenant, () =>
+            this.executeWithTimeout(
+              () =>
+                this.dagExecutor.execute(
+                  nodes,
+                  runWithTenantContext,
+                  startFromNode,
+                  signal,
+                  ownership,
+                ),
+              workflow.timeout,
+              controller,
+            ));
+        },
+        onStart: (startedRun) => {
+          this.config.onStart?.(startedRun);
+        },
+        onComplete: async (finalRun) => {
+          workflow.outputSchema?.parse(finalRun.output);
+          await workflow.onComplete?.(finalRun.output, finalRun.context);
+          this.config.onComplete?.(finalRun);
+        },
+        onError: async (errorRun, error, context) => {
+          // Run failures arrive through this callback rather than being thrown past the
+          // span, so the span's own catch never sees them. Report a bounded
+          // classification: the raw message is user-supplied and reaches the wire via
+          // both the span status and the recorded exception.
+          setActiveSpanErrorStatus(new Error(retryTelemetryErrorType(error)));
+          await workflow.onError?.(error, context);
+          this.config.onError?.(errorRun, error);
+        },
+        onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+      });
+    }, {
+      "workflow.id": run.workflowId,
+      "workflow.run_id": run.id,
+    }, {
+      errorStatus: (error) => new Error(retryTelemetryErrorType(ensureError(error))),
     });
   }
 

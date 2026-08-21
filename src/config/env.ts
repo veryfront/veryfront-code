@@ -115,6 +115,15 @@ export function getGoogleGenAIEnvConfig(): {
   };
 }
 
+export function getGoogleGenAICredentialEnvName():
+  | "GOOGLE_API_KEY"
+  | "GOOGLE_GENERATIVE_AI_API_KEY"
+  | undefined {
+  if (getEnv("GOOGLE_API_KEY")) return "GOOGLE_API_KEY";
+  if (getEnv("GOOGLE_GENERATIVE_AI_API_KEY")) return "GOOGLE_GENERATIVE_AI_API_KEY";
+  return undefined;
+}
+
 export function getMistralEnvConfig(): {
   apiKey?: string;
   baseURL?: string;

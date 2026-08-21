@@ -1,5 +1,6 @@
 import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { getOutputSchemaParser } from "../../output-schema.ts";
 
 export interface SecurityConfig {
   /** Input validation rules */
@@ -244,6 +245,43 @@ function reportViolations(
   for (const violation of violations) onViolation(violation);
 }
 
+async function filterStructuredOutputValue(
+  value: unknown,
+  outputFilter: OutputFilter,
+): Promise<{
+  value: unknown;
+  violations: SecurityViolation[];
+}> {
+  if (typeof value === "string") {
+    const result = await outputFilter.filter(value);
+    return { value: result.filtered, violations: result.violations };
+  }
+
+  if (Array.isArray(value)) {
+    const filteredItems = [];
+    const violations: SecurityViolation[] = [];
+    for (const item of value) {
+      const result = await filterStructuredOutputValue(item, outputFilter);
+      filteredItems.push(result.value);
+      violations.push(...result.violations);
+    }
+    return { value: filteredItems, violations };
+  }
+
+  if (isRecord(value)) {
+    const filteredObject: Record<string, unknown> = {};
+    const violations: SecurityViolation[] = [];
+    for (const [key, item] of Object.entries(value)) {
+      const result = await filterStructuredOutputValue(item, outputFilter);
+      filteredObject[key] = result.value;
+      violations.push(...result.violations);
+    }
+    return { value: filteredObject, violations };
+  }
+
+  return { value, violations: [] };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -319,6 +357,18 @@ export function securityMiddleware(
     const outputFiltering = await outputFilter.filter(result.text);
     reportViolations(outputFiltering.violations, config.onViolation);
 
-    return { ...result, text: outputFiltering.filtered };
+    if (!("object" in result) || result.object === undefined) {
+      return { ...result, text: outputFiltering.filtered };
+    }
+
+    const objectFiltering = await filterStructuredOutputValue(result.object, outputFilter);
+    reportViolations(objectFiltering.violations, config.onViolation);
+    const parseOutput = getOutputSchemaParser(result);
+    if (parseOutput) {
+      const object = await parseOutput(outputFiltering.filtered);
+      return { ...result, text: outputFiltering.filtered, object };
+    }
+
+    return { ...result, text: outputFiltering.filtered, object: objectFiltering.value };
   };
 }

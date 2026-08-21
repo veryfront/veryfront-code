@@ -10,8 +10,11 @@ import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
+import { branch } from "../dsl/branch.ts";
 import { dependsOn, workflow } from "../dsl/workflow.ts";
+import { loop } from "../dsl/loop.ts";
 import { step } from "../dsl/step.ts";
+import { subWorkflow } from "../dsl/sub-workflow.ts";
 import { waitForApproval } from "../dsl/wait.ts";
 import type { PendingApproval, WorkflowRun } from "../types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
@@ -70,6 +73,349 @@ describe("WorkflowClient", () => {
 
   afterEach(async () => {
     await client.destroy();
+  });
+
+  describe("typed approval payload", () => {
+    const schemaWorkflow = workflow({
+      id: "typed-approval-workflow",
+      steps: [
+        waitForApproval("review", {
+          message: "Confirm the extracted values",
+          responseSchema: defineSchema((v) =>
+            v.object({ correctedName: v.string(), confirmed: v.boolean() })
+          )(),
+        }),
+      ],
+    });
+
+    it("surfaces a schema-conformant payload in workflow context", async () => {
+      client.register(schemaWorkflow);
+      const handle = await client.start("typed-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await client.approve(handle.runId, approval.id, "reviewer", undefined, {
+        correctedName: "Ada",
+        confirmed: true,
+      });
+
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      const decision = run.nodeStates["review"]?.output as { data?: unknown } | undefined;
+      assertEquals(decision?.data, { correctedName: "Ada", confirmed: true });
+    });
+
+    it("rejects a non-conformant payload without persisting the decision", async () => {
+      client.register(schemaWorkflow);
+      const handle = await client.start("typed-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await assertRejects(() =>
+        client.approve(handle.runId, approval.id, "reviewer", undefined, {
+          correctedName: 42,
+        })
+      );
+
+      // Still pending: a bad payload must not consume the approval.
+      const stillPending = await backend.getPendingApprovals(handle.runId);
+      assertEquals(stillPending.length, 1);
+      assertEquals(stillPending[0]!.status, "pending");
+    });
+
+    it("rejects omitted data without persisting a decision when the schema requires it", async () => {
+      client.register(schemaWorkflow);
+      const handle = await client.start("typed-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await assertRejects(() => client.approve(handle.runId, approval.id, "reviewer"));
+
+      const stillPending = await backend.getPendingApprovals(handle.runId);
+      assertEquals(stillPending.length, 1);
+      assertEquals(stillPending[0]!.status, "pending");
+    });
+
+    it("validates statically declared loop approval steps", async () => {
+      const loopWorkflow = workflow({
+        id: "typed-loop-approval-workflow",
+        steps: [
+          loop("review-loop", {
+            while: () => false,
+            maxIterations: 1,
+            steps: [
+              waitForApproval("review", {
+                message: "Review loop item",
+                responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+              }),
+            ],
+          }),
+        ],
+      });
+      client.register(loopWorkflow);
+      const runId = "run-static-loop-approval";
+      await backend.createRun({
+        id: runId,
+        workflowId: loopWorkflow.id,
+        status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {}, runId, workflowId: loopWorkflow.id },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-static-loop",
+        nodeId: "review",
+        message: "Review loop item",
+        payload: undefined,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await assertRejects(() =>
+        client.approve(runId, "apr-static-loop", "reviewer", undefined, {
+          confirmed: "yes",
+        })
+      );
+
+      const stillPending = await backend.getPendingApprovals(runId);
+      assertEquals(stillPending.length, 1);
+      assertEquals(stillPending[0]?.status, "pending");
+    });
+
+    it("leaves dynamically declared loop approval steps unvalidated", async () => {
+      const dynamicLoopWorkflow = workflow({
+        id: "dynamic-loop-approval-workflow",
+        steps: [
+          loop("review-loop", {
+            while: () => false,
+            maxIterations: 1,
+            steps: () => [
+              waitForApproval("review", {
+                message: "Review loop item",
+                responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+              }),
+            ],
+          }),
+        ],
+      });
+      client.register(dynamicLoopWorkflow);
+      const runId = "run-dynamic-loop-approval";
+      await backend.createRun({
+        id: runId,
+        workflowId: dynamicLoopWorkflow.id,
+        status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {}, runId, workflowId: dynamicLoopWorkflow.id },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-dynamic-loop",
+        nodeId: "review",
+        message: "Review loop item",
+        payload: undefined,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await client.approve(runId, "apr-dynamic-loop", "reviewer", undefined, {
+        confirmed: "yes",
+      });
+
+      assertEquals(await backend.getPendingApprovals(runId), []);
+    });
+
+    it("drops stale approval schemas when a workflow id is re-registered", async () => {
+      const workflowId = "re-registered-approval-workflow";
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          waitForApproval("review", {
+            message: "Initial typed review",
+            responseSchema: defineSchema((v) => v.object({ confirmed: v.boolean() }))(),
+          }),
+        ],
+      }));
+      client.register(workflow({
+        id: workflowId,
+        steps: [
+          waitForApproval("review", { message: "Replacement untyped review" }),
+        ],
+      }));
+
+      const runId = "run-re-registered-approval";
+      await backend.createRun({
+        id: runId,
+        workflowId,
+        status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {}, runId, workflowId },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingApproval(runId, {
+        id: "apr-re-registered",
+        nodeId: "review",
+        message: "Replacement untyped review",
+        payload: undefined,
+        requestedAt: new Date(),
+        status: "pending",
+      });
+
+      await client.approve(runId, "apr-re-registered", "reviewer", undefined, {
+        confirmed: "yes",
+      });
+
+      assertEquals(await backend.getPendingApprovals(runId), []);
+    });
+
+    it("leaves comment-only approvals working when no schema is declared", async () => {
+      client.register(workflow({
+        id: "untyped-approval-workflow",
+        steps: [waitForApproval("review", { message: "Confirm" })],
+      }));
+
+      const handle = await client.start("untyped-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await client.approve(handle.runId, approval.id, "reviewer", "looks good");
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+    });
+  });
+
+  describe("nested approval", () => {
+    // The module docstring on veryfront/workflow documents exactly this shape:
+    // a waitForApproval inside a branch.
+    const nestedApprovalWorkflow = workflow({
+      id: "nested-approval-workflow",
+      steps: [
+        branch("review-gate", {
+          condition: () => true,
+          then: [waitForApproval("nested-review", { message: "Please review" })],
+        }),
+        dependsOn(
+          step("publish", {
+            tool: createMockTool("publish-after-nested-approval", { published: true }),
+          }),
+          "review-gate",
+        ),
+      ],
+    });
+
+    const subWorkflowApprovalWorkflow = workflow({
+      id: "sub-workflow-nested-approval-workflow",
+      steps: [
+        subWorkflow("child-workflow", {
+          workflow: workflow({
+            id: "child-approval-workflow",
+            steps: [
+              waitForApproval("child-review", { message: "Review child workflow" }),
+            ],
+          }).definition,
+        }),
+        dependsOn(
+          step("publish-child", {
+            tool: createMockTool("publish-after-sub-workflow-approval", { published: "child" }),
+          }),
+          "child-workflow",
+        ),
+      ],
+    });
+
+    it("creates a pending approval for a wait nested in a branch", async () => {
+      client.register(nestedApprovalWorkflow);
+
+      const handle = await client.start("nested-approval-workflow", {});
+      await handle.settled();
+
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(run.status, "waiting");
+
+      // Branch children are qualified with their arm, and the approval is keyed
+      // by that same id. Reporting the enclosing branch instead produced no
+      // approval at all.
+      const approvals = await backend.getPendingApprovals(handle.runId);
+      assertEquals(approvals.length, 1);
+      assertEquals(approvals[0]!.nodeId, "review-gate/then/nested-review");
+      assertEquals(approvals[0]!.message, "Please review");
+      assertEquals(run.currentNodes, ["review-gate/then/nested-review"]);
+    });
+
+    it("resolves a nested approval and lets the run continue", async () => {
+      client.register(nestedApprovalWorkflow);
+
+      const handle = await client.start("nested-approval-workflow", {});
+      await handle.settled();
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+
+      await client.approve(handle.runId, approval.id, "reviewer");
+
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(run.status, "completed");
+      assertEquals(run.nodeStates["review-gate"]!.status, "completed");
+      assertEquals(run.nodeStates["publish"]!.status, "completed");
+      const output = run.output as Record<string, unknown>;
+      assertEquals(output.publish, { published: true });
+      assertEquals(
+        (output["review-gate/then/nested-review"] as { approved?: boolean }).approved,
+        true,
+      );
+    });
+
+    it("creates and resolves a pending approval nested in a sub-workflow", async () => {
+      client.register(subWorkflowApprovalWorkflow);
+
+      const handle = await client.start("sub-workflow-nested-approval-workflow", {});
+      await handle.settled();
+
+      const waitingRun = await backend.getRun(handle.runId);
+      assertExists(waitingRun);
+      assertEquals(waitingRun.status, "waiting");
+      assertEquals(waitingRun.currentNodes, ["child-review"]);
+
+      const [approval] = await backend.getPendingApprovals(handle.runId);
+      assertExists(approval);
+      assertEquals(approval.nodeId, "child-review");
+      assertEquals(approval.message, "Review child workflow");
+
+      await client.approve(handle.runId, approval.id, "reviewer");
+
+      assertEquals(await backend.getPendingApprovals(handle.runId), []);
+      const run = await backend.getRun(handle.runId);
+      assertExists(run);
+      assertEquals(run.status, "completed");
+      assertEquals(run.nodeStates["child-workflow"]!.status, "completed");
+      assertEquals(run.nodeStates["publish-child"]!.status, "completed");
+      const output = run.output as Record<string, unknown>;
+      assertEquals(output["publish-child"], { published: "child" });
+    });
   });
 
   describe("register()", () => {
@@ -208,7 +554,7 @@ describe("WorkflowClient", () => {
         type: "function",
         description: "Capture workflow tool context",
         inputSchema: defineSchema((v) => v.object({}).passthrough())(),
-        execute: (_input, context) => {
+        execute: async (_input, context) => {
           capturedContext = context;
           return {
             projectSlug: context?.projectSlug,

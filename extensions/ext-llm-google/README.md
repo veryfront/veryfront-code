@@ -205,6 +205,24 @@ const response = await ai.chat("google/gemini-2.5-pro", {
 
 See [Gemini safety settings](https://ai.google.dev/gemini-api/docs/safety-settings) for available categories and thresholds.
 
+## Structured Outputs
+
+A response format maps to Gemini generation config keys. `type: "json"` sets
+`responseMimeType` alone; `type: "json_schema"` adds `responseJsonSchema`:
+
+```json
+{
+  "generationConfig": {
+    "responseMimeType": "application/json",
+    "responseJsonSchema": { "type": "object" }
+  }
+}
+```
+
+Gemini has no counterpart for the format name, description, or strict flag, so
+those are not sent. Provider options replace `generationConfig` wholesale, and
+these two keys are re-applied afterward so an override cannot drop the schema.
+
 ## Provider Options
 
 Pass Gemini-specific options through `providerOptions`:
@@ -243,11 +261,10 @@ When `requestLabels` is set, it takes precedence. Otherwise, `userId` is sent as
 
 The following settings emit `unsupported-setting` warnings and are silently dropped:
 
-| Setting            | Reason                                                                                              |
-| ------------------ | --------------------------------------------------------------------------------------------------- |
-| `presencePenalty`  | Gemini `generateContent` does not accept presence penalty.                                          |
-| `frequencyPenalty` | Gemini `generateContent` does not accept frequency penalty.                                         |
-| `responseFormat`   | Gemini uses `generationConfig.responseMimeType` + `responseSchema` instead (use `providerOptions`). |
+| Setting            | Reason                                                      |
+| ------------------ | ----------------------------------------------------------- |
+| `presencePenalty`  | Gemini `generateContent` does not accept presence penalty.  |
+| `frequencyPenalty` | Gemini `generateContent` does not accept frequency penalty. |
 
 ## Error Handling
 

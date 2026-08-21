@@ -1121,6 +1121,102 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
     }
   });
 
+  it("self-heals Darwin /private/var aliases for the same cached SSR path", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-darwin-alias-selfheal-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-darwin-alias-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const projectId = "project-darwin-alias-selfheal";
+    const contentSourceId = "preview-main";
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        const cacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+        const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("darwinalias"));
+        const aliasedCachedPath = cachedPath.startsWith("/var/")
+          ? `/private${cachedPath}`
+          : cachedPath;
+
+        await getLocalFs().mkdir(cacheDir, { recursive: true });
+        await writeTextFile(
+          join(cacheDir, "_index.json"),
+          JSON.stringify({ [key]: cachedPath }),
+        );
+        const cache = await getModulePathCache(cacheDir);
+        verifiedModuleDeps.set(`${cachedPath}:${key}`, true);
+        verifiedModuleDeps.set(`${aliasedCachedPath}:${key}`, true);
+
+        const invalidated = await invalidateMdxEsmModuleForCachedPath(
+          aliasedCachedPath,
+          filePath,
+          projectDir,
+          "19.1.1",
+          getMdxEsmSsrCacheDirs(projectId, contentSourceId),
+        );
+
+        assertEquals(invalidated, true);
+        assertEquals(cache.get(key), undefined);
+        assertEquals(verifiedModuleDeps.get(`${cachedPath}:${key}`), undefined);
+        assertEquals(verifiedModuleDeps.get(`${aliasedCachedPath}:${key}`), undefined);
+      });
+    } finally {
+      await Promise.all([
+        remove(cacheBase, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("self-heals cached SSR paths when the cache-dir context is no longer active", async () => {
+    clearModulePathCache();
+
+    const cacheBase = await makeTempDir({ prefix: "vf-mdx-contextless-selfheal-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-contextless-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const projectId = "project-contextless-selfheal";
+    const contentSourceId = "preview-main";
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    let cacheDir = "";
+    let cachedPath = "";
+    let cache: Map<string, string> | undefined;
+
+    try {
+      await runWithCacheDir(cacheBase, async () => {
+        cacheDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
+        cachedPath = join(cacheDir, buildMdxEsmModuleFileName("contextless"));
+
+        await getLocalFs().mkdir(cacheDir, { recursive: true });
+        await writeTextFile(
+          join(cacheDir, "_index.json"),
+          JSON.stringify({ [key]: cachedPath }),
+        );
+        cache = await getModulePathCache(cacheDir);
+        verifiedModuleDeps.set(`${cachedPath}:${key}`, true);
+      });
+
+      const invalidated = await invalidateMdxEsmModuleForCachedPath(
+        cachedPath,
+        filePath,
+        projectDir,
+        "19.1.1",
+        null,
+      );
+
+      assertEquals(invalidated, true);
+      assertEquals(cache?.get(key), undefined);
+      assertEquals(verifiedModuleDeps.get(`${cachedPath}:${key}`), undefined);
+    } finally {
+      await Promise.all([
+        remove(cacheBase, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
   it("self-heals stale entries from older versioned cache dirs", async () => {
     clearModulePathCache();
 

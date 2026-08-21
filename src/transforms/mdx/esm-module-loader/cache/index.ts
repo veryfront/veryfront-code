@@ -16,6 +16,7 @@ import {
 } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
@@ -582,7 +583,9 @@ export function invalidateModulePaths(changedPaths: string[]): void {
 function getMdxEsmCacheDirForCachedPath(cachedPath: string): string | null {
   const baseCacheDir = getMdxEsmCacheDir();
   const prefix = baseCacheDir.endsWith("/") ? baseCacheDir : `${baseCacheDir}/`;
-  if (!cachedPath.startsWith(prefix)) return null;
+  if (!cachedPath.startsWith(prefix)) {
+    return getMdxEsmCacheDirFromPathSegments(cachedPath);
+  }
 
   const parts = cachedPath.slice(prefix.length).split("/");
   const [maybeVersionKey, maybeProjectKey, maybeSourceKey] = parts;
@@ -596,10 +599,51 @@ function getMdxEsmCacheDirForCachedPath(cachedPath: string): string | null {
     : join(baseCacheDir, projectKey, sourceKey);
 }
 
+function getMdxEsmCacheDirFromPathSegments(cachedPath: string): string | null {
+  const marker = "/veryfront-mdx-esm/";
+  const markerIndex = cachedPath.indexOf(marker);
+  if (markerIndex < 0) return null;
+
+  const cacheRoot = cachedPath.slice(0, markerIndex + marker.length - 1);
+  const parts = cachedPath.slice(markerIndex + marker.length).split("/");
+  const [maybeVersionKey, maybeProjectKey, maybeSourceKey] = parts;
+  const hasVersionSegment = isCacheVersionSegment(maybeVersionKey);
+  const projectKey = hasVersionSegment ? maybeProjectKey : maybeVersionKey;
+  const sourceKey = hasVersionSegment ? maybeSourceKey : maybeProjectKey;
+  if (!projectKey || !sourceKey) return null;
+
+  return hasVersionSegment
+    ? join(cacheRoot, maybeVersionKey!, projectKey, sourceKey)
+    : join(cacheRoot, projectKey, sourceKey);
+}
+
 function isSameOrDescendantPath(path: string, parentPath: string): boolean {
   const normalizedParent = parentPath.replace(/\/+$/, "");
   const normalizedPath = path.replace(/\/+$/, "");
   return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
+}
+
+function isDarwinHost(): boolean {
+  const deno = getDenoRuntime();
+  if (deno) return deno.build.os === "darwin";
+  return (globalThis as { process?: { platform?: string } }).process?.platform === "darwin";
+}
+
+function normalizeDarwinPrivateVarAlias(path: string): string {
+  if (!isDarwinHost()) return path;
+  return path.startsWith("/private/var/") ? path.slice("/private".length) : path;
+}
+
+function getDarwinPrivateVarAlias(path: string): string | null {
+  if (!isDarwinHost()) return null;
+  if (path.startsWith("/private/var/")) return path.slice("/private".length);
+  if (path.startsWith("/var/")) return `/private${path}`;
+  return null;
+}
+
+function isSameCachedPath(a: string, b: string): boolean {
+  return a === b ||
+    normalizeDarwinPrivateVarAlias(a) === normalizeDarwinPrivateVarAlias(b);
 }
 
 function invalidateMdxEsmModuleFromCache(
@@ -618,13 +662,16 @@ function invalidateMdxEsmModuleFromCache(
     return false;
   }
 
-  if (expectedCachedPath && cachedPath !== expectedCachedPath) {
+  if (expectedCachedPath && !isSameCachedPath(cachedPath, expectedCachedPath)) {
     verifiedModuleDeps.delete(`${expectedCachedPath}:${cacheKey}`);
     return false;
   }
 
   cache.delete(cacheKey);
   verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+  if (expectedCachedPath && expectedCachedPath !== cachedPath) {
+    verifiedModuleDeps.delete(`${expectedCachedPath}:${cacheKey}`);
+  }
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
     filePath,
     cachedPath,
@@ -668,7 +715,11 @@ export async function invalidateMdxEsmModuleForCachedPath(
   const candidateDirs = [
     ...(derivedCacheDir ? [derivedCacheDir] : []),
     ...configuredDirs,
-  ].filter((cacheDir, index, dirs) => dirs.indexOf(cacheDir) === index);
+  ].flatMap((cacheDir) => {
+    const alias = getDarwinPrivateVarAlias(cacheDir);
+    return alias ? [cacheDir, alias] : [cacheDir];
+  }).filter((cacheDir, index, dirs) => dirs.indexOf(cacheDir) === index)
+    .sort((a, b) => Number(modulePathCaches.has(b)) - Number(modulePathCaches.has(a)));
   if (candidateDirs.length === 0) return false;
 
   for (const cacheDir of candidateDirs) {
