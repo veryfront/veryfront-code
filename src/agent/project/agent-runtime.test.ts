@@ -109,13 +109,9 @@ Deno.test("project agent runtime resolves code and markdown agent candidates", a
     model: "openai/gpt-5.4",
     maxSteps: 7,
     providerTools: ["web_search"],
-    tools: [
-      "execute_skill_script",
-      "get_active_agent_run",
-      "get_agent_run_events",
-      "load_skill",
-      "load_skill_reference",
-    ],
+    // No skills are registered in this project, so the skill tools are not
+    // attached and do not appear in the serialized candidate.
+    tools: ["get_active_agent_run", "get_agent_run_events"],
   });
   assertEquals(await createRuntimeAgentDefinitionFromAgent(markdownAgent), {
     id: "writer",
@@ -212,10 +208,7 @@ Deno.test("project agent runtime serializes scoped delegates and first-party MCP
 
   assertEquals(definition.tools, [
     "agent_specialist",
-    "execute_skill_script",
     "get_file",
-    "load_skill",
-    "load_skill_reference",
     "lookup_job",
   ]);
   assertEquals(definition.delegates, ["specialist"]);

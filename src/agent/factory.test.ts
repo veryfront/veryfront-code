@@ -82,11 +82,33 @@ describe("agent factory", () => {
 
   it("bootstraps schema validation before registering universal skill tools", () => {
     resetExtensionContracts();
+    registerSkill("support-triage", createSkill("support-triage", "Triage support requests"));
 
     const assistant = agent({ id: "schema-bootstrap", system: "Stay helpful." });
 
     assertEquals(typeof tryResolve<{ object: unknown }>("SchemaValidator")?.object, "function");
     assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+  });
+
+  it("does not attach skill tools to an agent that never mentioned skills", () => {
+    // Undeclared `skills` means "every visible skill". With no skills
+    // registered that is nothing, so the three skill tools were being sent on
+    // every request to answer "no such skill" and nothing else.
+    const assistant = agent({ id: "no-skills-anywhere", system: "Stay helpful." });
+
+    assertEquals(assistant.config.tools, undefined);
+  });
+
+  it("keeps skill tools for an agent that opted in before any skill registered", () => {
+    // `skills: true` is intent, not inference: the author may be registering
+    // skills later, and stripping the tools would silently break them.
+    const optedIn = agent({ id: "opted-in-early", system: "Stay helpful.", skills: true });
+
+    assertEquals(Object.keys(optedIn.config.tools ?? {}).sort(), [
       "execute_skill_script",
       "load_skill",
       "load_skill_reference",

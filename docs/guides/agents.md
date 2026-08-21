@@ -95,6 +95,10 @@ Research the question and cite every claim.
 - Omit `skills` or use `skills: true` to advertise and authorize every skill
   visible to the agent. Use `skills: []` to advertise none and to authorize no
   project or configured skill for `load_skill`.
+- The difference between omitting `skills` and `skills: true` shows only when a
+  project has no skills at all. An agent that omitted it gets no skill tools,
+  because there is nothing for them to load. `skills: true` is a declaration,
+  so the tools stay whatever the registry holds.
 - `tools: true` - every currently scoped tool is authorized, while non-bootstrap
   schemas are deferred behind `tool_search` until the agent searches for them.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
@@ -366,6 +370,28 @@ console.log(result.text); // The agent's response
 console.log(result.toolCalls); // Tools the agent called
 console.log(result.usage); // Token usage
 ```
+
+### One-shot calls
+
+For a single call with no tools and no follow-up turn - an extraction, a
+classification, a rewrite - hold the agent to one step and turn skills off:
+
+```ts
+const extractor = agent({
+  id: "extractor",
+  model: "anthropic/claude-sonnet-4-6",
+  system: "Extract the invoice total. Reply with the number alone.",
+  skills: false,
+  maxSteps: 1,
+});
+
+const { text } = await extractor.generate({ input: invoiceText });
+```
+
+`maxSteps: 1` stops the runtime from taking a second turn it has no use for.
+`skills: false` removes the `load_skill` family from the request in a project
+that does have skills - an agent with one job should not be offered a catalog
+it will never open.
 
 ## Structured output
 

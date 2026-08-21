@@ -110,6 +110,48 @@ function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
 }
 
 /**
+ * What to do with the `load_skill` family for this agent.
+ *
+ * - `disable`: skills were turned off on purpose. Remove the tools even if the
+ *   author also configured one, so `skills: false` cannot be worked around.
+ * - `omit`: nothing declared them and there is nothing to load, so do not
+ *   inject.
+ * - `inject`: attach the framework tools, keeping any concrete override.
+ *
+ * `omit` is the case this distinction exists for. An undeclared `skills` means
+ * "every visible skill", which is usually right -- but in a project with no
+ * skills it resolved to nothing while the tools were attached anyway, spending
+ * prompt budget every request on a tool that could only answer "no such skill".
+ *
+ * Declaring `skills` at all counts as intent and still injects, `true` against
+ * an empty registry included: that author is opting in deliberately, possibly
+ * before the skills they expect have registered. Configuring one of the skill
+ * tools by hand counts the same way -- nobody supplies a `load_skill` without
+ * wanting the family around it. Discovery registers skills -- global ones and
+ * an agent's own colocated ones -- before constructing any agent, so an
+ * undeclared agent always sees the finished registry.
+ */
+type SkillToolDisposition = "disable" | "omit" | "inject";
+
+function hasConfiguredSkillTool(tools: AgentConfig["tools"]): boolean {
+  if (tools === undefined || tools === true) return false;
+  return SKILL_TOOL_REGISTRATIONS.some((registration) => {
+    const configured = tools[registration.id];
+    return typeof configured === "object" && configured !== null;
+  });
+}
+
+function resolveSkillToolDisposition(
+  config: AgentConfig,
+  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">,
+): SkillToolDisposition {
+  if (isExplicitNoneSkillSelector(config.skills)) return "disable";
+  if (config.skills !== undefined) return "inject";
+  if (hasConfiguredSkillTool(config.tools)) return "inject";
+  return resolveSkillSnapshot().definitions.length > 0 ? "inject" : "omit";
+}
+
+/**
  * Projects a registered skill onto the runtime skill shape the shared skills
  * renderer consumes. Instructions stay empty: the call context advertises
  * skills, and `load_skill` delivers their bodies.
@@ -314,10 +356,13 @@ function resolveToolsConfiguration(input: {
   config: AgentConfig;
   id: string;
   delegates: string[] | undefined;
-  exposeSkillTools: boolean;
-  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "allowedSkillIds">;
+  skillTools: SkillToolDisposition;
+  resolveSkillSnapshot: () => Pick<
+    ResolvedSkillSelectorSnapshot<Skill>,
+    "allowedSkillIds" | "definitions"
+  >;
 }): AgentConfig["tools"] {
-  const { config, id, delegates, exposeSkillTools, resolveSkillSnapshot } = input;
+  const { config, id, delegates, skillTools, resolveSkillSnapshot } = input;
   let merged = config.tools;
 
   ensureBuiltinSchemaValidator();
@@ -335,7 +380,12 @@ function resolveToolsConfiguration(input: {
       configuredTools[INVOKE_AGENT_TOOL_ID] = createInvokeAgentTool({ selfId: id });
     }
     for (const registration of SKILL_TOOL_REGISTRATIONS) {
-      if (!exposeSkillTools) {
+      if (skillTools === "disable") {
+        delete configuredTools[registration.id];
+        continue;
+      }
+
+      if (skillTools === "omit") {
         delete configuredTools[registration.id];
         continue;
       }
@@ -496,12 +546,11 @@ function createAgent<TOutput = never>(
 
   registerConfiguredLocalTools(config);
 
-  const shouldExposeSkillTools = !isExplicitNoneSkillSelector(config.skills);
   const mergedToolsConfig = resolveToolsConfiguration({
     config,
     id,
     delegates,
-    exposeSkillTools: shouldExposeSkillTools,
+    skillTools: resolveSkillToolDisposition(config, resolveSkillSnapshot),
     resolveSkillSnapshot,
   });
 
