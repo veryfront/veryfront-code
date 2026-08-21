@@ -8,7 +8,7 @@
  */
 
 import { createFileSystem } from "../src/platform/compat/fs.ts";
-import { bumpDenoJsonVersion } from "./release-version.ts";
+import { bumpDenoJsonVersion, getNewVersion } from "./release-version.ts";
 import { exit, getArgs } from "../src/platform/compat/process.ts";
 import { promptUser } from "../cli/utils/index.ts";
 
@@ -112,33 +112,6 @@ async function runCommand(cmd: string[], cwd?: string) {
   } else {
     throw new Error("Unsupported runtime for command execution.");
   }
-}
-
-function getNewVersion(currentVersion: string, type: string): string {
-	if (/^\d+\.\d+\.\d+$/.test(type)) {
-		return type;
-	}
-
-	const parts = currentVersion.split(".").map(Number);
-	if (parts.length !== 3 || parts.some(isNaN)) {
-		throw new Error(`Invalid current version format: ${currentVersion}`);
-	}
-	const [major, minor, patch] = parts as [number, number, number];
-
-	switch (type) {
-		case "major":
-			return `${major + 1}.0.0`;
-		case "minor":
-			return `${major}.${minor + 1}.0`;
-		case "patch":
-			return `${major}.${minor}.${patch + 1}`;
-		default:
-			if (/^\d+\.\d+\.\d+$/.test(type)) {
-				return type;
-			}
-			console.error(`Invalid version argument: ${type}`);
-			exit(1);
-	}
 }
 
 async function updateExampleVersions(newVersion: string) {

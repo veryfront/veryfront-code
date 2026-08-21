@@ -20,3 +20,35 @@ export function bumpDenoJsonVersion(source: string, newVersion: string): string 
 	}
 	return source.replace(versionField, `$1${newVersion}$2`);
 }
+
+/** Resolve a stable release version from either a stable or prerelease source. */
+export function getNewVersion(currentVersion: string, type: string): string {
+	if (/^\d+\.\d+\.\d+$/.test(type)) {
+		return type;
+	}
+
+	const currentMatch = currentVersion.match(
+		/^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+	);
+	if (!currentMatch) {
+		throw new Error(`Invalid current version format: ${currentVersion}`);
+	}
+
+	const major = Number(currentMatch[1]);
+	const minor = Number(currentMatch[2]);
+	const patch = Number(currentMatch[3]);
+	const isPrerelease = currentVersion.includes("-");
+
+	switch (type) {
+		case "major":
+			return `${major + 1}.0.0`;
+		case "minor":
+			return `${major}.${minor + 1}.0`;
+		case "patch":
+			return isPrerelease
+				? `${major}.${minor}.${patch}`
+				: `${major}.${minor}.${patch + 1}`;
+		default:
+			throw new Error(`Invalid version argument: ${type}`);
+	}
+}
