@@ -421,6 +421,37 @@ describe("Distributed cache functions", () => {
       });
     });
 
+    it("drops the process-local entry on delete, deleteAsync and clear", async () => {
+      await withCountingBackend("l1-key-invalidation", async (mod, reads) => {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+        const read = (): Promise<void> =>
+          runWithCacheBatching(async () => {
+            await cache.getAsync(key);
+          });
+
+        await read();
+        await read();
+        assertEquals(reads(), 1, "precondition: the entry is held across requests");
+
+        cache.delete(key);
+        await read();
+        assertEquals(reads(), 2, "delete must drop the process-local entry");
+        await read();
+        assertEquals(reads(), 2);
+
+        await cache.deleteAsync(key);
+        await read();
+        assertEquals(reads(), 3, "deleteAsync must drop the process-local entry");
+        await read();
+        assertEquals(reads(), 3);
+
+        cache.clear();
+        await read();
+        assertEquals(reads(), 4, "clear must drop the process-local entry");
+      });
+    });
+
     it("does not use process-local entries for API reads without verified authority", async () => {
       const mod = await import("./file-cache.ts?l1-api-auth-scope");
       const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
@@ -749,6 +780,119 @@ describe("Distributed cache functions", () => {
           assertEquals(reads(), 1, "the second api-backed request must be served locally");
         },
       );
+    });
+
+    // Issue veryfront-issue-inbox#602 acceptance criterion 4: a read taken
+    // outside a request scope bypasses the batcher, so before this store it
+    // paid a round trip every time.
+    it("serves a read taken outside any request scope from the process-local store", async () => {
+      await withApiBackend(
+        "l1-no-request-scope",
+        () => "api:https://api.example:tok-a:proj-a",
+        async (mod, reads) => {
+          const cache = new mod.FileCache();
+          const key = "file:release:acme:rel_123:/app/page.tsx";
+
+          // No runWithCacheBatching wrapper: this is the bypass at
+          // request-cache-batcher.ts, where there is no batch to join.
+          assertEquals(await cache.getAsync(key), "content");
+          assertEquals(reads(), 1);
+
+          assertEquals(await cache.getAsync(key), "content");
+          assertEquals(await cache.getAsync(key), "content");
+          assertEquals(reads(), 1, "an out-of-scope repeat read must not reach the backend");
+
+          // A request-scoped read shares the same entry rather than re-reading.
+          await runWithCacheBatching(async () => {
+            assertEquals(await cache.getAsync(key), "content");
+          });
+          assertEquals(reads(), 1, "and the entry is shared with request-scoped reads");
+        },
+      );
+    });
+
+    // Issue veryfront-issue-inbox#602 acceptance criterion 2: pin the backend
+    // call count for a known module graph. Counts round trips, not keys, so a
+    // batched flush counts once however many keys it carries.
+    it("issues no backend call for a module graph a previous render already read", async () => {
+      const mod = await import("./file-cache.ts?l1-module-graph");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let calls = 0;
+      const value = (key: string) => JSON.stringify({ value: `source of ${key}`, timestamp: 0 });
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "api",
+            size: 0,
+            get: (key: string) => {
+              calls += 1;
+              return Promise.resolve(value(key));
+            },
+            getBatch: (keys: string[]) => {
+              calls += 1;
+              return Promise.resolve(new Map(keys.map((key) => [key, value(key)])));
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+            delByPattern: () => Promise.resolve(0),
+            resolveAuthorityScope: () => "api:https://api.example:tok-a:proj-a",
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        // A module graph the renderer walks depth first, awaiting each import
+        // before it discovers the next. That walk is what degenerates the
+        // request batcher into one round trip per file.
+        const graph = (release: string) =>
+          Array.from(
+            { length: 150 },
+            (_unused, index) => `file:release:acme:${release}:/app/module-${index}.tsx`,
+          );
+        const render = async (release: string): Promise<void> => {
+          await runWithCacheBatching(async () => {
+            for (const key of graph(release)) {
+              assertEquals(await cache.getAsync(key), `source of ${key}`);
+            }
+          });
+        };
+
+        await render("rel_1");
+        const cold = calls;
+        assertEquals(
+          cold,
+          150,
+          "precondition: the cold render is still one round trip per file, which is the batcher half of #602",
+        );
+
+        await render("rel_1");
+        assertEquals(calls - cold, 0, "a warm render of the same graph must issue no backend call");
+
+        await render("rel_1");
+        assertEquals(calls - cold, 0, "and must keep issuing none on every later render");
+
+        // Activating a release produces a different key per file, so the next
+        // render reads the new release rather than serving the old one.
+        const beforeActivation = calls;
+        await render("rel_2");
+        assertEquals(
+          calls - beforeActivation,
+          150,
+          "a new release must not be served from the previous release's entries",
+        );
+        await render("rel_2");
+        assertEquals(calls - beforeActivation, 150, "and the new release warms the same way");
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
     });
 
     it("never shares a process-local entry between two resolved authorities", async () => {

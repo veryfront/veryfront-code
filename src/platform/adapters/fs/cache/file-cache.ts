@@ -387,9 +387,12 @@ export class FileCache {
         // Update request-scoped cache so subsequent reads in same request see the new value
         setInRequestCache(key, serialized);
         // The write is only authoritative once the backend has it, so hold
-        // admission until then.
+        // admission until then. Take the promise before handing the settle to
+        // it, so a backend that throws instead of rejecting still settles
+        // through the finally below rather than blocking this key forever.
+        const pending = backend.set(key, serialized, this.backendTtlSeconds);
         settleOnReturn = false;
-        backend.set(key, serialized, this.backendTtlSeconds)
+        pending
           .catch((error) => {
             logger.warn("Backend set failed", { key, error });
           })

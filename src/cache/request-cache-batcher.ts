@@ -52,6 +52,13 @@ export async function getCachedWithBatching(
   key: string,
 ): Promise<string | null> {
   const ctx = asyncLocalStorage.getStore();
+  // A read taken outside a request scope has no batch window and no sibling
+  // reads to coalesce with, so there is nothing for it to join. The bypass is
+  // deliberate. It is also not the fan-out cost veryfront-issue-inbox#602
+  // measured: release-scoped file reads are served from the process-local
+  // store in FileCache.getAsync, which is consulted before this function, so a
+  // repeat out-of-scope read of the same release-scoped key costs no round
+  // trip. Keys that are not release-scoped still pay one round trip each here.
   if (!ctx) return backend.get(key);
 
   if (ctx.cache.has(key)) return ctx.cache.get(key) ?? null;
@@ -116,6 +123,15 @@ async function flushBatch(ctx: RequestCacheContext, backend: CacheBackend): Prom
   });
 
   try {
+    // A flush carrying exactly one key costs one round trip on either path:
+    // getBatch([key]) is one POST /get-batch and get(key) is one GET /get.
+    // Measured on a 150-file depth-first module-graph walk, the shape
+    // veryfront-issue-inbox#602 is about: 150 flushes, every one carrying a
+    // single key, 150 round trips whichever path they take. So this
+    // fallthrough costs nothing in round trips, and it avoids encoding a batch
+    // request body and decoding a batch response for one value. What costs
+    // round trips is the flush size, not the endpoint: the same 150 files read
+    // as a fan-out flush in 2 batches of 100 and 50.
     const results = backend.getBatch && uniqueKeys.length > 1
       ? await backend.getBatch(uniqueKeys)
       : await getIndividually(backend, uniqueKeys);
