@@ -7,6 +7,7 @@
  * Usage:
  *   deno run -A scripts/build/generate-templates-manifest.ts
  *   deno run -A scripts/build/generate-templates-manifest.ts --check
+ *   deno run -A scripts/build/generate-templates-manifest.ts --check --root <path>
  */
 
 import { walk } from "#std/fs/walk";
@@ -186,6 +187,40 @@ async function generateManifest(): Promise<TemplateManifest> {
 	return manifest;
 }
 
+function getRootArgument(args: string[]): string | undefined {
+	const rootIndex = args.indexOf("--root");
+	if (rootIndex === -1) return undefined;
+
+	const root = args[rootIndex + 1];
+	if (root === undefined || root.startsWith("--")) {
+		throw new Error("--root requires a directory path");
+	}
+	return root;
+}
+
+async function decompressGeneratedManifest(
+	source: string | null,
+): Promise<string | null> {
+	const encoded = source?.match(
+		/COMPRESSED_TEMPLATE_MANIFEST_BASE64:\s*string\s*=\s*"([A-Za-z0-9+/=]+)";/,
+	)?.[1];
+	if (encoded === undefined) return null;
+
+	try {
+		const binary = atob(encoded);
+		const bytes = new Uint8Array(binary.length);
+		for (let index = 0; index < binary.length; index++) {
+			bytes[index] = binary.charCodeAt(index);
+		}
+		const stream = new Blob([bytes]).stream().pipeThrough(
+			new DecompressionStream("gzip"),
+		);
+		return await new Response(stream).text();
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Write (or verify) the generated manifest artifacts.
  *
@@ -196,6 +231,9 @@ async function generateManifest(): Promise<TemplateManifest> {
  * `run-generate.ts` invokes this as a subprocess, so the guard is true there.
  */
 async function main(): Promise<void> {
+	const root = getRootArgument(Deno.args);
+	if (root !== undefined) Deno.chdir(root);
+
 	const manifest = await generateManifest();
 	const outputPath = "./templates/manifest.json";
 	const output = JSON.stringify(manifest, null, 2) + "\n";
@@ -226,10 +264,13 @@ async function main(): Promise<void> {
 
 	if (Deno.args.includes("--check")) {
 		const existing = await Deno.readTextFile(outputPath).catch(() => null);
-		const existingCompressed = await Deno.readTextFile(compressedOutputPath).catch(() => null);
+		const existingCompressedSource = await Deno.readTextFile(
+			compressedOutputPath,
+		).catch(() => null);
+		const existingCompressed = await decompressGeneratedManifest(existingCompressedSource);
 		const stalePaths = [
 			...(existing !== output ? [outputPath] : []),
-			...(existingCompressed !== compressedOutput ? [compressedOutputPath] : []),
+			...(existingCompressed !== output ? [compressedOutputPath] : []),
 		];
 		if (stalePaths.length > 0) {
 			console.error(`${stalePaths.join(", ")} is stale. Run deno task generate.`);
