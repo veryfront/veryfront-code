@@ -438,6 +438,15 @@ export interface RedisCacheBackendOptions {
 export { isRedisConfigured };
 
 export class RedisCacheBackend implements CacheBackend {
+  /**
+   * Reports `"redis"`, a real member of `CacheBackendType`. This previously
+   * read `"distributed"`, which was never a member of that union, so the wider
+   * annotation was hiding a contract violation. Core's own Redis backend
+   * already reports `"redis"` (`src/cache/backends/redis.ts`), and the only
+   * in-repo consumer branches on `type !== "memory"`
+   * (`src/cache/backends/factory.ts`). If you branch on this value from
+   * outside the repo, read `"redis"`.
+   */
   readonly type = "redis" as const;
   declare getWithRevision?: RevisionedCacheBackend["getWithRevision"];
   declare compareExchange?: RevisionedCacheBackend["compareExchange"];
