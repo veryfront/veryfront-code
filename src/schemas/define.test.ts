@@ -156,6 +156,93 @@ describe("defineSchema", () => {
     assertEquals(schema.safeParse({ category: bug, existing: "archived" }).success, false);
   });
 
+  it("narrows inline enum literals through array, optional, union, and top-level schemas", () => {
+    reset();
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
+
+    const getPropagationSchema = defineSchema((v) =>
+      v.object({
+        labels: v.array(v.enum(["bug", "billing"])),
+        priority: v.enum(["low", "high"]).optional(),
+        state: v.union([v.enum(["draft", "review"]), v.literal("archived")]),
+      })
+    );
+    const getTopLevelSchema = defineSchema((v) => v.enum(["alpha", "beta"]));
+
+    type Propagation = InferSchema<ReturnType<typeof getPropagationSchema>>;
+    type TopLevel = InferSchema<ReturnType<typeof getTopLevelSchema>>;
+
+    const label: Propagation["labels"][number] = "bug";
+    const priority: Propagation["priority"] = "high";
+    const state: Propagation["state"] = "archived";
+    const topLevel: TopLevel = "alpha";
+    // Every directive below is a regression guard. Without the const type
+    // parameter on `enum` each of these positions widens to `string` and the
+    // assignment compiles, which makes the directive unused and fails
+    // `deno check` with TS2578.
+    // @ts-expect-error Array elements must reject values outside the declared set.
+    const invalidLabel: Propagation["labels"][number] = "feature";
+    // @ts-expect-error Optional enums must reject values outside the declared set.
+    const invalidPriority: Propagation["priority"] = "urgent";
+    // @ts-expect-error Union arms must reject values outside the declared set.
+    const invalidState: Propagation["state"] = "deleted";
+    // @ts-expect-error Top-level enums must reject values outside the declared set.
+    const invalidTopLevel: TopLevel = "gamma";
+    void invalidLabel;
+    void invalidPriority;
+    void invalidState;
+    void invalidTopLevel;
+
+    const schema = getPropagationSchema();
+    assertEquals(schema.parse({ labels: [label], priority, state }), {
+      labels: ["bug"],
+      priority: "high",
+      state: "archived",
+    });
+    assertEquals(
+      schema.safeParse({ labels: ["billing"], priority: "low", state: "draft" }).success,
+      true,
+    );
+    assertEquals(schema.safeParse({ labels: ["feature"], state: "draft" }).success, false);
+    assertEquals(
+      schema.safeParse({ labels: [], priority: "urgent", state: "draft" }).success,
+      false,
+    );
+    assertEquals(schema.safeParse({ labels: [], state: "deleted" }).success, false);
+    assertEquals(getTopLevelSchema().parse(topLevel), "alpha");
+    assertEquals(getTopLevelSchema().safeParse("gamma").success, false);
+  });
+
+  it("emits the same JSON Schema for an enum with and without a const assertion", () => {
+    reset();
+    const adapter = createZodAdapter();
+    register<SchemaValidator>("SchemaValidator", adapter);
+
+    const getInlineSchema = defineSchema((v) =>
+      v.object({ category: v.enum(["bug", "billing", "feature"]) })
+    );
+    const getAssertedSchema = defineSchema((v) =>
+      v.object({ category: v.enum(["bug", "billing", "feature"] as const) })
+    );
+
+    const inline = adapter.toJsonSchema(getInlineSchema());
+    const asserted = adapter.toJsonSchema(getAssertedSchema());
+
+    // Pin the wire format as well as the equality, so a change to the const
+    // type parameter cannot silently alter what providers and MCP clients
+    // receive, and so this test cannot pass by comparing two empty objects.
+    const expected: JsonSchema = {
+      type: "object",
+      properties: {
+        category: { type: "string", enum: ["bug", "billing", "feature"] },
+      },
+      required: ["category"],
+    };
+    assertEquals(inline, expected);
+    assertEquals(asserted, expected);
+    assertEquals(JSON.stringify(inline), JSON.stringify(asserted));
+  });
+
   it("fails clearly when the registered adapter cannot compile raw JSON Schema", () => {
     reset();
     const { compileJsonSchema: _unsupported, ...legacyAdapter } = createZodAdapter();
