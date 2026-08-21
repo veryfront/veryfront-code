@@ -4863,6 +4863,41 @@ describe("anthropic output_config schema closure", () => {
     assertEquals(branches[1]!.additionalProperties, false);
   });
 
+  it("closes object subschemas under every schema-bearing keyword", () => {
+    // These are all accepted JSON Schema keywords (src/schemas/schema-input.ts),
+    // so a raw outputSchema can put an object under any of them. A walk that
+    // skips one leaves that object open for Anthropic to reject.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      dependentSchemas: { name: { type: "object", properties: { via: { type: "string" } } } },
+      unevaluatedProperties: { type: "object", properties: { extra: { type: "string" } } },
+      contentSchema: { type: "object", properties: { body: { type: "string" } } },
+    });
+
+    for (const keyword of ["unevaluatedProperties", "contentSchema"]) {
+      assertEquals(
+        (schema[keyword] as Record<string, unknown>).additionalProperties,
+        false,
+        keyword,
+      );
+    }
+    const dependent = (schema.dependentSchemas as Record<string, Record<string, unknown>>).name;
+    assertEquals(dependent.additionalProperties, false);
+  });
+
+  it("closes an object declaring additionalProperties as undefined", () => {
+    // An explicit `undefined` survives the walk but not JSON, so honoring its
+    // presence would emit exactly the open schema Anthropic rejects.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: undefined,
+    });
+
+    assertEquals(schema.additionalProperties, false);
+  });
+
   it("leaves an explicitly declared additionalProperties alone", () => {
     // Rewriting an explicit declaration would silently change the contract the
     // caller asked for. Anthropic still rejects it, which is the caller's call.

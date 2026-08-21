@@ -226,7 +226,7 @@ Anthropic rejects an object-typed schema that does not explicitly set
 `additionalProperties: false`, independently of the framework's own `strict`
 flag:
 
-```
+```text
 output_config.format.schema: For 'object' type, 'additionalProperties'
 must be explicitly set to false
 ```

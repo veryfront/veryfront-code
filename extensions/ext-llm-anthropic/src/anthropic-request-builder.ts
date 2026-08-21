@@ -2250,7 +2250,17 @@ function buildAnthropicOutputConfig(
  * through untouched instead of being rewritten when they happen to look like a
  * schema.
  */
-const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+const SCHEMA_MAP_KEYWORDS = new Set([
+  "properties",
+  "patternProperties",
+  "$defs",
+  "definitions",
+  "dependentSchemas",
+  // Draft-07 `dependencies` holds either a schema or an array of property
+  // names per key. The array form contains strings, which the walk returns
+  // unchanged, so both spellings can share this branch.
+  "dependencies",
+]);
 const SCHEMA_LIST_KEYWORDS = new Set(["anyOf", "oneOf", "allOf", "prefixItems"]);
 const SCHEMA_VALUE_KEYWORDS = new Set([
   "items",
@@ -2262,6 +2272,9 @@ const SCHEMA_VALUE_KEYWORDS = new Set([
   "if",
   "then",
   "else",
+  "unevaluatedProperties",
+  "unevaluatedItems",
+  "contentSchema",
 ]);
 
 /**
@@ -2277,7 +2290,8 @@ const SCHEMA_VALUE_KEYWORDS = new Set([
  *
  * An explicitly declared `additionalProperties` is preserved: rewriting it
  * would silently narrow a contract the caller deliberately opened, and
- * Anthropic surfaces its own error for that case.
+ * Anthropic surfaces its own error for that case. An explicit `undefined`
+ * is not a declaration -- JSON drops it before the provider ever sees it.
  *
  * The result is a copy. The schema object belongs to the agent and is reused
  * across providers and calls, so closing it for Anthropic must not mutate it.
@@ -2307,7 +2321,11 @@ function closeObjectSchemas(schema: unknown): unknown {
     result[key] = value;
   }
 
-  if (isObjectTyped(source.type) && !("additionalProperties" in source)) {
+  // `undefined` counts as unset, not as a declaration. The key survives the
+  // walk when a caller writes it explicitly as `undefined`, but JSON drops it
+  // on the way to the provider -- so honoring its presence would emit exactly
+  // the open schema Anthropic rejects.
+  if (isObjectTyped(source.type) && source.additionalProperties === undefined) {
     result.additionalProperties = false;
   }
   return result;
