@@ -265,6 +265,16 @@ describe("serializeWorkflowContext", () => {
     assertEquals(JSON.parse(serialized).step.total, null);
   });
 
+  it("refuses a boxed Number whose valueOf returns a BigInt, as JSON does", () => {
+    // `Number()` accepts a BigInt that JSON's `ToNumber` refuses, so converting
+    // with it would quietly coerce this to 2 and persist a number JSON would
+    // have thrown on. The conversion has to be the operation JSON performs, not
+    // one that merely looks like it.
+    const boxed = Object.assign(new Number(1), { valueOf: () => 2n });
+
+    assertThrows(() => serializeWorkflowContext(contextWith({ total: boxed })), TypeError);
+  });
+
   it("does not probe primitive slots on an ordinary object", () => {
     // Each probe throws on a miss and a context is mostly objects that miss
     // every one, so probing all of them spent several thrown exceptions per
@@ -409,6 +419,34 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals((error as Error).message.includes("context.step.shallow"), true);
       assertEquals((error as Error).message.includes(".n.n"), false);
+    });
+
+    it("reads a hook above the depth cutoff exactly once", () => {
+      // Handing the whole root back to `JSON.stringify` would re-run every
+      // getter and `toJSON` the walk had already run on the way down, and a
+      // hook that answers differently the second time would then persist a
+      // value this check never saw. Only the subtree below the cutoff is left
+      // to JSON, so nothing above it is read twice.
+      let reads = 0;
+      let deep: unknown = { leaf: 1 };
+      for (let index = 0; index < PAST_THE_WALK; index++) deep = { n: deep };
+      // The getter is keyed before the deep value on purpose. Keyed after it,
+      // the walk would stop before ever reaching the getter and read it once
+      // even when restarting from the root, so the test would prove nothing.
+      const output: Record<string, unknown> = {};
+      Object.defineProperty(output, "counted", {
+        enumerable: true,
+        get: () => {
+          reads++;
+          return reads;
+        },
+      });
+      output.deep = deep;
+
+      const serialized = serializeWorkflowContext(contextWith(output));
+
+      assertEquals(reads, 1);
+      assertEquals(JSON.parse(serialized).step.counted, 1);
     });
 
     it("counts every hole in a sparse array without keeping one entry each", () => {

@@ -19,9 +19,6 @@ const MAX_REPORTED_PATHS = 5;
  */
 export const MAX_TRAVERSAL_DEPTH = 1000;
 
-/** Ends a walk that ran past `MAX_TRAVERSAL_DEPTH`. Never leaves this module. */
-const TRAVERSAL_TOO_DEEP = new Error("workflow value nested deeper than the walk follows");
-
 /**
  * Property names safe to quote verbatim in a diagnostic.
  *
@@ -202,20 +199,25 @@ function boxedPrimitiveSlot(value: JsonTraversalReference): BoxedPrimitiveSlot |
  *
  * JSON puts a Number box through `ToNumber` and a String box through
  * `ToString`, and both of those ask the object, so a replaced `valueOf` or a
- * replaced prototype decides what JSON writes. `Number` and `String` perform
- * those same two conversions. Reading the slot instead would persist a value
- * JSON never wrote, which is the one outcome this module has to avoid. A
- * Boolean box is the case JSON does read straight from the slot.
+ * replaced prototype decides what JSON writes. Reading the slot instead would
+ * persist a value JSON never wrote, which is the one outcome this module has to
+ * avoid. A Boolean box is the case JSON does read straight from the slot.
+ *
+ * `+` and a template literal are used rather than `Number()` and `String()`,
+ * which are close but not the same operations: `Number()` accepts a BigInt that
+ * `ToNumber` refuses, so a `valueOf` returning one would be quietly coerced to a
+ * number here and rejected by JSON. The parameter is `unknown` so each branch
+ * needs one assertion rather than a chain; `slot` is what makes it sound.
  */
 function unboxAsJsonWould(
-  value: JsonTraversalReference,
+  value: unknown,
   slot: BoxedPrimitiveSlot,
 ): string | number | boolean | bigint {
-  if (slot === "number") return Number(value);
-  if (slot === "string") return String(value);
-  if (slot === "boolean") return Boolean.prototype.valueOf.call(value);
+  if (slot === "number") return +(value as number);
+  if (slot === "string") return `${value as string}`;
+  if (slot === "boolean") return Boolean.prototype.valueOf.call(value as boolean);
   // JSON refuses a BigInt box outright, and the walk reports it by its path.
-  return BigInt.prototype.valueOf.call(value);
+  return BigInt.prototype.valueOf.call(value as bigint);
 }
 
 /** Build the exact value JSON will encode, collecting what it cannot carry. */
@@ -304,7 +306,12 @@ function normalizeAndFindUnrepresentableValues(
       }
     }
 
-    if (depth >= MAX_TRAVERSAL_DEPTH) throw TRAVERSAL_TOO_DEEP;
+    // Past the depth this walk follows, the subtree is spliced in as it is and
+    // left to `JSON.stringify`. Handing back the whole root instead would make
+    // every getter and `toJSON` above this point run a second time, and a hook
+    // that answers differently on its second call would then persist a value
+    // this check never saw. Nothing below here is reported, which is the price.
+    if (depth >= MAX_TRAVERSAL_DEPTH) return nested as NormalizedJsonValue;
     active.add(nested);
     try {
       if (isArray) {
@@ -356,16 +363,7 @@ function normalizeAndFindUnrepresentableValues(
     }
   };
 
-  let normalized: NormalizedJsonValue | typeof OMIT_JSON_VALUE;
-  try {
-    normalized = normalize(root, label, "", true, 0);
-  } catch (error) {
-    if (error !== TRAVERSAL_TOO_DEEP) throw error;
-    // Nested past what this walk follows. What it found on the way down still
-    // holds, and the rest is left to `JSON.stringify`, which is iterative and
-    // reaches a depth this walk cannot.
-    return { normalized: root, unrepresentable: found };
-  }
+  const normalized = normalize(root, label, "", true, 0);
 
   return {
     normalized: normalized === OMIT_JSON_VALUE ? undefined : normalized,
