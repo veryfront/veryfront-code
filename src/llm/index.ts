@@ -11,7 +11,7 @@
  * ```
  */
 
-import { agent } from "#veryfront/agent/factory.ts";
+import { createEphemeralAgent } from "#veryfront/agent/factory.ts";
 import type {
   AgentOutputSchema,
   AgentResponse,
@@ -37,7 +37,7 @@ export interface GenerateInput<
 }
 
 /**
- * Run a single model call without constructing an agent.
+ * Run a single model call without registering a reusable agent.
  *
  * Supply `outputSchema` to receive a parsed, validated `object` typed from that
  * schema. No tools, skills, or memory take part.
@@ -51,7 +51,7 @@ export function generate(
     AgentOutputSchema | undefined
   >,
 ): Promise<AgentResponse> {
-  return agent({
+  return createEphemeralAgent({
     system: system ?? "",
     skills: false,
     maxSteps: 1,

@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { registerModelProvider } from "#veryfront/provider";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ModelRuntime } from "#veryfront/provider";
@@ -36,11 +37,27 @@ function stubProvider(text: string) {
 }
 
 describe("llm/generate", () => {
-  it("returns text without constructing an agent", async () => {
+  beforeEach(() => {
+    agentRegistry.clearAll();
+  });
+
+  it("returns text through a one-shot agent facade", async () => {
     const stub = stubProvider("hello");
     try {
       const result = await generate({ input: "hi", model: "stub/stub" });
       assertEquals(result.text, "hello");
+    } finally {
+      stub.dispose();
+    }
+  });
+
+  it("does not register temporary agents", async () => {
+    const stub = stubProvider("hello");
+    try {
+      await generate({ input: "hi", model: "stub/stub" });
+      await generate({ input: "again", model: "stub/stub" });
+
+      assertEquals(agentRegistry.getAllIds(), []);
     } finally {
       stub.dispose();
     }
@@ -92,6 +109,7 @@ describe("llm/generate", () => {
       await assertRejects(() =>
         generate({ input: "where", model: "stub/stub", outputSchema: SCHEMA })
       );
+      assertEquals(agentRegistry.getAllIds(), []);
     } finally {
       stub.dispose();
     }

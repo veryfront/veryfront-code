@@ -22,9 +22,9 @@ const { text } = await generate({ input: "Name three colours." });
 
 ### Functions
 
-| Name       | Description                                            | Source                                                                               |
-| ---------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `generate` | Run a single model call without constructing an agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts#L45) |
+| Name       | Description                                                   | Source                                                                               |
+| ---------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `generate` | Run a single model call without registering a reusable agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/llm/index.ts#L45) |
 
 ### Types
 
