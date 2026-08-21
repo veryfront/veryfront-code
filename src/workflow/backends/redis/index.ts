@@ -18,6 +18,7 @@ import type {
 } from "../../types.ts";
 import { assertWorkflowRunUpdate, type WorkflowBackend, type WorkflowRunUpdate } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
+import { serializeWorkflowContext } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
@@ -321,7 +322,7 @@ export class RedisBackend implements WorkflowBackend {
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
       nodeStates: JSON.stringify(run.nodeStates),
       currentNodes: JSON.stringify(run.currentNodes),
-      context: JSON.stringify(run.context),
+      context: serializeWorkflowContext(run.context, run.id),
       error: run.error ? JSON.stringify(run.error) : "",
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() || "",
@@ -338,7 +339,9 @@ export class RedisBackend implements WorkflowBackend {
     }
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
-    if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
+    if (patch.context !== undefined) {
+      fields.context = serializeWorkflowContext(patch.context);
+    }
     if (Object.hasOwn(patch, "error")) {
       fields.error = patch.error ? JSON.stringify(patch.error) : "";
     }
