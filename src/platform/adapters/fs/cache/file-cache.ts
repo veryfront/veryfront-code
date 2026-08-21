@@ -25,7 +25,6 @@ import {
   getRequestCacheContext,
   setInRequestCache,
 } from "#veryfront/cache/request-cache-batcher.ts";
-import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { isImmutableFileCacheKey } from "./immutable-keys.ts";
 
 const logger = baseLogger.component("file-cache");
@@ -97,32 +96,49 @@ export function isFileCacheDistributedEnabled(): boolean {
  * When backend unavailable: Small memory fallback for local dev
  */
 /**
- * Process-local store for entries whose keys can never denote different content
+ * Process-local store for entries whose keys embed a release identity
  * (see {@link isImmutableFileCacheKey}). With an eligible distributed backend,
- * read otherwise costs an HTTP round trip on every request, in every replica.
- * a single SSR render was measured issuing thousands of them
+ * reading one otherwise costs an HTTP round trip on every request, in every
+ * replica, and a single SSR render was measured issuing thousands of them
  * (veryfront-issue-inbox#602).
  *
- * There is deliberately no invalidation path: an entry is only admitted when the
- * key embeds the release identity, so the value behind it cannot change. Eviction
- * is a memory bound, not a correctness mechanism. The store is keyed on the full
- * cache key, which includes the project slug, so it cannot serve one project's
- * content to another.
+ * Isolation: an entry is scoped on the authority the backend would authorise
+ * the read with, which the backend resolves itself
+ * ({@link CacheBackend.resolveAuthorityScope}). Two credentials or two projects
+ * therefore never share an entry, and an authority the backend cannot resolve
+ * disables the store for that read rather than falling back to a shared scope.
+ *
+ * Invalidation: the store does have one, because production invalidates these
+ * prefixes even though the keys embed a release. See the release and env
+ * prefix clears in `veryfront/websocket-manager.ts` and `veryfront/adapter.ts`.
+ * Every write and delete drops the entries it covers, and holds admission for
+ * those keys until its backend call settles, so a read taken inside that window
+ * bypasses the store instead of pinning a pre-delete value with no TTL.
+ * Eviction is a memory bound, not a correctness mechanism.
  */
 const IMMUTABLE_L1_MAX_ENTRIES = 2_000;
 /** Skip outsized entries rather than let one file evict the whole working set. */
 const IMMUTABLE_L1_MAX_ENTRY_BYTES = 512 * 1024;
-const textEncoder = new TextEncoder();
-const immutableL1 = new Map<string, string>();
+/** Retained bound, so the entry count cannot imply a multi-GB ceiling. */
+const IMMUTABLE_L1_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+const immutableL1 = new Map<string, { raw: string; size: number }>();
+let immutableL1BytesUsed = 0;
 let immutableL1MutationGeneration = 0;
+
+/** A mutation whose backend call has not settled yet. */
+type ImmutableL1Mutation =
+  | { kind: "key"; key: string }
+  | { kind: "prefix"; prefix: string }
+  | { kind: "prefixSuffix"; prefix: string; suffix: string };
+
+const immutableL1InFlightMutations = new Set<ImmutableL1Mutation>();
 
 function immutableL1AuthorityScope(backend: CacheBackend, key: string): string | null {
   if (!isImmutableFileCacheKey(key)) return null;
   if (backend.type !== "api") return backend.type;
-
-  const verifiedCredential = getVerifiedCacheApiCredential();
-  if (!verifiedCredential) return null;
-  return `api:${verifiedCredential.projectId}:${verifiedCredential.projectSlug}`;
+  // The api backend authorises with a credential this module must not
+  // re-derive. Fail closed when it cannot name the authority.
+  return backend.resolveAuthorityScope?.() ?? null;
 }
 
 function immutableL1Key(scope: string, key: string): string {
@@ -134,39 +150,80 @@ function immutableL1SourceKey(scopedKey: string): string {
   return separator === -1 ? scopedKey : scopedKey.slice(separator + 1);
 }
 
+function immutableL1MutationCovers(mutation: ImmutableL1Mutation, key: string): boolean {
+  switch (mutation.kind) {
+    case "key":
+      return mutation.key === key;
+    case "prefix":
+      return key.startsWith(mutation.prefix);
+    case "prefixSuffix":
+      return key.startsWith(mutation.prefix) && key.endsWith(mutation.suffix);
+  }
+}
+
+/**
+ * Whether an unresolved mutation still covers `key`. A global generation
+ * counter only catches a mutation that lands while a read is in flight, so
+ * admission needs this per-key and per-prefix barrier as well.
+ */
+function immutableL1AdmissionBlocked(key: string): boolean {
+  for (const mutation of immutableL1InFlightMutations) {
+    if (immutableL1MutationCovers(mutation, key)) return true;
+  }
+  return false;
+}
+
+/**
+ * Drop the entries a mutation covers and block admission for those keys until
+ * its backend call settles. Call the returned function in a `finally`, so a
+ * rejected mutation cannot leave a permanent block behind.
+ */
+function immutableL1BeginMutation(mutation: ImmutableL1Mutation): () => void {
+  immutableL1InFlightMutations.add(mutation);
+  immutableL1MutationGeneration++;
+  for (const scopedKey of [...immutableL1.keys()]) {
+    if (immutableL1MutationCovers(mutation, immutableL1SourceKey(scopedKey))) {
+      immutableL1Delete(scopedKey);
+    }
+  }
+  return (): void => {
+    immutableL1InFlightMutations.delete(mutation);
+  };
+}
+
 function immutableL1Get(scopedKey: string): string | undefined {
   const hit = immutableL1.get(scopedKey);
   if (hit === undefined) return undefined;
   // Re-insert so eviction order is least-recently-used rather than insertion.
   immutableL1.delete(scopedKey);
   immutableL1.set(scopedKey, hit);
-  return hit;
+  return hit.raw;
+}
+
+function immutableL1Delete(scopedKey: string): void {
+  const existing = immutableL1.get(scopedKey);
+  if (existing === undefined) return;
+  immutableL1BytesUsed -= existing.size;
+  immutableL1.delete(scopedKey);
 }
 
 function immutableL1Set(scopedKey: string, raw: string): void {
-  if (textEncoder.encode(raw).byteLength > IMMUTABLE_L1_MAX_ENTRY_BYTES) return;
-  immutableL1.delete(scopedKey);
-  immutableL1.set(scopedKey, raw);
-  while (immutableL1.size > IMMUTABLE_L1_MAX_ENTRIES) {
+  // estimateSize is the accounting the fallback cache already uses, and it
+  // reads the length rather than copying the value on this hot path.
+  const size = estimateSize(raw);
+  if (size > IMMUTABLE_L1_MAX_ENTRY_BYTES) return;
+
+  immutableL1Delete(scopedKey);
+  immutableL1.set(scopedKey, { raw, size });
+  immutableL1BytesUsed += size;
+
+  while (
+    immutableL1.size > IMMUTABLE_L1_MAX_ENTRIES ||
+    immutableL1BytesUsed > IMMUTABLE_L1_MAX_TOTAL_BYTES
+  ) {
     const oldest = immutableL1.keys().next().value;
     if (oldest === undefined) break;
-    immutableL1.delete(oldest);
-  }
-}
-
-/**
- * Drop a process-local entry. Immutable keys should never be rewritten, so this
- * exists to keep an explicit write or delete authoritative rather than to make
- * the store correct.
- */
-function immutableL1Drop(key: string): void {
-  immutableL1DropByPredicate((scopedKey) => immutableL1SourceKey(scopedKey) === key);
-}
-
-function immutableL1DropByPredicate(matches: (key: string) => boolean): void {
-  immutableL1MutationGeneration++;
-  for (const key of [...immutableL1.keys()]) {
-    if (matches(key)) immutableL1.delete(key);
+    immutableL1Delete(oldest);
   }
 }
 
@@ -174,6 +231,13 @@ function immutableL1DropByPredicate(matches: (key: string) => boolean): void {
 export function clearImmutableFileCacheL1(): void {
   immutableL1MutationGeneration++;
   immutableL1.clear();
+  immutableL1BytesUsed = 0;
+  immutableL1InFlightMutations.clear();
+}
+
+/** Test seam: proves a settled mutation leaves no admission block behind. */
+export function immutableFileCacheL1InFlightMutationCount(): number {
+  return immutableL1InFlightMutations.size;
 }
 
 export class FileCache {
@@ -257,7 +321,11 @@ export class FileCache {
           // The backend will add its own namespace prefix, so we pass the key as-is
           const requestCache = getRequestCacheContext();
           const requestCacheAlreadyHasValue = requestCache?.cache.has(key) ?? false;
-          const l1Scope = requestCacheAlreadyHasValue
+          // A read that starts while a mutation for this key is unresolved
+          // bypasses the process-local store entirely: the backend can still be
+          // serving the pre-mutation value, and pinning it would outlive the
+          // mutation.
+          const l1Scope = requestCacheAlreadyHasValue || immutableL1AdmissionBlocked(key)
             ? null
             : immutableL1AuthorityScope(backend, key);
           const l1Key = l1Scope ? immutableL1Key(l1Scope, key) : null;
@@ -295,42 +363,55 @@ export class FileCache {
    */
   set<T>(key: string, value: T): void {
     if (!this.options.enabled) return;
-    immutableL1Drop(key);
+    const settleMutation = immutableL1BeginMutation({ kind: "key", key });
+    let settleOnReturn = true;
 
-    const size = estimateSize(value);
-    const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
+    try {
+      const size = estimateSize(value);
+      const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
 
-    // In distributed mode, fire-and-forget to backend
-    // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
-    const backend = this.getBackend();
-    if (backend) {
-      let serialized: string;
-      try {
-        serialized = JSON.stringify(entry);
-      } catch (error) {
-        logger.debug("Backend set skipped because the cache entry is not serializable", {
-          key,
-          error,
-        });
+      // In distributed mode, fire-and-forget to backend
+      // Note: key already includes the full prefix from buildFileCacheKeyPrefix (e.g., "file:env:project:...")
+      const backend = this.getBackend();
+      if (backend) {
+        let serialized: string;
+        try {
+          serialized = JSON.stringify(entry);
+        } catch (error) {
+          logger.debug("Backend set skipped because the cache entry is not serializable", {
+            key,
+            error,
+          });
+          return;
+        }
+        // Update request-scoped cache so subsequent reads in same request see the new value
+        setInRequestCache(key, serialized);
+        // The write is only authoritative once the backend has it, so hold
+        // admission until then.
+        settleOnReturn = false;
+        backend.set(key, serialized, this.backendTtlSeconds)
+          .catch((error) => {
+            logger.warn("Backend set failed", { key, error });
+          })
+          .finally(settleMutation);
         return;
       }
-      // Update request-scoped cache so subsequent reads in same request see the new value
-      setInRequestCache(key, serialized);
-      backend.set(key, serialized, this.backendTtlSeconds).catch((error) => {
-        logger.warn("Backend set failed", { key, error });
-      });
-      return;
-    }
 
-    this.setToFallback(key, entry, size);
+      this.setToFallback(key, entry, size);
+    } finally {
+      if (settleOnReturn) settleMutation();
+    }
   }
 
   /**
    * Async set - writes to backend (primary) or fallback memory cache.
    */
   setAsync<T>(key: string, value: T): Promise<void> {
-    immutableL1Drop(key);
-    if (!this.options.enabled) return Promise.resolve();
+    const settleMutation = immutableL1BeginMutation({ kind: "key", key });
+    if (!this.options.enabled) {
+      settleMutation();
+      return Promise.resolve();
+    }
 
     const size = estimateSize(value);
     const entry: CacheEntry<T> = { value, timestamp: Date.now(), size };
@@ -340,6 +421,7 @@ export class FileCache {
     const backend = this.getBackend();
     if (!backend) {
       this.setToFallback(key, entry, size);
+      settleMutation();
       return Promise.resolve();
     }
 
@@ -353,6 +435,8 @@ export class FileCache {
           await backend.set(key, serialized, this.backendTtlSeconds);
         } catch (error) {
           logger.debug("Backend set failed, skipping fallback", { key, error });
+        } finally {
+          settleMutation();
         }
       },
       { "cache.key": key, "cache.backend": backend.type, "cache.size": size },
@@ -387,28 +471,33 @@ export class FileCache {
   }
 
   delete(key: string): boolean {
-    immutableL1Drop(key);
+    // No backend call, so there is no window to hold admission across.
+    immutableL1BeginMutation({ kind: "key", key })();
     const entry = this.fallbackCache.get(key);
     if (entry) this.fallbackMemoryUsed -= entry.size;
     return this.fallbackCache.delete(key);
   }
 
   deleteAsync(key: string): Promise<boolean> {
-    immutableL1Drop(key);
+    const settleMutation = immutableL1BeginMutation({ kind: "key", key });
     return withSpan(
       "platform.fs.cache.deleteAsync",
       async () => {
-        const deletedFromFallback = this.delete(key);
-        // setAsync() publishes distributed writes into the request-scoped
-        // cache before awaiting the backend. Invalidate that view as part of
-        // the same delete, or this request can keep reading a value that the
-        // backend no longer contains.
-        setInRequestCache(key, null);
-        const backend = this.getBackend();
-        if (backend) {
-          await backend.del(key);
+        try {
+          const deletedFromFallback = this.delete(key);
+          // setAsync() publishes distributed writes into the request-scoped
+          // cache before awaiting the backend. Invalidate that view as part of
+          // the same delete, or this request can keep reading a value that the
+          // backend no longer contains.
+          setInRequestCache(key, null);
+          const backend = this.getBackend();
+          if (backend) {
+            await backend.del(key);
+          }
+          return deletedFromFallback;
+        } finally {
+          settleMutation();
         }
-        return deletedFromFallback;
       },
       { "cache.key": key },
     );
@@ -442,78 +531,90 @@ export class FileCache {
   }
 
   deleteByPrefix(prefix: string): number {
-    immutableL1DropByPredicate((key) => immutableL1SourceKey(key).startsWith(prefix));
+    const settleMutation = immutableL1BeginMutation({ kind: "prefix", prefix });
     const count = this.clearLocalByPrefix(prefix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
     // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    cacheBackend?.delByPattern?.(`${prefix}*`).catch((error) => {
-      logger.warn("Backend invalidation failed", { prefix, error });
-    });
+    const pending = cacheBackend?.delByPattern?.(`${prefix}*`);
+    if (pending) {
+      pending.catch((error) => {
+        logger.warn("Backend invalidation failed", { prefix, error });
+      }).finally(settleMutation);
+    } else {
+      settleMutation();
+    }
 
     return count;
   }
 
   deleteByPrefixAsync(prefix: string): Promise<number> {
-    immutableL1DropByPredicate((key) => immutableL1SourceKey(key).startsWith(prefix));
+    const settleMutation = immutableL1BeginMutation({ kind: "prefix", prefix });
     return withSpan(
       "platform.fs.cache.deleteByPrefixAsync",
       async () => {
-        // Clear local cache first, then await the single backend deletion.
-        // Intentionally does NOT call deleteByPrefix() to avoid a double backend
-        // delete (sync fire-and-forget + async await on the same pattern).
-        const count = this.clearLocalByPrefix(prefix);
+        try {
+          // Clear local cache first, then await the single backend deletion.
+          // Intentionally does NOT call deleteByPrefix() to avoid a double backend
+          // delete (sync fire-and-forget + async await on the same pattern).
+          const count = this.clearLocalByPrefix(prefix);
 
-        // Await backend deletion for cross-pod consistency
-        // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-        if (cacheBackend?.delByPattern) {
-          await cacheBackend.delByPattern(`${prefix}*`);
+          // Await backend deletion for cross-pod consistency
+          // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
+          if (cacheBackend?.delByPattern) {
+            await cacheBackend.delByPattern(`${prefix}*`);
+          }
+
+          return count;
+        } finally {
+          settleMutation();
         }
-
-        return count;
       },
       { "cache.prefix": prefix },
     );
   }
 
   deleteByPrefixAndSuffix(prefix: string, suffix: string): number {
-    immutableL1DropByPredicate((key) => {
-      const sourceKey = immutableL1SourceKey(key);
-      return sourceKey.startsWith(prefix) && sourceKey.endsWith(suffix);
-    });
+    const settleMutation = immutableL1BeginMutation({ kind: "prefixSuffix", prefix, suffix });
     const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
 
     // Fire-and-forget backend deletion; failure logged at warn so operators can detect
     // persistent backend issues (e.g. Redis down) without needing debug logging enabled.
     // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-    cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`).catch((error) => {
-      logger.warn("Backend invalidation failed", { prefix, suffix, error });
-    });
+    const pending = cacheBackend?.delByPattern?.(`${prefix}*:${suffix}`);
+    if (pending) {
+      pending.catch((error) => {
+        logger.warn("Backend invalidation failed", { prefix, suffix, error });
+      }).finally(settleMutation);
+    } else {
+      settleMutation();
+    }
 
     return count;
   }
 
   deleteByPrefixAndSuffixAsync(prefix: string, suffix: string): Promise<number> {
-    immutableL1DropByPredicate((key) => {
-      const sourceKey = immutableL1SourceKey(key);
-      return sourceKey.startsWith(prefix) && sourceKey.endsWith(suffix);
-    });
+    const settleMutation = immutableL1BeginMutation({ kind: "prefixSuffix", prefix, suffix });
     return withSpan(
       "platform.fs.cache.deleteByPrefixAndSuffixAsync",
       async () => {
-        // Clear local cache first, then await the single backend deletion.
-        // Intentionally does NOT call deleteByPrefixAndSuffix() to avoid a double backend
-        // delete (sync fire-and-forget + async await on the same pattern).
-        const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
+        try {
+          // Clear local cache first, then await the single backend deletion.
+          // Intentionally does NOT call deleteByPrefixAndSuffix() to avoid a double backend
+          // delete (sync fire-and-forget + async await on the same pattern).
+          const count = this.clearLocalByPrefixAndSuffix(prefix, suffix);
 
-        // Await backend deletion for cross-pod consistency
-        // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
-        if (cacheBackend?.delByPattern) {
-          await cacheBackend.delByPattern(`${prefix}*:${suffix}`);
+          // Await backend deletion for cross-pod consistency
+          // Note: prefix already includes "file:" from buildFileCacheKeyPrefix, don't add it again
+          if (cacheBackend?.delByPattern) {
+            await cacheBackend.delByPattern(`${prefix}*:${suffix}`);
+          }
+
+          return count;
+        } finally {
+          settleMutation();
         }
-
-        return count;
       },
       { "cache.prefix": prefix, "cache.suffix": suffix },
     );

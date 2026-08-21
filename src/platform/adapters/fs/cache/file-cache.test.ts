@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   FileCache,
@@ -617,13 +617,15 @@ describe("Distributed cache functions", () => {
       }
     });
 
-    it("enforces the process-local entry limit by UTF-8 bytes", async () => {
-      const mod = await import("./file-cache.ts?l1-utf8-entry-limit");
+    it("enforces the process-local entry limit by estimated retained bytes", async () => {
+      const mod = await import("./file-cache.ts?l1-entry-byte-limit");
       const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
       assertExists(descriptor);
       const raw = JSON.stringify({ value: "😀".repeat(140_000), timestamp: Date.now() });
-      assertEquals(raw.length <= 512 * 1024, true, "precondition: UTF-16 length fits");
-      assertEquals(new TextEncoder().encode(raw).byteLength > 512 * 1024, true);
+      assertEquals(raw.length <= 512 * 1024, true, "precondition: code-unit count fits");
+      // estimateSize charges two bytes per UTF-16 code unit, the same accounting
+      // the fallback cache uses.
+      assertEquals(raw.length * 2 > 512 * 1024, true);
       let reads = 0;
       Object.defineProperty(CacheBackends, "file", {
         ...descriptor,
@@ -655,7 +657,7 @@ describe("Distributed cache functions", () => {
         await runWithCacheBatching(async () => {
           assertEquals(await cache.getAsync(key), "😀".repeat(140_000));
         });
-        assertEquals(reads, 2, "UTF-8 oversized entries must not be retained locally");
+        assertEquals(reads, 2, "oversized entries must not be retained locally");
       } finally {
         mod.clearImmutableFileCacheL1();
       }
@@ -687,6 +689,271 @@ describe("Distributed cache functions", () => {
         });
         assertEquals(reads(), 5, "suffix invalidation must drop only the matching L1 entry");
       });
+    });
+
+    // The api backend is what production selects for SSR renders, so reuse has
+    // to be proven there and not only on a redis stub.
+    async function withApiBackend(
+      tag: string,
+      resolveAuthorityScope: () => string | null,
+      run: (mod: typeof import("./file-cache.ts"), reads: () => number) => Promise<void>,
+    ): Promise<void> {
+      const mod = await import(`./file-cache.ts?${tag}`);
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let reads = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "api",
+            size: 0,
+            get: () => {
+              reads += 1;
+              return Promise.resolve(JSON.stringify({ value: "content", timestamp: Date.now() }));
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+            resolveAuthorityScope,
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+      try {
+        await run(mod, () => reads);
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    }
+
+    it("serves a second api-backed request from the process-local store", async () => {
+      await withApiBackend(
+        "l1-api-reuse",
+        () => "api:https://api.example:tok-a:proj-a",
+        async (mod, reads) => {
+          const cache = new mod.FileCache();
+          const key = "file:release:acme:rel_123:/app/page.tsx";
+
+          await runWithCacheBatching(async () => {
+            assertEquals(await cache.getAsync(key), "content");
+          });
+          assertEquals(reads(), 1);
+
+          await runWithCacheBatching(async () => {
+            assertEquals(await cache.getAsync(key), "content");
+          });
+          assertEquals(reads(), 1, "the second api-backed request must be served locally");
+        },
+      );
+    });
+
+    it("never shares a process-local entry between two resolved authorities", async () => {
+      const scopes = [
+        "api:https://api.example:tok-a:proj-a",
+        "api:https://api.example:tok-b:proj-b",
+        "api:https://api.example:tok-a:proj-a",
+      ];
+      let call = 0;
+      await withApiBackend("l1-api-authority-isolation", () => {
+        const scope = scopes[Math.min(call, scopes.length - 1)] ?? null;
+        call += 1;
+        return scope;
+      }, async (mod, reads) => {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        assertEquals(reads(), 2, "a second authority must not read the first authority's entry");
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        assertEquals(reads(), 2, "the first authority must still be served its own entry");
+      });
+    });
+
+    it("disables the process-local store when the authority cannot be resolved", async () => {
+      await withApiBackend("l1-api-authority-unresolved", () => null, async (mod, reads) => {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+        assertEquals(reads(), 2, "an unresolvable authority must not fall back to a shared scope");
+      });
+    });
+
+    it("evicts the oldest entry once the store passes its total byte bound", async () => {
+      const mod = await import("./file-cache.ts?l1-total-byte-bound");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      // One 512 KiB entry, shared by every key, so the accounting reaches the
+      // 64 MiB bound after 128 entries while the test retains one copy.
+      const filler = "a".repeat(262_118);
+      const raw = `{"value":"${filler}","timestamp":0}`;
+      assertEquals(raw.length * 2, 512 * 1024, "precondition: each entry is exactly 512 KiB");
+      let reads = 0;
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => {
+              reads += 1;
+              return Promise.resolve(raw);
+            },
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        const keyAt = (index: number) => `file:release:acme:rel_123:/app/page-${index}.tsx`;
+
+        // 128 entries fill the bound exactly, so nothing is evicted yet.
+        for (let index = 0; index < 128; index++) {
+          await runWithCacheBatching(async () => {
+            await cache.getAsync(keyAt(index));
+          });
+        }
+        assertEquals(reads, 128);
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(keyAt(0));
+        });
+        assertEquals(reads, 128, "the whole working set must still be held");
+
+        // One more entry passes the bound and evicts the least recently used.
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(keyAt(128));
+        });
+        assertEquals(reads, 129);
+
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(keyAt(1));
+        });
+        assertEquals(reads, 130, "the byte bound must evict rather than grow without limit");
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    });
+
+    it("does not admit a read that overlaps an unresolved prefix invalidation", async () => {
+      const mod = await import("./file-cache.ts?l1-invalidation-window");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      let stored: string | null = JSON.stringify({ value: "old", timestamp: Date.now() });
+      let releaseDelete: (() => void) | undefined;
+      const deleteReleased = new Promise<void>((resolve) => {
+        releaseDelete = resolve;
+      });
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => Promise.resolve(stored),
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+            delByPattern: async () => {
+              await deleteReleased;
+              stored = null;
+              return 1;
+            },
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        const key = "file:release:acme:rel_123:/app/page.tsx";
+
+        await runWithCacheBatching(async () => {
+          assertEquals(await cache.getAsync(key), "old");
+        });
+
+        // The invalidation drops L1 synchronously, then waits on the backend.
+        const invalidation = cache.deleteByPrefixAsync("file:release:");
+        await runWithCacheBatching(async () => {
+          await cache.getAsync(key);
+        });
+
+        releaseDelete?.();
+        await invalidation;
+
+        await runWithCacheBatching(async () => {
+          assertEquals(
+            await cache.getAsync(key),
+            undefined,
+            "a read taken inside the invalidation window must not pin the pre-delete value",
+          );
+        });
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
+    });
+
+    it("releases the in-flight mutation record when a backend delete rejects", async () => {
+      const mod = await import("./file-cache.ts?l1-mutation-registry-leak");
+      const descriptor = Object.getOwnPropertyDescriptor(CacheBackends, "file");
+      assertExists(descriptor);
+      Object.defineProperty(CacheBackends, "file", {
+        ...descriptor,
+        value: () =>
+          Promise.resolve({
+            type: "redis",
+            size: 0,
+            get: () => Promise.resolve(JSON.stringify({ value: "content", timestamp: Date.now() })),
+            set: () => Promise.resolve(),
+            del: () => Promise.resolve(false),
+            clear: () => Promise.resolve(),
+            delByPattern: () => Promise.reject(new Error("backend invalidation failed")),
+          } as never),
+      });
+      try {
+        assertEquals(await mod.initializeFileCacheBackend(), true);
+      } finally {
+        Object.defineProperty(CacheBackends, "file", descriptor);
+      }
+
+      try {
+        const cache = new mod.FileCache();
+        await assertRejects(() => cache.deleteByPrefixAsync("file:release:"));
+        assertEquals(
+          mod.immutableFileCacheL1InFlightMutationCount(),
+          0,
+          "a rejected mutation must not block admission forever",
+        );
+      } finally {
+        mod.clearImmutableFileCacheL1();
+      }
     });
   });
 
