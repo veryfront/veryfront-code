@@ -47,6 +47,43 @@ credentials from the project environment by default and never sends them to
 Veryfront. Managed per-user OAuth and connector features outside the supported
 local subset still require the configured API layer.
 
+## Target both self-hosted and Veryfront Cloud
+
+Self-hosting activates an extension only when the project declares it:
+
+```ts
+// veryfront.config.ts
+import { defineConfig } from "veryfront";
+import extRedis from "@veryfront/ext-redis";
+
+export default defineConfig({
+  extensions: [extRedis()],
+});
+```
+
+The hosted runtime rejects that same declaration. It provides those capabilities
+itself, and the only entry it accepts under `extensions` is
+`{ name, enabled: false }`, which turns one off. A configuration file that works
+locally therefore fails to deploy, and the reverse.
+
+Deploying to both means selecting the extension list per target:
+
+```ts
+// veryfront.config.ts
+import { defineConfig } from "veryfront";
+import extRedis from "@veryfront/ext-redis";
+
+const selfHosted = !Deno.env.get("VERYFRONT_PROJECT_SLUG");
+
+export default defineConfig({
+  extensions: selfHosted ? [extRedis()] : [],
+});
+```
+
+Use whichever signal already distinguishes your environments. The condition is
+the point, not the specific variable: declare extensions when you own the
+runtime, and leave the list empty when the platform owns it.
+
 ## Run Salesforce integration tools locally
 
 The Salesforce service account source runs the catalog's fixed Salesforce
