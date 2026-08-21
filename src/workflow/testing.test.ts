@@ -41,7 +41,7 @@ function stallingTool(id: string): Tool {
   };
 }
 
-describe("workflow/testing", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("workflow/testing", () => {
   const open: WorkflowTestHarness[] = [];
 
   afterEach(async () => {
