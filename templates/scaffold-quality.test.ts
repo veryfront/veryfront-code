@@ -59,7 +59,6 @@ async function scaffold(template: string, projectDir: string): Promise<void> {
     parentDir: projectDir,
     template: template as Parameters<typeof createProject>[0]["template"],
     runtime: "node",
-    features: [],
     integrations: [],
     environmentValues: {},
     conflictPolicy: "overwrite",

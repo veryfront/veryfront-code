@@ -232,7 +232,7 @@ export const CommonArgs = {
 // Low-level parser that converts process argv into a ParsedArgs object.
 // Used once in cli/main.ts before routing to individual command handlers.
 
-const ARRAY_FLAGS = new Set(["with", "candidate-model"]);
+const ARRAY_FLAGS = new Set(["candidate-model"]);
 /** Boolean options accepted by every command, regardless of the command word. */
 export const GLOBAL_BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "help",
@@ -455,7 +455,6 @@ export function parseCliArgs(args: string[]): ParsedArgs {
       s: "strict",
       j: "json",
       y: "yes",
-      w: "with",
       m: "mode",
     },
   }) as ParsedArgs;

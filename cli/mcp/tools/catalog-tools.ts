@@ -406,7 +406,6 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
             parentDir,
             template: input.template as InitTemplate,
             runtime: "node",
-            features: [],
             integrations: (input.integrations ?? []) as IntegrationName[],
             environmentValues: {},
             conflictPolicy: "fail",
