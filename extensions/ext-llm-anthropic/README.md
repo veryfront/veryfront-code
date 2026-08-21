@@ -212,8 +212,34 @@ providerOptions: {
 A `json_schema` response format maps to Anthropic `output_config`:
 
 ```json
-{ "output_config": { "format": { "type": "json_schema", "schema": { "type": "object" } } } }
+{
+  "output_config": {
+    "format": {
+      "type": "json_schema",
+      "schema": { "type": "object", "properties": {}, "additionalProperties": false }
+    }
+  }
+}
 ```
+
+Anthropic rejects an object-typed schema that does not explicitly set
+`additionalProperties: false`, independently of the framework's own `strict`
+flag:
+
+```
+output_config.format.schema: For 'object' type, 'additionalProperties'
+must be explicitly set to false
+```
+
+The builder satisfies that itself, filling in `additionalProperties: false` on
+every object subschema that left it unset -- including nested properties, array
+items, and `anyOf`/`oneOf`/`allOf` branches -- so a plain
+`defineSchema((v) => v.object({ ... }))()` works without `.strict()`.
+
+An `additionalProperties` you declare yourself is left as declared. A schema
+that genuinely allows extra properties, such as one built with `v.record()`,
+is still rejected by Anthropic, which has no way to express an open object in
+structured output.
 
 ### Container
 
