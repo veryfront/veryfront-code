@@ -24,6 +24,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { fromFileUrl, join } from "#std/path";
 import { UNITS } from "./run-generate.ts";
 
 type Tasks = Record<string, string>;
@@ -71,6 +72,67 @@ for (const unit of UNITS) {
   }
 }
 const checks = scriptInvocations(expandTask("generate:manifests:check"));
+
+async function runTemplateManifestGenerator(
+  root: string,
+  args: string[],
+): Promise<Deno.CommandOutput> {
+  return await new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      "-A",
+      `--config=${fromFileUrl(new URL("../test.deno.json", import.meta.url))}`,
+      fromFileUrl(new URL("./generate-templates-manifest.ts", import.meta.url)),
+      ...args,
+      "--root",
+      root,
+    ],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+}
+
+async function createTemplateManifestFixture(): Promise<string> {
+  const root = await Deno.makeTempDir({
+    prefix: "veryfront-template-manifest-",
+  });
+  for (
+    const path of [
+      "templates/files/example",
+      "templates/integrations",
+      "templates/features",
+      "templates/ai-rules",
+    ]
+  ) {
+    await Deno.mkdir(join(root, path), { recursive: true });
+  }
+  await Deno.writeTextFile(
+    join(root, "templates/files/example/index.ts"),
+    "export const example = true;\n",
+  );
+
+  const generated = await runTemplateManifestGenerator(root, []);
+  assertEquals(
+    generated.code,
+    0,
+    new TextDecoder().decode(generated.stderr),
+  );
+  return root;
+}
+
+function changeGzipOsByte(source: string): string {
+  const encoded = source.match(/"([A-Za-z0-9+/=]+)"/)?.[1];
+  assert(
+    encoded !== undefined,
+    "generated manifest must contain base64 gzip data",
+  );
+  const binary = atob(encoded);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  assert(bytes.length > 9, "generated manifest must contain a gzip header");
+  bytes[9] = bytes[9] === 3 ? 255 : 3;
+  const changed = btoa(String.fromCharCode(...bytes));
+  return source.replace(encoded, changed);
+}
 
 describe("generated artifact checks", () => {
   it("runs before source typechecking", () => {
@@ -134,25 +196,39 @@ describe("generated artifact checks", () => {
     );
   });
 
-  it("fails on compressed template manifest drift without rewriting it", async () => {
-    const path = new URL("../../templates/manifest.generated.ts", import.meta.url);
-    const original = await Deno.readTextFile(path);
-    const drifted = original.replace(
-      "COMPRESSED_TEMPLATE_MANIFEST_BASE64",
-      "DRIFTED_TEMPLATE_MANIFEST_BASE64",
-    );
-    assert(drifted !== original, "test fixture must alter the generated manifest");
-
-    await Deno.writeTextFile(path, drifted);
+  it("checks compressed manifest content without rewriting its encoding", async () => {
+    const root = await createTemplateManifestFixture();
+    const path = join(root, "templates/manifest.generated.ts");
     try {
-      const result = await new Deno.Command("bash", {
-        args: [
-          "-lc",
-          "deno run -A scripts/build/generate-templates-manifest.ts --check",
-        ],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      const original = await Deno.readTextFile(path);
+      const equivalent = changeGzipOsByte(original);
+      await Deno.writeTextFile(path, equivalent);
+
+      const equivalentResult = await runTemplateManifestGenerator(root, [
+        "--check",
+      ]);
+      assertEquals(
+        equivalentResult.code,
+        0,
+        new TextDecoder().decode(equivalentResult.stderr),
+      );
+      assertEquals(
+        await Deno.readTextFile(path),
+        equivalent,
+        "the freshness check must not normalize equivalent gzip bytes",
+      );
+
+      const drifted = equivalent.replace(
+        "COMPRESSED_TEMPLATE_MANIFEST_BASE64",
+        "DRIFTED_TEMPLATE_MANIFEST_BASE64",
+      );
+      assert(
+        drifted !== equivalent,
+        "test fixture must invalidate the generated manifest",
+      );
+      await Deno.writeTextFile(path, drifted);
+
+      const result = await runTemplateManifestGenerator(root, ["--check"]);
 
       assert(result.code !== 0, "manifest drift must fail the freshness check");
       const stderr = new TextDecoder().decode(result.stderr);
@@ -163,7 +239,7 @@ describe("generated artifact checks", () => {
         "the freshness check must not rewrite the committed manifest",
       );
     } finally {
-      await Deno.writeTextFile(path, original);
+      await Deno.remove(root, { recursive: true });
     }
   });
 });
