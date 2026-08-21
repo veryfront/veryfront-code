@@ -302,15 +302,56 @@ describe("chat/provider-errors", () => {
       },
     };
 
+    const EXPECTED = {
+      code: "OUTPUT_SCHEMA_NOT_CLOSED",
+      message:
+        "The model rejected the output schema because an object in it allows additional properties. " +
+        "Set additionalProperties: false on that object -- add .strict() if the outputSchema was " +
+        "built with defineSchema(), or set the property directly on a raw JSON Schema.",
+    };
+
     it("names the schema requirement instead of a generic service error", () => {
       // Without a mapping this lands on EXTERNAL_SERVICE_ERROR ("LLM provider
       // service error"), which points nowhere: the caller cannot tell that
       // their own outputSchema is what needs changing.
-      assertEquals(parseProviderError(providerError(OPEN_OBJECT_REJECTION)), {
-        code: "OUTPUT_SCHEMA_NOT_CLOSED",
-        message:
-          "The model rejected the output schema because an object in it allows additional properties. Add .strict() to the object in your outputSchema so it sets additionalProperties: false.",
-      });
+      assertEquals(parseProviderError(providerError(OPEN_OBJECT_REJECTION)), EXPECTED);
+    });
+
+    it("matches OpenAI's wording for the same rejection", () => {
+      assertEquals(
+        parseProviderError(providerError({
+          error: {
+            type: "invalid_request_error",
+            message:
+              "Invalid schema for response_format 'Person': In context=(), 'additionalProperties' is required to be supplied and to be false.",
+          },
+        })),
+        EXPECTED,
+      );
+    });
+
+    it("does not claim a tool schema rejection is about the output schema", () => {
+      // Providers reject open objects in tool/function schemas with a nearly
+      // identical sentence. Sending the caller to fix `outputSchema` would be
+      // pointing at the wrong schema entirely.
+      assertEquals(
+        parseProviderError(providerError({
+          error: {
+            type: "invalid_request_error",
+            message:
+              "Invalid schema for function 'lookup': In context=(), 'additionalProperties' is required to be supplied and to be false.",
+          },
+        })),
+        { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
+      );
+    });
+
+    it("gives raw JSON Schema callers a remediation they can apply", () => {
+      // `.strict()` exists only on schema-builder objects; outputSchema also
+      // accepts a plain JSON Schema, where the fix is the property itself.
+      const { message } = parseProviderError(providerError(OPEN_OBJECT_REJECTION));
+      assertEquals(message.includes("additionalProperties: false"), true);
+      assertEquals(message.includes(".strict()"), true);
     });
 
     it("does not echo the provider's raw message", () => {

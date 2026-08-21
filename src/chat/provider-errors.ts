@@ -30,7 +30,8 @@ const OUTPUT_SCHEMA_NOT_CLOSED_ERROR = {
   code: "OUTPUT_SCHEMA_NOT_CLOSED",
   message:
     "The model rejected the output schema because an object in it allows additional properties. " +
-    "Add .strict() to the object in your outputSchema so it sets additionalProperties: false.",
+    "Set additionalProperties: false on that object -- add .strict() if the outputSchema was " +
+    "built with defineSchema(), or set the property directly on a raw JSON Schema.",
 } as const;
 
 const AI_PROVIDER_SPEND_LIMIT_ERROR = {
@@ -185,18 +186,37 @@ export function isCreditLimitMessage(normalizedMessage: string): boolean {
 }
 
 /**
+ * Wordings that identify a rejection as being about the *structured output*
+ * schema rather than a tool or function schema. Providers reject open objects
+ * in both, with near-identical sentences:
+ *
+ *   output_config.format.schema: For 'object' type, 'additionalProperties'
+ *     must be explicitly set to false                              (Anthropic)
+ *   Invalid schema for response_format 'X': ... 'additionalProperties' is
+ *     required to be supplied and to be false                         (OpenAI)
+ *   Invalid schema for function 'X': ... 'additionalProperties' is
+ *     required to be supplied and to be false            (OpenAI, tool schema)
+ *
+ * Only the first two are about `outputSchema`. Without this discriminator the
+ * third is mislabeled and the caller is sent to fix the wrong schema.
+ */
+const STRUCTURED_OUTPUT_MARKERS = ["output_config", "response_format", "output schema"];
+
+/**
  * Detects a provider rejecting the structured-output schema because an object
  * in it does not set `additionalProperties: false`.
  *
  * The caller's own `outputSchema` is what has to change, so this is worth
  * naming rather than collapsing into a generic service error. Matched on the
- * two things the wording is built from -- the property name and the closure
- * requirement -- rather than a fixed sentence, which providers reword.
+ * pieces the wording is built from -- the property name, the closure
+ * requirement, and a structured-output marker -- rather than a fixed sentence,
+ * which providers reword.
  */
 function isOpenObjectSchemaRejection(message: string): boolean {
   const normalizedMessage = message.toLowerCase();
-  return normalizedMessage.includes("additionalproperties") &&
-    (normalizedMessage.includes("false") || normalizedMessage.includes("required"));
+  if (!normalizedMessage.includes("additionalproperties")) return false;
+  if (!normalizedMessage.includes("false") && !normalizedMessage.includes("required")) return false;
+  return STRUCTURED_OUTPUT_MARKERS.some((marker) => normalizedMessage.includes(marker));
 }
 
 function isAssistantPrefillUnsupportedMessage(message: string): boolean {
