@@ -68,6 +68,24 @@ export interface Lock {
   expiresAt: Date;
 }
 
+/** Minimal persisted run state used to derive public workflow events. */
+export interface WorkflowRunObservedState {
+  revision: number;
+  status: WorkflowStatus;
+  nodes: Record<
+    string,
+    { status: WorkflowRun["nodeStates"][string]["status"]; attempt: number; error?: string }
+  >;
+  runError?: string;
+}
+
+/** Atomic initial snapshot and ordered changes for one workflow run. */
+export interface WorkflowRunObservation {
+  initial: WorkflowRun;
+  changes: AsyncIterable<WorkflowRunObservedState>;
+  close(): Promise<void>;
+}
+
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
@@ -173,6 +191,12 @@ export interface WorkflowBackend {
     timestamp: Date;
   }>;
 
+  /** Open an atomic observation of a run when this backend supports it. */
+  openRunObservation?(
+    runId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<WorkflowRunObservation | null>;
+
   initialize?(): Promise<void>;
   healthCheck?(): Promise<boolean>;
   destroy(): Promise<void>;
@@ -222,6 +246,10 @@ type WithEventSupport =
   & WorkflowBackend
   & Required<Pick<WorkflowBackend, "publishEvent" | "subscribeEvents">>;
 
+type WithRunObservationSupport =
+  & WorkflowBackend
+  & Required<Pick<WorkflowBackend, "openRunObservation">>;
+
 export function hasQueueSupport(backend: WorkflowBackend): backend is WithQueueSupport {
   return (
     typeof backend.enqueue === "function" &&
@@ -242,6 +270,13 @@ export function hasEventSupport(backend: WorkflowBackend): backend is WithEventS
     typeof backend.publishEvent === "function" &&
     typeof backend.subscribeEvents === "function"
   );
+}
+
+/** Check whether atomic run observation is available. */
+export function hasRunObservationSupport(
+  backend: WorkflowBackend,
+): backend is WithRunObservationSupport {
+  return typeof backend.openRunObservation === "function";
 }
 
 type WithWorkerSupport =

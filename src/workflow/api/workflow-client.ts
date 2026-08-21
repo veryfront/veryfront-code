@@ -14,8 +14,8 @@ import type {
   WorkflowStatus,
 } from "../types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import type { WorkflowBackend } from "../backends/types.ts";
-import { observeRunUpdates, WorkflowRunEventBus } from "../events.ts";
+import { hasRunObservationSupport, type WorkflowBackend } from "../backends/types.ts";
+import { deriveWorkflowRunEventObservation, type WorkflowRunEventObservation } from "../events.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
   WorkflowExecutor,
@@ -39,18 +39,14 @@ export interface WorkflowClientConfig {
   debug?: boolean;
 }
 
+/** Supported observation stream or an explicit unsupported-backend result. */
+export type WorkflowRunEventsResult =
+  | ({ supported: true } & WorkflowRunEventObservation)
+  | { supported: false; reason: "unsupported" };
+
 /** Implement workflow client. */
 export class WorkflowClient {
   private backend: WorkflowBackend;
-  /**
-   * Fan-out for run events, always present.
-   *
-   * Not opt-in: a bus nothing subscribes to costs one map lookup per run
-   * update, and requiring configuration would mean the SSE route 404s until a
-   * user discovers a flag. `observeRunUpdates` does no work for an unwatched
-   * run.
-   */
-  readonly #runEvents = new WorkflowRunEventBus();
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private debug: boolean;
@@ -59,10 +55,7 @@ export class WorkflowClient {
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
-    this.backend = observeRunUpdates(
-      config.backend ?? new MemoryBackend({ debug: this.debug }),
-      this.#runEvents,
-    );
+    this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
 
     const userOnWaiting = config.executor?.onWaiting;
     const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
@@ -246,9 +239,17 @@ export class WorkflowClient {
     return this.approvalManager.listAllPending(filter);
   }
 
-  /** Per-run event fan-out backing the SSE route. */
-  get runEvents(): WorkflowRunEventBus {
-    return this.#runEvents;
+  /** Open an ordered event observation, or report unsupported custom backends explicitly. */
+  async observeRunEvents(
+    runId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<WorkflowRunEventsResult | null> {
+    if (!hasRunObservationSupport(this.backend)) {
+      return { supported: false, reason: "unsupported" };
+    }
+    const observation = await this.backend.openRunObservation(runId, options);
+    if (!observation) return null;
+    return { supported: true, ...deriveWorkflowRunEventObservation(observation) };
   }
 
   getBackend(): WorkflowBackend {

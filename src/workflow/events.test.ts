@@ -3,11 +3,12 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import {
   deriveRunEvents,
+  deriveWorkflowRunEventObservation,
   isTerminalRunStatus,
   type RunEventSnapshot,
   snapshotRun,
-  WorkflowRunEventBus,
 } from "./events.ts";
+import type { WorkflowRunObservation } from "./backends/types.ts";
 import type { NodeState, WorkflowRun, WorkflowStatus } from "./types.ts";
 
 function node(
@@ -25,6 +26,35 @@ function snapshot(
 }
 
 describe("workflow/events", () => {
+  it("derives each observation from its own initial baseline", async () => {
+    const initial = {
+      id: "r1",
+      status: "running",
+      nodeStates: { a: { nodeId: "a", status: "completed", attempt: 1 } },
+    } as unknown as WorkflowRun;
+    const observation: WorkflowRunObservation = {
+      initial,
+      changes: {
+        async *[Symbol.asyncIterator]() {
+          yield {
+            revision: 1,
+            status: "completed",
+            nodes: { a: { status: "completed", attempt: 1 } },
+          };
+        },
+      },
+      close: () => Promise.resolve(),
+    };
+
+    const derived = deriveWorkflowRunEventObservation(observation);
+    const events = [];
+    for await (const event of derived.events) events.push(event);
+
+    expect(events).toEqual([
+      { type: "run.status", runId: "r1", status: "completed" },
+    ]);
+  });
+
   describe("deriveRunEvents", () => {
     it("reports a first observation as the run's current status", () => {
       const events = deriveRunEvents("r1", undefined, snapshot("running"));
@@ -167,90 +197,6 @@ describe("workflow/events", () => {
       expect(isTerminalRunStatus("running")).toBe(false);
       expect(isTerminalRunStatus("waiting")).toBe(false);
       expect(isTerminalRunStatus("pending")).toBe(false);
-    });
-  });
-
-  describe("WorkflowRunEventBus", () => {
-    it("delivers only to subscribers of that run", () => {
-      // Two concurrent runs sharing one channel is the failure this scoping
-      // exists to prevent.
-      const bus = new WorkflowRunEventBus();
-      const one: string[] = [];
-      const two: string[] = [];
-      bus.subscribe("r1", (e) => one.push(`${e.type}:${e.runId}`));
-      bus.subscribe("r2", (e) => two.push(`${e.type}:${e.runId}`));
-
-      bus.publish("r1", snapshot("completed"));
-
-      expect(one).toEqual(["run.status:r1"]);
-      expect(two).toEqual([]);
-    });
-
-    it("does no work for a run nobody is watching", () => {
-      const bus = new WorkflowRunEventBus();
-
-      expect(bus.hasListeners("r1")).toBe(false);
-      bus.publish("r1", snapshot("running"));
-      expect(bus.hasListeners("r1")).toBe(false);
-    });
-
-    it("reports only what happened after the seeded baseline", () => {
-      // Without this a subscriber joining a half-finished run would be told
-      // every completed step had just completed.
-      const bus = new WorkflowRunEventBus();
-      const seen: string[] = [];
-      bus.subscribe(
-        "r1",
-        (e) => seen.push(e.type),
-        snapshot("running", { a: node("completed") }),
-      );
-
-      bus.publish("r1", snapshot("running", { a: node("completed"), b: node("running") }));
-
-      expect(seen).toEqual(["step.started"]);
-    });
-
-    it("stops delivering after unsubscribe, and unsubscribing twice is safe", () => {
-      const bus = new WorkflowRunEventBus();
-      const seen: string[] = [];
-      const release = bus.subscribe("r1", (e) => seen.push(e.type), snapshot("running"));
-
-      release();
-      release();
-      bus.publish("r1", snapshot("completed"));
-
-      expect(seen).toEqual([]);
-      expect(bus.hasListeners("r1")).toBe(false);
-    });
-
-    it("keeps delivering to the other subscribers when one throws", () => {
-      // A listener that throws must not abort the backend write that produced
-      // the event, nor rob its peers of it.
-      const bus = new WorkflowRunEventBus();
-      const survived: string[] = [];
-      bus.subscribe("r1", () => {
-        throw new Error("subscriber is broken");
-      }, snapshot("running"));
-      bus.subscribe("r1", (e) => survived.push(e.type), snapshot("running"));
-
-      bus.publish("r1", snapshot("completed"));
-
-      expect(survived).toEqual(["run.status"]);
-    });
-
-    it("drops a run's baseline once its last subscriber leaves", () => {
-      // Otherwise the bus retains one entry per run for the process lifetime.
-      const bus = new WorkflowRunEventBus();
-      const release = bus.subscribe("r1", () => {}, snapshot("running", { a: node("running") }));
-      release();
-
-      const seen: string[] = [];
-      bus.subscribe("r1", (e) => seen.push(e.type));
-      bus.publish("r1", snapshot("running", { a: node("running") }));
-
-      // A fresh baseline means the first publish is reported as new, rather
-      // than diffed against a stale snapshot from the previous connection.
-      expect(seen).toEqual(["step.started", "run.status"]);
     });
   });
 });

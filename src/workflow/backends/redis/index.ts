@@ -16,7 +16,13 @@ import type {
   WorkflowRun,
   WorkflowStatus,
 } from "../../types.ts";
-import { assertWorkflowRunUpdate, type WorkflowBackend, type WorkflowRunUpdate } from "../types.ts";
+import {
+  assertWorkflowRunUpdate,
+  type WorkflowBackend,
+  type WorkflowRunObservation,
+  type WorkflowRunObservedState,
+  type WorkflowRunUpdate,
+} from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
 import { prepareWorkflowJson, serializeWorkflowContext } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
@@ -35,6 +41,9 @@ import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts"
 const logger = agentLogger.component("redis-backend");
 const REDIS_STORAGE_SCHEMA_VERSION = "schema-v1";
 const REDIS_STORAGE_SCHEMA_NAMESPACE = `${REDIS_STORAGE_SCHEMA_VERSION}:`;
+const RUN_OBSERVATION_REVISION_FIELD = "__runObservationRevision";
+const RUN_OBSERVATION_STREAM_MAX_LENGTH = 64;
+const RUN_OBSERVATION_POLL_INTERVAL_MS = 20;
 
 function appendStorageSchemaVersion(base: string): string {
   return `${base.replace(/:+$/, "")}:${REDIS_STORAGE_SCHEMA_VERSION}`;
@@ -80,6 +89,26 @@ local claimed = redis.call('set', KEYS[2], ARGV[2], 'NX', 'PX', ARGV[3])
 if not claimed then return 0 end
 redis.call('hset', KEYS[1], 'workerId', ARGV[2], 'heartbeatAt', ARGV[4])
 if not started or started == '' then redis.call('hset', KEYS[1], 'startedAt', ARGV[4]) end
+local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+local status = redis.call('hget', KEYS[1], 'status')
+local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+local nodes = {}
+for nodeId, node in pairs(sourceNodes) do
+  local reduced = { status = node.status, attempt = node.attempt }
+  if node.error ~= nil then reduced.error = node.error end
+  nodes[nodeId] = reduced
+end
+local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
+local streamFields = { 'revision', tostring(revision), 'status', status, 'nodes', nodesJson }
+local rawError = redis.call('hget', KEYS[1], 'error')
+if rawError and rawError ~= '' then
+  local runError = cjson.decode(rawError)
+  if runError.message ~= nil then
+    table.insert(streamFields, 'runError')
+    table.insert(streamFields, runError.message)
+  end
+end
+redis.call('xadd', ARGV[5], 'MAXLEN', '~', ARGV[6], '*', unpack(streamFields))
 return 1`;
 
 /**
@@ -98,12 +127,38 @@ return 1`;
  * caller), so this assumes a single logical Redis, matching the lock scripts
  * above.
  */
-const MOVE_STATUS_SCRIPT = `local old = redis.call('hget', KEYS[1], 'status')
-if old == ARGV[2] then return 0 end
-redis.call('hset', KEYS[1], 'status', ARGV[2])
-if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
-redis.call('sadd', ARGV[3] .. ARGV[2], ARGV[1])
-return 1`;
+const UPDATE_RUN_SCRIPT = `-- observable-run-update
+if redis.call('exists', KEYS[1]) == 0 then return 0 end
+local old = redis.call('hget', KEYS[1], 'status')
+local nextStatus = ARGV[2]
+if nextStatus ~= '' and old ~= nextStatus then
+  redis.call('hset', KEYS[1], 'status', nextStatus)
+  if old and old ~= '' then redis.call('srem', ARGV[3] .. old, ARGV[1]) end
+  redis.call('sadd', ARGV[3] .. nextStatus, ARGV[1])
+end
+for i = 6, #ARGV, 2 do redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1]) end
+local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+local status = redis.call('hget', KEYS[1], 'status')
+local rawNodes = redis.call('hget', KEYS[1], 'nodeStates') or '{}'
+local sourceNodes = cjson.decode(rawNodes)
+local nodes = {}
+for nodeId, node in pairs(sourceNodes) do
+  local reduced = { status = node.status, attempt = node.attempt }
+  if node.error ~= nil then reduced.error = node.error end
+  nodes[nodeId] = reduced
+end
+local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
+local fields = { 'revision', tostring(revision), 'status', status, 'nodes', nodesJson }
+local rawError = redis.call('hget', KEYS[1], 'error')
+if rawError and rawError ~= '' then
+  local runError = cjson.decode(rawError)
+  if runError.message ~= nil then
+    table.insert(fields, 'runError')
+    table.insert(fields, runError.message)
+  end
+end
+redis.call('xadd', ARGV[4], 'MAXLEN', '~', ARGV[5], '*', unpack(fields))
+return revision`;
 
 /** Atomically verify the current status, update fields, and move the status index. */
 const UPDATE_RUN_IF_STATUS_SCRIPT = `-- conditional-run-update
@@ -129,10 +184,128 @@ if nextStatus ~= '' and old ~= nextStatus then
   redis.call('srem', statusPrefix .. old, runId)
   redis.call('sadd', statusPrefix .. nextStatus, runId)
 end
-for i = expectedCount + 6, #ARGV, 2 do
+local streamKey = ARGV[expectedCount + 6]
+local maxLength = ARGV[expectedCount + 7]
+for i = expectedCount + 8, #ARGV, 2 do
   redis.call('hset', KEYS[1], ARGV[i], ARGV[i + 1])
 end
+local revision = redis.call('hincrby', KEYS[1], '${RUN_OBSERVATION_REVISION_FIELD}', 1)
+local status = redis.call('hget', KEYS[1], 'status')
+local sourceNodes = cjson.decode(redis.call('hget', KEYS[1], 'nodeStates') or '{}')
+local nodes = {}
+for nodeId, node in pairs(sourceNodes) do
+  local reduced = { status = node.status, attempt = node.attempt }
+  if node.error ~= nil then reduced.error = node.error end
+  nodes[nodeId] = reduced
+end
+local nodesJson = next(nodes) == nil and '{}' or cjson.encode(nodes)
+local streamFields = { 'revision', tostring(revision), 'status', status, 'nodes', nodesJson }
+local rawError = redis.call('hget', KEYS[1], 'error')
+if rawError and rawError ~= '' then
+  local runError = cjson.decode(rawError)
+  if runError.message ~= nil then
+    table.insert(streamFields, 'runError')
+    table.insert(streamFields, runError.message)
+  end
+end
+redis.call('xadd', streamKey, 'MAXLEN', '~', maxLength, '*', unpack(streamFields))
 return 1`;
+
+/** Atomically capture the run hash and journal revision used as the observation baseline. */
+const OPEN_RUN_OBSERVATION_SCRIPT = `-- open-run-observation
+local raw = redis.call('hgetall', KEYS[1])
+if #raw == 0 then return nil end
+local run = {}
+for i = 1, #raw, 2 do run[raw[i]] = raw[i + 1] end
+return { tostring(run['${RUN_OBSERVATION_REVISION_FIELD}'] or '0'), cjson.encode(run) }`;
+
+const TERMINAL_RUN_STATUSES = new Set<WorkflowStatus>(["completed", "failed", "cancelled"]);
+
+function parseRunObservedState(data: Record<string, string>): WorkflowRunObservedState {
+  const allowedFields = new Set(["revision", "status", "nodes", "runError"]);
+  if (Object.keys(data).some((field) => !allowedFields.has(field))) {
+    throw new Error("Invalid workflow run observation record");
+  }
+  const revision = Number(data.revision);
+  const validStatuses: WorkflowStatus[] = [
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+    "waiting",
+  ];
+  if (
+    !Number.isSafeInteger(revision) || revision < 0 ||
+    !validStatuses.includes(data.status as WorkflowStatus)
+  ) {
+    throw new Error("Invalid workflow run observation record");
+  }
+  const parsedNodes = JSON.parse(data.nodes ?? "null") as unknown;
+  if (!parsedNodes || typeof parsedNodes !== "object" || Array.isArray(parsedNodes)) {
+    throw new Error("Invalid workflow run observation record");
+  }
+  const nodes: WorkflowRunObservedState["nodes"] = {};
+  for (const [nodeId, value] of Object.entries(parsedNodes)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("Invalid workflow run observation record");
+    }
+    const node = value as Record<string, unknown>;
+    const validNodeStatuses = ["pending", "running", "completed", "failed", "skipped"];
+    if (
+      Object.keys(node).some((field) => !["status", "attempt", "error"].includes(field)) ||
+      typeof node.status !== "string" || !validNodeStatuses.includes(node.status) ||
+      !Number.isSafeInteger(node.attempt) || (node.attempt as number) < 0 ||
+      (node.error !== undefined && typeof node.error !== "string")
+    ) {
+      throw new Error("Invalid workflow run observation record");
+    }
+    nodes[nodeId] = {
+      status: node.status as WorkflowRunObservedState["nodes"][string]["status"],
+      attempt: node.attempt as number,
+      ...(node.error !== undefined ? { error: node.error } : {}),
+    };
+  }
+  if (data.runError !== undefined && typeof data.runError !== "string") {
+    throw new Error("Invalid workflow run observation record");
+  }
+  return {
+    revision,
+    status: data.status as WorkflowStatus,
+    nodes,
+    ...(data.runError !== undefined ? { runError: data.runError } : {}),
+  };
+}
+
+function serializeInitialRunObservation(run: WorkflowRun): Record<string, string> {
+  const nodes: WorkflowRunObservedState["nodes"] = {};
+  for (const [nodeId, node] of Object.entries(run.nodeStates)) {
+    nodes[nodeId] = {
+      status: node.status,
+      attempt: node.attempt,
+      ...(node.error !== undefined ? { error: node.error } : {}),
+    };
+  }
+  return {
+    revision: "0",
+    status: run.status,
+    nodes: JSON.stringify(nodes),
+    ...(run.error?.message !== undefined ? { runError: run.error.message } : {}),
+  };
+}
+
+function waitForObservationPoll(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(finish, RUN_OBSERVATION_POLL_INTERVAL_MS);
+    function finish(): void {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
 
 /** Atomically append and retain only the newest bounded list entries. */
 const APPEND_RETAINED_LIST_SCRIPT = `-- retained-list-append
@@ -243,6 +416,7 @@ export class RedisBackend implements WorkflowBackend {
    * pending message if it was requeued and re-read before acking).
    */
   private pendingMessageIds = new Map<string, string[]>();
+  private runObservationClosers = new Set<() => void>();
 
   constructor(config: RedisBackendConfig = {}) {
     const resolvedConfig: RedisBackendInternalConfig = {
@@ -276,6 +450,10 @@ export class RedisBackend implements WorkflowBackend {
 
   private approvalsKey(runId: string): string {
     return `${this.storagePrefix()}approvals:${runId}`;
+  }
+
+  private runObservationKey(runId: string): string {
+    return `${this.storagePrefix()}run-observation:${runId}`;
   }
 
   private statusIndexKey(status: WorkflowStatus): string {
@@ -329,6 +507,7 @@ export class RedisBackend implements WorkflowBackend {
       startedAt: run.startedAt?.toISOString() || "",
       heartbeatAt: run.heartbeatAt?.toISOString() || "",
       completedAt: run.completedAt?.toISOString() || "",
+      [RUN_OBSERVATION_REVISION_FIELD]: "0",
     };
   }
 
@@ -565,8 +744,12 @@ export class RedisBackend implements WorkflowBackend {
     await client.sadd(this.statusIndexKey(run.status), run.id);
     await client.sadd(this.workflowIndexKey(run.workflowId), run.id);
     await client.sadd(this.allRunsIndexKey(), run.id);
+    await client.xadd(this.runObservationKey(run.id), "*", serializeInitialRunObservation(run));
 
-    if (this.config.runTtl) await client.expire(this.runKey(run.id), this.config.runTtl);
+    if (this.config.runTtl) {
+      await client.expire(this.runKey(run.id), this.config.runTtl);
+      await client.expire(this.runObservationKey(run.id), this.config.runTtl);
+    }
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
@@ -586,17 +769,20 @@ export class RedisBackend implements WorkflowBackend {
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
     const fields = this.serializeRunPatch(patch);
-    // status is written by MOVE_STATUS_SCRIPT below (atomically with its index
-    // move), so it is deliberately excluded from this plain hset.
-    if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
-
-    if (patch.status !== undefined) {
-      // Atomic status write + index move (see MOVE_STATUS_SCRIPT).
-      await client.eval(
-        MOVE_STATUS_SCRIPT,
-        [this.runKey(runId)],
-        [runId, patch.status, `${this.storagePrefix()}index:status:`],
-      );
+    const result = await client.eval(
+      UPDATE_RUN_SCRIPT,
+      [this.runKey(runId)],
+      [
+        runId,
+        patch.status ?? "",
+        `${this.storagePrefix()}index:status:`,
+        this.runObservationKey(runId),
+        String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
+        ...Object.entries(fields).flatMap(([field, value]) => [field, value]),
+      ],
+    );
+    if (Number(result) === 0) {
+      throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
     }
 
     // Terminal states should clear stale-claim markers.
@@ -647,6 +833,8 @@ export class RedisBackend implements WorkflowBackend {
         `${this.storagePrefix()}index:status:`,
         runId,
         expectedWorkerId ?? "",
+        this.runObservationKey(runId),
+        String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
         ...fieldArgs,
       ],
     );
@@ -669,6 +857,7 @@ export class RedisBackend implements WorkflowBackend {
       this.checkpointsKey(runId),
       this.approvalsKey(runId),
       this.claimKey(runId),
+      this.runObservationKey(runId),
     );
     await client.srem(this.statusIndexKey(run.status), runId);
     await client.srem(this.workflowIndexKey(run.workflowId), runId);
@@ -1097,9 +1286,110 @@ export class RedisBackend implements WorkflowBackend {
     const claimed = await client.eval(
       CLAIM_STALLED_RUN_SCRIPT,
       [this.runKey(runId), this.claimKey(runId)],
-      [observedActivity, workerId, String(stalledThreshold), new Date(now).toISOString()],
+      [
+        observedActivity,
+        workerId,
+        String(stalledThreshold),
+        new Date(now).toISOString(),
+        this.runObservationKey(runId),
+        String(RUN_OBSERVATION_STREAM_MAX_LENGTH),
+      ],
     );
     return Number(claimed) === 1;
+  }
+
+  async openRunObservation(
+    runId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<WorkflowRunObservation | null> {
+    const client = await this.ensureClient();
+    const captured = await client.eval(
+      OPEN_RUN_OBSERVATION_SCRIPT,
+      [this.runKey(runId)],
+      [],
+    );
+    if (captured === null || captured === undefined) return null;
+    if (
+      !Array.isArray(captured) || captured.length !== 2 ||
+      typeof captured[0] !== "string" || typeof captured[1] !== "string"
+    ) {
+      throw new Error("Workflow run observation failed");
+    }
+
+    let initialRevision: number;
+    let initial: WorkflowRun;
+    try {
+      initialRevision = Number(captured[0]);
+      if (!Number.isSafeInteger(initialRevision) || initialRevision < 0) throw new Error();
+      const data = JSON.parse(captured[1]) as unknown;
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error();
+      initial = this.deserializeRun(data as Record<string, string>);
+      initial.pendingApprovals = await this.getPendingApprovals(runId);
+    } catch {
+      throw new Error("Workflow run observation failed");
+    }
+
+    const controller = new AbortController();
+    let closed = false;
+    const close = (): void => {
+      if (closed) return;
+      closed = true;
+      controller.abort();
+      options.signal?.removeEventListener("abort", close);
+      this.runObservationClosers.delete(close);
+    };
+    this.runObservationClosers.add(close);
+    options.signal?.addEventListener("abort", close, { once: true });
+    if (options.signal?.aborted) close();
+
+    const streamKey = this.runObservationKey(runId);
+    const changes: AsyncIterable<WorkflowRunObservedState> = {
+      [Symbol.asyncIterator]: async function* () {
+        if (TERMINAL_RUN_STATUSES.has(initial.status)) {
+          close();
+          return;
+        }
+        let expectedRevision = initialRevision + 1;
+        let lastStreamId = "0-0";
+        try {
+          while (!controller.signal.aborted) {
+            let streams;
+            try {
+              streams = await client.xread([{ key: streamKey, xid: lastStreamId }], {
+                count: RUN_OBSERVATION_STREAM_MAX_LENGTH,
+              });
+            } catch {
+              throw new Error("Workflow run observation failed");
+            }
+            const messages = streams[0]?.messages ?? [];
+            if (messages.length === 0) {
+              await waitForObservationPoll(controller.signal);
+              continue;
+            }
+            for (const message of messages) {
+              lastStreamId = message.id;
+              let state: WorkflowRunObservedState;
+              try {
+                state = parseRunObservedState(message.data);
+              } catch {
+                throw new Error("Workflow run observation failed");
+              }
+              if (state.revision <= initialRevision) continue;
+              if (state.revision !== expectedRevision) {
+                throw new Error("Workflow run observation failed");
+              }
+              expectedRevision++;
+              yield state;
+              if (TERMINAL_RUN_STATUSES.has(state.status)) return;
+            }
+          }
+        } finally {
+          close();
+        }
+      },
+    };
+
+    return { initial, changes, close: () => Promise.resolve(close()) };
   }
 
   async healthCheck(): Promise<boolean> {
@@ -1114,6 +1404,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async destroy(): Promise<void> {
+    for (const close of [...this.runObservationClosers]) close();
     if (this.client) {
       try {
         if (typeof this.client.quit === "function") await this.client.quit();

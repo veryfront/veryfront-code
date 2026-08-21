@@ -1,16 +1,14 @@
 /**
  * Workflow run events: what changed on a run, derived from what was persisted.
  *
- * A caller who wants to react to a run — a dashboard, a CI job, an operator
- * console — has had one option: poll `GET /runs/:id` on a timer. Polling picks
+ * A caller who wants to react to a run, such as a dashboard, CI job, or operator
+ * console, has had one option: poll `GET /runs/:id` on a timer. Polling picks
  * a latency floor and pays for it whether or not anything happened, and it
  * cannot report a transition that started and finished inside one interval.
  *
  * The events here are **derived, not emitted**. Nothing in the executor calls
- * into this module. Every run mutation already funnels through
- * `WorkflowBackend.updateRun`, so wrapping that one method with
- * {@linkcode observeRunUpdates} sees every transition exactly once, in the
- * order it was durably applied. Deriving from persisted state rather than from
+ * into this module. A backend observation supplies every persisted transition
+ * in revision order. Deriving from persisted state rather than from
  * in-process callbacks means an event is only reported once the change it
  * describes actually survived, and a run driven by a worker in another process
  * is observed on the same terms as a local one.
@@ -49,8 +47,7 @@
  */
 
 import type { NodeState, WorkflowRun, WorkflowStatus } from "./types.ts";
-import type { WorkflowRunUpdate } from "./backends/types.ts";
-import type { WorkflowBackend } from "./backends/types.ts";
+import type { WorkflowRunObservation, WorkflowRunObservedState } from "./backends/types.ts";
 
 /** Terminal run statuses: no further event can follow one. */
 const TERMINAL_STATUSES: readonly WorkflowStatus[] = [
@@ -105,6 +102,13 @@ export interface WorkflowRunStatusEvent {
   error?: string;
 }
 
+/**
+ * A persisted workflow transition suitable for streaming to run observers.
+ *
+ * Events contain identifiers, statuses, attempts, and persisted error messages
+ * only. Workflow inputs, outputs, context, and tenant metadata are never part
+ * of this stream.
+ */
 export type WorkflowRunEvent =
   | WorkflowStepStartedEvent
   | WorkflowStepCompletedEvent
@@ -202,187 +206,47 @@ export function deriveRunEvents(
   return events;
 }
 
-/** Receives every event derived for a run. */
-export type WorkflowRunEventListener = (event: WorkflowRunEvent) => void;
-
-/**
- * Per-run fan-out for derived events.
- *
- * Scoped by run id rather than process-global: two runs executing
- * concurrently would otherwise interleave on one channel with no way to tell
- * them apart. A run with no subscribers costs nothing — `publish` returns
- * before any diffing work when the run is not being watched, which is the
- * common case in a process serving mostly unwatched runs.
- */
-export class WorkflowRunEventBus {
-  readonly #listeners = new Map<string, Set<WorkflowRunEventListener>>();
-  readonly #snapshots = new Map<string, RunEventSnapshot>();
-
-  /** Whether anything is currently watching this run. */
-  hasListeners(runId: string): boolean {
-    return (this.#listeners.get(runId)?.size ?? 0) > 0;
-  }
-
-  /**
-   * Watch a run. The returned function unsubscribes and is safe to call more
-   * than once.
-   *
-   * `initial` seeds the diff baseline so the first update after subscribing
-   * reports only what changed since the caller's own read, rather than
-   * replaying the run's whole history as if it had just happened.
-   */
-  subscribe(
-    runId: string,
-    listener: WorkflowRunEventListener,
-    initial?: RunEventSnapshot,
-  ): () => void {
-    let listeners = this.#listeners.get(runId);
-    if (!listeners) {
-      listeners = new Set();
-      this.#listeners.set(runId, listeners);
-    }
-    listeners.add(listener);
-    if (initial && !this.#snapshots.has(runId)) this.#snapshots.set(runId, initial);
-
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const current = this.#listeners.get(runId);
-      if (!current) return;
-      current.delete(listener);
-      if (current.size === 0) {
-        // Drop the baseline with the last listener. Keeping it would leak one
-        // entry per run for the process's lifetime, and the next subscriber
-        // seeds its own from a fresh read anyway.
-        this.#listeners.delete(runId);
-        this.#snapshots.delete(runId);
-      }
-    };
-  }
-
-  /**
-   * Diff a run's new state against what this bus last saw and deliver the
-   * result. A listener that throws does not stop the others.
-   */
-  publish(
-    runId: string,
-    next: RunEventSnapshot,
-    runError?: string,
-    nodeErrors?: Record<string, string | undefined>,
-  ): void {
-    const listeners = this.#listeners.get(runId);
-    if (!listeners || listeners.size === 0) return;
-
-    const events = deriveRunEvents(runId, this.#snapshots.get(runId), next, runError, nodeErrors);
-    this.#snapshots.set(runId, next);
-    if (events.length === 0) return;
-
-    for (const event of events) {
-      for (const listener of [...listeners]) {
-        try {
-          listener(event);
-        } catch {
-          // A broken subscriber is that subscriber's problem. Letting it throw
-          // here would abort the backend write that produced the event.
-        }
-      }
-    }
-  }
+/** Subscriber-local event stream derived from one atomic backend observation. */
+export interface WorkflowRunEventObservation {
+  initial: WorkflowRun;
+  events: AsyncIterable<WorkflowRunEvent>;
+  close(): Promise<void>;
 }
 
-/**
- * Wrap a backend so every run mutation is also published to `bus`.
- *
- * Returns a delegating object rather than mutating the backend, so a backend
- * shared with something that must not emit events is unaffected.
- *
- * The read-back is skipped entirely when nothing is watching the run, so an
- * unobserved run pays one map lookup per update and nothing else. When a run
- * *is* watched, the wrapper re-reads it after the write rather than deriving
- * from the patch: a patch carries only the fields that changed, and a
- * conditional update may not have applied at all.
- */
-export function observeRunUpdates<T extends WorkflowBackend>(
-  backend: T,
-  bus: WorkflowRunEventBus,
-): T {
-  async function publishCurrent(runId: string): Promise<void> {
-    if (!bus.hasListeners(runId)) return;
-    try {
-      const run = await backend.getRun(runId);
-      if (!run) return;
-      const nodeErrors: Record<string, string | undefined> = {};
-      for (const [nodeId, state] of Object.entries(run.nodeStates ?? {})) {
-        if (state?.error !== undefined) nodeErrors[nodeId] = state.error;
-      }
-      bus.publish(runId, snapshotRun(run), run.error?.message, nodeErrors);
-    } catch {
-      // Observation must never fail the write that triggered it.
-    }
+function snapshotObservedState(state: WorkflowRunObservedState): RunEventSnapshot {
+  const nodes: RunEventSnapshot["nodes"] = {};
+  for (const [nodeId, node] of Object.entries(state.nodes)) {
+    nodes[nodeId] = { status: node.status, attempt: node.attempt };
   }
+  return { status: state.status, nodes };
+}
 
-  // A Proxy rather than a spread or a subclass. Backends are classes, so their
-  // methods live on the prototype and `{ ...backend }` copies none of them;
-  // subclassing would only work for the concrete types this module imports.
-  // Forwarding everything unknown keeps optional backend capabilities intact,
-  // including the `typeof backend.updateRunIfStatusAndWorker === "function"`
-  // probes callers use to detect them.
-  return new Proxy(backend, {
-    get(target, property) {
-      if (property === "createRun") {
-        return async (run: Parameters<WorkflowBackend["createRun"]>[0]): Promise<void> => {
-          await target.createRun(run);
-          await publishCurrent(run.id);
-        };
-      }
-
-      if (property === "updateRun") {
-        return async (runId: string, patch: WorkflowRunUpdate): Promise<void> => {
-          await target.updateRun(runId, patch);
-          await publishCurrent(runId);
-        };
-      }
-
-      if (property === "updateRunIfStatus" && typeof target.updateRunIfStatus === "function") {
-        return async (
-          runId: string,
-          expectedStatuses: Parameters<NonNullable<WorkflowBackend["updateRunIfStatus"]>>[1],
-          patch: WorkflowRunUpdate,
-        ): Promise<boolean> => {
-          const applied = await target.updateRunIfStatus!(runId, expectedStatuses, patch);
-          if (applied) await publishCurrent(runId);
-          return applied;
-        };
-      }
-
-      if (
-        property === "updateRunIfStatusAndWorker" &&
-        typeof target.updateRunIfStatusAndWorker === "function"
-      ) {
-        return async (
-          runId: string,
-          expectedStatuses: Parameters<
-            NonNullable<WorkflowBackend["updateRunIfStatusAndWorker"]>
-          >[1],
-          expectedWorkerId: string,
-          patch: WorkflowRunUpdate,
-        ): Promise<boolean> => {
-          const applied = await target.updateRunIfStatusAndWorker!(
-            runId,
-            expectedStatuses,
-            expectedWorkerId,
-            patch,
+/** Derive public events from a backend observation without shared baselines. */
+export function deriveWorkflowRunEventObservation(
+  observation: WorkflowRunObservation,
+): WorkflowRunEventObservation {
+  return {
+    initial: observation.initial,
+    events: {
+      async *[Symbol.asyncIterator]() {
+        let previous = snapshotRun(observation.initial);
+        for await (const state of observation.changes) {
+          const next = snapshotObservedState(state);
+          const nodeErrors: Record<string, string | undefined> = {};
+          for (const [nodeId, node] of Object.entries(state.nodes)) {
+            if (node.error !== undefined) nodeErrors[nodeId] = node.error;
+          }
+          yield* deriveRunEvents(
+            observation.initial.id,
+            previous,
+            next,
+            state.runError,
+            nodeErrors,
           );
-          if (applied) await publishCurrent(runId);
-          return applied;
-        };
-      }
-
-      // Bind to the target, not the proxy: a backend reading its own private
-      // fields through `this` would otherwise fail on the proxy receiver.
-      const value = Reflect.get(target, property, target) as unknown;
-      return typeof value === "function" ? value.bind(target) : value;
+          previous = next;
+        }
+      },
     },
-  }) as T;
+    close: () => observation.close(),
+  };
 }

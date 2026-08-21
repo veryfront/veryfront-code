@@ -37,6 +37,7 @@ class MockRedisAdapter implements RedisAdapter {
   expiries = new Map<string, number>();
   streams = new Map<string, Array<{ id: string; data: Record<string, string> }>>();
   groups = new Map<string, Set<string>>();
+  nextStreamSequence = 1;
 
   hset(key: string, fields: Record<string, string>): Promise<number> {
     let map = this.hashes.get(key);
@@ -108,6 +109,7 @@ class MockRedisAdapter implements RedisAdapter {
       if (this.hashes.delete(key)) count++;
       if (this.lists.delete(key)) count++;
       if (this.sets.delete(key)) count++;
+      if (this.streams.delete(key)) count++;
     }
     return Promise.resolve(count);
   }
@@ -142,6 +144,39 @@ class MockRedisAdapter implements RedisAdapter {
   eval(script: string, keys: string[], args: string[]): Promise<unknown> {
     const key = keys[0]!;
 
+    if (script.includes("open-run-observation")) {
+      const hash = this.hashes.get(key);
+      if (!hash) return Promise.resolve(null);
+      return Promise.resolve([
+        hash.get("__runObservationRevision") ?? "0",
+        JSON.stringify(Object.fromEntries(hash)),
+      ]);
+    }
+
+    if (script.includes("observable-run-update")) {
+      const hash = this.hashes.get(key);
+      if (!hash) return Promise.resolve(0);
+      const runId = args[0]!;
+      const nextStatus = args[1]!;
+      const statusPrefix = args[2]!;
+      const streamKey = args[3]!;
+      const maxLength = Number(args[4]);
+      const oldStatus = hash.get("status") ?? "";
+      if (nextStatus && nextStatus !== oldStatus) {
+        hash.set("status", nextStatus);
+        this.sets.get(statusPrefix + oldStatus)?.delete(runId);
+        let nextSet = this.sets.get(statusPrefix + nextStatus);
+        if (!nextSet) {
+          nextSet = new Set();
+          this.sets.set(statusPrefix + nextStatus, nextSet);
+        }
+        nextSet.add(runId);
+      }
+      for (let i = 5; i < args.length; i += 2) hash.set(args[i]!, args[i + 1]!);
+      this.appendRunObservation(hash, streamKey, maxLength);
+      return Promise.resolve(1);
+    }
+
     if (script.includes("retained-list-append")) {
       let list = this.lists.get(key);
       if (!list) {
@@ -160,6 +195,8 @@ class MockRedisAdapter implements RedisAdapter {
       const workerId = args[1]!;
       const claimDuration = Number(args[2]);
       const now = args[3]!;
+      const streamKey = args[4]!;
+      const maxLength = Number(args[5]);
       const hash = this.hashes.get(key);
       if (!hash || hash.get("status") !== "running") return Promise.resolve(0);
       const activity = hash.get("heartbeatAt") || hash.get("startedAt") || hash.get("createdAt");
@@ -170,6 +207,7 @@ class MockRedisAdapter implements RedisAdapter {
       hash.set("workerId", workerId);
       hash.set("heartbeatAt", now);
       if (!hash.get("startedAt")) hash.set("startedAt", now);
+      this.appendRunObservation(hash, streamKey, maxLength);
       return Promise.resolve(1);
     }
 
@@ -269,9 +307,12 @@ class MockRedisAdapter implements RedisAdapter {
         nextSet.add(runId);
       }
 
-      for (let i = expectedCount + 5; i < args.length; i += 2) {
+      const streamKey = args[expectedCount + 5]!;
+      const maxLength = Number(args[expectedCount + 6]);
+      for (let i = expectedCount + 7; i < args.length; i += 2) {
         hash.set(args[i]!, args[i + 1]!);
       }
+      this.appendRunObservation(hash, streamKey, maxLength);
       return Promise.resolve(1);
     }
 
@@ -379,9 +420,65 @@ class MockRedisAdapter implements RedisAdapter {
       this.streams.set(key, stream);
     }
 
-    const msgId = `${Date.now()}-0`;
+    const msgId = `${this.nextStreamSequence++}-0`;
     stream.push({ id: msgId, data: fields });
     return Promise.resolve(msgId);
+  }
+
+  xread(
+    streams: Array<{ key: string; xid: string }>,
+    options: { block?: number; count?: number } = {},
+  ): Promise<
+    Array<{ key: string; messages: Array<{ id: string; data: Record<string, string> }> }>
+  > {
+    const requested = streams[0];
+    if (!requested) return Promise.resolve([]);
+    const after = Number(requested.xid.split("-")[0]);
+    const messages = (this.streams.get(requested.key) ?? []).filter((message) =>
+      Number(message.id.split("-")[0]) > after
+    ).slice(0, options.count);
+    return Promise.resolve(messages.length > 0 ? [{ key: requested.key, messages }] : []);
+  }
+
+  private appendRunObservation(
+    hash: Map<string, string>,
+    streamKey: string,
+    maxLength: number,
+  ): number {
+    const revision = Number(hash.get("__runObservationRevision") ?? "0") + 1;
+    hash.set("__runObservationRevision", String(revision));
+    const sourceNodes = JSON.parse(hash.get("nodeStates") ?? "{}") as Record<
+      string,
+      { status: string; attempt: number; error?: string }
+    >;
+    const nodes = Object.fromEntries(
+      Object.entries(sourceNodes).map(([nodeId, node]) => [
+        nodeId,
+        {
+          status: node.status,
+          attempt: node.attempt,
+          ...(node.error !== undefined ? { error: node.error } : {}),
+        },
+      ]),
+    );
+    const data: Record<string, string> = {
+      revision: String(revision),
+      status: hash.get("status") ?? "",
+      nodes: JSON.stringify(nodes),
+    };
+    const rawError = hash.get("error");
+    if (rawError) {
+      const error = JSON.parse(rawError) as { message?: string };
+      if (error.message !== undefined) data.runError = error.message;
+    }
+    let stream = this.streams.get(streamKey);
+    if (!stream) {
+      stream = [];
+      this.streams.set(streamKey, stream);
+    }
+    stream.push({ id: `${this.nextStreamSequence++}-0`, data });
+    if (stream.length > maxLength) stream.splice(0, stream.length - maxLength);
+    return revision;
   }
 
   xreadgroup(
@@ -507,6 +604,189 @@ describe("RedisBackend", () => {
   });
 
   describe("createRun / getRun", () => {
+    it("observes cross-instance run transitions in exact revision order", async () => {
+      const writer = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const reader = new RedisBackend({ client: mockRedis, prefix: "test:" });
+      const run = createTestRun("run-observed");
+      await writer.createRun(run);
+
+      const observation = await reader.openRunObservation(run.id);
+      assertExists(observation);
+      await writer.updateRun(run.id, { status: "waiting" });
+      await writer.updateRun(run.id, { status: "running" });
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await iterator.next()).value, {
+        revision: 1,
+        status: "waiting",
+        nodes: {},
+      });
+      assertEquals((await iterator.next()).value, {
+        revision: 2,
+        status: "running",
+        nodes: {},
+      });
+      await observation.close();
+    });
+
+    it("does not lose an update racing observation setup", async () => {
+      const run = createTestRun("run-open-race");
+      await backend.createRun(run);
+
+      const opening = backend.openRunObservation(run.id);
+      await backend.updateRun(run.id, { status: "running" });
+      const observation = await opening;
+      assertExists(observation);
+
+      assertEquals((await observation.changes[Symbol.asyncIterator]().next()).value, {
+        revision: 1,
+        status: "running",
+        nodes: {},
+      });
+      await observation.close();
+    });
+
+    it("journals only successful conditional updates", async () => {
+      const run = createTestRun("run-observed-conditional");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      assertEquals(
+        await backend.updateRunIfStatus(run.id, ["running"], { status: "failed" }),
+        false,
+      );
+      assertEquals(
+        await backend.updateRunIfStatus(run.id, ["pending"], { status: "running" }),
+        true,
+      );
+
+      assertEquals((await observation.changes[Symbol.asyncIterator]().next()).value, {
+        revision: 1,
+        status: "running",
+        nodes: {},
+      });
+      await observation.close();
+    });
+
+    it("stores and exposes only reduced observable state", async () => {
+      const run = createTestRun("run-observed-reduced", {
+        workerId: "private-worker",
+        _tenant: {
+          projectSlug: "private-project",
+          token: "private-token",
+          productionMode: false,
+        },
+      });
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+
+      await backend.updateRun(run.id, {
+        status: "failed",
+        output: { secret: "private-output" },
+        context: { input: { secret: "private-input" } },
+        nodeStates: {
+          step: {
+            nodeId: "step",
+            status: "failed",
+            attempt: 2,
+            input: { secret: "node-input" },
+            output: { secret: "node-output" },
+            error: "safe node failure",
+          },
+        },
+        error: { message: "safe run failure", stack: "private stack" },
+      });
+
+      const iterator = observation.changes[Symbol.asyncIterator]();
+      assertEquals((await iterator.next()).value, {
+        revision: 1,
+        status: "failed",
+        nodes: { step: { status: "failed", attempt: 2, error: "safe node failure" } },
+        runError: "safe run failure",
+      });
+      assertEquals(await iterator.next(), { value: undefined, done: true });
+
+      const stream = mockRedis.streams.get(
+        "test:schema-v1:run-observation:run-observed-reduced",
+      );
+      assertEquals(stream?.map((entry) => Object.keys(entry.data).sort()), [
+        ["nodes", "revision", "status"],
+        ["nodes", "revision", "runError", "status"],
+      ]);
+      assertEquals(JSON.stringify(stream).includes("private"), false);
+    });
+
+    it("fails with a sanitized error when the retained journal has a revision gap", async () => {
+      const run = createTestRun("run-observed-gap");
+      await backend.createRun(run);
+      const observation = await backend.openRunObservation(run.id);
+      assertExists(observation);
+      mockRedis.streams.set("test:schema-v1:run-observation:run-observed-gap", [{
+        id: "999-0",
+        data: { revision: "2", status: "running", nodes: "{}" },
+      }]);
+
+      await assertRejects(
+        () => observation.changes[Symbol.asyncIterator]().next(),
+        Error,
+        "Workflow run observation failed",
+      );
+    });
+
+    it("sanitizes Redis read and record parse failures", async () => {
+      const run = createTestRun("run-observed-read-failure");
+      await backend.createRun(run);
+      const readFailure = await backend.openRunObservation(run.id);
+      assertExists(readFailure);
+      mockRedis.xread = () => Promise.reject(new Error("redis://private-host raw failure"));
+      await assertRejects(
+        () => readFailure.changes[Symbol.asyncIterator]().next(),
+        Error,
+        "Workflow run observation failed",
+      );
+
+      const parseBackend = new RedisBackend({ client: mockRedis, prefix: "parse:" });
+      const parseRun = createTestRun("run-observed-parse-failure");
+      await parseBackend.createRun(parseRun);
+      const parseFailure = await parseBackend.openRunObservation(parseRun.id);
+      assertExists(parseFailure);
+      mockRedis.xread = (_streams) =>
+        Promise.resolve([{
+          key: "parse:schema-v1:run-observation:run-observed-parse-failure",
+          messages: [{
+            id: "1000-0",
+            data: { revision: "not-a-revision", status: "running", nodes: "private payload" },
+          }],
+        }]);
+      await assertRejects(
+        () => parseFailure.changes[Symbol.asyncIterator]().next(),
+        Error,
+        "Workflow run observation failed",
+      );
+    });
+
+    it("closes observations on abort, destroy, and terminal states", async () => {
+      const run = createTestRun("run-observed-close");
+      await backend.createRun(run);
+      const controller = new AbortController();
+      const aborted = await backend.openRunObservation(run.id, { signal: controller.signal });
+      const destroyed = await backend.openRunObservation(run.id);
+      assertExists(aborted);
+      assertExists(destroyed);
+      controller.abort();
+      assertEquals(await aborted.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+      await backend.destroy();
+      assertEquals(await destroyed.changes[Symbol.asyncIterator]().next(), {
+        value: undefined,
+        done: true,
+      });
+    });
+
     it("stores new runs in a schema-versioned custom-prefix namespace", async () => {
       await backend.createRun(createTestRun("run-versioned-namespace"));
 
@@ -661,6 +941,15 @@ describe("RedisBackend", () => {
 
       const updated = await backend.getRun("run-u1");
       assertEquals(updated?.status, "running");
+    });
+
+    it("rejects an update for a missing run", async () => {
+      await assertRejects(
+        () => backend.updateRun("missing-run", { status: "running" }),
+        Error,
+        "Run not found",
+      );
+      assertEquals(await backend.getRun("missing-run"), null);
     });
 
     it("should update output and context", async () => {
@@ -890,8 +1179,17 @@ describe("RedisBackend", () => {
   describe("deleteRun", () => {
     it("should delete a run and its indexes", async () => {
       await backend.createRun(createTestRun("run-d1"));
+      await backend.updateRun("run-d1", { status: "running" });
+      assertEquals(
+        mockRedis.streams.has("test:schema-v1:run-observation:run-d1"),
+        true,
+      );
       await backend.deleteRun("run-d1");
       assertEquals(await backend.getRun("run-d1"), null);
+      assertEquals(
+        mockRedis.streams.has("test:schema-v1:run-observation:run-d1"),
+        false,
+      );
     });
 
     it("should no-op for non-existent run", async () => {
@@ -1541,6 +1839,8 @@ describe("RedisBackend", () => {
           startedAt: new Date(Date.now() - 120_000),
         }),
       );
+      const observation = await backend.openRunObservation("run-claim");
+      assertExists(observation);
 
       assertEquals(await backend.claimStalledRun("run-claim", "worker-a", 60_000), true);
       assertEquals(await backend.claimStalledRun("run-claim", "worker-b", 60_000), false);
@@ -1548,6 +1848,12 @@ describe("RedisBackend", () => {
       const run = await backend.getRun("run-claim");
       assertEquals(run?.workerId, "worker-a");
       assertExists(run?.heartbeatAt);
+      assertEquals((await observation.changes[Symbol.asyncIterator]().next()).value, {
+        revision: 1,
+        status: "running",
+        nodes: {},
+      });
+      await observation.close();
     });
 
     it("does not claim after a concurrent heartbeat refresh", async () => {
@@ -1762,6 +2068,10 @@ describe("RedisBackend", () => {
       await ttlBackend.createRun(createTestRun("run-ttl"));
 
       assertEquals(mockRedis.expiries.has("ttl:schema-v1:run:run-ttl"), true);
+      assertEquals(
+        mockRedis.expiries.get("ttl:schema-v1:run-observation:run-ttl"),
+        3600,
+      );
     });
   });
 
