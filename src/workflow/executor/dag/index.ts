@@ -260,7 +260,7 @@ export class DAGExecutor {
         nodeStates[nodeId] = runningState;
       }
       if (isDurableRun) {
-        await this.publishNodeStates(scope, nodeStates, context);
+        await this.publishNodeStates(scope, nodeStates, context, batch);
         abortSignal?.throwIfAborted();
       }
 
@@ -381,7 +381,11 @@ export class DAGExecutor {
       }
 
       if (isDurableRun) {
-        await this.publishNodeStates(scope, nodeStates, context);
+        // A settled node is no longer current. One still recorded running is
+        // parked (a wait, or a composite enclosing one) and stays current so a
+        // paused run names what it is parked on.
+        const stillRunning = batch.filter((nodeId) => nodeStates[nodeId]?.status === "running");
+        await this.publishNodeStates(scope, nodeStates, context, stillRunning);
         abortSignal?.throwIfAborted();
       }
       for (const nodeId of checkpointNodes) {
@@ -437,10 +441,12 @@ export class DAGExecutor {
     scope: ExecutionScope,
     nodeStates: Record<string, NodeState>,
     context: WorkflowContext,
+    currentNodes: string[],
   ): Promise<void> {
     const published = await this.config.onNodeStatesChanged?.({
       runId: scope.rootRunId,
       nodeStates: structuredClone(nodeStates),
+      currentNodes: [...currentNodes],
       context: structuredClone(context),
       ownership: scope.ownership,
     });

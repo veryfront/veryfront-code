@@ -56,10 +56,17 @@ export interface DAGExecutorConfig {
     nodeStates: Record<string, NodeState>;
     ownership?: CheckpointOwnership;
   }) => Promise<boolean | void> | boolean | void;
-  /** Persist one root-run node-state boundary before execution can advance. */
+  /**
+   * Persist one root-run node-state boundary before execution can advance.
+   *
+   * `currentNodes` names the top-level nodes the run is occupied with at that
+   * boundary: the whole batch as it enters, and only the nodes still running
+   * (a parked wait, or a composite enclosing one) once it settles.
+   */
   onNodeStatesChanged?: (input: {
     runId: string;
     nodeStates: Record<string, NodeState>;
+    currentNodes: string[];
     context: WorkflowContext;
     ownership?: CheckpointOwnership;
   }) => Promise<boolean | void> | boolean | void;

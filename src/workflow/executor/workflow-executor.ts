@@ -172,12 +172,12 @@ export class WorkflowExecutor {
           { nodeStates },
           ownership?.workerId,
         ),
-      onNodeStatesChanged: ({ runId, nodeStates, context, ownership }) =>
+      onNodeStatesChanged: ({ runId, nodeStates, currentNodes, context, ownership }) =>
         updateRunIfStatus(
           this.config.backend,
           runId,
           ["running"],
-          { nodeStates, context: toPersistedWorkflowContext(context) },
+          { nodeStates, currentNodes, context: toPersistedWorkflowContext(context) },
           ownership?.workerId,
         ),
     });

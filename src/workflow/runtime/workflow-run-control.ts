@@ -755,6 +755,9 @@ async function completeRun(
       output,
       context: publicContext,
       nodeStates: result.nodeStates,
+      // A run that resumes past its final wait reaches here with the wait
+      // still named from when it parked; nothing is current once it completes.
+      currentNodes: [],
       error: undefined,
       completedAt: new Date(),
     },
