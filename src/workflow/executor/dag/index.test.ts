@@ -1051,6 +1051,70 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["before"]!.status, "completed");
     });
 
+    it("runs a step declared after a wait in the same iteration once the wait resolves", async () => {
+      // The loop keeps its own per-iteration snapshot in `<id>_loop_state`,
+      // taken when it suspended. The approval that resumes the run patches the
+      // authoritative top-level nodeStates, not that snapshot -- so without
+      // reconciling the two, the loop replays its iteration with the wait
+      // still "running", nothing becomes ready, and the child graph reports
+      // completed with the dependent step never scheduled.
+      const order: string[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        order.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "the-loop",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => loop.iteration < 1,
+            steps: [
+              {
+                id: "inner-wait",
+                dependsOn: [],
+                config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+              },
+              { id: "after-wait", dependsOn: ["inner-wait"], config: { type: "step" } as any },
+            ],
+          } as any,
+        },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(order, []);
+
+      // What ApprovalManager.processDecision persists before calling resume:
+      // the decision lands on the top-level node state, never on the loop's
+      // private snapshot.
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            "inner-wait": {
+              nodeId: "inner-wait",
+              status: "completed",
+              output: { approved: true },
+              attempt: 1,
+              startedAt: new Date(),
+              completedAt: new Date(),
+            },
+          },
+          context: first.context,
+        }),
+      );
+
+      assertEquals(second.completed, true);
+      assertEquals(order, ["after-wait"]);
+      assertEquals(second.nodeStates["after-wait"]!.status, "completed");
+    });
+
     it("removes child node states from previous dynamic loop iterations", async () => {
       const nodes: WorkflowNode[] = [
         {
