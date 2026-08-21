@@ -1443,6 +1443,147 @@ describe("DAGExecutor", () => {
       assertEquals(observations[1]!.outer?.startedAt, observations[0]!.outer?.startedAt);
     });
 
+    it("names the entering batch in currentNodes and drops settled nodes from it", async () => {
+      const boundaries: string[][] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: createMockStepExecutor(),
+        onNodeStatesChanged: ({ currentNodes }) => {
+          boundaries.push([...currentNodes]);
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: { type: "step" } as any },
+        { id: "second", dependsOn: ["first"], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(boundaries, [["first"], [], ["second"], []]);
+    });
+
+    it("keeps a parked wait in currentNodes when its batch settles", async () => {
+      const boundaries: string[][] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: createMockStepExecutor(),
+        onNodeStatesChanged: ({ currentNodes }) => {
+          boundaries.push([...currentNodes]);
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "work", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "gate",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "approve" } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "gate");
+      assertEquals(boundaries, [["work", "gate"], ["gate"]]);
+    });
+
+    it("keeps a composite enclosing a parked wait in currentNodes when it settles", async () => {
+      const boundaries: string[][] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: createMockStepExecutor(),
+        onNodeStatesChanged: ({ currentNodes }) => {
+          boundaries.push([...currentNodes]);
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "par",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [
+              { id: "work", dependsOn: [], config: { type: "step" } },
+              {
+                id: "gate",
+                dependsOn: [],
+                config: { type: "wait", waitType: "approval", message: "approve" },
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      assertEquals(result.waitingNode, "gate");
+      assertEquals(boundaries, [["par"], ["par"]]);
+    });
+
+    it("keeps a failed node in currentNodes when its batch settles", async () => {
+      const boundaries: Array<{
+        currentNodes: string[];
+        nodeStates: Record<string, NodeState>;
+      }> = [];
+      const exec = new DAGExecutor({
+        stepExecutor: createMockStepExecutor(
+          new Map([
+            ["ok", { success: true, output: "ok" }],
+            ["boom", { success: false, error: "step exploded" }],
+          ]),
+        ),
+        onNodeStatesChanged: ({ currentNodes, nodeStates }) => {
+          boundaries.push({
+            currentNodes: [...currentNodes],
+            nodeStates: structuredClone(nodeStates),
+          });
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "ok", dependsOn: [], config: { type: "step" } as any },
+        { id: "boom", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error, 'Node "boom" failed: step exploded');
+      assertEquals(boundaries.map(({ currentNodes }) => currentNodes), [["ok", "boom"], ["boom"]]);
+      assertEquals(boundaries[1]!.nodeStates.ok?.status, "completed");
+      assertEquals(boundaries[1]!.nodeStates.boom?.status, "failed");
+    });
+
+    it("keeps every failed node and parked wait of a failing batch in currentNodes", async () => {
+      const boundaries: string[][] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: createMockStepExecutor(
+          new Map([
+            ["ok", { success: true, output: "ok" }],
+            ["boom", { success: false, error: "first failure" }],
+            ["bang", { success: false, error: "second failure" }],
+          ]),
+        ),
+        onNodeStatesChanged: ({ currentNodes }) => {
+          boundaries.push([...currentNodes]);
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "ok", dependsOn: [], config: { type: "step" } as any },
+        { id: "boom", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "gate",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "approve" } as any,
+        },
+        { id: "bang", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, false);
+      assertEquals(result.error, 'Node "boom" failed: first failure');
+      assertEquals(boundaries, [["ok", "boom", "gate", "bang"], ["boom", "gate", "bang"]]);
+    });
+
     it("publishes completed node state with the context produced by that node", async () => {
       const boundaries: Array<{
         nodeStates: Record<string, NodeState>;

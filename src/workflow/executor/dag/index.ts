@@ -260,7 +260,7 @@ export class DAGExecutor {
         nodeStates[nodeId] = runningState;
       }
       if (isDurableRun) {
-        await this.publishNodeStates(scope, nodeStates, context);
+        await this.publishNodeStates(scope, nodeStates, context, batch);
         abortSignal?.throwIfAborted();
       }
 
@@ -381,7 +381,16 @@ export class DAGExecutor {
       }
 
       if (isDurableRun) {
-        await this.publishNodeStates(scope, nodeStates, context);
+        // A node that completed or was skipped is no longer current. One still
+        // recorded running is parked (a wait, or a composite enclosing one) and
+        // stays current so a paused run names what it is parked on. A failed
+        // node stays current too: the run is about to fail on it, and the
+        // terminal record must still name where it stopped.
+        const stillCurrent = batch.filter((nodeId) => {
+          const status = nodeStates[nodeId]?.status;
+          return status === "running" || status === "failed";
+        });
+        await this.publishNodeStates(scope, nodeStates, context, stillCurrent);
         abortSignal?.throwIfAborted();
       }
       for (const nodeId of checkpointNodes) {
@@ -437,10 +446,12 @@ export class DAGExecutor {
     scope: ExecutionScope,
     nodeStates: Record<string, NodeState>,
     context: WorkflowContext,
+    currentNodes: string[],
   ): Promise<void> {
     const published = await this.config.onNodeStatesChanged?.({
       runId: scope.rootRunId,
       nodeStates: structuredClone(nodeStates),
+      currentNodes: [...currentNodes],
       context: structuredClone(context),
       ownership: scope.ownership,
     });

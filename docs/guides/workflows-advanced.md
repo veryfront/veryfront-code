@@ -197,6 +197,14 @@ persist their settled state before dependents execute. Parallel nodes start as a
 batch and settle after the batch joins. Top-level composites report their own
 boundaries; synthetic child graphs do not replace the durable root state.
 
+The same boundaries keep `currentNodes` on the run current. While a run is
+`running` it names the batch in flight, so a run that stops making progress
+shows which step it is on from its persisted state alone. While the run is
+`waiting` it names the node the run is parked on, which can be a child of a
+composite. It is empty once the run completes. A failed run keeps the nodes in
+its terminal batch that failed or were still running. A cancelled run keeps the
+last recorded value, so both terminal states still name where execution stopped.
+
 A terminal snapshot closes immediately. A terminal `run.status` frame is the last
 transition frame. Cancelling the response or aborting the request releases the
 backend observation. An observation failure sends the sanitized `error` frame and

@@ -729,6 +729,116 @@ describe("workflow/executor/workflow-executor", () => {
     }
   });
 
+  it("records the executing step in currentNodes and clears it on completion", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    executor.register(
+      workflow({
+        id: "current-nodes-while-running",
+        steps: [
+          step("prepare", { tool: createTool("prepare", () => ({ ready: true })) }),
+          dependsOn(
+            step("slow", {
+              tool: createTool("slow", async () => {
+                started.resolve();
+                await release.promise;
+                return { done: true };
+              }),
+            }),
+            "prepare",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("current-nodes-while-running", {});
+    await started.promise;
+    const midStep = await backend.getRun(handle.runId);
+    assertEquals(midStep?.status, "running");
+    assertEquals(midStep?.currentNodes, ["slow"]);
+    assertEquals(midStep?.nodeStates.slow?.status, "running");
+
+    release.resolve();
+    await handle.settled();
+    const completed = await backend.getRun(handle.runId);
+    assertEquals(completed?.status, "completed");
+    assertEquals(completed?.currentNodes, []);
+  });
+
+  it("names the failed step in currentNodes when a step error fails the run", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "current-nodes-on-failure",
+        steps: [
+          step("prepare", { tool: createTool("prepare", () => ({ ready: true })) }),
+          dependsOn(
+            step("boom", {
+              tool: createTool("boom", () => {
+                throw new Error("step exploded");
+              }),
+            }),
+            "prepare",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("current-nodes-on-failure", {});
+    await handle.settled();
+    const failed = await backend.getRun(handle.runId);
+    assertEquals(failed?.status, "failed");
+    assertEquals(failed?.nodeStates.prepare?.status, "completed");
+    assertEquals(failed?.nodeStates.boom?.status, "failed");
+    assertEquals(failed?.currentNodes, ["boom"]);
+  });
+
+  it("clears currentNodes when a run resumed from its final wait completes", async () => {
+    const backend = new MemoryBackend();
+    const approvalId = "approval-final-wait";
+    const executor = new WorkflowExecutor({
+      backend,
+      onWaiting: async (pausedRun, nodeId) => {
+        await backend.savePendingApproval(pausedRun.id, {
+          id: approvalId,
+          nodeId,
+          message: "approve me",
+          payload: {},
+          requestedAt: new Date(),
+          status: "pending",
+        });
+      },
+    });
+    executor.register(
+      workflow({
+        id: "final-wait",
+        steps: [
+          step("prepare", { tool: createTool("prepare", () => ({ ready: true })) }),
+          dependsOn(waitForApproval("review"), "prepare"),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("final-wait", {});
+    await handle.settled();
+    const waiting = await backend.getRun(handle.runId);
+    assertEquals(waiting?.status, "waiting");
+    assertEquals(waiting?.currentNodes, ["review"]);
+
+    const approvals = new ApprovalManager({ backend, executor, expirationCheckInterval: 0 });
+    try {
+      await approvals.approve(handle.runId, approvalId, "reviewer");
+      const completed = await backend.getRun(handle.runId);
+      assertEquals(completed?.status, "completed");
+      assertEquals(completed?.currentNodes, []);
+    } finally {
+      approvals.stop();
+    }
+  });
+
   it("fences a started execution after stalled ownership is replaced", async () => {
     const backend = new MemoryBackend();
     const executor = new WorkflowExecutor({ backend, heartbeatInterval: 60_000 });
