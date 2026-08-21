@@ -305,7 +305,7 @@ describe("chat/provider-errors", () => {
     const EXPECTED = {
       code: "OUTPUT_SCHEMA_NOT_CLOSED",
       message:
-        "The model rejected the output schema because an object in it allows additional properties. " +
+        "The provider rejected the output schema because an object in it allows additional properties. " +
         "Set additionalProperties: false on that object -- add .strict() if the outputSchema was " +
         "built with defineSchema(), or set the property directly on a raw JSON Schema.",
     };
@@ -359,6 +359,31 @@ describe("chat/provider-errors", () => {
       // can quote request content, so they never reach the caller verbatim.
       const parsed = parseProviderError(providerError(OPEN_OBJECT_REJECTION));
       assertEquals(parsed.message.includes("output_config.format.schema"), false);
+    });
+
+    it("matches when the rejection arrives as a bare error message", () => {
+      // The body is only preserved for a structured 400. An unparsed shape, a
+      // truncated read, or a provider whose envelope carries no
+      // `invalid_request_error` type reaches here as a plain Error instead.
+      assertEquals(
+        parseProviderError(
+          new Error(
+            "Invalid schema for response_format 'Person': In context=(), 'additionalProperties' is required to be supplied and to be false.",
+          ),
+        ),
+        EXPECTED,
+      );
+    });
+
+    it("does not claim a bare tool schema error is about the output schema", () => {
+      assertEquals(
+        parseProviderError(
+          new Error(
+            "Invalid schema for function 'lookup': In context=(), 'additionalProperties' is required to be supplied and to be false.",
+          ),
+        ),
+        { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
+      );
     });
 
     it("leaves an unrelated invalid_request_error on the generic path", () => {
