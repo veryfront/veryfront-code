@@ -25,7 +25,16 @@ describe("scaffold engine", () => {
     );
     assertEquals(
       planScaffold({ projectDir, type: "api", name: "users/[id]" }).files[0]?.path,
-      "/project/app/users/[id]/route.ts",
+      "/project/app/api/users/[id]/route.ts",
+    );
+    // An explicit "api/" prefix must not be doubled up.
+    assertEquals(
+      planScaffold({ projectDir, type: "api", name: "api/users/[id]" }).files[0]?.path,
+      "/project/app/api/users/[id]/route.ts",
+    );
+    assertEquals(
+      planScaffold({ projectDir, type: "api", name: "api" }).files[0]?.path,
+      "/project/app/api/route.ts",
     );
     assertEquals(
       planScaffold({ projectDir, type: "layout", name: "admin" }).files[0]?.path,
@@ -44,6 +53,10 @@ describe("scaffold engine", () => {
     assertEquals(
       planScaffold({ projectDir, router, type: "api", name: "users/[id]" }).files[0]?.path,
       "/project/pages/api/users/[id].ts",
+    );
+    assertEquals(
+      planScaffold({ projectDir, router, type: "api", name: "api" }).files[0]?.path,
+      "/project/pages/api/index.ts",
     );
     assertEquals(
       planScaffold({ projectDir, router, type: "layout", name: "main" }).files[0]?.path,

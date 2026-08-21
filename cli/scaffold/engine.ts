@@ -72,10 +72,13 @@ const SCAFFOLD_DEFINITIONS: Record<ScaffoldType, ScaffoldDefinition> = {
     },
   },
   api: {
+    // Both routers serve API handlers from an "api" segment, so the segment is
+    // owned by the scaffold rather than the caller. Accept a slug that already
+    // spells it so `generate api api/users/[id]` does not nest a second one.
     getPath: ({ projectDir, router, slug }) =>
       router === "app-router"
-        ? join(projectDir, "app", slug, "route.ts")
-        : joinPagesFile(join(projectDir, "pages", "api"), slug, ".ts"),
+        ? join(projectDir, "app", "api", stripApiPrefix(slug), "route.ts")
+        : joinPagesFile(join(projectDir, "pages", "api"), stripApiPrefix(slug), ".ts"),
     getContent: ({ router, methods }) => generateApiTemplate(methods, router),
   },
   layout: {
@@ -189,6 +192,10 @@ function resolveInput(input: ScaffoldInput): ResolvedScaffoldInput {
     slug,
     componentName: toComponentName(slug),
   };
+}
+
+function stripApiPrefix(slug: string): string {
+  return slug === "api" ? "" : slug.replace(/^api\//, "");
 }
 
 function joinPagesFile(base: string, slug: string, extension: ".mdx" | ".ts"): string {
