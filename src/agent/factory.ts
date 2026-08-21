@@ -20,6 +20,10 @@ import {
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import {
+  resolveSkillToolDisposition,
+  type SkillToolDisposition,
+} from "./skill-tool-disposition.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
 import type { ResolvedSkillSelectorSnapshot } from "#veryfront/skill/selector.ts";
 import {
@@ -104,52 +108,6 @@ const SKILL_TOOL_REGISTRATIONS = [
   { id: "load_skill_reference", create: createLoadSkillReferenceTool },
   { id: "execute_skill_script", create: createExecuteSkillScriptTool },
 ] as const;
-
-function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
-  return skills === false || (Array.isArray(skills) && skills.length === 0);
-}
-
-/**
- * What to do with the `load_skill` family for this agent.
- *
- * - `disable`: skills were turned off on purpose. Remove the tools even if the
- *   author also configured one, so `skills: false` cannot be worked around.
- * - `omit`: nothing declared them and there is nothing to load, so do not
- *   inject.
- * - `inject`: attach the framework tools, keeping any concrete override.
- *
- * `omit` is the case this distinction exists for. An undeclared `skills` means
- * "every visible skill", which is usually right -- but in a project with no
- * skills it resolved to nothing while the tools were attached anyway, spending
- * prompt budget every request on a tool that could only answer "no such skill".
- *
- * Declaring `skills` at all counts as intent and still injects, `true` against
- * an empty registry included: that author is opting in deliberately, possibly
- * before the skills they expect have registered. Configuring one of the skill
- * tools by hand counts the same way -- nobody supplies a `load_skill` without
- * wanting the family around it. Discovery registers skills -- global ones and
- * an agent's own colocated ones -- before constructing any agent, so an
- * undeclared agent always sees the finished registry.
- */
-type SkillToolDisposition = "disable" | "omit" | "inject";
-
-function hasConfiguredSkillTool(tools: AgentConfig["tools"]): boolean {
-  if (tools === undefined || tools === true) return false;
-  return SKILL_TOOL_REGISTRATIONS.some((registration) => {
-    const configured = tools[registration.id];
-    return typeof configured === "object" && configured !== null;
-  });
-}
-
-function resolveSkillToolDisposition(
-  config: AgentConfig,
-  resolveSkillSnapshot: () => Pick<ResolvedSkillSelectorSnapshot<Skill>, "definitions">,
-): SkillToolDisposition {
-  if (isExplicitNoneSkillSelector(config.skills)) return "disable";
-  if (config.skills !== undefined) return "inject";
-  if (hasConfiguredSkillTool(config.tools)) return "inject";
-  return resolveSkillSnapshot().definitions.length > 0 ? "inject" : "omit";
-}
 
 /**
  * Projects a registered skill onto the runtime skill shape the shared skills
@@ -550,7 +508,7 @@ function createAgent<TOutput = never>(
     config,
     id,
     delegates,
-    skillTools: resolveSkillToolDisposition(config, resolveSkillSnapshot),
+    skillTools: resolveSkillToolDisposition(config, id),
     resolveSkillSnapshot,
   });
 

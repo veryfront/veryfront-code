@@ -15,6 +15,8 @@ import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { getAvailableTools } from "./runtime/tool-helpers.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
+import { resolveSkillToolDisposition } from "./skill-tool-disposition.ts";
+import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
 import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
@@ -101,6 +103,48 @@ describe("agent factory", () => {
     const assistant = agent({ id: "no-skills-anywhere", system: "Stay helpful." });
 
     assertEquals(assistant.config.tools, undefined);
+  });
+
+  it("honours a skill tool configured as `true` rather than dropping it", () => {
+    // `load_skill: true` asks for the framework's own tool by name. That is as
+    // explicit a request for the skill infrastructure as passing a concrete
+    // tool, so it must not be read as "nothing declared skills".
+    const assistant = agent({
+      id: "boolean-skill-tool",
+      system: "Stay helpful.",
+      tools: { load_skill: true },
+    });
+
+    assertEquals(Object.keys(assistant.config.tools ?? {}).sort(), [
+      "execute_skill_script",
+      "load_skill",
+      "load_skill_reference",
+    ]);
+  });
+
+  it("applies the same rule to a `tools: true` agent, per step", async () => {
+    // A concrete tool map is resolved once at construction; `tools: true` draws
+    // from the registry on every step. Both must agree, or a bare agent keeps
+    // load_skill on one path and loses it on the other.
+    const assistant = agent({ id: "everything-agent", system: "Stay helpful.", tools: true });
+
+    const withoutSkills = await getAvailableTools(assistant.config.tools, {
+      includeSkillTools:
+        resolveSkillToolDisposition(assistant.config, "everything-agent") === "inject",
+    });
+    assertEquals(withoutSkills.filter((t) => isSkillInfrastructureToolId(t.name)), []);
+
+    // Asking per step also means this path sees skills registered after the
+    // agent was constructed.
+    registerSkill("late-arrival", createSkill("late-arrival", "Registered after the agent"));
+    const withSkills = await getAvailableTools(assistant.config.tools, {
+      includeSkillTools:
+        resolveSkillToolDisposition(assistant.config, "everything-agent") === "inject",
+    });
+    assertEquals(
+      withSkills.filter((t) => isSkillInfrastructureToolId(t.name)).map((t) => t.name).sort(),
+      ["execute_skill_script", "load_skill", "load_skill_reference"],
+    );
   });
 
   it("keeps skill tools for an agent that opted in before any skill registered", () => {
