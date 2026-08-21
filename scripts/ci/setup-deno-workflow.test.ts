@@ -675,9 +675,11 @@ describe("setup-deno CI contract", () => {
     );
     assert(redisWarm && dependencyWarm, "both warm-cache steps must exist");
 
-    const templateManifestGenerator = steps.find((step) =>
-      String(step.run ?? "").includes("generate-templates-manifest.ts")
-    );
+    const templateManifestGenerator = steps.find((step) => {
+      const command = String(step.run ?? "");
+      return command.includes("generate-templates-manifest.ts") ||
+        /\bdeno task generate(?::manifests)?\b/.test(command);
+    });
     assertEquals(
       templateManifestGenerator,
       undefined,
