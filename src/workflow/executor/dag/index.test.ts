@@ -26,6 +26,8 @@ import { StepExecutor, type StepResult } from "../step-executor.ts";
 import { CheckpointManager } from "../checkpoint-manager.ts";
 import type { WorkflowBackend } from "../../backends/types.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/index.ts";
+import { serializeWorkflowContext } from "../../context-serialization.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -1049,6 +1051,59 @@ describe("DAGExecutor", () => {
       assertEquals(result.waiting, true);
       assertExists(result.nodeStates["before"]);
       assertEquals(result.nodeStates["before"]!.status, "completed");
+    });
+
+    it("persists a suspended iteration's child states without a value JSON rewrites", async () => {
+      // `WorkflowContext` is JSON-representable by contract, and the loop was
+      // writing `NodeState` straight into it, timestamps included. That made
+      // the framework break the rule it asks of a step: the persistence check
+      // reported the loop's own `startedAt` as a user-authored lossy value,
+      // naming a path no step wrote and telling the reader to return a plain
+      // object from it. It also meant a resumed iteration read a string where
+      // the suspending one wrote a `Date`.
+      const nodes: WorkflowNode[] = [
+        {
+          id: "the-loop",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: () => true,
+            steps: [
+              { id: "inner", dependsOn: [], config: { type: "step" } as any },
+              {
+                id: "inner-wait",
+                dependsOn: ["inner"],
+                config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      const result = await executor.execute(nodes, createTestRun());
+
+      assertEquals(result.waiting, true);
+      const loopState = result.context["the-loop_loop_state"] as {
+        iterationNodeStates: Record<string, { startedAt?: unknown }>;
+      };
+      const inner = loopState.iterationNodeStates["inner"];
+      assertExists(inner);
+      assertEquals(typeof inner.startedAt, "string");
+
+      const warnings: LogEntry[] = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.level === "warn" && entry.component === "workflow-context") {
+          warnings.push(entry);
+        }
+      });
+      try {
+        serializeWorkflowContext(result.context);
+      } finally {
+        unsubscribe();
+      }
+
+      assertEquals(warnings, []);
     });
 
     it("runs a step declared after a wait in the same iteration once the wait resolves", async () => {
