@@ -31,7 +31,9 @@ function describe(value: unknown): string {
   return tag === "Object" ? (value?.constructor?.name ?? "object") : tag;
 }
 
-function isPlainObject(value: object): boolean {
+/** Whether a value is a plain `{}` object rather than a class instance. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
@@ -66,8 +68,8 @@ function findUnrepresentableValues(context: WorkflowContext): UnrepresentableVal
       return;
     }
 
-    const object = value as object;
-    if (ancestors.has(object)) {
+    const nested = value as Record<string, unknown>;
+    if (ancestors.has(nested)) {
       found.push({ path, kind: "circular reference", fatal: true });
       return;
     }
@@ -75,31 +77,31 @@ function findUnrepresentableValues(context: WorkflowContext): UnrepresentableVal
     // A value carrying toJSON is replaced by whatever it returns -- a Date
     // becomes a string, so the type a later step reads is not the type the
     // step that produced it wrote.
-    if (typeof (object as { toJSON?: unknown }).toJSON === "function") {
-      found.push({ path, kind: describe(object), fatal: false });
+    if (typeof nested.toJSON === "function") {
+      found.push({ path, kind: describe(nested), fatal: false });
       return;
     }
 
-    if (Array.isArray(object)) {
-      ancestors.add(object);
-      object.forEach((element, index) => visit(element, `${path}[${index}]`));
-      ancestors.delete(object);
+    if (Array.isArray(nested)) {
+      ancestors.add(nested);
+      nested.forEach((element, index) => visit(element, `${path}[${index}]`));
+      ancestors.delete(nested);
       return;
     }
 
     // Anything that is not a plain object loses whatever its prototype carried:
     // a Map and a Set both serialize as `{}`, a class instance as its own
     // enumerable fields only.
-    if (!isPlainObject(object)) {
-      found.push({ path, kind: describe(object), fatal: false });
+    if (!isPlainObject(nested)) {
+      found.push({ path, kind: describe(nested), fatal: false });
       return;
     }
 
-    ancestors.add(object);
-    for (const [key, nested] of Object.entries(object)) {
-      visit(nested, path ? `${path}.${key}` : key);
+    ancestors.add(nested);
+    for (const [key, child] of Object.entries(nested)) {
+      visit(child, path ? `${path}.${key}` : key);
     }
-    ancestors.delete(object);
+    ancestors.delete(nested);
   };
 
   for (const [key, value] of Object.entries(context)) visit(value, key);
