@@ -203,14 +203,7 @@ export function createWorkflowHandler(
       if (segments.length === 2 && first === "runs" && runId) {
         const run = await client.getRun(runId);
         if (!run) return problem(`No workflow run ${runId}`, 404);
-
-        // A waiting run does not carry its own pending approvals: they live in
-        // the approval manager, while `run.pendingApprovals` stays empty.
-        // useWorkflow reads them off the run body to fire onApprovalRequired,
-        // so the projection has to put them back or a paused workflow never
-        // surfaces its approval. The durable fix belongs in the run record.
-        const pendingApprovals = await client.getPendingApprovals(runId);
-        return Response.json(projectRun(run, pendingApprovals));
+        return Response.json(projectRun(run));
       }
 
       if (

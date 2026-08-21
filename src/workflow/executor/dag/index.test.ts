@@ -1277,6 +1277,293 @@ describe("DAGExecutor", () => {
     });
   });
 
+  describe("recovery from a worker that died mid-node", () => {
+    it("re-runs a step left in running state, rather than stranding it", async () => {
+      const executed: string[] = [];
+      const persistedAttempts: number[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onRecoveryScheduled: ({ nodeId, nodeStates }) => {
+          persistedAttempts.push(nodeStates[nodeId]?.attempt ?? 0);
+        },
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "first", dependsOn: [], config: { type: "step" } as any },
+        { id: "second", dependsOn: ["first"], config: { type: "step" } as any },
+      ];
+
+      // What a dead worker leaves behind: the node it was executing is recorded
+      // as running and never reaches a terminal state.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          first: { nodeId: "first", status: "completed", output: "first", attempt: 1 },
+          second: { nodeId: "second", status: "running", attempt: 1, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(result.completed, true);
+      assertEquals(persistedAttempts, [2]);
+      assertEquals(executed, ["second"]);
+      assertEquals(result.nodeStates["second"]!.status, "completed");
+    });
+
+    it("does not re-run recovered work when recovery state cannot be persisted", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onRecoveryScheduled: () => false,
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
+      ];
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          "side-effect": {
+            nodeId: "side-effect",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date(),
+          },
+        },
+      });
+
+      await assertRejects(
+        () => exec.execute(nodes, run),
+        Error,
+        "execution ownership changed",
+      );
+      assertEquals(executed, []);
+    });
+
+    it("never re-runs a node whose retry budget was already spent", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "flaky",
+          dependsOn: [],
+          config: { type: "step", retry: { maxAttempts: 2 } } as any,
+        },
+      ];
+
+      // Recovered twice already and died again each time. The
+      // step executor restarts its own retry loop at 1 and overwrites the
+      // recorded attempt, so scheduling this again would let repeated worker
+      // deaths re-run it forever -- duplicating any external side effect.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          flaky: { nodeId: "flaky", status: "running", attempt: 3, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(executed, []);
+      assertEquals(result.completed, false);
+      assertEquals(result.nodeStates["flaky"]!.status, "failed");
+      assertEquals(typeof result.error, "string");
+    });
+
+    it("stops after one recovery for a node with no retry configured", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "once", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      // attempt 2 on a node allowing 1: it was recovered once already and the
+      // worker died again. A default node gets one recovery, not unlimited ones.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          once: { nodeId: "once", status: "running", attempt: 2, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(executed, []);
+      assertEquals(result.completed, false);
+      assertEquals(result.nodeStates["once"]!.status, "failed");
+    });
+
+    it("persists only the run's own node states, never a child graph's", async () => {
+      // The hook is wired to a fenced write that replaces the run's whole
+      // node-state map. A loop iteration's child run carries only that
+      // iteration's children, so persisting one under the real run id would
+      // erase every top-level node -- and a workflow whose completed nodes read
+      // as pending re-runs from the start, duplicating exactly the side effects
+      // this recovery path exists to protect.
+      const persisted: Array<{ runId: string; nodeId: string; keys: string[] }> = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => ({
+          success: true,
+          output: node.id,
+          executionTime: 1,
+        })),
+        onRecoveryScheduled: ({ runId, nodeId, nodeStates }) => {
+          persisted.push({ runId, nodeId, keys: Object.keys(nodeStates).sort() });
+        },
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "before", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "loop",
+          dependsOn: ["before"],
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: (_context: WorkflowContext, loop: { iteration: number }) => loop.iteration < 1,
+            steps: [
+              {
+                id: "inner-parallel",
+                dependsOn: [],
+                config: {
+                  type: "parallel",
+                  nodes: [{ id: "leaf", dependsOn: [], config: { type: "step" } }],
+                },
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      // A worker died inside the loop: the loop node and the composite in its
+      // in-flight iteration are both recorded running, the iteration's states
+      // living in their own keyspace under the loop's persisted state.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          before: { nodeId: "before", status: "completed", attempt: 1 },
+          loop: { nodeId: "loop", status: "running", attempt: 1, startedAt: new Date() },
+        },
+        context: {
+          input: { topic: "test" },
+          loop_loop_state: {
+            iteration: 0,
+            previousResults: [],
+            iterationNodeStates: {
+              "inner-parallel": {
+                nodeId: "inner-parallel",
+                status: "running",
+                attempt: 1,
+                startedAt: new Date(),
+              },
+            },
+          },
+        },
+      });
+
+      await exec.execute(nodes, run);
+
+      assertEquals(persisted, [
+        { runId: "test-run", nodeId: "loop", keys: ["before", "loop"] },
+      ]);
+    });
+
+    it("leaves a wait parked on its decision alone", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "approve",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "m" } as any,
+        },
+      ];
+
+      // Nothing executes while a wait is parked, so there is no interrupted
+      // attempt to recover -- re-running it would raise a second approval for a
+      // decision already pending. A loop or branch child graph hits this too:
+      // its synthetic run is always "running" even while its wait is parked.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          approve: {
+            nodeId: "approve",
+            status: "running",
+            attempt: 1,
+            startedAt: new Date(),
+            input: { type: "approval", message: "m" },
+          },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(executed, []);
+      assertEquals(result.nodeStates["approve"]!.status, "running");
+    });
+
+    it("leaves a composite parked on a nested wait alone", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: {
+            type: "branch",
+            condition: () => true,
+            then: [
+              { id: "inner", dependsOn: [], config: { type: "step" } as any },
+              {
+                id: "inner-wait",
+                dependsOn: ["inner"],
+                config: { type: "wait", waitType: "approval", message: "m" } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(executed, ["inner"]);
+      // The composite is recorded as running while its child waits. That is a
+      // parked run, not a dead worker, and must not restart the branch.
+      assertEquals(first.nodeStates["gate"]!.status, "running");
+    });
+  });
+
   describe("loop resume (H9)", () => {
     it("should not re-run completed steps of an in-flight loop iteration on resume", async () => {
       let incrRuns = 0;

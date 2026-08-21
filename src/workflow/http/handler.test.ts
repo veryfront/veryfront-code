@@ -4,10 +4,20 @@ import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
 import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { PendingApproval } from "../types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { createWorkflowClient, type WorkflowClient } from "../api/workflow-client.ts";
 import { step, waitForApproval, workflow } from "../dsl/index.ts";
 import { createWorkflowHandler } from "./handler.ts";
+
+class CountingMemoryBackend extends MemoryBackend {
+  pendingApprovalReads = 0;
+
+  override getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    this.pendingApprovalReads++;
+    return super.getPendingApprovals(runId);
+  }
+}
 
 function slowTool(id: string): Tool {
   return {
@@ -148,6 +158,24 @@ describe("createWorkflowHandler", () => {
     // useWorkflow derives status, progress and approvals from exactly these.
     expect(run.status).toBeDefined();
     expect(run.nodeStates).toBeDefined();
+  });
+
+  it("uses the approvals hydrated by the run read", async () => {
+    await client.destroy();
+    const backend = new CountingMemoryBackend({ debug: false });
+    client = createWorkflowClient({ backend, debug: false });
+    client.register(
+      workflow({ id: "pipeline", steps: [step("only", { tool: passthroughTool("noop") })] }),
+    );
+    handlers = createWorkflowHandler(client);
+
+    const runId = await startRun();
+    backend.pendingApprovalReads = 0;
+
+    const response = await handlers.GET(get(`/api/workflows/runs/${runId}`));
+
+    expect(response.status).toBe(200);
+    expect(backend.pendingApprovalReads).toBe(1);
   });
 
   it("answers a missing run with 404 rather than an empty body", async () => {

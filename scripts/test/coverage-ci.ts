@@ -79,6 +79,9 @@ export function buildDenoTestCommandArgs(
     "--preload=src/testing/preload.ts",
     "--no-check",
     "--parallel",
+    // Leaks here are load-dependent and do not reproduce on demand, so the
+    // first failure has to carry the stack rather than advise a rerun.
+    "--trace-leaks",
     "--allow-all",
     PROVIDER_EGRESS_DENY_NET,
     "--v8-flags=--max-old-space-size=8192",

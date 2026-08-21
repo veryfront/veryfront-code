@@ -39,6 +39,13 @@ deno task test:file src/workflow/executor/dag/index.test.ts
 For targeted changes, run the narrowest relevant task first (`deno task test:file <path>`), then
 broaden only when the change touches shared runtime, public APIs, or cross-cutting behavior.
 
+This repository pins its Deno version in `.tool-versions`, and `mise` or `asdf`
+will select it automatically. Match it before regenerating anything: generated
+files embed declaration line numbers in padded columns, so a different Deno
+rewrites them even when nothing changed, and committing that output turns CI red
+for everyone. `deno task docs` refuses to run on the wrong version rather than
+producing a plausible-looking diff.
+
 Use these tasks rather than a hand-written `deno test` command. They set `DENO_TESTING=1` and
 deny network access to the LLM provider origins. Without both, a test that stubs
 `globalThis.fetch` is ignored by the outbound fetch guard (`src/security/http/outbound-fetch.ts`)

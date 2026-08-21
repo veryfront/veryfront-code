@@ -160,7 +160,7 @@ async function loadModule(args: {
   const fileExistsLocally = await fs.exists(modulePath);
   if (fileExistsLocally) {
     try {
-      return await loadTSModuleDirect(modulePath);
+      return await loadTSModuleDirect(modulePath, await moduleRevision(fs, modulePath));
     } catch (error) {
       // A direct import shares the dev server's runtime context, which is what
       // makes auto-discovery (agentRegistry and friends) work — but it leaves
@@ -207,8 +207,42 @@ export function isSpecifierResolutionError(error: unknown): boolean {
   return SPECIFIER_RESOLUTION_MESSAGE.test(error.message.trimStart());
 }
 
-function loadTSModuleDirect(modulePath: string): Promise<APIRoute> {
-  const cacheBuster = `?v=${Date.now()}`;
+/**
+ * Cache key for a route module's current contents.
+ *
+ * Every request loads its route through here, so keying on the clock would mint
+ * a new module per request: module-level state (clients, caches, pools) would
+ * reset between requests in dev while persisting in production, with no error
+ * to show for it. Keying on mtime keeps an edit hot-reloading while letting an
+ * untouched route keep the module it already has.
+ *
+ * The content digest is the durable signal. Mtime is included only to keep the
+ * key readable while guarding filesystems whose observable timestamp can
+ * collide for two same-size edits.
+ *
+ * A filesystem that cannot report stat or content falls back to the clock,
+ * which is no worse than reloading every time.
+ */
+async function moduleRevision(fs: FileSystem, modulePath: string): Promise<string> {
+  try {
+    const { mtime } = await fs.stat(modulePath);
+    const source = await fs.readTextFile(modulePath);
+    const digest = await hashModuleSource(source);
+    return `${mtime?.getTime() ?? "unknown"}-${digest}`;
+  } catch {
+    // An unreadable path still has to load; fall through to the clock.
+  }
+  return String(Date.now());
+}
+
+async function hashModuleSource(source: string): Promise<string> {
+  const bytes = new TextEncoder().encode(source);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return new Uint8Array(digest).toHex();
+}
+
+function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRoute> {
+  const cacheBuster = `?v=${revision}`;
   const url = modulePath.startsWith("file://")
     ? `${modulePath}${cacheBuster}`
     : `file://${modulePath}${cacheBuster}`;
@@ -481,7 +515,7 @@ async function loadAndTranspileModule(
     adapter,
     config,
   );
-  return await loadModuleFromCode(source, fs);
+  return await loadModuleFromCode(source, fs, `${projectDir}\u0000${modulePath}`);
 }
 
 function buildTranspiledModuleSource(
@@ -668,7 +702,53 @@ export function getUserDependencies(
   return userDeps;
 }
 
-async function loadModuleFromCode(
+/**
+ * Bundled route modules, keyed by owner and generated source.
+ *
+ * The bundling path builds its module from generated source and imports it from
+ * a throwaway temp file, so an unchanged route produced a brand new module on
+ * every request: module-level state (clients, caches, pools) reset between
+ * requests, while the same code under `veryfront serve` kept it. Caching on the
+ * generated source keeps an unchanged route on the module it already has, and
+ * changed source hashes differently and rebuilds.
+ *
+ * The key carries the project and route path as well as the code, so two
+ * projects that happen to bundle byte-identical output never share a module,
+ * and with it module state.
+ */
+const bundledModules = new Map<string, Promise<APIRoute>>();
+
+/** Bundled routes a dev session can hold before the oldest is dropped. */
+const MAX_BUNDLED_MODULES = 64;
+
+async function bundledModuleKey(owner: string, code: string): Promise<string> {
+  return await hashModuleSource(`${owner}\u0000${code}`);
+}
+
+function loadModuleFromCode(
+  code: string,
+  fs: FileSystem,
+  owner: string,
+): Promise<APIRoute> {
+  return bundledModuleKey(owner, code).then((key) => {
+    const cached = bundledModules.get(key);
+    if (cached) return cached;
+
+    const loading = importModuleFromCode(code, fs);
+    bundledModules.set(key, loading);
+
+    // A failed build must not be remembered as this route's module.
+    loading.catch(() => bundledModules.delete(key));
+
+    if (bundledModules.size > MAX_BUNDLED_MODULES) {
+      const oldest = bundledModules.keys().next();
+      if (!oldest.done) bundledModules.delete(oldest.value);
+    }
+    return loading;
+  });
+}
+
+async function importModuleFromCode(
   code: string,
   fs: FileSystem,
 ): Promise<APIRoute> {
