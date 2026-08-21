@@ -2238,9 +2238,79 @@ function buildAnthropicOutputConfig(
   return {
     format: {
       type: "json_schema",
-      schema: unwrapToolInputSchema(responseFormat.schema),
+      schema: closeObjectSchemas(unwrapToolInputSchema(responseFormat.schema)),
     },
   };
+}
+
+/**
+ * JSON Schema keywords whose value is itself a schema, a list of schemas, or a
+ * map of schemas. Recursion is restricted to these so that keywords holding
+ * literal values -- `default`, `const`, `enum`, `examples` -- are copied
+ * through untouched instead of being rewritten when they happen to look like a
+ * schema.
+ */
+const SCHEMA_MAP_KEYWORDS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+const SCHEMA_LIST_KEYWORDS = new Set(["anyOf", "oneOf", "allOf", "prefixItems"]);
+const SCHEMA_VALUE_KEYWORDS = new Set([
+  "items",
+  "additionalItems",
+  "contains",
+  "additionalProperties",
+  "propertyNames",
+  "not",
+  "if",
+  "then",
+  "else",
+]);
+
+/**
+ * Set `additionalProperties: false` on every object-typed subschema that left
+ * it unset.
+ *
+ * Anthropic's `output_config.format` rejects an object schema without it with a
+ * 400 -- "For 'object' type, 'additionalProperties' must be explicitly set to
+ * false" -- unconditionally, and independently of the framework's own `strict`
+ * flag. A plain `v.object({...})` with every field required therefore fails
+ * even though it already satisfies the rest of strict structured output, so the
+ * requirement is satisfied here rather than pushed onto every caller.
+ *
+ * An explicitly declared `additionalProperties` is preserved: rewriting it
+ * would silently narrow a contract the caller deliberately opened, and
+ * Anthropic surfaces its own error for that case.
+ *
+ * The result is a copy. The schema object belongs to the agent and is reused
+ * across providers and calls, so closing it for Anthropic must not mutate it.
+ */
+function closeObjectSchemas(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(closeObjectSchemas);
+  if (typeof schema !== "object" || schema === null) return schema;
+
+  const source = schema as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (SCHEMA_MAP_KEYWORDS.has(key)) {
+      result[key] = typeof value === "object" && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map((
+            [name, subschema],
+          ) => [name, closeObjectSchemas(subschema)]),
+        )
+        : value;
+      continue;
+    }
+    if (SCHEMA_LIST_KEYWORDS.has(key) || SCHEMA_VALUE_KEYWORDS.has(key)) {
+      result[key] = closeObjectSchemas(value);
+      continue;
+    }
+    result[key] = value;
+  }
+
+  if (source.type === "object" && !("additionalProperties" in source)) {
+    result.additionalProperties = false;
+  }
+  return result;
 }
 
 function resolveAnthropicMaxTokens(

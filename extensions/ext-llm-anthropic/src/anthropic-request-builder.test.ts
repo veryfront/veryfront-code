@@ -4793,3 +4793,108 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     );
   });
 });
+
+describe("anthropic output_config schema closure", () => {
+  /** Build a request carrying `schema` as the json_schema response format. */
+  function buildWithOutputSchema(schema: unknown): Record<string, unknown> {
+    const warnings: unknown[] = [];
+    const body = buildAnthropicMessagesRequest(
+      "claude-haiku-4-5-20251001",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        responseFormat: { type: "json_schema", name: "output", schema },
+        // deno-lint-ignore no-explicit-any
+      } as any,
+      false,
+      // deno-lint-ignore no-explicit-any
+      warnings as any,
+    );
+    return (body.output_config as { format: { schema: Record<string, unknown> } }).format.schema;
+  }
+
+  it("closes a top-level object schema that left additionalProperties unset", () => {
+    // Anthropic rejects this schema with a 400 unless additionalProperties is
+    // explicitly false, even though every property is already required.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    });
+
+    assertEquals(schema.additionalProperties, false);
+  });
+
+  it("closes nested object properties", () => {
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        user: { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+      },
+      required: ["user"],
+    });
+
+    const user = (schema.properties as Record<string, Record<string, unknown>>).user;
+    assertEquals(user.additionalProperties, false);
+  });
+
+  it("closes object schemas inside array items", () => {
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        rows: { type: "array", items: { type: "object", properties: { id: { type: "string" } } } },
+      },
+    });
+
+    const rows = (schema.properties as Record<string, Record<string, unknown>>).rows;
+    assertEquals((rows.items as Record<string, unknown>).additionalProperties, false);
+  });
+
+  it("closes object schemas inside composition keywords", () => {
+    const schema = buildWithOutputSchema({
+      anyOf: [
+        { type: "object", properties: { a: { type: "string" } } },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    });
+
+    const branches = schema.anyOf as Record<string, unknown>[];
+    assertEquals(branches[0]!.additionalProperties, false);
+    assertEquals(branches[1]!.additionalProperties, false);
+  });
+
+  it("leaves an explicitly declared additionalProperties alone", () => {
+    // Rewriting an explicit declaration would silently change the contract the
+    // caller asked for. Anthropic still rejects it, which is the caller's call.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { name: { type: "string" } },
+      additionalProperties: true,
+    });
+
+    assertEquals(schema.additionalProperties, true);
+  });
+
+  it("does not mutate the caller's schema object", () => {
+    // The schema is owned by the agent and reused across providers and calls,
+    // so closing it for Anthropic must not leak into anyone else's request.
+    const original = { type: "object", properties: { name: { type: "string" } } };
+    buildWithOutputSchema(original);
+
+    assertEquals(Object.hasOwn(original, "additionalProperties"), false);
+  });
+
+  it("does not rewrite non-schema values that merely look like schemas", () => {
+    // `default` holds a literal value, not a subschema. Recursing into it would
+    // corrupt the declared default.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        config: { type: "string", default: { type: "object", properties: {} } },
+      },
+    });
+
+    const config = (schema.properties as Record<string, Record<string, unknown>>).config;
+    assertEquals(config.default, { type: "object", properties: {} });
+  });
+});
