@@ -18,6 +18,7 @@ import { DAGExecutor } from "./index.ts";
 import type {
   Checkpoint,
   LoopExecutionContext,
+  NodeState,
   WorkflowContext,
   WorkflowNode,
   WorkflowRun,
@@ -1625,6 +1626,130 @@ describe("DAGExecutor", () => {
       // The composite is recorded as running while its child waits. That is a
       // parked run, not a dead worker, and must not restart the branch.
       assertEquals(first.nodeStates["gate"]!.status, "running");
+    });
+  });
+
+  describe("wait resume inside a nested composite", () => {
+    /**
+     * A composite runs its children against a synthetic run, so the child graph
+     * cannot read the real run's status. Resuming an approval used to look, one
+     * level down, exactly like recovering from a dead worker: the enclosing
+     * composite was re-entered off the recovery budget that exists for crashes.
+     *
+     * It only became visible once a re-entered sibling was queued behind the
+     * concurrency limit. Executing the node overwrites the bumped attempt;
+     * a node that never gets its turn keeps it, so ordinary approvals raised
+     * the recorded attempt until the budget was declared spent.
+     */
+    const waitingParallel = (id: string): WorkflowNode => ({
+      id,
+      dependsOn: [],
+      config: {
+        type: "parallel",
+        nodes: [
+          {
+            id: `${id}-wait`,
+            dependsOn: [],
+            config: { type: "wait", waitType: "approval", message: "m" } as any,
+          },
+        ],
+      } as any,
+    });
+
+    const approve = (
+      states: Record<string, NodeState>,
+      waitId: string,
+    ): Record<string, NodeState> => ({
+      ...states,
+      [waitId]: { ...states[waitId]!, status: "completed", completedAt: new Date() },
+    });
+
+    it("spends no recovery budget when an approval resumes a nested composite", async () => {
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(),
+        // Forces the second inner composite to queue behind the first.
+        maxConcurrency: 1,
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "outer",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [waitingParallel("inner-a"), waitingParallel("inner-b")],
+          } as any,
+        },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "inner-a-wait");
+
+      // Approving the first wait re-enters "outer", which re-enters "inner-a"
+      // and reaches "inner-b" -- which parks on its own approval.
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: approve(first.nodeStates, "inner-a-wait"),
+          context: first.context,
+        }),
+      );
+      assertEquals(second.waiting, true);
+      assertEquals(second.waitingNode, "inner-b-wait");
+      assertEquals(
+        second.nodeStates["inner-a"]!.attempt,
+        1,
+        "an approval resume must not consume the recovery budget of a nested composite",
+      );
+
+      // Approving the second wait must finish the run. Nothing was ever
+      // interrupted, so nothing may be reported as interrupted.
+      const third = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: approve(second.nodeStates, "inner-b-wait"),
+          context: second.context,
+        }),
+      );
+      assertEquals(third.error, undefined);
+      assertEquals(third.completed, true);
+    });
+
+    it("still recovers a nested node when the worker died mid-run", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "outer",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [{ id: "child", dependsOn: [], config: { type: "step" } as any }],
+          } as any,
+        },
+      ];
+
+      // A dead worker leaves a "running" run, not a "waiting" one.
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            outer: { nodeId: "outer", status: "running", attempt: 1, startedAt: new Date() },
+            child: { nodeId: "child", status: "running", attempt: 1, startedAt: new Date() },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(executed, ["child"]);
     });
   });
 

@@ -245,21 +245,20 @@ describe("workflow/executor tracing", () => {
         executeUnwrapped(
           nodes: WorkflowNode[],
           run: WorkflowRun,
-          rootRunId: string,
+          scope: {
+            rootRunId: string;
+            executionRunId: string;
+            resumingWait: boolean;
+            ownership?: unknown;
+          },
           startFromNode?: string,
           abortSignal?: AbortSignal,
-          ownership?: unknown,
-          executionRunId?: string,
         ): Promise<unknown>;
-      }).executeUnwrapped(
-        nodes,
-        syntheticRun,
-        "durable-root-run",
-        undefined,
-        undefined,
-        undefined,
-        "durable-hook-run",
-      );
+      }).executeUnwrapped(nodes, syntheticRun, {
+        rootRunId: "durable-root-run",
+        executionRunId: "durable-hook-run",
+        resumingWait: false,
+      });
       await tracing.provider.forceFlush();
 
       const nodeSpan = byName(tracing.exporter.getFinishedSpans(), "workflow.node child");
