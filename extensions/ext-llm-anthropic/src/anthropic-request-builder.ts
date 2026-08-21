@@ -2261,7 +2261,25 @@ const SCHEMA_MAP_KEYWORDS = new Set([
   // unchanged, so both spellings can share this branch.
   "dependencies",
 ]);
-const SCHEMA_LIST_KEYWORDS = new Set(["anyOf", "oneOf", "allOf", "prefixItems"]);
+const SCHEMA_LIST_KEYWORDS = new Set(["anyOf", "oneOf", "prefixItems"]);
+/**
+ * `allOf` branches describe one instance together, not alternatives, and
+ * `additionalProperties` only ever sees the `properties` of the schema object
+ * carrying it. Closing branches that each declare part of the object therefore
+ * makes every one of them reject the others' properties, and the composition
+ * accepts nothing at all:
+ *
+ *   allOf: [ { properties: { a }, additionalProperties: false },
+ *            { properties: { b }, additionalProperties: false } ]
+ *
+ * `{ a, b }` fails the first branch on `b` and the second on `a`.
+ *
+ * So branches are walked for objects nested deeper inside them, but are not
+ * closed themselves. An `allOf` of open objects is still rejected by Anthropic
+ * -- which is the correct outcome, and a legible one, rather than a schema that
+ * validates nothing the model can produce.
+ */
+const COMPOSITION_LIST_KEYWORDS = new Set(["allOf"]);
 const SCHEMA_VALUE_KEYWORDS = new Set([
   "items",
   "additionalItems",
@@ -2296,8 +2314,8 @@ const SCHEMA_VALUE_KEYWORDS = new Set([
  * The result is a copy. The schema object belongs to the agent and is reused
  * across providers and calls, so closing it for Anthropic must not mutate it.
  */
-function closeObjectSchemas(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(closeObjectSchemas);
+function closeObjectSchemas(schema: unknown, closeSelf = true): unknown {
+  if (Array.isArray(schema)) return schema.map((entry) => closeObjectSchemas(entry, closeSelf));
   if (typeof schema !== "object" || schema === null) return schema;
 
   const source = schema as Record<string, unknown>;
@@ -2314,6 +2332,12 @@ function closeObjectSchemas(schema: unknown): unknown {
         : value;
       continue;
     }
+    if (COMPOSITION_LIST_KEYWORDS.has(key)) {
+      result[key] = Array.isArray(value)
+        ? value.map((branch) => closeObjectSchemas(branch, false))
+        : closeObjectSchemas(value, false);
+      continue;
+    }
     if (SCHEMA_LIST_KEYWORDS.has(key) || SCHEMA_VALUE_KEYWORDS.has(key)) {
       result[key] = closeObjectSchemas(value);
       continue;
@@ -2325,7 +2349,7 @@ function closeObjectSchemas(schema: unknown): unknown {
   // walk when a caller writes it explicitly as `undefined`, but JSON drops it
   // on the way to the provider -- so honoring its presence would emit exactly
   // the open schema Anthropic rejects.
-  if (isObjectTyped(source.type) && source.additionalProperties === undefined) {
+  if (closeSelf && isObjectTyped(source.type) && source.additionalProperties === undefined) {
     result.additionalProperties = false;
   }
   return result;

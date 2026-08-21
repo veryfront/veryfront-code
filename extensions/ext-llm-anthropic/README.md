@@ -233,13 +233,28 @@ must be explicitly set to false
 
 The builder satisfies that itself, filling in `additionalProperties: false` on
 every object subschema that left it unset -- including nested properties, array
-items, and `anyOf`/`oneOf`/`allOf` branches -- so a plain
-`defineSchema((v) => v.object({ ... }))()` works without `.strict()`.
+items, and `anyOf`/`oneOf` branches -- so a
+`defineSchema((v) => v.object({ ... }))()` whose properties are all required
+works without `.strict()`.
 
-An `additionalProperties` you declare yourself is left as declared. A schema
-that genuinely allows extra properties, such as one built with `v.record()`,
-is still rejected by Anthropic, which has no way to express an open object in
-structured output.
+Three shapes are deliberately left open:
+
+- **`allOf` branches.** `additionalProperties` only ever sees the `properties`
+  of the schema object carrying it, so closing branches that each declare part
+  of the same object makes every branch reject the others' properties, and the
+  composition accepts nothing at all. Branches are walked for objects nested
+  inside them, but are not closed themselves.
+- **An `additionalProperties` you declared yourself**, which is left exactly as
+  declared.
+- **Open records.** `v.record()` emits `additionalProperties` as a schema
+  rather than `false`, and Anthropic has no way to express an open object in
+  structured output, so it rejects these either way.
+
+Closing an object is necessary, but it is not the only constraint Anthropic
+places on a structured-output schema -- notably, a schema with `.optional()`
+properties can still be rejected. Where a field may be absent, prefer a
+required property that accepts null (`v.string().nullable()`) over an optional
+one.
 
 ### Container
 

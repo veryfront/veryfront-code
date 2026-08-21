@@ -4863,6 +4863,40 @@ describe("anthropic output_config schema closure", () => {
     assertEquals(branches[1]!.additionalProperties, false);
   });
 
+  it("does not close allOf branches, which describe one instance together", () => {
+    // `additionalProperties` only sees the `properties` of the schema object
+    // carrying it, so closing both branches makes each reject the other's
+    // property and `{ a, b }` satisfies neither.
+    const schema = buildWithOutputSchema({
+      allOf: [
+        { type: "object", properties: { a: { type: "string" } } },
+        { type: "object", properties: { b: { type: "string" } } },
+      ],
+    });
+
+    const branches = schema.allOf as Record<string, unknown>[];
+    assertEquals(Object.hasOwn(branches[0]!, "additionalProperties"), false);
+    assertEquals(Object.hasOwn(branches[1]!, "additionalProperties"), false);
+  });
+
+  it("still closes objects nested inside an allOf branch", () => {
+    // Only the branch itself participates in the composition. An object under
+    // a branch's `properties` is an ordinary standalone schema.
+    const schema = buildWithOutputSchema({
+      allOf: [
+        {
+          type: "object",
+          properties: { user: { type: "object", properties: { name: { type: "string" } } } },
+        },
+      ],
+    });
+
+    const branch = (schema.allOf as Record<string, unknown>[])[0]!;
+    const user = (branch.properties as Record<string, Record<string, unknown>>).user;
+    assertEquals(user.additionalProperties, false);
+    assertEquals(Object.hasOwn(branch, "additionalProperties"), false);
+  });
+
   it("closes object subschemas under every schema-bearing keyword", () => {
     // These are all accepted JSON Schema keywords (src/schemas/schema-input.ts),
     // so a raw outputSchema can put an object under any of them. A walk that
