@@ -32,6 +32,15 @@ class RejectingApprovalPersistenceBackend extends MemoryBackend {
   }
 }
 
+class CountingApprovalReadsBackend extends MemoryBackend {
+  approvalReads = 0;
+
+  override getPendingApprovals(runId: string): Promise<PendingApproval[]> {
+    this.approvalReads++;
+    return super.getPendingApprovals(runId);
+  }
+}
+
 function createMockTool(name: string, output: unknown): Tool {
   return {
     id: name,
@@ -908,6 +917,41 @@ describe("createWorkflowClient()", () => {
 describe(
   "WorkflowClient.getRun approvals",
   () => {
+    it("uses the approvals hydrated by the backend without querying twice", async () => {
+      const backend = new CountingApprovalReadsBackend({ debug: false });
+      const client = createWorkflowClient({ backend, debug: false });
+      const runId = "run-hydrated-approvals";
+      await backend.createRun({
+        id: runId,
+        workflowId: "gated-hydration",
+        status: "waiting",
+        input: {},
+        nodeStates: {},
+        currentNodes: ["review"],
+        context: { input: {}, runId, workflowId: "gated-hydration" },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      });
+      await backend.savePendingApproval(runId, {
+        id: "approval-hydrated",
+        nodeId: "review",
+        status: "pending",
+        message: "Please review",
+        payload: {},
+        requestedAt: new Date(),
+      });
+
+      try {
+        const run = await client.getRun(runId);
+        assertEquals(run?.pendingApprovals.length, 1);
+        assertEquals(backend.approvalReads, 1);
+      } finally {
+        await client.destroy();
+      }
+    });
+
     it("carries the approvals a waiting run is blocked on", async () => {
       // The run record declares `pendingApprovals`, but approvals are persisted
       // to their own store so they can be reserved atomically against a worker.

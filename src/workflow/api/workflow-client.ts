@@ -178,25 +178,9 @@ export class WorkflowClient {
     return this.executor.cancel(runId);
   }
 
-  /**
-   * Read a run, including the approvals it is currently waiting on.
-   *
-   * Approvals are stored apart from the run so they can be reserved atomically
-   * against a worker, which leaves `pendingApprovals` empty on the stored
-   * record. Callers read a run and reasonably expect it to say what it is
-   * waiting for, and `useWorkflow` in particular takes approvals off the run to
-   * announce them. Join the two on the public read path rather than writing a
-   * second copy, which could disagree with the approval store.
-   *
-   * `listRuns` deliberately does not do this: it would issue one approval query
-   * per run. Read the individual run when the approvals matter.
-   */
-  async getRun(runId: string): Promise<WorkflowRun | null> {
-    const run = await this.backend.getRun(runId);
-    if (!run) return null;
-
-    const pendingApprovals = await this.approvalManager.getPendingApprovals(runId);
-    return { ...run, pendingApprovals };
+  /** Read a run, including the approvals it is currently waiting on. */
+  getRun(runId: string): Promise<WorkflowRun | null> {
+    return this.backend.getRun(runId);
   }
 
   listRuns(filter?: RunFilter): Promise<WorkflowRun[]> {

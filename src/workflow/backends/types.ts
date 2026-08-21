@@ -71,6 +71,7 @@ export interface Lock {
 /** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
+  /** Read a run with its current pending approvals hydrated. */
   getRun(runId: string): Promise<WorkflowRun | null>;
   updateRun(runId: string, patch: WorkflowRunUpdate): Promise<void>;
   /** Apply a run patch only when its current status matches one of the expected statuses. */
