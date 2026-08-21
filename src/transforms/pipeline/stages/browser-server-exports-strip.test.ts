@@ -11,6 +11,7 @@ import {
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
+import { getErrorCollector, resetErrorCollector } from "#veryfront/observability";
 import {
   browserServerExportsStripPlugin,
   moduleReferenceWalkers,
@@ -1325,28 +1326,56 @@ describe("browser-server-exports-strip", () => {
     });
 
     it("classifies authored browser parse errors as tenant compilation failures", async () => {
+      resetErrorCollector();
       const source = [
         `export async function getServerData() { return { props: {} }; }`,
         `export default function Page( { return null; }`,
       ].join("\n");
 
-      const error = await assertRejects(
-        () =>
-          runPipeline(
-            source,
-            "/project/pages/broken.tsx",
-            "/project",
-            { projectId: "authored-strip-parse-error", dev: false, ssr: false },
-          ),
-        VeryfrontError,
-      );
+      try {
+        const error = await assertRejects(
+          () =>
+            runPipeline(
+              source,
+              "/project/pages/broken.tsx",
+              "/project",
+              { projectId: "authored-strip-parse-error", dev: false, ssr: false },
+            ),
+          VeryfrontError,
+        );
 
-      assertInstanceOf(error, VeryfrontError);
-      assertEquals(error.slug, "compilation-error");
-      assertEquals(
-        (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
-        true,
-      );
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "compilation-error");
+        assertEquals(
+          (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+          true,
+        );
+
+        const compileErrors = getErrorCollector().getAll({ type: "compile" });
+        assertEquals(compileErrors.length, 1);
+        assertEquals(compileErrors[0]?.file, "/project/pages/broken.tsx");
+        assertStringIncludes(compileErrors[0]?.message ?? "", "Unexpected keyword");
+      } finally {
+        resetErrorCollector();
+      }
+    });
+
+    it("strips modules with legacy parameter decorators before compiling browser modules", async () => {
+      const source = [
+        `function inject(_target: unknown, _key: string, _index: number) {}`,
+        `const SECRET = "SERVER_ONLY_PARAMETER_DECORATOR_SECRET";`,
+        `export async function getServerData() { return { props: { secret: SECRET } }; }`,
+        `class PageModel { load(@inject dep: unknown) { return dep; } }`,
+        `export default function Page() { return PageModel; }`,
+      ].join("\n");
+
+      const result = await browserServerExportsStripPlugin.transform({
+        ...ctx(source, "browser"),
+        filePath: "/project/pages/parameter-decorator.tsx",
+      } as TransformContext);
+
+      assertNotIncludes(result, "SERVER_ONLY_PARAMETER_DECORATOR_SECRET");
+      assertStringIncludes(result, "PageModel");
     });
 
     it("does not claim tenant ownership of generated Markdown or MDX parse diagnostics", async () => {

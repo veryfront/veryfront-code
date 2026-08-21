@@ -58,6 +58,7 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors";
+import { getErrorCollector } from "#veryfront/observability";
 import { getLoaderFromPath, isGeneratedContentOutput } from "../../esm/transform-utils.ts";
 import { isTypeScript } from "../context.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";
@@ -1781,6 +1782,7 @@ export async function stripServerOnlyExports(
     body = bodyOf(ast);
   } catch (error) {
     if (options.classifySourceParseErrors === true && isParserSourceDiagnostic(error)) {
+      getErrorCollector().addCompileError(errorMessage(error), filePath);
       throw createSourceParseCompilationError(filePath, error);
     }
     throw new ServerExportStripError(filePath, errorMessage(error));
