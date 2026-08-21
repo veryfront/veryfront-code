@@ -111,7 +111,11 @@ is not a failure: the in-flight node span ends as ERROR reporting `Node "<id>" f
 the `workflow.run` span stays unset, so cancellations do not show up in errored-run queries.
 Span statuses never carry the underlying error text, on this path or any other: they name the
 node, or a bounded classification such as `ECONNRESET`. The detail stays in the run record and
-the logs.
+the logs. The `exception` event a failed span records carries no `exception.stacktrace` either,
+because the error the span reports is a classification built where the failure was noticed, so
+its frames would name framework files and the absolute paths they sit at rather than the
+failure. A caller that wants the real stack on a span opts in with an `errorStatus` mapper that
+returns the error it was given.
 
 Retry attempts of a composite node appear as repeated sibling spans sharing one name. Status
 tells them apart only when an attempt eventually succeeds: that one is not ERROR while the
