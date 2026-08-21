@@ -3,11 +3,37 @@
  *
  * @module llm
  *
- * @example
+ * @example Text
  * ```ts
  * import { generate } from "veryfront/llm";
  *
  * const { text } = await generate({ input: "Name three colours." });
+ * ```
+ *
+ * @example Structured output
+ * ```ts
+ * import { generate } from "veryfront/llm";
+ * import { defineSchema } from "veryfront/schemas";
+ *
+ * const { object } = await generate({
+ *   input: "Berlin is 12 degrees today.",
+ *   outputSchema: defineSchema((v) =>
+ *     v.object({ city: v.string(), tempC: v.number() })
+ *   )(),
+ * });
+ *
+ * object.city; // string
+ * ```
+ *
+ * @example Choosing a model
+ * ```ts
+ * import { generate } from "veryfront/llm";
+ *
+ * const { text } = await generate({
+ *   input: "Summarise this in one line.",
+ *   system: "You are terse.",
+ *   model: "anthropic/claude-haiku-4-5-20251001",
+ * });
  * ```
  */
 
