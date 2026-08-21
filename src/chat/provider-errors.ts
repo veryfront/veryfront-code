@@ -26,6 +26,13 @@ const MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR = {
     "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
 } as const;
 
+const OUTPUT_SCHEMA_NOT_CLOSED_ERROR = {
+  code: "OUTPUT_SCHEMA_NOT_CLOSED",
+  message:
+    "The model rejected the output schema because an object in it allows additional properties. " +
+    "Add .strict() to the object in your outputSchema so it sets additionalProperties: false.",
+} as const;
+
 const AI_PROVIDER_SPEND_LIMIT_ERROR = {
   code: "AI_PROVIDER_SPEND_LIMIT_EXCEEDED",
   message:
@@ -177,6 +184,21 @@ export function isCreditLimitMessage(normalizedMessage: string): boolean {
   );
 }
 
+/**
+ * Detects a provider rejecting the structured-output schema because an object
+ * in it does not set `additionalProperties: false`.
+ *
+ * The caller's own `outputSchema` is what has to change, so this is worth
+ * naming rather than collapsing into a generic service error. Matched on the
+ * two things the wording is built from -- the property name and the closure
+ * requirement -- rather than a fixed sentence, which providers reword.
+ */
+function isOpenObjectSchemaRejection(message: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  return normalizedMessage.includes("additionalproperties") &&
+    (normalizedMessage.includes("false") || normalizedMessage.includes("required"));
+}
+
 function isAssistantPrefillUnsupportedMessage(message: string): boolean {
   const normalizedMessage = message.toLowerCase();
   const mentionsAssistantPrefill = normalizedMessage.includes("assistant message prefill") ||
@@ -275,6 +297,9 @@ function parseKnownProviderBody(
     }
     if (isAssistantPrefillUnsupportedMessage(body.message)) {
       return MODEL_UNSUPPORTED_ASSISTANT_PREFILL_ERROR;
+    }
+    if (isOpenObjectSchemaRejection(body.message)) {
+      return OUTPUT_SCHEMA_NOT_CLOSED_ERROR;
     }
     if (normalizedMessage.includes("too long")) {
       return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };

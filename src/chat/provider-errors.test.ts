@@ -281,4 +281,53 @@ describe("chat/provider-errors", () => {
     assertEquals(parseProviderError(nestedError), expected);
     assertEquals(parseProviderError(nestedLastError), expected);
   });
+
+  describe("structured-output schema rejections", () => {
+    /** An error carrying `body` the way buildProviderError attaches it. */
+    function providerError(body: unknown): Error {
+      const error = new Error("Provider request failed with status 400");
+      Object.defineProperty(error, "responseBody", {
+        value: JSON.stringify(body),
+        enumerable: false,
+      });
+      return error;
+    }
+
+    const OPEN_OBJECT_REJECTION = {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "output_config.format.schema: For 'object' type, 'additionalProperties' must be explicitly set to false",
+      },
+    };
+
+    it("names the schema requirement instead of a generic service error", () => {
+      // Without a mapping this lands on EXTERNAL_SERVICE_ERROR ("LLM provider
+      // service error"), which points nowhere: the caller cannot tell that
+      // their own outputSchema is what needs changing.
+      assertEquals(parseProviderError(providerError(OPEN_OBJECT_REJECTION)), {
+        code: "OUTPUT_SCHEMA_NOT_CLOSED",
+        message:
+          "The model rejected the output schema because an object in it allows additional properties. Add .strict() to the object in your outputSchema so it sets additionalProperties: false.",
+      });
+    });
+
+    it("does not echo the provider's raw message", () => {
+      // The curated message is the whole point of this layer: provider bodies
+      // can quote request content, so they never reach the caller verbatim.
+      const parsed = parseProviderError(providerError(OPEN_OBJECT_REJECTION));
+      assertEquals(parsed.message.includes("output_config.format.schema"), false);
+    });
+
+    it("leaves an unrelated invalid_request_error on the generic path", () => {
+      assertEquals(
+        parseProviderError(providerError({
+          type: "error",
+          error: { type: "invalid_request_error", message: "something else entirely" },
+        })),
+        { code: "EXTERNAL_SERVICE_ERROR", message: "LLM provider service error" },
+      );
+    });
+  });
 });
