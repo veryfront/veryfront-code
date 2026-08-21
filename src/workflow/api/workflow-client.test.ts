@@ -907,7 +907,6 @@ describe("createWorkflowClient()", () => {
 
 describe(
   "WorkflowClient.getRun approvals",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     it("carries the approvals a waiting run is blocked on", async () => {
       // The run record declares `pendingApprovals`, but approvals are persisted
