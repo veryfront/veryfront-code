@@ -54,6 +54,13 @@ function installRealTracing() {
   };
 }
 
+function linkOf(
+  span: ReadableSpan,
+  type: string,
+): { context: { traceId: string; spanId: string } } | undefined {
+  return span.links.find((link) => link.attributes?.["workflow.link.type"] === type);
+}
+
 function parentIdOf(span: ReadableSpan): string | undefined {
   const withContext = span as unknown as { parentSpanContext?: { spanId?: string } };
   return withContext.parentSpanContext?.spanId ??
@@ -668,7 +675,7 @@ describe("workflow/executor tracing", () => {
     }
   });
 
-  it("parents the run span to an ambient caller span when one is active", async () => {
+  it("roots the run span away from an ambient caller and links back to it", async () => {
     const tracing = installRealTracing();
     try {
       const { withSpan } = await import("#veryfront/observability/tracing/otlp-setup.ts");
@@ -692,10 +699,62 @@ describe("workflow/executor tracing", () => {
       assertExists(caller);
       assertExists(runSpan);
 
-      // The run span is a trace ROOT only when nothing traces the caller. Started from a
-      // traced request it joins that trace instead, which is why `workflow.run_id` and not
-      // trace identity is what correlates a run.
-      assertEquals(parentIdOf(runSpan), caller.spanContext().spanId);
+      // A run outlives whatever started it -- parked on an approval, by days. Nesting it
+      // under the caller would leave an open span inside a finished trace and let the
+      // caller's sampling decision drop the whole run. It gets its own trace; the causal
+      // edge survives as a link.
+      assertEquals(parentIdOf(runSpan), undefined);
+      assertEquals(runSpan.spanContext().traceId === caller.spanContext().traceId, false);
+
+      const callerLink = linkOf(runSpan, "caller");
+      assertExists(callerLink, "the run span must link back to the caller it was rooted away from");
+      assertEquals(callerLink.context.spanId, caller.spanContext().spanId);
+      assertEquals(callerLink.context.traceId, caller.spanContext().traceId);
+    } finally {
+      await tracing.dispose();
+    }
+  });
+
+  it("links a resumed execution back to the execution that parked", async () => {
+    const tracing = installRealTracing();
+    try {
+      const backend = new MemoryBackend();
+      const executor = new WorkflowExecutor({ backend, enableLocking: false });
+      executor.register(
+        workflow({
+          id: "resume-link-workflow",
+          steps: [
+            { id: "gate", config: { type: "wait", waitType: "approval", message: "ok?" } },
+          ],
+        }).definition as never,
+      );
+
+      const handle = await executor.start("resume-link-workflow", {});
+      await handle.settled();
+      const parked = await backend.getRun(handle.runId);
+      assertExists(parked);
+      assertEquals(parked.status, "waiting");
+      // The parked execution wrote its own trace identity, so the resume has something
+      // to link to. Without it the two executions share only `workflow.run_id`.
+      assertExists(parked._traceContext);
+
+      // Resuming a parked run is the second execution regardless of how the wait
+      // resolves; this one re-parks, which exercises the same link path.
+      await executor.resume(handle.runId);
+      await tracing.provider.forceFlush();
+
+      const runSpans = tracing.exporter.getFinishedSpans().filter(
+        (span) => span.name === "workflow.run",
+      );
+      assertEquals(runSpans.length, 2);
+      const [first, second] = runSpans as [ReadableSpan, ReadableSpan];
+
+      // Separate traces -- that is the point of the link.
+      assertEquals(first.spanContext().traceId === second.spanContext().traceId, false);
+      const previousLink = linkOf(second, "previous_execution");
+      assertExists(previousLink, "a resumed execution must link to the one that parked");
+      assertEquals(previousLink.context.spanId, first.spanContext().spanId);
+      assertEquals(previousLink.context.traceId, first.spanContext().traceId);
     } finally {
       await tracing.dispose();
     }

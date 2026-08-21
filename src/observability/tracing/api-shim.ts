@@ -49,13 +49,30 @@ export interface SpanContext {
   traceFlags: number;
 }
 
+/**
+ * A causal relationship to a span that is not this span's parent.
+ *
+ * Used for work whose cause is real but whose lifetime is independent: a
+ * durable run linking back to the request that started it, or to its own
+ * previous execution across a suspend.
+ */
+export interface Link {
+  context: SpanContext;
+  attributes?: Record<string, AttributeValue>;
+}
+
+export interface SpanStartOptions {
+  kind?: number;
+  attributes?: Record<string, AttributeValue>;
+  links?: Link[];
+  /** Start a new trace, ignoring any active span as parent. */
+  root?: boolean;
+}
+
 export interface Tracer {
   startSpan(
     name: string,
-    options?: {
-      kind?: number;
-      attributes?: Record<string, AttributeValue>;
-    },
+    options?: SpanStartOptions,
     context?: Context,
   ): Span;
   startActiveSpan<T>(

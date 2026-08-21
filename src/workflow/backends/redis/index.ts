@@ -318,6 +318,7 @@ export class RedisBackend implements WorkflowBackend {
       status: run.status,
       workerId: run.workerId || "",
       tenant: run._tenant ? JSON.stringify(run._tenant) : "",
+      traceContext: run._traceContext || "",
       sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
@@ -355,6 +356,9 @@ export class RedisBackend implements WorkflowBackend {
     }
     if (Object.hasOwn(patch, "completedAt")) {
       fields.completedAt = patch.completedAt?.toISOString() ?? "";
+    }
+    if (Object.hasOwn(patch, "_traceContext")) {
+      fields.traceContext = patch._traceContext ?? "";
     }
     return fields;
   }
@@ -477,6 +481,7 @@ export class RedisBackend implements WorkflowBackend {
       status: status ?? "pending",
       workerId: data.workerId || undefined,
       _tenant: parseJsonOr(data.id, "tenant", data.tenant, undefined),
+      _traceContext: data.traceContext || undefined,
       sourceIntegrationPolicy,
       input: parseJsonOr(data.id, "input", data.input, undefined),
       output: parseJsonOr(data.id, "output", data.output, undefined),
