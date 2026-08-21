@@ -24,7 +24,7 @@ describe("parseTargetFlag", () => {
 
   it("should parse all targets", () => {
     const targets = parseTargetFlag("all");
-    const expected = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"];
+    const expected = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"] as const;
 
     for (const target of expected) {
       assertEquals(targets.includes(target), true);

@@ -43,6 +43,15 @@ function formatIssues(issues: Array<{ path: string[]; message: string }>): strin
   return issues.map((i) => `  - ${i.path.join(".")}: ${i.message}`).join("\n");
 }
 
+/**
+ * Builds args carrying a raw, unvalidated `mode` so the router's own validation
+ * is what rejects it. The widening is scoped to `mode`, every other field keeps
+ * its `ParsedArgs` type, and `args` is copied rather than mutated.
+ */
+function parsedArgsWithRawMode(args: ParsedArgs, mode: unknown): ParsedArgs {
+  return { ...args, mode: mode as ParsedArgs["mode"] };
+}
+
 describe("cli/command-definitions integrity", () => {
   it("should have all expected commands", () => {
     const expectedCommands = [
@@ -561,7 +570,7 @@ describe("cli/router helpers", () => {
       setJsonMode(true);
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid", json: true } as ParsedArgs,
+          parsedArgsWithRawMode({ _: ["serve"], json: true }, "invalid"),
         );
         assertEquals(code, 2);
         assertEquals(consoleOutput.length, 1);
@@ -584,7 +593,7 @@ describe("cli/router helpers", () => {
       Deno.env.set("VERYFRONT_NO_UPDATE_CHECK", "1");
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid" } as ParsedArgs,
+          parsedArgsWithRawMode({ _: ["serve"] }, "invalid"),
         );
         assertEquals(code, 2);
         assertEquals(consoleErrorOutput.some((line) => line.includes("✗")), true);
