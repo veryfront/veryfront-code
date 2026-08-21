@@ -32,6 +32,20 @@
  * the executor, which is a change to the executor rather than a helper this
  * module can provide.
  *
+ * ## Where this sits
+ *
+ * This is a domain fixture, not a test runner. `veryfront/testing/bdd` is
+ * already the runtime-decoupled runner -- it maps `describe`/`it` onto
+ * `@std/testing/bdd` on Deno, `node:test` on Node and `bun:test` on Bun -- and
+ * this module is used inside tests that runner executes. It deliberately adds
+ * no test-lifecycle concepts of its own, and imports nothing Deno-specific, so
+ * it works on every runtime the framework supports.
+ *
+ * The polling loop here is not a reimplementation of
+ * `veryfront/testing`'s `waitFor`. That one answers a boolean and throws a
+ * generic timeout; these waits have to return the matched run or approval, and
+ * their failure has to carry the run's state. They do share its time scaling.
+ *
  * @module workflow/testing
  *
  * @example
@@ -50,6 +64,8 @@
  * ```
  */
 
+import { registerTestCleanup } from "#veryfront/testing/isolation.ts";
+import { scaleMs } from "#veryfront/testing/timing.ts";
 import { MemoryBackend } from "./backends/memory.ts";
 import { createWorkflowClient, type WorkflowClient } from "./api/workflow-client.ts";
 import type { WorkflowBackend } from "./backends/types.ts";
@@ -66,7 +82,14 @@ import type {
 /** Statuses a run cannot move out of. */
 const TERMINAL: readonly WorkflowStatus[] = ["completed", "failed", "cancelled"] as const;
 
-/** How long any wait polls before giving up. */
+/**
+ * How long any wait polls before giving up, and how often it checks.
+ *
+ * Both are passed through `scaleMs`, the framework's test time scale. Without
+ * it a fixed deadline is the same flake this harness exists to remove: it
+ * holds on a developer machine and expires on a loaded CI runner, and the
+ * failure looks like a product bug rather than a starved test.
+ */
 const DEFAULT_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 10;
 
@@ -191,7 +214,7 @@ export async function startWorkflowTest<TInput = unknown, TOutput = unknown>(
   definition: Workflow | WorkflowDefinition,
   options: StartWorkflowTestOptions<TInput> = {},
 ): Promise<WorkflowTestHarness<TOutput>> {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = scaleMs(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, 50);
   const client = createWorkflowClient({
     backend: options.backend ?? new MemoryBackend({ debug: false }),
     debug: false,
@@ -227,7 +250,7 @@ export async function startWorkflowTest<TInput = unknown, TOutput = unknown>(
         const result = check(last);
         if (result !== undefined) return result;
       }
-      await sleep(POLL_INTERVAL_MS);
+      await sleep(scaleMs(POLL_INTERVAL_MS, 1));
     }
 
     throw new Error(
@@ -271,6 +294,12 @@ export async function startWorkflowTest<TInput = unknown, TOutput = unknown>(
   }
 
   let disposed = false;
+
+  // Registered as well as exposed. A harness whose test throws before reaching
+  // its own cleanup would otherwise leave a client running, and in Bun a leaked
+  // client across tests is exactly the cross-test leakage `isolation.ts` exists
+  // to contain. `dispose()` stays public for tests that want to release early.
+  registerTestCleanup(() => harness.dispose());
 
   const harness: WorkflowTestHarness<TOutput> = {
     runId,
