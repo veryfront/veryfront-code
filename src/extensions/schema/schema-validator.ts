@@ -238,7 +238,7 @@ export interface SchemaValidator {
     schemas: T,
   ): Schema<InferSchema<T[number]>>;
   literal<T extends string | number | boolean | null>(value: T): Schema<T>;
-  enum<T extends readonly [string, ...string[]]>(values: T): Schema<T[number]>;
+  enum<const T extends readonly [string, ...string[]]>(values: T): Schema<T[number]>;
 
   /**
    * Defer schema construction — used for recursive shapes. The thunk is

@@ -874,7 +874,7 @@ export function createZodAdapter(): SchemaValidator {
     literal: <T extends string | number | boolean | null>(value: T): Schema<T> =>
       wrap(z.literal(value as never)),
 
-    enum: <T extends readonly [string, ...string[]]>(values: T): Schema<T[number]> =>
+    enum: <const T extends readonly [string, ...string[]]>(values: T): Schema<T[number]> =>
       wrap(
         (z.enum as (v: readonly [string, ...string[]]) => AnyZodSchema)(values),
       ),

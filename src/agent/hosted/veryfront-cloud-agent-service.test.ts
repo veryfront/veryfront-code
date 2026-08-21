@@ -51,6 +51,7 @@ import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
 import { getRemoteToolSourceFactory } from "./cloud-agent-config.ts";
 import type { AgentSystem } from "#veryfront/agent/types.ts";
+import type { RuntimeClientProfile } from "#veryfront/agent/runtime/client-profile.ts";
 
 type CaptureRecord = {
   error: unknown;
@@ -154,7 +155,7 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
     }]]),
     trace: (_name: string, operation: () => unknown) => operation(),
   } as never;
-  const clientProfile = {
+  const clientProfile: RuntimeClientProfile = {
     id: "veryfront-studio",
     type: "web",
     trusted: true,

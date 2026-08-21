@@ -312,8 +312,8 @@ class StatefulAtomicRedisClient implements RedisClient {
 }
 
 describe("RedisCacheBackend ordinary cache behavior", () => {
-  it("keeps the distributed type and validates namespace boundaries", () => {
-    assertEquals(new RedisCacheBackend().type, "distributed");
+  it("keeps the redis type and validates namespace boundaries", () => {
+    assertEquals(new RedisCacheBackend().type, "redis");
     assertThrows(() => new RedisCacheBackend("vf:ambiguous"), TypeError, "end with ':'");
     assertThrows(
       () => new RedisCacheBackend("vf:unsafe:\n"),

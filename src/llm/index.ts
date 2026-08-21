@@ -20,7 +20,7 @@
  *   system: "Classify the support ticket.",
  *   outputSchema: lazySchema(defineSchema((v) =>
  *     v.object({
- *       category: v.enum(["bug", "billing", "feature"] as const),
+ *       category: v.enum(["bug", "billing", "feature"]),
  *       reasoning: v.string(),
  *       confidence: v.number().min(0).max(100),
  *     })
