@@ -1,5 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { ensureError, ORCHESTRATION_ERROR, RESOURCE_NOT_FOUND } from "#veryfront/errors";
+import { getActiveTraceparent } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
   hasLockSupport,
   hasWorkerSupport,
@@ -502,6 +503,12 @@ export async function executeWorkflowRunControl(
     }
 
     const now = new Date();
+    // This is the one write per execution that is already fenced and already
+    // inside the run's span, so the run's trace identity rides along with it
+    // rather than costing a round trip of its own. A later execution reads it
+    // back and links to it; nothing else in the framework consumes it, so a
+    // process with no tracer simply leaves the field alone.
+    const traceContext = getActiveTraceparent();
     const activated = await updateRunIfStatus(
       backend,
       runId,
@@ -510,6 +517,7 @@ export async function executeWorkflowRunControl(
         status: "running",
         startedAt: run.startedAt || now,
         heartbeatAt: now,
+        ...(traceContext ? { _traceContext: traceContext } : {}),
       },
       expectedWorkerId,
     );

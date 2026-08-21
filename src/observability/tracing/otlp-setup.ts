@@ -24,6 +24,7 @@ import {
   defaultTextMapSetter,
   getTracer,
   getTracerProviderRevision,
+  type Link,
   propagation as shimPropagation,
   type Span,
   SpanKind,
@@ -31,6 +32,7 @@ import {
   trace as shimTrace,
   type Tracer,
 } from "./api-shim.ts";
+import { formatTraceparent, parseTraceparent } from "./traceparent.ts";
 import { getHostTelemetryEnv } from "./telemetry-env.ts";
 import {
   sanitizeErrorForTelemetry,
@@ -236,6 +238,8 @@ function startSpanWithFallback(
       {
         kind: options?.kind ?? SpanKind.INTERNAL,
         attributes: sanitizeTelemetryAttributes(attributes),
+        ...(options?.links?.length ? { links: options.links } : {}),
+        ...(options?.root ? { root: true } : {}),
       },
       parentContext,
     );
@@ -287,6 +291,19 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
 export type WithSpanOptions = {
   kind?: SpanKind;
   errorStatus?: (error: unknown) => unknown;
+  /**
+   * Causal relationships to spans that are not this span's parent. Use for work
+   * whose cause is real but whose lifetime is independent of it.
+   */
+  links?: Link[];
+  /**
+   * Start a new trace instead of continuing the caller's. Durable work wants
+   * this: a child inherits the caller's sampling decision, so a sampled-out
+   * caller would otherwise drop the whole thing, and work that outlives the
+   * caller leaves an open span inside a finished trace. Pair it with a link
+   * back to the caller so the causal edge survives.
+   */
+  root?: boolean;
 };
 
 function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): unknown {
@@ -530,6 +547,47 @@ export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>)
 }
 
 /** Context for get trace. */
+/**
+ * The active span's identity as a `traceparent`, for storing somewhere durable.
+ *
+ * Undefined when nothing is tracing, so a caller persists a linkable identity
+ * or none at all -- never a placeholder that resolves to no span.
+ */
+export function getActiveTraceparent(): string | undefined {
+  try {
+    const span = shimTrace.getActiveSpan?.();
+    if (!span) return undefined;
+    return formatTraceparent(span.spanContext());
+  } catch (error) {
+    reportTelemetryFailure("Failed to read active traceparent", error);
+    return undefined;
+  }
+}
+
+/**
+ * Build a span link from a `traceparent` read back out of durable storage.
+ *
+ * Returns undefined for anything unparseable, so a corrupted or absent record
+ * costs the link and nothing else.
+ */
+export function traceparentLink(
+  traceparent: string | undefined,
+  attributes?: Record<string, AttributeValue>,
+): Link | undefined {
+  const spanContext = parseTraceparent(traceparent);
+  if (!spanContext) return undefined;
+  return attributes
+    ? { context: spanContext, attributes: sanitizeTelemetryAttributes(attributes) }
+    : { context: spanContext };
+}
+
+/** A link to the span that is active right now, for a span about to be rooted away from it. */
+export function activeSpanLink(
+  attributes?: Record<string, AttributeValue>,
+): Link | undefined {
+  return traceparentLink(getActiveTraceparent(), attributes);
+}
+
 export function getTraceContext(): { traceId?: string; spanId?: string } {
   const span = shimTrace.getActiveSpan?.();
   if (!span) return {};
