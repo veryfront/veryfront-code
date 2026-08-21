@@ -1309,11 +1309,13 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["second"]!.status, "completed");
     });
 
-    it("counts the interrupted attempt, so a crash loop cannot run forever", async () => {
+    it("never re-runs a node whose retry budget was already spent", async () => {
+      const executed: string[] = [];
       const exec = new DAGExecutor({
-        stepExecutor: new MockStepExecutor(
-          new Map([["flaky", { success: false, error: "died again" }]]),
-        ),
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
       });
 
       const nodes: WorkflowNode[] = [
@@ -1324,18 +1326,52 @@ describe("DAGExecutor", () => {
         },
       ];
 
+      // Recovered twice already and died again each time. The
+      // step executor restarts its own retry loop at 1 and overwrites the
+      // recorded attempt, so scheduling this again would let repeated worker
+      // deaths re-run it forever -- duplicating any external side effect.
       const run = createTestRun({
         status: "running",
         nodeStates: {
-          flaky: { nodeId: "flaky", status: "running", attempt: 2, startedAt: new Date() },
+          flaky: { nodeId: "flaky", status: "running", attempt: 3, startedAt: new Date() },
         },
       });
 
       const result = await exec.execute(nodes, run);
 
-      // Exhausted rather than retried indefinitely.
+      assertEquals(executed, []);
       assertEquals(result.completed, false);
       assertEquals(result.nodeStates["flaky"]!.status, "failed");
+      assertEquals(typeof result.error, "string");
+    });
+
+    it("stops after one recovery for a node with no retry configured", async () => {
+      const executed: string[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "once", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      // attempt 2 on a node allowing 1: it was recovered once already and the
+      // worker died again. A default node gets one recovery, not unlimited ones.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          once: { nodeId: "once", status: "running", attempt: 2, startedAt: new Date() },
+        },
+      });
+
+      const result = await exec.execute(nodes, run);
+
+      assertEquals(executed, []);
+      assertEquals(result.completed, false);
+      assertEquals(result.nodeStates["once"]!.status, "failed");
     });
 
     it("leaves a wait parked on its decision alone", async () => {

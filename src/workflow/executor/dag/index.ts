@@ -133,6 +133,7 @@ export class DAGExecutor {
       // before writing any state at all -- the node looks untouched and runs
       // again -- except that the recorded attempt now bounds the retries.
       const resumingWait = run.status === "waiting";
+      const exhausted: Array<{ nodeId: string; attempts: number; maxAttempts: number }> = [];
       for (const [nodeId, degree] of inDegree) {
         if (degree !== 0 || ready.includes(nodeId)) continue;
         const state = nodeStates[nodeId];
@@ -149,7 +150,47 @@ export class DAGExecutor {
         // This also matters inside a loop or branch child graph, whose synthetic
         // run is always "running" even while its wait is parked.
         if (node.config.type === "wait") continue;
+
+        // The step executor restarts its own retry loop at 1 and overwrites the
+        // recorded attempt, so it cannot bound anything across worker deaths.
+        // Count them here instead, or repeated crashes re-run the node forever
+        // and duplicate whatever side effect it performs.
+        //
+        // An interrupted attempt never finished, so it does not consume the
+        // node's retry budget outright -- a default node still gets recovered
+        // once. What it does consume is one recovery: the count below is
+        // written back before scheduling, and nothing overwrites it if the
+        // worker dies again, so the next resume sees a higher number.
+        const maxAttempts = node.config.retry?.maxAttempts ?? 1;
+        const attempts = state.attempt ?? 0;
+        if (attempts > maxAttempts) {
+          exhausted.push({ nodeId, attempts, maxAttempts });
+          continue;
+        }
+        nodeStates[nodeId] = { ...state, attempt: attempts + 1 };
         ready.push(nodeId);
+      }
+
+      if (exhausted.length > 0) {
+        const first = exhausted[0]!;
+        for (const { nodeId, attempts, maxAttempts } of exhausted) {
+          nodeStates[nodeId] = {
+            ...nodeStates[nodeId]!,
+            status: "failed",
+            error:
+              `Interrupted after ${attempts} of ${maxAttempts} attempt(s); retry budget exhausted`,
+            completedAt: new Date(),
+          };
+        }
+        return {
+          completed: false,
+          waiting: false,
+          context,
+          nodeStates,
+          contextPatch,
+          error: `Node "${first.nodeId}" was interrupted after ${first.attempts} of ` +
+            `${first.maxAttempts} attempt(s); retry budget exhausted`,
+        };
       }
     }
 
