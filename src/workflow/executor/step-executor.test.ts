@@ -385,22 +385,32 @@ describe("StepExecutor agent structured output", () => {
     });
   });
 
-  it("keeps a structured output whose schema transformed it to undefined", async () => {
-    // The runtime sets `object` iff an outputSchema is configured, so presence
-    // -- not definedness -- is what separates a structured response from a
-    // schemaless one. A schema using the supported `transform()` operation can
-    // legitimately yield `undefined`, and that is not the same as no schema.
+  it("survives a durable round-trip unchanged", async () => {
+    // The durable path persists workflow context with JSON.stringify, which
+    // drops undefined-valued keys. If the stored output carried any, the same
+    // run would present one shape in memory and another after a pause/resume.
     const node = makeAgentStepNode({
-      text: "null",
+      text: "hi",
+      toolCalls: undefined,
       object: undefined,
       status: "completed",
-      usage: { totalTokens: 2 },
+      usage: undefined,
     });
 
     const result = await new StepExecutor({}).execute(node, makeContext());
 
-    assertEquals(Object.hasOwn(result.output as object, "object"), true);
-    assertEquals((result.output as { object?: unknown }).object, undefined);
+    assertEquals(result.output, JSON.parse(JSON.stringify(result.output)));
+  });
+
+  it("omits response fields the agent did not produce", async () => {
+    // Not just `object`: `toolCalls` and `usage` were stored as present-but-
+    // undefined keys, so `"usage" in ctx.step` answered differently before and
+    // after a resume.
+    const node = makeAgentStepNode({ text: "hi", status: "completed" });
+
+    const result = await new StepExecutor({}).execute(node, makeContext());
+
+    assertEquals(Object.keys(result.output as object), ["text", "status"]);
   });
 
   it("omits the object key entirely for an agent with no outputSchema", async () => {
@@ -412,8 +422,9 @@ describe("StepExecutor agent structured output", () => {
 
     const result = await new StepExecutor({}).execute(node, makeContext());
 
-    // Absent, not present-and-undefined: a schemaless agent's output shape is
-    // unchanged, so `"object" in context.extract` stays a usable signal.
+    // Absent, not present-and-undefined, so a schemaless agent's output gains
+    // no key and the fields it did produce are untouched.
     assertEquals(Object.hasOwn(result.output as object, "object"), false);
+    assertEquals((result.output as { usage?: unknown }).usage, { totalTokens: 3 });
   });
 });

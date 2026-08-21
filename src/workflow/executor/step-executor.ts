@@ -154,6 +154,30 @@ export interface StepResult {
   executionTime: number;
 }
 
+/**
+ * Build a step's stored output, keeping only the fields that actually have a
+ * value.
+ *
+ * A step's output is written into workflow context, and the durable path
+ * persists that context with `JSON.stringify`, which drops every
+ * `undefined`-valued key. A response field that is absent -- `toolCalls` and
+ * `usage` on a schemaless agent, `object` on one whose schema parsed to
+ * `undefined` -- would therefore exist as a key in memory and be gone after a
+ * pause/resume, so the same run would present two different context shapes
+ * depending on whether it ever suspended.
+ *
+ * Emitting only defined fields collapses that to one shape: what a step reads
+ * in memory is exactly what survives a durable round-trip. Reading an absent
+ * field still yields `undefined`, so this is invisible to `ctx.step.usage`; it
+ * only makes `"usage" in ctx.step` and `Object.keys(ctx.step)` mean the same
+ * thing on both paths.
+ */
+function buildAgentStepOutput(fields: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  );
+}
+
 export class StepExecutor {
   private config: StepExecutorConfig;
   private nonCooperativeErrors = new WeakSet<Error>();
@@ -362,22 +386,17 @@ export class StepExecutor {
     });
     abortSignal?.throwIfAborted();
 
-    return {
+    // `object` is the validated structured output from the agent's
+    // `outputSchema`, already parsed by `generate()`. Omitting it here was
+    // silent: a later step reading `context.<nodeId>.object` got `undefined`
+    // with no error, making `outputSchema` unusable from inside a workflow.
+    return buildAgentStepOutput({
       text: response.text,
       toolCalls: response.toolCalls,
       status: response.status,
       usage: response.usage,
-      // `generate()` has already parsed and validated this against the agent's
-      // `outputSchema`. Dropping it here is silent: a later step reading
-      // `context.<nodeId>.object` gets `undefined` with no error, which makes
-      // `outputSchema` unusable from inside a workflow.
-      //
-      // Keyed on presence, not on value, to mirror how the runtime sets it:
-      // `...(outputSchema ? { object: await outputSchema.parseOutput(text) } : {})`.
-      // A schema whose `transform()` yields `undefined` is a real structured
-      // output and must survive; only a schemaless agent has no key at all.
-      ...("object" in response ? { object: response.object } : {}),
-    };
+      object: response.object,
+    });
   }
 
   private async executeTool(
