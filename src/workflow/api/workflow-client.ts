@@ -15,6 +15,7 @@ import type {
 } from "../types.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
+import { observeRunUpdates, WorkflowRunEventBus } from "../events.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
   WorkflowExecutor,
@@ -41,6 +42,15 @@ export interface WorkflowClientConfig {
 /** Implement workflow client. */
 export class WorkflowClient {
   private backend: WorkflowBackend;
+  /**
+   * Fan-out for run events, always present.
+   *
+   * Not opt-in: a bus nothing subscribes to costs one map lookup per run
+   * update, and requiring configuration would mean the SSE route 404s until a
+   * user discovers a flag. `observeRunUpdates` does no work for an unwatched
+   * run.
+   */
+  readonly #runEvents = new WorkflowRunEventBus();
   private executor: WorkflowExecutor;
   private approvalManager: ApprovalManager;
   private debug: boolean;
@@ -49,7 +59,10 @@ export class WorkflowClient {
 
   constructor(config: WorkflowClientConfig = {}) {
     this.debug = config.debug ?? false;
-    this.backend = config.backend ?? new MemoryBackend({ debug: this.debug });
+    this.backend = observeRunUpdates(
+      config.backend ?? new MemoryBackend({ debug: this.debug }),
+      this.#runEvents,
+    );
 
     const userOnWaiting = config.executor?.onWaiting;
     const userResponseSchemaResolver = config.approval?.responseSchemaResolver;
@@ -231,6 +244,11 @@ export class WorkflowClient {
     approver?: string;
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
     return this.approvalManager.listAllPending(filter);
+  }
+
+  /** Per-run event fan-out backing the SSE route. */
+  get runEvents(): WorkflowRunEventBus {
+    return this.#runEvents;
   }
 
   getBackend(): WorkflowBackend {

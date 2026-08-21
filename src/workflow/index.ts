@@ -160,3 +160,15 @@ export { api } from "./api.ts";
 // =============================================================================
 export { createWorkflowHandler } from "./http/handler.ts";
 export type { WorkflowHandlerOptions, WorkflowHandlers } from "./http/handler.ts";
+export { deriveRunEvents, isTerminalRunStatus, snapshotRun } from "./events.ts";
+export type {
+  RunEventSnapshot,
+  WorkflowRunEvent,
+  WorkflowRunEventListener,
+  WorkflowRunStatusEvent,
+  WorkflowStepCompletedEvent,
+  WorkflowStepFailedEvent,
+  WorkflowStepSkippedEvent,
+  WorkflowStepStartedEvent,
+} from "./events.ts";
+export { WorkflowRunEventBus } from "./events.ts";

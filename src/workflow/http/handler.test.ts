@@ -408,4 +408,100 @@ describe("createWorkflowHandler", () => {
 
     expect(response.status).toBe(400);
   });
+
+  describe("run event stream", () => {
+    /** Read an SSE body to completion, returning `[eventName, data]` pairs. */
+    async function readStream(
+      response: Response,
+    ): Promise<Array<[string, Record<string, unknown>]>> {
+      const text = await response.text();
+      const frames: Array<[string, Record<string, unknown>]> = [];
+      for (const block of text.split("\n\n")) {
+        const name = /^event: (.+)$/m.exec(block)?.[1];
+        const data = /^data: (.+)$/m.exec(block)?.[1];
+        if (name && data) frames.push([name, JSON.parse(data) as Record<string, unknown>]);
+      }
+      return frames;
+    }
+
+    it("streams a finished run's snapshot and closes", async () => {
+      // A terminal run has no transitions left. Holding the connection open
+      // would strand the caller waiting for an event that cannot arrive.
+      const runId = await startRun();
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("text/event-stream");
+
+      const frames = await readStream(response);
+      expect(frames.length).toBe(1);
+      expect(frames[0]?.[0]).toBe("snapshot");
+      expect(frames[0]?.[1].id).toBe(runId);
+      expect(frames[0]?.[1].status).toBe("completed");
+    });
+
+    it("streams transitions of a run that finishes while connected", async () => {
+      const started = await handlers.POST(post("/api/workflows/slow/start", { input: {} }));
+      const { runId } = await started.json() as { runId: string };
+
+      const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+      const collected = readStream(response);
+
+      await client.cancel(runId);
+
+      const frames = await collected;
+      const names = frames.map(([name]) => name);
+
+      expect(names[0]).toBe("snapshot");
+      expect(names).toContain("run.status");
+
+      const terminal = frames.findLast(([name]) => name === "run.status");
+      expect(terminal?.[1].status).toBe("cancelled");
+      expect(terminal?.[1].runId).toBe(runId);
+    });
+
+    it("does not leak the run's context through the snapshot", () => {
+      // The snapshot frame is the same projection the run detail endpoint
+      // returns, so it must not widen what that endpoint exposes.
+      return startRun().then(async (runId) => {
+        const response = await handlers.GET(get(`/api/workflows/runs/${runId}/events`));
+        const [[, snapshotFrame]] = await readStream(response);
+
+        const detail = await (await handlers.GET(get(`/api/workflows/runs/${runId}`))).json();
+
+        expect(Object.keys(snapshotFrame).sort()).toEqual(
+          Object.keys(detail as Record<string, unknown>).sort(),
+        );
+      });
+    });
+
+    it("404s for a run that does not exist", async () => {
+      const response = await handlers.GET(get("/api/workflows/runs/missing/events"));
+
+      expect(response.status).toBe(404);
+      expect(response.headers.get("content-type")).not.toBe("text/event-stream");
+    });
+
+    it("releases the subscription when the client disconnects", async () => {
+      const started = await handlers.POST(post("/api/workflows/slow/start", { input: {} }));
+      const { runId } = await started.json() as { runId: string };
+
+      const controller = new AbortController();
+      const request = new Request(
+        `http://localhost:3000/api/workflows/runs/${runId}/events`,
+        { signal: controller.signal },
+      );
+      const response = await handlers.GET(request);
+
+      expect(client.runEvents.hasListeners(runId)).toBe(true);
+
+      controller.abort();
+      await response.body?.cancel().catch(() => {});
+
+      expect(client.runEvents.hasListeners(runId)).toBe(false);
+
+      await client.cancel(runId);
+    });
+  });
 });

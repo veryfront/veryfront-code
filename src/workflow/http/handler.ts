@@ -22,6 +22,7 @@
 import { isVeryfrontError } from "#veryfront/errors";
 import type { WorkflowClient } from "../api/index.ts";
 import { ApprovalDecisionSchema, RunFilterSchema } from "../schemas/index.ts";
+import { isTerminalRunStatus, snapshotRun, type WorkflowRunEvent } from "../events.ts";
 import type {
   ApprovalDecision,
   PendingApproval,
@@ -182,6 +183,92 @@ function projectRun(
  * created here instead would carry its own in-memory backend and would not see
  * those runs.
  */
+/**
+ * Stream a run's transitions as Server-Sent Events until it reaches a terminal
+ * status or the client disconnects.
+ *
+ * Polling `GET /runs/:id` is the alternative, and it cannot report a
+ * transition that begins and ends inside one interval — a fast step is simply
+ * never seen. This reports every persisted change once, in order.
+ *
+ * The current run is sent first as a `snapshot` event, and the diff baseline
+ * is seeded from that same read. A subscriber therefore starts from a known
+ * state and receives only what happened after it, rather than having to
+ * reconstruct the run from a partial event history it joined midway.
+ */
+function runEventStream(
+  client: WorkflowClient,
+  run: WorkflowRun,
+  signal: AbortSignal,
+): Response {
+  const encoder = new TextEncoder();
+
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      // Holder rather than a bare binding: `close` is registered as an abort
+      // listener before the subscription exists, so it needs a reference it
+      // can read later rather than a value it captures now.
+      const subscription: { release?: () => void } = {};
+
+      const close = (): void => {
+        if (closed) return;
+        closed = true;
+        subscription.release?.();
+        signal.removeEventListener("abort", close);
+        try {
+          controller.close();
+        } catch {
+          // Already closed by a cancelled stream; nothing to undo.
+        }
+      };
+
+      const send = (event: string, data: unknown): void => {
+        if (closed) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
+          );
+        } catch {
+          // The consumer went away between the abort signal and this write.
+          close();
+        }
+      };
+
+      if (signal.aborted) {
+        close();
+        return;
+      }
+      signal.addEventListener("abort", close);
+
+      send("snapshot", projectRun(run));
+
+      // A run that is already finished has no transitions left. Ending the
+      // response is the honest answer -- holding the connection open would
+      // strand a caller waiting for an event that cannot arrive.
+      if (isTerminalRunStatus(run.status)) {
+        close();
+        return;
+      }
+
+      subscription.release = client.runEvents.subscribe(run.id, (event: WorkflowRunEvent) => {
+        send(event.type, event);
+        if (event.type === "run.status" && isTerminalRunStatus(event.status)) close();
+      }, snapshotRun(run));
+    },
+  });
+
+  return new Response(body, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      // Proxies that buffer by default would defeat the point of streaming.
+      "x-accel-buffering": "no",
+    },
+  });
+}
+
 export function createWorkflowHandler(
   client: WorkflowClient,
   options: WorkflowHandlerOptions = {},
@@ -210,6 +297,12 @@ export function createWorkflowHandler(
         const run = await client.getRun(runId);
         if (!run) return problem(`No workflow run ${runId}`, 404);
         return Response.json(projectRun(run));
+      }
+
+      if (segments.length === 3 && first === "runs" && runId && third === "events") {
+        const run = await client.getRun(runId);
+        if (!run) return problem(`No workflow run ${runId}`, 404);
+        return runEventStream(client, run, request.signal);
       }
 
       if (
