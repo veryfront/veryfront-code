@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { WorkflowContext } from "./types.ts";
-import { serializeWorkflowContext } from "./context-serialization.ts";
+import { serializeWorkflowContext, serializeWorkflowJson } from "./context-serialization.ts";
 
 function contextWith(nodeOutput: unknown): WorkflowContext {
   return { input: {}, step: nodeOutput };
@@ -25,7 +25,7 @@ describe("serializeWorkflowContext", () => {
       const error = assertThrows(() => serializeWorkflowContext(contextWith({ total: 1n })));
 
       assertEquals(error instanceof Error, true);
-      assertEquals((error as Error).message.includes("step.total"), true);
+      assertEquals((error as Error).message.includes("context.step.total"), true);
       assertEquals((error as Error).message.includes("BigInt"), true);
     });
 
@@ -35,7 +35,7 @@ describe("serializeWorkflowContext", () => {
 
       const error = assertThrows(() => serializeWorkflowContext(contextWith(cyclic)));
 
-      assertEquals((error as Error).message.includes("step.self"), true);
+      assertEquals((error as Error).message.includes("context.step.self"), true);
       assertEquals((error as Error).message.includes("circular"), true);
     });
 
@@ -44,7 +44,7 @@ describe("serializeWorkflowContext", () => {
         serializeWorkflowContext(contextWith({ rows: [{ id: 9n }] }))
       );
 
-      assertEquals((error as Error).message.includes("step.rows[0].id"), true);
+      assertEquals((error as Error).message.includes("context.step.rows[0].id"), true);
     });
   });
 
@@ -74,6 +74,32 @@ describe("serializeWorkflowContext", () => {
 
       assertEquals(JSON.parse(serialized).step.ratio, null);
     });
+  });
+
+  it("keeps traversing a class instance's enumerable fields", () => {
+    // The instance itself is only lossy -- it serializes as its own fields --
+    // but JSON still encodes those fields, so a BigInt inside one is exactly
+    // as fatal as it would be in a plain object. Recording the instance and
+    // stopping would hand back the native error after promising a path.
+    class Receipt {
+      total = 5n;
+    }
+
+    const error = assertThrows(() => serializeWorkflowContext(contextWith(new Receipt())));
+
+    assertEquals((error as Error).message.includes("context.step.total"), true);
+    assertEquals((error as Error).message.includes("BigInt"), true);
+  });
+
+  it("names the field a value was found in, not only its path", () => {
+    // The same step output reaches `context`, `nodeStates`, `output`, and
+    // checkpoints. Whichever is encoded first decides the error, so each one
+    // has to say which field it came from.
+    const error = assertThrows(() =>
+      serializeWorkflowJson({ step: { output: { total: 1n } } }, "nodeStates")
+    );
+
+    assertEquals((error as Error).message.includes("nodeStates.step.output.total"), true);
   });
 
   it("does not mistake a repeated value for a cycle", () => {

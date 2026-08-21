@@ -33,18 +33,19 @@ function describe(value: unknown): string {
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null) return false;
+  if (value === null) return false;
+  if (typeof value !== "object") return false;
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
 
 /**
- * Collect every value in `context` that JSON cannot carry unchanged.
+ * Collect every value under `root` that JSON cannot carry unchanged.
  *
  * Traverses the same ground `JSON.stringify` covers, so the report describes
  * what would actually happen to the value rather than what its type suggests.
  */
-function findUnrepresentableValues(context: WorkflowContext): UnrepresentableValue[] {
+function findUnrepresentableValues(root: unknown, label: string): UnrepresentableValue[] {
   const found: UnrepresentableValue[] = [];
   const ancestors = new Set<object>();
 
@@ -91,10 +92,11 @@ function findUnrepresentableValues(context: WorkflowContext): UnrepresentableVal
 
     // Anything that is not a plain object loses whatever its prototype carried:
     // a Map and a Set both serialize as `{}`, a class instance as its own
-    // enumerable fields only.
+    // enumerable fields only. Recording that is not the end of the walk --
+    // JSON still encodes those enumerable fields, so a BigInt or a cycle
+    // inside one is every bit as fatal as it would be in a plain object.
     if (!isPlainObject(nested)) {
       found.push({ path, kind: describe(nested), fatal: false });
-      return;
     }
 
     ancestors.add(nested);
@@ -104,7 +106,7 @@ function findUnrepresentableValues(context: WorkflowContext): UnrepresentableVal
     ancestors.delete(nested);
   };
 
-  for (const [key, value] of Object.entries(context)) visit(value, key);
+  visit(root, label);
   return found;
 }
 
@@ -117,7 +119,7 @@ function formatPaths(values: readonly UnrepresentableValue[]): string {
 }
 
 /**
- * Serialize a workflow context for durable storage.
+ * Serialize one field of a workflow run for durable storage.
  *
  * `WorkflowContext` is JSON-representable by contract, but nothing enforced it:
  * a step writes whatever it returns, and the in-memory backend keeps the value
@@ -127,30 +129,34 @@ function formatPaths(values: readonly UnrepresentableValue[]): string {
  *
  * Checking here makes the mismatch legible at the moment it matters:
  *
- * - Values JSON cannot encode at all fail the run with the node and path that
+ * - Values JSON cannot encode at all fail the run with the field and path that
  *   produced them, instead of `Do not know how to serialize a BigInt` raised
  *   from inside the backend with nothing pointing back at the step.
  * - Values it encodes lossily are logged with the same detail, because the
  *   alternative is a step reading a `string` where its predecessor wrote a
  *   `Date`, decided by whether the run happened to pause.
+ *
+ * Every field carrying step-authored values goes through this, not just
+ * `context`: the same value reaches `nodeStates`, `output`, and checkpoints,
+ * and whichever field is encoded first is the one that decides whether the
+ * error is a path-aware one or the native message.
  */
-export function serializeWorkflowContext(context: WorkflowContext, runId?: string): string {
-  const unrepresentable = findUnrepresentableValues(context);
+export function serializeWorkflowJson(value: unknown, label: string, runId?: string): string {
+  const unrepresentable = findUnrepresentableValues(value, label);
 
-  const fatal = unrepresentable.filter((value) => value.fatal);
+  const fatal = unrepresentable.filter((entry) => entry.fatal);
   if (fatal.length > 0) {
     throw ORCHESTRATION_ERROR.create({
-      detail:
-        `Workflow context cannot be persisted: ${formatPaths(fatal)}. Workflow context must be ` +
+      detail: `Workflow run cannot be persisted: ${formatPaths(fatal)}. Workflow state must be ` +
         `JSON-representable, because a run that suspends is stored as JSON. Return a plain ` +
         `object from the step that produced this value.`,
     });
   }
 
-  const lossy = unrepresentable.filter((value) => !value.fatal);
+  const lossy = unrepresentable.filter((entry) => !entry.fatal);
   if (lossy.length > 0) {
     logger.warn(
-      "Workflow context holds values that do not survive persistence unchanged",
+      "Workflow state holds values that do not survive persistence unchanged",
       {
         ...(runId ? { runId } : {}),
         paths: formatPaths(lossy),
@@ -158,5 +164,10 @@ export function serializeWorkflowContext(context: WorkflowContext, runId?: strin
     );
   }
 
-  return JSON.stringify(context);
+  return JSON.stringify(value);
+}
+
+/** Serialize a workflow context for durable storage. */
+export function serializeWorkflowContext(context: WorkflowContext, runId?: string): string {
+  return serializeWorkflowJson(context, "context", runId);
 }

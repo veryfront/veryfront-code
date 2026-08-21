@@ -18,7 +18,7 @@ import type {
 } from "../../types.ts";
 import { assertWorkflowRunUpdate, type WorkflowBackend, type WorkflowRunUpdate } from "../types.ts";
 import { agentLogger, safeJsonParse } from "#veryfront/utils";
-import { serializeWorkflowContext } from "../../context-serialization.ts";
+import { serializeWorkflowJson } from "../../context-serialization.ts";
 import { requeueRun } from "../shared/requeue-run.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, RESOURCE_NOT_FOUND } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
@@ -318,11 +318,11 @@ export class RedisBackend implements WorkflowBackend {
       workerId: run.workerId || "",
       tenant: run._tenant ? JSON.stringify(run._tenant) : "",
       sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
-      input: JSON.stringify(run.input),
-      output: run.output !== undefined ? JSON.stringify(run.output) : "",
-      nodeStates: JSON.stringify(run.nodeStates),
+      input: serializeWorkflowJson(run.input, "input", run.id),
+      output: run.output !== undefined ? serializeWorkflowJson(run.output, "output", run.id) : "",
+      nodeStates: serializeWorkflowJson(run.nodeStates, "nodeStates", run.id),
       currentNodes: JSON.stringify(run.currentNodes),
-      context: serializeWorkflowContext(run.context, run.id),
+      context: serializeWorkflowJson(run.context, "context", run.id),
       error: run.error ? JSON.stringify(run.error) : "",
       createdAt: run.createdAt.toISOString(),
       startedAt: run.startedAt?.toISOString() || "",
@@ -335,12 +335,16 @@ export class RedisBackend implements WorkflowBackend {
     const fields: Record<string, string> = {};
     if (Object.hasOwn(patch, "workerId")) fields.workerId = patch.workerId ?? "";
     if (Object.hasOwn(patch, "output")) {
-      fields.output = patch.output !== undefined ? JSON.stringify(patch.output) : "";
+      fields.output = patch.output !== undefined
+        ? serializeWorkflowJson(patch.output, "output")
+        : "";
     }
-    if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
+    if (patch.nodeStates !== undefined) {
+      fields.nodeStates = serializeWorkflowJson(patch.nodeStates, "nodeStates");
+    }
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (patch.context !== undefined) {
-      fields.context = serializeWorkflowContext(patch.context);
+      fields.context = serializeWorkflowJson(patch.context, "context");
     }
     if (Object.hasOwn(patch, "error")) {
       fields.error = patch.error ? JSON.stringify(patch.error) : "";
@@ -742,7 +746,10 @@ export class RedisBackend implements WorkflowBackend {
       APPEND_RETAINED_LIST_SCRIPT,
       [this.checkpointsKey(runId)],
       [
-        JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+        serializeWorkflowJson(
+          { ...checkpoint, timestamp: checkpoint.timestamp.toISOString() },
+          "checkpoint",
+        ),
         String(MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES),
       ],
     );
@@ -760,7 +767,10 @@ export class RedisBackend implements WorkflowBackend {
       expectedStatuses,
       expectedWorkerId,
       this.checkpointsKey(storageRunId),
-      JSON.stringify({ ...checkpoint, timestamp: checkpoint.timestamp.toISOString() }),
+      serializeWorkflowJson(
+        { ...checkpoint, timestamp: checkpoint.timestamp.toISOString() },
+        "checkpoint",
+      ),
       MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
     );
   }
