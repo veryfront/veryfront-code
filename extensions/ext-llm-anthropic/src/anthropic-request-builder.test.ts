@@ -4884,6 +4884,44 @@ describe("anthropic output_config schema closure", () => {
     assertEquals(Object.hasOwn(original, "additionalProperties"), false);
   });
 
+  it("closes the object branch of a nullable object", () => {
+    // `.nullable()` emits an anyOf of the object and null, which is the shape
+    // the schema emitter really produces -- not a bare object.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: {
+        user: {
+          anyOf: [
+            { type: "object", properties: { name: { type: "string" } }, required: ["name"] },
+            { type: "null" },
+          ],
+        },
+      },
+      required: ["user"],
+    });
+
+    const branches = (schema.properties as Record<string, Record<string, unknown>>)
+      .user.anyOf as Record<string, unknown>[];
+    assertEquals(branches[0]!.additionalProperties, false);
+    assertEquals(branches[1]!.additionalProperties, undefined);
+  });
+
+  it("leaves a record's additionalProperties schema intact", () => {
+    // `v.record()` emits additionalProperties as a *schema*, not a boolean.
+    // Overwriting it with `false` would silently turn a map into a closed empty
+    // object. Anthropic rejects open records either way, which is the honest
+    // outcome; #3922 makes that rejection legible.
+    const schema = buildWithOutputSchema({
+      type: "object",
+      properties: { meta: { type: "object", additionalProperties: { type: "string" } } },
+      required: ["meta"],
+    });
+
+    const meta = (schema.properties as Record<string, Record<string, unknown>>).meta;
+    assertEquals(meta.additionalProperties, { type: "string" });
+    assertEquals(schema.additionalProperties, false);
+  });
+
   it("does not rewrite non-schema values that merely look like schemas", () => {
     // `default` holds a literal value, not a subschema. Recursing into it would
     // corrupt the declared default.
