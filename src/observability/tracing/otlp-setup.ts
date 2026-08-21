@@ -39,6 +39,8 @@ import {
   sanitizeTelemetryAttributes,
   sanitizeTelemetryAttributeValue,
   sanitizeTelemetryText,
+  type TelemetryErrorDetail,
+  telemetryErrorType,
 } from "../telemetry-error.ts";
 import { runAsyncWithContextFallback, runSyncWithContextFallback } from "./context-callback.ts";
 
@@ -260,7 +262,7 @@ function startSpanWithFallback(
   return { span, context: spanContext };
 }
 
-function setSpanErrorStatus(span: Span, error: unknown): void {
+function setSpanErrorStatus(span: Span, error: unknown, detail: TelemetryErrorDetail): void {
   // Sanitization runs on caller-supplied values on every error path, so it is guarded
   // like the span calls are: a throw here would turn a handled failure into a thrown one,
   // and telemetry must never change the outcome it reports on. Defence in depth -- probing
@@ -268,7 +270,7 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
   let telemetryError: Error | undefined;
   runTelemetryOperation(
     () => {
-      telemetryError = sanitizeErrorForTelemetry(error);
+      telemetryError = sanitizeErrorForTelemetry(error, detail);
     },
     "Failed to sanitize error for telemetry",
   );
@@ -290,6 +292,14 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
 
 export type WithSpanOptions = {
   kind?: SpanKind;
+  /**
+   * Maps a thrown error to what the span should report. Supply this to say
+   * something more useful than the default classification, for example naming
+   * the node that failed. Return the error itself to opt a span back into the
+   * raw message text and the stack trace that goes with it; anything else you
+   * return is reported without a stack, since its frames would describe your
+   * mapper rather than the failure.
+   */
   errorStatus?: (error: unknown) => unknown;
   /**
    * Causal relationships to spans that are not this span's parent. Use for work
@@ -306,16 +316,58 @@ export type WithSpanOptions = {
   root?: boolean;
 };
 
+/**
+ * Resolve what a failed span reports.
+ *
+ * Fails closed: with no `errorStatus` mapper the span carries a bounded
+ * classification, never the thrown error's own message. Telemetry leaves the
+ * process to a vendor, and a message (plus the stack trace recorded alongside
+ * it) carries whatever the thrower interpolated in. Callers that want detail on
+ * the span say so explicitly; everyone else gets the safe default, including
+ * call sites that do not exist yet.
+ */
 function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): unknown {
-  if (!options?.errorStatus) return error;
-  let statusError: unknown = error;
+  const bounded = boundedSpanError(error);
+  if (!options?.errorStatus) return bounded;
+  let statusError: unknown = bounded;
   runTelemetryOperation(
     () => {
-      statusError = options.errorStatus?.(error) ?? error;
+      // A mapper that throws, or returns nothing, has not opted this span into
+      // anything, so it falls back to the bounded classification rather than to
+      // the raw error.
+      statusError = options.errorStatus?.(error) ?? bounded;
     },
     "Failed to derive span error status",
   );
   return statusError;
+}
+
+/** A detached error carrying only the classification, so nothing user-supplied escapes. */
+function boundedSpanError(error: unknown): unknown {
+  let bounded: unknown = sanitizeErrorForTelemetry("Error", "withoutStack", "Error");
+  runTelemetryOperation(
+    () => {
+      const classification = telemetryErrorType(error);
+      bounded = sanitizeErrorForTelemetry(classification, "withoutStack", classification);
+    },
+    "Failed to classify span error status",
+  );
+  return bounded;
+}
+
+/**
+ * Report a failed span.
+ *
+ * A span exports a stack trace only for the error that actually unwound through
+ * it, and only when the caller's `errorStatus` mapper handed that same error
+ * back. Everything else on this path is a classification built here or in the
+ * mapper: `recordException` derives `exception.stacktrace` from whatever it is
+ * given, so those frames, and the absolute path of every file in them, would go
+ * on the wire with every failed span.
+ */
+function reportSpanFailure(span: Span, error: unknown, options: WithSpanOptions | undefined): void {
+  const statusError = spanErrorStatus(error, options);
+  setSpanErrorStatus(span, statusError, statusError === error ? "withStack" : "withoutStack");
 }
 
 /** Applies span. */
@@ -335,7 +387,7 @@ export async function withSpan<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, spanErrorStatus(error, options));
+    reportSpanFailure(span, error, options);
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -363,7 +415,7 @@ export function withSpanSync<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, spanErrorStatus(error, options));
+    reportSpanFailure(span, error, options);
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -450,7 +502,9 @@ export function endServerSpan(span: unknown, statusCode: number, error?: Error):
   );
 
   if (error) {
-    setSpanErrorStatus(otelSpan, error);
+    // The handler hands over the error it caught, so these frames describe the
+    // request that failed rather than this file.
+    setSpanErrorStatus(otelSpan, error, "withStack");
     runTelemetryOperation(() => otelSpan.end(), "Failed to end server span");
     return;
   }
@@ -529,12 +583,18 @@ export function addActiveSpanEvent(
   addSpanEvent(shimTrace.getActiveSpan?.(), name, attributes);
 }
 
-/** Marks the active span as failed. */
+/**
+ * Marks the active span as failed.
+ *
+ * The error names the failure, it does not carry it: this is called from the
+ * code that noticed the problem, so a stack captured here describes the
+ * reporting site. It is reported without one.
+ */
 export function setActiveSpanErrorStatus(error: unknown): void {
   const span = shimTrace.getActiveSpan?.();
   if (!span) return;
 
-  setSpanErrorStatus(span, error);
+  setSpanErrorStatus(span, error, "withoutStack");
 }
 
 /** Context for with. */

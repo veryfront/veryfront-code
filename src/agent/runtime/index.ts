@@ -194,6 +194,8 @@ export {
   type StreamedToolCallMaterialization,
 } from "./tool-result-continuation.ts";
 
+const NativeError = Error;
+
 function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
   const normalizedModelId = modelId.startsWith("veryfront-cloud/")
     ? modelId.slice("veryfront-cloud/".length)
@@ -230,6 +232,7 @@ import { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 import { resolveModelProviderOptionKey, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateTextResult, RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import { telemetryErrorType } from "#veryfront/observability/telemetry-error.ts";
 import { resolveTemperatureParameter } from "./model-capabilities.ts";
 import { applySkillDelegationOverridesToToolInput } from "./skill-delegation-overrides.ts";
 import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model-transport.ts";
@@ -864,7 +867,6 @@ function buildRuntimeToolTraceAttributes(input: {
   inputSizeBytes?: number;
   outputSizeBytes?: number;
   errorType?: string;
-  errorMessage?: string;
 }): Record<string, string | number | boolean> {
   return compactRuntimeTraceAttributes({
     "agent.id": input.agentId,
@@ -888,8 +890,10 @@ function buildRuntimeToolTraceAttributes(input: {
     "gen_ai.tool.name": input.toolName,
     "gen_ai.tool.type": "function",
     "gen_ai.tool.call.id": input.toolCallId,
+    // Deliberately no "error.message". Tool and provider error text is
+    // caller-supplied and telemetry leaves the process; "error.type" is the
+    // bounded classification, the same trade the workflow retry events make.
     "error.type": input.errorType,
-    "error.message": input.errorMessage,
   });
 }
 
@@ -946,7 +950,10 @@ async function traceConfiguredToolExecution(input: {
         );
         const resultError = getToolResultError(result);
         if (resultError !== undefined) {
-          setOtelActiveSpanErrorStatus(resultError);
+          // Identify the tool, not the failure text: `resultError` is a raw
+          // string, which reaches the wire unchanged through both the span
+          // status and the recorded exception.
+          setOtelActiveSpanErrorStatus(new NativeError(`Tool "${input.toolName}" failed`));
         }
         setOtelActiveSpanAttributes(
           buildRuntimeToolTraceAttributes({
@@ -960,12 +967,10 @@ async function traceConfiguredToolExecution(input: {
             inputSizeBytes,
             outputSizeBytes: estimateSerializedSizeBytes(result),
             errorType: resultError === undefined ? undefined : "ToolResultError",
-            errorMessage: resultError,
           }),
         );
         return result;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
         setOtelActiveSpanAttributes({
           ...buildRuntimeToolTraceAttributes({
             mode: input.mode,
@@ -976,8 +981,7 @@ async function traceConfiguredToolExecution(input: {
             status: "failed",
             providerExecuted: false,
             inputSizeBytes,
-            errorType: error instanceof Error ? error.name : "Error",
-            errorMessage,
+            errorType: telemetryErrorType(error),
           }),
         });
         throw error;
@@ -1007,12 +1011,12 @@ async function traceProviderExecutedTool(input: {
   isError?: boolean;
 }): Promise<void> {
   const status = input.isError === true ? "failed" : "completed";
-  const errorMessage = input.isError === true ? stringifyToolError(input.result) : undefined;
+  const hasError = input.isError === true;
   await withSpan(
     "agent.tool_execute",
     async () => {
-      if (errorMessage !== undefined) {
-        setOtelActiveSpanErrorStatus(errorMessage);
+      if (hasError) {
+        setOtelActiveSpanErrorStatus(new NativeError(`Tool "${input.toolName}" failed`));
       }
       setOtelActiveSpanAttributes(
         buildRuntimeToolTraceAttributes({
@@ -1021,8 +1025,7 @@ async function traceProviderExecutedTool(input: {
           providerExecuted: true,
           inputSizeBytes: estimateSerializedSizeBytes(input.args),
           outputSizeBytes: estimateSerializedSizeBytes(input.result),
-          errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
-          errorMessage,
+          errorType: hasError ? "ProviderExecutedToolError" : undefined,
         }),
       );
     },
@@ -1032,8 +1035,7 @@ async function traceProviderExecutedTool(input: {
       providerExecuted: true,
       inputSizeBytes: estimateSerializedSizeBytes(input.args),
       outputSizeBytes: estimateSerializedSizeBytes(input.result),
-      errorType: input.isError === true ? "ProviderExecutedToolError" : undefined,
-      errorMessage,
+      errorType: hasError ? "ProviderExecutedToolError" : undefined,
     }),
   );
 }
@@ -1821,7 +1823,6 @@ export class AgentRuntime {
                 "tool.status": "blocked",
                 error: true,
                 "error.type": "ToolExposureBlocked",
-                "error.message": toolCall.error,
               });
               const errorMessage = createToolErrorMessage(
                 tc.toolCallId,
@@ -1915,7 +1916,7 @@ export class AgentRuntime {
                 ? stringifyToolError(generatedToolResult.result)
                 : undefined;
               if (toolCall.error !== undefined) {
-                setOtelActiveSpanErrorStatus(toolCall.error);
+                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
               }
               if (
                 generatedToolResult.isError !== true &&
@@ -1933,7 +1934,6 @@ export class AgentRuntime {
                     ? {
                       error: true,
                       "error.type": "ProviderExecutedToolError",
-                      "error.message": toolCall.error,
                     }
                     : {}),
                 }),
@@ -1958,7 +1958,6 @@ export class AgentRuntime {
                 "tool.status": "blocked",
                 error: true,
                 "error.type": "ToolPolicyBlocked",
-                "error.message": policyCheck.error,
               });
 
               const errorMessage: Message = {
@@ -2025,7 +2024,7 @@ export class AgentRuntime {
 
               const resultError = getToolResultError(result);
               if (resultError !== undefined) {
-                setOtelActiveSpanErrorStatus(resultError);
+                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
               }
               toolCall.status = resultError === undefined ? "completed" : "error";
               toolCall.result = result;
@@ -2040,7 +2039,6 @@ export class AgentRuntime {
                   ...(resultError === undefined ? {} : {
                     error: true,
                     "error.type": "ToolResultError",
-                    "error.message": resultError,
                   }),
                 }),
               );
@@ -2079,8 +2077,7 @@ export class AgentRuntime {
               setSpanAttributes(toolSpan, {
                 "tool.status": "failed",
                 error: true,
-                "error.type": error instanceof Error ? error.name : "Error",
-                "error.message": toolCall.error,
+                "error.type": telemetryErrorType(error),
               });
 
               const errorMessage = createToolErrorMessage(

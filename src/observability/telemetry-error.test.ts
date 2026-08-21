@@ -16,6 +16,7 @@ import {
   sanitizeStructuredTelemetryData,
   sanitizeTelemetryAttributes,
   type TelemetryAttributeValue,
+  telemetryErrorType,
 } from "./telemetry-error.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
@@ -120,6 +121,98 @@ describe("observability/telemetry-error", () => {
     assertEquals(sanitized.name, "Error");
     assertEquals(sanitized.message, "Unknown error");
     assertEquals(accessorCalls, 0);
+  });
+
+  it("classifies only own data error codes without invoking accessors", () => {
+    const coded = new Error("temporary network failure");
+    Object.defineProperty(coded, "code", {
+      configurable: true,
+      value: "ECONNRESET",
+      writable: true,
+    });
+
+    assertEquals(telemetryErrorType(coded), "ECONNRESET");
+
+    let accessorCalls = 0;
+    const accessorBacked = new Error("private failure");
+    Object.defineProperty(accessorBacked, "code", {
+      configurable: true,
+      get(): never {
+        accessorCalls += 1;
+        throw new Error("private code accessor must not run");
+      },
+    });
+
+    assertEquals(telemetryErrorType(accessorBacked), "Error");
+    assertEquals(accessorCalls, 0);
+  });
+
+  it("classifies error codes through a captured RegExp matcher", () => {
+    const previousExec = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec");
+    const coded = new Error("temporary network failure");
+    Object.defineProperty(coded, "code", {
+      configurable: true,
+      value: "ECONNRESET",
+      writable: true,
+    });
+
+    try {
+      Object.defineProperty(RegExp.prototype, "exec", {
+        configurable: true,
+        value: () => ["", "secret-error-type@example.com"],
+        writable: true,
+      });
+
+      assertEquals(telemetryErrorType(coded), "ECONNRESET");
+    } finally {
+      if (previousExec) {
+        Object.defineProperty(RegExp.prototype, "exec", previousExec);
+      }
+    }
+  });
+
+  it("classifies error names through a captured Set matcher", () => {
+    const previousHas = Object.getOwnPropertyDescriptor(Set.prototype, "has");
+    const named = new Error("application failure");
+    Object.defineProperty(named, "name", {
+      configurable: true,
+      value: "secret-error-name@example.com",
+      writable: true,
+    });
+
+    try {
+      Object.defineProperty(Set.prototype, "has", {
+        configurable: true,
+        value: () => true,
+        writable: true,
+      });
+
+      assertEquals(telemetryErrorType(named), "Error");
+    } finally {
+      if (previousHas) {
+        Object.defineProperty(Set.prototype, "has", previousHas);
+      }
+    }
+  });
+
+  it("classifies VeryfrontError status through a safe snapshot", () => {
+    assertEquals(
+      telemetryErrorType(API_CLIENT_ERROR.create({ detail: "request failed" })),
+      "VeryfrontError:500",
+    );
+
+    let statusReads = 0;
+    const accessorBacked = API_CLIENT_ERROR.create({ detail: "private detail" });
+    Object.defineProperty(accessorBacked, "status", {
+      configurable: true,
+      get(): never {
+        statusReads += 1;
+        throw new Error("private status accessor must not run");
+      },
+    });
+
+    assertEquals(telemetryErrorType(accessorBacked), "Error");
+    assertEquals(statusReads, 0);
   });
 
   it("ignores inherited descriptor values without invoking accessors", () => {

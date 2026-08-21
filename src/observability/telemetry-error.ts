@@ -17,6 +17,7 @@ import {
   MAX_TELEMETRY_ATTRIBUTE_COUNT,
   MAX_TELEMETRY_ATTRIBUTE_KEY_LENGTH,
 } from "./limits.ts";
+import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import {
   isNativeErrorWithoutHooks,
   isProxyWithoutHooks,
@@ -37,6 +38,8 @@ const NativeString = String;
 const NativeURL = URL;
 const dateGetTime = Date.prototype.getTime;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const regExpExec = RegExp.prototype.exec;
+const setHas = Set.prototype.has;
 const stringSlice = String.prototype.slice;
 const ERROR_PROTOTYPE = NativeError.prototype;
 const URL_HREF_GETTER = readOwnDescriptorGetter(NativeURL.prototype, "href");
@@ -73,6 +76,16 @@ function readOwnErrorString(
     return typeof value === "string" ? value : INVALID_ERROR_FIELD;
   } catch (_) {
     return INVALID_ERROR_FIELD;
+  }
+}
+
+function readOwnErrorDataField(error: Error, key: PropertyKey): unknown {
+  try {
+    const descriptor = getOwnPropertyDescriptor(error, key);
+    if (!descriptor || !hasOwn(descriptor, "value")) return undefined;
+    return descriptor.value;
+  } catch (_) {
+    return undefined;
   }
 }
 
@@ -431,14 +444,34 @@ export function sanitizeStructuredTelemetryData<T>(value: T): T {
 }
 
 /**
+ * Whether a telemetry snapshot keeps the source error's stack.
+ *
+ * `withStack` is for an error that actually unwound through the region being
+ * reported on: its frames describe the failure. `withoutStack` is for an error
+ * built at the reporting site to classify a failure it did not itself raise.
+ * Those frames describe the reporting code, they carry the absolute paths of
+ * whichever machine ran it, and they say nothing about what went wrong, so they
+ * must not leave the process.
+ */
+export type TelemetryErrorDetail = "withStack" | "withoutStack";
+
+/**
  * Create an error safe to send to telemetry backends without mutating or
  * replacing the application error that will be returned to the caller.
  *
  * Native errors are classified through a hook-free runtime brand check. Older
  * supported runtimes use the platform compatibility implementation instead of
  * the unsafe `instanceof` fallback that executes Proxy traps.
+ *
+ * Pass `"withoutStack"` when `error` stands in for the failure rather than
+ * being it. The snapshot then has no `stack` at all, which is what keeps
+ * `recordException` from exporting an `exception.stacktrace`.
  */
-export function sanitizeErrorForTelemetry(error: unknown): Error {
+export function sanitizeErrorForTelemetry(
+  error: unknown,
+  detail: TelemetryErrorDetail = "withStack",
+  safeName?: string,
+): Error {
   try {
     const isError = isNativeErrorWithoutHooks(error);
     const source = isError ? error : undefined;
@@ -451,8 +484,10 @@ export function sanitizeErrorForTelemetry(error: unknown): Error {
         readNativeErrorNameWithoutHooks(source),
         LOG_PREVIEW_MAX_LENGTH_CHARS,
       )
-      : "Unknown";
-    const sourceStack = source ? readNativeErrorStack(source) : undefined;
+      : safeName === undefined
+      ? "Unknown"
+      : sanitizeTelemetryText(safeName, LOG_PREVIEW_MAX_LENGTH_CHARS);
+    const sourceStack = source && detail === "withStack" ? readNativeErrorStack(source) : undefined;
     const stack = sourceStack === undefined
       ? undefined
       : sanitizeTelemetryText(sourceStack, MAX_STRING_DISPLAY_LENGTH);
@@ -461,5 +496,65 @@ export function sanitizeErrorForTelemetry(error: unknown): Error {
   } catch (_) {
     // Telemetry is best effort and must never replace the application outcome.
     return createErrorShapedRecord("Unknown error", "Unknown");
+  }
+}
+
+const SAFE_TELEMETRY_ERROR_NAMES = new Set([
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+]);
+
+/**
+ * Node/Deno transient network error codes. Matched as whole tokens against
+ * error.code (or, when a plain Error carries no code, its message). Unlike
+ * "429"/"503"/"timeout", these tokens are specific enough not to appear
+ * incidentally in unrelated error text.
+ */
+const TELEMETRY_ERROR_CODE_RE = /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND)\b/;
+
+function matchTransientErrorCode(text: string): string | undefined {
+  try {
+    const match = apply(regExpExec, TELEMETRY_ERROR_CODE_RE, [text]) as RegExpExecArray | null;
+    return typeof match?.[1] === "string" ? match[1] : undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
+/** Whether text names one of the transient network codes above. */
+export function hasTransientErrorCode(text: string): boolean {
+  return matchTransientErrorCode(text) !== undefined;
+}
+
+/**
+ * Bounded classification safe to put on a span. Never returns the error's own
+ * message: telemetry leaves the process, and a message carries whatever the
+ * thrower interpolated into it. The detail stays in the logs.
+ *
+ * Accepts `unknown` because a throw is not guaranteed to be an `Error`, and a
+ * bare string reaches `sanitizeErrorForTelemetry` as raw text.
+ */
+export function telemetryErrorType(error: unknown): string {
+  try {
+    const veryfrontError = snapshotVeryfrontError(error);
+    if (veryfrontError) return `VeryfrontError:${veryfrontError.status}`;
+    if (!isNativeErrorWithoutHooks(error)) return "Unknown";
+
+    const code = readOwnErrorDataField(error, "code");
+    if (typeof code === "string") {
+      const match = matchTransientErrorCode(code);
+      if (match) return match;
+    }
+
+    const name = readNativeErrorNameWithoutHooks(error);
+    return apply(setHas, SAFE_TELEMETRY_ERROR_NAMES, [name]) === true ? name : "Error";
+  } catch (_) {
+    // Classification is best effort and must never change the outcome it reports on.
+    return "Error";
   }
 }
