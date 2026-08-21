@@ -21,7 +21,7 @@ describe("isImmutableFileCacheKey", () => {
     }
   });
 
-  it("rejects every branch-scoped key — branch content changes on save", () => {
+  it("rejects every branch-scoped key, because branch content changes on save", () => {
     for (const prefix of ["file", "stat", "dir", "files"]) {
       assertEquals(isImmutableFileCacheKey(`${prefix}:branch:acme:main`), false, prefix);
     }

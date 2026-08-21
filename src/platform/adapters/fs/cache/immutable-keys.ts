@@ -1,8 +1,10 @@
 /********************************************************************************
- * Immutable file-cache key classification
+ * Release-scoped file-cache key classification
  *
- * Decides whether a file-cache key denotes content that can never change, and
- * is therefore safe to hold in a process-local cache with no invalidation path.
+ * Decides whether a file-cache key embeds a release identity, which makes it
+ * eligible for a process-local cache. Eligibility is not a claim that the value
+ * never changes: production does invalidate these keys, so the store that uses
+ * this predicate still needs an invalidation path.
  *
  * @module platform/adapters/fs/cache/immutable-keys
  ********************************************************************************/
@@ -14,32 +16,40 @@
  *     {prefix}:{sourceTypeKey}:{projectSlug}:{qualifier}
  *
  * `sourceTypeKey` is `release`, `env` or `branch`, and the qualifier is what
- * makes the first two safe:
+ * makes the first two eligible:
  *
- * - `release`     -> qualifier is the `releaseId`. A release is an immutable
- *                    snapshot.
- * - `env`         -> qualifier is `environmentName` + the **`releaseId`**.
- *                    Activating a new release does not change the value behind
- *                    an existing key; it produces a *different* key.
+ * - `release`     -> qualifier is the `releaseId`. A release is a snapshot, so
+ *                    activating another one produces a different key rather
+ *                    than a new value behind this one.
+ * - `env`         -> qualifier is `environmentName` + the **`releaseId`**, so
+ *                    it inherits the same property.
  * - `branch`      -> qualifier is a branch name, whose content changes on every
- *                    save. Never immutable.
+ *                    save. Never eligible.
  *
- * That distinction is the whole safety argument. veryfront-issue-inbox#39 exists
- * because a shared proxy kept serving a previous release from a process-local
- * cache after activation — but that cache was keyed on a *pointer that moved*.
- * These keys embed the release identity, so the same failure cannot occur.
+ * That distinction is the safety argument against the failure in
+ * veryfront-issue-inbox#39, where a shared proxy kept serving a previous
+ * release from a process-local cache after activation. That cache was keyed on
+ * a *pointer that moved*. These keys are not.
+ *
+ * It is not a claim that the value behind an eligible key is immutable. The
+ * renderer invalidates `file:release:`, `file:env:`, `stat:release:`,
+ * `stat:env:`, `dir:*` and `files:*` (see the prefix clears in
+ * `veryfront/websocket-manager.ts` and `veryfront/adapter.ts`), and a
+ * process-local store built on this predicate must honour those invalidations.
+ * What eligibility buys is that a stale entry cannot survive a release
+ * activation, not that no entry ever goes stale.
  *
  * The match is an anchored allow-list rather than a segment scan, because the
- * dangerous mistake is classifying a mutable key as immutable. Only the four
- * prefixes that actually route through `buildFileOperationPrefix` are accepted
- * (`file`, `stat`, `dir`, `files`); anything else — including `github:*` keys,
- * the `*:unknown` fallbacks used when there is no file operation context, and
- * every `branch` key — is treated as mutable and simply does not get the
+ * dangerous mistake is classifying a branch key as release-scoped. Only the
+ * four prefixes that actually route through `buildFileOperationPrefix` are
+ * accepted (`file`, `stat`, `dir`, `files`). Anything else, including
+ * `github:*` keys, the `*:unknown` fallbacks used when there is no file
+ * operation context, and every `branch` key, simply does not get the
  * optimisation.
  */
 const IMMUTABLE_FILE_CACHE_KEY = /^(?:file|stat|dir|files):(?:release|env):/;
 
-/** Whether `key` denotes content that cannot change, so it needs no invalidation. */
+/** Whether `key` embeds a release identity, so a process-local copy is eligible. */
 export function isImmutableFileCacheKey(key: string): boolean {
   return IMMUTABLE_FILE_CACHE_KEY.test(key);
 }
