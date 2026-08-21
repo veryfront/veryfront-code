@@ -87,6 +87,43 @@ describe("guide content contracts", () => {
     }
   });
 
+  it("keeps the workflow EventSource example terminal-safe and wire-accurate", async () => {
+    const guide = await Deno.readTextFile(
+      new URL("docs/guides/workflows-advanced.md", repoRoot),
+    );
+
+    assertStringIncludes(
+      guide,
+      'const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);',
+    );
+    assertStringIncludes(
+      guide,
+      "if (TERMINAL_RUN_STATUSES.has(run.status)) events.close();",
+    );
+    assertStringIncludes(
+      guide,
+      'event.type === "run.status" && TERMINAL_RUN_STATUSES.has(event.status)',
+    );
+    assertStringIncludes(guide, "event instanceof MessageEvent");
+    assertStringIncludes(guide, "Native `EventSource` reconnects automatically");
+
+    for (
+      const type of [
+        "step.started",
+        "step.completed",
+        "step.failed",
+        "step.skipped",
+        "run.status",
+      ]
+    ) {
+      assertStringIncludes(
+        guide,
+        `\`{ type: "${type}"`,
+        `the ${type} wire shape must include its type discriminator`,
+      );
+    }
+  });
+
   it("presents open source, self-hosted, and managed paths as first-class options", async () => {
     const overview = await Deno.readTextFile(
       new URL("docs/getting-started/index.md", repoRoot),

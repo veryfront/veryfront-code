@@ -140,12 +140,15 @@ Use the SSE route when a dashboard, operator, or CI client needs durable progres
 without polling the run endpoint:
 
 ```ts
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
 export function observeWorkflowRun(runId: string): EventSource {
   const events = new EventSource(`/api/workflows/runs/${runId}/events`);
 
   events.addEventListener("snapshot", (message) => {
     const run = JSON.parse((message as MessageEvent).data);
     console.log(run.status, run.nodeStates);
+    if (TERMINAL_RUN_STATUSES.has(run.status)) events.close();
   });
 
   for (
@@ -158,9 +161,20 @@ export function observeWorkflowRun(runId: string): EventSource {
     ]
   ) {
     events.addEventListener(name, (message) => {
-      console.log(name, JSON.parse((message as MessageEvent).data));
+      const event = JSON.parse((message as MessageEvent).data);
+      console.log(name, event);
+      if (event.type === "run.status" && TERMINAL_RUN_STATUSES.has(event.status)) {
+        events.close();
+      }
     });
   }
+
+  events.addEventListener("error", (event) => {
+    if (event instanceof MessageEvent) {
+      console.error(JSON.parse(event.data));
+      events.close();
+    }
+  });
 
   return events;
 }
@@ -171,11 +185,11 @@ The first frame is always `snapshot`. It uses the same public run projection as
 
 | Event            | Data                                                                |
 | ---------------- | ------------------------------------------------------------------- |
-| `step.started`   | `{ runId, nodeId, attempt }`                                        |
-| `step.completed` | `{ runId, nodeId, attempt }`                                        |
-| `step.failed`    | `{ runId, nodeId, attempt, error? }`                                |
-| `step.skipped`   | `{ runId, nodeId }`                                                 |
-| `run.status`     | `{ runId, status, error? }`                                         |
+| `step.started`   | `{ type: "step.started", runId, nodeId, attempt }`                  |
+| `step.completed` | `{ type: "step.completed", runId, nodeId, attempt }`                |
+| `step.failed`    | `{ type: "step.failed", runId, nodeId, attempt, error? }`           |
+| `step.skipped`   | `{ type: "step.skipped", runId, nodeId }`                           |
+| `run.status`     | `{ type: "run.status", runId, status, error? }`                     |
 | `error`          | `{ code: "workflow_observation_failed", message, retryable: true }` |
 
 Top-level sequential nodes persist `running` before their side effect starts and
@@ -187,6 +201,13 @@ A terminal snapshot closes immediately. A terminal `run.status` frame is the las
 transition frame. Cancelling the response or aborting the request releases the
 backend observation. An observation failure sends the sanitized `error` frame and
 then closes.
+
+Native `EventSource` reconnects automatically when a transport disconnects or a
+successful SSE response reaches EOF. The helper calls `close()` for terminal runs
+to avoid reconnecting to an already-finished run. A transport failure dispatches
+a plain `Event`, which keeps the native reconnect behavior. The server's named
+`error` frame dispatches a `MessageEvent`; the helper closes it so the caller can
+decide when to retry from a fresh snapshot.
 
 A new connection receives a fresh snapshot and future transitions. It does not
 replay transitions that are already represented by that snapshot. A missing run
