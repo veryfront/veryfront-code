@@ -904,3 +904,83 @@ describe("createWorkflowClient()", () => {
     await client.destroy();
   });
 });
+
+describe(
+  "WorkflowClient.getRun approvals",
+  { sanitizeOps: false, sanitizeResources: false },
+  () => {
+    it("carries the approvals a waiting run is blocked on", async () => {
+      // The run record declares `pendingApprovals`, but approvals are persisted
+      // to their own store so they can be reserved atomically against a worker.
+      // Nothing wrote the field, so every reader saw an empty array while the run
+      // sat waiting -- including useWorkflow, which announces approvals from it.
+      const client = createWorkflowClient({
+        backend: new MemoryBackend({ debug: false }),
+        debug: false,
+      });
+      client.register(
+        workflow({ id: "gated", steps: [waitForApproval("sign-off", { message: "ok?" })] }),
+      );
+
+      try {
+        const handle = await client.start("gated", {});
+
+        let approvals: PendingApproval[] = [];
+        for (let attempt = 0; attempt < 100; attempt++) {
+          approvals = await client.getPendingApprovals(handle.runId);
+          if (approvals.length > 0) break;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assertEquals(approvals.length, 1);
+
+        const run = await client.getRun(handle.runId);
+        assertEquals(run?.status, "waiting");
+        assertEquals(run?.pendingApprovals.length, 1);
+        assertEquals(run?.pendingApprovals[0]?.id, approvals[0]?.id);
+      } finally {
+        await client.destroy();
+      }
+    });
+
+    it("clears them from the run once the approval is resolved", async () => {
+      const client = createWorkflowClient({
+        backend: new MemoryBackend({ debug: false }),
+        debug: false,
+      });
+      client.register(
+        workflow({ id: "gated-2", steps: [waitForApproval("sign-off", { message: "ok?" })] }),
+      );
+
+      try {
+        const handle = await client.start("gated-2", {});
+
+        let approvalId: string | undefined;
+        for (let attempt = 0; attempt < 100; attempt++) {
+          approvalId = (await client.getPendingApprovals(handle.runId))[0]?.id;
+          if (approvalId) break;
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assertExists(approvalId);
+
+        await client.approve(handle.runId, approvalId, "tester");
+
+        const run = await client.getRun(handle.runId);
+        assertEquals(run?.pendingApprovals.length, 0);
+      } finally {
+        await client.destroy();
+      }
+    });
+
+    it("returns null for a run that does not exist", async () => {
+      const client = createWorkflowClient({
+        backend: new MemoryBackend({ debug: false }),
+        debug: false,
+      });
+      try {
+        assertEquals(await client.getRun("run_missing"), null);
+      } finally {
+        await client.destroy();
+      }
+    });
+  },
+);
