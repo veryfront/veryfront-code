@@ -102,6 +102,37 @@ describe("serializeWorkflowContext", () => {
     assertEquals((error as Error).message.includes("nodeStates.step.output.total"), true);
   });
 
+  describe("diagnostic content", () => {
+    it("redacts a property key that is not a plain identifier", () => {
+      // A step may key an object by payload -- an email, an account id. The
+      // path is flattened into one string before the logger sees it, so an
+      // unrecognised key would travel into logs as ordinary message text.
+      const error = assertThrows(() =>
+        serializeWorkflowContext(contextWith({ "user@example.com": { total: 1n } }))
+      );
+
+      assertEquals((error as Error).message.includes("user@example.com"), false);
+      assertEquals((error as Error).message.includes("<redacted>.total"), true);
+    });
+
+    it("keeps ordinary field names, which are what make the path useful", () => {
+      const error = assertThrows(() => serializeWorkflowContext(contextWith({ orderTotal: 1n })));
+
+      assertEquals((error as Error).message.includes("context.step.orderTotal"), true);
+    });
+  });
+
+  it("reports an array hole, which JSON fills in as null", () => {
+    // `JSON.stringify` materializes holes, so a sparse array comes back dense
+    // and a check like `0 in value` answers differently after a resume.
+    const sparse = [];
+    sparse[2] = "third";
+
+    const serialized = serializeWorkflowContext(contextWith({ rows: sparse }));
+
+    assertEquals(JSON.parse(serialized).step.rows, [null, null, "third"]);
+  });
+
   it("does not mistake a repeated value for a cycle", () => {
     // The same object appearing twice as siblings is perfectly serializable;
     // only an ancestor reappearing in its own subtree is a cycle.

@@ -8,6 +8,26 @@ const logger = agentLogger.component("workflow-context");
 const MAX_REPORTED_PATHS = 5;
 
 /**
+ * Property names safe to quote verbatim in a diagnostic.
+ *
+ * A path is built from the keys a step chose, and a step is free to key an
+ * object by an email address, an account id, or any other payload value. The
+ * diagnostic is flattened into a single string before it reaches the logger,
+ * where key-based redaction can no longer see the structure -- so an
+ * unrecognised key would travel into logs and persisted error details as
+ * ordinary message text.
+ *
+ * Field names written by a developer are plain identifiers, which is what this
+ * admits. Anything else is replaced: the path still says how deep the value is
+ * and what shape it sits in, without repeating the data.
+ */
+const SAFE_PATH_SEGMENT = /^[A-Za-z_$][A-Za-z0-9_$]{0,39}$/;
+
+function redactPathSegment(key: string): string {
+  return SAFE_PATH_SEGMENT.test(key) ? key : "<redacted>";
+}
+
+/**
  * A value the durable codec cannot carry.
  *
  * `fatal` separates the two ways JSON fails a value: it either refuses to
@@ -29,14 +49,6 @@ function describe(value: unknown): string {
   if (typeof value === "number") return Number.isFinite(value) ? "number" : `number (${value})`;
   const tag = Object.prototype.toString.call(value).slice(8, -1);
   return tag === "Object" ? (value?.constructor?.name ?? "object") : tag;
-}
-
-/** Whether a value is a plain `{}` object rather than a class instance. */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null) return false;
-  if (typeof value !== "object") return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
 }
 
 /**
@@ -85,7 +97,16 @@ function findUnrepresentableValues(root: unknown, label: string): Unrepresentabl
 
     if (Array.isArray(nested)) {
       ancestors.add(nested);
-      nested.forEach((element, index) => visit(element, `${path}[${index}]`));
+      // Indexed rather than `forEach`, which skips holes. JSON materializes
+      // every hole as `null`, so a sparse array comes back dense and a check
+      // like `0 in value` answers differently after a resume.
+      for (let index = 0; index < nested.length; index++) {
+        if (!Object.hasOwn(nested, index)) {
+          found.push({ path: `${path}[${index}]`, kind: "array hole", fatal: false });
+          continue;
+        }
+        visit(nested[index], `${path}[${index}]`);
+      }
       ancestors.delete(nested);
       return;
     }
@@ -95,13 +116,16 @@ function findUnrepresentableValues(root: unknown, label: string): Unrepresentabl
     // enumerable fields only. Recording that is not the end of the walk --
     // JSON still encodes those enumerable fields, so a BigInt or a cycle
     // inside one is every bit as fatal as it would be in a plain object.
-    if (!isPlainObject(nested)) {
+    // Narrowed to a non-null object above, so the prototype read is safe here
+    // and needs no null guard of its own.
+    const prototype = Object.getPrototypeOf(nested);
+    if (prototype !== Object.prototype && prototype !== null) {
       found.push({ path, kind: describe(nested), fatal: false });
     }
 
     ancestors.add(nested);
     for (const [key, child] of Object.entries(nested)) {
-      visit(child, path ? `${path}.${key}` : key);
+      visit(child, path ? `${path}.${redactPathSegment(key)}` : redactPathSegment(key));
     }
     ancestors.delete(nested);
   };
@@ -140,6 +164,17 @@ function formatPaths(values: readonly UnrepresentableValue[]): string {
  * `context`: the same value reaches `nodeStates`, `output`, and checkpoints,
  * and whichever field is encoded first is the one that decides whether the
  * error is a path-aware one or the native message.
+ *
+ * Two corners are deliberately left to the native error. The scan reads each
+ * property once and `JSON.stringify` reads it again, so a value produced by a
+ * side-effectful getter can differ between the two passes; and a custom
+ * `toJSON` hook is recorded as lossy without invoking it, so a hook returning
+ * a BigInt or a cycle still fails natively. Closing either means encoding from
+ * a snapshot this module builds rather than from the caller's object -- a
+ * hand-rolled JSON encoder on the persistence path, where a subtle divergence
+ * from `JSON.stringify` would corrupt stored data rather than merely blur a
+ * diagnostic. Neither corner is a regression: both behave exactly as they did
+ * before this check existed.
  */
 export function serializeWorkflowJson(value: unknown, label: string, runId?: string): string {
   const unrepresentable = findUnrepresentableValues(value, label);
