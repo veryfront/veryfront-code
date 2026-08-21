@@ -27,16 +27,10 @@ import {
   loadIntegrations,
   validateIntegrations,
 } from "../../templates/integration-loader.ts";
-import {
-  loadFeature,
-  mergeFiles,
-  resolveFeatures,
-  validateFeatures,
-} from "../../templates/feature-loader.ts";
+import { mergeFiles } from "../../templates/loader.ts";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import type {
   EnvVarConfig,
-  FeatureName,
   IntegrationName,
   ResolvedIntegration,
   TemplateFile,
@@ -48,7 +42,6 @@ export interface CreateProjectRequest {
   parentDir: string;
   template: InitTemplate;
   runtime: InitRuntime;
-  features: FeatureName[];
   integrations: IntegrationName[];
   environmentValues: Record<string, string>;
   conflictPolicy: "fail" | "overwrite";
@@ -64,7 +57,7 @@ export interface CreateProjectResult {
   packageManager: PackageManager;
   dependencyInstallation: "installed" | "failed" | "skipped";
   gitInitialization: "initialized" | "failed" | "skipped";
-  featureTips: string[];
+  setupTips: string[];
 }
 
 export type ProjectCreationEvent =
@@ -189,19 +182,15 @@ function createConfigError(message: string): Error {
   return toError(createError({ type: "config", message }));
 }
 
-function validateOrThrow<T extends string>(
-  kind: "features" | "integrations",
-  values: T[],
-  validate: (values: T[]) => { valid: boolean; errors: string[] },
-): void {
-  if (!values.length) return;
+function validateIntegrationsOrThrow(integrations: IntegrationName[]): void {
+  if (!integrations.length) return;
 
-  const validation = validate(values);
+  const validation = validateIntegrations(integrations);
   if (validation.valid) return;
 
   for (const error of validation.errors) logger.error(error);
 
-  throw createConfigError(`Invalid ${kind} specified`);
+  throw createConfigError("Invalid integrations specified");
 }
 
 function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
@@ -263,60 +252,19 @@ async function loadTemplateFiles(
  * `@types/mdx`, which breaks `tsc --noEmit` for every library consumer — so a
  * project that renders MDX has to install it or those routes fail at runtime.
  *
- * Two ways a project ends up needing it, and the template config sees neither
- * on its own:
- *
- * - A scaffolded `.mdx` file. The `minimal` starter ships `app/about/page.mdx`.
- * - The `mdx` feature. It scaffolds no files — it sets `mdx.enabled` in the
- *   config and tips the user to "Create .mdx files in app/ directory" — so a
- *   user who follows that advice on any template would hit a runtime failure
- *   with nothing in `package.json` to explain it.
+ * The template config does not see this on its own: a starter declares the
+ * extension only if its own config says so, while the need comes from the
+ * assembled file set — `minimal` ships `app/about/page.mdx`, and an
+ * integration scaffold can add one to any template.
  */
 function withMdxExtension(
   firstPartyExtensions: string[] | undefined,
   files: TemplateFile[],
-  features: FeatureName[],
 ): string[] | undefined {
-  const needsMdx = features.includes("mdx") ||
-    files.some((file) => file.path.endsWith(".mdx"));
-  if (!needsMdx) return firstPartyExtensions;
+  if (!files.some((file) => file.path.endsWith(".mdx"))) return firstPartyExtensions;
   const existing = firstPartyExtensions ?? [];
   if (existing.includes(MDX_EXTENSION_PACKAGE)) return existing;
   return [...existing, MDX_EXTENSION_PACKAGE];
-}
-
-async function assembleFeatureFiles(
-  features: FeatureName[],
-  templateFiles: TemplateFile[],
-  allEnvVars: EnvVarConfig[],
-): Promise<{ files: TemplateFile[]; tips: string[] }> {
-  let files = templateFiles;
-  const tips: string[] = [];
-  if (!features.length) return { files, tips };
-
-  const { ordered, errors } = await resolveFeatures(features);
-  if (errors.length) {
-    for (const error of errors) logger.error(error);
-    throw createConfigError("Failed to resolve features");
-  }
-
-  logger.debug(`Resolved feature order: ${ordered.join(" -> ")}`);
-
-  for (const featureName of ordered) {
-    const feature = await loadFeature(featureName);
-    if (!feature) {
-      logger.warn(`Feature ${featureName} not found, skipping`);
-      continue;
-    }
-
-    logger.debug(`Loading feature: ${featureName} (${feature.files.length} files)`);
-
-    files = mergeFiles(files, feature.files);
-    if (feature.config.envVars) allEnvVars.push(...feature.config.envVars);
-    if (feature.config.tips) tips.push(...feature.config.tips);
-  }
-
-  return { files, tips };
 }
 
 async function assembleIntegrationFiles(
@@ -484,7 +432,7 @@ async function installProjectDependencies(
 }
 
 interface ScaffoldAssembly {
-  /** Template, feature and integration files, in write order. */
+  /** Template and integration files, in write order. */
   files: TemplateFile[];
   envVars: EnvVarConfig[];
   tips: string[];
@@ -500,33 +448,26 @@ interface ScaffoldAssembly {
  */
 async function assembleScaffold(request: {
   template: InitTemplate;
-  features: FeatureName[];
   integrations: IntegrationName[];
 }): Promise<ScaffoldAssembly> {
   const template = await loadTemplateFiles(request.template);
   const envVars = [...template.envVars];
 
-  const featureAssembly = await assembleFeatureFiles(
-    request.features,
-    template.files,
-    envVars,
-  );
   const integrationAssembly = await assembleIntegrationFiles(
     request.integrations,
-    featureAssembly.files,
+    template.files,
     envVars,
   );
 
   return {
     files: integrationAssembly.files,
     envVars,
-    tips: [...featureAssembly.tips, ...integrationAssembly.tips],
+    tips: integrationAssembly.tips,
     packageJsonOptions: {
       dependencies: template.dependencies,
       firstPartyExtensions: withMdxExtension(
         template.firstPartyExtensions,
         integrationAssembly.files,
-        request.features,
       ),
       integrations: integrationAssembly.loadedIntegrations.map((integration) => ({
         name: integration.config.name,
@@ -551,8 +492,7 @@ export async function createProject(
     : join(request.parentDir, projectName);
   const fs = createFileSystem();
 
-  validateOrThrow("features", request.features, validateFeatures);
-  validateOrThrow("integrations", request.integrations, validateIntegrations);
+  validateIntegrationsOrThrow(request.integrations);
 
   if (
     projectName !== undefined &&
@@ -567,7 +507,7 @@ export async function createProject(
   if (projectName !== undefined) await ensureDir(projectDir);
 
   const createdPaths = await writeScaffoldFiles(projectDir, assembly.files);
-  const featureTips = assembly.tips;
+  const setupTips = assembly.tips;
   const allEnvVars = assembly.envVars;
 
   if (request.includePackageMetadata) {
@@ -610,7 +550,7 @@ export async function createProject(
     packageManager,
     dependencyInstallation,
     gitInitialization,
-    featureTips,
+    setupTips,
   };
 }
 
@@ -650,7 +590,6 @@ export interface MaterializeScaffoldRequest {
    */
   projectName?: string;
   runtime?: InitRuntime;
-  features?: FeatureName[];
   integrations?: IntegrationName[];
   environmentValues?: Record<string, string>;
   /** Include `package.json` (and `deno.json` on the Deno runtime). */
@@ -693,12 +632,10 @@ export async function materializeScaffold(
     if (nameError) throw createConfigError(nameError);
   }
 
-  const features = request.features ?? [];
   const integrations = request.integrations ?? [];
-  validateOrThrow("features", features, validateFeatures);
-  validateOrThrow("integrations", integrations, validateIntegrations);
+  validateIntegrationsOrThrow(integrations);
 
-  const assembly = await assembleScaffold({ template, features, integrations });
+  const assembly = await assembleScaffold({ template, integrations });
 
   // Keyed by path, because the generated files below are the same files the
   // CLI writes last: whatever a template ships at those paths is merged in,

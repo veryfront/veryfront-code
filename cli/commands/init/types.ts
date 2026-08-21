@@ -1,4 +1,4 @@
-import type { FeatureName, IntegrationName } from "../../../templates/types.ts";
+import type { IntegrationName } from "../../../templates/types.ts";
 
 export type InitTemplate =
   | "ai-agent"
@@ -20,7 +20,6 @@ export interface InitOptions {
   template?: InitTemplate;
   skipInstall?: boolean;
   skipEnvPrompt?: boolean;
-  features?: FeatureName[];
   integrations?: IntegrationName[];
   env?: EnvValues;
   /** Suppress output messages */

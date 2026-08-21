@@ -121,7 +121,7 @@ export async function initCommand(
   options: InitOptions,
   dependencies: InitCommandDependencies = {},
 ): Promise<void> {
-  const { name, features = [], quiet = false } = options;
+  const { name, quiet = false } = options;
   const { integrations = [] } = options;
   const parentDir = options.parentDir ?? cwd();
 
@@ -216,7 +216,6 @@ export async function initCommand(
       parentDir,
       template,
       runtime,
-      features,
       integrations,
       environmentValues: options.env ?? {},
       conflictPolicy: options.force ? "overwrite" : "fail",
@@ -343,8 +342,8 @@ export async function initCommand(
     }
 
     const tips: string[] = [];
-    if (result.featureTips.length) {
-      for (const tip of result.featureTips) {
+    if (result.setupTips.length) {
+      for (const tip of result.setupTips) {
         tips.push(dim(tip));
       }
     }

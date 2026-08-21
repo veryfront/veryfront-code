@@ -41,6 +41,24 @@ function getSortedFiles(entry: { files: Record<string, string> }): TemplateFile[
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
+/**
+ * Overlay one set of template files onto another, later paths winning.
+ *
+ * Used to layer the integration scaffold and generated files (AGENTS.md,
+ * .env.example) over a starter template.
+ */
+export function mergeFiles(
+  baseFiles: TemplateFile[],
+  overlayFiles: TemplateFile[],
+): TemplateFile[] {
+  const fileMap = new Map<string, TemplateFile>();
+
+  for (const file of baseFiles) fileMap.set(file.path, file);
+  for (const file of overlayFiles) fileMap.set(file.path, file);
+
+  return Array.from(fileMap.values()).sort((a, b) => a.path.localeCompare(b.path));
+}
+
 export async function loadTemplateFromDirectory(
   templateName: string,
 ): Promise<TemplateFile[]> {

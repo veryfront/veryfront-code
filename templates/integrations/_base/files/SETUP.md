@@ -6,7 +6,7 @@ This guide helps you set up credentials for all 50+ service integrations availab
 
 ```bash
 # Create a new project with integrations
-veryfront init my-app --with ai --integrations slack,github,notion
+veryfront init my-app --integrations slack,github,notion
 
 # Start development
 cd my-app

@@ -73,7 +73,6 @@ describe("scaffold parity", () => {
           parentDir,
           template: template as InitTemplate,
           runtime: "node",
-          features: [],
           integrations: [],
           environmentValues: {},
           conflictPolicy: "fail",

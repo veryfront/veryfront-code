@@ -68,42 +68,6 @@ async function collectSortedFiles(root: string): Promise<Array<{ path: string }>
 	return files.sort((a, b) => relative(root, a.path).localeCompare(relative(root, b.path)));
 }
 
-/**
- * Features whose on-disk `files/` directory the manifest does not carry.
- *
- * Every feature ships one and none of it is ever scaffolded: `FeatureConfig`
- * has no `files` field and the loader never reads the directory, so the tree
- * is inert (veryfront-code#3786). This reports rather than throws. Making it
- * fatal would break the build until the affected features are resolved.
- * Whether they should be activated or deleted is not a manifest-generator
- * decision. Silence is what let this sit undetected, so the generator says it
- * on every run.
- */
-export async function findFeaturesWithIgnoredFiles(
-	featuresDir = "./templates/features",
-): Promise<Array<{ feature: string; fileCount: number }>> {
-	const ignored: Array<{ feature: string; fileCount: number }> = [];
-	let entries: Deno.DirEntry[];
-	try {
-		entries = await collectSortedDirectoryEntries(featuresDir);
-	} catch {
-		return ignored;
-	}
-	for (const entry of entries) {
-		if (!entry.isDirectory) continue;
-		const filesPath = `${featuresDir}/${entry.name}/files`;
-		try {
-			const stat = await Deno.stat(filesPath);
-			if (!stat.isDirectory) continue;
-		} catch {
-			continue;
-		}
-		const fileCount = (await collectSortedFiles(filesPath)).length;
-		if (fileCount > 0) ignored.push({ feature: entry.name, fileCount });
-	}
-	return ignored;
-}
-
 async function generateManifest(): Promise<TemplateManifest> {
 	const templatesDir = "./templates/files";
 	const integrationsDir = "./templates/integrations";
@@ -156,24 +120,6 @@ async function generateManifest(): Promise<TemplateManifest> {
 		if (Object.keys(files).length === 0) continue;
 
 		manifest.templates[`integration:${integrationName}`] = { files };
-	}
-
-	// Features declare no files. Every feature directory nevertheless ships a
-	// `files/` tree, and none of it has ever been scaffolded, because
-	// `FeatureConfig` has no `files` field and the loader never reads the
-	// directory (#3786). Warn rather than throw: making this fatal would break
-	// the build until the affected features are resolved. Resolving them is not
-	// a manifest-generator decision. Silence is what let this sit undetected,
-	// so the generator says it on every run.
-	const featuresWithIgnoredFiles = await findFeaturesWithIgnoredFiles();
-	if (featuresWithIgnoredFiles.length > 0) {
-		console.warn(
-			`[templates-manifest] ignored feature files/ directories, not scaffolded: ${
-				featuresWithIgnoredFiles
-					.map(({ feature, fileCount }) => `${feature} (${fileCount})`)
-					.join(", ")
-			}. See veryfront-code#3786.`,
-		);
 	}
 
 	// Process ai-rules templates (used by `veryfront install`)
