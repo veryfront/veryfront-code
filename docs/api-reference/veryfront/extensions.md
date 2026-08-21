@@ -568,7 +568,7 @@ import {
 | `DistributedCacheKeyListing`     | Immutable bounded cache listing with explicit completeness.                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/cache-support.ts#L56) |
 | `DistributedCacheListOptions`    | Bounded provider-neutral cache listing request.                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/cache-support.ts#L50) |
 | `RenderCacheStore`               |                                                                                                                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L18)                |
-| `RevisionedCacheBackend`         | Cache backend with the complete atomic revision capability.                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L128)                         |
+| `RevisionedCacheBackend`         | Cache backend with the complete atomic revision capability.                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L138)                         |
 
 ### `veryfront/extensions/distributed/rate-limit-support`
 
