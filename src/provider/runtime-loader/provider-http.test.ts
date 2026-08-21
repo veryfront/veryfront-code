@@ -354,6 +354,37 @@ describe("provider-http", () => {
       });
     });
 
+    it("preserves a Google 400 that names itself INVALID_ARGUMENT", async () => {
+      // Google's envelope carries no `type`, so keying preservation on
+      // `invalid_request_error` alone dropped the body for every Google 400 --
+      // leaving the classifier downstream nothing to work with.
+      const responseBody = JSON.stringify({
+        error: {
+          code: 400,
+          status: "INVALID_ARGUMENT",
+          message: "This model does not support assistant message prefill.",
+        },
+      });
+      const err = await buildProviderError("google", jsonResponse(400, responseBody));
+
+      assertEquals(err.responseBody, responseBody);
+      assertEquals(Object.keys(err).includes("responseBody"), false);
+      assertEquals(err.message, "Provider request failed with status 400");
+      assertEquals(JSON.stringify(err).includes("assistant message prefill"), false);
+    });
+
+    it("does not preserve a 400 whose envelope names no rejection reason", async () => {
+      const err = await buildProviderError(
+        "google",
+        jsonResponse(400, {
+          error: { code: 400, status: "UNKNOWN", message: "private provider payload <TOKEN>" },
+        }),
+      );
+
+      assertEquals(err.responseBody, undefined);
+      assertEquals(JSON.stringify(err).includes("<TOKEN>"), false);
+    });
+
     it("does not preserve arbitrary provider 402 response details", async () => {
       const err = await buildProviderError(
         "openai",
