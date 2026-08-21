@@ -742,6 +742,9 @@ describe("agent/hosted-child-lifecycle", () => {
       },
     });
 
+    // Asserted before the leak check below, so that check cannot pass on an
+    // empty snapshot list.
+    assertEquals(snapshots.length, 1, "the child settles exactly one failure snapshot");
     assertEquals(
       (snapshots[0]?.error ?? "").includes("output_config.format.schema"),
       false,
