@@ -46,6 +46,7 @@ import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-ag
 import { createAgentRuntime } from "./cloud-agent-chat-execution.ts";
 import { createInvokeAgentTool } from "./cloud-agent-child-tools.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
+import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
@@ -154,7 +155,7 @@ Deno.test("root and child runtimes use the deployment-owned remote MCP factory",
     }]]),
     trace: (_name: string, operation: () => unknown) => operation(),
   } as never;
-  const clientProfile = {
+  const clientProfile: RuntimeClientProfile = {
     id: "veryfront-studio",
     type: "web",
     trusted: true,

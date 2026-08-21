@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { installTargets, parseTargetFlag } from "./install.ts";
+import type { AIToolId } from "./types.ts";
 import {
   exists,
   makeTempDir,
@@ -24,7 +25,14 @@ describe("parseTargetFlag", () => {
 
   it("should parse all targets", () => {
     const targets = parseTargetFlag("all");
-    const expected = ["cursor", "claude-code", "skill", "copilot", "windsurf", "agents"];
+    const expected: AIToolId[] = [
+      "cursor",
+      "claude-code",
+      "skill",
+      "copilot",
+      "windsurf",
+      "agents",
+    ];
 
     for (const target of expected) {
       assertEquals(targets.includes(target), true);

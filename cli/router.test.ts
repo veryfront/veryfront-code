@@ -8,6 +8,7 @@ import { parseLoginMethod } from "./auth/utils.ts";
 import { routeCommand } from "./router.ts";
 import { cliLogger, VERSION } from "./utils/index.ts";
 import { setJsonMode } from "./shared/json-output.ts";
+import { parseCliArgs } from "./shared/args.ts";
 import { isInteractive, resetInteractiveMode } from "./shared/interactive.ts";
 import type { ParsedArgs } from "./shared/types.ts";
 
@@ -561,7 +562,7 @@ describe("cli/router helpers", () => {
       setJsonMode(true);
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid", json: true } as ParsedArgs,
+          parseCliArgs(["serve", "--mode", "invalid", "--json"]),
         );
         assertEquals(code, 2);
         assertEquals(consoleOutput.length, 1);
@@ -584,7 +585,7 @@ describe("cli/router helpers", () => {
       Deno.env.set("VERYFRONT_NO_UPDATE_CHECK", "1");
       try {
         const code = await runAndCaptureExit(
-          { _: ["serve"], mode: "invalid" } as ParsedArgs,
+          parseCliArgs(["serve", "--mode", "invalid"]),
         );
         assertEquals(code, 2);
         assertEquals(consoleErrorOutput.some((line) => line.includes("✗")), true);

@@ -2,7 +2,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getCacheBackendTypeSchema = defineSchema((v) =>
-  v.enum(["memory", "redis", "api", "disk"])
+  v.enum(["memory", "redis", "api", "disk", "distributed"])
 );
 
 export const getCacheSetBatchEntrySchema = defineSchema((v) =>

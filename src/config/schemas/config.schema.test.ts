@@ -21,7 +21,7 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
-import { validateVeryfrontConfig } from "./config.schema.ts";
+import { validateVeryfrontConfig, type VeryfrontConfig } from "./config.schema.ts";
 
 describe("configSchema", () => {
   it("validates valid config", () => {
@@ -81,7 +81,7 @@ describe("configSchema", () => {
       inputDir: "public",
       outputDir: ".veryfront/images",
       preserveOriginal: true,
-    };
+    } satisfies NonNullable<NonNullable<VeryfrontConfig["assetPipeline"]>["images"]>;
     assertEquals(
       validateVeryfrontConfig({ assetPipeline: { images } }).assetPipeline
         ?.images,
