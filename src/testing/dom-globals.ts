@@ -25,19 +25,30 @@ export class ResizeObserverStub {
   disconnect(): void {}
 }
 
+/** The subset of `MediaQueryList` components actually touch. */
+export interface MediaQueryListStub {
+  matches: boolean;
+  media: string;
+  addEventListener: () => void;
+  removeEventListener: () => void;
+  addListener: () => void;
+  removeListener: () => void;
+  onchange: null;
+  dispatchEvent: () => boolean;
+}
+
 /** A `matchMedia` that always reports no match, with the full event surface. */
-export function createMatchMediaStub(): () => MediaQueryList {
-  return () =>
-    ({
-      matches: false,
-      media: "",
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      addListener: () => {},
-      removeListener: () => {},
-      onchange: null,
-      dispatchEvent: () => false,
-    }) as unknown as MediaQueryList;
+export function createMatchMediaStub(): () => MediaQueryListStub {
+  return () => ({
+    matches: false,
+    media: "",
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    onchange: null,
+    dispatchEvent: () => false,
+  });
 }
 
 /** Options for {@linkcode installComponentDom}. */
@@ -73,7 +84,10 @@ export function installComponentDom(
   options: ComponentDomOptions = {},
 ): () => void {
   const w = dom.window as Record<string, unknown>;
-  const g = globalThis as unknown as Record<string, unknown>;
+  const readGlobal = (key: string): unknown => Reflect.get(globalThis, key);
+  const writeGlobal = (key: string, value: unknown): void => {
+    Reflect.set(globalThis, key, value);
+  };
 
   const keys = [
     ...BASE_GLOBALS,
@@ -84,38 +98,41 @@ export function installComponentDom(
   ];
 
   const previous: Record<string, unknown> = {};
-  for (const key of keys) previous[key] = g[key];
+  for (const key of keys) previous[key] = readGlobal(key);
 
-  g.document = w.document;
-  g.window = w;
-  g.navigator = w.navigator;
-  g.HTMLElement = w.HTMLElement;
-  g.Node = w.Node;
-  g.Element = w.Element;
-  g.MouseEvent = w.MouseEvent;
-  g.getComputedStyle = (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w);
-  g.ResizeObserver = ResizeObserverStub;
-  if (options.matchMedia) g.matchMedia = createMatchMediaStub();
-  for (const name of options.windowGlobals ?? []) g[name] = w[name];
+  writeGlobal("document", w.document);
+  writeGlobal("window", w);
+  writeGlobal("navigator", w.navigator);
+  writeGlobal("HTMLElement", w.HTMLElement);
+  writeGlobal("Node", w.Node);
+  writeGlobal("Element", w.Element);
+  writeGlobal("MouseEvent", w.MouseEvent);
+  writeGlobal(
+    "getComputedStyle",
+    (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w),
+  );
+  writeGlobal("ResizeObserver", ResizeObserverStub);
+  if (options.matchMedia) writeGlobal("matchMedia", createMatchMediaStub());
+  for (const name of options.windowGlobals ?? []) writeGlobal(name, w[name]);
 
-  const pendingFrames = new Set<ReturnType<typeof setTimeout>>();
-  g.requestAnimationFrame = (callback: (time: number) => void) => {
+  const pendingFrames = new Set<number>();
+  writeGlobal("requestAnimationFrame", (callback: (time: number) => void): number => {
     const id = setTimeout(() => {
       pendingFrames.delete(id);
       callback(0);
     }, 0);
     pendingFrames.add(id);
-    return id as unknown as number;
-  };
-  g.cancelAnimationFrame = (id: number) => {
-    pendingFrames.delete(id as unknown as ReturnType<typeof setTimeout>);
+    return id;
+  });
+  writeGlobal("cancelAnimationFrame", (id: number): void => {
+    pendingFrames.delete(id);
     clearTimeout(id);
-  };
+  });
 
   return () => {
     for (const frame of pendingFrames) clearTimeout(frame);
     pendingFrames.clear();
-    for (const key of keys) g[key] = previous[key];
+    for (const key of keys) writeGlobal(key, previous[key]);
     (dom.window as { close: () => void }).close();
   };
 }
