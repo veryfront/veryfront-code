@@ -134,8 +134,10 @@ describe("defineSchema", () => {
     const billing: Issue["category"] = "billing";
     const open: Issue["existing"] = "open";
     const closed: Issue["existing"] = "closed";
+    // Regression guard for this fix: an inline enum with no assertion must stay a literal union.
     // @ts-expect-error Enum output must reject values outside the declared set.
     const invalidCategory: Issue["category"] = "feature";
+    // Baseline, not a regression guard: this directive is already used on the base commit.
     // @ts-expect-error Existing const-asserted enums must keep their literal union.
     const invalidExisting: Issue["existing"] = "archived";
     void invalidCategory;
