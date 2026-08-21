@@ -30,7 +30,12 @@ import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
 import { retryTelemetryErrorType } from "./retry-policy.ts";
-import { setActiveSpanErrorStatus, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  activeSpanLink,
+  setActiveSpanErrorStatus,
+  traceparentLink,
+  withSpan,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
 import {
@@ -439,10 +444,19 @@ export class WorkflowExecutor {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
 
-    // One span per execution. It is a trace root only when nothing traces the caller;
-    // started from an instrumented request or webhook handler it joins that trace
-    // instead. Either way a run that pauses and resumes spans more than one trace, so
-    // `workflow.run_id` -- not trace identity -- is what stitches a run together.
+    // One span per execution, always its own trace root.
+    //
+    // Rooting is deliberate. A workflow run is durable work that outlives whatever
+    // started it: parked on an approval it can resume days later, so nesting it under
+    // a request span would leave an open span inside a finished trace, and OTel's
+    // parent-based sampler would let a sampled-out request silently drop the whole
+    // run. The causal edges survive as links instead -- one to the caller, and one to
+    // this run's previous execution, so a resumed run's traces form a chain.
+    const links = [
+      activeSpanLink({ "workflow.link.type": "caller" }),
+      traceparentLink(run._traceContext, { "workflow.link.type": "previous_execution" }),
+    ].filter((link) => link !== undefined);
+
     await withSpan("workflow.run", async () => {
       await executeWorkflowRunControl({
         backend: this.config.backend,
@@ -508,6 +522,8 @@ export class WorkflowExecutor {
       "workflow.id": run.workflowId,
       "workflow.run_id": run.id,
     }, {
+      root: true,
+      links,
       errorStatus: (error) => new Error(retryTelemetryErrorType(ensureError(error))),
     });
   }

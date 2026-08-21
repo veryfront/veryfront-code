@@ -69,6 +69,15 @@ export const WORKFLOW_RUNTIME_STATE_VERSION = 2;
 /** Immutable internal run field carrying the durable provenance model version. */
 export const INTERNAL_WORKFLOW_RUNTIME_STATE_VERSION_FIELD = "_runtimeStateVersion";
 
+/**
+ * Internal run field carrying the last execution's W3C `traceparent`.
+ *
+ * Framework-only: it exists so the next execution can link its span to the
+ * previous one, and it names internal infrastructure, so it is stripped from
+ * every public run projection alongside the other `_`-prefixed fields.
+ */
+export const INTERNAL_WORKFLOW_TRACE_CONTEXT_FIELD = "_traceContext";
+
 function isRuntimeRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
