@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -7,10 +8,8 @@ import { embedding } from "./embedding.ts";
 import { clearEmbeddingProviders, registerEmbeddingProvider } from "./resolve.ts";
 
 describe("embedding", () => {
-  const originalFetch = globalThis.fetch;
-
   afterEach(() => {
-    globalThis.fetch = originalFetch;
+    restoreMockFetch();
     deleteEnv("GOOGLE_API_KEY");
     deleteEnv("GOOGLE_GENERATIVE_AI_API_KEY");
     deleteEnv("GOOGLE_GEMINI_BASE_URL");
@@ -79,17 +78,22 @@ describe("embedding", () => {
     let guardedCalls = 0;
     let replacedGlobalCalls = 0;
     let requestedApiKey: string | null = null;
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      guardedCalls++;
-      const request = new Request(input, init);
-      requestedApiKey = request.headers.get("x-goog-api-key");
-      return Response.json({
-        embedding: { values: [0.25, 0.75] },
-        usageMetadata: { promptTokenCount: 2 },
-      });
-    }) as typeof fetch;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        guardedCalls++;
+        const request = new Request(input, init);
+        requestedApiKey = request.headers.get("x-goog-api-key");
+        return Response.json({
+          embedding: { values: [0.25, 0.75] },
+          usageMetadata: { promptTokenCount: 2 },
+        });
+      }) as typeof fetch,
+    );
 
     const embedder = embedding({ model: "google/gemini-embedding-001" });
+    // Deliberately a raw global assignment, not another install: the point of
+    // this test is that the transport captured at construction wins over
+    // whatever tenant code later does to globalThis.fetch.
     globalThis.fetch = (() => {
       replacedGlobalCalls++;
       return Promise.resolve(new Response("unexpected", { status: 500 }));
@@ -110,13 +114,15 @@ describe("embedding", () => {
     setEnv("GOOGLE_GEMINI_BASE_URL", "https://example.com/gemini/v1beta");
     let requestedUrl = "";
 
-    globalThis.fetch = (async (input: URL | Request | string, init?: RequestInit) => {
-      requestedUrl = new Request(input, init).url;
-      return Response.json({
-        embedding: { values: [0.5] },
-        usageMetadata: { promptTokenCount: 1 },
-      });
-    }) as typeof fetch;
+    installMockFetch(
+      (async (input: URL | Request | string, init?: RequestInit) => {
+        requestedUrl = new Request(input, init).url;
+        return Response.json({
+          embedding: { values: [0.5] },
+          usageMetadata: { promptTokenCount: 1 },
+        });
+      }) as typeof fetch,
+    );
 
     const embedder = embedding({ model: "google/gemini-embedding-001" });
     assertEquals(await embedder.embed("hello"), [0.5]);

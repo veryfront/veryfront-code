@@ -16,6 +16,33 @@ export interface ContextPatch {
   delete: string[];
 }
 
+/**
+ * Facts that belong to the execution as a whole rather than to one graph.
+ *
+ * Composite nodes run their children against synthetic `WorkflowRun` records
+ * that are never persisted, so a child graph can learn nothing about the real
+ * run from the run it is handed. Anything a child graph must agree with the
+ * root run about is threaded here instead of inferred from that record.
+ */
+export interface ExecutionScope {
+  /**
+   * The root, backend-persisted run id. Synthetic child runs carry generated
+   * ids, so this is the only id a caller can actually look up -- span
+   * correlation and recovery persistence must both use it.
+   */
+  rootRunId: string;
+  /** Run id handed to step execution for run-scoped hooks. */
+  executionRunId: string;
+  /**
+   * True when the root run is resuming from a decision it parked on, false when
+   * it is recovering from a worker that died mid-node. A node recorded
+   * `running` means something different in each case, and only the root run
+   * record can tell them apart.
+   */
+  resumingWait: boolean;
+  ownership?: CheckpointOwnership;
+}
+
 export interface DAGExecutorConfig {
   stepExecutor: StepExecutor;
   checkpointManager?: CheckpointManager;

@@ -377,6 +377,12 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   workerId?: string;
   /** Captured tenant context for multi-tenant job execution */
   _tenant?: CapturedTenantContext;
+  /**
+   * @internal W3C `traceparent` of the most recent execution's `workflow.run`
+   * span. A run that parks and resumes traces once per execution; the next
+   * execution links back to this so the executions stay joined.
+   */
+  _traceContext?: string;
   /** @internal Immutable durable provenance model version. */
   _runtimeStateVersion?: number;
   /** @internal Framework-only public projection ownership sidecar. */

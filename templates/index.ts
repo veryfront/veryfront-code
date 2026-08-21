@@ -12,37 +12,11 @@ import {
   templateDirectoryExists,
 } from "./loader.ts";
 import { STARTER_TEMPLATE_NAMES } from "./types.ts";
-import type {
-  EnvVarConfig,
-  FeatureConfig,
-  FeatureName,
-  ResolvedFeature,
-  TemplateConfig,
-  TemplateFile,
-  TemplateName,
-} from "./types.ts";
+import type { EnvVarConfig, TemplateConfig, TemplateFile, TemplateName } from "./types.ts";
 
-export type {
-  EnvVarConfig,
-  FeatureConfig,
-  FeatureName,
-  ResolvedFeature,
-  TemplateConfig,
-  TemplateFile,
-  TemplateName,
-};
+export type { EnvVarConfig, TemplateConfig, TemplateFile, TemplateName };
 
-export {
-  AVAILABLE_FEATURES,
-  featureExists,
-  loadFeature,
-  loadFeatureConfig,
-  mergeConfig,
-  mergeDependencies,
-  mergeFiles,
-  resolveFeatures,
-  validateFeatures,
-} from "./feature-loader.ts";
+export { mergeFiles } from "./loader.ts";
 
 /**
  * Markdown renderer dependencies for the chat starters.

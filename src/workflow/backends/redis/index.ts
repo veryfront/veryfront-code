@@ -310,6 +310,9 @@ export class RedisBackend implements WorkflowBackend {
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
     const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
+    // Encoded before the fields below, on purpose. A step's return value reaches
+    // `input`, `output`, and `nodeStates` as well, and those are encoded by
+    // `JSON.stringify`, so whichever runs first decides the error a caller sees.
     const context = serializeWorkflowContext(run.context, run.id);
     return {
       id: run.id,
@@ -318,6 +321,7 @@ export class RedisBackend implements WorkflowBackend {
       status: run.status,
       workerId: run.workerId || "",
       tenant: run._tenant ? JSON.stringify(run._tenant) : "",
+      traceContext: run._traceContext || "",
       sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
@@ -332,9 +336,16 @@ export class RedisBackend implements WorkflowBackend {
     };
   }
 
-  private serializeRunPatch(patch: WorkflowRunUpdate): Record<string, string> {
+  private serializeRunPatch(patch: WorkflowRunUpdate, runId?: string): Record<string, string> {
+    // Encoded before the fields below for the same reason as in `serializeRun`:
+    // `output` and `nodeStates` carry the same step values, and the field that
+    // is encoded first decides the error a caller sees.
+    //
+    // `runId` is passed so a lossy-value warning names the run it came from.
+    // Patches are where warnings actually fire, because creation usually writes
+    // only `input` while patches write the accumulated node outputs.
     const context = patch.context !== undefined
-      ? serializeWorkflowContext(patch.context)
+      ? serializeWorkflowContext(patch.context, runId)
       : undefined;
     const fields: Record<string, string> = {};
     if (Object.hasOwn(patch, "workerId")) fields.workerId = patch.workerId ?? "";
@@ -356,10 +367,15 @@ export class RedisBackend implements WorkflowBackend {
     if (Object.hasOwn(patch, "completedAt")) {
       fields.completedAt = patch.completedAt?.toISOString() ?? "";
     }
+    if (Object.hasOwn(patch, "_traceContext")) {
+      fields.traceContext = patch._traceContext ?? "";
+    }
     return fields;
   }
 
   private serializeCheckpoint(runId: string, checkpoint: Checkpoint): string {
+    // Checked before the rest of the checkpoint is encoded below, so a value
+    // JSON refuses is named by its path rather than by the native error.
     const { normalized: context } = prepareWorkflowJson(
       checkpoint.context,
       "checkpoint.context",
@@ -477,6 +493,7 @@ export class RedisBackend implements WorkflowBackend {
       status: status ?? "pending",
       workerId: data.workerId || undefined,
       _tenant: parseJsonOr(data.id, "tenant", data.tenant, undefined),
+      _traceContext: data.traceContext || undefined,
       sourceIntegrationPolicy,
       input: parseJsonOr(data.id, "input", data.input, undefined),
       output: parseJsonOr(data.id, "output", data.output, undefined),
@@ -585,7 +602,7 @@ export class RedisBackend implements WorkflowBackend {
 
     if (this.config.debug) logger.debug(`[RedisBackend] Updating run: ${runId}`);
 
-    const fields = this.serializeRunPatch(patch);
+    const fields = this.serializeRunPatch(patch, runId);
     // status is written by MOVE_STATUS_SCRIPT below (atomically with its index
     // move), so it is deliberately excluded from this plain hset.
     if (Object.keys(fields).length > 0) await client.hset(this.runKey(runId), fields);
@@ -635,7 +652,7 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
-    const fields = this.serializeRunPatch(patch);
+    const fields = this.serializeRunPatch(patch, runId);
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
     const result = await client.eval(
       UPDATE_RUN_IF_STATUS_SCRIPT,

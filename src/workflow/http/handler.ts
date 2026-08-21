@@ -158,6 +158,7 @@ function projectRun(
     _tenant: _tenant,
     _runtimeStateVersion: _runtimeStateVersion,
     _workflowProjection: _workflowProjection,
+    _traceContext: _traceContext,
     checkpoints: _checkpoints,
     workerId: _workerId,
     heartbeatAt: _heartbeatAt,

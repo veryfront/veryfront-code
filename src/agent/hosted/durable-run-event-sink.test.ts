@@ -429,6 +429,38 @@ describe("agent/hosted/durable-run-event-sink", () => {
     assertEquals(order, ["append:first", "flush", "append:second", "flush"]);
   });
 
+  it("reports the concrete disable reason when a required mirror is already disabled", async () => {
+    for (
+      const disableReason of [
+        "auth_rejected",
+        "payload_too_large",
+      ] as const
+    ) {
+      const target = mirror();
+      const error = await assertRejects(
+        async () =>
+          await createDurableRunEventSink({
+            mirror: {
+              ...target.result,
+              getSnapshot: () => snapshot({ disabled: true, disableReason }),
+            },
+          })({
+            type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+            messages: [],
+          }),
+        DurableRunEventPersistenceError,
+        disableReason,
+      );
+
+      assertInstanceOf(error, DurableRunEventPersistenceError);
+      assertEquals(
+        String(error.detail).includes(disableReason),
+        true,
+        "structured VeryfrontError detail should expose the durable mirror disable reason",
+      );
+    }
+  });
+
   it("does not mask later persistence failures with a rejected tail", async () => {
     const firstAppendStarted = Promise.withResolvers<void>();
     const releaseFirstAppend = Promise.withResolvers<void>();

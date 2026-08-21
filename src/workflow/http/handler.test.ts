@@ -182,6 +182,9 @@ describe("createWorkflowHandler", () => {
     const context = run.context as Record<string, unknown>;
     expect(context.env).toBeUndefined();
     expect(run._tenant).toBeUndefined();
+    // Trace identity names internal infrastructure and belongs to telemetry,
+    // not to anyone polling a run.
+    expect(run._traceContext).toBeUndefined();
     expect(run.workerId).toBeUndefined();
     expect(run.heartbeatAt).toBeUndefined();
     expect(run.checkpoints).toBeUndefined();
@@ -228,6 +231,7 @@ describe("createWorkflowHandler", () => {
     const listed = body.runs?.find((run) => run.id === runId);
     expect((listed?.context as Record<string, unknown> | undefined)?.env).toBeUndefined();
     expect(listed?._tenant).toBeUndefined();
+    expect(listed?._traceContext).toBeUndefined();
     expect(listed?.workerId).toBeUndefined();
     expect(listed?.checkpoints).toBeUndefined();
   });

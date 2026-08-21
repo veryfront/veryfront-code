@@ -874,10 +874,7 @@ describe("guide content contracts", () => {
   });
 
   it("recommends the current Node.js LTS in onboarding docs", async () => {
-    const docs = [
-      "docs/guides/self-hosting.md",
-      "templates/features/mdx/files/app/docs/getting-started/page.mdx",
-    ];
+    const docs = ["docs/guides/self-hosting.md"];
 
     for (const path of docs) {
       const text = await Deno.readTextFile(path);

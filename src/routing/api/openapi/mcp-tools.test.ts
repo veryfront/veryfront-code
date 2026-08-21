@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { installMockFetch, restoreMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateMCPToolsFromSpec } from "./mcp-tools.ts";
@@ -232,17 +233,16 @@ describe("routing/api/openapi/mcp-tools", () => {
     });
 
     it("does not propagate caller-supplied end-user identity headers", async () => {
-      const originalFetch = globalThis.fetch;
       let requestHeaders: Headers | undefined;
 
       try {
-        globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+        installMockFetch((input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           requestHeaders = request.headers;
           return Promise.resolve(
             Response.json({ ok: true }, { status: 200 }),
           );
-        };
+        });
 
         const tools = generateTools(
           makeSpec({
@@ -263,17 +263,18 @@ describe("routing/api/openapi/mcp-tools", () => {
         assertExists(requestHeaders);
         assertEquals(requestHeaders.get("X-End-User-Id"), null);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
 
     it("blocks an internal configured API base URL before invoking fetch", async () => {
-      const originalFetch = globalThis.fetch;
       let fetchCalls = 0;
-      globalThis.fetch = (() => {
-        fetchCalls++;
-        return Promise.resolve(Response.json({ unexpected: true }));
-      }) as typeof fetch;
+      installMockFetch(
+        (() => {
+          fetchCalls++;
+          return Promise.resolve(Response.json({ unexpected: true }));
+        }) as typeof fetch,
+      );
 
       try {
         const tools = generateTools(
@@ -294,7 +295,7 @@ describe("routing/api/openapi/mcp-tools", () => {
         assertEquals(fetchCalls, 0);
         assertEquals((result as { error?: boolean }).error, true);
       } finally {
-        globalThis.fetch = originalFetch;
+        restoreMockFetch();
       }
     });
   });

@@ -54,7 +54,6 @@ export async function createProject(
       parentDir: join(cwd(), "projects"),
       template,
       runtime: "node",
-      features: [],
       integrations: [],
       environmentValues: {},
       conflictPolicy: "fail",

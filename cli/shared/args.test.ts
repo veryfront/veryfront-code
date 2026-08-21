@@ -277,13 +277,6 @@ describe("cli/shared/args", () => {
       assertEquals(parseCliArgs(["-h"]).help, true);
     });
 
-    it("should handle --with as array flag", () => {
-      assertEquals(parseCliArgs(["--with", "react", "--with", "tailwind"]).with, [
-        "react",
-        "tailwind",
-      ]);
-    });
-
     it("should handle repeated --candidate-model values as an array flag", () => {
       assertEquals(
         parseCliArgs([

@@ -16,6 +16,7 @@ import {
   INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD,
   INTERNAL_WORKFLOW_PROJECTION_STATE_FIELD,
   INTERNAL_WORKFLOW_RUNTIME_STATE_VERSION_FIELD,
+  INTERNAL_WORKFLOW_TRACE_CONTEXT_FIELD,
   SUBWORKFLOW_CONTEXT_OUTPUT_KIND,
   SUBWORKFLOW_INPUT_KIND,
   WORKFLOW_RUNTIME_STATE_VERSION,
@@ -419,6 +420,7 @@ export function toPublicWorkflowRun(run: WorkflowRun): WorkflowRun {
   Reflect.deleteProperty(projected, "_tenant");
   Reflect.deleteProperty(projected, INTERNAL_WORKFLOW_RUNTIME_STATE_VERSION_FIELD);
   Reflect.deleteProperty(projected, INTERNAL_WORKFLOW_PROJECTION_STATE_FIELD);
+  Reflect.deleteProperty(projected, INTERNAL_WORKFLOW_TRACE_CONTEXT_FIELD);
 
   const authoritativeInputNodeIds = new Set(
     Object.values(projected.nodeStates)

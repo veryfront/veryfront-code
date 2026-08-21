@@ -120,11 +120,6 @@ describe("InitCommand Types", () => {
       assertEquals(options.skipEnvPrompt, true);
     });
 
-    it("should allow features array", () => {
-      const options: InitOptions = { features: [] };
-      assertEquals(options.features?.length, 0);
-    });
-
     it("should allow integrations array", () => {
       const options: InitOptions = { integrations: [] };
       assertEquals(options.integrations?.length, 0);
@@ -136,7 +131,6 @@ describe("InitCommand Types", () => {
         template: "ai-agent",
         skipInstall: false,
         skipEnvPrompt: false,
-        features: [],
         integrations: [],
       };
 
@@ -144,7 +138,6 @@ describe("InitCommand Types", () => {
       assertEquals(options.template, "ai-agent");
       assertEquals(options.skipInstall, false);
       assertEquals(options.skipEnvPrompt, false);
-      assertExists(options.features);
       assertExists(options.integrations);
     });
 
@@ -176,10 +169,6 @@ describe("InitCommand Types", () => {
 
     it("should default skipEnvPrompt to undefined when not specified", () => {
       assertEquals(options.skipEnvPrompt, undefined);
-    });
-
-    it("should default features to undefined when not specified", () => {
-      assertEquals(options.features, undefined);
     });
 
     it("should default integrations to undefined when not specified", () => {

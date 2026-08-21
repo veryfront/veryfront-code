@@ -23,6 +23,7 @@ export type WorkflowRunUpdate = Partial<
     | "heartbeatAt"
     | "completedAt"
     | "workerId"
+    | "_traceContext"
   >
 >;
 
@@ -37,6 +38,7 @@ const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "heartbeatAt",
   "completedAt",
   "workerId",
+  "_traceContext",
 ]);
 
 /** Reject untyped callers that attempt to rewrite immutable run state. */

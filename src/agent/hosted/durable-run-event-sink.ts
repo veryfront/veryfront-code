@@ -19,7 +19,10 @@ export { DurableRunEventPersistenceError } from "../conversation/private-run-eve
 
 function assertEnabled(snapshot: ConversationRunMirrorSnapshot): void {
   if (snapshot.disabled) {
-    throw new DurableRunEventPersistenceError("Required durable run event mirror is disabled");
+    const suffix = snapshot.disableReason === undefined ? "" : `: ${snapshot.disableReason}`;
+    throw new DurableRunEventPersistenceError(
+      `Required durable run event mirror is disabled${suffix}`,
+    );
   }
 }
 

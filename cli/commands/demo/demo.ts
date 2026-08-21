@@ -342,7 +342,6 @@ async function executeStepAction(
         parentDir: cwd(),
         template: "ai-agent",
         runtime: "node",
-        features: [],
         integrations: [],
         environmentValues: {},
         conflictPolicy: "overwrite",

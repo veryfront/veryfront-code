@@ -94,16 +94,28 @@ planning for:
   generator — will see one series per item. Drop or rewrite `workflow.node` names at the
   collector if that matters for your backend.
 
-Runs are traced per execution attempt. A run that pauses at a wait node or a pending
-approval and later resumes produces a _separate_ trace from its first execution; every span
-carries `workflow.run_id`, so filtering on that attribute reassembles the whole run across
-executions.
+`workflow.run` is always a trace root. Started from an instrumented HTTP handler, webhook,
+or approval callback it does **not** join that request's trace — a run is durable work that
+outlives whatever started it. Parked on an approval it can resume days later, so nesting it
+under the request would leave an open span inside a finished trace, and OpenTelemetry's
+default parent-based sampler would let a sampled-out request silently drop the entire run.
 
-`workflow.run` is a trace root only when nothing traces the caller. Started from an
-instrumented HTTP handler, webhook, or approval callback it becomes a child of that
-request's span and joins its trace. That is usually what you want — the run appears under
-the request that triggered it — but note the request span typically finishes before the run
-does, because execution is dispatched without being awaited.
+The causal edges survive as span **links** instead. Every `workflow.run` span carries up to
+two, each tagged with `workflow.link.type`:
+
+| `workflow.link.type` | Points at                                                                     |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `caller`             | The span that was active when this execution started, when anything traced it |
+| `previous_execution` | This run's previous `workflow.run` span, when it is resuming                  |
+
+Runs are still traced per execution attempt: a run that pauses at a wait node or a pending
+approval and later resumes produces a _separate_ trace per execution. Those traces are now
+chained by `previous_execution` links, and every span still carries `workflow.run_id`, so
+filtering on that attribute reassembles the whole run as it always did.
+
+The link is built from a W3C `traceparent` persisted on the run record when each execution
+claims it. A run executed with tracing disabled simply stores nothing and the next
+execution links to nothing — the chain degrades to `workflow.run_id` correlation.
 
 Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
 ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work. A cancelled run

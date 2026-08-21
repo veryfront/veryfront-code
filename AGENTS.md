@@ -46,10 +46,17 @@ rewrites them even when nothing changed, and committing that output turns CI red
 for everyone. `deno task docs` refuses to run on the wrong version rather than
 producing a plausible-looking diff.
 
-Use these tasks rather than a hand-written `deno test` command. They set `DENO_TESTING=1` and
-deny network access to the LLM provider origins. Without both, a test that stubs
-`globalThis.fetch` is ignored by the outbound fetch guard (`src/security/http/outbound-fetch.ts`)
-and issues a real request to a live provider, failing with a confusing 401 or 405.
+Use these tasks rather than a hand-written `deno test` command; they deny network access to
+the LLM provider origins.
+
+To control outbound HTTP in a test, use `src/testing/mock-fetch.ts` -- `withMockFetch(mock, fn)`
+where the stub has a callback to scope, or the `installMockFetch` / `restoreMockFetch` pair for
+suites that install per test and tear down in `afterEach`. Both move `globalThis.fetch` and the
+host transport in `src/security/http/outbound-fetch.ts` together.
+
+Assigning `globalThis.fetch` by hand controls only code that calls `fetch` directly. Anything
+routed through `guardedOutboundFetch` reads the host transport instead, so a hand-assigned stub
+is ignored there and the request reaches the live endpoint, failing with a confusing 401 or 405.
 
 ## Public copy rules
 
