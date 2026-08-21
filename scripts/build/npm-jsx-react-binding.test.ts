@@ -17,6 +17,13 @@ const BROKEN_POPOVER = [
   "};",
 ].join("\n");
 
+/** Same defect as BROKEN_POPOVER, but with no imports so it can be executed. */
+const BROKEN_POPOVER_STANDALONE = [
+  "export function render() {",
+  '    return React.createElement("div") ? "ok" : "no";',
+  "}",
+].join("\n");
+
 describe("findFreeReactReference", () => {
   it("flags the emitted builtin popover from the broken release", () => {
     assertEquals(findFreeReactReference(BROKEN_POPOVER), 6);
@@ -198,7 +205,7 @@ describe("normalizeNpmJsxReactBinding", () => {
     }
   }
 
-  it("patches only the modules that need it, and makes them loadable", async () => {
+  it("patches only the modules that need it", async () => {
     await withTree({
       "src/popover.js": BROKEN_POPOVER,
       "src/fine.js":
@@ -263,15 +270,71 @@ describe("normalizeNpmJsxReactBinding", () => {
   });
 
   it("leaves a module whose module-scope binding is not an import", async () => {
-    // A binding the rewrite cannot satisfy: the module shadows `React` with an
-    // import of its own name, so prepending another one would be a duplicate
-    // declaration rather than a fix. Detection must not claim success here.
-    await withTree({
-      "src/shadowed.js":
-        'const React = undefined;\nReact.createElement("div");',
-    }, async (root) => {
-      // A local binding exists, so nothing is patched and nothing is reported.
+    // Nothing here needs fixing: the module already declares `React` at module
+    // scope, so prepending an import would be a duplicate declaration rather
+    // than a fix. Whether that binding is any good is the module's business.
+    const source = 'const React = undefined;\nReact.createElement("div");';
+    await withTree({ "src/bound.js": source }, async (root) => {
       assertEquals(await normalizeNpmJsxReactBinding(root), []);
+      assertEquals(await Deno.readTextFile(`${root}/src/bound.js`), source);
+    });
+  });
+
+  // The checker can only claim a module has a React binding. Whether the
+  // rewritten file actually loads is a different property and one it cannot
+  // establish -- a duplicate declaration parses fine and dies at load. So load
+  // it for real, in a subprocess, with `react` mapped to a stub.
+  it("produces a module that really loads and runs", async () => {
+    await withTree({
+      "src/popover.js": BROKEN_POPOVER_STANDALONE,
+      "react-stub.js": "export function createElement() { return true; }",
+      "import-map.json": JSON.stringify({
+        imports: { react: "./react-stub.js" },
+      }),
+    }, async (root) => {
+      assertEquals(await normalizeNpmJsxReactBinding(root), ["src/popover.js"]);
+
+      const command = new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--quiet",
+          "--no-lock",
+          `--import-map=${root}/import-map.json`,
+          "--allow-read",
+          `${root}/entry.js`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      });
+      await Deno.writeTextFile(
+        `${root}/entry.js`,
+        'import { render } from "./src/popover.js";\nconsole.log(render());\n',
+      );
+
+      const { code, stdout, stderr } = await command.output();
+      const decode = (bytes: Uint8Array) =>
+        new TextDecoder().decode(bytes).trim();
+      assertEquals(
+        code,
+        0,
+        `patched module failed to load: ${decode(stderr)}`,
+      );
+      assertEquals(decode(stdout), "ok");
+    });
+  });
+
+  it("does not turn a hoisted `var React` into a duplicate declaration", async () => {
+    // `var` hoists out of its block, so prepending an import beside it would
+    // make the module unloadable -- a failure the post-rewrite scan cannot see,
+    // because by then the import itself satisfies the check.
+    const source = [
+      'export function read() { return React.createElement("div"); }',
+      "if (globalThis.x) { var React = globalThis.React; }",
+    ].join("\n");
+
+    await withTree({ "src/hoisted.js": source }, async (root) => {
+      assertEquals(await normalizeNpmJsxReactBinding(root), []);
+      assertEquals(await Deno.readTextFile(`${root}/src/hoisted.js`), source);
     });
   });
 

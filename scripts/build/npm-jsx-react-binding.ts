@@ -55,6 +55,12 @@ function isNode(value: unknown): value is Node {
     typeof (value as Node).type === "string";
 }
 
+const FOR_TYPES = new Set([
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+]);
+
 const FUNCTION_TYPES = new Set([
   "FunctionDeclaration",
   "FunctionExpression",
@@ -77,13 +83,86 @@ function eachChild(
   }
 }
 
-/** Every identifier name inside a binding pattern, however destructured. */
+/**
+ * The names a binding pattern binds — and only those.
+ *
+ * Every position that is *read* rather than bound is skipped, because counting
+ * one as a declaration silences the whole scope. A default value is the case
+ * that bit: `function get(react = React)` binds `react` and *reads* `React`, so
+ * collecting both makes the file look like it declares React. The emitted
+ * `react/server-render-context.js` has exactly that signature twice.
+ *
+ * A computed destructuring key (`const { [React]: v } = o`) is likewise a read,
+ * and is left for the reference walk to flag.
+ */
 function patternNames(node: unknown, out: Set<string>): void {
   if (!isNode(node)) return;
-  if (node.type === "Identifier" && typeof node.name === "string") {
-    out.add(node.name);
+
+  switch (node.type) {
+    case "Identifier":
+      if (typeof node.name === "string") out.add(node.name);
+      return;
+    // Only the target binds; the default value on the right is a read.
+    case "AssignmentPattern":
+      patternNames(node.left, out);
+      return;
+    case "RestElement":
+      patternNames(node.argument, out);
+      return;
+    case "ArrayPattern":
+      for (const element of Array.isArray(node.elements) ? node.elements : []) {
+        patternNames(element, out);
+      }
+      return;
+    case "ObjectPattern":
+      for (
+        const property of Array.isArray(node.properties) ? node.properties : []
+      ) {
+        patternNames(property, out);
+      }
+      return;
+    // The key names the source property; the value is the binding target.
+    case "ObjectProperty":
+      patternNames(node.value, out);
+      return;
+    default:
+      return;
   }
-  eachChild(node, (child) => patternNames(child, out));
+}
+
+/**
+ * Adds every `var` name in `statements`, descending through nested blocks and
+ * control flow but not into nested functions.
+ *
+ * `var` hoists to the enclosing function or module, so `if (x) { var React = … }`
+ * declares React for the whole scope. Missing that is not a false negative but
+ * something worse: the rewrite would prepend an import beside the `var` and Node
+ * would refuse the file outright with "Identifier 'React' has already been
+ * declared".
+ */
+function addHoistedVarNames(statements: unknown[], out: Set<string>): void {
+  for (const statement of statements) {
+    if (!isNode(statement)) continue;
+    if (FUNCTION_TYPES.has(statement.type)) continue;
+
+    if (
+      statement.type === "VariableDeclaration" && statement.kind === "var"
+    ) {
+      const declarations = Array.isArray(statement.declarations)
+        ? statement.declarations
+        : [];
+      for (const declarator of declarations) {
+        if (isNode(declarator)) patternNames(declarator.id, out);
+      }
+      continue;
+    }
+
+    eachChild(statement, (child) => {
+      if (isNode(child) && !FUNCTION_TYPES.has(child.type)) {
+        addHoistedVarNames([child], out);
+      }
+    });
+  }
 }
 
 function scopeBody(node: Node): unknown[] {
@@ -134,6 +213,19 @@ function declaredNames(node: Node): Set<string> {
 
   if (node.type === "CatchClause") patternNames(node.param, names);
 
+  // `for (const React of list)` binds React for the head and the body.
+  if (FOR_TYPES.has(node.type)) {
+    const head = node.type === "ForStatement" ? node.init : node.left;
+    if (isNode(head) && head.type === "VariableDeclaration") {
+      const declarations = Array.isArray(head.declarations)
+        ? head.declarations
+        : [];
+      for (const declarator of declarations) {
+        if (isNode(declarator)) patternNames(declarator.id, names);
+      }
+    }
+  }
+
   for (const entry of scopeBody(node)) {
     if (!isNode(entry)) continue;
 
@@ -166,6 +258,10 @@ function declaredNames(node: Node): Set<string> {
       const id = statement.id;
       if (isNode(id) && typeof id.name === "string") names.add(id.name);
     }
+  }
+
+  if (node.type === "Program" || FUNCTION_TYPES.has(node.type)) {
+    addHoistedVarNames(scopeBody(node), names);
   }
 
   return names;
@@ -243,7 +339,8 @@ export function findFreeReactReference(
     if (!isNode(node)) return;
 
     const opensScope = node.type === "BlockStatement" ||
-      node.type === "CatchClause" || FUNCTION_TYPES.has(node.type);
+      node.type === "CatchClause" || FOR_TYPES.has(node.type) ||
+      FUNCTION_TYPES.has(node.type);
     const inShadow = shadowed ||
       (opensScope && declaredNames(node).has("React"));
 
