@@ -753,6 +753,11 @@ async function postJsonRpc(
   if (typeof expectedId !== "string" || expectedId.length === 0) {
     throw new TypeError("Remote MCP JSON-RPC request id must be a non-empty string");
   }
+  if (callerSignal?.aborted) {
+    throw NETWORK_ERROR.create({
+      detail: "Remote MCP request was aborted",
+    });
+  }
   const serializedBody = serializeJsonRpcRequest(body);
   const requestScope = createRequestSignalScope(callerSignal);
 

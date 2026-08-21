@@ -191,11 +191,23 @@ describe("tool/remote-mcp", () => {
   });
 
   it("normalizes non-Error caller abort reasons", async () => {
+    let requestCalls = 0;
+    const createSource = createRemoteMCPToolSourceFactoryWithTransport({
+      trustedEndpoints: ["https://example.com/mcp"],
+      requestFetch: async () => {
+        requestCalls++;
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "docs:tools:list",
+          result: { tools: [] },
+        });
+      },
+    });
     const controller = new AbortController();
     controller.abort("caller stopped");
-    const source = createRemoteMCPToolSource({
+    const source = createSource({
       id: "docs",
-      endpoint: "https://93.184.216.34",
+      endpoint: "https://example.com/mcp",
     });
 
     await assertRejects(
@@ -203,6 +215,7 @@ describe("tool/remote-mcp", () => {
       Error,
       "Remote MCP request was aborted",
     );
+    assertEquals(requestCalls, 0);
   });
 
   it("rejects internal MCP endpoints before invoking the configured transport", async () => {
