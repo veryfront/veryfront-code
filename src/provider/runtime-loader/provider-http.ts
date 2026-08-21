@@ -104,6 +104,40 @@ function preserveStructuredResponseBody<T extends ProviderError>(
   return error;
 }
 
+/**
+ * Google's canonical `google.rpc.Code` for a request the API rejected as
+ * malformed. It arrives in `error.status`, where Anthropic and the
+ * OpenAI-compatible providers put `invalid_request_error` in `error.type` --
+ * the same meaning under a different key, and the reason a Google 400 used to
+ * reach classification carrying neither its body nor its own wording.
+ *
+ * The classifier in `src/chat/provider-errors.ts` has to recognise the same
+ * envelope for a preserved body to be worth anything. Preserving without
+ * classifying, or classifying without preserving, leaves the provider exactly
+ * as opaque as before, so the end-to-end tests in
+ * `src/chat/provider-errors.test.ts` drive both halves through the real
+ * `buildProviderError` and fail if they drift apart.
+ */
+const GOOGLE_INVALID_ARGUMENT_STATUS = "INVALID_ARGUMENT";
+
+/**
+ * Whether a 400 envelope identifies itself as a rejected *request* -- the
+ * class whose body names a reason the caller can act on (a schema that must be
+ * closed, a prompt that is too long, an account that cannot be charged).
+ *
+ * Keyed on a recognised marker rather than the status alone: a 400 whose
+ * envelope we do not recognise is still dropped, so widening this stays a
+ * deliberate act per envelope shape rather than a blanket retention of every
+ * 400 body.
+ */
+function isInvalidRequestEnvelope(
+  errorType: string | undefined,
+  errorRecord: Record<string, unknown> | undefined,
+): boolean {
+  return errorType === "invalid_request_error" ||
+    errorRecord?.status === GOOGLE_INVALID_ARGUMENT_STATUS;
+}
+
 /** Parses retry after ms. */
 export function parseRetryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined;
@@ -316,7 +350,7 @@ export async function buildProviderError(
   });
 
   const isStructuredInvalidRequest = status === 400 &&
-    errorType === "invalid_request_error" &&
+    isInvalidRequestEnvelope(errorType, errorRecord) &&
     parsedBody !== undefined &&
     !truncated;
   const problemSlug = typeof parsedBody?.slug === "string" ? parsedBody.slug : undefined;

@@ -407,13 +407,12 @@ describe("chat/provider-errors", () => {
         assertEquals(parseProviderError(error), EXPECTED);
       });
 
-      it("does not reach a provider whose 400 envelope is not preserved", async () => {
-        // Documents a boundary rather than asserting desired behaviour.
-        // `buildProviderError` preserves a body only for a structured
-        // `invalid_request_error`, and replaces every message with the generic
-        // status text -- so Google's `{error:{code,status,message}}` envelope
-        // arrives with neither a body nor its own wording, and no classifier
-        // downstream can see the rejection. Tracked in #3932.
+      it("classifies a Google rejection end to end", async () => {
+        // Google's envelope is `{error:{code,status,message}}` with no `type`
+        // at all, so both halves have to recognise `INVALID_ARGUMENT`: the
+        // body is preserved for classification, and the classifier reads the
+        // shape it arrives in. Either half alone leaves this on the generic
+        // path.
         const error = await buildProviderError(
           "google",
           jsonResponse(400, {
@@ -427,10 +426,73 @@ describe("chat/provider-errors", () => {
         );
 
         assertEquals(error.message, "Provider request failed with status 400");
+        assertEquals(parseProviderError(error), EXPECTED);
+      });
+
+      it("reaches the rest of the curated mappings from Google's envelope too", async () => {
+        // The gap was never specific to the output-schema mapping: with the
+        // body dropped, *every* curated mapping was unreachable for Google.
+        // A second mapping proves the whole family is now in reach, not one
+        // special-cased sentence.
+        const error = await buildProviderError(
+          "google",
+          jsonResponse(400, {
+            error: {
+              code: 400,
+              status: "INVALID_ARGUMENT",
+              message: "This model does not support assistant message prefill.",
+            },
+          }),
+        );
+
+        assertEquals(parseProviderError(error), {
+          code: "MODEL_UNSUPPORTED_ASSISTANT_PREFILL",
+          message:
+            "The selected model does not support assistant-message prefill. Start a new user message or choose a compatible model.",
+        });
+      });
+
+      it("still drops a 400 whose envelope names no rejection reason", async () => {
+        // Widening preservation stays per recognised envelope. A 400 that
+        // identifies itself as something else is retained no more than before,
+        // so provider bodies are not blanket-retained by status alone.
+        const error = await buildProviderError(
+          "google",
+          jsonResponse(400, {
+            error: {
+              code: 400,
+              status: "UNKNOWN",
+              message: "private provider payload <TOKEN>",
+            },
+          }),
+        );
+
+        assertEquals(error.responseBody, undefined);
+        assertEquals(JSON.stringify(error).includes("<TOKEN>"), false);
         assertEquals(parseProviderError(error), {
           code: "EXTERNAL_SERVICE_ERROR",
           message: "LLM provider service error",
         });
+      });
+
+      it("does not echo a preserved Google body into the message", async () => {
+        // The preserved body is classification-only. Widening what gets
+        // retained must not widen what the caller is shown.
+        const error = await buildProviderError(
+          "google",
+          jsonResponse(400, {
+            error: {
+              code: 400,
+              status: "INVALID_ARGUMENT",
+              message: "Invalid schema for response_format: private payload <TOKEN>",
+            },
+          }),
+        );
+
+        assertEquals(error.message, "Provider request failed with status 400");
+        assertEquals(error.message.includes("<TOKEN>"), false);
+        assertEquals(Object.keys(error).includes("responseBody"), false);
+        assertEquals(JSON.stringify(error).includes("<TOKEN>"), false);
       });
     });
 
