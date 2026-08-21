@@ -441,6 +441,32 @@ export function agent<TOutputSchema extends AgentOutputSchema>(
 ): Agent<InferAgentOutputSchema<TOutputSchema>>;
 export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput>;
 export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOutput> {
+  return createAgent(config, { register: true });
+}
+
+/**
+ * Build an agent runtime without adding it to the project registry.
+ *
+ * Framework facades use this when they need the agent runtime pipeline for a
+ * single call, but must not expose a reusable agent in registry-backed
+ * listings.
+ */
+export function createEphemeralAgent<TOutputSchema extends AgentOutputSchema>(
+  config: AgentConfig<InferAgentOutputSchema<TOutputSchema>> & { outputSchema: TOutputSchema },
+): Agent<InferAgentOutputSchema<TOutputSchema>>;
+export function createEphemeralAgent<TOutput = never>(
+  config: AgentConfig<TOutput>,
+): Agent<TOutput>;
+export function createEphemeralAgent<TOutput = never>(
+  config: AgentConfig<TOutput>,
+): Agent<TOutput> {
+  return createAgent(config, { register: false });
+}
+
+function createAgent<TOutput = never>(
+  config: AgentConfig<TOutput>,
+  options: { register: boolean },
+): Agent<TOutput> {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
     throw toError(
       createError({
@@ -505,7 +531,9 @@ export function agent<TOutput = never>(config: AgentConfig<TOutput>): Agent<TOut
   });
 
   setEffectiveAgentSystem(agentInstance, augmentedSystem);
-  agentRegistry.register(id, agentInstance);
+  if (options.register) {
+    agentRegistry.register(id, agentInstance);
+  }
 
   return agentInstance;
 }
