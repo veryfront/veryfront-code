@@ -68,9 +68,9 @@ const SSR_PIPELINE: TransformPlugin[] = [
 
 const BROWSER_PIPELINE: TransformPlugin[] = [
   parsePlugin,
+  browserServerExportsStripPlugin, // Drop server-only hooks + their now-unused imports
   compilePlugin,
   cssStripPlugin, // Strip CSS imports before they hit import resolution
-  browserServerExportsStripPlugin, // Drop server-only hooks + their now-unused imports
   browserNodeBuiltinImportsPlugin, // node:* named imports -> namespace + destructure
   resolveImportsPlugin, // Unified import resolution
   finalizePlugin,

@@ -90,6 +90,26 @@ describe("ext-parser-babel", () => {
       assert(ast);
     });
 
+    it("parses decorators before and after export accepted by the bundler", async () => {
+      for (
+        const code of [
+          "@logged export class Store {}",
+          "export @logged class Store {}",
+        ]
+      ) {
+        const ast = await parser.parse({ code, filePath: "file.ts" });
+        assert(ast);
+      }
+    });
+
+    it("parses legacy TypeScript parameter decorators", async () => {
+      const ast = await parser.parse({
+        code: "class Store { load(@inject dep: Dependency) { return dep; } }",
+        filePath: "file.ts",
+      });
+      assert(ast);
+    });
+
     it("reports function directives without exposing Babel AST details", async () => {
       assertEquals(
         await parser.hasFunctionDirective?.({

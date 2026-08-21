@@ -50,27 +50,44 @@
  * getEnv(...)` used only by `getServerData` does not reach the browser), and
  * removes the hook-only imports that leaves unused. What it does NOT do: reason
  * about a value that is *also* read by browser code, or one reached only through
- * an existing bare side-effect import — those are kept. It is not a general
+ * an existing bare side-effect import. Those are kept. It is not a general
  * guarantee that every secret stays on the server, but a value used solely by a
  * server-only hook no longer leaks.
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors";
+import { getErrorCollector } from "#veryfront/observability";
+import { getLoaderFromPath, isGeneratedContentOutput } from "../../esm/transform-utils.ts";
+import { isTypeScript } from "../context.ts";
 import type { TransformContext, TransformPlugin } from "../types.ts";
 import { TransformStage } from "../types.ts";
-import {
-  COMPILE_SOURCE_MAP_DIRECTIVE_METADATA,
-  COMPILE_SOURCE_MAP_INPUT_METADATA,
-} from "./compile.ts";
 
 /** Exports that only ever execute on the server. */
-const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
+export const SERVER_ONLY_EXPORTS = ["getServerData", "getStaticData", "getStaticPaths"];
 
-// The compile stage runs before this pass and embeds its input in a development
-// sourcemap. Once a hook is stripped, any prior map is stale and may contain or
-// point at a verbatim copy of the server-only source. Match only an actual
-// trailing directive so source-map-like text inside authored strings survives.
+export interface StripServerOnlyExportsOptions {
+  /**
+   * Leave imports this pass did not make unused exactly as authored. This is
+   * only safe before a later compiler pass can erase unused named imports.
+   */
+  preserveUnownedUnusedImports?: boolean;
+  /**
+   * Convert authored source syntax diagnostics into the same tenant-owned
+   * compilation error shape as the compiler stage.
+   */
+  classifySourceParseErrors?: boolean;
+}
+
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+
+// This pass runs before compile, so no compile map exists yet. Checked-in build
+// output can still carry a stale map directive, and once a hook is stripped that
+// map may point at verbatim server-only source. Match only an actual trailing
+// directive so source-map-like text inside authored strings survives.
 const SOURCE_MAP_SUFFIX =
   /(^|\r?\n)[\t ]*\/\/[#@][\t ]*sourceMappingURL=[^"'`\s]+[\t ]*(?:\r?\n)?$/;
 
@@ -78,9 +95,52 @@ function dropSourceMapSuffix(code: string): string {
   return code.replace(SOURCE_MAP_SUFFIX, "$1");
 }
 
-function appendSourceMapDirective(code: string, directive: string): string {
-  const separator = code.length > 0 && !code.endsWith("\n") ? "\n" : "";
-  return `${code}${separator}${directive}\n`;
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    return undefined;
+  }
+  try {
+    const descriptor = ReflectGetOwnPropertyDescriptor(value, key);
+    if (
+      descriptor !== undefined &&
+      ReflectApply(ObjectPrototypeHasOwnProperty, descriptor, ["value"]) === true
+    ) {
+      return descriptor.value;
+    }
+  } catch {
+    // A hostile proxy cannot provide trusted source-diagnostic evidence.
+  }
+  return undefined;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isParserSourceDiagnostic(error: unknown): boolean {
+  const loc = readOwnDataProperty(error, "loc");
+  if (loc !== null && typeof loc === "object") return true;
+  if (readOwnDataProperty(error, "code") === "BABEL_PARSE_ERROR") return true;
+  return typeof readOwnDataProperty(error, "pos") === "number";
+}
+
+function createSourceParseCompilationError(
+  filePath: string | undefined,
+  cause: unknown,
+): Error {
+  const loader = getLoaderFromPath(filePath ?? "module.tsx");
+  const detail = `ESM transform failed for ${filePath ?? "this module"} ` +
+    `(loader: ${loader}): ${errorMessage(cause)}`;
+  return COMPILATION_ERROR.create({
+    detail,
+    cause,
+    context: {
+      tenantBuildFailure: !isGeneratedContentOutput(filePath) && isParserSourceDiagnostic(cause),
+    },
+  });
 }
 
 /** Source the stub nodes are lifted from, so no node shape is hand-built. */
@@ -110,13 +170,108 @@ function children(node: Node): Node[] {
   return found;
 }
 
+function isEcmaScriptIdentifier(name: string): boolean {
+  return /^[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*$/u.test(name);
+}
+
+function isIntrinsicJsxName(name: string): boolean {
+  if (/^[a-z]/.test(name)) return true;
+  return !isEcmaScriptIdentifier(name);
+}
+
+function jsxElementNameReadsBinding(node: Node): boolean {
+  if (node.type !== "JSXIdentifier") return true;
+  const name = nodeName(node);
+  return name !== null && !isIntrinsicJsxName(name);
+}
+
+function isReferenceChildKey(parent: Node, key: string): boolean {
+  if (parent.type === "ImportDeclaration" || parent.type === "ImportSpecifier") return false;
+  if (parent.type === "ImportDefaultSpecifier" || parent.type === "ImportNamespaceSpecifier") {
+    return false;
+  }
+  if (parent.type === "ImportAttribute") return false;
+  if (parent.type === "ExportAllDeclaration") return false;
+  if (parent.type === "ExportDefaultSpecifier" || parent.type === "ExportNamespaceSpecifier") {
+    return false;
+  }
+  if (parent.type === "ExportSpecifier") return key === "local";
+  if (
+    parent.type === "ExportNamedDeclaration" && isNode(parent.source) && key === "specifiers"
+  ) {
+    return false;
+  }
+  if (
+    (parent.type === "JSXOpeningElement" || parent.type === "JSXClosingElement") &&
+    key === "name" && isNode(parent.name) && !jsxElementNameReadsBinding(parent.name)
+  ) {
+    return false;
+  }
+  if (parent.type === "JSXAttribute" && key === "name") return false;
+  if (parent.type === "JSXNamespacedName") return false;
+  if (parent.type === "JSXMemberExpression" && key === "property") return false;
+  if (
+    (parent.type === "MemberExpression" || parent.type === "OptionalMemberExpression") &&
+    key === "property" && parent.computed !== true
+  ) {
+    return false;
+  }
+  if (
+    (parent.type === "ObjectProperty" || parent.type === "ObjectMethod" ||
+      parent.type === "ClassMethod" || parent.type === "ClassProperty" ||
+      parent.type === "ClassAccessorProperty" || parent.type === "ClassPrivateProperty" ||
+      parent.type === "ClassPrivateMethod") &&
+    key === "key" && parent.computed !== true
+  ) {
+    return false;
+  }
+  if (parent.type === "PrivateName" && key === "id") return false;
+  if (
+    (parent.type === "TSEnumDeclaration" || parent.type === "TSEnumMember") && key === "id"
+  ) {
+    return false;
+  }
+  if (parent.type === "TSQualifiedName" && key === "right") return false;
+  if (
+    (parent.type === "BreakStatement" || parent.type === "ContinueStatement" ||
+      parent.type === "LabeledStatement") && key === "label"
+  ) {
+    return false;
+  }
+  if (parent.type === "MetaProperty") return false;
+  if (parent.type === "Directive" || parent.type === "DirectiveLiteral") return false;
+  return true;
+}
+
+function referenceChildren(node: Node): Node[] {
+  const found: Node[] = [];
+
+  for (const [key, value] of Object.entries(node)) {
+    if (
+      key === "loc" || key === "leadingComments" || key === "trailingComments" ||
+      key === "comments" || key === "tokens"
+    ) {
+      continue;
+    }
+    if (!isReferenceChildKey(node, key)) continue;
+
+    if (Array.isArray(value)) {
+      for (const entry of value) if (isNode(entry)) found.push(entry);
+      continue;
+    }
+    if (isNode(value)) found.push(value);
+  }
+
+  return found;
+}
+
 /**
  * Walk every node in the tree. Returning `false` from `visit` skips the
  * subtree, which is how import statements stay out of the reference count.
  */
 function walk(node: Node, visit: (node: Node) => boolean | void): void {
   if (visit(node) === false) return;
-  for (const child of children(node)) walk(child, visit);
+  for (const child of referenceChildren(node)) walk(child, visit);
 }
 
 /**
@@ -199,6 +354,16 @@ function nodeName(value: unknown): string | null {
   if (!isNode(value)) return null;
   const name = value.name;
   return typeof name === "string" ? name : null;
+}
+
+function exportName(value: unknown): string | null {
+  return isNode(value) ? (stringLiteralText(value) ?? nodeName(value)) : null;
+}
+
+function mayNameServerOnlyExport(code: string): boolean {
+  if (!/\bexport\b/.test(code)) return false;
+  if (SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return true;
+  return code.includes("\\");
 }
 
 function bodyOf(ast: ASTNode): Node[] {
@@ -333,13 +498,14 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
     for (const specifier of Array.isArray(statement.specifiers) ? statement.specifiers : []) {
       if (!isNode(specifier)) continue;
       if (specifier.exportKind === "type") continue;
-      if (!isHook(nodeName(specifier.exported))) continue;
+      const exported = exportName(specifier.exported);
+      if (!isHook(exported)) continue;
 
       // `export { x as getServerData } from "./loader"` never binds `x` here,
       // so there is no body to empty and the module it points at is still
       // pulled into the graph.
       if (isNode(statement.source)) {
-        unhandled.push(`export { … as ${nodeName(specifier.exported)} } from …`);
+        unhandled.push(`export { … as ${exported} } from …`);
         continue;
       }
 
@@ -371,6 +537,14 @@ function exportedHookBindings(body: Node[]): { locals: Set<string>; unhandled: s
       if (patternBoundNames(id).some(isHook)) {
         unhandled.push("export const { … } = …");
       }
+    }
+  }
+
+  for (const statement of body) {
+    if (statement.type !== "TSImportEqualsDeclaration") continue;
+    const name = nodeName(statement.id);
+    if (name && (locals.has(name) || (statement.isExport === true && isHook(name)))) {
+      unhandled.push(`import ${name} = require(…)`);
     }
   }
 
@@ -536,6 +710,16 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
       continue;
     }
 
+    if (
+      statement.type === "TSImportEqualsDeclaration" && statement.isExport !== true &&
+      !isErasedTypeNode(statement)
+    ) {
+      const id = statement.id;
+      const name = nodeName(id);
+      if (name && isNode(id)) decls.push({ statement, names: [name], bindingIds: [id] });
+      continue;
+    }
+
     if (statement.type === "VariableDeclaration") {
       const variableDecls: ModuleScopeDecl[] = [];
 
@@ -654,7 +838,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
   };
 
   const visitChildren = (node: Node, scopes: LexicalScope[]): void => {
-    for (const child of children(node)) visit(child, scopes);
+    for (const child of referenceChildren(node)) visit(child, scopes);
   };
 
   const visitDecorators = (node: Node, scopes: LexicalScope[]): void => {
@@ -906,9 +1090,11 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
     if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
       if (node.type === "ClassDeclaration") bindPatternNames(scopes[0] ?? rootScope, node.id);
       visitDecorators(node, scopes);
-      const body = node.body;
-      if (isNode(body)) visitChildren(body, scopes);
       if (isNode(node.superClass)) visit(node.superClass, scopes);
+      const classScope: LexicalScope = { kind: "block", names: new Set() };
+      bindPatternNames(classScope, node.id);
+      const body = node.body;
+      if (isNode(body)) visitChildren(body, [classScope, ...scopes]);
       return;
     }
 
@@ -966,7 +1152,7 @@ function freeReferencedIdentifiers(root: Node): Set<string> {
 
 /**
  * Identifiers referenced inside the server-only hooks that are about to be
- * emptied — the seed of the hook's dependency closure. Must be collected before
+ * emptied. It is the seed of the hook's dependency closure. Must be collected before
  * the hook bodies are replaced with stubs. `targets` is the set of local hook
  * names (as passed to `emptyServerOnlyHooks`).
  */
@@ -1293,17 +1479,49 @@ function compilerNameRegistrations(body: Node[]): CompilerNameRegistration[] {
   return registrations;
 }
 
+const JSX_PRAGMA_RUNTIME = /@jsxRuntime\s+(\S+)/;
+const JSX_PRAGMA_FACTORY = /@jsx\s+(\S+)/;
+const JSX_PRAGMA_FRAGMENT = /@jsxFrag\s+(\S+)/;
+const DEFAULT_CLASSIC_FACTORY_ROOT = "React";
+
+function pragmaRootBinding(expression: string | undefined): string | null {
+  const root = expression?.split(/[.([]/)[0]?.trim();
+  return root && isEcmaScriptIdentifier(root) ? root : null;
+}
+
+function jsxPragmaBindings(ast: ASTNode): Set<string> {
+  const pinned = new Set<string>();
+  const comments = (ast as { comments?: unknown }).comments;
+  if (!Array.isArray(comments)) return pinned;
+
+  const texts: string[] = [];
+  for (const comment of comments) {
+    const text = isNode(comment) ? comment.value : undefined;
+    if (typeof text === "string" && text.includes("@jsx")) texts.push(text);
+  }
+  if (!texts.some((text) => JSX_PRAGMA_RUNTIME.exec(text)?.[1] === "classic")) return pinned;
+
+  for (const text of texts) {
+    for (const pattern of [JSX_PRAGMA_FACTORY, JSX_PRAGMA_FRAGMENT]) {
+      const root = pragmaRootBinding(pattern.exec(text)?.[1]);
+      if (root) pinned.add(root);
+    }
+  }
+  pinned.add(DEFAULT_CLASSIC_FACTORY_ROOT);
+  return pinned;
+}
+
 /**
  * Drop the top-level declarations the emptied server-only hooks closed over.
  *
  * Scope is the *dependency closure of the stripped hooks*, not "everything
  * unreferenced". A declaration is removed only when (a) it is reached from the
- * hook's own reference graph — seeded from `hookClosure` and grown through the
- * initialisers of declarations already removed — and (b) nothing surviving in
+ * hook's own reference graph, seeded from `hookClosure` and grown through the
+ * initialisers of declarations already removed, and (b) nothing surviving in
  * the module still references it. So `const API_KEY = getEnv(...)` read only by
  * `getServerData` goes (letting `dropUnusedImportBindings` drop the import
- * next), while an unrelated `const _ = bootClientAnalytics()` — never part of
- * the hook graph — is left intact along with its side effect. Iterates to a
+ * next), while an unrelated `const _ = bootClientAnalytics()`, never part of
+ * the hook graph, is left intact along with its side effect. Iterates to a
  * fixpoint: removing one binding can leave a helper it was the last user of
  * newly dead *within the closure*.
  */
@@ -1311,6 +1529,7 @@ function dropUnusedModuleScopeBindings(
   body: Node[],
   hookClosure: Set<string>,
   filePath: string | undefined,
+  pinned: Set<string>,
 ): Node[] {
   let current = body;
 
@@ -1336,7 +1555,7 @@ function dropUnusedModuleScopeBindings(
     const removedDecls: ModuleScopeDecl[] = [];
     for (const decl of decls) {
       const inClosure = decl.names.every((name) => hookClosure.has(name));
-      const unused = decl.names.every((name) => !referenced.has(name));
+      const unused = decl.names.every((name) => !referenced.has(name) && !pinned.has(name));
       if (!inClosure || !unused) continue;
 
       removedDecls.push(decl);
@@ -1417,7 +1636,12 @@ function importedBindings(statement: Node): string[] {
  * artifact, which is exactly what this stage strips. Other unused imports keep
  * the legacy conservative side-effect rewrite.
  */
-function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[] {
+function dropUnusedImportBindings(
+  body: Node[],
+  hookClosure: Set<string>,
+  pinned: Set<string>,
+  options: StripServerOnlyExportsOptions,
+): Node[] {
   // Import liveness must be scope-aware. A local enum member, namespace,
   // parameter property, or ordinary nested binding can share a spelling with
   // an import without reading that imported binding.
@@ -1430,26 +1654,69 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
     const bindings = importedBindings(statement);
     // Already a side-effect import: nothing to drop.
     if (bindings.length === 0) return true;
-    if (bindings.some((binding) => referenced.has(binding))) return true;
+    if (bindings.some((binding) => referenced.has(binding) || pinned.has(binding))) return true;
 
     const source = isNode(statement.source) ? statement.source.value : undefined;
     const isKnownDroppableSource = typeof source === "string" &&
       (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
-    // Two different reasons to delete rather than reduce, and one to reduce.
     // A node: or veryfront source is unsafe or pointless as a browser
-    // side-effect import whatever used it. A project-relative source is deleted
-    // only when the stripped hook owned every binding, because that module is
-    // reached solely through server-only code and a bare side-effect import
-    // would keep its whole transitive graph in the browser artifact. An import
-    // the hook never touched was already unused before this pass ran, so it
-    // keeps the legacy reduction and its side effects with it.
-    if (isKnownDroppableSource || bindings.every((binding) => hookClosure.has(binding))) {
+    // side-effect import whatever used it. Any other source is deleted when the
+    // stripped hook owned at least one binding and no surviving code reads any
+    // binding it declares. Keeping the rest of that statement would keep the
+    // imported module's transitive graph in the browser artifact, especially
+    // under JS/JSX loaders where compile cannot erase unused named imports.
+    if (isKnownDroppableSource || bindings.some((binding) => hookClosure.has(binding))) {
       return false;
     }
 
+    if (options.preserveUnownedUnusedImports === true) {
+      // The browser strip runs before compile. For TS and TSX, esbuild can
+      // erase genuinely unused named imports after this stage. Rewriting them
+      // to bare side-effect imports here would make erasable imports
+      // non-erasable.
+      return true;
+    }
+
+    // Direct helper callers and non-TypeScript browser inputs keep the legacy
+    // conservative behavior: leave the module evaluation but remove the
+    // binding. JS, JSX, and generated MDX compile output do not get unused
+    // import erasure from esbuild transform mode.
     statement.specifiers = [];
     return true;
   });
+}
+
+function retainLeadingComments(before: Node[], after: Node[]): Node[] {
+  const kept = new Set<Node>(after);
+  let orphaned: unknown[] = [];
+  let lastKept: Node | undefined;
+
+  for (const statement of before) {
+    if (!kept.has(statement)) {
+      const comments = statement.leadingComments;
+      if (Array.isArray(comments)) orphaned = [...orphaned, ...comments];
+      continue;
+    }
+
+    lastKept = statement;
+    if (orphaned.length === 0) continue;
+    const existing = Array.isArray(statement.leadingComments) ? statement.leadingComments : [];
+    statement.leadingComments = [
+      ...orphaned,
+      ...existing.filter((comment) => !orphaned.includes(comment)),
+    ];
+    orphaned = [];
+  }
+
+  if (orphaned.length > 0 && lastKept !== undefined) {
+    const existing = Array.isArray(lastKept.trailingComments) ? lastKept.trailingComments : [];
+    lastKept.trailingComments = [
+      ...existing.filter((comment) => !orphaned.includes(comment)),
+      ...orphaned,
+    ];
+  }
+
+  return after;
 }
 
 function setBody(ast: ASTNode, body: Node[]): void {
@@ -1482,14 +1749,16 @@ class ServerExportStripError extends Error {
  * Throws when the module names a server-only export and this pass cannot act on
  * it: no parser registered, the module does not parse, or the hook is exported
  * in a form with no local declaration to empty. Failing the build is the only
- * safe outcome — the alternative is shipping the loader to the browser.
+ * safe outcome. The alternative is shipping the loader to the browser.
  */
 export async function stripServerOnlyExports(
   code: string,
   filePath?: string,
+  options: StripServerOnlyExportsOptions = {},
 ): Promise<string> {
-  // Cheap pre-check: no mention of a hook means no parse.
-  if (!SERVER_ONLY_EXPORTS.some((name) => code.includes(name))) return code;
+  // Cheap pre-check: no plausible exported hook shape means no parse. Escaped
+  // export names require parsing because the runtime sees the normalized name.
+  if (!mayNameServerOnlyExport(code)) return code;
 
   const parser = tryResolve<CodeParser>("CodeParser");
   if (!parser) {
@@ -1504,14 +1773,19 @@ export async function stripServerOnlyExports(
     const parsedStubs = await parseStubs(parser);
     if (!parsedStubs) throw new Error("the stub source did not parse");
     stubs = parsedStubs;
+  } catch (error) {
+    throw new ServerExportStripError(filePath, errorMessage(error));
+  }
 
+  try {
     ast = await parser.parse({ code, filePath: filePath ?? "module.tsx" });
     body = bodyOf(ast);
   } catch (error) {
-    throw new ServerExportStripError(
-      filePath,
-      error instanceof Error ? error.message : String(error),
-    );
+    if (options.classifySourceParseErrors === true && isParserSourceDiagnostic(error)) {
+      getErrorCollector().addCompileError(errorMessage(error), filePath);
+      throw createSourceParseCompilationError(filePath, error);
+    }
+    throw new ServerExportStripError(filePath, errorMessage(error));
   }
 
   const { locals, unhandled } = exportedHookBindings(body);
@@ -1529,8 +1803,20 @@ export async function stripServerOnlyExports(
   // Drop the module-scope state the emptied hooks were the last user of, then
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
-  const pruned = dropUnusedModuleScopeBindings(body, hookClosure, filePath);
-  setBody(ast, dropUnusedImportBindings(pruned, hookClosure));
+  //
+  // Ordering dependency: this pass runs before compile. Browser TS and TSX
+  // inputs can leave unowned unused named imports authored so compile can erase
+  // them. Moving this pass back after compile must restore a later
+  // unused-import erasure step or revisit that policy.
+  const pinned = jsxPragmaBindings(ast);
+  const pruned = retainLeadingComments(
+    body,
+    dropUnusedModuleScopeBindings(body, hookClosure, filePath, pinned),
+  );
+  setBody(
+    ast,
+    retainLeadingComments(pruned, dropUnusedImportBindings(pruned, hookClosure, pinned, options)),
+  );
 
   const generated = await parser.generate(ast);
   return dropSourceMapSuffix(generated.code);
@@ -1538,18 +1824,15 @@ export async function stripServerOnlyExports(
 
 export const browserServerExportsStripPlugin: TransformPlugin = {
   name: "browser-server-exports-strip",
-  // After esbuild compile and CSS strip, before any import resolution, so the
-  // dropped bindings are never rewritten or pre-fetched.
-  stage: TransformStage.COMPILE + 0.6,
+  // After parse and before compile, so stripped hook bodies never reach
+  // esbuild keepNames or the compile sourcemap. The array order in
+  // BROWSER_PIPELINE must agree with this stage number because custom plugins
+  // cause the pipeline to be sorted by stage.
+  stage: TransformStage.PARSE + 0.5,
   condition: (ctx: TransformContext) => ctx.target === "browser",
-  transform: async (ctx: TransformContext) => {
-    const directive = ctx.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-    const compileInput = ctx.metadata.get(COMPILE_SOURCE_MAP_INPUT_METADATA);
-    ctx.metadata.delete(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-    ctx.metadata.delete(COMPILE_SOURCE_MAP_INPUT_METADATA);
-    const result = await stripServerOnlyExports(ctx.code, ctx.filePath);
-    return result === ctx.code && compileInput === ctx.code && typeof directive === "string"
-      ? appendSourceMapDirective(result, directive)
-      : result;
-  },
+  transform: (ctx: TransformContext) =>
+    stripServerOnlyExports(ctx.code, ctx.filePath, {
+      classifySourceParseErrors: true,
+      preserveUnownedUnusedImports: isTypeScript(ctx),
+    }),
 };

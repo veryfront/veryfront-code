@@ -41,7 +41,7 @@ function pickPlugins(filePath?: string): parser.ParserPlugin[] {
     "classProperties",
     "classPrivateProperties",
     "classPrivateMethods",
-    "decorators-legacy",
+    "decorators",
     "decoratorAutoAccessors",
     "deprecatedImportAssert",
     "dynamicImport",
@@ -57,6 +57,18 @@ function pickPlugins(filePath?: string): parser.ParserPlugin[] {
   return plugins;
 }
 
+function pickLegacyDecoratorPlugins(filePath?: string): parser.ParserPlugin[] {
+  return pickPlugins(filePath).map((plugin) =>
+    plugin === "decorators" ? "decorators-legacy" : plugin
+  );
+}
+
+function isBabelSyntaxError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = Object.getOwnPropertyDescriptor(error, "code")?.value;
+  return code === "BABEL_PARSER_SYNTAX_ERROR";
+}
+
 /**
  * Babel-backed parser with the same parse behavior as {@link BabelCodeParser},
  * without loading traversal, generation, or extension runtime dependencies.
@@ -64,12 +76,29 @@ function pickPlugins(filePath?: string): parser.ParserPlugin[] {
 export class BabelParseOnlyParser implements BabelParseOnlyParserContract {
   parse(options: ParseOptions): Promise<ASTNode> {
     const filePath = options.filePath?.toLowerCase() ?? "";
-    const ast = parser.parse(options.code, {
+    const parseOptions: parser.ParserOptions = {
       sourceType: "unambiguous",
       allowReturnOutsideFunction: options.allowReturnOutsideFunction === true ||
         /\.(?:cjs|js)$/.test(filePath),
       plugins: pickPlugins(parseablePath(options.filePath)),
-    });
+    };
+    const ast = (() => {
+      try {
+        return parser.parse(options.code, parseOptions);
+      } catch (error) {
+        if (!isBabelSyntaxError(error)) throw error;
+        try {
+          return parser.parse(options.code, {
+            ...parseOptions,
+            plugins: pickLegacyDecoratorPlugins(parseablePath(options.filePath)),
+          });
+        } catch {
+          // Preserve the primary parser's diagnostic when neither supported
+          // decorator dialect accepts the source.
+          throw error;
+        }
+      }
+    })();
     const node: { type: string } = ast;
     return Promise.resolve(node as ASTNode);
   }

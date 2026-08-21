@@ -1,18 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../plugins/__tests__/code-parser-setup.ts";
+import "../../mdx/compiler/__tests__/content-processor-setup.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
+import { getErrorCollector, resetErrorCollector } from "#veryfront/observability";
 import {
   browserServerExportsStripPlugin,
   moduleReferenceWalkers,
   stripServerOnlyExports,
 } from "./browser-server-exports-strip.ts";
-import { COMPILE_SOURCE_MAP_DIRECTIVE_METADATA, compilePlugin } from "./compile.ts";
 import { runPipeline } from "../index.ts";
 import { type TransformContext, TransformStage } from "../types.ts";
+import { VeryfrontError } from "#veryfront/errors";
 
 function assertNotIncludes(haystack: string, needle: string): void {
   assertEquals(haystack.includes(needle), false, `expected not to find ${needle} in:\n${haystack}`);
@@ -29,6 +36,38 @@ describe("browser-server-exports-strip", () => {
   });
 
   describe("emptying server-only hooks", () => {
+    it("runs before custom pre-compile browser plugins see server-only code", async () => {
+      const source = [
+        `const SERVER_SECRET = "secret-from-server-hook";`,
+        `export async function getServerData() {`,
+        `  return { props: { secret: SERVER_SECRET } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      let customPluginSawSecret = false;
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "strip-before-custom-plugin", dev: false, ssr: false },
+        {
+          plugins: [{
+            name: "pre-compile-observer",
+            stage: TransformStage.PARSE + 0.75,
+            transform: (ctx) => {
+              customPluginSawSecret = ctx.code.includes("SERVER_SECRET");
+              return ctx.code;
+            },
+          }],
+        },
+      );
+
+      assertEquals(customPluginSawSecret, false);
+      assertNotIncludes(result.code, "SERVER_SECRET");
+      assertNotIncludes(result.code, "secret-from-server-hook");
+    });
+
     it("empties an exported async function declaration body", async () => {
       const code = [
         `import { hashOf } from "../lib/uses-crypto.js";`,
@@ -216,6 +255,109 @@ describe("browser-server-exports-strip", () => {
 
       assertNotIncludes(result, `hashOf("hello")`);
       assertStringIncludes(result, "hashed");
+    });
+
+    it("does not keep a hook-only import because its name matches an intrinsic JSX tag", async () => {
+      const code = [
+        `import { table } from "../server/table.ts";`,
+        `export async function getServerData() {`,
+        `  return { props: { table: table() } };`,
+        `}`,
+        `export default function Page() {`,
+        `  return <table><tbody /></table>;`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertNotIncludes(result, "../server/table.ts");
+      assertEquals(occurrences(result, "table"), 2);
+      assertStringIncludes(result, "<table>");
+    });
+
+    it("keeps a JSX member object that browser code still reads", async () => {
+      const code = [
+        `import { motion } from "../client/motion.ts";`,
+        `const helper = motion;`,
+        `export async function getServerData() {`,
+        `  return { props: { helper } };`,
+        `}`,
+        `export default function Page() {`,
+        `  return <motion.div />;`,
+        `}`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, "../client/motion.ts");
+      assertStringIncludes(result, "motion.div");
+    });
+
+    it("keeps leading JSX import-source comments when the first statement is removed", async () => {
+      const code = [
+        `/** @jsxImportSource preact */`,
+        `import { loadSecret } from "../server/load-secret.ts";`,
+        `export async function getServerData() {`,
+        `  return { props: { secret: loadSecret() } };`,
+        `}`,
+        `export default function Page() { return <main />; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, "@jsxImportSource preact");
+      assertNotIncludes(result, "../server/load-secret.ts");
+    });
+
+    it("does not delete an unrelated top-level binding named like a class expression", async () => {
+      const code = [
+        `import { initClient } from "../client/init.ts";`,
+        `const Inner = initClient();`,
+        `const Factory = class Inner {`,
+        `  static make() { return Inner; }`,
+        `};`,
+        `export async function getServerData() {`,
+        `  return { props: { Factory } };`,
+        `}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertStringIncludes(result, "../client/init.ts");
+      assertStringIncludes(result, "const Inner = initClient()");
+      assertNotIncludes(result, "class Inner");
+    });
+
+    it("matches escaped server-only export names before deciding to skip parsing", async () => {
+      const escapedHookName = "get\\u0053erverData";
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const SECRET = getEnv("ORDERS_SECRET");`,
+        `function loadIt() { return { props: { SECRET } }; }`,
+        `export { loadIt as ${escapedHookName} };`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code, "page.tsx");
+
+      assertNotIncludes(result, "ORDERS_SECRET");
+      assertNotIncludes(result, "getEnv");
+      assertStringIncludes(result, "getServerData");
+    });
+
+    it("fails closed when a server hook is an import-equals alias", async () => {
+      const code = [
+        `import Loader = require("../server/loader.ts");`,
+        `export { Loader as getServerData };`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      await assertRejects(
+        () => stripServerOnlyExports(code, "page.ts"),
+        Error,
+        "import Loader = require",
+      );
     });
 
     // Emitting a module this pass could not analyse would put the loader and
@@ -529,7 +671,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      // The barrel is gone completely — not even a side-effect import survives.
+      // The barrel is gone completely. Not even a side-effect import survives.
       assertNotIncludes(result, `"veryfront"`);
       assertNotIncludes(result, `'veryfront'`);
       assertEquals(occurrences(result, "getEnv"), 0);
@@ -564,8 +706,8 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "thing"), 0);
     });
 
-    // Secret-leak fix: a module-scope value computed for a server-only hook —
-    // `const API_KEY = getEnv("SECRET_KEY")` read only inside getServerData —
+    // Secret-leak fix: a module-scope value computed for a server-only hook,
+    // `const API_KEY = getEnv("SECRET_KEY")` read only inside getServerData,
     // must not survive into the browser output. Emptying the hook leaves it
     // dead; the pass now drops it, which in turn drops the framework import.
     it("drops a module-scope server value used only by a stripped hook", async () => {
@@ -585,7 +727,7 @@ describe("browser-server-exports-strip", () => {
     });
 
     // Contrast pin: the same value is KEPT when the browser component also reads
-    // it — pruning is scoped to declarations nothing else references.
+    // it. Pruning is scoped to declarations nothing else references.
     it("keeps a module-scope value the client component also reads", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
@@ -603,7 +745,7 @@ describe("browser-server-exports-strip", () => {
     // Over-pruning guard: pruning is scoped to the stripped hook's closure, so
     // unrelated module-scope initialization with side effects (client analytics,
     // custom-element registration, instrumentation) sitting next to a server-only
-    // hook must survive — only the hook's own closure is removed.
+    // hook must survive. Only the hook's own closure is removed.
     it("keeps unrelated top-level side-effect declarations while dropping the hook's closure", async () => {
       const code = [
         `const clientInit = bootClientAnalytics();`,
@@ -659,7 +801,7 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "getEnv"), 0);
     });
 
-    // The hook can be an arrow assigned to `const` — its closure must be
+    // The hook can be an arrow assigned to `const`. Its closure must be
     // captured the same way as a `function` declaration before it is emptied.
     it("prunes the closure of a const-arrow hook form", async () => {
       const code = [
@@ -904,7 +1046,7 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "a, b");
     });
 
-    it("keeps side effects for ordinary imports with mixed hook-only bindings", async () => {
+    it("deletes a mixed import whose surviving specifier nothing reads", async () => {
       const code = [
         `import { initClient, loadSecret } from "./client-setup.ts";`,
         `export async function getServerData() { return { props: { token: loadSecret() } }; }`,
@@ -913,7 +1055,7 @@ describe("browser-server-exports-strip", () => {
 
       const result = await stripServerOnlyExports(code);
 
-      assertStringIncludes(result, `import "./client-setup.ts"`);
+      assertNotIncludes(result, "./client-setup.ts");
       assertEquals(occurrences(result, "initClient"), 0);
       assertEquals(occurrences(result, "loadSecret"), 0);
     });
@@ -1137,6 +1279,203 @@ describe("browser-server-exports-strip", () => {
       return { code, target, filePath: "pages/test.tsx", metadata: new Map() } as TransformContext;
     }
 
+    function pageWithUnownedUnusedImport(): string {
+      return [
+        `import { initClientMetrics } from "./client-metrics.ts";`,
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+    }
+
+    function assertNoClientMetricsImport(code: string): void {
+      assertNotIncludes(code, "client-metrics.ts");
+      assertEquals(occurrences(code, "initClientMetrics"), 0);
+    }
+
+    function assertBareClientMetricsImport(code: string): void {
+      assertEquals(/import\s*["'][^"']*client-metrics[^"']*["'];/.test(code), true);
+      assertNotIncludes(code, "import { initClientMetrics }");
+      assertEquals(occurrences(code, "initClientMetrics"), 0);
+    }
+
+    function assertOneBareProjectImport(code: string): void {
+      const sideEffectImports = code.match(/import\s*["'][^"']+["'];/g) ?? [];
+      assertEquals(sideEffectImports.length, 1, code);
+      assertStringIncludes(sideEffectImports[0] ?? "", "/_veryfront/fs/");
+      assertEquals(occurrences(code, "initClientMetrics"), 0);
+    }
+
+    it("accepts decorators after export before compiling browser modules", async () => {
+      const source = [
+        `function logged(value: unknown) { return value; }`,
+        `const SECRET = "SERVER_ONLY_DECORATOR_SECRET";`,
+        `export async function getServerData() { return { props: { secret: SECRET } }; }`,
+        `export @logged class PageModel {}`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/decorated.tsx",
+        "/project",
+        { projectId: "decorator-after-export-strip", dev: false, ssr: false },
+      );
+
+      assertNotIncludes(result.code, "SERVER_ONLY_DECORATOR_SECRET");
+      assertStringIncludes(result.code, "PageModel");
+    });
+
+    it("classifies authored browser parse errors as tenant compilation failures", async () => {
+      resetErrorCollector();
+      const source = [
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page( { return null; }`,
+      ].join("\n");
+
+      try {
+        const error = await assertRejects(
+          () =>
+            runPipeline(
+              source,
+              "/project/pages/broken.tsx",
+              "/project",
+              { projectId: "authored-strip-parse-error", dev: false, ssr: false },
+            ),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "compilation-error");
+        assertEquals(
+          (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+          true,
+        );
+
+        const compileErrors = getErrorCollector().getAll({ type: "compile" });
+        assertEquals(compileErrors.length, 1);
+        assertEquals(compileErrors[0]?.file, "/project/pages/broken.tsx");
+        assertStringIncludes(compileErrors[0]?.message ?? "", "Unexpected keyword");
+      } finally {
+        resetErrorCollector();
+      }
+    });
+
+    it("strips modules with legacy parameter decorators before compiling browser modules", async () => {
+      const source = [
+        `function inject(_target: unknown, _key: string, _index: number) {}`,
+        `const SECRET = "SERVER_ONLY_PARAMETER_DECORATOR_SECRET";`,
+        `export async function getServerData() { return { props: { secret: SECRET } }; }`,
+        `class PageModel { load(@inject dep: unknown) { return dep; } }`,
+        `export default function Page() { return PageModel; }`,
+      ].join("\n");
+
+      const result = await browserServerExportsStripPlugin.transform({
+        ...ctx(source, "browser"),
+        filePath: "/project/pages/parameter-decorator.tsx",
+      } as TransformContext);
+
+      assertNotIncludes(result, "SERVER_ONLY_PARAMETER_DECORATOR_SECRET");
+      assertStringIncludes(result, "PageModel");
+    });
+
+    it("strips modules with legacy decorator type arguments before compiling browser modules", async () => {
+      const source = [
+        `function logged<T>(value: T) { return value; }`,
+        `const SECRET = "SERVER_ONLY_GENERIC_DECORATOR_SECRET";`,
+        `export async function getServerData() { return { props: { secret: SECRET } }; }`,
+        `@logged<string> export class PageModel {}`,
+        `export default function Page() { return PageModel; }`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/generic-decorator.tsx",
+        "/project",
+        { projectId: "generic-decorator-strip", dev: false, ssr: false },
+      );
+
+      assertNotIncludes(result.code, "SERVER_ONLY_GENERIC_DECORATOR_SECRET");
+      assertStringIncludes(result.code, "PageModel");
+    });
+
+    it("does not claim tenant ownership of generated Markdown or MDX parse diagnostics", async () => {
+      const source = [
+        `export async function getServerData() { return { props: {} }; }`,
+        `export default function Page( { return null; }`,
+      ].join("\n");
+
+      for (const extension of ["md", "mdx"]) {
+        const error = await assertRejects(
+          async () =>
+            await browserServerExportsStripPlugin.transform({
+              ...ctx(source, "browser"),
+              filePath: `/project/pages/generated.${extension}`,
+            } as TransformContext),
+          VeryfrontError,
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertEquals(error.slug, "compilation-error");
+        assertEquals(
+          (error.context as { tenantBuildFailure?: unknown } | undefined)?.tenantBuildFailure,
+          false,
+        );
+      }
+    });
+
+    it("keeps missing parser failures framework owned", async () => {
+      const previous = tryResolve<CodeParser>("CodeParser");
+      unregister("CodeParser");
+
+      try {
+        const error = await assertRejects(
+          async () =>
+            await browserServerExportsStripPlugin.transform(
+              ctx(`export async function getServerData() { return { props: {} }; }`, "browser"),
+            ),
+          Error,
+        );
+
+        assertEquals(error instanceof VeryfrontError, false);
+        assertStringIncludes((error as Error).message, "no CodeParser extension is registered");
+      } finally {
+        if (previous !== undefined) register("CodeParser", previous);
+      }
+    });
+
+    it("keeps parser-internal failures framework owned", async () => {
+      const parser = tryResolve<CodeParser>("CodeParser");
+      if (!parser) throw new Error("no CodeParser extension is registered");
+
+      const failingParser: CodeParser = {
+        parse: (options) => {
+          if (options.code.includes("__vfStub")) return parser.parse(options);
+          return Promise.reject(new Error("parser exploded internally"));
+        },
+        traverse: (ast, visitor) => parser.traverse(ast, visitor),
+        generate: (ast, options) => parser.generate(ast, options),
+        injectJsxNodePositions: (source, options) => parser.injectJsxNodePositions(source, options),
+        hasFunctionDirective: parser.hasFunctionDirective?.bind(parser),
+        findStaticCommonJsImports: parser.findStaticCommonJsImports?.bind(parser),
+      };
+      register("CodeParser", failingParser);
+
+      try {
+        const error = await assertRejects(
+          async () =>
+            await browserServerExportsStripPlugin.transform(
+              ctx(`export async function getServerData() { return { props: {} }; }`, "browser"),
+            ),
+          Error,
+        );
+
+        assertEquals(error instanceof VeryfrontError, false);
+        assertStringIncludes((error as Error).message, "parser exploded internally");
+      } finally {
+        register("CodeParser", parser);
+      }
+    });
+
     it("drops the server-only import chain from the client artifact", async () => {
       const code = [
         `import { hashOf } from "@/lib/uses-crypto";`,
@@ -1154,7 +1493,52 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "TestD as default");
     });
 
-    it("does not retain a pre-strip inline source map", async () => {
+    it("lets compile erase unrelated unused TS and TSX named imports", async () => {
+      for (const extension of ["ts", "tsx"]) {
+        const result = await runPipeline(
+          pageWithUnownedUnusedImport(),
+          `/project/pages/test.${extension}`,
+          "/project",
+          { projectId: `unused-import-${extension}`, dev: false, ssr: false },
+        );
+
+        assertNoClientMetricsImport(result.code);
+      }
+    });
+
+    it("retains only a side-effect import for unrelated unused JS and JSX imports", async () => {
+      for (const extension of ["js", "jsx"]) {
+        const result = await runPipeline(
+          pageWithUnownedUnusedImport(),
+          `/project/pages/test.${extension}`,
+          "/project",
+          { projectId: `unused-import-${extension}`, dev: false, ssr: false },
+        );
+
+        assertBareClientMetricsImport(result.code);
+      }
+    });
+
+    it("retains only a side-effect import for unrelated unused generated MDX imports", async () => {
+      const source = [
+        `import { initClientMetrics } from "./client-metrics.ts";`,
+        ``,
+        `export async function getServerData() { return { props: {} }; }`,
+        ``,
+        `# Dashboard`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.mdx",
+        "/project",
+        { projectId: "unused-import-mdx", dev: false, ssr: false },
+      );
+
+      assertOneBareProjectImport(result.code);
+    });
+
+    it("builds the dev compile map from stripped browser input", async () => {
       const source = [
         `import { getEnv } from "veryfront";`,
         `const KEY = getEnv("SERVER_VALUE");`,
@@ -1162,15 +1546,18 @@ describe("browser-server-exports-strip", () => {
         `export async function getServerData() { return { props: { key: KEY } }; }`,
         `export default function Page() { return CLIENT_MARKER; }`,
       ].join("\n");
-      const compileContext = {
-        ...ctx(source, "browser"),
-        dev: true,
-        jsxImportSource: "react",
-      };
-      const compiled = await compilePlugin.transform(compileContext);
-      const directive = compileContext.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA);
-      assertEquals(typeof directive, "string");
-      const match = String(directive).match(
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/test.tsx",
+        "/project",
+        { projectId: "source-map-after-strip", dev: true, ssr: false },
+      );
+
+      assertNotIncludes(result.code, "SERVER_VALUE");
+      assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result.code, "sourceMappingURL=data:text/plain;base64,AAAA");
+      const match = result.code.match(
         /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/]+={0,2})/,
       );
       assertEquals(match === null, false);
@@ -1179,55 +1566,28 @@ describe("browser-server-exports-strip", () => {
       };
       assertEquals(
         sourceMap.sourcesContent?.some((content) => content.includes("SERVER_VALUE")),
-        true,
+        false,
       );
-
-      const result = await browserServerExportsStripPlugin.transform({
-        ...compileContext,
-        code: compiled,
-      });
-
-      assertNotIncludes(result, "SERVER_VALUE");
-      assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
-      assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
     });
 
-    it("removes a pre-strip inline map before an appended MDX export", async () => {
+    it("removes a pre-existing source map directive after stripping", async () => {
       const source = [
         `import { getEnv } from "veryfront";`,
         `const KEY = getEnv("SERVER_VALUE");`,
         `const CLIENT_MARKER = "//# sourceMappingURL=data:text/plain;base64,AAAA";`,
-        `const MDXLayout = () => CLIENT_MARKER;`,
         `export async function getServerData() { return { props: { key: KEY } }; }`,
+        `export default function Page() { return CLIENT_MARKER; }`,
+        `//# sourceMappingURL=data:application/json;base64,AAAA`,
       ].join("\n");
-      const compileContext = {
-        ...ctx(source, "browser"),
-        filePath: "pages/test.mdx",
-        dev: true,
-        jsxImportSource: "react",
-      };
-      const compiled = await compilePlugin.transform(compileContext);
-      assertEquals(
-        String(compileContext.metadata.get(COMPILE_SOURCE_MAP_DIRECTIVE_METADATA)).includes(
-          "sourceMappingURL=data:application/json;base64,",
-        ),
-        true,
-      );
-      assertNotIncludes(compiled, "sourceMappingURL=data:application/json;base64,");
-      assertStringIncludes(compiled, "export { MDXLayout };");
 
-      const result = await browserServerExportsStripPlugin.transform({
-        ...compileContext,
-        code: compiled,
-      });
+      const result = await browserServerExportsStripPlugin.transform(ctx(source, "browser"));
 
       assertNotIncludes(result, "SERVER_VALUE");
       assertNotIncludes(result, "sourceMappingURL=data:application/json;base64,");
       assertStringIncludes(result, "sourceMappingURL=data:text/plain;base64,AAAA");
-      assertStringIncludes(result, "export { MDXLayout };");
     });
 
-    it("removes the compile map after an intermediate plugin appends code", async () => {
+    it("keeps the stripped compile map after an intermediate plugin appends code", async () => {
       const source = [
         `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
         `export async function getServerData() { return { props: { key: KEY } }; }`,
@@ -1249,11 +1609,22 @@ describe("browser-server-exports-strip", () => {
       );
 
       assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
-      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
       assertStringIncludes(result.code, "export const APPENDED = true;");
+      const match = result.code.match(
+        /\/\/[#@]\s*sourceMappingURL=data:application\/json;base64,([A-Za-z0-9+/]+={0,2})/,
+      );
+      assertEquals(match === null, false);
+      const sourceMap = JSON.parse(atob(match?.[1] ?? "")) as {
+        sourcesContent?: string[];
+      };
+      assertEquals(
+        sourceMap.sourcesContent?.some((content) => content.includes("SERVER_ONLY_HOOK_SOURCE")),
+        false,
+      );
     });
 
-    it("does not confuse a copied map string with the compile map comment", async () => {
+    it("allows a later plugin to copy the stripped compile map string", async () => {
       const source = [
         `const KEY = "SERVER_ONLY_HOOK_SOURCE";`,
         `export async function getServerData() { return { props: { key: KEY } }; }`,
@@ -1283,8 +1654,8 @@ describe("browser-server-exports-strip", () => {
       );
 
       assertNotIncludes(result.code, "SERVER_ONLY_HOOK_SOURCE");
-      assertNotIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
-      assertNotIncludes(result.code, "COPIED_COMPILE_MAP");
+      assertStringIncludes(result.code, "sourceMappingURL=data:application/json;base64,");
+      assertStringIncludes(result.code, "COPIED_COMPILE_MAP");
       assertStringIncludes(result.code, "export const APPENDED = true;");
     });
 
@@ -1504,9 +1875,10 @@ export const v = live();`,
         const result = await stripServerOnlyExports(code, "/project/app/page.tsx");
 
         // The binding goes; the module specifier is demoted to a side-effect
-        // import by dropUnusedImportBindings, which is pre-existing behaviour
+        // import by dropUnusedImportBindings, which is pre-existing behavior
         // and not what this case is about.
         assertNotIncludes(result, "{ audit }");
+        assertStringIncludes(result, `import "./audit.ts"`);
         assertNotIncludes(result, 'getEnv("SECRET")');
       });
 
@@ -1784,10 +2156,7 @@ export function hook() {
         const result = await stripServerOnlyExports(code, "page.tsx");
 
         assertNotIncludes(result, "{ secretOnly, Low }");
-        // A mixed project import keeps its pre-existing side-effect contract.
-        // The TypeScript fix removes the false live binding; it does not prove
-        // that evaluating the imported module is safe to delete.
-        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertNotIncludes(result, "../lib/server-only.ts");
         assertStringIncludes(result, "Level.Low");
       });
 
@@ -1867,7 +2236,7 @@ export function hook() {
         const result = await stripServerOnlyExports(code, "page.tsx");
 
         assertNotIncludes(result, "{ secretOnly, Alias }");
-        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertNotIncludes(result, "../lib/server-only.ts");
         assertStringIncludes(result, "import Alias = ClientNS");
       });
 
@@ -1901,7 +2270,7 @@ export function hook() {
         const result = await stripServerOnlyExports(code, "page.tsx");
 
         assertNotIncludes(result, "{ secretOnly, Alias }");
-        assertStringIncludes(result, `import "../lib/server-only.ts"`);
+        assertNotIncludes(result, "../lib/server-only.ts");
         assertStringIncludes(result, "enum Alias");
       });
 
