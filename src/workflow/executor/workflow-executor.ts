@@ -294,6 +294,10 @@ export class WorkflowExecutor {
 
     if (run.status !== "waiting" && run.status !== "pending" && run.status !== "running") {
       throw ORCHESTRATION_ERROR.create({
+        // Asking to resume a run that already finished is the caller being out
+        // of date, not the orchestrator failing. Surfaced over HTTP it has to
+        // read as a conflict, or a stale retry button reports a server error.
+        status: 409,
         detail: `Cannot resume workflow run "${runId}": current status is "${run.status}". ` +
           `Only runs in "waiting", "pending", or "running" status can be resumed.`,
       });

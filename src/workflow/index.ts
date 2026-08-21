@@ -154,3 +154,9 @@ export { getWorkflowTenant } from "./executor/step-executor.ts";
 // Context-Aware API
 // =============================================================================
 export { api } from "./api.ts";
+
+// =============================================================================
+// HTTP surface for the React hooks
+// =============================================================================
+export { createWorkflowHandler } from "./http/handler.ts";
+export type { WorkflowHandlerOptions, WorkflowHandlers } from "./http/handler.ts";

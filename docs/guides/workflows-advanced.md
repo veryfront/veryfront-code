@@ -102,6 +102,37 @@ function WorkflowStatus({ runId }: { runId: string }) {
 subscribes to `${apiBase}/runs/${runId}` and keeps `status` and `nodeStates` in
 sync with the server's run state.
 
+### Serve the hook routes
+
+Nothing serves those paths by default. Mount `createWorkflowHandler` on a
+catch-all route to answer all of them at once:
+
+```ts theme={null}
+// app/api/workflows/[...path]/route.ts
+import { createWorkflowHandler } from "veryfront/workflow";
+import { workflows } from "../../../../lib/workflows.ts";
+
+export const { GET, POST } = createWorkflowHandler(workflows);
+```
+
+Pass the same client the rest of the app starts workflows with. A client created
+inside the route file would carry its own in-memory backend and would not see
+those runs.
+
+The handler covers every path the hooks call:
+
+| Method | Path | Hook |
+| ------ | ---- | ---- |
+| `POST` | `/{workflowId}/start` | `useWorkflowStart` |
+| `GET` | `/runs` | `useWorkflowList` |
+| `GET` | `/runs/{runId}` | `useWorkflow` |
+| `POST` | `/runs/{runId}/cancel` | `useWorkflow` |
+| `POST` | `/runs/{runId}/retry` | `useWorkflow` |
+| `GET`, `POST` | `/runs/{runId}/approvals/{approvalId}` | `useApproval` |
+
+Mounting somewhere else means telling both sides. Pass `basePath` to the handler
+and the matching `apiBase` to every hook.
+
 ## Verify it worked
 
 For loops, run the workflow with an input that triggers the loop condition (a
@@ -113,6 +144,8 @@ For blob storage, configure an adapter, run a workflow that writes a large
 artifact, and confirm the storage backend received it. The step output should
 reference a blob handle rather than the inline payload.
 
-For React hooks, render the dashboard component above, select **Run Pipeline**,
-and confirm the status string moves through `running` to `completed` while
-individual `nodeStates` entries update.
+For React hooks, mount the handler as shown above, render the dashboard
+component, select **Run Pipeline**, and confirm the status string moves through
+`running` to `completed` while individual `nodeStates` entries update. A status
+that never leaves its initial value usually means the hook routes are not
+mounted, so every poll is answering 404.
