@@ -13,18 +13,18 @@
  * @example Structured output
  * ```ts
  * import { generate } from "veryfront/llm";
- * import { defineSchema } from "veryfront/schemas";
+ * import { defineSchema, lazySchema } from "veryfront/schemas";
  *
  * const { object } = await generate({
  *   input: "The checkout button does nothing on mobile Safari.",
  *   system: "Classify the support ticket.",
- *   outputSchema: defineSchema((v) =>
+ *   outputSchema: lazySchema(defineSchema((v) =>
  *     v.object({
  *       category: v.enum(["bug", "billing", "feature"] as const),
  *       reasoning: v.string(),
  *       confidence: v.number().min(0).max(100),
  *     })
- *   )(),
+ *   )),
  * });
  *
  * object.category; // "bug" | "billing" | "feature"
