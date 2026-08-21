@@ -4834,7 +4834,7 @@ describe("anthropic output_config schema closure", () => {
       required: ["user"],
     });
 
-    const user = (schema.properties as Record<string, Record<string, unknown>>).user;
+    const user = (schema.properties as Record<string, Record<string, unknown>>).user!;
     assertEquals(user.additionalProperties, false);
   });
 
@@ -4846,7 +4846,7 @@ describe("anthropic output_config schema closure", () => {
       },
     });
 
-    const rows = (schema.properties as Record<string, Record<string, unknown>>).rows;
+    const rows = (schema.properties as Record<string, Record<string, unknown>>).rows!;
     assertEquals((rows.items as Record<string, unknown>).additionalProperties, false);
   });
 
@@ -4892,7 +4892,7 @@ describe("anthropic output_config schema closure", () => {
     });
 
     const branch = (schema.allOf as Record<string, unknown>[])[0]!;
-    const user = (branch.properties as Record<string, Record<string, unknown>>).user;
+    const user = (branch.properties as Record<string, Record<string, unknown>>).user!;
     assertEquals(user.additionalProperties, false);
     assertEquals(Object.hasOwn(branch, "additionalProperties"), false);
   });
@@ -4916,7 +4916,7 @@ describe("anthropic output_config schema closure", () => {
         keyword,
       );
     }
-    const dependent = (schema.dependentSchemas as Record<string, Record<string, unknown>>).name;
+    const dependent = (schema.dependentSchemas as Record<string, Record<string, unknown>>).name!;
     assertEquals(dependent.additionalProperties, false);
   });
 
@@ -4930,6 +4930,48 @@ describe("anthropic output_config schema closure", () => {
     });
 
     assertEquals(schema.additionalProperties, false);
+  });
+
+  it("does not close a $ref holder, whose properties live elsewhere", () => {
+    // `additionalProperties` only sees the `properties` of the schema object
+    // carrying it. A `$ref` declares none of its own, so closing it rejects
+    // every property the target defines -- a valid schema turned into one that
+    // validates nothing.
+    const schema = buildWithOutputSchema({
+      $defs: { Person: { type: "object", properties: { name: { type: "string" } } } },
+      $ref: "#/$defs/Person",
+      type: "object",
+    });
+
+    assertEquals(Object.hasOwn(schema, "additionalProperties"), false);
+    const person = (schema.$defs as Record<string, Record<string, unknown>>).Person!;
+    assertEquals(person.additionalProperties, false);
+  });
+
+  it("keeps traversing when Set and Array intrinsics are replaced", () => {
+    // This module captures its intrinsics on purpose (see the top of the file).
+    // A walker calling through the live prototypes can be silently disabled by
+    // a patched `Set.prototype.has`, leaving every nested object open.
+    const nativeHas = Set.prototype.has;
+    const nativeIsArray = Array.isArray;
+    try {
+      Set.prototype.has = () => false;
+      Array.isArray = ((_value: unknown) => false) as unknown as typeof Array.isArray;
+
+      const schema = buildWithOutputSchema({
+        type: "object",
+        properties: {
+          user: { type: "object", properties: { name: { type: "string" } } },
+        },
+      });
+
+      const user = (schema.properties as Record<string, Record<string, unknown>>).user!;
+      assertEquals(user.additionalProperties, false);
+      assertEquals(schema.additionalProperties, false);
+    } finally {
+      Set.prototype.has = nativeHas;
+      Array.isArray = nativeIsArray;
+    }
   });
 
   it("leaves an explicitly declared additionalProperties alone", () => {
@@ -4970,7 +5012,7 @@ describe("anthropic output_config schema closure", () => {
     });
 
     const branches = (schema.properties as Record<string, Record<string, unknown>>)
-      .user.anyOf as Record<string, unknown>[];
+      .user!.anyOf as Record<string, unknown>[];
     assertEquals(branches[0]!.additionalProperties, false);
     assertEquals(branches[1]!.additionalProperties, undefined);
   });
@@ -4994,7 +5036,7 @@ describe("anthropic output_config schema closure", () => {
       properties: { value: { type: ["string", "null"] } },
     });
 
-    const value = (schema.properties as Record<string, Record<string, unknown>>).value;
+    const value = (schema.properties as Record<string, Record<string, unknown>>).value!;
     assertEquals(Object.hasOwn(value, "additionalProperties"), false);
   });
 
@@ -5009,7 +5051,7 @@ describe("anthropic output_config schema closure", () => {
       required: ["meta"],
     });
 
-    const meta = (schema.properties as Record<string, Record<string, unknown>>).meta;
+    const meta = (schema.properties as Record<string, Record<string, unknown>>).meta!;
     assertEquals(meta.additionalProperties, { type: "string" });
     assertEquals(schema.additionalProperties, false);
   });
@@ -5024,7 +5066,7 @@ describe("anthropic output_config schema closure", () => {
       },
     });
 
-    const config = (schema.properties as Record<string, Record<string, unknown>>).config;
+    const config = (schema.properties as Record<string, Record<string, unknown>>).config!;
     assertEquals(config.default, { type: "object", properties: {} });
   });
 });

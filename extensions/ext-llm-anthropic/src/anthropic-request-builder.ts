@@ -2315,30 +2315,27 @@ const SCHEMA_VALUE_KEYWORDS = new Set([
  * across providers and calls, so closing it for Anthropic must not mutate it.
  */
 function closeObjectSchemas(schema: unknown, closeSelf = true): unknown {
-  if (Array.isArray(schema)) return schema.map((entry) => closeObjectSchemas(entry, closeSelf));
+  if (ArrayIsArray(schema)) {
+    const entries: unknown[] = [];
+    for (const entry of schema) entries[entries.length] = closeObjectSchemas(entry, closeSelf);
+    return entries;
+  }
   if (typeof schema !== "object" || schema === null) return schema;
 
   const source = schema as Record<string, unknown>;
   const result: Record<string, unknown> = {};
 
-  for (const [key, value] of Object.entries(source)) {
-    if (SCHEMA_MAP_KEYWORDS.has(key)) {
-      result[key] = typeof value === "object" && value !== null && !Array.isArray(value)
-        ? Object.fromEntries(
-          Object.entries(value as Record<string, unknown>).map((
-            [name, subschema],
-          ) => [name, closeObjectSchemas(subschema)]),
-        )
-        : value;
+  for (const key of objectKeys(source)) {
+    const value = source[key];
+    if (hasSetValue(SCHEMA_MAP_KEYWORDS, key)) {
+      result[key] = closeSchemaMap(value);
       continue;
     }
-    if (COMPOSITION_LIST_KEYWORDS.has(key)) {
-      result[key] = Array.isArray(value)
-        ? value.map((branch) => closeObjectSchemas(branch, false))
-        : closeObjectSchemas(value, false);
+    if (hasSetValue(COMPOSITION_LIST_KEYWORDS, key)) {
+      result[key] = closeObjectSchemas(value, false);
       continue;
     }
-    if (SCHEMA_LIST_KEYWORDS.has(key) || SCHEMA_VALUE_KEYWORDS.has(key)) {
+    if (hasSetValue(SCHEMA_LIST_KEYWORDS, key) || hasSetValue(SCHEMA_VALUE_KEYWORDS, key)) {
       result[key] = closeObjectSchemas(value);
       continue;
     }
@@ -2349,8 +2346,27 @@ function closeObjectSchemas(schema: unknown, closeSelf = true): unknown {
   // walk when a caller writes it explicitly as `undefined`, but JSON drops it
   // on the way to the provider -- so honoring its presence would emit exactly
   // the open schema Anthropic rejects.
-  if (closeSelf && isObjectTyped(source.type) && source.additionalProperties === undefined) {
+  //
+  // A `$ref` holder is skipped: `additionalProperties` only ever sees the
+  // `properties` of the schema object carrying it, and a `$ref` declares none
+  // of its own, so closing it rejects every property the target defines.
+  if (
+    closeSelf && isObjectTyped(source.type) &&
+    source.additionalProperties === undefined &&
+    source.$ref === undefined
+  ) {
     result.additionalProperties = false;
+  }
+  return result;
+}
+
+/** Walk a keyword whose value maps names to subschemas. */
+function closeSchemaMap(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || ArrayIsArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const name of objectKeys(source)) {
+    result[name] = closeObjectSchemas(source[name]);
   }
   return result;
 }
