@@ -79,9 +79,7 @@ function describe(value: unknown): string {
 }
 
 /** Whether a value is a plain `{}` object rather than a class instance. */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null) return false;
-  if (typeof value !== "object") return false;
+function isPlainObject(value: JsonTraversalReference): boolean {
   try {
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
@@ -92,7 +90,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function describeToJsonValue(value: unknown): string {
   if (typeof value === "bigint") return "BigInt";
-  if (typeof value === "object" && value !== null) {
+  if (typeof value === "object") {
     try {
       Date.prototype.getTime.call(value);
       return "Date";
