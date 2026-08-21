@@ -16,14 +16,14 @@
  * used only by a server-only hook that this pass just emptied. Nor can its
  * tree-shaker own the rest of the job (verified against esbuild 0.28.1, both
  * modes): a destructured module-scope value (`const { a } = getEnv(…)`) is
- * never shaken — even `@__PURE__`-annotated — because destructuring may
+ * never shaken, even `@__PURE__`-annotated ones, because destructuring may
  * trigger getters or throw; an impure hook-only initialiser is
  * indistinguishable from client init (`getEnv(…)` vs `bootClientAnalytics()`)
  * without exactly the closure analysis below; keepNames registration calls
  * pin hook-only helpers alive; and no esbuild mode reduces an unrelated
  * unused import to a bare side-effect import while deleting a hook-owned one.
- * The distinction that drives every one of those decisions — membership in
- * the stripped hook's dependency closure — is not expressible in a bundler's
+ * The distinction that drives every one of those decisions, membership in
+ * the stripped hook's dependency closure, is not expressible in a bundler's
  * side-effect model, so this stage computes it itself.
  *
  * The pass runs on the AST from the `CodeParser` contract, for the same reason
@@ -34,13 +34,13 @@
  *
  * Liveness is computed as *reachability over the module's binding graph*, not
  * as "is this name mentioned somewhere else". The nodes are every module-scope
- * binding — including a `var` that hoists out of a block, `if`, `try`,
+ * binding, including a `var` that hoists out of a block, `if`, `try`,
  * `switch`, loop or label, which binds module scope exactly as a top-level
  * declaration does. The roots are what the module still *runs*: its surviving
  * exports, the client component, and any side-effectful top-level statement,
  * which keeps whatever it references. A declaration that merely introduces a
- * name — a function, a `var dead = helper`, a class with no decorator, computed
- * key or static initialiser — runs nothing, so it is elided from the roots and
+ * name (a function, a `var dead = helper`, a class with no decorator, computed
+ * key or static initialiser) runs nothing, so it is elided from the roots and
  * cannot vouch for anything: a private helper the module never calls used to be
  * treated as unconditionally live and kept `const KEY = getEnv(…)` and its
  * `node:crypto` import in the browser artifact.
@@ -49,7 +49,7 @@
  * "what runs at module load" and "what this binding reads" are different
  * questions. A declaration roots only what it *evaluates*: `const handler =
  * memo(() => KEY)` calls `memo` when the module loads, and reads `KEY` only if
- * something calls the arrow — which needs `handler`. So the arrow's body is an
+ * something calls the arrow, which needs `handler`. So the arrow's body is an
  * edge out of `handler`, not a root, and a dead declaration can no longer
  * vouch for a secret buried in a callback it never runs. An immediately
  * invoked function is not deferred; nor is a class static block, a static
@@ -62,8 +62,8 @@
  * and a declarator's reads of its own pattern's siblings all spell a name
  * without reading the binding behind it.
  *
- * Deciding this per declaration instead — asking each one whether its name is
- * mentioned elsewhere — cannot see a cycle. Two hook-only helpers that call
+ * Deciding this per declaration instead, asking each one whether its name is
+ * mentioned elsewhere, cannot see a cycle. Two hook-only helpers that call
  * each other are each the other's last consumer, so neither is ever removable
  * and the secret they close over ships with them. Reachability drops the whole
  * unreachable component however long it is.
@@ -98,7 +98,7 @@
  * *reassigns* (`export let getServerData = stub; getServerData = realLoader`),
  * and one it *redeclares* through a hoisted `var` below the top level
  * (`export var getServerData = stub; if (cond) { var getServerData =
- * realLoader }`) — stubbing the declarator would leave the later write to put
+ * realLoader }`): stubbing the declarator would leave the later write to put
  * the real loader back at module-evaluation time, so the build stops rather
  * than shipping the declaration. It covers two more cases on the other side of
  * the analysis: a binding the graph proves dead but that sits in a position
@@ -119,11 +119,11 @@
  * they cannot.
  *
  * What this pass does: it empties hook bodies, drops every module-scope binding
- * in the hooks' dependency closure that nothing surviving can reach — including
+ * in the hooks' dependency closure that nothing surviving can reach, including
  * destructured ones and ones a nested `var` hoists up, so neither
  * `const API_KEY = getEnv(...)` nor `const { apiKey } = getEnv(...)` nor
  * `if (cond) { var API_KEY = getEnv(...) }` used only by `getServerData`
- * reaches the browser — and removes the hook-only imports that leaves unused.
+ * reaches the browser, and removes the hook-only imports that leaves unused.
  * Unreachable code holding those bindings goes with them, however far it sits
  * from the hook: a private helper nothing calls, a dead class, a dead helper
  * cycle, a `if (…) { var debug = … }` dev aid.
@@ -132,7 +132,7 @@
  * removes bindings, never side effects, so a value that surviving
  * module-evaluation code reads is kept however server-only it looks. That
  * covers a value browser code also reads, one a bare top-level statement
- * references, and — the case that surprises — a declaration nothing reaches
+ * references, and (the case that surprises) a declaration nothing reaches
  * whose own initialiser still runs and reads the value while running:
  * `const boot = initAnalytics(KEY)`, `Object.defineProperty(box, "run", …)`,
  * `const dead = new Wrapper(KEY)`, `` tag`…${KEY}` ``, `const { a } = KEY`,
@@ -640,7 +640,7 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
  * A destructuring declarator (`const { apiKey } = getEnv(...)`) is a single
  * site carrying every name its pattern binds: it is removed only when *all* of
  * them are dead, so a pattern the client still partly reads survives whole.
- * This is what stops a destructured server value from shipping — esbuild's
+ * This is what stops a destructured server value from shipping: esbuild's
  * tree-shaker never removes a destructuring of a call, even a
  * `@__PURE__`-annotated one, because the pattern itself may trigger getters or
  * throw.
@@ -648,7 +648,7 @@ function referencedIdentifiers(body: Node[], excluded?: WeakSet<Node>): Set<stri
 interface BindingSite {
   /** Every name this site binds. */
   names: string[];
-  /** What the site's own code reads — its outgoing edges in the graph. */
+  /** What the site's own code reads, its outgoing edges in the graph. */
   references: Set<string>;
   /** The node to elide when asking what the rest of the module still reads. */
   node: Node;
@@ -700,7 +700,7 @@ function declaratorReferences(declaration: Node, declarator: Node): Set<string> 
  *
  * Top-level declarations are the obvious ones, but a `var` hoists out of any
  * block, `if`, `try`, `switch`, loop or label it is written in, so those bind
- * module scope too and belong in the graph — the pass used to miss them
+ * module scope too and belong in the graph. The pass used to miss them
  * entirely, which made a secret declared as `if (cond) { var KEY = getEnv(…) }`
  * permanently unremovable. Function bodies and class static blocks are separate
  * `var` scopes and are not entered.
@@ -817,8 +817,8 @@ function startsVarScope(node: Node): boolean {
  * (`label: var KEY = …`, `if (c) var KEY = …`) becomes an empty block, and a
  * `for` initialiser is cleared.
  *
- * A `for…in`/`for…of` head has no such edit — the binding is what the loop
- * assigns to — so those sites are registered as unremovable and the caller
+ * A `for…in`/`for…of` head has no such edit, because the binding is what the
+ * loop assigns to, so those sites are registered as unremovable and the caller
  * fails the build rather than shipping the value they hold.
  */
 function collectHoistedVarSites(
@@ -918,7 +918,7 @@ function isLexicallyBound(name: string, scopes: LexicalScope[]): boolean {
 const NOTHING_ELIDED: ReadonlySet<Node> = new Set<Node>();
 
 /**
- * Free identifiers genuinely *read* by a subtree — the edges of the
+ * Free identifiers genuinely *read* by a subtree, the edges of the
  * module-scope binding graph.
  *
  * Scope-aware: a nested declaration that shadows `loadJob` must not hide a real
@@ -938,7 +938,7 @@ const NOTHING_ELIDED: ReadonlySet<Node> = new Set<Node>();
  * for removal stops masking the reads of the code around it.
  *
  * `deferred` names functions, methods and instance fields whose bodies do not
- * run where they are written. Their reads are still reads — they are just not
+ * run where they are written. Their reads are still reads: they are just not
  * reads the *module evaluation* performs, which is the difference between the
  * roots of the liveness walk and the edges of it.
  */
@@ -1039,8 +1039,8 @@ function freeReferencedIdentifiers(
       visitPatternDecorators(pattern, decoratorScopes);
       return;
     }
-    // Babel hangs a parameter decorator off the pattern itself — a plain
-    // `Identifier`, an `AssignmentPattern` or a destructuring pattern — and not
+    // Babel hangs a parameter decorator off the pattern itself (a plain
+    // `Identifier`, an `AssignmentPattern` or a destructuring pattern) and not
     // only off a `TSParameterProperty`. A decorator is ordinary runtime code
     // whose reads count, so `constructor(@inject(loadSecret) value: string)`
     // keeps the import it needs; missing it dropped that import out from under
@@ -1566,7 +1566,7 @@ export function moduleReferenceWalkers(ast: ASTNode): {
 
 /**
  * Identifiers referenced inside the server-only hooks that are about to be
- * emptied — the seed of the hook's dependency closure. Must be collected before
+ * emptied, the seed of the hook's dependency closure. Must be collected before
  * the hook bodies are replaced with stubs. `targets` is the set of local hook
  * names (as passed to `emptyServerOnlyHooks`).
  */
@@ -1613,7 +1613,7 @@ function hookReferencedIdentifiers(body: Node[], targets: Set<string>): Set<stri
  *
  * Used to fail closed on a module that reassigns a hook binding: the pass can
  * stub only the declarator, and the assignment would put the real loader back
- * at module-evaluation time. Collection is deliberately scope-blind — a nested
+ * at module-evaluation time. Collection is deliberately scope-blind: a nested
  * local that shadows a hook name and is assigned also stops the build, because
  * on this boundary a stopped build is recoverable and a shipped loader is not.
  */
@@ -1696,8 +1696,8 @@ function assignedNames(body: Node[]): Set<string> {
  * Treating these as binding writes fails the build instead, exactly as a
  * plain reassignment does.
  *
- * Traversal stops at every construct that starts a new `var` scope — function
- * bodies, class bodies, class static blocks and TypeScript-only nodes — so a
+ * Traversal stops at every construct that starts a new `var` scope (function
+ * bodies, class bodies, class static blocks and TypeScript-only nodes), so a
  * nested `function Page() { var getServerData = 1 }` is a local of `Page` and
  * is not reported.
  */
@@ -1878,7 +1878,7 @@ function compilerNameRegistrations(
  * Every name reachable from `roots` by following the binding graph's edges.
  *
  * A name is live when surviving code reads it, or when a live binding's own
- * code reads it. Everything else is dead — cycles included, which is exactly
+ * code reads it. Everything else is dead, cycles included, which is exactly
  * what asking each declaration in turn "is this name mentioned anywhere else?"
  * can never see: two hook-only helpers that call each other keep each other
  * alive forever, and whatever they close over ships with them.
@@ -1950,7 +1950,7 @@ function hasParameterDecorators(node: Node): boolean {
 }
 
 /**
- * `__name(<value>, "name")` — esbuild's `keepNames` helper applied inline, the
+ * `__name(<value>, "name")` is esbuild's `keepNames` helper applied inline, the
  * shape a dev build wraps every initialiser in. It defines a `name` property on
  * the value it is handed and returns it, so it is compiler metadata rather than
  * a call the module makes, and it is exactly as inert as its first argument.
@@ -1963,7 +1963,7 @@ function isNameRegistrationCall(node: Node, helpers: ReadonlySet<string>): boole
   return args.length === 2 && stringLiteralText(args[1]) !== null;
 }
 
-/** `static { __name(this, "Loader") }` — the class form of that same metadata. */
+/** `static { __name(this, "Loader") }`, the class form of that same metadata. */
 function isNameRegistrationBlock(node: Node, helpers: ReadonlySet<string>): boolean {
   const statements = Array.isArray(node.body) ? node.body.filter(isNode) : [];
   return statements.every((statement) => {
@@ -2095,8 +2095,8 @@ function isInertExpression(
  * Whether a declaration *runs* when the module is evaluated.
  *
  * This is the line between the two halves of an unused declaration. One that
- * only introduces a name — a function, a `var dead = helper`, a class with no
- * decorator, superclass or static initialiser — does nothing at module-load
+ * only introduces a name (a function, a `var dead = helper`, a class with no
+ * decorator, superclass or static initialiser) does nothing at module-load
  * time, so an unreachable one is not surviving code and has no business being
  * asked what the module still reads. One whose initialiser runs
  * (`const clientInit = bootClientAnalytics()`) is a top-level side effect
@@ -2131,7 +2131,7 @@ function evaluationIsInert(
  * something calls or constructs them.
  *
  * This is what separates a declaration's *roots* from its *edges*. `const
- * handler = memo(() => KEY)` performs one read at module load — `memo` — and
+ * handler = memo(() => KEY)` performs one read at module load (`memo`), and
  * the arrow body's read of `KEY` happens only if something calls the arrow,
  * which needs `handler`. Counting the whole subtree as module-evaluation reads
  * let any dead declaration with an impure initialiser vouch for every name
@@ -4261,7 +4261,7 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
 }
 
 /**
- * Whether a declaration can be left out of the root computation — whether the
+ * Whether a declaration can be left out of the root computation: whether the
  * module reading a name *there* is a reason to keep that name alive.
  *
  * Three shapes say it is not:
@@ -4275,13 +4275,13 @@ function deferredExecutionNodes(root: Node, sites: BindingSite[]): Set<Node> {
  *   server-only import even though nothing reads `dead`. This exception does
  *   not apply to a direct top-level initialiser, whose side effect is part of
  *   the module even when it happens to call the same import as the hook, and
- *   eliding it from the roots is not on its own a licence to delete it — see
+ *   eliding it from the roots is not on its own a licence to delete it. See
  *   `dropUnreachableModuleScopeBindings`, which still keeps the statement when
  *   any binding it evaluates survives.
  *
  * Anything else roots what it evaluates like any other side-effectful top-level
- * statement. That is what keeps `const clientInit = bootClientAnalytics()` —
- * and the helper it calls — in the browser artifact, including when the hook
+ * statement. That is what keeps `const clientInit = bootClientAnalytics()`,
+ * and the helper it calls, in the browser artifact, including when the hook
  * calls the same helper or import for a different purpose.
  */
 type ElisionReason =
@@ -4365,8 +4365,8 @@ function serverTaintedSites(
 /**
  * The local names a surviving separate export declaration publishes.
  *
- * A separate export is a real browser consumer of the binding it names —
- * whatever imports the module reads it — but `freeReferencedIdentifiers`
+ * A separate export is a real browser consumer of the binding it names,
+ * because whatever imports the module reads it, but `freeReferencedIdentifiers`
  * cannot see that. An `ExportSpecifier` resolves `local` against the synthetic
  * root scope, while `export default Page` also names an already-bound local.
  *
@@ -4410,7 +4410,7 @@ function separateExportLocalNames(body: Node[]): Set<string> {
  *
  * Liveness is reachability from the code that survives, not "is this name
  * mentioned elsewhere". The roots are what the module still *evaluates* once
- * every declaration that merely introduces a name is elided — surviving
+ * every declaration that merely introduces a name is elided: surviving
  * exports, the client component and any side-effectful top-level statement,
  * minus the bodies that run only when something calls them. The edges are
  * genuine reads, deferred ones included, so a binding the browser can still
@@ -4424,7 +4424,7 @@ function separateExportLocalNames(body: Node[]): Set<string> {
  * treated as unconditionally live and kept `const KEY = getEnv(…)` and its
  * `node:crypto` import in the browser artifact. Removal stays scoped to the
  * closure, so an unrelated direct `const clientInit = bootClientAnalytics()`
- * keeps its side effect even if the hook calls the same binding — and a
+ * keeps its side effect even if the hook calls the same binding, and a
  * hoisted `var` elided by that second rule is only cut when every binding it
  * evaluates is going away too, because `if (dev) { var d = boot(secret()) }`
  * is still client code when `boot` survives. Inside the closure the pass is exhaustive:
@@ -4432,7 +4432,7 @@ function separateExportLocalNames(body: Node[]): Set<string> {
  * what lets `dropUnusedImportBindings` drop the import next.
  *
  * Every binding name a removal takes out is added to `removedNames`, so the
- * caller can verify — fail closed — that none of them survives in the final
+ * caller can verify (fail closed) that none of them survives in the final
  * output. Two situations are reported back instead, and the caller stops the
  * build rather than shipping the value: a dead binding this pass cannot cut
  * out of the tree, and one that only a deferred body of a surviving
@@ -4495,7 +4495,7 @@ function dropUnreachableModuleScopeBindings(
   const removable = dead.filter((site) => {
     if (!tainted.has(site)) return false;
     if (reasons.get(site) !== "closure-only-evaluation") return true;
-    // This site's initialiser still runs — eliding it from the roots only
+    // This site's initialiser still runs. Eliding it from the roots only
     // stopped it vouching for what it calls. Cutting it out is justified only
     // when everything it evaluates is going away. If even one called binding
     // survives for browser code, deleting the whole initializer can delete an
@@ -4508,7 +4508,7 @@ function dropUnreachableModuleScopeBindings(
 
   // A name written down in more than one place is only safe to drop when every
   // one of its declarations goes, and only when each of them can be cut out
-  // at all — a `for (var KEY of …)` head declares the binding the loop assigns
+  // at all: a `for (var KEY of …)` head declares the binding the loop assigns
   // to and has no removable declaration.
   const removableSites = new Set(removable);
   const survivingNames = new Set(
@@ -4535,8 +4535,8 @@ function dropUnreachableModuleScopeBindings(
   }
 
   // A declaration the browser keeps, holding a read of a binding the browser
-  // must not keep. The read is real but deferred — a callback body, a method,
-  // an instance field — so it never rooted the binding, while the declaration
+  // must not keep. The read is real but deferred (a callback body, a method,
+  // an instance field), so it never rooted the binding, while the declaration
   // around it runs at module load and cannot be cut. Neither shipping the
   // secret nor emitting a reference to a binding that is gone is acceptable,
   // and choosing between them is the module author's call, not this pass's.
@@ -4698,7 +4698,7 @@ class ServerExportStripError extends Error {
  * Throws when the module names a server-only export and this pass cannot act on
  * it: no parser registered, the module does not parse, or the hook is exported
  * in a form with no local declaration to empty. Failing the build is the only
- * safe outcome — the alternative is shipping the loader to the browser.
+ * safe outcome: the alternative is shipping the loader to the browser.
  */
 export async function stripServerOnlyExports(
   code: string,
@@ -4779,7 +4779,7 @@ export async function stripServerOnlyExports(
   // top-level declarations (which may run browser side effects).
   const hookSeed = hookReferencedIdentifiers(body, locals);
 
-  // Fail closed on a hook this pass identified but could not stub — a class
+  // Fail closed on a hook this pass identified but could not stub: a class
   // declaration, an imported binding re-exported under a hook name, or any
   // other form outside `emptyServerOnlyHooks`'s reach. Emitting the module
   // with the declaration intact would ship the loader to the browser.
@@ -4797,8 +4797,8 @@ export async function stripServerOnlyExports(
   // the imports that leaves unused. Order matters: pruning `const API_KEY =
   // getEnv(...)` is what makes the `veryfront` import droppable.
   //
-  // The hooks' dependency closure is itself a reachability question — a helper
-  // the hook reaches only through another helper belongs to it just as much —
+  // The hooks' dependency closure is itself a reachability question: a helper
+  // the hook reaches only through another helper belongs to it just as much,
   // so it is grown over the same binding graph the pruning walks.
   const removedNames = new Set<string>();
   const removableStatements = new Set<Node>();
@@ -4837,7 +4837,7 @@ export async function stripServerOnlyExports(
   // Fail-closed output verification, run against the artifact itself: the
   // emitted code is re-parsed and scanned for every binding this pass decided
   // to drop, as an import or as a reference. Checking the freshly parsed
-  // output — not the tree the nodes were structurally deleted from — means a
+  // output (not the tree the nodes were structurally deleted from) means a
   // regression anywhere between the removal decision and the emitted text,
   // the generator included, stops the build instead of leaking.
   if (removedNames.size > 0) {
