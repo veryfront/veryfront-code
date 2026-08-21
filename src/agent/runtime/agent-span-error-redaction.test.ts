@@ -219,6 +219,50 @@ describe("agent span error redaction", () => {
     }
   });
 
+  it("keeps returned tool failures bounded when application code replaces Error", async () => {
+    const tracing = installRealTracing();
+    const NativeError = Error;
+    const previousError = Object.getOwnPropertyDescriptor(globalThis, "Error");
+    try {
+      const needle = "returned-tool-poisoned-error@example.com";
+      const assistant = createAgent(tool({
+        id: "probe_tool",
+        description: "probe",
+        inputSchema,
+        execute: () => ({ error: "tool_error", message: `lookup failed for ${needle}` }),
+      }));
+
+      Object.defineProperty(globalThis, "Error", {
+        configurable: true,
+        value: function Error(): never {
+          throw new NativeError("global Error constructor must not run");
+        },
+        writable: true,
+      });
+
+      await assistant.generate({ input: "go" });
+      if (previousError) {
+        Object.defineProperty(globalThis, "Error", previousError);
+      }
+      await tracing.provider.forceFlush();
+      const spans = tracing.exporter.getFinishedSpans();
+
+      assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
+
+      const failed = erroredSpans(spans, "agent.tool_execute");
+      assertEquals(failed.length > 0, true, "a failed tool must still mark its span ERROR");
+      for (const span of failed) {
+        assertEquals(span.status.message, 'Tool "probe_tool" failed');
+      }
+    } finally {
+      if (previousError) {
+        Object.defineProperty(globalThis, "Error", previousError);
+      }
+      await tracing.dispose();
+    }
+  });
+
   it("keeps a thrown tool error's text off every agent span", async () => {
     const tracing = installRealTracing();
     try {

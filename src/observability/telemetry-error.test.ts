@@ -147,6 +147,54 @@ describe("observability/telemetry-error", () => {
     assertEquals(accessorCalls, 0);
   });
 
+  it("classifies error codes through a captured RegExp matcher", () => {
+    const previousExec = Object.getOwnPropertyDescriptor(RegExp.prototype, "exec");
+    const coded = new Error("temporary network failure");
+    Object.defineProperty(coded, "code", {
+      configurable: true,
+      value: "ECONNRESET",
+      writable: true,
+    });
+
+    try {
+      Object.defineProperty(RegExp.prototype, "exec", {
+        configurable: true,
+        value: () => ["", "secret-error-type@example.com"],
+        writable: true,
+      });
+
+      assertEquals(telemetryErrorType(coded), "ECONNRESET");
+    } finally {
+      if (previousExec) {
+        Object.defineProperty(RegExp.prototype, "exec", previousExec);
+      }
+    }
+  });
+
+  it("classifies error names through a captured Set matcher", () => {
+    const previousHas = Object.getOwnPropertyDescriptor(Set.prototype, "has");
+    const named = new Error("application failure");
+    Object.defineProperty(named, "name", {
+      configurable: true,
+      value: "secret-error-name@example.com",
+      writable: true,
+    });
+
+    try {
+      Object.defineProperty(Set.prototype, "has", {
+        configurable: true,
+        value: () => true,
+        writable: true,
+      });
+
+      assertEquals(telemetryErrorType(named), "Error");
+    } finally {
+      if (previousHas) {
+        Object.defineProperty(Set.prototype, "has", previousHas);
+      }
+    }
+  });
+
   it("classifies VeryfrontError status through a safe snapshot", () => {
     assertEquals(
       telemetryErrorType(API_CLIENT_ERROR.create({ detail: "request failed" })),

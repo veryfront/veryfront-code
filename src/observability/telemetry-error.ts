@@ -38,6 +38,8 @@ const NativeString = String;
 const NativeURL = URL;
 const dateGetTime = Date.prototype.getTime;
 const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const regExpExec = RegExp.prototype.exec;
+const setHas = Set.prototype.has;
 const stringSlice = String.prototype.slice;
 const ERROR_PROTOTYPE = NativeError.prototype;
 const URL_HREF_GETTER = readOwnDescriptorGetter(NativeURL.prototype, "href");
@@ -512,9 +514,18 @@ const SAFE_TELEMETRY_ERROR_NAMES = new Set([
  */
 const TELEMETRY_ERROR_CODE_RE = /\b(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND)\b/;
 
+function matchTransientErrorCode(text: string): string | undefined {
+  try {
+    const match = apply(regExpExec, TELEMETRY_ERROR_CODE_RE, [text]) as RegExpExecArray | null;
+    return typeof match?.[1] === "string" ? match[1] : undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
 /** Whether text names one of the transient network codes above. */
 export function hasTransientErrorCode(text: string): boolean {
-  return TELEMETRY_ERROR_CODE_RE.test(text);
+  return matchTransientErrorCode(text) !== undefined;
 }
 
 /**
@@ -533,12 +544,12 @@ export function telemetryErrorType(error: unknown): string {
 
     const code = readOwnErrorDataField(error, "code");
     if (typeof code === "string") {
-      const match = TELEMETRY_ERROR_CODE_RE.exec(code);
-      if (match?.[1]) return match[1];
+      const match = matchTransientErrorCode(code);
+      if (match) return match;
     }
 
     const name = readNativeErrorNameWithoutHooks(error);
-    return SAFE_TELEMETRY_ERROR_NAMES.has(name) ? name : "Error";
+    return apply(setHas, SAFE_TELEMETRY_ERROR_NAMES, [name]) === true ? name : "Error";
   } catch (_) {
     // Classification is best effort and must never change the outcome it reports on.
     return "Error";

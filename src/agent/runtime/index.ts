@@ -194,6 +194,8 @@ export {
   type StreamedToolCallMaterialization,
 } from "./tool-result-continuation.ts";
 
+const NativeError = Error;
+
 function resolveRuntimeGenAiProviderName(modelId: string): string | undefined {
   const normalizedModelId = modelId.startsWith("veryfront-cloud/")
     ? modelId.slice("veryfront-cloud/".length)
@@ -951,7 +953,7 @@ async function traceConfiguredToolExecution(input: {
           // Identify the tool, not the failure text: `resultError` is a raw
           // string, which reaches the wire unchanged through both the span
           // status and the recorded exception.
-          setOtelActiveSpanErrorStatus(new Error(`Tool "${input.toolName}" failed`));
+          setOtelActiveSpanErrorStatus(new NativeError(`Tool "${input.toolName}" failed`));
         }
         setOtelActiveSpanAttributes(
           buildRuntimeToolTraceAttributes({
@@ -1014,7 +1016,7 @@ async function traceProviderExecutedTool(input: {
     "agent.tool_execute",
     async () => {
       if (hasError) {
-        setOtelActiveSpanErrorStatus(new Error(`Tool "${input.toolName}" failed`));
+        setOtelActiveSpanErrorStatus(new NativeError(`Tool "${input.toolName}" failed`));
       }
       setOtelActiveSpanAttributes(
         buildRuntimeToolTraceAttributes({
@@ -1914,7 +1916,7 @@ export class AgentRuntime {
                 ? stringifyToolError(generatedToolResult.result)
                 : undefined;
               if (toolCall.error !== undefined) {
-                setOtelActiveSpanErrorStatus(new Error(`Tool "${tc.toolName}" failed`));
+                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
               }
               if (
                 generatedToolResult.isError !== true &&
@@ -2022,7 +2024,7 @@ export class AgentRuntime {
 
               const resultError = getToolResultError(result);
               if (resultError !== undefined) {
-                setOtelActiveSpanErrorStatus(new Error(`Tool "${tc.toolName}" failed`));
+                setOtelActiveSpanErrorStatus(new NativeError(`Tool "${tc.toolName}" failed`));
               }
               toolCall.status = resultError === undefined ? "completed" : "error";
               toolCall.result = result;
