@@ -161,6 +161,7 @@ describe("workflow/runtime/public-run", () => {
       sourceIntegrationPolicy: SOURCE_POLICY,
       _tenant: frameworkTenant,
       _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+      _traceContext: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
     };
 
     const projected = toPublicWorkflowRun(run);
@@ -168,6 +169,8 @@ describe("workflow/runtime/public-run", () => {
 
     assertEquals(projected._tenant, undefined);
     assertEquals(projected._runtimeStateVersion, undefined);
+    // Trace identity is telemetry infrastructure, not run data.
+    assertEquals(projected._traceContext, undefined);
     assertEquals(projected.context.env, undefined);
     assertEquals(projected.context._tenant, undefined);
     assertEquals(projected.context.parallel, {

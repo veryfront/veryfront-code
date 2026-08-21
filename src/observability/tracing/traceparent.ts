@@ -45,13 +45,8 @@ export function parseTraceparent(traceparent: string | undefined): SpanContext |
   const match = TRACEPARENT_PATTERN.exec(traceparent.trim().split("-", 4).join("-"));
   if (!match) return undefined;
 
-  const [, version, traceId, spanId, flags] = match as unknown as [
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
+  const [, version, traceId, spanId, flags] = match;
+  if (!version || !traceId || !spanId || !flags) return undefined;
   if (version === "ff") return undefined;
 
   const spanContext: SpanContext = {
