@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
+import { defineError } from "#veryfront/errors";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type Tool, tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
@@ -348,6 +349,69 @@ describe("agent span error redaction", () => {
       if (previousError) {
         Object.defineProperty(globalThis, "Error", previousError);
       }
+      await tracing.dispose();
+    }
+  });
+
+  it("does not invoke application-owned accessors while classifying span errors", async () => {
+    const tracing = installRealTracing();
+    try {
+      const { withSpan } = await import("#veryfront/observability/tracing/otlp-setup.ts");
+      const needle = "accessor-code-secret@example.com";
+      let getterCalls = 0;
+      const REVIEW_PROBE = defineError({
+        slug: "review-probe",
+        category: "RUNTIME",
+        status: 500,
+        title: "Review probe",
+      });
+
+      await withSpan("probe.accessor-code", async () => {
+        const error = new Error("accessor must stay opaque");
+        Object.defineProperty(error, "code", {
+          configurable: true,
+          get() {
+            getterCalls++;
+            return `ECONNRESET ${needle}`;
+          },
+        });
+        throw error;
+      }).catch(() => {});
+      await tracing.provider.forceFlush();
+
+      const spans = tracing.exporter.getFinishedSpans();
+      assertNoSpanCarries(spans, needle);
+      assertNoSpanCarriesAStack(spans);
+      assertEquals(getterCalls, 0);
+
+      const span = spans.find((candidate) => candidate.name === "probe.accessor-code");
+      assertExists(span);
+      assertEquals(span.status.code, SpanStatusCode.ERROR);
+      assertEquals(span.status.message, "Error");
+
+      await withSpan("probe.accessor-status", async () => {
+        const error = REVIEW_PROBE.create({ message: "branded error must stay opaque" });
+        Object.defineProperty(error, "status", {
+          configurable: true,
+          get() {
+            getterCalls++;
+            return needle;
+          },
+        });
+        throw error;
+      }).catch(() => {});
+      await tracing.provider.forceFlush();
+
+      const allSpans = tracing.exporter.getFinishedSpans();
+      assertNoSpanCarries(allSpans, needle);
+      assertNoSpanCarriesAStack(allSpans);
+      assertEquals(getterCalls, 0);
+
+      const statusSpan = allSpans.find((candidate) => candidate.name === "probe.accessor-status");
+      assertExists(statusSpan);
+      assertEquals(statusSpan.status.code, SpanStatusCode.ERROR);
+      assertEquals(statusSpan.status.message, "Error");
+    } finally {
       await tracing.dispose();
     }
   });
