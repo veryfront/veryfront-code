@@ -628,6 +628,37 @@ describe("RedisBackend", () => {
       assertEquals(updated?.output, { value: 42 });
     });
 
+    it("clears optional run fields when a patch explicitly sets undefined", async () => {
+      const runId = "run-clear-optionals";
+      const timestamp = new Date("2025-06-15T12:10:00.000Z");
+      await backend.createRun(createTestRun(runId));
+      await backend.updateRun(runId, {
+        output: { value: 42 },
+        error: { message: "failed", stack: "internal stack" },
+        workerId: "worker-1",
+        startedAt: timestamp,
+        heartbeatAt: timestamp,
+        completedAt: timestamp,
+      });
+
+      await backend.updateRun(runId, {
+        output: undefined,
+        error: undefined,
+        workerId: undefined,
+        startedAt: undefined,
+        heartbeatAt: undefined,
+        completedAt: undefined,
+      });
+
+      const updated = await backend.getRun(runId);
+      assertEquals(updated?.output, undefined);
+      assertEquals(updated?.error, undefined);
+      assertEquals(updated?.workerId, undefined);
+      assertEquals(updated?.startedAt, undefined);
+      assertEquals(updated?.heartbeatAt, undefined);
+      assertEquals(updated?.completedAt, undefined);
+    });
+
     it("should atomically reject a patch when the current status is not expected", async () => {
       await backend.createRun(createTestRun("run-cas"));
 

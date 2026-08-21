@@ -35,6 +35,7 @@ export function map(id: string, options: MapOptions): WorkflowNode {
 
   const config: MapNodeConfig = {
     type: "map",
+    description: options.description,
     items: options.items,
     processor: options.processor,
     concurrency: options.concurrency,

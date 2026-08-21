@@ -279,8 +279,16 @@ function makeEvalTool(id: string, source = id): Tool {
   }) as Tool;
 }
 
+type AgentGenerateFixture = (input: Parameters<Agent["generate"]>[0]) => Promise<AgentResponse>;
+
+function createGenerateStub(generate: AgentGenerateFixture): Agent["generate"] {
+  return (async (input: Parameters<Agent["generate"]>[0]) => {
+    return await generate(input);
+  }) as Agent["generate"];
+}
+
 function makeAgentStub(
-  generate: Agent["generate"],
+  generate: AgentGenerateFixture,
   config: Partial<Agent["config"]> = {},
 ): Agent {
   return {
@@ -290,7 +298,7 @@ function makeAgentStub(
       system: "Stub.",
       ...config,
     } as Agent["config"],
-    generate,
+    generate: createGenerateStub(generate),
     stream: async () => ({ toDataStreamResponse: () => new Response() }),
     respond: async () => new Response(),
     getMemory: () => ({}) as ReturnType<Agent["getMemory"]>,

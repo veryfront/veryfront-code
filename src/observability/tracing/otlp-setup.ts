@@ -257,24 +257,49 @@ function startSpanWithFallback(
 }
 
 function setSpanErrorStatus(span: Span, error: unknown): void {
-  const telemetryError = sanitizeErrorForTelemetry(error);
+  // Sanitization runs on caller-supplied values on every error path, so it is guarded
+  // like the span calls are: a throw here would turn a handled failure into a thrown one,
+  // and telemetry must never change the outcome it reports on. Defence in depth -- probing
+  // throwing proxy traps, accessors and toString found no input that actually throws.
+  let telemetryError: Error | undefined;
+  runTelemetryOperation(
+    () => {
+      telemetryError = sanitizeErrorForTelemetry(error);
+    },
+    "Failed to sanitize error for telemetry",
+  );
+  if (!telemetryError) return;
+  const sanitized = telemetryError;
   runTelemetryOperation(
     () =>
       span.setStatus({
         code: SpanStatusCode.ERROR,
-        message: telemetryError.message,
+        message: sanitized.message,
       }),
     "Failed to set span error status",
   );
   runTelemetryOperation(
-    () => span.recordException(telemetryError),
+    () => span.recordException(sanitized),
     "Failed to record span exception",
   );
 }
 
 export type WithSpanOptions = {
   kind?: SpanKind;
+  errorStatus?: (error: unknown) => unknown;
 };
+
+function spanErrorStatus(error: unknown, options: WithSpanOptions | undefined): unknown {
+  if (!options?.errorStatus) return error;
+  let statusError: unknown = error;
+  runTelemetryOperation(
+    () => {
+      statusError = options.errorStatus?.(error) ?? error;
+    },
+    "Failed to derive span error status",
+  );
+  return statusError;
+}
 
 /** Applies span. */
 export async function withSpan<T>(
@@ -293,7 +318,7 @@ export async function withSpan<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, error);
+    setSpanErrorStatus(span, spanErrorStatus(error, options));
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -321,7 +346,7 @@ export function withSpanSync<T>(
     );
     return result;
   } catch (error) {
-    setSpanErrorStatus(span, error);
+    setSpanErrorStatus(span, spanErrorStatus(error, options));
     throw error;
   } finally {
     runTelemetryOperation(() => span.end(), "Failed to end span");
@@ -477,6 +502,14 @@ export function setActiveSpanAttributes(
       "Failed to set active span attribute",
     );
   }
+}
+
+/** Records an event on the currently active span, if there is one. */
+export function addActiveSpanEvent(
+  name: string,
+  attributes?: Record<string, AttributeValue>,
+): void {
+  addSpanEvent(shimTrace.getActiveSpan?.(), name, attributes);
 }
 
 /** Marks the active span as failed. */

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/observability"
 description: "Tracing, metrics, OTLP export, and structured logs."
-order: 22
+order: 23
 ---
 
 ## Import
@@ -56,7 +56,7 @@ const result = await withSpan("load-data", async () => {
 | `getHostTelemetryEnv`                    |                                                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/telemetry-env.ts#L7)                  |
 | `getLogBuffer`                           | Return log buffer.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L231)                           |
 | `getMetricsState`                        | State for get metrics.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L38)                         |
-| `getTraceContext`                        | Context for get trace.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L500)                   |
+| `getTraceContext`                        | Context for get trace.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L533)                   |
 | `initAutoInstrumentation`                | Initialize automatic instrumentation wrappers.                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/orchestrator.ts#L15)          |
 | `initializeApplicationErrorReporter`     | Activate an explicitly selected reporter initializer.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L153)                   |
 | `initializeOTLP`                         | Initialize OTLP tracing export.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L113)                   |
@@ -106,7 +106,7 @@ const result = await withSpan("load-data", async () => {
 | `recordSecurityHeaders`                  | Record security headers.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L170)                        |
 | `resetErrorCollector`                    | Reset captured runtime errors.                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L412)                      |
 | `resetLogBuffer`                         | Reset the in-memory log buffer.                                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L237)                           |
-| `setActiveSpanAttributes`                | Sets active span attributes.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L468)                   |
+| `setActiveSpanAttributes`                | Sets active span attributes.                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L493)                   |
 | `setCacheSize`                           | Sets cache size.                                                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L77)                         |
 | `setSpanAttributes`                      | Sets span attributes.                                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L62)                         |
 | `shutdownMetrics`                        | Shut down metrics collection.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L33)                         |
@@ -192,36 +192,41 @@ These import paths group focused functionality under this module. Each is a sepa
 *********************** OpenTelemetry OTLP Setup Thin wrapper that delegates to the `ext-observability-opentelemetry` extension via the `TracingExporter` contract. When the extension is not installed, all span operations silently no-op. Reads configuration from environment variables: - OTEL_TRACES_ENABLED: "true" to enable tracing - OTEL_SERVICE_NAME: Service name for traces - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP endpoint - OTEL_EXPORTER_OTLP_HEADERS: Auth headers ************************
 
 ```ts
-import { addSpanEvent, endServerSpan, extractContext } from "veryfront/observability/otlp-setup";
+import {
+  addActiveSpanEvent,
+  addSpanEvent,
+  endServerSpan,
+} from "veryfront/observability/otlp-setup";
 ```
 
 #### Functions
 
-| Name                       | Description                                         | Source                                                                                                       |
-| -------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `addSpanEvent`             | Adds an event to a span.                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L449) |
-| `endServerSpan`            | End an active server tracing span.                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L401) |
-| `extractContext`           | Context for extract.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L332) |
-| `getTraceContext`          | Context for get trace.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L500) |
-| `initializeOTLP`           | Initialize OTLP tracing export.                     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L113) |
-| `initializeOTLPWithApis`   | Initialize OTLP tracing with explicit API adapters. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L136) |
-| `injectContext`            | Context for inject.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L344) |
-| `isOTLPEnabled`            | Check whether OTLP export is enabled.               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L131) |
-| `setActiveSpanAttributes`  | Sets active span attributes.                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L468) |
-| `setActiveSpanErrorStatus` | Marks the active span as failed.                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L483) |
-| `setSpanAttributes`        | Sets span attributes.                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L433) |
-| `shutdownOTLP`             | Shut down OTLP tracing export.                      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L125) |
-| `startServerSpan`          | Starts server span.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L355) |
-| `withContext`              | Context for with.                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L491) |
-| `withSpan`                 | Applies span.                                       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L280) |
-| `withSpanSync`             | Applies span sync.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L304) |
+| Name                       | Description                                                     | Source                                                                                                       |
+| -------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `addActiveSpanEvent`       | Records an event on the currently active span, if there is one. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L508) |
+| `addSpanEvent`             | Adds an event to a span.                                        | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L474) |
+| `endServerSpan`            | End an active server tracing span.                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L426) |
+| `extractContext`           | Context for extract.                                            | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L357) |
+| `getTraceContext`          | Context for get trace.                                          | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L533) |
+| `initializeOTLP`           | Initialize OTLP tracing export.                                 | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L113) |
+| `initializeOTLPWithApis`   | Initialize OTLP tracing with explicit API adapters.             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L136) |
+| `injectContext`            | Context for inject.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L369) |
+| `isOTLPEnabled`            | Check whether OTLP export is enabled.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L131) |
+| `setActiveSpanAttributes`  | Sets active span attributes.                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L493) |
+| `setActiveSpanErrorStatus` | Marks the active span as failed.                                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L516) |
+| `setSpanAttributes`        | Sets span attributes.                                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L458) |
+| `shutdownOTLP`             | Shut down OTLP tracing export.                                  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L125) |
+| `startServerSpan`          | Starts server span.                                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L380) |
+| `withContext`              | Context for with.                                               | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L524) |
+| `withSpan`                 | Applies span.                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L305) |
+| `withSpanSync`             | Applies span sync.                                              | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L329) |
 
 #### Types
 
 | Name              | Description                       | Source                                                                                                       |
 | ----------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `OTLPConfig`      | Configuration used by otlpconfig. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L46)  |
-| `WithSpanOptions` |                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L275) |
+| `WithSpanOptions` |                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L287) |
 
 ### `veryfront/observability/sentry`
 

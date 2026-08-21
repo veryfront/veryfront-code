@@ -428,12 +428,107 @@ describe("listTestFiles supports bracket character classes", () => {
     });
   });
 
+  it("does not read braces inside a class as alternation", () => {
+    // `expandBraces` scanned the raw pattern, so the `{}` inside this class was
+    // expanded away before `globToRegex` could parse the class:
+    // `src/[{}].test.ts` became `src/[].test.ts` and selected nothing. Empty is
+    // the dangerous answer — `tests/node/run-tests.mjs` turns an empty
+    // selection into `process.exit(0)` — and it is the exact failure this
+    // module is being fixed for. rg 15.2.0 and `node:fs` globSync both return
+    // `{.test.ts` and `}.test.ts` here.
+    withFixture(["src/{.test.ts", "src/}.test.ts", "src/a.test.ts"], (root) => {
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/[{}].test.ts"], root), root),
+        ["src/{.test.ts", "src/}.test.ts"],
+      );
+      // A real group and a class carrying braces in one pattern: the group
+      // still expands, the class still does not. Same answer from rg 15.2.0
+      // and globSync.
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/{a,[{}]}.test.ts"], root), root),
+        ["src/a.test.ts", "src/{.test.ts", "src/}.test.ts"],
+      );
+    });
+  });
+
   it("treats an unterminated bracket as a literal", () => {
     withFixture(["src/[a.test.ts"], (root) => {
       deepStrictEqual(
         relativeSorted(listTestFilesInChild(["src/[a.test.ts"], root), root),
         ["src/[a.test.ts"],
       );
+    });
+  });
+});
+
+describe("listTestFiles resolves the pattern shapes consumers actually pass", () => {
+  // Found by an acceptance audit after #3784 landed. Each of these selected
+  // ZERO files while ripgrep 15.2.0 returned real matches. Zero is the
+  // dangerous answer: `tests/node/run-tests.mjs` turns an empty selection into
+  // `process.exit(0)`, so the command reports success having run nothing —
+  // the silent-green failure mode this module exists to prevent.
+  const TREE = [
+    "src/a.test.ts",
+    "src/b.test.ts",
+    "src/nested/c.test.ts",
+    "src/routes/[id]/r.test.ts",
+  ];
+
+  it("matches a bare basename glob at any depth", () => {
+    // `rg --files -g '*.test.ts'` matches the BASENAME at any depth. Anchoring
+    // a slash-free pattern to the root instead made it match nothing at all.
+    withFixture(TREE, (root) => {
+      deepStrictEqual(relativeSorted(listTestFilesInChild(["*.test.ts"], root), root), [
+        "src/a.test.ts",
+        "src/b.test.ts",
+        "src/nested/c.test.ts",
+        "src/routes/[id]/r.test.ts",
+      ]);
+    });
+  });
+
+  it("still anchors a pattern that contains a separator", () => {
+    // The basename rule must not leak into rooted patterns: `src/*.test.ts` is
+    // depth-1 under src/, not "any a.test.ts anywhere".
+    withFixture(TREE, (root) => {
+      deepStrictEqual(relativeSorted(listTestFilesInChild(["src/*.test.ts"], root), root), [
+        "src/a.test.ts",
+        "src/b.test.ts",
+      ]);
+    });
+  });
+
+  it("expands brace alternation", () => {
+    withFixture(TREE, (root) => {
+      deepStrictEqual(relativeSorted(listTestFilesInChild(["src/{a,b}.test.ts"], root), root), [
+        "src/a.test.ts",
+        "src/b.test.ts",
+      ]);
+      deepStrictEqual(
+        relativeSorted(listTestFilesInChild(["src/{a,nested/c}.test.ts"], root), root),
+        ["src/a.test.ts", "src/nested/c.test.ts"],
+      );
+    });
+  });
+
+  it("treats a directory that exists as a literal path, brackets and all", () => {
+    // `src/routes/[id]` is a real directory in this repo's shape
+    // (src/discovery/__fixtures__/.../[userId]/). `hasGlob` classified it as a
+    // character class, so it could never match the directory literally named
+    // `[id]`. An existing path wins over a glob reading of the same string.
+    withFixture(TREE, (root) => {
+      deepStrictEqual(relativeSorted(listTestFilesInChild(["src/routes/[id]"], root), root), [
+        "src/routes/[id]/r.test.ts",
+      ]);
+    });
+  });
+
+  it("keeps bracket classes working when the path does not exist", () => {
+    withFixture(TREE, (root) => {
+      deepStrictEqual(relativeSorted(listTestFilesInChild(["src/[ab].test.ts"], root), root), [
+        "src/a.test.ts",
+        "src/b.test.ts",
+      ]);
     });
   });
 });

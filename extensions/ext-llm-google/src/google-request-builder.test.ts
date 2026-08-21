@@ -239,7 +239,9 @@ describe("ext-llm-google/google-request-builder", () => {
           allowedFunctionNames: ["lookup"],
         },
       },
-      generationConfig: { temperature: 0.9 },
+      // Provider options replace generationConfig, but the requested response
+      // format is re-pinned afterwards so an override cannot drop it.
+      generationConfig: { temperature: 0.9, responseMimeType: "application/json" },
       labels: { tenant: "acme" },
       cachedContent: "cachedContents/abc",
       safetySettings: [{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }],
@@ -249,8 +251,69 @@ describe("ext-llm-google/google-request-builder", () => {
     assertEquals(warnings.drain().map((warning) => warning.setting), [
       "presencePenalty",
       "frequencyPenalty",
-      "responseFormat",
     ]);
+  });
+
+  it("pins structured JSON Schema after provider generationConfig overrides", () => {
+    const schema = {
+      type: "object",
+      $defs: {
+        forecast: {
+          type: "object",
+          properties: { city: { type: "string" } },
+          required: ["city"],
+        },
+      },
+      $ref: "#/$defs/forecast",
+    };
+
+    const body = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Forecast" }] }],
+        responseFormat: { type: "json_schema", name: "Forecast", schema },
+        providerOptions: {
+          google: {
+            generationConfig: {
+              temperature: 0.9,
+              responseMimeType: "text/plain",
+              responseSchema: { type: "object", properties: {} },
+              responseJsonSchema: { type: "string" },
+            },
+          },
+        },
+      },
+      createWarningCollector(),
+    );
+
+    assertEquals(body.generationConfig, {
+      temperature: 0.9,
+      responseMimeType: "application/json",
+      responseJsonSchema: schema,
+    });
+  });
+
+  it("normalizes provider generationConfig before pinning structured output", () => {
+    const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+
+    const body = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Status" }] }],
+        responseFormat: { type: "json_schema", name: "Status", schema },
+        providerOptions: {
+          google: {
+            generationConfig: ["bad", "shape"],
+          },
+        },
+      },
+      createWarningCollector(),
+    );
+
+    assertEquals(body.generationConfig, {
+      responseMimeType: "application/json",
+      responseJsonSchema: schema,
+    });
   });
 
   it("accepts only the explicitly supported Google provider-tool schemas", () => {

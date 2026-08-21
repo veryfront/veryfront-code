@@ -38,6 +38,11 @@ import type {
 import { deriveNodeStatus, shouldCheckpoint } from "./utils.ts";
 import { buildGraph, getReadyNodes, hasCycle, updateInDegreesForCompletedNodes } from "./graph.ts";
 import { executeLoopNodeStrategy } from "./loop-node-strategy.ts";
+import {
+  setActiveSpanAttributes,
+  setActiveSpanErrorStatus,
+  withSpan,
+} from "#veryfront/observability/tracing/otlp-setup.ts";
 import { executeMapNodeStrategy } from "./map-node-strategy.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import { executeCompositeNodeWithPolicy } from "./composite-node-execution.ts";
@@ -50,6 +55,8 @@ import {
   createSetContextPatch,
   mergeContextPatches,
 } from "./context-patch.ts";
+
+const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
 
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
@@ -71,7 +78,7 @@ export class DAGExecutor {
   ): Promise<DAGExecutionResult> {
     const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
       run,
-      () => this.executeUnwrapped(nodes, run, startFromNode, abortSignal, ownership),
+      () => this.executeUnwrapped(nodes, run, run.id, startFromNode, abortSignal, ownership),
     );
     return result;
   }
@@ -79,9 +86,17 @@ export class DAGExecutor {
   private async executeUnwrapped(
     nodes: WorkflowNode[],
     run: WorkflowRun,
+    /**
+     * The root, backend-persisted run id. Composite and sub-workflow nodes execute
+     * against synthetic run records with generated ids; span correlation must always
+     * use the id callers can actually look up, so it is threaded rather than read
+     * from `run`.
+     */
+    rootRunId: string,
     startFromNode?: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
+    executionRunId = run.id,
   ): Promise<DAGInternalExecutionResult> {
     abortSignal?.throwIfAborted();
     const context = cloneExecutionState(run.context, "Workflow context");
@@ -104,6 +119,104 @@ export class DAGExecutor {
     }
 
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
+    if (!startFromNode) {
+      // A node recorded as running means different things depending on why the
+      // run stopped, and the two must not be confused.
+      //
+      // A waiting run parked deliberately: the running node is a composite whose
+      // child is on a human decision. Re-enter it so the child resumes.
+      //
+      // Any other run reaching here is recovering from a worker that died
+      // mid-node. Nothing will ever write that node a terminal state, and
+      // getReadyNodes does not consider it ready, so leaving it be strands the
+      // run. Re-run it. That matches what already happens when a worker dies
+      // before writing any state at all -- the node looks untouched and runs
+      // again -- except that the recorded attempt now bounds the retries.
+      const resumingWait = run.status === "waiting";
+      // Only the top-level run has a row in the backend to write. Composites
+      // execute their children against synthetic runs (`${node.id}_parallel`,
+      // `_branch`, `_iter_N`) whose node states are a different keyspace: a loop
+      // iteration's run carries only that iteration's children. Persisting one
+      // of those under the real run id would replace the run's whole node-state
+      // map with an iteration-local fragment, stranding every completed
+      // top-level node as pending and re-running the workflow from the start --
+      // the duplicate side effect this recovery path exists to prevent.
+      // Child recoveries are persisted by the parent when it returns.
+      const isDurableRun = run.id === rootRunId;
+      const exhausted: Array<{ nodeId: string; attempts: number; maxAttempts: number }> = [];
+      for (const [nodeId, degree] of inDegree) {
+        if (degree !== 0 || ready.includes(nodeId)) continue;
+        const state = nodeStates[nodeId];
+        if (state?.status !== "running") continue;
+        const node = nodeMap.get(nodeId);
+        if (!node) continue;
+        if (resumingWait) {
+          if (RESUMABLE_COMPOSITE_TYPES.has(node.config.type)) ready.push(nodeId);
+          continue;
+        }
+        // A wait recorded as running is parked on its decision, never a dead
+        // worker: nothing executes while it waits, so there is nothing to
+        // recover. Re-running it would re-raise an approval that already exists.
+        // This also matters inside a loop or branch child graph, whose synthetic
+        // run is always "running" even while its wait is parked.
+        if (node.config.type === "wait") continue;
+
+        // The step executor restarts its own retry loop at 1 and overwrites the
+        // recorded attempt, so it cannot bound anything across worker deaths.
+        // Count them here instead, or repeated crashes re-run the node forever
+        // and duplicate whatever side effect it performs.
+        //
+        // An interrupted attempt never finished, so it does not consume the
+        // node's retry budget outright -- a default node still gets recovered
+        // once. What it does consume is one recovery: the count below is
+        // written back before scheduling, and nothing overwrites it if the
+        // worker dies again, so the next resume sees a higher number.
+        const maxAttempts = node.config.retry?.maxAttempts ?? 1;
+        const attempts = state.attempt ?? 0;
+        if (attempts > maxAttempts) {
+          exhausted.push({ nodeId, attempts, maxAttempts });
+          continue;
+        }
+        nodeStates[nodeId] = { ...state, attempt: attempts + 1 };
+        if (isDurableRun) {
+          const recovered = await this.config.onRecoveryScheduled?.({
+            runId: rootRunId,
+            nodeId,
+            nodeStates: structuredClone(nodeStates),
+            ownership,
+          });
+          if (recovered === false) {
+            throw ORCHESTRATION_ERROR.create({
+              detail:
+                `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+            });
+          }
+        }
+        ready.push(nodeId);
+      }
+
+      if (exhausted.length > 0) {
+        const first = exhausted[0]!;
+        for (const { nodeId, attempts, maxAttempts } of exhausted) {
+          nodeStates[nodeId] = {
+            ...nodeStates[nodeId]!,
+            status: "failed",
+            error:
+              `Interrupted after ${attempts} of ${maxAttempts} attempt(s); retry budget exhausted`,
+            completedAt: new Date(),
+          };
+        }
+        return {
+          completed: false,
+          waiting: false,
+          context,
+          nodeStates,
+          contextPatch,
+          error: `Node "${first.nodeId}" was interrupted after ${first.attempts} of ` +
+            `${first.maxAttempts} attempt(s); retry budget exhausted`,
+        };
+      }
+    }
 
     while (ready.length > 0) {
       abortSignal?.throwIfAborted();
@@ -129,6 +242,8 @@ export class DAGExecutor {
             nodeMap.get(nodeId)!,
             contextSnapshots[i]!,
             nodeStateSnapshots[i]!,
+            rootRunId,
+            executionRunId,
             abortSignal,
             ownership,
           )
@@ -191,7 +306,9 @@ export class DAGExecutor {
         nodeStates[nodeId] = nodeResult.state;
 
         if (nodeResult.waiting) {
-          if (!outcome) outcome = { kind: "waiting", nodeId };
+          // A composite reports the child that actually suspended. Falling back
+          // to this node covers a top-level wait, which is its own waiting node.
+          if (!outcome) outcome = { kind: "waiting", nodeId: nodeResult.waitingNode ?? nodeId };
           continue;
         }
 
@@ -267,6 +384,8 @@ export class DAGExecutor {
     node: WorkflowNode,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    rootRunId: string,
+    executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
@@ -275,15 +394,64 @@ export class DAGExecutor {
 
     const existingState = nodeStates[nodeId];
     if (existingState?.status === "completed") {
+      // Replayed from a checkpoint: no work happens in this execution, so no span.
       return { state: existingState, contextPatch: createSetContextPatch(), waiting: false };
     }
 
+    return await withSpan(
+      `workflow.node ${nodeId}`,
+      async () => {
+        const result = await this.dispatchNode(
+          node,
+          context,
+          nodeStates,
+          rootRunId,
+          executionRunId,
+          abortSignal,
+          ownership,
+        );
+        // A failing node returns a failed state rather than throwing, so the span's own
+        // catch never runs. Without this the span stays UNSET and a failed run is
+        // indistinguishable from a successful one in any trace backend.
+        setActiveSpanAttributes({ "workflow.node.status": result.state.status });
+        if (result.state.status === "failed") {
+          // The failure must be visible to errored-span queries, but the node's error
+          // text is user-supplied and can carry customer data -- the same reason retry
+          // events carry a classification rather than a message. Identify the node, not
+          // the failure text; the detail stays in the run record and the logs.
+          setActiveSpanErrorStatus(new Error(`Node "${nodeId}" failed`));
+        }
+        return result;
+      },
+      {
+        "workflow.run_id": rootRunId,
+        "workflow.node.id": nodeId,
+        "workflow.node.type": node.config.type,
+      },
+      {
+        errorStatus: () => new Error(`Node "${nodeId}" failed`),
+      },
+    );
+  }
+
+  /** Executes a node's type-specific strategy. Always runs inside its `workflow.node` span. */
+  private async dispatchNode(
+    node: WorkflowNode,
+    context: WorkflowContext,
+    nodeStates: Record<string, NodeState>,
+    rootRunId: string,
+    executionRunId: string,
+    abortSignal?: AbortSignal,
+    ownership?: CheckpointOwnership,
+  ): Promise<NodeExecutionResult> {
+    const nodeId = node.id;
     this.config.onNodeStart?.(nodeId);
 
     if (node.config.skip) {
       const shouldSkip = await node.config.skip(context);
       abortSignal?.throwIfAborted();
       if (shouldSkip) {
+        setActiveSpanAttributes({ "workflow.node.skipped": true });
         const state = this.config.stepExecutor.createSkippedState(nodeId);
         this.config.onNodeComplete?.(nodeId, state);
         return { state, contextPatch: createSetContextPatch(), waiting: false };
@@ -294,14 +462,23 @@ export class DAGExecutor {
 
     switch (config.type) {
       case "step":
-        return this.executeStepNode(node, context, abortSignal);
+        return this.executeStepNode(node, context, executionRunId, abortSignal);
       case "parallel":
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
           execute: (attemptSignal) =>
-            this.executeParallelNode(node, config, context, nodeStates, attemptSignal, ownership),
+            this.executeParallelNode(
+              node,
+              config,
+              context,
+              nodeStates,
+              rootRunId,
+              executionRunId,
+              attemptSignal,
+              ownership,
+            ),
         });
       case "map":
         return executeCompositeNodeWithPolicy({
@@ -316,7 +493,15 @@ export class DAGExecutor {
               nodeStates,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
-                  this.executeChildGraph(nodes, run, options, attemptSignal, ownership),
+                  this.executeChildGraph(
+                    nodes,
+                    run,
+                    rootRunId,
+                    executionRunId,
+                    options,
+                    attemptSignal,
+                    ownership,
+                  ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
@@ -344,6 +529,8 @@ export class DAGExecutor {
               selectedBranch,
               context,
               nodeStates,
+              rootRunId,
+              executionRunId,
               attemptSignal,
               ownership,
             );
@@ -358,7 +545,16 @@ export class DAGExecutor {
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
           execute: (attemptSignal) =>
-            this.executeSubWorkflowNode(node, config, context, attemptSignal, ownership),
+            this.executeSubWorkflowNode(
+              node,
+              config,
+              context,
+              rootRunId,
+              executionRunId,
+              nodeStates,
+              attemptSignal,
+              ownership,
+            ),
         });
       case "loop":
         return executeCompositeNodeWithPolicy({
@@ -373,7 +569,15 @@ export class DAGExecutor {
               nodeStates,
               runtime: {
                 executeChildGraph: (nodes, run) =>
-                  this.executeChildGraph(nodes, run, undefined, attemptSignal, ownership),
+                  this.executeChildGraph(
+                    nodes,
+                    run,
+                    rootRunId,
+                    executionRunId,
+                    undefined,
+                    attemptSignal,
+                    ownership,
+                  ),
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
@@ -391,9 +595,15 @@ export class DAGExecutor {
   private async executeStepNode(
     node: WorkflowNode,
     context: WorkflowContext,
+    runId: string,
     abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
-    const result = await this.config.stepExecutor.execute(node, context, abortSignal);
+    const result = await this.config.stepExecutor.execute(
+      node,
+      context,
+      abortSignal,
+      runId,
+    );
     abortSignal?.throwIfAborted();
 
     const state: NodeState = {
@@ -421,6 +631,8 @@ export class DAGExecutor {
     config: ParallelNodeConfig,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    rootRunId: string,
+    executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
@@ -444,9 +656,11 @@ export class DAGExecutor {
         createdAt: new Date(),
         sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
+      rootRunId,
       undefined,
       abortSignal,
       ownership,
+      executionRunId,
     );
     abortSignal?.throwIfAborted();
 
@@ -455,7 +669,7 @@ export class DAGExecutor {
     // The outer batch commits this snapshot only if the composite eventually
     // completes or waits; a final failed state discards it in full.
     applyContextPatch(context, result.contextPatch);
-    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+    applyRecordPatch(nodeStates, createRecordPatch({}, result.nodeStates));
 
     const state: NodeState = {
       nodeId: node.id,
@@ -473,6 +687,7 @@ export class DAGExecutor {
       state,
       contextPatch: result.contextPatch,
       waiting: result.waiting,
+      waitingNode: result.waitingNode,
     };
   }
 
@@ -482,6 +697,8 @@ export class DAGExecutor {
     conditionResult: boolean,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    rootRunId: string,
+    executionRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
@@ -520,9 +737,11 @@ export class DAGExecutor {
         createdAt: new Date(),
         sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
+      rootRunId,
       undefined,
       abortSignal,
       ownership,
+      executionRunId,
     );
     abortSignal?.throwIfAborted();
 
@@ -548,6 +767,7 @@ export class DAGExecutor {
       state,
       contextPatch: result.contextPatch,
       waiting: result.waiting,
+      waitingNode: result.waitingNode,
     };
   }
 
@@ -587,6 +807,9 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
+    rootRunId: string,
+    executionRunId: string,
+    nodeStates: Record<string, NodeState>,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<NodeExecutionResult> {
@@ -613,6 +836,12 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
 
     const subRunId = `${node.id}_sub_${generateId()}`;
+    // The sub-run record is synthetic and never persisted, so its id is a debugging
+    // attribute only — `workflow.run_id` keeps pointing at the root run.
+    setActiveSpanAttributes({
+      "workflow.sub_run_id": subRunId,
+      "workflow.sub_workflow_id": workflowDef.id,
+    });
 
     const result = await this.executeUnwrapped(
       steps,
@@ -621,7 +850,7 @@ export class DAGExecutor {
         workflowId: workflowDef.id,
         status: "running",
         input,
-        nodeStates: {},
+        nodeStates: { ...nodeStates },
         currentNodes: [],
         context: { input },
         checkpoints: [],
@@ -629,11 +858,15 @@ export class DAGExecutor {
         createdAt: new Date(),
         sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       },
+      rootRunId,
       undefined,
       abortSignal,
       ownership,
+      executionRunId,
     );
     abortSignal?.throwIfAborted();
+
+    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
     let finalOutput: unknown = result.context;
     if (result.completed && config.output) {
@@ -657,6 +890,7 @@ export class DAGExecutor {
       state,
       contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
       waiting: result.waiting,
+      waitingNode: result.waitingNode,
     };
   }
 
@@ -692,12 +926,22 @@ export class DAGExecutor {
   private async executeChildGraph(
     nodes: WorkflowNode[],
     run: WorkflowRun,
+    rootRunId: string,
+    executionRunId: string,
     options?: ChildGraphExecutionOptions,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<DAGInternalExecutionResult> {
     if (!options?.maxConcurrency) {
-      return await this.executeUnwrapped(nodes, run, undefined, abortSignal, ownership);
+      return await this.executeUnwrapped(
+        nodes,
+        run,
+        rootRunId,
+        undefined,
+        abortSignal,
+        ownership,
+        executionRunId,
+      );
     }
 
     // Run the child graph on a scoped executor rather than mutating
@@ -708,6 +952,14 @@ export class DAGExecutor {
       ...this.config,
       maxConcurrency: options.maxConcurrency,
     });
-    return await childExecutor.executeUnwrapped(nodes, run, undefined, abortSignal, ownership);
+    return await childExecutor.executeUnwrapped(
+      nodes,
+      run,
+      rootRunId,
+      undefined,
+      abortSignal,
+      ownership,
+      executionRunId,
+    );
   }
 }

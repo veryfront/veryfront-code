@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectAncestorDirs,
@@ -24,27 +24,32 @@ describe("rendering/app-reserved", () => {
     const controller = new AbortController();
     controller.abort(new DOMException("render cancelled", "AbortError"));
 
-    await assertRejects(
-      () =>
-        loadReservedWithPath(
-          ["/project/app/blog", "/project/app"],
-          "loading",
-          "/project",
-          { compileMode: "development", environment: "preview" },
-          adapter,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          controller.signal,
-        ),
-      Error,
-      "render cancelled",
-    );
+    try {
+      await loadReservedWithPath(
+        ["/project/app/blog", "/project/app"],
+        "loading",
+        "/project",
+        { compileMode: "development", environment: "preview" },
+        adapter,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        controller.signal,
+      );
+      throw new Error("Expected reserved component loading to reject after cancellation");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      assertEquals(error.name, "AbortError");
+      assertEquals(
+        error.message === "render cancelled" || error.message === "The operation was aborted",
+        true,
+      );
+    }
     assertEquals(reads, 0);
   });
 
@@ -57,27 +62,29 @@ describe("rendering/app-reserved", () => {
       },
     } as unknown as AbortSignal;
 
-    await assertRejects(
-      () =>
-        loadReservedWithPath(
-          [],
-          "loading",
-          "/project",
-          { compileMode: "development", environment: "preview" },
-          {} as RuntimeAdapter,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          signal,
-        ),
-      Error,
-      "operation was aborted",
-    );
+    try {
+      await loadReservedWithPath(
+        [],
+        "loading",
+        "/project",
+        { compileMode: "development", environment: "preview" },
+        {} as RuntimeAdapter,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        signal,
+      );
+      throw new Error("Expected reserved component loading to reject after cancellation");
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      assertEquals(error.name, "AbortError");
+      assertEquals(error.message, "The operation was aborted");
+    }
   });
 
   describe("RESERVED_COMPONENTS", () => {

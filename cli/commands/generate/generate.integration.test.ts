@@ -42,7 +42,7 @@ describe("CLI generate command", () => {
 
       assert(await exists(join(context.projectDir, "app", "docs", "intro", "page.tsx")));
       assert(await exists(join(context.projectDir, "app", "main", "layout.tsx")));
-      assert(await exists(join(context.projectDir, "app", "users", "[id]", "route.ts")));
+      assert(await exists(join(context.projectDir, "app", "api", "users", "[id]", "route.ts")));
     });
   });
 
@@ -55,7 +55,7 @@ describe("CLI generate command", () => {
       await generateCommand(context.projectDir, "layout", "nested");
 
       assert(await exists(join(context.projectDir, "app", "docs", "intro", "page.tsx")));
-      assert(await exists(join(context.projectDir, "app", "users", "[id]", "route.ts")));
+      assert(await exists(join(context.projectDir, "app", "api", "users", "[id]", "route.ts")));
       assert(await exists(join(context.projectDir, "app", "nested", "layout.tsx")));
     });
   });

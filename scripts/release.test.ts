@@ -1,6 +1,10 @@
 import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
-import { bumpDenoJsonVersion } from "./release-version.ts";
+import {
+  bumpDenoJsonVersion,
+  bumpVersionAssignments,
+  getNewVersion,
+} from "./release-version.ts";
 
 // A deno.json shaped like the real one: an inline array is what re-serialising
 // used to reflow, so it has to survive a bump untouched.
@@ -58,6 +62,45 @@ describe("scripts/release", () => {
         () => bumpDenoJsonVersion('{\n  "name": "veryfront"\n}\n', "0.1.1237"),
         Error,
         'Could not find a "version" field',
+      );
+    });
+  });
+
+  describe("getNewVersion", () => {
+    it("promotes the current RC to its stable patch version", () => {
+      assertEquals(getNewVersion("0.1.1246-rc", "patch"), "0.1.1246");
+      assertEquals(getNewVersion("0.1.1246-rc.42", "patch"), "0.1.1246");
+    });
+
+    it("can bump a prerelease to the next minor or major version", () => {
+      assertEquals(getNewVersion("0.1.1246-rc", "minor"), "0.2.0");
+      assertEquals(getNewVersion("0.1.1246-rc", "major"), "1.0.0");
+    });
+
+    it("rejects malformed current versions", () => {
+      assertThrows(
+        () => getNewVersion("0.1.1246-rc!", "patch"),
+        Error,
+        "Invalid current version format",
+      );
+    });
+  });
+
+  describe("bumpVersionAssignments", () => {
+    it("promotes RC constants to the stable version", () => {
+      assertEquals(
+        bumpVersionAssignments(
+          'export const VERSION = "0.1.1246-rc";\n',
+          "0.1.1246",
+        ),
+        'export const VERSION = "0.1.1246";\n',
+      );
+      assertEquals(
+        bumpVersionAssignments(
+          'export const VERYFRONT_VERSION = "0.1.1246-rc.42";\n',
+          "0.1.1246",
+        ),
+        'export const VERYFRONT_VERSION = "0.1.1246";\n',
       );
     });
   });

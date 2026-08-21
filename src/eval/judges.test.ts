@@ -345,3 +345,61 @@ describe("eval/judges", () => {
     assertStringIncludes(result.explanation ?? "", "valid JSON");
   });
 });
+
+describe("eval/judges rubric framing", () => {
+  function promptsFrom(calls: unknown[]): string {
+    return JSON.stringify(calls);
+  }
+
+  it("grades standing text without the agent-answer premise", async () => {
+    const calls: unknown[] = [];
+    const judge = judges.llm.rubric({
+      framing: "text",
+      model: createJudgeModel(
+        JSON.stringify({ score: 1, pass: true, explanation: "Professional throughout." }),
+        calls,
+      ),
+    });
+
+    const result = await judge({
+      rubric: "The text must be polite and free of internal jargon.",
+      // The value handed straight through, which is what the answer framing
+      // misreads as an agent echoing its prompt.
+      input: "Sehr geehrte Frau Muster, ...",
+      output: { text: "Sehr geehrte Frau Muster, ..." },
+      metadata: {},
+    });
+
+    assertEquals(result.score, 1);
+    assertEquals(result.pass, true);
+
+    const sent = promptsFrom(calls);
+    assertStringIncludes(sent, "Evaluate the supplied text against the supplied rubric.");
+    assertStringIncludes(sent, "not produced in response to a");
+    // The answer premise is gone, and the graded value is sent once as text
+    // rather than twice as both the input and the answer.
+    assertEquals(sent.includes("Evaluate an agent answer"), false);
+    assertEquals(sent.includes("expected-answer context"), false);
+    assertStringIncludes(sent, "text");
+  });
+
+  it("keeps the answer framing as the default", async () => {
+    const calls: unknown[] = [];
+    const judge = judges.llm.rubric({
+      model: createJudgeModel(
+        JSON.stringify({ score: 0.9, pass: true, explanation: "Correct." }),
+        calls,
+      ),
+    });
+
+    await judge({
+      rubric: "The answer must be correct.",
+      input: "2 + 2?",
+      output: { text: "4" },
+      metadata: {},
+    });
+
+    const sent = promptsFrom(calls);
+    assertStringIncludes(sent, "Evaluate an agent answer against the supplied rubric.");
+  });
+});

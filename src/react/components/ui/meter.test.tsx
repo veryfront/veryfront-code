@@ -12,64 +12,15 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import { Meter } from "./meter.tsx";
 
 // ---------------------------------------------------------------------------
 // jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
-class ResizeObserverStub {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
-}
-
 function installDom(dom: JSDOM): () => void {
-  const w = dom.window as unknown as Record<string, unknown>;
-  const g = globalThis as unknown as Record<string, unknown>;
-  const keys = [
-    "document",
-    "window",
-    "navigator",
-    "HTMLElement",
-    "Node",
-    "Element",
-    "MouseEvent",
-    "getComputedStyle",
-    "ResizeObserver",
-    "matchMedia",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-  ];
-  const prev: Record<string, unknown> = {};
-  for (const k of keys) prev[k] = g[k];
-
-  g.document = w.document;
-  g.window = w;
-  g.navigator = w.navigator;
-  g.HTMLElement = w.HTMLElement;
-  g.Node = w.Node;
-  g.Element = w.Element;
-  g.MouseEvent = w.MouseEvent;
-  g.getComputedStyle = (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w);
-  g.ResizeObserver = ResizeObserverStub;
-  g.matchMedia = () => ({
-    matches: false,
-    media: "",
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    addListener: () => {},
-    removeListener: () => {},
-    onchange: null,
-    dispatchEvent: () => false,
-  });
-  g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(0), 0);
-  g.cancelAnimationFrame = (id: number) => clearTimeout(id);
-
-  return () => {
-    for (const k of keys) g[k] = prev[k];
-    dom.window.close();
-  };
+  return installComponentDom(dom, { matchMedia: true });
 }
 
 /** Render `element` into a fresh DOM; returns the host node and a teardown. */

@@ -11,6 +11,14 @@ import { __resetServerShuttingDownForTests, markServerShuttingDown } from "../..
 
 const encoder = new TextEncoder();
 
+type AgentGenerateFixture = (input: Parameters<Agent["generate"]>[0]) => Promise<AgentResponse>;
+
+function createGenerateStub(generate: AgentGenerateFixture): Agent["generate"] {
+  return (async (input: Parameters<Agent["generate"]>[0]) => {
+    return await generate(input);
+  }) as Agent["generate"];
+}
+
 function encodePem(label: string, der: ArrayBuffer): string {
   const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
   const lines = base64.match(/.{1,64}/g) ?? [base64];
@@ -102,11 +110,11 @@ function createAgentResponse(text = "Hello from handler"): AgentResponse {
   };
 }
 
-function createAgent(generate: Agent["generate"]): Agent {
+function createAgent(generate: AgentGenerateFixture): Agent {
   return {
     id: "agent-1",
     config: {} as Agent["config"],
-    generate,
+    generate: createGenerateStub(generate),
     stream: async () => ({ toDataStreamResponse: () => new Response() } as never),
     respond: async () => new Response(),
     getMemory: () => ({} as never),

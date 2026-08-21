@@ -3689,7 +3689,7 @@ describe("anthropic-provider", () => {
       assertEquals(dropped, ["temperature", "topP"]);
     });
 
-    it("warns on non-text responseFormat", async () => {
+    it("warns on a schemaless json responseFormat", async () => {
       const runtime = createAnthropicModelRuntime({
         apiKey: "k",
         baseURL: "https://example.anthropic.test/v1",
@@ -3701,6 +3701,82 @@ describe("anthropic-provider", () => {
       });
       const dropped = settings(result);
       assertEquals(dropped, ["responseFormat"]);
+    });
+
+    it("emits Anthropic output_config when responseFormat is structured", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          captured = JSON.parse(readRequestBody(init) ?? "{}");
+          return Promise.resolve(okResponse());
+        },
+      }, "claude-sonnet-4-20250514");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      };
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        responseFormat: { type: "json_schema", name: "Person", schema, strict: true },
+      });
+      const body = captured as { output_config?: unknown } | null;
+      // The schema is closed on the way out: Anthropic rejects an object schema
+      // that does not explicitly set additionalProperties: false.
+      assertEquals(body!.output_config, {
+        format: { type: "json_schema", schema: { ...schema, additionalProperties: false } },
+      });
+      assertEquals(settings(result), []);
+    });
+
+    it("keeps requested output_config ahead of raw provider options", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          captured = JSON.parse(readRequestBody(init) ?? "{}");
+          return Promise.resolve(okResponse());
+        },
+      }, "claude-sonnet-4-20250514");
+      const schema = {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+      };
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        providerOptions: {
+          anthropic: {
+            output_config: { format: { type: "text" } },
+          },
+        },
+        responseFormat: { type: "json_schema", name: "Person", schema },
+      });
+
+      const body = captured as { output_config?: unknown } | null;
+      // The schema is closed on the way out: Anthropic rejects an object schema
+      // that does not explicitly set additionalProperties: false.
+      assertEquals(body!.output_config, {
+        format: { type: "json_schema", schema: { ...schema, additionalProperties: false } },
+      });
+    });
+
+    it("advertises JSON Schema structured output only for supported model families", () => {
+      const supported = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-5-20250929");
+      const unsupported = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-20250514");
+      assertEquals(supported.runtimeCapabilities?.structuredOutput, ["json_schema"]);
+      assertEquals(unsupported.runtimeCapabilities?.structuredOutput, false);
     });
   });
 

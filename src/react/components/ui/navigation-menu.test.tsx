@@ -13,10 +13,12 @@
  */
 import * as React from "react";
 import { flushSync } from "react-dom";
+import { waitFor } from "#veryfront/testing/deno-compat.ts";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { installComponentDom } from "#veryfront/testing/dom-globals.ts";
 import {
   NavigationMenu,
   NavigationMenuContent,
@@ -30,62 +32,11 @@ import {
 // jsdom harness - installs a fresh DOM per render and stubs the browser APIs
 // jsdom lacks (ResizeObserver, rAF, matchMedia) so effect-driven components mount.
 // ---------------------------------------------------------------------------
-class ResizeObserverStub {
-  observe(): void {}
-  unobserve(): void {}
-  disconnect(): void {}
-}
-
 function installDom(dom: JSDOM): () => void {
-  const w = dom.window as unknown as Record<string, unknown>;
-  const g = globalThis as unknown as Record<string, unknown>;
-  const keys = [
-    "document",
-    "window",
-    "navigator",
-    "HTMLElement",
-    "Node",
-    "Element",
-    "MouseEvent",
-    "KeyboardEvent",
-    "FocusEvent",
-    "getComputedStyle",
-    "ResizeObserver",
-    "matchMedia",
-    "requestAnimationFrame",
-    "cancelAnimationFrame",
-  ];
-  const prev: Record<string, unknown> = {};
-  for (const k of keys) prev[k] = g[k];
-
-  g.document = w.document;
-  g.window = w;
-  g.navigator = w.navigator;
-  g.HTMLElement = w.HTMLElement;
-  g.Node = w.Node;
-  g.Element = w.Element;
-  g.MouseEvent = w.MouseEvent;
-  g.KeyboardEvent = w.KeyboardEvent;
-  g.FocusEvent = w.FocusEvent;
-  g.getComputedStyle = (w.getComputedStyle as (e: Element) => CSSStyleDeclaration).bind(w);
-  g.ResizeObserver = ResizeObserverStub;
-  g.matchMedia = () => ({
-    matches: false,
-    media: "",
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    addListener: () => {},
-    removeListener: () => {},
-    onchange: null,
-    dispatchEvent: () => false,
+  return installComponentDom(dom, {
+    matchMedia: true,
+    windowGlobals: ["KeyboardEvent", "FocusEvent"],
   });
-  g.requestAnimationFrame = (cb: (t: number) => void) => setTimeout(() => cb(0), 0);
-  g.cancelAnimationFrame = (id: number) => clearTimeout(id);
-
-  return () => {
-    for (const k of keys) g[k] = prev[k];
-    dom.window.close();
-  };
 }
 
 /** Render `element` into a fresh DOM; returns the host node, a click helper and a teardown. */
@@ -161,6 +112,9 @@ function Fixture(): React.ReactElement {
 function triggers(host: HTMLElement): HTMLElement[] {
   return Array.from(host.querySelectorAll<HTMLElement>("nav ul li button"));
 }
+
+/** Comfortably longer than the component's 100ms close delay. */
+const CLOSE_SETTLE_MS = 300;
 
 describe("NavigationMenu behaviour", () => {
   it("renders a nav landmark with its list, items and collapsed triggers", () => {
@@ -298,17 +252,23 @@ describe("NavigationMenu behaviour", () => {
         "leaving the trigger does not close the panel immediately",
       );
       await pointerEnter(panel);
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Proving a negative, so this has to be a real wait: comfortably longer
+      // than the component's close delay, and asserting the panel survived it.
+      await new Promise((resolve) => setTimeout(resolve, CLOSE_SETTLE_MS));
       assert(
         host.querySelector('[data-slot="navigation-menu-content"]'),
         "entering the panel cancels the pending close",
       );
 
       await pointerLeave(panel);
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      assert(
-        host.querySelector('[data-slot="navigation-menu-content"]') == null,
-        "the panel closes after the pointer leaves the coordinated region",
+      // Poll rather than sleeping past the close delay. A fixed sleep races the
+      // component's timer under a loaded parallel suite: too short and the
+      // assertion fails, and either way the test can finish with that timer
+      // still pending, which trips the leak sanitizer. Waiting for the observable
+      // outcome guarantees the timer has fired before teardown.
+      await waitFor(
+        () => host.querySelector('[data-slot="navigation-menu-content"]') == null,
+        { interval: 10, message: "panel did not close after the pointer left the region" },
       );
     } finally {
       unmount();

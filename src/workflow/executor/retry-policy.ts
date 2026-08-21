@@ -8,6 +8,15 @@ export const DEFAULT_RETRY_INITIAL_DELAY_MS = 1_000;
 export const DEFAULT_RETRY_MAX_DELAY_MS = 30_000;
 
 const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const SAFE_ERROR_NAMES = new Set([
+  "Error",
+  "EvalError",
+  "RangeError",
+  "ReferenceError",
+  "SyntaxError",
+  "TypeError",
+  "URIError",
+]);
 
 /**
  * Node/Deno transient network error codes. Matched as whole tokens against
@@ -35,6 +44,19 @@ export function isRetryableWorkflowError(error: Error, config: RetryConfig | und
   const code = (error as { code?: unknown }).code;
   const subject = typeof code === "string" ? code : error.message;
   return RETRYABLE_CODE_RE.test(subject);
+}
+
+/** Public-safe retry telemetry classification. Never include the error message here. */
+export function retryTelemetryErrorType(error: Error): string {
+  if (isVeryfrontError(error)) return `VeryfrontError:${error.status}`;
+
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string") {
+    const match = RETRYABLE_CODE_RE.exec(code);
+    if (match?.[1]) return match[1];
+  }
+
+  return SAFE_ERROR_NAMES.has(error.name) ? error.name : "Error";
 }
 
 /** Backoff delay (fixed/linear/exponential per config) with ±10% jitter. */

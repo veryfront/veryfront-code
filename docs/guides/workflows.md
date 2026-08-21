@@ -328,23 +328,63 @@ export default workflow({
 
 ## Verify it worked
 
-Start the workflow from the start route, then poll the run state until it
-reaches a terminal status:
+`createWorkflowClient()` stores runs in memory, private to the client that
+started them. A second client, in another route file or the same file on a
+later request, does not see them. Verify the run from the request that started
+it, and add a persistent backend before reading run state from anywhere else.
 
-```bash
-RUN=$(curl -s http://localhost:3000/api/start-content-workflow \
-  -H "Content-Type: application/json" \
-  -d '{"topic":"AI agents"}' | jq -r .runId)
+Add a route that starts the workflow, waits for it, and reads the finished run
+back through the same client:
 
-while true; do
-  STATE=$(curl -s "http://localhost:3000/api/workflows/runs/$RUN")
-  STATUS=$(echo "$STATE" | jq -r '.status')
-  echo "status=$STATUS"
-  case "$STATUS" in
-    completed|failed|cancelled) break ;;
-  esac
-  sleep 2
-done
+```ts
+// app/api/verify-content-workflow/route.ts
+import { getAgent, getAllAgentIds } from "veryfront/agent";
+import { toolRegistry } from "veryfront/tool";
+import { createWorkflowClient } from "veryfront/workflow";
+import contentPipeline from "../../../workflows/content-pipeline.ts";
+
+const workflows = createWorkflowClient({
+  executor: {
+    stepExecutor: {
+      agentRegistry: { get: getAgent, list: getAllAgentIds },
+      toolRegistry,
+    },
+  },
+});
+
+workflows.register(contentPipeline);
+
+export async function POST(request: Request) {
+  const input = await request.json();
+  const handle = await workflows.start("content-pipeline", input);
+  await handle.settled();
+
+  const run = await workflows.getRun(handle.runId);
+  return Response.json({ status: run?.status, nodeStates: run?.nodeStates });
+}
 ```
 
-A working run reaches `status: "completed"` and exposes a `nodeStates` map with one `completed` entry per step. If `status` ends in `failed`, inspect the matching node entry in `nodeStates` for the underlying error.
+Call it:
+
+```bash
+curl -s http://localhost:3000/api/verify-content-workflow \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"AI agents"}' \
+  | jq '{status, nodes: (.nodeStates | to_entries | map({(.key): .value.status}))}'
+```
+
+A working run reaches `status: "completed"` and exposes a `nodeStates` map with one `completed` entry per step:
+
+```json
+{
+  "status": "completed",
+  "nodes": [{ "research": "completed" }, { "write": "completed" }, { "review": "completed" }]
+}
+```
+
+If `status` ends in `failed`, inspect the matching node entry in `nodeStates` for the underlying error.
+
+To read run state from a different request (a status endpoint, a dashboard, or
+the `useWorkflow` hook), give every client the same persistent backend, such as
+`RedisBackend`, instead of the default in-memory one. Run state written by one
+in-memory client is not readable from any other.

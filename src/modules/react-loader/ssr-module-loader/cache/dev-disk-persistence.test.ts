@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   deleteEnv,
+  isNotFoundError,
   makeTempDir,
   mkdir,
   readTextFile,
@@ -15,6 +16,7 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { CacheBackends } from "#veryfront/cache/backend.ts";
 import { stop as stopEsbuild } from "#veryfront/platform/compat/esbuild.ts";
+import { isBun } from "#veryfront/platform/compat/runtime.ts";
 import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
   DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
@@ -32,10 +34,21 @@ const ENV_KEYS = [
   "VF_DISK_CACHE_DIR",
 ] as const;
 
+async function removeTempDirIfPresent(path: string): Promise<void> {
+  try {
+    await remove(path, { recursive: true });
+  } catch (error) {
+    if (isNotFoundError(error)) return;
+    throw error;
+  }
+}
+
 /** Put the process in the state a `veryfront dev` server runs in. */
 function useLocalDevEnvironment(): void {
   for (const key of ENV_KEYS) deleteEnv(key);
 }
+
+const itUnlessBun = isBun ? it.skip : it;
 
 describe("SSR module distributed cache on a local dev server", () => {
   afterAll(async () => {
@@ -64,7 +77,7 @@ describe("SSR module distributed cache on a local dev server", () => {
         assertEquals(await afterRestart.getFromRedis("dev-disk-key"), code);
       });
     } finally {
-      await remove(cacheDir, { recursive: true });
+      await removeTempDirIfPresent(cacheDir);
     }
   });
 
@@ -90,12 +103,12 @@ describe("SSR module distributed cache on a local dev server", () => {
         assertEquals(await cache.getFromRedis("shared-key"), "export default 'first';");
       });
     } finally {
-      await remove(firstCacheDir, { recursive: true });
-      await remove(secondCacheDir, { recursive: true });
+      await removeTempDirIfPresent(firstCacheDir);
+      await removeTempDirIfPresent(secondCacheDir);
     }
   });
 
-  it("rebuilds a cached parent when an imported file changes while stopped", async () => {
+  itUnlessBun("rebuilds a cached parent when an imported file changes while stopped", async () => {
     useLocalDevEnvironment();
     const cacheDir = await makeTempDir({ prefix: "vf-dev-ssr-cache-" });
     const projectDir = await makeTempDir({ prefix: "vf-dev-ssr-project-" });
@@ -156,10 +169,16 @@ describe("SSR module distributed cache on a local dev server", () => {
 
         const afterRestart = await createLoader().loadRawModule(parentPath, parentSource);
         assertEquals((afterRestart.default as () => string)(), "after");
+
+        // A transform publishes to the distributed cache without blocking the
+        // render, so a write can still be in flight here. The `finally` below
+        // deletes the directory it is writing into; without this the write
+        // fails into a cleanup path that outlives the test.
+        await persistent.drainBackgroundWrites();
       });
     } finally {
-      await remove(projectDir, { recursive: true });
-      await remove(cacheDir, { recursive: true });
+      await removeTempDirIfPresent(projectDir);
+      await removeTempDirIfPresent(cacheDir);
     }
   });
 
@@ -179,7 +198,7 @@ describe("SSR module distributed cache on a local dev server", () => {
         assertEquals(await cache.getFromRedis("dev-disk-key"), null);
       });
     } finally {
-      await remove(tempDir, { recursive: true });
+      await removeTempDirIfPresent(tempDir);
     }
   });
 

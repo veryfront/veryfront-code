@@ -130,6 +130,23 @@ describe("cicd coverage workflow", () => {
     );
   });
 
+  it("blocks live provider egress in every Deno unit coverage path", async () => {
+    const providerDenyNet =
+      "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
+    const coverageCiScript = await readRepoFile("scripts/test/coverage-ci.ts");
+
+    assertStringIncludes(coverageCiScript, `"${providerDenyNet}"`);
+    for (
+      const taskName of [
+        "test:coverage",
+        "test:coverage:unit",
+        "test:coverage:integration",
+      ]
+    ) {
+      assertStringIncludes(await readDenoTask(taskName), providerDenyNet);
+    }
+  });
+
   it("stays runnable on every runtime, not just the one with the global", async () => {
     // `tests/node/run-tests.mjs` drops any file under src/ whose source mentions
     // the runtime global, and `tests/bun/run-tests.mjs` shares that list. This
