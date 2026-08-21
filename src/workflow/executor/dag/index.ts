@@ -133,6 +133,16 @@ export class DAGExecutor {
       // before writing any state at all -- the node looks untouched and runs
       // again -- except that the recorded attempt now bounds the retries.
       const resumingWait = run.status === "waiting";
+      // Only the top-level run has a row in the backend to write. Composites
+      // execute their children against synthetic runs (`${node.id}_parallel`,
+      // `_branch`, `_iter_N`) whose node states are a different keyspace: a loop
+      // iteration's run carries only that iteration's children. Persisting one
+      // of those under the real run id would replace the run's whole node-state
+      // map with an iteration-local fragment, stranding every completed
+      // top-level node as pending and re-running the workflow from the start --
+      // the duplicate side effect this recovery path exists to prevent.
+      // Child recoveries are persisted by the parent when it returns.
+      const isDurableRun = run.id === rootRunId;
       const exhausted: Array<{ nodeId: string; attempts: number; maxAttempts: number }> = [];
       for (const [nodeId, degree] of inDegree) {
         if (degree !== 0 || ready.includes(nodeId)) continue;
@@ -168,16 +178,19 @@ export class DAGExecutor {
           continue;
         }
         nodeStates[nodeId] = { ...state, attempt: attempts + 1 };
-        const recovered = await this.config.onRecoveryScheduled?.({
-          runId: rootRunId,
-          nodeId,
-          nodeStates: structuredClone(nodeStates),
-          ownership,
-        });
-        if (recovered === false) {
-          throw ORCHESTRATION_ERROR.create({
-            detail: `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+        if (isDurableRun) {
+          const recovered = await this.config.onRecoveryScheduled?.({
+            runId: rootRunId,
+            nodeId,
+            nodeStates: structuredClone(nodeStates),
+            ownership,
           });
+          if (recovered === false) {
+            throw ORCHESTRATION_ERROR.create({
+              detail:
+                `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+            });
+          }
         }
         ready.push(nodeId);
       }

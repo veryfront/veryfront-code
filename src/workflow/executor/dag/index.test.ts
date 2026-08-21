@@ -1412,6 +1412,81 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["once"]!.status, "failed");
     });
 
+    it("persists only the run's own node states, never a child graph's", async () => {
+      // The hook is wired to a fenced write that replaces the run's whole
+      // node-state map. A loop iteration's child run carries only that
+      // iteration's children, so persisting one under the real run id would
+      // erase every top-level node -- and a workflow whose completed nodes read
+      // as pending re-runs from the start, duplicating exactly the side effects
+      // this recovery path exists to protect.
+      const persisted: Array<{ runId: string; nodeId: string; keys: string[] }> = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => ({
+          success: true,
+          output: node.id,
+          executionTime: 1,
+        })),
+        onRecoveryScheduled: ({ runId, nodeId, nodeStates }) => {
+          persisted.push({ runId, nodeId, keys: Object.keys(nodeStates).sort() });
+        },
+      });
+
+      const nodes: WorkflowNode[] = [
+        { id: "before", dependsOn: [], config: { type: "step" } as any },
+        {
+          id: "loop",
+          dependsOn: ["before"],
+          config: {
+            type: "loop",
+            maxIterations: 2,
+            while: (_context: WorkflowContext, loop: { iteration: number }) => loop.iteration < 1,
+            steps: [
+              {
+                id: "inner-parallel",
+                dependsOn: [],
+                config: {
+                  type: "parallel",
+                  nodes: [{ id: "leaf", dependsOn: [], config: { type: "step" } }],
+                },
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      // A worker died inside the loop: the loop node and the composite in its
+      // in-flight iteration are both recorded running, the iteration's states
+      // living in their own keyspace under the loop's persisted state.
+      const run = createTestRun({
+        status: "running",
+        nodeStates: {
+          before: { nodeId: "before", status: "completed", attempt: 1 },
+          loop: { nodeId: "loop", status: "running", attempt: 1, startedAt: new Date() },
+        },
+        context: {
+          input: { topic: "test" },
+          loop_loop_state: {
+            iteration: 0,
+            previousResults: [],
+            iterationNodeStates: {
+              "inner-parallel": {
+                nodeId: "inner-parallel",
+                status: "running",
+                attempt: 1,
+                startedAt: new Date(),
+              },
+            },
+          },
+        },
+      });
+
+      await exec.execute(nodes, run);
+
+      assertEquals(persisted, [
+        { runId: "test-run", nodeId: "loop", keys: ["before", "loop"] },
+      ]);
+    });
+
     it("leaves a wait parked on its decision alone", async () => {
       const executed: string[] = [];
       const exec = new DAGExecutor({
