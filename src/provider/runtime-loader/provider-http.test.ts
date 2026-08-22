@@ -950,6 +950,41 @@ describe("provider-http", () => {
       assertEquals(await new Response(stream).text(), "chunk");
     });
 
+    it("reports the configured deadline and total wait after replays, not the last clamp", async () => {
+      // Replays are clamped by the remaining budget, so the final attempt runs
+      // on a deadline nobody configured. Surfacing that number sends a
+      // responder looking for a setting that does not exist (issue #710's
+      // second defect: the error must say which deadline fired).
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return new Promise<Response>(() => {});
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            modelId: "gpt-5.5",
+            headersTimeoutMs: 5,
+            totalHeadersBudgetMs: 12,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      ) as ProviderRequestError;
+
+      assertEquals(attempts > 1, true, "the budget must buy at least one replay");
+      assertMatch(error.message, /5ms deadline/);
+      assertMatch(error.message, /model gpt-5\.5/);
+      assertEquals(
+        error.message.includes("2ms deadline"),
+        false,
+        "a clamped replay deadline must not be reported as the configured one",
+      );
+    });
+
     it("does not retry a quota failure that shares the rate limit status", async () => {
       // 429 + insufficient_quota classifies as ProviderQuotaError with
       // retryable: false. The retry decision keys on that flag, not on the
