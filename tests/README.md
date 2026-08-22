@@ -24,7 +24,7 @@ react/                    # React package source with colocated unit tests
 tests/
 ├── _helpers/             # Shared test utilities (TestContext, etc.)
 ├── _examples/            # Example tests demonstrating best practices
-├── e2e/                  # End-to-end tests (Playwright)
+├── e2e/                  # End-to-end journeys (Deno and Playwright)
 ├── fixtures/             # Test data and mock implementations
 └── integration/          # Integration tests (multiple components, I/O, servers)
 ```
@@ -40,7 +40,8 @@ Canonical leaves are:
 
 - `src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, `react/` -> `unit -> unit -> deno`
 - `tests/integration/` -> `integration -> integration -> deno`
-- `tests/e2e/` -> `e2e -> e2e -> playwright`
+- `tests/e2e/**/*.test.*` -> `e2e -> e2e -> deno`
+- `tests/e2e/**/*.playwright.ts` -> `e2e -> e2e -> playwright`
 
 Runtime is a suite variant, not a competing leaf owner. Runtime metadata lives
 on one registry record and can assign variant runners, but it does not create a

@@ -60,7 +60,7 @@ export const LEAF_TEST_SUITES: readonly LeafTestSuite[] = Object.freeze([
     id: "e2e",
     level: "e2e",
     pathSelectors: ["tests/e2e/"],
-    runner: "playwright",
+    runner: "deno",
     prOwner: "test-architecture",
     supportExclusions: TEST_SUPPORT_EXCLUSIONS,
   },

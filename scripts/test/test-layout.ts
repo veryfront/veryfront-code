@@ -1,3 +1,4 @@
+import { parse } from "#babel/parser";
 import { parseArgs } from "#std/flags";
 import { walk } from "#std/fs/walk";
 import {
@@ -82,7 +83,6 @@ export type TestLayoutMigrationBaseline =
 const DENO_TEST_PATTERN = /\.test\.(?:ts|tsx|js|mjs|cjs)$/;
 const PLAYWRIGHT_TEST_PATTERN = /\.playwright\.ts$/;
 const TEST_LIKE_PATTERN = /\.(?:test|spec|playwright)\.[^/]+$/;
-const STRING_LITERAL_PATTERN = /["']([^"'\n]+)["']/g;
 const MIGRATION_FILE_PATH = "scripts/test/test-layout-migration.ts";
 const IGNORED_ROOTS = new Set([
   ".git",
@@ -320,23 +320,115 @@ export function parseMigrationBaselineSource(
   source: string,
   ref: string,
 ): TestLayoutMigrationBaseline {
-  if (!source.includes("TEST_LAYOUT_MIGRATION_ENTRIES")) {
+  let program;
+  try {
+    program = parse(source, {
+      sourceType: "module",
+      plugins: ["typescript"],
+    }).program;
+  } catch {
     return {
       kind: "malformed",
       ref,
-      reason:
-        "base migration file does not export TEST_LAYOUT_MIGRATION_ENTRIES",
+      reason: "base migration file is not valid TypeScript",
     };
+  }
+
+  const declarations = program.body.flatMap((statement) => {
+    if (
+      statement.type !== "ExportNamedDeclaration" ||
+      statement.declaration?.type !== "VariableDeclaration" ||
+      statement.declaration.kind !== "const"
+    ) {
+      return [];
+    }
+
+    return statement.declaration.declarations.filter((declaration) =>
+      declaration.id.type === "Identifier" &&
+      declaration.id.name === "TEST_LAYOUT_MIGRATION_ENTRIES"
+    );
+  });
+
+  if (declarations.length !== 1) {
+    return {
+      kind: "malformed",
+      ref,
+      reason: declarations.length === 0
+        ? "base migration file does not export TEST_LAYOUT_MIGRATION_ENTRIES"
+        : "base migration file exports TEST_LAYOUT_MIGRATION_ENTRIES more than once",
+    };
+  }
+
+  const initializer = declarations[0].init;
+  if (
+    initializer?.type !== "CallExpression" ||
+    initializer.callee.type !== "MemberExpression" ||
+    initializer.callee.computed ||
+    initializer.callee.object.type !== "Identifier" ||
+    initializer.callee.object.name !== "Object" ||
+    initializer.callee.property.type !== "Identifier" ||
+    initializer.callee.property.name !== "freeze" ||
+    initializer.arguments.length !== 1 ||
+    initializer.arguments[0].type !== "ArrayExpression"
+  ) {
+    return {
+      kind: "malformed",
+      ref,
+      reason: "base migration file has no explicit executable migration paths",
+    };
+  }
+
+  const inventory = initializer.arguments[0];
+  const declaredPaths: string[] = [];
+  for (const element of inventory.elements) {
+    if (element?.type === "SpreadElement") {
+      const expression = element.argument;
+      if (
+        expression.type !== "CallExpression" ||
+        expression.callee.type !== "Identifier" ||
+        expression.callee.name !== "entries" ||
+        expression.arguments[0]?.type !== "ArrayExpression"
+      ) {
+        return malformedMigrationEntryShape(ref);
+      }
+      for (const pathElement of expression.arguments[0].elements) {
+        if (pathElement?.type !== "StringLiteral") {
+          return malformedMigrationEntryShape(ref);
+        }
+        declaredPaths.push(pathElement.value);
+      }
+      continue;
+    }
+
+    if (element?.type !== "ObjectExpression") {
+      return malformedMigrationEntryShape(ref);
+    }
+    const pathProperty = element.properties.find((property) =>
+      property.type === "ObjectProperty" &&
+      !property.computed &&
+      ((property.key.type === "Identifier" && property.key.name === "path") ||
+        (property.key.type === "StringLiteral" &&
+          property.key.value === "path"))
+    );
+    if (
+      pathProperty?.type !== "ObjectProperty" ||
+      pathProperty.value.type !== "StringLiteral"
+    ) {
+      return malformedMigrationEntryShape(ref);
+    }
+    declaredPaths.push(pathProperty.value.value);
   }
 
   const explicitPaths: string[] = [];
   const unsupportedTestLikePaths: string[] = [];
-  for (const match of source.matchAll(STRING_LITERAL_PATTERN)) {
-    const literal = normalizeProjectPath(match[1] ?? "");
-    if (getExecutableTestKind(literal)) {
-      explicitPaths.push(literal);
-    } else if (looksLikeTestPath(literal)) {
-      unsupportedTestLikePaths.push(literal);
+  for (const path of declaredPaths) {
+    const normalized = normalizeProjectPath(path);
+    if (getExecutableTestKind(normalized)) {
+      explicitPaths.push(normalized);
+    } else if (looksLikeTestPath(normalized)) {
+      unsupportedTestLikePaths.push(normalized);
+    } else {
+      return malformedMigrationEntryShape(ref);
     }
   }
 
@@ -349,15 +441,18 @@ export function parseMigrationBaselineSource(
       }`,
     };
   }
-  if (explicitPaths.length === 0) {
-    return {
-      kind: "malformed",
-      ref,
-      reason: "base migration file has no explicit executable migration paths",
-    };
-  }
 
   return { kind: "paths", ref, paths: sortedUnique(explicitPaths) };
+}
+
+function malformedMigrationEntryShape(
+  ref: string,
+): TestLayoutMigrationBaseline {
+  return {
+    kind: "malformed",
+    ref,
+    reason: "base migration file has no explicit executable migration paths",
+  };
 }
 
 async function main(): Promise<void> {

@@ -124,6 +124,13 @@ describe("test layout path ownership", () => {
       suite: "e2e",
       runner: "playwright",
     });
+    assertEquals(classifyTestPath("tests/e2e/features/api-routes.test.ts"), {
+      kind: "canonical",
+      path: "tests/e2e/features/api-routes.test.ts",
+      level: "e2e",
+      suite: "e2e",
+      runner: "deno",
+    });
   });
 
   it("keeps current off-layout tests on explicit migration entries with owner and removal PR", () => {
@@ -371,6 +378,93 @@ describe("test layout inventory validation", () => {
     assertEquals(errors, []);
   });
 
+  it("accepts a valid empty migration inventory after the final move", () => {
+    const baseline = parseMigrationBaselineSource(
+      `export const TEST_LAYOUT_MIGRATION_ENTRIES:
+        readonly TestLayoutMigrationEntry[] = Object.freeze([]);`,
+      "base-ref",
+    );
+
+    assertEquals(baseline, {
+      kind: "paths",
+      ref: "base-ref",
+      paths: [],
+    });
+    assertEquals(
+      validateMigrationPathRatchet([], baseline),
+      [],
+    );
+  });
+
+  it("extracts only paths from the checked-in migration export", async () => {
+    const source = await Deno.readTextFile(
+      new URL("./test-layout-migration.ts", import.meta.url),
+    );
+
+    assertEquals(
+      parseMigrationBaselineSource(source, "base-ref"),
+      {
+        kind: "paths",
+        ref: "base-ref",
+        paths: TEST_LAYOUT_MIGRATION_ENTRIES.map((entry) => entry.path).sort(),
+      },
+    );
+  });
+
+  it("rejects quoted path decoys outside migration entries", () => {
+    for (
+      const decoy of [
+        '// "tests/unit/invalidation-state.test.ts"',
+        '/* "tests/unit/invalidation-state.test.ts" */',
+        'const fixture = `"tests/unit/invalidation-state.test.ts"`;',
+      ]
+    ) {
+      const baseline = parseMigrationBaselineSource(
+        `${decoy}
+        export const TEST_LAYOUT_MIGRATION_ENTRIES = Object.freeze([
+          { pathPrefix: "tests/", count: 51 },
+        ]);`,
+        "base-ref",
+      );
+
+      assertEquals(baseline, {
+        kind: "malformed",
+        ref: "base-ref",
+        reason:
+          "base migration file has no explicit executable migration paths",
+      });
+    }
+  });
+
+  it("rejects non-code empty inventories that mask a malformed export", () => {
+    for (
+      const nonCodePrefix of [
+        "// export const TEST_LAYOUT_MIGRATION_ENTRIES = Object.freeze([]);",
+        `/*
+        export const TEST_LAYOUT_MIGRATION_ENTRIES = Object.freeze([]);
+        */`,
+        `const fixture = \`
+        export const TEST_LAYOUT_MIGRATION_ENTRIES = Object.freeze([]);
+        \`;`,
+      ]
+    ) {
+      const baseline = parseMigrationBaselineSource(
+        `${nonCodePrefix}
+        export const TEST_LAYOUT_MIGRATION_ENTRIES = Object.freeze([
+          { pathPrefix: "tests/", count: 51 },
+        ]);`,
+        "base-ref",
+      );
+
+      assertEquals(baseline, {
+        kind: "malformed",
+        ref: "base-ref",
+        reason:
+          "base migration file has no explicit executable migration paths",
+      });
+    }
+  });
+
   it("fails closed for malformed base migration evidence once the base file exists", () => {
     // Production break caught: an unsupported historical migration file shape
     // is treated as an empty baseline, silently permitting inventory growth.
@@ -406,6 +500,27 @@ describe("test layout inventory validation", () => {
     assertEquals(result.files > 0, true);
     assertEquals(result.inventory.length, result.files);
     assertEquals(result.timingMs >= 0, true);
+  });
+});
+
+describe("test layout CI baseline", () => {
+  it("fetches the remote branch name while retaining origin/main as the manual baseline", async () => {
+    const workflow = await Deno.readTextFile(
+      new URL("../../.github/workflows/cicd.yml", import.meta.url),
+    );
+
+    assertEquals(
+      workflow.includes(
+        '*) fetch_ref="main"; base="origin/main" ;;',
+      ),
+      true,
+    );
+    assertEquals(
+      workflow.includes(
+        'git fetch --no-tags --depth=1 origin "$fetch_ref"',
+      ),
+      true,
+    );
   });
 });
 

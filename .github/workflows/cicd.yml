@@ -49,18 +49,17 @@ jobs:
         run: |
           set -eu
           case "$EVENT_NAME" in
-            pull_request) base="$PR_BASE_SHA" ;;
-            merge_group) base="$MERGE_GROUP_BASE_SHA" ;;
-            push) base="$PUSH_BASE_SHA" ;;
-            *) base="origin/main" ;;
+            pull_request) fetch_ref="$PR_BASE_SHA"; base="$PR_BASE_SHA" ;;
+            merge_group) fetch_ref="$MERGE_GROUP_BASE_SHA"; base="$MERGE_GROUP_BASE_SHA" ;;
+            push) fetch_ref="$PUSH_BASE_SHA"; base="$PUSH_BASE_SHA" ;;
+            *) fetch_ref="main"; base="origin/main" ;;
           esac
 
           if [ -z "$base" ] || printf '%s' "$base" | grep -Eq '^0+$'; then
-            git fetch --no-tags --depth=1 origin main
+            fetch_ref="main"
             base="origin/main"
-          else
-            git fetch --no-tags --depth=1 origin "$base"
           fi
+          git fetch --no-tags --depth=1 origin "$fetch_ref"
 
           echo "TEST_LAYOUT_MIGRATION_BASE_REF=$base" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-deno
