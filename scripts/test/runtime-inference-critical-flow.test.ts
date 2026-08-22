@@ -9,12 +9,16 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
   artifactClaim,
+  assertListedRunFailure,
   parseRuntimeSelection,
   parseScopedResponseJson,
   validateAnthropicRequest,
+  waitForProviderCancellation,
   waitForProviderReceipt,
   waitForTerminalRun,
 } from "./runtime-inference-critical-flow.ts";
+import { parseCommaSeparatedFlag } from "./runtime-e2e-helpers.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const VALID_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const VALID_KEY = "vf-runtime-critical-flow-key";
@@ -45,9 +49,15 @@ function anthropicRequest(overrides: {
 async function assertRejectsWithMessage(
   fn: () => Promise<unknown>,
   expected: string,
+  assertionMessage: string,
 ): Promise<void> {
-  const error = await assertRejects(fn, Error);
-  assertStringIncludes((error as Error).message, expected);
+  const error = await assertRejects(
+    fn,
+    Error,
+    undefined,
+    assertionMessage,
+  );
+  assertStringIncludes((error as Error).message, expected, assertionMessage);
 }
 
 function yamlRecord(value: unknown, context: string): Record<string, unknown> {
@@ -58,18 +68,46 @@ function yamlRecord(value: unknown, context: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function unresolvedCancellationFields(): {
+  cancellationEvidence: () => undefined;
+  cancellation: Promise<string>;
+} {
+  return {
+    cancellationEvidence: () => undefined,
+    cancellation: new Promise<string>(() => {}),
+  };
+}
+
 describe("runtime inference critical-flow pure contract", () => {
   it("selects all runtimes by default in stable order", () => {
-    assertEquals(parseRuntimeSelection([]), ["node", "bun", "deno"]);
+    assertEquals(
+      parseRuntimeSelection([]),
+      ["node", "bun", "deno"],
+      "Default runtime selection should cover all supported runtimes in stable order",
+    );
   });
 
   it("selects explicit runtimes from inline or separate flags", () => {
-    assertEquals(parseRuntimeSelection(["--runtime=node"]), ["node"]);
-    assertEquals(parseRuntimeSelection(["--runtime", "bun"]), ["bun"]);
-    assertEquals(parseRuntimeSelection(["--runtimes=deno,node"]), [
-      "deno",
-      "node",
-    ]);
+    assertEquals(
+      parseRuntimeSelection(["--runtime=node"]),
+      ["node"],
+      "Inline --runtime should select exactly the requested runtime",
+    );
+    assertEquals(
+      parseRuntimeSelection(["--runtime", "bun"]),
+      ["bun"],
+      "Separate --runtime value should select exactly the requested runtime",
+    );
+    assertEquals(
+      parseRuntimeSelection(["--runtimes=deno,node"]),
+      ["deno", "node"],
+      "Comma-separated --runtimes should preserve explicit runtime order",
+    );
+    assertEquals(
+      parseCommaSeparatedFlag(["--runtime=node,bun"], ["runtime"]),
+      ["node", "bun"],
+      "Shared comma flag parser should return trimmed runtime entries",
+    );
   });
 
   it("rejects missing, unknown, and duplicate runtime selections", () => {
@@ -77,24 +115,43 @@ describe("runtime inference critical-flow pure contract", () => {
       () => parseRuntimeSelection(["--runtime"]),
       Error,
       "--runtime requires a comma-separated value",
+      "Missing runtime flag value should throw the parser's validation error",
     );
     assertThrows(
       () => parseRuntimeSelection(["--runtime=python"]),
       Error,
       "Unknown runtime: python",
+      "Unknown runtime names should be rejected before execution",
     );
     assertThrows(
       () => parseRuntimeSelection(["--runtime=node,node"]),
       Error,
       "Duplicate runtime: node",
+      "Duplicate runtime names should be rejected before execution",
     );
   });
 
   it("states honest runtime artifact claims", () => {
-    assertStringIncludes(artifactClaim("node"), "packed npm consumer");
-    assertStringIncludes(artifactClaim("bun"), "packed package consumer");
-    assertStringIncludes(artifactClaim("deno"), "packed CLI");
-    assertEquals(artifactClaim("deno").includes("npm install"), false);
+    assertStringIncludes(
+      artifactClaim("node"),
+      "packed npm consumer",
+      "Node artifact claim should name npm consumer coverage",
+    );
+    assertStringIncludes(
+      artifactClaim("bun"),
+      "packed package consumer",
+      "Bun artifact claim should name package consumer coverage",
+    );
+    assertStringIncludes(
+      artifactClaim("deno"),
+      "packed CLI",
+      "Deno artifact claim should name packed CLI coverage",
+    );
+    assertEquals(
+      artifactClaim("deno").includes("npm install"),
+      false,
+      "Deno artifact claim should not imply npm installation semantics",
+    );
   });
 
   it("accepts exact Anthropic requests with the expected marker", async () => {
@@ -112,6 +169,7 @@ describe("runtime inference critical-flow pure contract", () => {
           "contract-marker",
         ),
       "POST /v1/messages",
+      "Validator should reject requests that do not use POST /v1/messages",
     );
     await assertRejectsWithMessage(
       () =>
@@ -120,6 +178,7 @@ describe("runtime inference critical-flow pure contract", () => {
           "contract-marker",
         ),
       "POST /v1/messages",
+      "Validator should reject requests sent to the wrong Anthropic path",
     );
     await assertRejectsWithMessage(
       () =>
@@ -128,6 +187,7 @@ describe("runtime inference critical-flow pure contract", () => {
           "contract-marker",
         ),
       "x-api-key",
+      "Validator should reject requests without the expected test API key",
     );
     await assertRejectsWithMessage(
       () =>
@@ -140,6 +200,7 @@ describe("runtime inference critical-flow pure contract", () => {
           "contract-marker",
         ),
       "valid JSON",
+      "Validator should preserve invalid JSON validation failures",
     );
     await assertRejectsWithMessage(
       () =>
@@ -148,6 +209,7 @@ describe("runtime inference critical-flow pure contract", () => {
           "contract-marker",
         ),
       VALID_WIRE_MODEL,
+      "Validator should preserve wrong model validation failures",
     );
     await assertRejectsWithMessage(
       () =>
@@ -156,106 +218,159 @@ describe("runtime inference critical-flow pure contract", () => {
           "contract-marker",
         ),
       "contract-marker",
+      "Validator should reject requests that omit the workflow marker",
     );
   });
 
   it("surfaces provider validation failures instead of generic receipt timeouts", async () => {
     const detailCalls: string[] = [];
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((input: URL | RequestInfo) => {
-      detailCalls.push(String(input));
-      return Promise.resolve(Response.json({ status: "running" }));
-    }) as typeof fetch;
-
-    try {
-      await assertRejectsWithMessage(
-        () =>
-          waitForProviderReceipt(
-            {
-              received: [],
-              server: {} as Deno.HttpServer,
-              abort() {},
-              closed: Promise.resolve(),
-              validationFailure: () =>
-                new Error(
-                  `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
-                ),
-              url: new URL("http://127.0.0.1:1/v1"),
-            },
-            "node",
-            new URL("http://127.0.0.1/runs/validation-failed"),
-          ),
-        `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
-      );
-      assertEquals(detailCalls.length, 0);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      ((input: URL | RequestInfo) => {
+        detailCalls.push(String(input));
+        return Promise.resolve(Response.json({ status: "running" }));
+      }) as typeof fetch,
+      async () => {
+        await assertRejectsWithMessage(
+          () =>
+            waitForProviderReceipt(
+              {
+                received: [],
+                server: {} as Deno.HttpServer,
+                abort() {},
+                closed: Promise.resolve(),
+                validationFailure: () =>
+                  new Error(
+                    `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+                  ),
+                ...unresolvedCancellationFields(),
+                url: new URL("http://127.0.0.1:1/v1"),
+              },
+              "node",
+              new URL("http://127.0.0.1/runs/validation-failed"),
+            ),
+          `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+          "Provider receipt wait should surface validation failures before polling detail",
+        );
+        assertEquals(
+          detailCalls.length,
+          0,
+          "Provider receipt wait should not poll run detail after validation already failed",
+        );
+      },
+    );
   });
 
   it("surfaces provider validation failures that arrive with terminal detail", async () => {
-    const originalFetch = globalThis.fetch;
     let validationFailure: Error | undefined;
-    globalThis.fetch = (() => {
-      validationFailure = new Error(
-        `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
-      );
-      return Promise.resolve(Response.json({ status: "failed" }));
-    }) as typeof fetch;
-
-    try {
-      await assertRejectsWithMessage(
-        () =>
-          waitForProviderReceipt(
-            {
-              received: [],
-              server: {} as Deno.HttpServer,
-              abort() {},
-              closed: Promise.resolve(),
-              validationFailure: () => validationFailure,
-              url: new URL("http://127.0.0.1:1/v1"),
-            },
-            "node",
-            new URL("http://127.0.0.1/runs/terminal-validation-failed"),
-          ),
-        `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() => {
+        validationFailure = new Error(
+          `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+        );
+        return Promise.resolve(Response.json({ status: "failed" }));
+      }) as typeof fetch,
+      async () => {
+        await assertRejectsWithMessage(
+          () =>
+            waitForProviderReceipt(
+              {
+                received: [],
+                server: {} as Deno.HttpServer,
+                abort() {},
+                closed: Promise.resolve(),
+                validationFailure: () => validationFailure,
+                ...unresolvedCancellationFields(),
+                url: new URL("http://127.0.0.1:1/v1"),
+              },
+              "node",
+              new URL("http://127.0.0.1/runs/terminal-validation-failed"),
+            ),
+          `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+          "Provider receipt wait should surface validation failures observed during terminal polling",
+        );
+      },
+    );
   });
 
   it("preserves terminal-detail validation failure observed during provider wait", async () => {
-    const originalFetch = globalThis.fetch;
     const expectedMessage =
       `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`;
     let validationFailure: Error | undefined;
-    globalThis.fetch = (() => {
-      validationFailure = new Error(expectedMessage);
-      return Promise.resolve(Response.json({ status: "failed" }));
-    }) as typeof fetch;
+    await withMockFetch(
+      (() => {
+        validationFailure = new Error(expectedMessage);
+        return Promise.resolve(Response.json({ status: "failed" }));
+      }) as typeof fetch,
+      async () => {
+        const error = await assertRejects(
+          () =>
+            waitForProviderReceipt(
+              {
+                received: [],
+                server: {} as Deno.HttpServer,
+                abort() {},
+                closed: Promise.resolve(),
+                validationFailure: () => validationFailure,
+                ...unresolvedCancellationFields(),
+                url: new URL("http://127.0.0.1:1/v1"),
+              },
+              "node",
+              new URL("http://127.0.0.1/runs/deadline-edge-validation-failed"),
+            ),
+          Error,
+          undefined,
+          "Provider wait should reject when validation fails during terminal polling",
+        );
+        assertEquals(
+          (error as Error).message,
+          expectedMessage,
+          "Provider wait should not replace validation error text with generic timeout text",
+        );
+      },
+    );
+  });
 
-    try {
-      const error = await assertRejects(
-        () =>
-          waitForProviderReceipt(
-            {
-              received: [],
-              server: {} as Deno.HttpServer,
-              abort() {},
-              closed: Promise.resolve(),
-              validationFailure: () => validationFailure,
-              url: new URL("http://127.0.0.1:1/v1"),
+  it("requires provider-side client abort evidence before cleanup can release the black-hole response", async () => {
+    await waitForProviderCancellation(
+      {
+        received: [],
+        server: {} as Deno.HttpServer,
+        abort() {
+          throw new Error("cleanup abort should not be needed for evidence");
+        },
+        closed: Promise.resolve(),
+        validationFailure: () => undefined,
+        cancellationEvidence: () => "client connection aborted",
+        cancellation: Promise.resolve("client connection aborted"),
+        url: new URL("http://127.0.0.1:1/v1"),
+      },
+      "node",
+      25,
+    );
+
+    await assertRejectsWithMessage(
+      () =>
+        waitForProviderCancellation(
+          {
+            received: [],
+            server: {} as Deno.HttpServer,
+            abort() {
+              throw new Error(
+                "cleanup abort should not be needed for evidence",
+              );
             },
-            "node",
-            new URL("http://127.0.0.1/runs/deadline-edge-validation-failed"),
-          ),
-        Error,
-      );
-      assertEquals((error as Error).message, expectedMessage);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+            closed: Promise.resolve(),
+            validationFailure: () => undefined,
+            cancellationEvidence: () => undefined,
+            cancellation: new Promise<string>(() => {}),
+            url: new URL("http://127.0.0.1:1/v1"),
+          },
+          "node",
+          10,
+        ),
+      "provider request was not aborted by the client before cleanup",
+      "Provider cancellation wait should fail if cleanup would be the only release path",
+    );
   });
 
   it("polls through non-terminal states and returns terminal failure details", async () => {
@@ -267,76 +382,144 @@ describe("runtime inference critical-flow pure contract", () => {
         nodeStates: { "call-provider": { status: "failed" } },
       },
     ];
-    const originalFetch = globalThis.fetch;
     let calls = 0;
-    globalThis.fetch = (() => {
-      const body = states[Math.min(calls, states.length - 1)];
-      calls += 1;
-      return Promise.resolve(Response.json(body));
-    }) as typeof fetch;
-
-    try {
-      const detail = await waitForTerminalRun(
-        new URL("http://127.0.0.1/runs/1"),
-        1_000,
-      );
-      assertEquals(detail.status, "failed");
-      assertEquals(calls, 3);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() => {
+        const body = states[Math.min(calls, states.length - 1)];
+        calls += 1;
+        return Promise.resolve(Response.json(body));
+      }) as typeof fetch,
+      async () => {
+        const detail = await waitForTerminalRun(
+          new URL("http://127.0.0.1/runs/1"),
+          1_000,
+        );
+        assertEquals(
+          detail.status,
+          "failed",
+          "Terminal run polling should return the failed detail payload",
+        );
+        assertEquals(
+          calls,
+          3,
+          "Terminal run polling should continue through pending and running states",
+        );
+      },
+    );
   });
 
   it("rejects terminal success and preserves last observation on deadline", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        Response.json({ status: "completed" }),
-      )) as typeof fetch;
-    try {
-      await assertRejectsWithMessage(
-        () => waitForTerminalRun(new URL("http://127.0.0.1/runs/ok"), 1_000),
-        "unexpected terminal status",
-      );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() =>
+        Promise.resolve(
+          Response.json({ status: "completed" }),
+        )) as typeof fetch,
+      async () => {
+        await assertRejectsWithMessage(
+          () => waitForTerminalRun(new URL("http://127.0.0.1/runs/ok"), 1_000),
+          "unexpected terminal status",
+          "Terminal run polling should reject completed runs for the timeout contract",
+        );
+      },
+    );
 
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        Response.json({
-          status: "running",
-          nodeStates: { "call-provider": { status: "running" } },
-        }),
-      )) as typeof fetch;
-    try {
-      const error = await assertRejects(
-        () => waitForTerminalRun(new URL("http://127.0.0.1/runs/slow"), 40),
-        Error,
-      );
-      assertStringIncludes((error as Error).message, "timed out");
-      assertStringIncludes((error as Error).message, "running");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await withMockFetch(
+      (() =>
+        Promise.resolve(
+          Response.json({
+            status: "running",
+            nodeStates: { "call-provider": { status: "running" } },
+          }),
+        )) as typeof fetch,
+      async () => {
+        const error = await assertRejects(
+          () => waitForTerminalRun(new URL("http://127.0.0.1/runs/slow"), 40),
+          Error,
+          undefined,
+          "Terminal run polling should reject when the deadline expires",
+        );
+        assertStringIncludes(
+          (error as Error).message,
+          "timed out",
+          "Terminal run polling deadline should report a timeout",
+        );
+        assertStringIncludes(
+          (error as Error).message,
+          "running",
+          "Terminal run polling deadline should include the last observed state",
+        );
+      },
+    );
   });
 
   it("aborts each poll fetch independently", async () => {
-    const originalFetch = globalThis.fetch;
     const observed: AbortSignal[] = [];
-    globalThis.fetch = ((_input: URL | RequestInfo, init?: RequestInit) => {
-      assert(init?.signal instanceof AbortSignal);
-      observed.push(init.signal);
-      return Promise.resolve(Response.json({ status: "failed" }));
-    }) as typeof fetch;
+    await withMockFetch(
+      ((_input: URL | RequestInfo, init?: RequestInit) => {
+        assert(
+          init?.signal instanceof AbortSignal,
+          "Terminal run polling should attach an AbortSignal to each fetch",
+        );
+        observed.push(init.signal);
+        return Promise.resolve(Response.json({ status: "failed" }));
+      }) as typeof fetch,
+      async () => {
+        await waitForTerminalRun(new URL("http://127.0.0.1/runs/1"), 1_000);
+        assertEquals(
+          observed.length,
+          1,
+          "Terminal run polling should issue exactly one fetch for immediate failure",
+        );
+        assertEquals(
+          observed[0]?.aborted,
+          false,
+          "Terminal run polling should clear the timeout without aborting a completed fetch",
+        );
+      },
+    );
+  });
 
-    try {
-      await waitForTerminalRun(new URL("http://127.0.0.1/runs/1"), 1_000);
-      assertEquals(observed.length, 1);
-      assertEquals(observed[0]?.aborted, false);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+  it("requires the listed run to carry the failed provider node state", () => {
+    const listed = assertListedRunFailure(
+      "node/packed npm consumer",
+      {
+        runs: [{
+          id: "run-1",
+          status: "failed",
+          nodeStates: {
+            "call-provider": {
+              status: "failed",
+              error: "Agent timed out after 2000ms",
+            },
+          },
+        }],
+      },
+      "run-1",
+    );
+
+    assertEquals(
+      listed.id,
+      "run-1",
+      "List assertion should return the same run that matched the requested run id",
+    );
+
+    assertThrows(
+      () =>
+        assertListedRunFailure(
+          "node/packed npm consumer",
+          {
+            runs: [{
+              id: "run-1",
+              status: "failed",
+              nodeStates: { "call-provider": { status: "running" } },
+            }],
+          },
+          "run-1",
+        ),
+      Error,
+      "persistence/list: call-provider was not failed",
+      "List assertion should reject a listed run whose provider node is not failed",
+    );
   });
 
   it("classifies successful plaintext start responses as route/start JSON failures", () => {
@@ -349,6 +532,7 @@ describe("runtime inference critical-flow pure contract", () => {
         ),
       Error,
       "node/packed npm consumer route/start: response was not JSON: this is not json",
+      "Route/start JSON parser should preserve the route/start failure scope",
     );
   });
 
@@ -362,6 +546,7 @@ describe("runtime inference critical-flow pure contract", () => {
         ),
       Error,
       "bun/packed package consumer persistence/list: response was not JSON: plain text list response",
+      "Persistence/list JSON parser should preserve the list failure scope",
     );
   });
 
@@ -395,11 +580,25 @@ console.log(JSON.stringify(Object.keys(mod).sort()));`,
       clearTimeout(timeout);
     }
 
-    assertEquals(new TextDecoder().decode(result.stderr), "");
-    assertEquals(result.code, 0);
+    assertEquals(
+      new TextDecoder().decode(result.stderr),
+      "",
+      "Critical-flow import subprocess should not write to stderr",
+    );
+    assertEquals(
+      result.code,
+      0,
+      "Critical-flow import subprocess should exit successfully",
+    );
     const exports = JSON.parse(new TextDecoder().decode(result.stdout));
-    assert(exports.includes("parseRuntimeSelection"));
-    assert(exports.includes("runRuntimeInferenceCriticalFlow"));
+    assert(
+      exports.includes("parseRuntimeSelection"),
+      "Critical-flow module should export parseRuntimeSelection on import",
+    );
+    assert(
+      exports.includes("runRuntimeInferenceCriticalFlow"),
+      "Critical-flow module should export runRuntimeInferenceCriticalFlow on import",
+    );
   });
 });
 
@@ -410,13 +609,22 @@ describe("runtime inference critical-flow CI contract", () => {
     };
 
     const testScripts = String(denoConfig.tasks["test:scripts"]);
-    assertStringIncludes(testScripts, FLOW_TEST_PATH);
+    assertStringIncludes(
+      testScripts,
+      FLOW_TEST_PATH,
+      "test:scripts should include the critical-flow unit test",
+    );
 
     const task = denoConfig.tasks["test:e2e:runtime-inference-critical-flow"];
-    assertEquals(typeof task, "string");
+    assertEquals(
+      typeof task,
+      "string",
+      "Critical-flow E2E task should be registered as a string command",
+    );
     assertStringIncludes(
       String(task),
       `deno run --allow-all ${FLOW_HARNESS_PATH}`,
+      "Critical-flow E2E task should execute the shared TypeScript harness",
     );
   });
 
@@ -434,22 +642,39 @@ describe("runtime inference critical-flow CI contract", () => {
     assertEquals(
       job.name,
       "tests (runtime critical flow: ${{ matrix.runtime }})",
+      "Runtime critical-flow job should expose stable matrix check names",
     );
-    assertEquals(job["runs-on"], "ubuntu-latest");
-    assertEquals(job["timeout-minutes"], 20);
+    assertEquals(
+      job["runs-on"],
+      "ubuntu-latest",
+      "Runtime critical-flow job should run on Ubuntu",
+    );
+    assertEquals(
+      job["timeout-minutes"],
+      20,
+      "Runtime critical-flow job should keep a bounded timeout",
+    );
 
     const strategy = yamlRecord(job.strategy, "runtime critical-flow strategy");
     const matrix = yamlRecord(strategy.matrix, "runtime critical-flow matrix");
-    assertEquals(matrix.runtime, ["deno", "node", "bun"]);
+    assertEquals(
+      matrix.runtime,
+      ["deno", "node", "bun"],
+      "Runtime critical-flow matrix should include Deno, Node, and Bun lanes",
+    );
 
     const steps = job.steps as Array<Record<string, unknown>>;
-    assert(steps.some((step) => step.uses === "./.github/actions/setup-deno"));
+    assert(
+      steps.some((step) => step.uses === "./.github/actions/setup-deno"),
+      "Runtime critical-flow job should install Deno",
+    );
     assert(
       steps.some((step) =>
         step.uses ===
           "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" &&
         yamlRecord(step.with, "setup-node with")["node-version"] === "24"
       ),
+      "Runtime critical-flow job should install Node 24",
     );
     assert(
       steps.some((step) =>
@@ -457,11 +682,15 @@ describe("runtime inference critical-flow CI contract", () => {
           "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6" &&
         yamlRecord(step.with, "setup-bun with")["bun-version"] === "1.3.6"
       ),
+      "Runtime critical-flow job should install Bun 1.3.6 for the Bun lane",
     );
-    assert(steps.some((step) =>
-      step.name === "Run runtime critical flow" &&
-      step.run ===
-        "deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}"
-    ));
+    assert(
+      steps.some((step) =>
+        step.name === "Run runtime critical flow" &&
+        step.run ===
+          "deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}"
+      ),
+      "Runtime critical-flow job should invoke the shared task with the matrix runtime",
+    );
   });
 });

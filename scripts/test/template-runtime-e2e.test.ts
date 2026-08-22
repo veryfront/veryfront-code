@@ -35,37 +35,62 @@ console.log(JSON.stringify(Object.keys(mod).sort()));
       clearTimeout(timeout);
     }
 
-    assertEquals(new TextDecoder().decode(result.stderr), "");
-    assertEquals(result.code, 0);
-    assertEquals(JSON.parse(new TextDecoder().decode(result.stdout)), [
-      "assertCondition",
-      "ensureCommand",
-      "getDevServerCommand",
-      "installDependencies",
-      "packNpmPackage",
-      "runChecked",
-      "scaffoldProject",
-      "startDevServer",
-      "stopDevServer",
-      "waitForRoute",
-    ]);
+    assertEquals(
+      new TextDecoder().decode(result.stderr),
+      "",
+      "Template runtime import subprocess should not write to stderr",
+    );
+    assertEquals(
+      result.code,
+      0,
+      "Template runtime import subprocess should exit successfully",
+    );
+    assertEquals(
+      JSON.parse(new TextDecoder().decode(result.stdout)),
+      [
+        "assertCondition",
+        "ensureCommand",
+        "getDevServerCommand",
+        "installDependencies",
+        "packNpmPackage",
+        "parseCommaSeparatedFlag",
+        "runChecked",
+        "scaffoldProject",
+        "startDevServer",
+        "stopDevServer",
+        "waitForRoute",
+      ],
+      "Template runtime module should export only shared harness helpers on import",
+    );
   });
 
   it("passes the selected port through Deno task without a separator", () => {
-    assertEquals(getDevServerCommand("deno", 4321), {
-      command: "deno",
-      args: ["task", "dev", "--port", "4321"],
-    });
+    assertEquals(
+      getDevServerCommand("deno", 4321),
+      {
+        command: "deno",
+        args: ["task", "dev", "--port", "4321"],
+      },
+      "Deno dev command should pass the selected port directly to the task",
+    );
   });
 
   it("preserves the script argument separator for npm and Bun", () => {
-    assertEquals(getDevServerCommand("node", 4321), {
-      command: "npm",
-      args: ["run", "dev", "--", "--port", "4321"],
-    });
-    assertEquals(getDevServerCommand("bun", 4321), {
-      command: "bun",
-      args: ["run", "dev", "--", "--port", "4321"],
-    });
+    assertEquals(
+      getDevServerCommand("node", 4321),
+      {
+        command: "npm",
+        args: ["run", "dev", "--", "--port", "4321"],
+      },
+      "Node dev command should preserve npm's script argument separator",
+    );
+    assertEquals(
+      getDevServerCommand("bun", 4321),
+      {
+        command: "bun",
+        args: ["run", "dev", "--", "--port", "4321"],
+      },
+      "Bun dev command should preserve Bun's script argument separator",
+    );
   });
 });

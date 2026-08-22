@@ -8,6 +8,31 @@ export interface CommandResult {
 
 const decoder = new TextDecoder();
 
+export function parseCommaSeparatedFlag(
+  args: string[],
+  names: string[],
+): string[] | null {
+  for (const name of names) {
+    const prefix = `--${name}=`;
+    const inline = args.find((arg) => arg.startsWith(prefix));
+    if (inline) {
+      return inline.slice(prefix.length).split(",").map((value) => value.trim())
+        .filter(Boolean);
+    }
+
+    const index = args.indexOf(`--${name}`);
+    if (index >= 0) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error(`--${name} requires a comma-separated value`);
+      }
+      return value.split(",").map((entry) => entry.trim()).filter(Boolean);
+    }
+  }
+
+  return null;
+}
+
 async function runCommand(
   command: string,
   args: string[],

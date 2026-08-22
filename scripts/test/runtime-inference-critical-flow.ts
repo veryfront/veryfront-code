@@ -3,6 +3,7 @@ import {
   ensureCommand,
   installDependencies,
   packNpmPackage,
+  parseCommaSeparatedFlag,
   runChecked,
   type RuntimeName,
   scaffoldProject,
@@ -32,30 +33,8 @@ const NODE_ID = "call-provider";
 const POLL_REQUEST_TIMEOUT_MS = 1_000;
 const TERMINAL_STATUSES = new Set(["failed", "completed", "cancelled"]);
 
-function parseCsvFlag(args: string[], names: string[]): string[] | null {
-  for (const name of names) {
-    const prefix = `--${name}=`;
-    const inline = args.find((arg) => arg.startsWith(prefix));
-    if (inline) {
-      return inline.slice(prefix.length).split(",").map((value) => value.trim())
-        .filter(Boolean);
-    }
-
-    const index = args.indexOf(`--${name}`);
-    if (index >= 0) {
-      const value = args[index + 1];
-      if (!value || value.startsWith("--")) {
-        throw new Error(`--${name} requires a comma-separated value`);
-      }
-      return value.split(",").map((entry) => entry.trim()).filter(Boolean);
-    }
-  }
-
-  return null;
-}
-
 export function parseRuntimeSelection(args: string[]): RuntimeName[] {
-  const requested = parseCsvFlag(args, ["runtime", "runtimes"]);
+  const requested = parseCommaSeparatedFlag(args, ["runtime", "runtimes"]);
   if (!requested) {
     return [...VALID_RUNTIMES];
   }
@@ -221,7 +200,8 @@ function hasFlag(args: string[], name: string): boolean {
 }
 
 function parseProviderMode(args: string[]): ProviderMode {
-  const value = parseCsvFlag(args, ["provider-mode"])?.[0] ?? "black-hole";
+  const value = parseCommaSeparatedFlag(args, ["provider-mode"])?.[0] ??
+    "black-hole";
   if (value !== "black-hole" && value !== "respond") {
     throw new Error(`Unknown provider mode: ${value}`);
   }
@@ -311,13 +291,89 @@ export const { GET, POST } = createWorkflowHandler(workflows);
   );
 }
 
-interface ProviderState {
+export interface ProviderState {
   received: Request[];
   server: Deno.HttpServer;
   abort(): void;
   closed: Promise<void>;
   validationFailure(): Error | undefined;
+  cancellationEvidence(): string | undefined;
+  cancellation: Promise<string>;
   url: URL;
+}
+
+function stringifyError(value: unknown): string {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+export function assertListedRunFailure(
+  label: string,
+  list: { runs?: WorkflowRunDetail[] },
+  runId: string,
+): WorkflowRunDetail {
+  const listed = list.runs?.find((run) => run.id === runId);
+  if (listed === undefined) {
+    throw new Error(
+      `${label} persistence/list: failed run was not listed: ${
+        JSON.stringify(list)
+      }`,
+    );
+  }
+  if (listed.status !== "failed") {
+    throw new Error(
+      `${label} persistence/list: listed run was not failed: ${
+        JSON.stringify(listed)
+      }`,
+    );
+  }
+
+  const node = listed.nodeStates?.[NODE_ID];
+  if (node?.status !== "failed") {
+    throw new Error(
+      `${label} persistence/list: ${NODE_ID} was not failed: ${
+        JSON.stringify(listed)
+      }`,
+    );
+  }
+
+  if (node.error !== undefined) {
+    const nodeError = stringifyError(node.error);
+    assertCondition(
+      nodeError.includes("timed out after 2000ms"),
+      `${label} persistence/list: expected 2000ms timeout evidence for ${NODE_ID}, got ${nodeError}`,
+    );
+  }
+
+  return listed;
+}
+
+export async function waitForProviderCancellation(
+  state: ProviderState,
+  runtime: RuntimeName,
+  timeoutMs = 1_500,
+): Promise<void> {
+  if (state.cancellationEvidence()) return;
+
+  let timeoutId: number | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `${runtime}/${
+              artifactClaim(runtime)
+            } provider/cancellation: provider request was not aborted by the client before cleanup within ${timeoutMs}ms`,
+          ),
+        ),
+      timeoutMs,
+    );
+  });
+
+  try {
+    await Promise.race([state.cancellation, timeoutPromise]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
 }
 
 function startProvider(
@@ -331,7 +387,16 @@ function startProvider(
     resolveClosed = resolve;
   });
   let validationFailure: Error | undefined;
+  let cancellationEvidence: string | undefined;
+  let resolveCancellation!: (evidence: string) => void;
+  const cancellation = new Promise<string>((resolve) => {
+    resolveCancellation = resolve;
+  });
   const pendingResponses = new Set<() => void>();
+  const recordCancellation = (evidence: string) => {
+    cancellationEvidence ??= evidence;
+    resolveCancellation(cancellationEvidence);
+  };
   const server = Deno.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -365,8 +430,18 @@ function startProvider(
 
     return await new Promise<Response>((resolve) => {
       const release = () => resolve(new Response(null, { status: 499 }));
+      const onClientAbort = () => {
+        recordCancellation("client connection aborted provider request");
+      };
       pendingResponses.add(release);
       controller.signal.addEventListener("abort", release, { once: true });
+      if (request.signal.aborted) {
+        onClientAbort();
+      } else {
+        request.signal.addEventListener("abort", onClientAbort, {
+          once: true,
+        });
+      }
     });
   });
 
@@ -384,6 +459,10 @@ function startProvider(
     validationFailure() {
       return validationFailure;
     },
+    cancellationEvidence() {
+      return cancellationEvidence;
+    },
+    cancellation,
     url: new URL(`http://127.0.0.1:${server.addr.port}/v1`),
   };
 }
@@ -523,12 +602,12 @@ async function assertRuntimeJourney(
       id?: unknown;
     }>(label, "route/start", startBody);
     const runId = started.runId ?? started.id;
-    assertCondition(
-      typeof runId === "string" && runId.length > 0,
-      `${label} route/start: response omitted runId`,
-    );
+    if (typeof runId !== "string" || runId.length === 0) {
+      throw new Error(`${label} route/start: response omitted runId`);
+    }
+    const runIdString = runId;
 
-    const detailUrl = new URL(`/api/workflows/runs/${runId}`, rootUrl);
+    const detailUrl = new URL(`/api/workflows/runs/${runIdString}`, rootUrl);
     await waitForProviderReceipt(provider, runtime, detailUrl);
     assertCondition(
       provider.received.length === 1,
@@ -562,9 +641,7 @@ async function assertRuntimeJourney(
         }`,
       );
     }
-    const nodeError = typeof node.error === "string"
-      ? node.error
-      : JSON.stringify(node.error);
+    const nodeError = stringifyError(node.error);
     assertCondition(
       nodeError.includes("timed out after 2000ms"),
       `${label} timeout/cancellation: expected 2000ms timeout evidence, got ${nodeError}`,
@@ -573,6 +650,7 @@ async function assertRuntimeJourney(
       elapsedMs >= 1_750 && elapsedMs < 10_000,
       `${label} timeout/cancellation: elapsed ${elapsedMs}ms outside expected bounds`,
     );
+    await waitForProviderCancellation(provider, runtime);
 
     const listResponse = await fetch(
       new URL(`/api/workflows/runs?workflowId=${WORKFLOW_ID}`, rootUrl),
@@ -590,13 +668,7 @@ async function assertRuntimeJourney(
       "persistence/list",
       listBody,
     );
-    const listed = list.runs?.find((run) => run.id === runId);
-    assertCondition(
-      listed?.status === "failed",
-      `${label} persistence/list: failed run was not listed: ${
-        JSON.stringify(list)
-      }`,
-    );
+    assertListedRunFailure(label, list, runIdString);
 
     const health = await fetch(rootUrl, { signal: AbortSignal.timeout(5_000) });
     await health.body?.cancel();

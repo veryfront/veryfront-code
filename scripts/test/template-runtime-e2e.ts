@@ -4,6 +4,7 @@ import {
   ensureCommand,
   installDependencies,
   packNpmPackage,
+  parseCommaSeparatedFlag,
   runChecked,
   type RuntimeName,
   scaffoldProject,
@@ -18,6 +19,7 @@ export {
   getDevServerCommand,
   installDependencies,
   packNpmPackage,
+  parseCommaSeparatedFlag,
   runChecked,
   scaffoldProject,
   startDevServer,
@@ -60,32 +62,12 @@ const TEMPLATE_ROUTE_EXPECTATIONS: Partial<
   ],
 };
 
-function parseCsvFlag(name: string): string[] | null {
-  const prefix = `--${name}=`;
-  const inline = Deno.args.find((arg) => arg.startsWith(prefix));
-  if (inline) {
-    return inline.slice(prefix.length).split(",").map((value) => value.trim())
-      .filter(Boolean);
-  }
-
-  const index = Deno.args.indexOf(`--${name}`);
-  if (index >= 0) {
-    const value = Deno.args[index + 1];
-    if (!value || value.startsWith("--")) {
-      throw new Error(`--${name} requires a comma-separated value`);
-    }
-    return value.split(",").map((entry) => entry.trim()).filter(Boolean);
-  }
-
-  return null;
-}
-
 function hasFlag(name: string): boolean {
   return Deno.args.includes(`--${name}`);
 }
 
 function selectedTemplates(): TemplateName[] {
-  const requested = parseCsvFlag("templates");
+  const requested = parseCommaSeparatedFlag(Deno.args, ["templates"]);
   const all = TEMPLATES.map((template) => template.id);
   if (!requested) {
     return [...all];
@@ -102,7 +84,7 @@ function selectedTemplates(): TemplateName[] {
 }
 
 function selectedRuntimes(): RuntimeName[] {
-  const requested = parseCsvFlag("runtimes");
+  const requested = parseCommaSeparatedFlag(Deno.args, ["runtimes"]);
   if (!requested) {
     return DEFAULT_RUNTIMES;
   }
