@@ -46,6 +46,10 @@ async function waitWithin<T>(
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 describe("provider-http", () => {
   describe("parseRetryAfterMs", () => {
     it("parses delta-seconds", () => {
@@ -924,6 +928,165 @@ describe("provider-http", () => {
         /request timed out after \d+ms waiting for the stream response headers \(5ms deadline\)$/,
         "an unnamed model must leave the rest of the diagnostic intact",
       );
+    });
+
+    it("retries a stream request whose response headers never arrived", async () => {
+      let attempts = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return attempts === 1
+            ? new Promise<Response>(() => {})
+            : Promise.resolve(new Response("chunk"));
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+        headersTimeoutMs: 5,
+      });
+
+      assertEquals(attempts, 2, "a stalled gateway must cost an attempt, not the run");
+      assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("bounds stream-header timeout retries", async () => {
+      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (...args) => {
+              attempts++;
+              return neverResponds(...args);
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      ) as ProviderRequestError;
+
+      assertEquals(attempts, 3, "replays must be bounded and then give up");
+      assertEquals(error.status, 0);
+      assertEquals(error.retryable, true);
+    });
+
+    it("does not replay a stream-header timeout with a non-replayable request body", async () => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("request"));
+          controller.close();
+        },
+      });
+      let attempts = 0;
+      await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return new Promise<Response>(() => {});
+            },
+            init: { method: "POST", body },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      );
+
+      assertEquals(attempts, 1, "fetch can consume a stream body, so it cannot be replayed");
+    });
+
+    it("never replays a stream once provider output has been exposed", async () => {
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const headersTimeoutMs = 5;
+      let attempts = 0;
+      let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+        },
+      });
+
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return Promise.resolve(new Response(body));
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+        headersTimeoutMs,
+      });
+      const reader = stream.getReader();
+      bodyController.enqueue(encoder.encode("first"));
+      assertEquals(
+        decoder.decode((await waitWithin(reader.read(), "the first chunk")).value),
+        "first",
+      );
+
+      // Idle well past the header deadline with output already delivered. The
+      // deadline timer is cancelled before the body is handed back, so this
+      // window must not produce a timeout — and therefore cannot produce a
+      // replay of output the caller has already seen.
+      await sleep(headersTimeoutMs * 10);
+
+      bodyController.enqueue(encoder.encode("second"));
+      bodyController.close();
+      assertEquals(
+        decoder.decode((await waitWithin(reader.read(), "the second chunk")).value),
+        "second",
+      );
+      assertEquals((await waitWithin(reader.read(), "the stream to close")).done, true);
+      assertEquals(attempts, 1, "exposed output must never be replayed");
+    });
+
+    it("does not replay a stream that fails after provider output", async () => {
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const failure = new Error("upstream body failed");
+      let attempts = 0;
+      let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+        },
+      });
+
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return Promise.resolve(new Response(body));
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+        headersTimeoutMs: 5,
+      });
+      const reader = stream.getReader();
+      bodyController.enqueue(encoder.encode("first"));
+      assertEquals(
+        decoder.decode((await waitWithin(reader.read(), "the first chunk")).value),
+        "first",
+      );
+
+      bodyController.error(failure);
+
+      const caught = await waitWithin(
+        reader.read().then(() => undefined, (error) => error),
+        "the mid-stream failure to propagate",
+      );
+      assertStrictEquals(caught, failure, "the caller must see the real failure");
+      assertEquals(attempts, 1, "a failure after output must end the request, not replay it");
     });
 
     it("preserves caller cancellation while response headers are pending", async () => {
