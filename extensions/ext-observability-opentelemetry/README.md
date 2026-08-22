@@ -80,22 +80,31 @@ With this extension registered, the workflow executor emits a `workflow.run` spa
 execution and a `workflow.node <id>` span per node, and agent spans nest beneath the node
 that produced them.
 
-Node spans are named after the node id so a trace reads at a glance. Generated child nodes
-carry generated ids — `<map>_0`, `<map>_1`, … for map items and `<loop>_iter_0`,
-`<loop>_iter_1`, … for loop iterations — so a `map` over a large collection, or a long
-`loop`, produces both one span per child and one distinct span _name_ per child. Two consequences worth
-planning for:
+Node spans are named after the node id so a trace reads at a glance. Map and loop children
+name their spans differently, and the difference decides which problem you get:
+
+- **Map children carry generated ids.** A `map` over N items builds children `<map>_0`,
+  `<map>_1`, and so on, so it emits one span per item _and_ one distinct span name per item.
+  The same generated id also lands in `workflow.node.id`.
+- **Loop children keep their authored ids.** A `loop` re-runs the same authored steps once
+  per iteration, so every iteration emits a span carrying that step's own id as both its
+  name and its `workflow.node.id`. Span names stay bounded no matter how long the loop runs,
+  and nothing on the span says which iteration produced it: only the span id and the start
+  timestamp separate iteration 0 from iteration 5. The `<loop>_iter_N` ids that appear in run
+  state are child-graph run ids, not span names, and no span is ever named after one.
+
+Two consequences worth planning for:
 
 - **Span volume.** A map over 10,000 items yields at least 10,000 node spans in a single
   trace, before any agent spans nested beneath them. The framework applies no cap; use the
   batch span processor's queue settings (`OTEL_BSP_MAX_QUEUE_SIZE`,
   `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`) or collector-side tail sampling to bound it.
-- **Name cardinality.** Backends that aggregate by span name — for example Tempo's metrics
-  generator — will see one series per item. Drop or rewrite `workflow.node` names at the
-  collector if that matters for your backend.
+- **Name cardinality.** Backends that aggregate by span name, for example Tempo's metrics
+  generator, see one series per map item. Loop iterations add no name cardinality. Drop or
+  rewrite `workflow.node` names at the collector if map fan-out matters for your backend.
 
 `workflow.run` is always a trace root. Started from an instrumented HTTP handler, webhook,
-or approval callback it does **not** join that request's trace — a run is durable work that
+or approval callback it does **not** join that request's trace: a run is durable work that
 outlives whatever started it. Parked on an approval it can resume days later, so nesting it
 under the request would leave an open span inside a finished trace, and OpenTelemetry's
 default parent-based sampler would let a sampled-out request silently drop the entire run.
@@ -115,7 +124,7 @@ filtering on that attribute reassembles the whole run as it always did.
 
 The link is built from a W3C `traceparent` persisted on the run record when each execution
 claims it. A run executed with tracing disabled simply stores nothing and the next
-execution links to nothing — the chain degrades to `workflow.run_id` correlation.
+execution links to nothing, so the chain degrades to `workflow.run_id` correlation.
 
 Node spans carry `workflow.node.status`, and a failed node or run sets the span status to
 ERROR, so the usual errored-spans filters in Jaeger, Tempo and Datadog work. A cancelled run
