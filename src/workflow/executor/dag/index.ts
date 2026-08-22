@@ -186,28 +186,35 @@ export class DAGExecutor {
         //
         // An interrupted attempt never finished, so it does not consume the
         // node's retry budget outright -- a default node still gets recovered
-        // once. What it does consume is one recovery: the count below is
-        // written back before scheduling, and nothing overwrites it if the
-        // worker dies again, so the next resume sees a higher number.
+        // once. Reserve that recovery durably before queueing it. Clearing
+        // startedAt distinguishes a reservation from a recovery that entered a
+        // batch; the batch-start boundary restores and persists startedAt before
+        // any side effect can run.
         const maxAttempts = node.config.retry?.maxAttempts ?? 1;
         const attempts = state.attempt ?? 0;
-        if (attempts > maxAttempts) {
+        const recoveryReserved = state.startedAt === undefined;
+        const largestValidAttempt = maxAttempts + (recoveryReserved ? 1 : 0);
+        if (attempts > largestValidAttempt) {
           exhausted.push({ nodeId, attempts, maxAttempts });
           continue;
         }
-        nodeStates[nodeId] = { ...state, attempt: attempts + 1 };
-        if (isDurableRun) {
-          const recovered = await this.config.onRecoveryScheduled?.({
-            runId: scope.rootRunId,
-            nodeId,
-            nodeStates: structuredClone(nodeStates),
-            ownership: scope.ownership,
-          });
-          if (recovered === false) {
-            throw ORCHESTRATION_ERROR.create({
-              detail:
-                `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+        if (!recoveryReserved) {
+          const reservation: NodeState = { ...state, attempt: attempts + 1 };
+          delete reservation.startedAt;
+          nodeStates[nodeId] = reservation;
+          if (isDurableRun) {
+            const recovered = await this.config.onRecoveryScheduled?.({
+              runId: scope.rootRunId,
+              nodeId,
+              nodeStates: structuredClone(nodeStates),
+              ownership: scope.ownership,
             });
+            if (recovered === false) {
+              throw ORCHESTRATION_ERROR.create({
+                detail:
+                  `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+              });
+            }
           }
         }
         ready.push(nodeId);
