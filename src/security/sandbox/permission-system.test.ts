@@ -20,20 +20,6 @@ async function expectGranted(request: PermissionRequest): Promise<void> {
   assertEquals(result.state, "granted");
 }
 
-/**
- * Assert only that the facade reported one of the runtime's states.
- *
- * Use this for a net request the test process may not hold. The suite runs
- * with net permission narrowed to loopback, so "granted" for an arbitrary host
- * would assert how the suite was invoked rather than anything this module
- * does. What the facade owes its caller is the runtime's own answer, whichever
- * one that is, without throwing.
- */
-async function expectRuntimeState(request: PermissionRequest): Promise<void> {
-  const result = await requestPermission(request);
-  assertValidState(result.state);
-}
-
 describe("Permission System", () => {
   describe("Permission Types", () => {
     it('should handle "net" permission type', async () => {
@@ -70,7 +56,7 @@ describe("Permission System", () => {
 
   describe("Permission Requests with Host", () => {
     it("should handle net permission with host", async () => {
-      await expectRuntimeState({ name: "net", host: "example.com" });
+      await expectGranted({ name: "net", host: "example.com" });
     });
 
     it("should handle net permission with localhost", async () => {
@@ -82,7 +68,7 @@ describe("Permission System", () => {
     });
 
     it("should handle net permission with port", async () => {
-      await expectRuntimeState({ name: "net", host: "example.com:8080" });
+      await expectGranted({ name: "net", host: "example.com:8080" });
     });
 
     // Deno validates wildcard domains and returns "denied"; Node.js just returns "granted"
@@ -130,23 +116,25 @@ describe("Permission System", () => {
       assertEquals(typeof result.state, "string");
     });
 
-    it("should return granted state for every permission the process holds", async () => {
-      // Net is absent on purpose: the suite runs with net narrowed to
-      // loopback, so a blanket net request is legitimately not granted.
-      const permissions: Permission[] = ["fs", "env", "run", "read", "write"];
+    it("should return granted state for all permissions in current implementation", async () => {
+      const permissions: Permission[] = ["net", "fs", "env", "run", "read", "write"];
 
       for (const permission of permissions) {
         const result = await requestPermission({ name: permission });
         assertEquals(result.state, "granted", `Permission ${permission} should be granted`);
       }
-
-      await expectRuntimeState({ name: "net" });
     });
 
     it("should handle multiple permission requests sequentially", async () => {
-      await expectRuntimeState({ name: "net", host: "example.com" });
-      await expectGranted({ name: "read", path: "/tmp/file.txt" });
-      await expectGranted({ name: "env" });
+      const requests: PermissionRequest[] = [
+        { name: "net", host: "example.com" },
+        { name: "read", path: "/tmp/file.txt" },
+        { name: "env" },
+      ];
+
+      for (const request of requests) {
+        await expectGranted(request);
+      }
     });
 
     it("should handle concurrent permission requests", async () => {
@@ -161,7 +149,7 @@ describe("Permission System", () => {
 
       assertEquals(results.length, 4);
       for (const result of results) {
-        assertValidState(result.state);
+        assertEquals(result.state, "granted");
       }
     });
   });
@@ -171,11 +159,11 @@ describe("Permission System", () => {
       const result = await requestPermission({ name: "net" });
 
       assertExists(result);
-      assertValidState(result.state);
+      assertEquals(result.state, "granted");
     });
 
     it("should handle permission request with undefined host", async () => {
-      await expectRuntimeState({ name: "net", host: undefined });
+      await expectGranted({ name: "net", host: undefined });
     });
 
     it("should handle permission request with undefined path", async () => {
@@ -183,7 +171,7 @@ describe("Permission System", () => {
     });
 
     it("should handle permission request with both host and path", async () => {
-      await expectRuntimeState({ name: "net", host: "example.com", path: "/some/path" });
+      await expectGranted({ name: "net", host: "example.com", path: "/some/path" });
     });
 
     it("should not mutate the input request object", async () => {
@@ -231,7 +219,7 @@ describe("Permission System", () => {
     });
 
     it("should handle IPv6 with brackets", async () => {
-      await expectRuntimeState({ name: "net", host: "[2001:db8::1]" });
+      await expectGranted({ name: "net", host: "[2001:db8::1]" });
     });
 
     it("should handle empty string path", async () => {
@@ -239,7 +227,7 @@ describe("Permission System", () => {
     });
 
     it("should handle empty string host", async () => {
-      await expectRuntimeState({ name: "net", host: "" });
+      await expectGranted({ name: "net", host: "" });
     });
   });
 
@@ -267,7 +255,7 @@ describe("Permission System", () => {
       assertEquals(results.length, 100);
 
       for (const result of results) {
-        assertValidState(result.state);
+        assertEquals(result.state, "granted");
       }
     });
 
@@ -316,13 +304,13 @@ describe("Permission System", () => {
       };
 
       const result = await requestPermission(request);
-      assertValidState(result.state);
+      assertEquals(result.state, "granted");
     });
   });
 
   describe("Sandbox Enforcement Documentation", () => {
     it("should document current permission model as facade", async () => {
-      await expectRuntimeState({ name: "net" });
+      await expectGranted({ name: "net" });
     });
 
     it("should always resolve (never reject)", async () => {
