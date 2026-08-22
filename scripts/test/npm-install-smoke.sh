@@ -13,8 +13,8 @@
 #   6. `veryfront/scaffold` resolves by its published subpath and materializes
 #      a project, so a hosted "create project" flow never has to walk into the
 #      package's build output to reach the starter templates
-#   7. the packed ai-agent starter starts under Node and renders over HTTP
-#      without unresolved generated runtime helpers
+#   7. the packed ai-agent starter starts under Node, renders a page, and loads
+#      an API route without unresolved or runtime-specific generated helpers
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm + curl on PATH.
 set -euo pipefail
@@ -200,13 +200,20 @@ if (pkg.name !== 'smoke-app') {
 }
 " || fail "veryfront/scaffold did not resolve from an installed package"
 
-echo "== 7. packed ai-agent starter: dev server renders over HTTP"
+echo "== 7. packed ai-agent starter: page and API route render over HTTP"
 cp -R "$ROOT_DIR/templates/files/ai-agent/." "$WORKDIR/"
+mkdir -p "$WORKDIR/app/api/npm-smoke"
+cat >"$WORKDIR/app/api/npm-smoke/route.ts" <<'EOF'
+export function GET(): Response {
+  return Response.json({ ok: true });
+}
+EOF
 
 DEV_PORT="${VF_NPM_SSR_SMOKE_PORT:-43119}"
 DEV_URL="http://127.0.0.1:$DEV_PORT/"
 DEV_LOG="$WORKDIR/veryfront-dev.log"
 DEV_RESPONSE="$WORKDIR/veryfront-response.html"
+API_RESPONSE="$WORKDIR/veryfront-api-response.json"
 
 CI=1 \
 NO_COLOR=1 \
@@ -247,6 +254,20 @@ grep -Eq '<title[^>]*>Assistant</title>' "$DEV_RESPONSE" || {
   head -c 2000 "$DEV_RESPONSE" >&2
   fail "packed ai-agent starter response did not contain its title"
 }
+
+API_STATUS="$(curl --silent --show-error --max-time 30 \
+  --output "$API_RESPONSE" --write-out '%{http_code}' "${DEV_URL}api/npm-smoke" || true)"
+
+if [ "$API_STATUS" != "200" ]; then
+  cat "$DEV_LOG" >&2
+  fail "packed npm API route did not return HTTP 200 (last status: ${API_STATUS:-none})"
+fi
+
+API_BODY="$(cat "$API_RESPONSE")"
+if [ "$API_BODY" != '{"ok":true}' ]; then
+  cat "$DEV_LOG" >&2
+  fail "packed npm API route returned an unexpected body: $API_BODY"
+fi
 
 if grep -Eq \
   "Could not resolve relative import|Cached module has missing dependency|Critical page module failed to load|Failed to preload TSX layout|Cannot find module.*_dnt" \
