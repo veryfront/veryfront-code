@@ -239,13 +239,16 @@ const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
 /**
  * Share of one heartbeat interval the retry backoff may occupy.
  *
- * This bounds the waits between attempts and nothing else. A request has no
- * deadline, so a slow control plane can still push a tick past its interval —
- * overlap is prevented by the in-flight guard on the interval below, not here.
- * Keeping backoff well inside the interval only stops the waits from being the
- * thing that provokes a skip.
+ * This bounds the waits between attempts and nothing else. Keeping backoff well
+ * inside the interval leaves the rest of the tick budget for the attempts.
  */
 const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
+/**
+ * Share of one heartbeat interval a whole tick — every attempt and every
+ * backoff wait — may occupy. The remainder is headroom, so a tick that spends
+ * its entire budget still settles before the next beat is due.
+ */
+const HEARTBEAT_TICK_BUDGET_RATIO = 0.9;
 
 /** Bounded retry plan for one heartbeat tick. */
 export type HeartbeatRetrySchedule = {
@@ -253,12 +256,23 @@ export type HeartbeatRetrySchedule = {
   maxAttempts: number;
   /** Backoff after each attempt that may still be retried, in attempt order. */
   delaysMs: readonly number[];
+  /**
+   * Deadline for a single attempt.
+   *
+   * A hung request fails nothing, so without this the tick never settles and
+   * the consecutive-failure counter never advances — the service looks alive to
+   * itself while doing nothing (veryfront-issue-inbox#728). Cooperative: it
+   * aborts the attempt's signal, which the request has to observe.
+   */
+  attemptTimeoutMs: number;
 };
 
 /**
- * Build the doubling backoff for one heartbeat tick, scaled down so the whole
- * sequence of waits fits inside {@link HEARTBEAT_RETRY_BUDGET_RATIO} of the
- * configured interval however short that interval is.
+ * Build the plan for one heartbeat tick: a doubling backoff scaled down so the
+ * waits fit inside {@link HEARTBEAT_RETRY_BUDGET_RATIO} of the configured
+ * interval, and an attempt deadline sized from whatever the waits leave of
+ * {@link HEARTBEAT_TICK_BUDGET_RATIO} — so a tick always settles inside its own
+ * interval however short that interval is.
  */
 export function heartbeatRetrySchedule(heartbeatIntervalMs: number): HeartbeatRetrySchedule {
   // Doubling weights 1, 2, 4, … over the maxAttempts - 1 waits sum to 2^(n-1) - 1.
@@ -268,13 +282,23 @@ export function heartbeatRetrySchedule(heartbeatIntervalMs: number): HeartbeatRe
     0,
     Math.min(HEARTBEAT_RETRY_BASE_DELAY_MS, Math.floor(budgetMs / totalWeight)),
   );
-  return {
-    maxAttempts: HEARTBEAT_MAX_ATTEMPTS,
-    delaysMs: Array.from(
-      { length: HEARTBEAT_MAX_ATTEMPTS - 1 },
-      (_unused, attempt) => unitDelayMs * 2 ** attempt,
+  const delaysMs = Array.from(
+    { length: HEARTBEAT_MAX_ATTEMPTS - 1 },
+    (_unused, attempt) => unitDelayMs * 2 ** attempt,
+  );
+  const totalDelayMs = delaysMs.reduce((sum, delayMs) => sum + delayMs, 0);
+  // Whatever the backoff leaves of the tick budget, split evenly across the
+  // attempts. Deliberately as generous as that allows: escalation still waits
+  // for three failed ticks, and a tick is paced by the interval, so shortening
+  // this buys no earlier escalation and only risks reporting a merely slow
+  // control plane as a dead one.
+  const attemptTimeoutMs = Math.max(
+    1,
+    Math.floor(
+      (heartbeatIntervalMs * HEARTBEAT_TICK_BUDGET_RATIO - totalDelayMs) / HEARTBEAT_MAX_ATTEMPTS,
     ),
-  };
+  );
+  return { maxAttempts: HEARTBEAT_MAX_ATTEMPTS, delaysMs, attemptTimeoutMs };
 }
 
 async function stableServiceKey(input: {
@@ -474,13 +498,15 @@ async function heartbeatAgentPushRuntimeService(
   return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
     maxAttempts: schedule.maxAttempts,
     abortSignal: options.abortSignal,
+    timeoutMs: schedule.attemptTimeoutMs,
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
     shouldRetry: isRetryableHeartbeatFailure,
-    onRetry: ({ error, attempt, delay }) => {
+    onRetry: ({ error, attempt, delay, isTimeout }) => {
       options.logger?.warn?.("Agent service heartbeat retrying after transient failure", {
         serviceId: input.serviceId,
         attempt: attempt + 1,
         retryInMs: delay,
+        timedOut: isTimeout,
         error: getErrorMessage(error),
       });
     },

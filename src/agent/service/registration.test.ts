@@ -500,6 +500,167 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
+  it("sizes the attempt deadline so a whole tick fits inside one interval", () => {
+    // Arithmetic only. This is the property that lets the failure counter stand
+    // in for a tick clock: if every tick terminates inside its own interval,
+    // then three failed ticks are three intervals, and "no tick has completed
+    // in a while" and "three ticks failed" become the same observation.
+    for (const intervalMs of [40, 100, 1_000, 30_000, 300_000]) {
+      const schedule = heartbeatRetrySchedule(intervalMs);
+      const totalDelayMs = schedule.delaysMs.reduce((sum, delayMs) => sum + delayMs, 0);
+      const worstCaseTickMs = schedule.maxAttempts * schedule.attemptTimeoutMs + totalDelayMs;
+
+      assert(
+        schedule.attemptTimeoutMs > 0,
+        `a ${intervalMs}ms interval must still give each attempt a deadline`,
+      );
+      assert(
+        worstCaseTickMs <= intervalMs,
+        `a tick that spends its whole budget takes ${worstCaseTickMs}ms, over the ` +
+          `${intervalMs}ms interval it has to fit in`,
+      );
+    }
+
+    // The deadline is sized against a real heartbeat measured during a degraded
+    // period, not a round number: at the production interval it must sit well
+    // clear of that, or a slow control plane is reported as a dead one.
+    const observedDegradedLatencyMs = 2_704;
+    const productionTimeoutMs = heartbeatRetrySchedule(30_000).attemptTimeoutMs;
+    assert(
+      productionTimeoutMs > observedDegradedLatencyMs * 2,
+      `a ${productionTimeoutMs}ms deadline leaves too little room above a heartbeat ` +
+        `already observed taking ${observedDegradedLatencyMs}ms while degraded`,
+    );
+  });
+
+  it("escalates a heartbeat that hangs rather than waiting on it forever", async () => {
+    // The request never answers and never fails. With no per-attempt deadline
+    // the tick never settles, so the counter never advances and the in-flight
+    // guard skips every later beat — the service looks alive to itself while
+    // doing nothing (veryfront-issue-inbox#728).
+    const intervalMs = 100;
+    let heartbeatRequests = 0;
+    let inFlight = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      inFlight++;
+      // Real fetch settles a hung request only by rejecting on abort. So does
+      // this: nothing else can ever end it.
+      // The RequestInit union the fetch type resolves to does not surface
+      // `signal` on every member; the runtime always carries it.
+      const { signal } = (init ?? {}) as { signal?: AbortSignal };
+      return new Promise((_resolve, reject) => {
+        const onAbort = () => {
+          inFlight--;
+          reject(signal?.reason ?? new Error("aborted"));
+        };
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    // Three ticks, each bounded by the interval it has to fit inside.
+    const escalationBudgetMs = 5_000;
+    const startedAt = Date.now();
+    try {
+      await waitFor(() => log.errors.length > 0, {
+        timeout: escalationBudgetMs,
+        interval: 10,
+        message: "a hung heartbeat never reached the persistent-failure log",
+      });
+    } finally {
+      lifecycle.stop();
+    }
+    const elapsedMs = Date.now() - startedAt;
+    await waitFor(() => inFlight === 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "the hung heartbeat request was never aborted after stop()",
+    });
+
+    assert(
+      elapsedMs < escalationBudgetMs,
+      `escalation took ${elapsedMs}ms, over the ${escalationBudgetMs}ms budget`,
+    );
+    assertEquals(
+      log.errors[0]?.message,
+      "Agent service heartbeat failing persistently",
+      "a hang must reach the same escalation a persistent failure does",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "a hung attempt must count as a failed one, so three ticks still escalate",
+    );
+    assert(
+      heartbeatRequests >= 9,
+      `three ticks of three attempts should have issued at least 9 requests, saw ` +
+        `${heartbeatRequests} — the deadline is not ending the attempts`,
+    );
+  });
+
+  it("lets a slow-but-successful heartbeat finish at the production interval", async () => {
+    // A heartbeat has been seen answering in ~2.7s while the control plane was
+    // degraded. That is slow, not dead, and the deadline must not convert it
+    // into a failure — this is the whole cost of choosing one too short.
+    const intervalMs = 30_000;
+    const slowLatencyMs = 3_000;
+    let heartbeatRequests = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      // The RequestInit union the fetch type resolves to does not surface
+      // `signal` on every member; the runtime always carries it.
+      const { signal } = (init ?? {}) as { signal?: AbortSignal };
+      return new Promise((resolve, reject) => {
+        // Raw timer on purpose: this is the double's simulated latency, on the
+        // same unscaled clock as the deadline it is being measured against.
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(jsonResponse(serviceResponse));
+        }, slowLatencyMs);
+        function onAbort() {
+          clearTimeout(timer);
+          reject(signal?.reason ?? new Error("aborted"));
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    // Driven directly rather than through the interval: this is about the
+    // deadline on one attempt, not about scheduling.
+    await lifecycle.heartbeat();
+    lifecycle.stop();
+
+    assertEquals(
+      heartbeatRequests,
+      1,
+      "a slow success must be answered on the first attempt, with no retry",
+    );
+    assertEquals(log.warnings.length, 0, "a slow success must not log a retry notice");
+    assertEquals(log.errors.length, 0, "a slow success must never escalate");
+  });
+
   it("still escalates persistent 500s, in bounded time", async () => {
     const script = scriptedHeartbeatFetch([500]);
     const log = recordingLogger();
