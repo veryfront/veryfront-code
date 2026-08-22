@@ -48,6 +48,7 @@
     "npm:@redis/client@1.5.8": "1.5.8",
     "npm:@sentry/deno@10.68.0": "10.68.0",
     "npm:@sentry/node@10.68.0": "10.68.0_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+exporter-trace-otlp-http@0.220.0__@opentelemetry+api@1.9.1",
+    "npm:@swc/wasm@1.16.1": "1.16.1",
     "npm:@tailwindcss/forms@0.5.11": "0.5.11_tailwindcss@4.2.2",
     "npm:@tailwindcss/typography@0.5.19": "0.5.19_tailwindcss@4.2.2",
     "npm:@types/better-sqlite3@7.6.13": "7.6.13",
@@ -63,6 +64,7 @@
     "npm:better-sqlite3@13.0.3": "13.0.3",
     "npm:brace-expansion@5.0.9": "5.0.9",
     "npm:browserslist@4.28.7": "4.28.7",
+    "npm:class-validator@0.15.1": "0.15.1",
     "npm:daisyui@5.5.14": "5.5.14",
     "npm:es-module-lexer@2.3.1": "2.3.1",
     "npm:esbuild@0.28.1": "0.28.1",
@@ -84,6 +86,7 @@
     "npm:react-dom@19.2.4": "19.2.4_react@19.2.4",
     "npm:react@19.2.4": "19.2.4",
     "npm:redis@5.11.0": "5.11.0",
+    "npm:reflect-metadata@0.2.2": "0.2.2",
     "npm:rehype-highlight@7.0.2": "7.0.2",
     "npm:rehype-raw@7.0.0": "7.0.0",
     "npm:rehype-sanitize@6.0.0": "6.0.0",
@@ -2674,6 +2677,9 @@
     "@standard-schema/spec@1.1.0": {
       "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="
     },
+    "@swc/wasm@1.16.1": {
+      "integrity": "sha512-CHDxeM0GJQyYbS/sxTgJQl0Io+yPSMwptKIt8nQA9e3yvcLphhsLBOzhDaUEGBIkP8DRAOSnDvW2d65CrZ3FjA=="
+    },
     "@tailwindcss/forms@0.5.11_tailwindcss@4.2.2": {
       "integrity": "sha512-h9wegbZDPurxG22xZSoWtdzc41/OlNEUQERNqI/0fOwa2aVlWGu7C35E/x6LDyD3lgtztFSSjKZyuVM0hxhbgA==",
       "dependencies": [
@@ -2807,6 +2813,9 @@
     },
     "@types/unist@3.0.2": {
       "integrity": "sha512-dqId9J8K/vGi5Zr7oo212BGii5m3q5Hxlkwy3WpYuKPklmBEvsbMYYyLxAQpSffdLl/gdW0XUpKWFvYmyoWCoQ=="
+    },
+    "@types/validator@13.15.10": {
+      "integrity": "sha512-T8L6i7wCuyoK8A/ZeLYt1+q0ty3Zb9+qbSSvrIVitzT3YjZqkTZ40IbRsPanlB4h1QB3JVL1SYCdR6ngtFYcuA=="
     },
     "@types/ws@8.18.1": {
       "integrity": "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==",
@@ -3008,6 +3017,14 @@
     },
     "cjs-module-lexer@2.2.0": {
       "integrity": "sha512-4bHTS2YuzUvtoLjdy+98ykbNB5jS0+07EvFNXerqZQJ89F7DI6ET7OQo/HJuW6K0aVsKA9hj9/RVb2kQVOrPDQ=="
+    },
+    "class-validator@0.15.1": {
+      "integrity": "sha512-LqoS80HBBSCVhz/3KloUly0ovokxpdOLR++Al3J3+dHXWt9sTKlKd4eYtoxhxyUjoe5+UcIM+5k9MIxyBWnRTw==",
+      "dependencies": [
+        "@types/validator",
+        "libphonenumber-js",
+        "validator"
+      ]
     },
     "cliui@8.0.1": {
       "integrity": "sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ==",
@@ -3802,6 +3819,9 @@
     "levenshtein-edit-distance@3.0.1": {
       "integrity": "sha512-/qMCkZbrAF7jZP/voqlkfNrBtEn0TMdhCK7OEBh/zb39t/c3wCnTjwU1ZvrMfQ3OxB8sBQXIpWRMM6FiQJVG3g==",
       "bin": true
+    },
+    "libphonenumber-js@1.13.11": {
+      "integrity": "sha512-ETER2kMaIFTI/Nh1a8Gk03dUF/SL0VZqtI+CcVHZxp5WIHYwNS7S+uiYZDYCvLy3lOR4/DAD5jf0h5WkePPpqg=="
     },
     "lie@3.3.0": {
       "integrity": "sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==",
@@ -4866,6 +4886,9 @@
         "@redis/time-series"
       ]
     },
+    "reflect-metadata@0.2.2": {
+      "integrity": "sha512-urBwgfrvVP/eAyXx4hluJivBKzuEbSQs9rKWCrCkbSxNv8mxPcUZKeuoF3Uy4mJl3Lwprp6yy5/39VWigZ4K6Q=="
+    },
     "rehype-highlight@7.0.2": {
       "integrity": "sha512-k158pK7wdC2qL3M5NcZROZ2tR/l7zOzjxXd5VGdcfIyoijjQqpHd3JKtYSBDpDZ38UI2WJWuFAtkMDxmx5kstA==",
       "dependencies": [
@@ -5405,6 +5428,9 @@
     },
     "util-deprecate@1.0.2": {
       "integrity": "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw=="
+    },
+    "validator@13.15.35": {
+      "integrity": "sha512-TQ5pAGhd5whStmqWvYF4OjQROlmv9SMFVt37qoCBdqRffuuklWYQlCNnEs2ZaIBD1kZRNnikiZOS1eqgkar0iw=="
     },
     "vfile-location@5.0.3": {
       "integrity": "sha512-5yXvWDEgqeiYiBe1lbxYF7UMAIm/IcopxMHrMQDq3nvKcjPKIhZklUKL+AE7J7uApI4kwe2snsK+eI6UTj9EHg==",
@@ -6355,6 +6381,14 @@
           "jsr:@std/testing@1.0.17",
           "npm:es-module-lexer@2.3.1",
           "npm:esbuild@0.28.1"
+        ]
+      },
+      "extensions/ext-bundler-swc": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "npm:@swc/wasm@1.16.1",
+          "npm:reflect-metadata@0.2.2"
         ]
       },
       "extensions/ext-cache-redis": {

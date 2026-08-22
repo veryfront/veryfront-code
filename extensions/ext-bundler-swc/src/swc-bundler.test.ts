@@ -1,0 +1,276 @@
+import "reflect-metadata";
+import type { ValidationError } from "npm:class-validator@0.15.1";
+import { assertEquals, assertStrictEquals, assertStringIncludes } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import type {
+  BundleOptions,
+  Bundler,
+  BundleResult,
+  TransformOptions,
+  TransformResult,
+} from "veryfront/extensions/bundler";
+import type { BundlerPlugin } from "veryfront/extensions/bundler";
+import { SwcBundler } from "./swc-bundler.ts";
+
+const METADATA_SOURCE = `
+function decorate(..._args: unknown[]): void {}
+function decorateClass(): ClassDecorator { return () => {}; }
+
+export class Dependency {}
+
+@decorateClass()
+export class Subject {
+  @decorate property!: Dependency;
+
+  constructor(readonly dependency: Dependency) {}
+
+  @decorate
+  method(value: number): string {
+    return String(value);
+  }
+}
+`;
+
+class RecordingBundler implements Bundler {
+  bundled?: BundleOptions;
+  transformed?: TransformOptions;
+
+  bundle(options: BundleOptions): Promise<BundleResult> {
+    this.bundled = options;
+    return Promise.resolve({ outputFiles: [], warnings: [], errors: [] });
+  }
+
+  transform(options: TransformOptions): Promise<TransformResult> {
+    this.transformed = options;
+    return Promise.resolve({ code: options.code, warnings: [] });
+  }
+}
+
+function dataModule(code: string): Promise<Record<string, unknown>> {
+  return import(`data:text/javascript;base64,${btoa(unescape(encodeURIComponent(code)))}`);
+}
+
+describe("SwcBundler decorator metadata", () => {
+  it("leaves the default standard-decorator path with the delegate", async () => {
+    const delegate = new RecordingBundler();
+    const bundler = new SwcBundler({ delegate });
+    const options: TransformOptions = {
+      code: `@logged class Example {}`,
+      loader: "ts",
+      tsconfigRaw: { compilerOptions: {} },
+    };
+
+    const result = await bundler.transform(options);
+
+    assertStrictEquals(delegate.transformed, options);
+    assertEquals(result.code, options.code);
+  });
+
+  it("keeps framework-only compiler state out of the esbuild delegate", async () => {
+    const delegate = new RecordingBundler();
+    const bundler = new SwcBundler({ delegate });
+
+    await bundler.bundle({
+      bundle: true,
+      typescriptDecoratorOptions: {
+        experimentalDecorators: false,
+        emitDecoratorMetadata: false,
+      },
+    });
+
+    assertEquals(delegate.bundled, { bundle: true });
+  });
+
+  it("emits legacy property, constructor, parameter, and return metadata", async () => {
+    const bundler = new SwcBundler();
+    const result = await bundler.transform({
+      code: METADATA_SOURCE,
+      loader: "ts",
+      format: "esm",
+      sourcefile: "fixture.ts",
+      tsconfigRaw: {
+        compilerOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: true,
+        },
+      },
+    });
+
+    for (
+      const metadataKey of [
+        "design:type",
+        "design:paramtypes",
+        "design:returntype",
+      ]
+    ) {
+      assertStringIncludes(result.code, metadataKey);
+    }
+
+    const loaded = await dataModule(result.code) as {
+      Dependency: new () => object;
+      Subject: { new (dependency: object): object; prototype: object };
+    };
+    const metadata = Reflect as typeof Reflect & {
+      getMetadata(key: string, target: object, property?: string): unknown;
+    };
+
+    assertEquals(
+      metadata.getMetadata("design:type", loaded.Subject.prototype, "property"),
+      loaded.Dependency,
+    );
+    assertEquals(metadata.getMetadata("design:paramtypes", loaded.Subject), [loaded.Dependency]);
+    assertEquals(metadata.getMetadata("design:paramtypes", loaded.Subject.prototype, "method"), [
+      Number,
+    ]);
+    assertEquals(
+      metadata.getMetadata("design:returntype", loaded.Subject.prototype, "method"),
+      String,
+    );
+    await bundler.stop();
+  });
+
+  it("honors decorator flags inherited through tsconfig", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const bundler = new SwcBundler();
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/base.json`,
+        JSON.stringify({
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+          },
+        }),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/tsconfig.json`,
+        `{
+          // The extension must follow the project compiler configuration.
+          "extends": "./base.json"
+        }`,
+      );
+
+      const result = await bundler.transform({
+        absWorkingDir: projectDir,
+        sourcefile: `${projectDir}/fixture.ts`,
+        code: METADATA_SOURCE,
+        loader: "ts",
+        format: "esm",
+      });
+
+      assertStringIncludes(result.code, "design:paramtypes");
+    } finally {
+      await bundler.stop();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("transforms TypeScript returned by virtual project loaders", async () => {
+    const bundler = new SwcBundler();
+    const virtualDependency: BundlerPlugin = {
+      name: "virtual-dependency",
+      setup(build) {
+        build.onResolve({ filter: /^\.\/dependency\.ts$/ }, () => ({
+          path: "dependency.ts",
+          namespace: "virtual-project",
+        }));
+        build.onLoad(
+          { filter: /.*/, namespace: "virtual-project" },
+          () => ({
+            contents: `export class Dependency {}`,
+            loader: "ts",
+          }),
+        );
+      },
+    };
+
+    try {
+      const result = await bundler.bundle({
+        bundle: true,
+        write: false,
+        format: "esm",
+        plugins: [virtualDependency],
+        stdin: {
+          sourcefile: "virtual-entry.ts",
+          resolveDir: Deno.cwd(),
+          loader: "ts",
+          contents: `
+            import { Dependency } from "./dependency.ts";
+            function decorate(..._args: unknown[]): void {}
+            export class Subject { @decorate value!: Dependency; }
+            export function propertyType() {
+              return Reflect.getMetadata("design:type", Subject.prototype, "value")?.name;
+            }
+          `,
+        },
+        tsconfigRaw: {
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+          },
+        },
+      });
+      const loaded = await dataModule(result.outputFiles[0]!.text) as {
+        propertyType(): string;
+      };
+
+      assertEquals(loaded.propertyType(), "Dependency");
+    } finally {
+      await bundler.stop();
+    }
+  });
+
+  it("bundles and evaluates a class-validator fixture with reflection initialized", async () => {
+    const bundler = new SwcBundler();
+    try {
+      const result = await bundler.bundle({
+        absWorkingDir: Deno.cwd(),
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "node",
+        target: "es2022",
+        stdin: {
+          sourcefile: "class-validator-fixture.ts",
+          resolveDir: Deno.cwd(),
+          loader: "ts",
+          contents: `
+            import { IsString, validateSync } from "class-validator";
+
+            export class UserDto {
+              @IsString()
+              name!: string;
+            }
+
+            export function validateName(name: unknown) {
+              const input = new UserDto();
+              input.name = name as string;
+              return validateSync(input).map((error) => error.property);
+            }
+
+            export function propertyType() {
+              return Reflect.getMetadata("design:type", UserDto.prototype, "name")?.name;
+            }
+          `,
+        },
+        tsconfigRaw: {
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+          },
+        },
+      });
+      assertEquals(result.errors, []);
+      const loaded = await dataModule(result.outputFiles[0]!.text) as {
+        propertyType(): string;
+        validateName(value: unknown): ValidationError[] | string[];
+      };
+
+      assertEquals(loaded.propertyType(), "String");
+      assertEquals(loaded.validateName("Ada"), []);
+      assertEquals(loaded.validateName(42), ["name"]);
+    } finally {
+      await bundler.stop();
+    }
+  });
+});

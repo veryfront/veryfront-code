@@ -1,5 +1,6 @@
 import { computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
-import type { BuildResult, Plugin } from "veryfront/extensions/bundler";
+import type { BuildResult, Bundler, Plugin } from "veryfront/extensions/bundler";
+import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
@@ -7,6 +8,7 @@ import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -157,6 +159,9 @@ async function loadModule(args: {
 
   const fileExistsLocally = await fs.exists(modulePath);
   if (fileExistsLocally) {
+    if (selectedBundlerForcesTypeScript()) {
+      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    }
     try {
       return await loadTSModuleDirect(modulePath, await moduleRevision(fs, modulePath));
     } catch (error) {
@@ -177,6 +182,19 @@ async function loadModule(args: {
 
   logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
   return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+}
+
+/** @internal Exported for the runtime-selection regression test. */
+export function bundlerForcesTypeScript(
+  bundler: Pick<Bundler, "forceBundleTypeScript"> | undefined,
+): boolean {
+  return bundler?.forceBundleTypeScript === true;
+}
+
+function selectedBundlerForcesTypeScript(): boolean {
+  return bundlerForcesTypeScript(
+    tryResolveExtensionContract<Bundler>("Bundler"),
+  );
 }
 
 /**
@@ -542,6 +560,12 @@ function buildTranspiledModuleSource(
       validateHTTPImports(source, allowedHosts);
 
       const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
+      const typescriptDecoratorOptions = selectedBundlerForcesTypeScript()
+        ? await readTypeScriptDecoratorOptions({
+          configPath: pathHelper.join(projectDir, "tsconfig.json"),
+          readTextFile: (path) => sourceSnapshot.readTextFile(path),
+        })
+        : undefined;
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -586,6 +610,7 @@ function buildTranspiledModuleSource(
         ].join("\n");
 
       const result: BuildResult = await build({
+        absWorkingDir: projectDir,
         bundle: true,
         write: false,
         format: "esm",
@@ -617,6 +642,7 @@ function buildTranspiledModuleSource(
           createHTTPPlugin({ allowedHosts, projectDir }),
           createProjectBoundaryPlugin(sourceSnapshot),
         ],
+        ...(typescriptDecoratorOptions ? { typescriptDecoratorOptions } : {}),
       });
 
       if (result.errors?.length) {

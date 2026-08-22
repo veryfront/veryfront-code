@@ -54,6 +54,12 @@ export const FIRST_PARTY_EXTENSION_POLICIES = Object.freeze(([
     rootNpm: true,
   },
   {
+    name: "ext-bundler-swc",
+    sourceDirectory: "ext-bundler-swc",
+    selection: "explicit",
+    rootNpm: false,
+  },
+  {
     name: "ext-cache-redis",
     sourceDirectory: "ext-cache-redis",
     selection: "explicit",

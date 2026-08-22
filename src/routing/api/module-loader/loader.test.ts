@@ -3,6 +3,7 @@ import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/ass
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
+  bundlerForcesTypeScript,
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   getUserDependencies,
@@ -106,6 +107,15 @@ const adapter: RuntimeAdapter = {
     throw new Error("not implemented");
   },
 };
+
+describe("TypeScript source execution selection", () => {
+  it("routes local source through an opt-in transform bundler only", () => {
+    assertEquals(bundlerForcesTypeScript(undefined), false);
+    assertEquals(bundlerForcesTypeScript({}), false);
+    assertEquals(bundlerForcesTypeScript({ forceBundleTypeScript: false }), false);
+    assertEquals(bundlerForcesTypeScript({ forceBundleTypeScript: true }), true);
+  });
+});
 
 describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterAll(async () => {
