@@ -17,6 +17,7 @@ import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
+import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -541,6 +542,39 @@ describe("server/services/rendering/ssr.service", () => {
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 404);
         assertEquals(result.failure?.kind, "undeployed");
+      });
+
+      it("answers 404 when the project's release source is gone", async () => {
+        // A deleted project answers 404 to every source read. The error the
+        // filesystem adapter actually raises must reach SSR as a 404 condition,
+        // not as a platform fault.
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw createNotFoundLikeError("app/layout.tsx");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+        assertEquals(result.status, 404, "a deleted project is a 404, not a 500");
+        assertEquals(result.failure?.kind, "not-found", "classified as a routing outcome");
+      });
+
+      it("still answers 500 when a layout exists but throws", async () => {
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw new Error("Cannot read properties of undefined (reading 'map')");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+        assertEquals(result.status, 500, "a genuine render fault must stay a fault");
+        assertEquals(result.failure?.kind, "runtime", "not downgraded to a routing outcome");
       });
 
       it("maps render redirects to redirect results", async () => {

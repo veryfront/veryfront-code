@@ -216,7 +216,15 @@ function extractRedirectLocation(
   }
 }
 
-function isFileNotFoundError(error: unknown): error is VeryfrontError {
+/**
+ * True for the framework's own "this path is not in the project" error.
+ *
+ * The slug is the identity; message text is never consulted. Only framework
+ * filesystem adapters raise it, and only where the source could not be
+ * retrieved, so project code that loaded and then threw never matches -- which
+ * is what keeps a genuine render fault a fault rather than a 404.
+ */
+export function isFileNotFoundError(error: unknown): error is VeryfrontError {
   return error instanceof VeryfrontError && error.slug === "file-not-found";
 }
 

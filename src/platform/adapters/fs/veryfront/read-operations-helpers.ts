@@ -1,5 +1,5 @@
 import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
-import { INVALID_IMPORT } from "#veryfront/errors";
+import { FILE_NOT_FOUND, INVALID_IMPORT } from "#veryfront/errors";
 import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import { READ_OPERATION_EXTENSION_PRIORITY } from "./extension-priority.ts";
 import type { ResolvedContentContext } from "./types.ts";
@@ -113,6 +113,24 @@ export function isNotFoundLikeError(error: unknown): boolean {
   return errorMessage.includes("404") || errorMessage.includes("Not Found");
 }
 
+/**
+ * Raise the framework's "this path is not in the release" error.
+ *
+ * Registry-branded rather than a raw `Error` so that whoever decides the
+ * response status can tell an absent path from a render that faulted: the
+ * `file-not-found` slug is what `resolveSSRFailure` already reads to answer
+ * 404. A release whose project has been deleted answers 404 to every source
+ * read, and a raw `Error` buried that routine deletion in 500s.
+ *
+ * `code` is kept because {@link isNotFoundLikeError} and the platform's Node
+ * and Deno absence checks both read it.
+ */
 export function createNotFoundLikeError(path: string): NotFoundLikeError {
-  return Object.assign(new Error(`404 Not Found: ${path}`), { code: "ENOENT" });
+  return Object.assign(
+    FILE_NOT_FOUND.create({
+      detail: `404 Not Found: ${path}`,
+      context: { path },
+    }),
+    { code: "ENOENT" },
+  );
 }

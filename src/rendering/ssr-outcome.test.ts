@@ -318,6 +318,28 @@ describe("ssr-outcome.ts", () => {
       }
     });
 
+    it("keeps a layout that exists but throws a server error", () => {
+      // The regression guard for the file-not-found branch above: only the
+      // framework's own absence error becomes a 404. Project code that loaded
+      // and then threw is still a fault, including when its message names a
+      // missing file or it sets ENOENT itself.
+      const thrown = new Error("404 Not Found: app/layout.tsx");
+      const enoent = Object.assign(new Error("Cannot read properties of undefined"), {
+        code: "ENOENT",
+      });
+
+      assertSSRFailureOutcome(
+        resolveSSRFailure(thrown, { isLocalProject: false }),
+        { kind: "server-error", exposure: "generic", error: thrown },
+        "message text must never be read as a routing decision",
+      );
+      assertSSRFailureOutcome(
+        resolveSSRFailure(enoent, { isLocalProject: false }),
+        { kind: "server-error", exposure: "generic", error: enoent },
+        "an unbranded ENOENT is not the framework's absence error",
+      );
+    });
+
     it("defaults service-overloaded to 503 when the error has no status", () => {
       const overloaded = SERVICE_OVERLOADED.create({ detail: "queue is full" });
       Object.assign(overloaded, { status: undefined });
