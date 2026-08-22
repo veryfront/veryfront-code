@@ -68,6 +68,7 @@ import {
   type DeployEnvironment,
   type DeploymentRoutingConvergence,
   type DeployRelease,
+  type EnvironmentAccessTarget,
 } from "./control-plane.ts";
 import type { DeployResult } from "./result.ts";
 
@@ -933,8 +934,11 @@ interface EnvironmentReadinessTarget {
   route?: string | null;
   protected: boolean;
   apiToken: string;
-  /** A user token exchanged for `apiToken`, sent to the gate in its place. */
-  sessionToken?: string;
+  /**
+   * A token bound to this environment, obtained by exchanging `apiToken`, and
+   * sent to the gate in its place. Not a session: the API refuses it as one.
+   */
+  environmentAccessToken?: string;
 }
 
 interface EnvironmentReadinessProbe {
@@ -1007,11 +1011,11 @@ function buildEnvironmentReadinessProbes(
   // environment — the most this step can establish, and the deployment it
   // would otherwise fail is already committed and verified. Same allowance the
   // protected custom-domain probe below already makes.
-  const canAuthenticate = isSessionCredential(target.sessionToken ?? target.apiToken);
+  const canAuthenticate = isSessionCredential(target.environmentAccessToken ?? target.apiToken);
   // A gate that refuses an exchanged token says something about the key
   // owner's access, not about the app. The deployment is already committed, so
   // that reads as gated rather than failing the deploy.
-  const tolerateChallenge = !canAuthenticate || target.sessionToken !== undefined;
+  const tolerateChallenge = !canAuthenticate || target.environmentAccessToken !== undefined;
 
   const targetUrl = buildEnvironmentProbeUrl(target.url, route);
   if (target.protected && !isMatchingVeryfrontHostedUrl(new URL(targetUrl), target)) {
@@ -1044,30 +1048,69 @@ function buildEnvironmentReadinessProbes(
   }];
 }
 
+/**
+ * Why no environment access token could be obtained. A bounded class, never the
+ * server's words: the warning that names it is operator-facing output.
+ */
+type EnvironmentAccessFailure =
+  | "unsupported"
+  | "refused"
+  | "rate_limited"
+  | "unreachable"
+  | "unusable";
+
 /** What the deploy could obtain to probe past a protected environment's gate. */
 type EnvironmentAccess =
   | { kind: "session" }
   | { kind: "exchanged"; token: string }
-  | { kind: "unavailable"; reason: string };
+  | { kind: "unavailable"; failure: EnvironmentAccessFailure; status?: number };
+
+function classifyEnvironmentAccessFailure(error: unknown): EnvironmentAccess {
+  const status = getErrorStatus(error);
+  if (status === 404 || status === 405 || status === 501) {
+    return { kind: "unavailable", failure: "unsupported", status };
+  }
+  if (status === 401 || status === 403) return { kind: "unavailable", failure: "refused", status };
+  if (status === 429) return { kind: "unavailable", failure: "rate_limited", status };
+  return { kind: "unavailable", failure: "unreachable", ...(status ? { status } : {}) };
+}
 
 /**
- * An API key cannot pass the gate, but the API can exchange it for a user token
- * that does. Failing to obtain one must not fail a committed deploy: the probe
- * then establishes what it always could, that the gate answers.
+ * An API key cannot pass the gate, but the API can exchange it for a token
+ * bound to this environment that does. Failing to obtain one must not fail a
+ * committed deploy: the probe then establishes what it always could, that the
+ * gate answers.
  */
 async function resolveEnvironmentAccess(
   controlPlane: DeployControlPlane,
   apiToken: string,
+  target: EnvironmentAccessTarget,
 ): Promise<EnvironmentAccess> {
   if (isSessionCredential(apiToken)) return { kind: "session" };
   try {
-    const token = await controlPlane.createEnvironmentAccessToken();
-    if (!isSessionCredential(token)) {
-      return { kind: "unavailable", reason: "the API returned a token the gate cannot read" };
-    }
+    const token = await controlPlane.createEnvironmentAccessToken(target);
+    if (!isSessionCredential(token)) return { kind: "unavailable", failure: "unusable" };
     return { kind: "exchanged", token };
   } catch (error) {
-    return { kind: "unavailable", reason: error instanceof Error ? error.message : String(error) };
+    return classifyEnvironmentAccessFailure(error);
+  }
+}
+
+function describeEnvironmentAccessFailure(
+  access: Extract<EnvironmentAccess, { kind: "unavailable" }>,
+): string {
+  const status = access.status === undefined ? "" : ` (HTTP ${access.status})`;
+  switch (access.failure) {
+    case "unsupported":
+      return `the Cloud API does not offer the environment access token exchange${status}`;
+    case "refused":
+      return `the Cloud API refused to issue an environment access token for this API key${status}`;
+    case "rate_limited":
+      return `the Cloud API rate limited the environment access token exchange${status}`;
+    case "unusable":
+      return "the Cloud API returned a token the gate cannot read";
+    case "unreachable":
+      return `the environment access token exchange did not complete${status}`;
   }
 }
 
@@ -1150,7 +1193,7 @@ export async function waitForEnvironmentReady(
   for (const probe of probes) {
     const headers = new Headers({ "Cache-Control": "no-cache" });
     if (probe.authenticate) {
-      headers.set("Cookie", `authToken=${target.sessionToken ?? target.apiToken}`);
+      headers.set("Cookie", `authToken=${target.environmentAccessToken ?? target.apiToken}`);
     }
     let lastResponse = "no response";
 
@@ -1262,9 +1305,12 @@ function getEnvironmentUrlWarning(
     return `${prefix} the access gate refused the environment access token with HTTP ${readiness.status}. Check that the API key owner is a member of this project, or open the URL signed in, to confirm the app responds.`;
   }
   if (access.kind === "unavailable") {
-    return `${prefix} the access gate answered HTTP ${readiness.status} and this CLI could not exchange the API key for an environment access token (${access.reason}). ${
-      getProbeCredentialRemedy(apiTokenSource)
-    }`;
+    const remedy = access.failure === "refused"
+      ? "Use an API key for this project whose owner can read it, or open the URL signed in, to confirm the app responds."
+      : getProbeCredentialRemedy(apiTokenSource);
+    return `${prefix} the access gate answered HTTP ${readiness.status} and ${
+      describeEnvironmentAccessFailure(access)
+    }. ${remedy}`;
   }
   return `${prefix} the access gate answered HTTP ${readiness.status} and this CLI has no session credential to probe past it. ${
     getProbeCredentialRemedy(apiTokenSource)
@@ -1568,7 +1614,10 @@ export function createDeployProject(options: {
         "wait-environment-url",
         async () => {
           if (environment.protected) {
-            access = await resolveEnvironmentAccess(controlPlane, config.apiToken);
+            access = await resolveEnvironmentAccess(controlPlane, config.apiToken, {
+              projectId: project!.id,
+              environmentName: environment.name,
+            });
           }
           return waitForEnvironmentReady({
             projectSlug: verification.projectSlug,
@@ -1577,7 +1626,7 @@ export function createDeployProject(options: {
             route: readinessRoute,
             protected: environment.protected,
             apiToken: config.apiToken,
-            ...(access.kind === "exchanged" ? { sessionToken: access.token } : {}),
+            ...(access.kind === "exchanged" ? { environmentAccessToken: access.token } : {}),
           }, {
             pollIntervalMs: polling.environmentPollIntervalMs,
             timeoutMs: polling.environmentTimeoutMs,

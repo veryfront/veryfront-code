@@ -665,7 +665,10 @@ describe("DeployProject", () => {
         );
 
         assertEquals(outcome.kind, "deployed");
-        assertEquals(controlPlane.environmentAccessTokenRequests.length, 1);
+        // The exchange names the target, so the API can bind the token to it.
+        assertEquals(controlPlane.environmentAccessTokenRequests, [
+          { projectId: PROJECT_ID, environmentName: "production" },
+        ]);
         assertEquals(cookies, [`authToken=${EXCHANGED_SESSION_TOKEN}`]);
         assertEquals(
           events.some((event) =>
@@ -720,10 +723,14 @@ describe("DeployProject", () => {
         const warning = events.find((event) =>
           event.kind === "warning" && event.code === "environment-url-unverified"
         );
+        const message = warning?.kind === "warning" ? warning.message : "";
         assertStringIncludes(
-          warning?.kind === "warning" ? warning.message : "",
-          "could not exchange the API key for an environment access token (API request failed: 404 Not Found)",
+          message,
+          "the Cloud API does not offer the environment access token exchange (HTTP 404)",
         );
+        // Server-provided detail never reaches the operator-facing warning.
+        assertEquals(message.includes("internal-host"), false);
+        assertEquals(message.includes("server detail"), false);
         assertEquals(
           outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,
           "gated",
@@ -732,6 +739,50 @@ describe("DeployProject", () => {
         await Deno.remove(projectDir, { recursive: true });
       }
     });
+  });
+
+  it("names a refused exchange by its class, not by the server's words", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentProtected = true;
+      controlPlane.environmentAccessToken = null;
+      controlPlane.environmentAccessTokenFailureStatus = 403;
+      const events: DeployEvent[] = [];
+      try {
+        const outcome = await withFetchStub(
+          () =>
+            new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            }),
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        const warning = events.find((event) =>
+          event.kind === "warning" && event.code === "environment-url-unverified"
+        );
+        const message = warning?.kind === "warning" ? warning.message : "";
+        assertStringIncludes(
+          message,
+          "the Cloud API refused to issue an environment access token for this API key (HTTP 403)",
+        );
+        assertEquals(message.includes("internal-host"), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    }, { VERYFRONT_API_TOKEN: API_KEY_TOKEN });
   });
 
   it("records the environment URL as served when the probe sees the app answer", async () => {
@@ -964,7 +1015,7 @@ describe("environment URL readiness", () => {
           ...hostedTarget,
           protected: true,
           apiToken: apiKeyToken,
-          sessionToken,
+          environmentAccessToken: sessionToken,
         }),
     );
 
@@ -979,7 +1030,7 @@ describe("environment URL readiness", () => {
           ...hostedTarget,
           protected: true,
           apiToken: apiKeyToken,
-          sessionToken,
+          environmentAccessToken: sessionToken,
         }, { pollIntervalMs: 1, timeoutMs: 1_000 }),
     );
 

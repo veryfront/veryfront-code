@@ -5,6 +5,7 @@ import {
   checkProtectedProxyAccess,
   extractUserIdFromToken,
   isProjectMember,
+  toProxyPrincipal,
 } from "./proxy-access-control.ts";
 import { register, reset } from "../extensions/contracts.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
@@ -162,7 +163,7 @@ describe("proxy/proxy-access-control", () => {
         users: undefined,
         apiBaseUrl: "https://api.example.com",
         isSignedInternalControlPlaneRequest: false,
-        extractUserIdFromToken: extractUserId,
+        extractPrincipal: extractUserId,
       }),
       null,
     );
@@ -174,7 +175,7 @@ describe("proxy/proxy-access-control", () => {
         users: undefined,
         apiBaseUrl: "https://api.example.com",
         isSignedInternalControlPlaneRequest: true,
-        extractUserIdFromToken: extractUserId,
+        extractPrincipal: extractUserId,
       }),
       null,
     );
@@ -194,7 +195,7 @@ describe("proxy/proxy-access-control", () => {
         users: [{ id: "user-1" }],
         apiBaseUrl: "https://api.example.com",
         isSignedInternalControlPlaneRequest: false,
-        extractUserIdFromToken: () => Promise.resolve("user-1"),
+        extractPrincipal: () => Promise.resolve({ userId: "user-1" }),
       }),
       {
         status: 302,
@@ -211,7 +212,7 @@ describe("proxy/proxy-access-control", () => {
         users: [{ id: "user-1" }],
         apiBaseUrl: "https://api.example.com",
         isSignedInternalControlPlaneRequest: false,
-        extractUserIdFromToken: () => Promise.resolve(undefined),
+        extractPrincipal: () => Promise.resolve(undefined),
       }),
       {
         status: 302,
@@ -228,7 +229,7 @@ describe("proxy/proxy-access-control", () => {
         users: [{ id: "user-1" }],
         apiBaseUrl: "https://api.example.com",
         isSignedInternalControlPlaneRequest: false,
-        extractUserIdFromToken: () => Promise.resolve("user-2"),
+        extractPrincipal: () => Promise.resolve({ userId: "user-2" }),
       }),
       { status: 403, message: "Access denied" },
     );
@@ -241,9 +242,101 @@ describe("proxy/proxy-access-control", () => {
         users: [{ id: "user-1" }],
         apiBaseUrl: "https://api.example.com",
         isSignedInternalControlPlaneRequest: false,
-        extractUserIdFromToken: () => Promise.resolve("user-1"),
+        extractPrincipal: () => Promise.resolve({ userId: "user-1" }),
       }),
       null,
+    );
+  });
+});
+
+describe("environment access tokens at the gate", () => {
+  const req = new Request("https://app.preview.veryfront.com/dashboard");
+  const url = new URL(req.url);
+  const matchingEnv = { id: "env-1", name: "preview", protected: true };
+  const bound = {
+    userId: "user-1",
+    environmentAccess: { projectId: "project-1", environmentId: "env-1" },
+  };
+
+  it("maps a verified payload to a principal, requiring audience and use for a bound token", () => {
+    assertEquals(toProxyPrincipal({ userId: "user-1" }), { userId: "user-1" });
+    assertEquals(
+      toProxyPrincipal({
+        userId: "user-1",
+        aud: "environment-gate",
+        tokenUse: "environment_access",
+        projectId: "project-1",
+        environmentId: "env-1",
+      }),
+      bound,
+    );
+    // A token that names the use but not the audience, or the other way round,
+    // or that is bound to nothing, is not a credential this gate issued for.
+    assertEquals(
+      toProxyPrincipal({
+        userId: "user-1",
+        tokenUse: "environment_access",
+        projectId: "project-1",
+      }),
+      undefined,
+    );
+    assertEquals(
+      toProxyPrincipal({ userId: "user-1", aud: "environment-gate", projectId: "project-1" }),
+      undefined,
+    );
+    assertEquals(
+      toProxyPrincipal({
+        userId: "user-1",
+        aud: "environment-gate",
+        tokenUse: "environment_access",
+      }),
+      undefined,
+    );
+    assertEquals(
+      toProxyPrincipal({ aud: "environment-gate", tokenUse: "environment_access" }),
+      undefined,
+    );
+  });
+
+  it("admits a bound token only for the project and environment it names", async () => {
+    const base = {
+      url,
+      matchingEnv,
+      projectId: "project-1",
+      userToken: "environment-token",
+      users: [{ id: "user-1" }],
+      apiBaseUrl: "https://api.example.com",
+      isSignedInternalControlPlaneRequest: false,
+    };
+
+    assertEquals(
+      await checkProtectedProxyAccess({ ...base, extractPrincipal: () => Promise.resolve(bound) }),
+      null,
+    );
+    assertEquals(
+      await checkProtectedProxyAccess({
+        ...base,
+        projectId: "project-2",
+        extractPrincipal: () => Promise.resolve(bound),
+      }),
+      { status: 403, message: "Access denied" },
+    );
+    assertEquals(
+      await checkProtectedProxyAccess({
+        ...base,
+        matchingEnv: { id: "env-2", name: "preview", protected: true },
+        extractPrincipal: () => Promise.resolve(bound),
+      }),
+      { status: 403, message: "Access denied" },
+    );
+    // Membership is still the owner's: a bound token for a non-member is refused.
+    assertEquals(
+      await checkProtectedProxyAccess({
+        ...base,
+        users: [{ id: "user-2" }],
+        extractPrincipal: () => Promise.resolve(bound),
+      }),
+      { status: 403, message: "Access denied" },
     );
   });
 });

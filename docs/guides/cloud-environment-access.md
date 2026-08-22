@@ -44,17 +44,23 @@ session. `veryfront deploy` performs this exchange to probe the environment it
 deployed. A CI smoke test can do the same:
 
 ```bash
+set -euo pipefail
 TOKEN=$(curl -fsS -X POST https://api.veryfront.com/auth/environment-token \
-  -H "Authorization: Bearer $VERYFRONT_API_TOKEN" |
+  -H "Authorization: Bearer $VERYFRONT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"<PROJECT_ID>","environment_name":"production"}' |
   jq -er '.access_token | strings | select(length > 0)')
-curl -sS -o /dev/null -w '%{http_code}\n' --cookie "authToken=$TOKEN" \
-  <environment-url>/<route>
+STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --cookie "authToken=$TOKEN" \
+  <environment-url>/<route>)
+[ "$STATUS" = "200" ] || { echo "expected 200, got $STATUS" >&2; exit 1; }
 ```
 
-Require the status the route normally returns. A `302` means the gate refused
-the token, not that the app answered, so do not follow redirects. A signed-in
-user who is not a member of the project gets a `403`, and so does an
-environment access token obtained by exchanging that user's API key.
+Compare against the status the route normally returns. The probe does not
+follow redirects: a `302` means the gate refused the token, not that the app
+answered, and the comparison turns it into a failed job. The token is bound to
+the project and environment named in the exchange. A key scoped to another
+project, or a key whose owner is not a member of the project gets a `403` at
+the exchange.
 
 ## Make an environment public
 

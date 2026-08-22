@@ -619,6 +619,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const protectionError = await checkProtectedProxyAccess({
       url,
       matchingEnv,
+      projectId: lookupResult.id,
       userToken,
       users: lookupResult.users,
       apiBaseUrl: config.apiBaseUrl,
@@ -744,6 +745,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         const protectionError = await checkProtectedProxyAccess({
           url,
           matchingEnv: accessEnv,
+          projectId: routingResult.id,
           userToken,
           users: accessResult.users,
           apiBaseUrl: config.apiBaseUrl,

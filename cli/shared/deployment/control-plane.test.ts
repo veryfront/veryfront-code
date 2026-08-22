@@ -56,10 +56,16 @@ describe("createHttpDeployControlPlane", () => {
     );
 
     assertEquals(
-      await controlPlane.createEnvironmentAccessToken(),
+      await controlPlane.createEnvironmentAccessToken({
+        projectId: "11111111-1111-4111-8111-111111111111",
+        environmentName: "production",
+      }),
       "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
     );
-    assertEquals(calls, [{ path: "/auth/environment-token", body: undefined }]);
+    assertEquals(calls, [{
+      path: "/auth/environment-token",
+      body: { project_id: "11111111-1111-4111-8111-111111111111", environment_name: "production" },
+    }]);
   });
 
   it("treats only not-found release asset manifests as polling absence", async () => {
