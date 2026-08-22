@@ -767,6 +767,85 @@ describe("provider-http", () => {
       assertEquals(error.retryable, true);
     });
 
+    it("caps total header wait across replays so it stays under the fork idle watchdog", async () => {
+      // Three unclamped 200ms attempts would spend ~600ms. The budget must stop
+      // it at ~250ms, below the enclosing watchdog.
+      let attempts = 0;
+      const startedAt = Date.now();
+      await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return new Promise<Response>(() => {});
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            headersTimeoutMs: 200,
+            totalHeadersBudgetMs: 250,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      );
+      const elapsedMs = Date.now() - startedAt;
+
+      assertEquals(attempts > 1, true, "the budget must still buy a replay");
+      assertEquals(
+        elapsedMs < 500,
+        true,
+        `total header wait must stay inside the budget, spent ${elapsedMs}ms`,
+      );
+    });
+
+    it("never shortens the first attempt to reserve budget for a replay", async () => {
+      // Budget deliberately below the per-attempt deadline. A provider that
+      // answers at 120ms must still win: clamping attempt 1 to the budget would
+      // sacrifice it for a replay that may never fire.
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () =>
+          new Promise<Response>((resolve) => setTimeout(() => resolve(new Response("chunk")), 120)),
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "openai",
+        headersTimeoutMs: 200,
+        totalHeadersBudgetMs: 50,
+      });
+
+      assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("reports the configured deadline and total wait after a replay, not the clamp", async () => {
+      // The replay runs on the budget's remainder, so its deadline is an
+      // internal clamp. Surfacing it sends a responder hunting for a setting
+      // that does not exist (issue #710's second defect).
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => new Promise<Response>(() => {}),
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            modelId: "gpt-5.5",
+            headersTimeoutMs: 200,
+            totalHeadersBudgetMs: 250,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      ) as ProviderRequestError;
+
+      assertMatch(error.message, /200ms deadline/);
+      assertMatch(error.message, /model gpt-5\.5/);
+      assertEquals(
+        /\(50ms deadline/.test(error.message),
+        false,
+        "a clamped replay deadline must not be reported as the configured one",
+      );
+    });
+
     it("retries a stream-header timeout before provider output", async () => {
       let attempts = 0;
       const stream = await requestStream({
