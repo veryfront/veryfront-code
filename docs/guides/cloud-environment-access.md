@@ -38,9 +38,9 @@ for its expiration.
 
 `VERYFRONT_API_TOKEN` does not open a protected environment on its own. It
 authenticates the CLI against the Cloud API, not requests to the deployed app.
-Exchange it for an environment access token instead: a user token for the key
-owner that the gate accepts for five minutes and that the Cloud API refuses as a
-session. `veryfront deploy` performs this exchange to probe the environment it
+Exchange it for an environment access token for the key owner instead. The gate
+accepts it for five minutes, and the Cloud API refuses it as a session.
+`veryfront deploy` performs this exchange to probe the environment it
 deployed. A CI smoke test can do the same:
 
 ```bash
