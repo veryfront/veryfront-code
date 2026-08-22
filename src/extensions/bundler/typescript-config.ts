@@ -23,9 +23,21 @@ const TSCONFIG_CYCLE_ERROR = defineError({
   suggestion: 'Remove the tsconfig.json "extends" entry that points back at an ancestor',
 });
 
+/**
+ * Input for {@link readTypeScriptDecoratorOptions}.
+ *
+ * `configPath` is the root `tsconfig.json` to read. The two optional hooks let
+ * a caller supply its own I/O: `readTextFile` replaces the default
+ * `node:fs/promises` read, so a sandboxed or snapshot-backed caller can stay
+ * inside its own boundary, and `resolveExtends` replaces the default Node
+ * resolution of an `extends` specifier.
+ */
 export interface ReadTypeScriptDecoratorOptionsInput {
+  /** Root TypeScript configuration to read. A missing file resolves to both flags off. */
   readonly configPath: string;
+  /** Read one configuration file. Defaults to `node:fs/promises`. */
   readonly readTextFile?: (path: string) => Promise<string>;
+  /** Resolve one `extends` specifier to a path. Defaults to Node resolution. */
   readonly resolveExtends?: (specifier: string, fromPath: string) => Promise<string>;
 }
 
