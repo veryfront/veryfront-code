@@ -1,11 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import {
   makeTempDir,
   mkdir,
+  readDir,
   readTextFile,
   remove,
   writeTextFile,
@@ -37,6 +38,15 @@ function deferred<T = void>(): {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** Names of the staging files a cycle publish left behind in its directory. */
+async function stagedArtifactLeftovers(artifactPath: string): Promise<string[]> {
+  const leftovers: string[] = [];
+  for await (const entry of readDir(dirname(artifactPath))) {
+    if (entry.name.startsWith(`${basename(artifactPath)}.pending-`)) leftovers.push(entry.name);
+  }
+  return leftovers;
 }
 
 describe("module-loader/module-persistence", () => {
@@ -183,6 +193,53 @@ describe("module-loader/module-persistence", () => {
       assertEquals(renames.length, 1, "identical later writers must reuse the durable artifact");
       assertEquals(renames[0]?.[1], cycleArtifactPath);
       assertEquals(await readTextFile(cycleArtifactPath), "export const page = 1;");
+      assertEquals(
+        await stagedArtifactLeftovers(cycleArtifactPath),
+        [],
+        "a finished publish must leave no staged file behind",
+      );
+    } finally {
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("fails closed and clears staging when a cycle artifact path holds other bytes", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const cycleArtifactPath = join(tmpDir, "cycle/artifact.js");
+
+    try {
+      await mkdir(dirname(cycleArtifactPath), { recursive: true });
+      await writeTextFile(cycleArtifactPath, "export const page = 0;");
+
+      await assertRejects(
+        () =>
+          persistTransformedModule({
+            filePath: join(projectDir, "app/page.ts"),
+            projectDir,
+            tmpDir,
+            transformedCode: "export const page = 1;",
+            localAdapter,
+            moduleCache: new Map(),
+            cacheKey: "cycle-conflict",
+            cycleArtifactPath,
+          }),
+        Error,
+        "Cycle artifact path contains conflicting content",
+      );
+
+      assertEquals(
+        await readTextFile(cycleArtifactPath),
+        "export const page = 0;",
+        "a conflicting publish must not replace the bytes already at the path",
+      );
+      assertEquals(
+        await stagedArtifactLeftovers(cycleArtifactPath),
+        [],
+        "a rejected publish must leave no staged file behind",
+      );
     } finally {
       await remove(projectDir, { recursive: true }).catch(() => undefined);
       await remove(tmpDir, { recursive: true }).catch(() => undefined);
