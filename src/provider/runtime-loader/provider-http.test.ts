@@ -817,12 +817,48 @@ describe("provider-http", () => {
             providerKind: "moonshotai",
             headersTimeoutMs: 5,
           }),
-        ProviderRequestError,
-        "request timed out",
-      ) as ProviderRequestError;
+        ProviderRateLimitError,
+      ) as ProviderRateLimitError;
 
-      assertEquals(attempts, 1);
-      assertEquals(error.retryable, true);
+      assertEquals(attempts, 1, "a delay past the deadline must not spend a second attempt");
+      assertEquals(error.retryable, true, "the rate limit is still retryable by an outer caller");
+      assertEquals(
+        error.message.includes("timed out"),
+        false,
+        "the provider rate limited us; it did not time out",
+      );
+    });
+
+    it("surfaces an unreadable 429 as a rate limit when its delay outlives the deadline", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(jsonResponse(
+                429,
+                "<html><body>Too Many Requests</body></html>",
+                { "retry-after": "60" },
+              ));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            modelId: "moonshotai/kimi-k2.6",
+            headersTimeoutMs: 20,
+          }),
+        ProviderRateLimitError,
+      ) as ProviderRateLimitError;
+
+      assertEquals(attempts, 1, "a 60s delay cannot fit a 20ms deadline, so do not retry");
+      assertEquals(error.status, 429, "the real provider status must survive");
+      assertEquals(
+        error.message.includes("timed out"),
+        false,
+        "an unreadable 429 must not be reported as a stalled gateway",
+      );
     });
 
     it("enforces its header deadline when a custom fetch ignores AbortSignal", async () => {

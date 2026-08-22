@@ -853,6 +853,11 @@ export async function requestStream(options: {
         ) {
           const retryDelayMs = err.retryAfterMs ??
             DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS * 2 ** rateLimitRetryCount;
+          // A wait longer than the deadline has left aborts part-way through,
+          // and the catch below would then rewrite this rate limit into a
+          // timeout the provider never caused. Retry-After routinely exceeds
+          // the 30s header deadline, so report the rate limit we actually got.
+          if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw err;
           rateLimitRetryCount++;
           await waitForProviderRateLimitRetry(retryDelayMs, deadline.deadlineSignal);
           continue;
