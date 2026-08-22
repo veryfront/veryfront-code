@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing";
 import {
   type AgentServiceRegistrationLogger,
   createAgentServiceRegistrationLifecycle,
@@ -288,19 +289,6 @@ function lifecycleOptions(
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (condition()) return true;
-    await sleep(5);
-  }
-  return condition();
-}
-
 describe("agent/agent-service-registration heartbeat retry", () => {
   it("retries a transient 500 so a one-second blip never counts as a failure", async () => {
     const script = scriptedHeartbeatFetch([500, 200]);
@@ -314,11 +302,16 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     await lifecycle.heartbeat();
     lifecycle.stop();
 
-    assertEquals(script.heartbeatAttempts(), 2);
-    assertEquals(log.errors.length, 0);
+    assertEquals(
+      script.heartbeatAttempts(),
+      2,
+      "the 500 must be retried once and the retry must be the 200",
+    );
+    assertEquals(log.errors.length, 0, "a recovered blip must not escalate");
     assertEquals(
       log.warnings.map((entry) => entry.message),
       ["Agent service heartbeat retrying after transient failure"],
+      "the only log for a recovered blip is the retry notice",
     );
   });
 
@@ -333,8 +326,12 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       await assertRejects(() => lifecycle.heartbeat(), Error, `HTTP ${status}`);
       lifecycle.stop();
 
-      assertEquals(script.heartbeatAttempts(), 1);
-      assertEquals(log.warnings.length, 0);
+      assertEquals(
+        script.heartbeatAttempts(),
+        1,
+        `HTTP ${status} must fail on the first attempt, with no retry`,
+      );
+      assertEquals(log.warnings.length, 0, `HTTP ${status} must not log a retry notice`);
     }
   });
 
@@ -344,7 +341,11 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       const totalDelayMs = schedule.delaysMs.reduce((sum, delayMs) => sum + delayMs, 0);
 
       assert(schedule.maxAttempts >= 2, "a transient failure must get at least one retry");
-      assertEquals(schedule.delaysMs.length, schedule.maxAttempts - 1);
+      assertEquals(
+        schedule.delaysMs.length,
+        schedule.maxAttempts - 1,
+        "every attempt except the last must be followed by a backoff",
+      );
       assert(
         totalDelayMs < intervalMs,
         `retry backoff ${totalDelayMs}ms must stay inside a ${intervalMs}ms interval`,
@@ -368,6 +369,47 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
+  it("cancels a pending retry backoff when the lifecycle stops", async () => {
+    let heartbeatAttempts = 0;
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatAttempts++;
+      return Promise.resolve(jsonResponse({ error: "boom" }, 500));
+    };
+
+    // Resolves the instant the retry logs its backoff, which happens on the
+    // microtask right before the timer starts — so stop() always lands inside
+    // the wait rather than racing it.
+    let enterBackoff!: () => void;
+    const enteredBackoff = new Promise<void>((resolve) => {
+      enterBackoff = resolve;
+    });
+    const logger: AgentServiceRegistrationLogger = {
+      info: () => {},
+      warn: (message) => {
+        if (message.includes("retrying")) enterBackoff();
+      },
+      error: () => {},
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: 60_000, logger }),
+    );
+
+    const inFlight = lifecycle.heartbeat();
+    await enteredBackoff;
+    lifecycle.stop();
+    await inFlight;
+
+    assertEquals(
+      heartbeatAttempts,
+      1,
+      "stop() must cancel the pending backoff, not let it wake and retry after teardown",
+    );
+  });
+
   it("still escalates persistent 500s, in bounded time", async () => {
     const script = scriptedHeartbeatFetch([500]);
     const log = recordingLogger();
@@ -375,19 +417,31 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
     );
 
-    // Three ticks of 40ms plus their backoff; anything slower means a retry
-    // sequence is not terminating and the escalation is being held off.
+    // Three ticks of 40ms plus their backoff. A retry sequence that failed to
+    // terminate would hold the escalation off past this budget.
     const escalationBudgetMs = 1_000;
     const startedAt = Date.now();
-    const escalated = await waitUntil(() => log.errors.length > 0, escalationBudgetMs);
+    await waitFor(() => log.errors.length > 0, {
+      timeout: escalationBudgetMs,
+      interval: 10,
+      message: "persistent 500s never reached the persistent-failure log",
+    });
     const elapsedMs = Date.now() - startedAt;
     lifecycle.stop();
-    // Let any backoff timer from the last in-flight tick expire.
-    await sleep(100);
 
-    assert(escalated, "persistent 500s must still reach the persistent-failure log");
-    assert(elapsedMs < escalationBudgetMs, `escalation took ${elapsedMs}ms`);
-    assertEquals(log.errors[0]?.message, "Agent service heartbeat failing persistently");
-    assertEquals(log.errors[0]?.metadata?.consecutiveFailures, 3);
+    assert(
+      elapsedMs < escalationBudgetMs,
+      `escalation took ${elapsedMs}ms, over the ${escalationBudgetMs}ms budget`,
+    );
+    assertEquals(
+      log.errors[0]?.message,
+      "Agent service heartbeat failing persistently",
+      "the persistent-failure log must still be the escalation signal",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "escalation must still trip on the third consecutive failed tick",
+    );
   });
 });

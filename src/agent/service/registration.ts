@@ -232,8 +232,6 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Status reported for a heartbeat that never reached the control plane. */
-const HEARTBEAT_TRANSPORT_FAILURE_STATUS = 503;
 /** Total heartbeat attempts for one tick, including the first. */
 const HEARTBEAT_MAX_ATTEMPTS = 3;
 /** Backoff before the first retry when the heartbeat interval leaves room for it. */
@@ -364,8 +362,8 @@ async function readAgentPushRuntimeServiceResponse(
 ): Promise<AgentPushRuntimeServiceRest> {
   if (!response.ok) {
     throw NETWORK_ERROR.create({
-      status: response.status,
       detail: `Agent runtime registration request failed with HTTP ${response.status}`,
+      context: { httpStatus: response.status },
     });
   }
 
@@ -419,19 +417,19 @@ type HeartbeatRequest = {
 async function sendHeartbeatRequest(
   input: HeartbeatRequest,
   fetchImpl: typeof globalThis.fetch,
+  abortSignal: AbortSignal | undefined,
 ): Promise<AgentPushRuntimeServiceRest> {
   let response: Response;
   try {
     response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
       method: "POST",
       headers: createHeaders(input.authToken),
+      signal: abortSignal,
     });
   } catch (cause) {
-    // The request never reached a handler, so nothing was applied. Report it
-    // with a 5xx — keeping the transport message — so the retry policy below
-    // treats it like any other transient control-plane failure.
+    // No response, so the request never reached a handler and applied nothing.
+    // It carries no httpStatus, which is what marks it transport-level below.
     throw NETWORK_ERROR.create({
-      status: HEARTBEAT_TRANSPORT_FAILURE_STATUS,
       detail: getErrorMessage(cause),
       cause,
     });
@@ -439,15 +437,24 @@ async function sendHeartbeatRequest(
   return await readAgentPushRuntimeServiceResponse(response);
 }
 
+/** Upstream response status recorded on a heartbeat failure, if it got one. */
+function readUpstreamHttpStatus(context: unknown): number | undefined {
+  if (typeof context !== "object" || context === null) return undefined;
+  const httpStatus = (context as { httpStatus?: unknown }).httpStatus;
+  return typeof httpStatus === "number" ? httpStatus : undefined;
+}
+
 /**
  * A control-plane 5xx is transient — a dropped pooler connection clears within
- * a second — and the heartbeat is idempotent, so repeating it is safe. A 4xx
- * (unknown service id, rejected token) is a real error that repeating only
- * delays, and anything without a status never reached the control plane in a
- * form we can reason about.
+ * a second — and the heartbeat is idempotent, so repeating it is safe. So is a
+ * failure with no status: it never produced a response, so nothing was applied.
+ * A 4xx (unknown service id, rejected token) is a real error that repeating
+ * only delays, and any other error slug is not ours to retry.
  */
 function isRetryableHeartbeatFailure(error: unknown): boolean {
-  return isVeryfrontError(error) && error.status >= 500 && error.status <= 599;
+  if (!isVeryfrontError(error) || error.slug !== NETWORK_ERROR.slug) return false;
+  const httpStatus = readUpstreamHttpStatus(error.context);
+  return httpStatus === undefined || (httpStatus >= 500 && httpStatus <= 599);
 }
 
 async function heartbeatAgentPushRuntimeService(
@@ -455,14 +462,16 @@ async function heartbeatAgentPushRuntimeService(
   fetchImpl: typeof globalThis.fetch,
   options: {
     logger?: AgentServiceRegistrationLogger;
-    isActive?: () => boolean;
+    /** Aborts the in-flight request and any pending backoff on teardown. */
+    abortSignal?: AbortSignal;
   } = {},
 ): Promise<AgentPushRuntimeServiceRest> {
   const schedule = heartbeatRetrySchedule(input.heartbeatIntervalMs);
-  return await retryWithBackoff(() => sendHeartbeatRequest(input, fetchImpl), {
+  return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
     maxAttempts: schedule.maxAttempts,
+    abortSignal: options.abortSignal,
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
-    shouldRetry: (error) => (options.isActive?.() ?? true) && isRetryableHeartbeatFailure(error),
+    shouldRetry: isRetryableHeartbeatFailure,
     onRetry: ({ error, attempt, delay }) => {
       options.logger?.warn?.("Agent service heartbeat retrying after transient failure", {
         serviceId: input.serviceId,
@@ -482,21 +491,31 @@ export async function createAgentServiceRegistrationLifecycle(
   const input = resolvedAgentServiceRegistrationInputSchema.parse(options);
   const service = await registerAgentPushRuntimeService(input, fetchImpl);
   let stopped = false;
+  const teardown = new AbortController();
 
   const heartbeat = async () => {
     if (stopped) {
       return;
     }
-    await heartbeatAgentPushRuntimeService(
-      {
-        apiUrl: input.apiUrl,
-        authToken: input.authToken,
-        serviceId: service.id,
-        heartbeatIntervalMs: input.heartbeatIntervalMs,
-      },
-      fetchImpl,
-      { logger: options.logger, isActive: () => !stopped },
-    );
+    try {
+      await heartbeatAgentPushRuntimeService(
+        {
+          apiUrl: input.apiUrl,
+          authToken: input.authToken,
+          serviceId: service.id,
+          heartbeatIntervalMs: input.heartbeatIntervalMs,
+        },
+        fetchImpl,
+        { logger: options.logger, abortSignal: teardown.signal },
+      );
+    } catch (error) {
+      // stop() aborts the in-flight request and any pending backoff. That is a
+      // teardown, not a heartbeat failure, so it must not reach the counter.
+      if (stopped) {
+        return;
+      }
+      throw error;
+    }
   };
 
   let consecutiveHeartbeatFailures = 0;
@@ -537,6 +556,7 @@ export async function createAgentServiceRegistrationLifecycle(
     stop: () => {
       stopped = true;
       clearInterval(interval);
+      teardown.abort();
     },
   };
 }
