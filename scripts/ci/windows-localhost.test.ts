@@ -4,10 +4,19 @@ import {
   assertStringIncludes,
 } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import { fromFileUrl } from "#std/path";
 import { parse } from "#std/yaml/parse";
 
 const PROBE_PATH = "scripts/ci/probe-localhost-resolution.mjs";
 const WORKFLOW_PATH = ".github/workflows/cicd.yml";
+
+// Resolve repo files from import.meta.url, not the process cwd: test files share
+// one process under --parallel and src/testing/cwd.ts chdirs that shared process.
+const REPO_ROOT = new URL("../../", import.meta.url);
+
+function repoFile(path: string): URL {
+  return new URL(path, REPO_ROOT);
+}
 const HOSTNAMES = ["veryfront-probe.localhost", "veryfront-probe.preview.localhost"];
 
 type JsonRecord = Record<string, unknown>;
@@ -19,7 +28,8 @@ function record(value: unknown, label: string): JsonRecord {
 
 async function runProbe(runtime: "node" | "deno"): Promise<JsonRecord[]> {
   const command = runtime === "node" ? "node" : Deno.execPath();
-  const args = runtime === "node" ? [PROBE_PATH] : ["run", "--allow-net", PROBE_PATH];
+  const probe = fromFileUrl(repoFile(PROBE_PATH));
+  const args = runtime === "node" ? [probe] : ["run", "--allow-net", probe];
   const output = await new Deno.Command(command, { args }).output();
   assert(output.success, new TextDecoder().decode(output.stderr));
   return new TextDecoder().decode(output.stdout).trim().split("\n")
@@ -51,7 +61,7 @@ describe("wildcard localhost Windows contract", () => {
   }
 
   it("runs resolver, native routing, and browser routing coverage on Windows", async () => {
-    const workflow = record(parse(await Deno.readTextFile(WORKFLOW_PATH)), "workflow");
+    const workflow = record(parse(await Deno.readTextFile(repoFile(WORKFLOW_PATH))), "workflow");
     const jobs = record(workflow.jobs, "workflow jobs");
     const job = record(jobs["tests-windows-localhost"], "Windows localhost job");
     const steps = job.steps;
@@ -78,12 +88,12 @@ describe("wildcard localhost Windows contract", () => {
     );
 
     const e2ePackage = record(
-      JSON.parse(await Deno.readTextFile("tests/e2e/package.json")),
+      JSON.parse(await Deno.readTextFile(repoFile("tests/e2e/package.json"))),
       "E2E package",
     );
     assertEquals(e2ePackage.type, "module");
     const denoConfig = record(
-      JSON.parse(await Deno.readTextFile("deno.json")),
+      JSON.parse(await Deno.readTextFile(repoFile("deno.json"))),
       "Deno config",
     );
     const tasks = record(denoConfig.tasks, "Deno tasks");
