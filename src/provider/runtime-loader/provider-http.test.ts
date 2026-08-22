@@ -975,6 +975,61 @@ describe("provider-http", () => {
       assertEquals(error.retryable, true);
     });
 
+    it("caps total header wait across replays so it stays under the fork idle watchdog", async () => {
+      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
+      let attempts = 0;
+      const startedAt = Date.now();
+      await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (...args) => {
+              attempts++;
+              return neverResponds(...args);
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 200,
+            totalHeadersBudgetMs: 250,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      );
+      const elapsedMs = Date.now() - startedAt;
+
+      assertEquals(attempts >= 2, true, `a replay must still be issued (attempts=${attempts})`);
+      assertEquals(
+        elapsedMs < 400,
+        true,
+        `three unclamped 200ms attempts run ~600ms; the budget must cut it short (elapsed=${elapsedMs}ms)`,
+      );
+    });
+
+    it("never shortens the first attempt to reserve budget for a replay", async () => {
+      let attempts = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return new Promise<Response>((resolve) => {
+            setTimeout(() => resolve(new Response("chunk")), 120);
+          });
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+        headersTimeoutMs: 200,
+        // Deliberately below the per-attempt deadline: a first attempt clamped
+        // to the total budget would abort at 50ms and lose a response that
+        // arrives comfortably inside its own deadline.
+        totalHeadersBudgetMs: 50,
+      });
+
+      assertEquals(attempts, 1);
+      assertEquals(await new Response(stream).text(), "chunk");
+    });
+
     it("does not replay a stream-header timeout with a non-replayable request body", async () => {
       const body = new ReadableStream<Uint8Array>({
         start(controller) {

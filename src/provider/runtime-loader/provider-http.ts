@@ -16,6 +16,16 @@ const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
 const MAX_PROVIDER_STREAM_RATE_LIMIT_RETRIES = 2;
 const MAX_PROVIDER_STREAM_HEADERS_TIMEOUT_RETRIES = 2;
+/**
+ * Ceiling on total wall time spent waiting for stream response headers across
+ * every attempt. Deliberately below the 45s `generic_idle` deadline the hosted
+ * child-fork watchdog applies to the first stream part
+ * (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`): that watchdog arms its
+ * timer around the first pull of `fullStream`, which is what drives the provider
+ * call, so replays that outlived this budget would be cut off mid-attempt and
+ * reported as a fork stall instead of the provider timeout they are.
+ */
+const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
 const DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS = 1_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
@@ -814,6 +824,8 @@ interface StreamRequestOptions {
   /** Model this request is for. Reported when a deadline elapses. */
   modelId?: string;
   headersTimeoutMs?: number;
+  /** Ceiling on total wall time spent waiting for headers across all attempts. */
+  totalHeadersBudgetMs?: number;
 }
 
 /**
@@ -927,9 +939,11 @@ async function attemptStream(
  * classified rate-limit responses are retried up to two times before provider
  * output is exposed, with all retry waits and attempts bounded by the stream
  * header deadline. A response whose headers never arrived within the deadline
- * is replayed up to two further times, each under a fresh deadline.
- * ReadableStream request bodies are not retried because fetch can consume them
- * on the first attempt.
+ * is replayed up to two further times. The first attempt always gets the full
+ * deadline; only replays are shortened, and every attempt together is capped by
+ * `totalHeadersBudgetMs` so the total stays under the hosted child-fork idle
+ * watchdog. ReadableStream request bodies are not retried because fetch can
+ * consume them on the first attempt.
  *
  * Both retries are confined to the window before any provider output exists.
  * The header deadline is cancelled before the response body is returned, so a
@@ -946,18 +960,28 @@ export async function requestStream(
 ): Promise<ReadableStream<Uint8Array>> {
   const headersTimeoutMs = options.headersTimeoutMs ??
     DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
+  const totalHeadersBudgetMs = options.totalHeadersBudgetMs ??
+    DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS;
   const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
+  const startedAt = Date.now();
   let headersTimeoutRetryCount = 0;
+  // The first attempt is never shortened to reserve room for a replay that may
+  // not happen — a slow provider that would have answered at 29s still wins.
+  let attemptTimeoutMs = headersTimeoutMs;
 
   while (true) {
-    const attempt = await attemptStream(options, headersTimeoutMs);
+    const attempt = await attemptStream(options, attemptTimeoutMs);
     if (attempt.outcome === "stream") return attempt.stream;
+
+    const remainingBudgetMs = totalHeadersBudgetMs - (Date.now() - startedAt);
     if (
       !requestBodyIsReplayable ||
-      headersTimeoutRetryCount >= MAX_PROVIDER_STREAM_HEADERS_TIMEOUT_RETRIES
+      headersTimeoutRetryCount >= MAX_PROVIDER_STREAM_HEADERS_TIMEOUT_RETRIES ||
+      remainingBudgetMs <= 0
     ) {
       throw attempt.error;
     }
     headersTimeoutRetryCount++;
+    attemptTimeoutMs = Math.min(headersTimeoutMs, remainingBudgetMs);
   }
 }
