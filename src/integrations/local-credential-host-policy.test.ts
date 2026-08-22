@@ -1,8 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
+import { VeryfrontError } from "#veryfront/errors";
 import {
+  assertLocalCredentialHostGrant,
   HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
   isHostLocalIntegrationCredentialsEnabled,
 } from "./local-credential-host-policy.ts";
@@ -35,6 +42,18 @@ describe("local integration credential host policy", () => {
 
     await withEnv({ [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "true" }, () => {
       assertEquals(isHostLocalIntegrationCredentialsEnabled(), false);
+      return Promise.resolve();
+    });
+  });
+  it("names the required variable in the refusal", async () => {
+    await withEnv({ [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "0" }, () => {
+      const error = assertThrows(
+        () => assertLocalCredentialHostGrant(),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertStringIncludes(error.message, HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+      assertStringIncludes(error.message, "=1");
       return Promise.resolve();
     });
   });

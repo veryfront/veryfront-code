@@ -42,6 +42,12 @@ Leave it unset on shared or proxy runtimes. Without it, both sources refuse to
 list or execute a tool. If you already run a local source, set this variable
 before you upgrade, or discovery starts failing.
 
+Worker isolation (`WORKER_ISOLATION_ENABLED=1`) and local integration
+credentials are mutually exclusive. An isolated project worker runs with the
+Deno `env` permission denied, so it cannot read this grant or any host
+credential. Run local integration sources on a runtime that does not enable
+worker isolation.
+
 For supported fixed REST tools, create a local source with the exact canonical
 tool IDs the application grants:
 

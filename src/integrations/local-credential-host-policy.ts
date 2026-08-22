@@ -29,7 +29,9 @@ export function isHostLocalIntegrationCredentialsEnabled(
 export function assertLocalCredentialHostGrant(): void {
   if (getEnvironmentConfig().proxyMode || !isHostLocalIntegrationCredentialsEnabled()) {
     localIntegrationConfigurationError(
-      "Local integration credentials are available only in local or self-hosted runtimes",
+      "Local integration credentials are available only in local or self-hosted runtimes. " +
+        `Set ${HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV}=1 in the host environment of a local ` +
+        "or dedicated self-hosted runtime. A proxy runtime is refused even with the grant set.",
     );
   }
 }
