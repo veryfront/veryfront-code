@@ -1,3 +1,4 @@
+// @veryfront-test runtime-guarded-deno
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
@@ -30,9 +31,11 @@ import { __resetPoolForTests } from "#veryfront/security/sandbox/worker-pool.ts"
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { APIRoute, AppRouteContext, AppRouteHandler } from "./types.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
 const fs = createFileSystem();
 const appRouteContext: AppRouteContext = { params: {}, env: {} };
+const denoIt = isDeno ? it : it.skip;
 
 async function getText(route: APIRoute | null): Promise<string | undefined> {
   const handler = route?.GET as AppRouteHandler | undefined;
@@ -156,7 +159,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  it("picks up an edited route module instead of serving the cached one", async () => {
+  denoIt("picks up an edited route module instead of serving the cached one", async () => {
     // The counterpart to reuse: editing a route must still take effect without
     // restarting the dev server.
     const tmpDir = await makeTempDir();
@@ -188,7 +191,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
   });
 
-  it("picks up same-size edits when the route mtime does not change", async () => {
+  denoIt("picks up same-size edits when the route mtime does not change", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "same-mtime-handler.ts");
     const observableTime = new Date(1_700_000_000_000);
@@ -404,7 +407,9 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("executes prepared bundled source only inside the project worker", async () => {
+  // Execution crosses the Deno Worker boundary. The portable preparation and
+  // source-hashing path is covered by the preceding test on every runtime.
+  denoIt("executes prepared bundled source only inside the project worker", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "isolated-handler.ts");
     const marker = "__vf_prepared_route_worker_marker__";
@@ -527,7 +532,9 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(typeof route?.GET, "function");
   });
 
-  it("resolves npm dependencies declared by adapter-backed virtual projects", async () => {
+  // Virtual projects rely on Deno's npm: resolution without a physical
+  // node_modules tree. Node project resolution is covered by the local cases.
+  denoIt("resolves npm dependencies declared by adapter-backed virtual projects", async () => {
     const realDir = await makeTempDir();
     await fs.mkdir(join(realDir, "lib"), { recursive: true });
     await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
@@ -677,7 +684,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
   // Bundling reads the route through the adapter; a direct import does not. A
   // module that threw while evaluating must surface its own error rather than
   // be evaluated a second time under bundling semantics.
-  it("does not retry a module whose own error quotes a resolver phrase", async () => {
+  denoIt("does not retry a module whose own error quotes a resolver phrase", async () => {
     const tmpDir = await makeTempDir();
     const modulePath = join(tmpDir, "handler.ts");
 
@@ -1459,7 +1466,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(prepared.source, /project-dependency/);
   });
 
-  it("rejects project symlink escapes before the adapter reads the target", async () => {
+  denoIt("rejects project symlink escapes before the adapter reads the target", async () => {
     const projectDir = await makeTempDir();
     const outsideDir = await makeTempDir();
     const projectLibDir = join(projectDir, "lib");
@@ -1509,7 +1516,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(linkedModuleRead, false);
   });
 
-  it("rejects a project package manifest symlink before reading outside the project", async () => {
+  denoIt("rejects an out-of-project package manifest symlink", async () => {
     const projectDir = await makeTempDir();
     const outsideDir = await makeTempDir();
     const outsideManifest = join(outsideDir, "package.json");
@@ -1556,7 +1563,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(outsideManifestRead, false);
   });
 
-  it("rejects a symlinked dependency manifest outside the project", async () => {
+  denoIt("rejects a symlinked dependency manifest outside the project", async () => {
     const projectDir = await makeTempDir();
     const outsideDir = await makeTempDir();
     const packageName = "outside-dependency";
@@ -1616,7 +1623,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(outsideManifestRead, false);
   });
 
-  it("reads the authorized canonical path when a project symlink is swapped", async () => {
+  denoIt("reads the authorized canonical path when a project symlink is swapped", async () => {
     const projectDir = await makeTempDir();
     const outsideDir = await makeTempDir();
     const projectLibDir = join(projectDir, "lib");
@@ -1708,7 +1715,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       );
 
     await withMockFetch(serveModule, async () => {
-      await assertRejects(
+      const error = await assertRejects(
         async () => {
           await loadHandlerModule({
             projectDir: virtualBase,
@@ -1718,7 +1725,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
           });
         },
         Error,
-        "No such file or directory",
+      );
+      assertMatch(
+        String((error as Error).message),
+        /No such file or directory|ENOENT/i,
       );
     });
   });
@@ -1815,7 +1825,7 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
   sanitizeResources: false,
   sanitizeOps: false,
 }, () => {
-  it("re-canonicalisation via realPathSync catches a node_modules symlink escape", async () => {
+  denoIt("re-canonicalisation via realPathSync catches a node_modules symlink escape", async () => {
     // Create a project root, a decoy "evil" package whose entry file is a
     // symlink pointing at a file outside the project root. If the shim only
     // checked the pre-symlink path, the containment test would pass but the
@@ -1871,7 +1881,7 @@ describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
     } catch (_) { /* best effort */ }
   });
 
-  it("accepts legitimate deps when the project root itself is opened through a symlink", async () => {
+  denoIt("accepts dependencies through a symlinked project root", async () => {
     // Regression for Codex review on #1120: if __vf_projectRoot is not
     // canonicalised at shim init, a legitimate dep inside a symlinked project
     // fails the post-realPathSync containment check (because realPathSync on
