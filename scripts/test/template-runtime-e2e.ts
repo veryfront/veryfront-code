@@ -300,6 +300,7 @@ async function testCase(
       await verifyAgenticWorkflowDemo(rootUrl);
     }
   } catch (error) {
+    await stopDevServer(server);
     const stdout = server.stdout.join("").trim();
     const stderr = server.stderr.join("").trim();
     throw new Error(

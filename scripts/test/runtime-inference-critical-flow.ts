@@ -905,6 +905,7 @@ async function assertRuntimeJourney(
 
     await assertApplicationPage(rootUrl, label, "server/post-timeout");
   } catch (error) {
+    if (server) await stopDevServer(server);
     const logs = server ? scopedLogs(server) : "";
     throw new Error(
       [

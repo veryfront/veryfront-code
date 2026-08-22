@@ -4,6 +4,8 @@ import { getDevServerCommand } from "./template-runtime-e2e.ts";
 import {
   getDevServerEnvironment,
   inspectModuleExports,
+  startDevServer,
+  stopDevServer,
 } from "./runtime-e2e-helpers.ts";
 
 describe("template runtime E2E commands", () => {
@@ -83,4 +85,63 @@ describe("template runtime E2E commands", () => {
       "Dev server environment should blank competing credentials and isolate scenario overrides in the child process",
     );
   });
+
+  it("terminates npm script descendants when stopping a Node dev server", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const projectDir = await Deno.makeTempDir({
+      prefix: "veryfront-runtime-server-cleanup-",
+    });
+    const pidFile = `${projectDir}/server.pid`;
+    let descendantPid: number | undefined;
+    let server: ReturnType<typeof startDevServer> | undefined;
+
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        `${JSON.stringify({ scripts: { dev: "node server.mjs" } })}\n`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/server.mjs`,
+        [
+          'import { writeFileSync } from "node:fs";',
+          "writeFileSync(process.env.RUNTIME_E2E_PID_FILE, String(process.pid));",
+          'process.on("SIGTERM", () => {});',
+          "setTimeout(() => {}, 10_000);",
+        ].join("\n"),
+      );
+      server = startDevServer(projectDir, "node", 4321, {
+        RUNTIME_E2E_PID_FILE: pidFile,
+      });
+
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        try {
+          descendantPid = Number(await Deno.readTextFile(pidFile));
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+      }
+      assertEquals(Number.isSafeInteger(descendantPid), true);
+
+      await stopDevServer(server);
+      assertEquals(await isProcessAlive(descendantPid!), false);
+    } finally {
+      if (server) await stopDevServer(server).catch(() => {});
+      if (descendantPid && await isProcessAlive(descendantPid)) {
+        Deno.kill(descendantPid, "SIGKILL");
+      }
+      await Deno.remove(projectDir, { recursive: true }).catch(() => {});
+    }
+  });
 });
+
+async function isProcessAlive(pid: number): Promise<boolean> {
+  const status = await new Deno.Command("kill", {
+    args: ["-0", String(pid)],
+    stdout: "null",
+    stderr: "null",
+  }).output();
+  return status.success;
+}

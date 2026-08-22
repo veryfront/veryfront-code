@@ -1,3 +1,8 @@
+import {
+  type CommandResult as ManagedCommandResult,
+  runCommand as runManagedCommand,
+} from "../../src/platform/compat/process/command.ts";
+
 export type RuntimeName = "node" | "bun" | "deno";
 
 export interface CommandResult {
@@ -262,30 +267,6 @@ export async function waitForRoute(
   );
 }
 
-async function collectStream(
-  stream: ReadableStream<Uint8Array> | null,
-  output: string[],
-): Promise<void> {
-  if (!stream) return;
-
-  const streamDecoder = new TextDecoder();
-  const reader = stream.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        const remainder = streamDecoder.decode();
-        if (remainder.length > 0) output.push(remainder);
-        return;
-      }
-      const decoded = streamDecoder.decode(value, { stream: true });
-      if (decoded.length > 0) output.push(decoded);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 export function getDevServerCommand(
   runtime: RuntimeName,
   port: number,
@@ -323,57 +304,37 @@ export function startDevServer(
   port: number,
   env: Record<string, string> = {},
 ): {
-  child: Deno.ChildProcess;
-  status: Promise<Deno.CommandStatus>;
+  abortController: AbortController;
+  result: Promise<ManagedCommandResult>;
   stdout: string[];
   stderr: string[];
 } {
   const { command, args } = getDevServerCommand(runtime, port);
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const child = new Deno.Command(command, {
+  const abortController = new AbortController();
+  const result = runManagedCommand(command, {
     args,
     cwd: projectDir,
     env: getDevServerEnvironment(env),
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+    capture: true,
+    signal: abortController.signal,
+    terminateProcessTreeOnExit: true,
+  }).then((commandResult) => {
+    if (commandResult.stdout) stdout.push(commandResult.stdout);
+    if (commandResult.stderr) stderr.push(commandResult.stderr);
+    return commandResult;
+  });
 
-  void collectStream(child.stdout, stdout);
-  void collectStream(child.stderr, stderr);
-
-  return { child, status: child.status, stdout, stderr };
+  return { abortController, result, stdout, stderr };
 }
 
 export async function stopDevServer(server: {
-  child: Deno.ChildProcess;
-  status: Promise<Deno.CommandStatus>;
+  abortController: AbortController;
+  result: Promise<ManagedCommandResult>;
 }): Promise<void> {
-  try {
-    server.child.kill("SIGTERM");
-  } catch {
-    return;
-  }
-
-  let timeoutId: number | undefined;
-  const timeout = new Promise<boolean>((resolve) => {
-    timeoutId = setTimeout(() => resolve(false), 5_000);
-  });
-  const exited = await Promise.race([
-    server.status.then(() => true).catch(() => true),
-    timeout,
-  ]).finally(() => {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-  });
-
-  if (!exited) {
-    try {
-      server.child.kill("SIGKILL");
-    } catch {
-      // The process may have exited between the timeout and SIGKILL.
-    }
-    await server.status.catch(() => {});
-  }
+  server.abortController.abort();
+  await server.result;
 }
 
 export async function scaffoldProject(
