@@ -5,6 +5,7 @@ import { relative } from "node:path";
 import { DENO_ONLY_TESTS } from "../../tests/deno-only-tests.mjs";
 import {
   filterTestFiles,
+  isDenoDependentTestSource,
   listTestFiles,
 } from "../../tests/test-file-utils.mjs";
 import {
@@ -49,6 +50,20 @@ describe("suite planning parity", () => {
       const plan = await planSuiteFiles({ suite: suite as SuitePlanId });
       assertEquals(plan.files, sorted(files), suite);
     }
+  });
+
+  it("keeps runtime-guarded Deno references eligible for Node", async () => {
+    // `tests/test-file-utils.mjs` owns which sources count as Deno-dependent,
+    // and a file opting out with the runtime-guarded header runs on Node. A
+    // second copy of that rule inside the planner would drop the file again
+    // while every runner still reported a pass, so the plan is asserted here
+    // rather than the predicate.
+    const plan = await planSuiteFiles({ suite: "runtime:node" });
+
+    assert(
+      plan.files.includes("src/routing/api/module-loader/loader.test.ts"),
+      "the Node plan must keep runtime-guarded module-loader coverage",
+    );
   });
 
   it("keeps eight coverage shards complete, disjoint, and ordered", async () => {
@@ -344,11 +359,10 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
   const portable: string[] = [];
   for (const absolutePath of files) {
     const source = await Deno.readTextFile(absolutePath);
-    if (
-      /\bDeno\./.test(source) ||
-      /tests\/_helpers\/utils\.ts/.test(source) ||
-      /\bcreateMockServer\s*\(/.test(source)
-    ) continue;
+    // Deliberately the shared predicate rather than a copy of it: a second
+    // copy agrees with a stale planner and reports parity while the runtime
+    // suite has already shrunk.
+    if (isDenoDependentTestSource(source)) continue;
     portable.push(relative(Deno.cwd(), absolutePath).replaceAll("\\", "/"));
   }
   return sorted(portable);

@@ -19,7 +19,11 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { DENO_ONLY_TESTS } from "./deno-only-tests.mjs";
-import { filterTestFiles } from "./test-file-utils.mjs";
+import {
+  filterTestFiles,
+  hasRuntimeGuardedDenoHeader,
+  isDenoDependentTestSource,
+} from "./test-file-utils.mjs";
 import { validateSuitePlan } from "./load-suite-plan.mjs";
 
 /** The files the shared list exists to exclude. */
@@ -106,6 +110,26 @@ describe("runtime test filters", () => {
       /\bDeno\./.test(source),
       false,
       "naming the Deno namespace here silently removes this suite from Node and Bun",
+    );
+  });
+
+  it("keeps runtime-guarded API module-loader coverage eligible for Node", async () => {
+    const source = await Deno.readTextFile(
+      new URL(
+        "../src/routing/api/module-loader/loader.test.ts",
+        import.meta.url,
+      ),
+    );
+
+    assertEquals(
+      hasRuntimeGuardedDenoHeader(source),
+      true,
+      "the broad loader suite must declare that its Deno-only cases are guarded",
+    );
+    assertEquals(
+      isDenoDependentTestSource(source),
+      false,
+      "the Node runner must not silently discard portable module-loader coverage",
     );
   });
 

@@ -2,6 +2,7 @@ import { parseArgs } from "#std/flags";
 import { relative, resolve } from "node:path";
 import {
   filterTestFiles,
+  isDenoDependentTestSource,
   listTestFiles,
 } from "../../tests/test-file-utils.mjs";
 import { DENO_ONLY_TESTS } from "../../tests/deno-only-tests.mjs";
@@ -257,16 +258,10 @@ async function selectRuntimeFiles(
   const files: string[] = [];
   for (const path of filtered) {
     const source = await Deno.readTextFile(path);
-    if (isDenoDependentSource(source)) continue;
+    if (isDenoDependentTestSource(source)) continue;
     files.push(normalizeRelativePath(root, path));
   }
   return files;
-}
-
-function isDenoDependentSource(source: string): boolean {
-  return /\bDeno\./.test(source) ||
-    /tests\/_helpers\/utils\.ts/.test(source) ||
-    /\bcreateMockServer\s*\(/.test(source);
 }
 
 async function assertOwnedPaths(paths: readonly string[]): Promise<void> {
