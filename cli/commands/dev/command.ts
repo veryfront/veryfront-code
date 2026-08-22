@@ -112,7 +112,8 @@ export async function startDevServerOnFreePort<T>(
   start: (port: number) => Promise<T>,
 ): Promise<{ server: T; port: number }> {
   const port = await findAvailablePort(requestedPort);
-  if (port !== requestedPort) {
+  // Port 0 asked for any free port, so landing elsewhere took nothing away.
+  if (requestedPort !== 0 && port !== requestedPort) {
     console.log();
     console.log(`  ${warning("!")} Port ${requestedPort} is in use, using ${port} instead`);
   }
