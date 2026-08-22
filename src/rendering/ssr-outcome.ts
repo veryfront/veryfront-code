@@ -231,9 +231,17 @@ function isFileNotFoundError(error: unknown): error is VeryfrontError {
  * EIO, aborts and timeouts into it. Both are server faults, and answering them
  * with a 404 would hide a real outage behind a status nothing alerts on.
  *
- * `code` narrows it to the adapter: `createNotFoundLikeError` is the only
- * raiser that sets ENOENT alongside the slug, and a test pins that. It is read
- * as an own data property so a project-owned getter cannot forge it.
+ * `code` narrows it to that one raiser: of the sixteen in-tree raisers of this
+ * slug, `createNotFoundLikeError` is the only one that sets ENOENT alongside
+ * it, and removing that assignment reddens tests in four files.
+ *
+ * This is a correctness guard, not a security boundary. `FILE_NOT_FOUND` is
+ * public API via the `veryfront/errors/general` export, so project code can
+ * raise this slug and can set an own `code` of its own. Reading the own data
+ * descriptor rules out an accessor -- no project getter runs during
+ * classification, and a getter cannot stand in for the marker -- but a plain
+ * assignment still passes, and project code can already reach a 404 through
+ * `notFound()` by design. Nothing here depends on the tenant being unable to.
  *
  * Message text is never consulted, so an error that merely reads "not found"
  * stays a fault.
