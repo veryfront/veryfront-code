@@ -1072,6 +1072,7 @@ export function createOpenAIModelRuntime(
         fetchImpl,
         providerLabel,
         providerKind,
+        modelId,
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
           extraHeaders: options.headers,
@@ -1104,6 +1105,7 @@ export function createOpenAIModelRuntime(
           fetchImpl,
           providerLabel,
           providerKind,
+          modelId,
           init: createOpenAIRequestInit({
             apiKey: config.apiKey,
             extraHeaders: options.headers,
@@ -1160,6 +1162,7 @@ export function createOpenAIResponsesRuntime(
         fetchImpl,
         providerLabel,
         providerKind,
+        modelId,
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
           extraHeaders: options.headers,
@@ -1196,6 +1199,7 @@ export function createOpenAIResponsesRuntime(
           fetchImpl,
           providerLabel,
           providerKind,
+          modelId,
           init: createOpenAIRequestInit({
             apiKey: config.apiKey,
             extraHeaders: options.headers,
@@ -1305,6 +1309,7 @@ export function createOpenAIEmbeddingRuntime(
         fetchImpl,
         providerLabel,
         providerKind,
+        modelId,
         init: createOpenAIRequestInit({
           apiKey: config.apiKey,
           body: JSON.stringify({

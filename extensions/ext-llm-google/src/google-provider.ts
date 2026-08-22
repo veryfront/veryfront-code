@@ -589,6 +589,7 @@ export function createGoogleModelRuntime(
         fetchImpl,
         providerLabel,
         providerKind: "google",
+        modelId,
         init: createGoogleRequestInit({
           apiKey: config.apiKey,
           extraHeaders: options.headers,
@@ -619,6 +620,7 @@ export function createGoogleModelRuntime(
           fetchImpl,
           providerLabel,
           providerKind: "google",
+          modelId,
           init: createGoogleRequestInit({
             apiKey: config.apiKey,
             extraHeaders: options.headers,
@@ -674,6 +676,7 @@ export function createGoogleEmbeddingRuntime(
             fetchImpl,
             providerLabel,
             providerKind: "google",
+            modelId,
             init: createGoogleRequestInit({
               apiKey: config.apiKey,
               body: JSON.stringify({

@@ -275,6 +275,12 @@ export async function buildProviderError(
   //  - insufficient_quota → hard quota, non-retryable
   //  - rate_limit_exceeded / tokens_per_min_exceeded → retry with Retry-After
   // Mistral and Moonshotai use the same OpenAI-compatible error envelope.
+  //
+  // A body that never parsed — empty, truncated, HTML from a gateway — carries
+  // no `insufficient_quota` and so stays a rate limit. An unreadable body is
+  // not evidence of exhausted quota, and calling it one ends an agent run on a
+  // limit that would have cleared on its own. Retries are bounded by the
+  // caller, so a misread hard quota costs attempts, never a hot loop.
   if (
     (provider === "openai" || provider === "mistral" || provider === "moonshotai") && status === 429
   ) {
@@ -285,9 +291,6 @@ export async function buildProviderError(
         message,
         retryable: false,
       });
-    }
-    if (truncated || parsedBody === undefined) {
-      return new ProviderRequestError({ provider, status, message, retryable: false });
     }
     return new ProviderRateLimitError({
       provider,
@@ -307,10 +310,10 @@ export async function buildProviderError(
   // wording is not a stable contract, so the delay is the signal we key on.
   // Without one the error stays a hard quota error and callers don't hot-loop
   // on retries that can't possibly succeed until midnight UTC.
+  //
+  // A body that never parsed names no status at all, so it falls through to
+  // the retryable branch for the same reason the OpenAI-compatible split does.
   if (provider === "google" && status === 429) {
-    if (truncated || parsedBody === undefined) {
-      return new ProviderRequestError({ provider, status, message, retryable: false });
-    }
     const retryDelayMs = retryAfterMs ?? parseGoogleRetryInfoMs(errorRecord);
     if (errorCode === "RESOURCE_EXHAUSTED" && retryDelayMs === undefined) {
       return new ProviderQuotaError({
@@ -609,13 +612,25 @@ function streamWithCleanup(
   });
 }
 
+/**
+ * Build the error for an elapsed request deadline.
+ *
+ * Names the deadline that fired, the time it took to fire, and the model when
+ * the caller supplied one. Without those every timeout serializes to the same
+ * sentence, and a responder cannot separate one slow model from a stalled
+ * gateway.
+ */
 function providerTimeoutError(
-  options: { providerKind: ProviderKind; providerLabel: string },
+  options: { providerKind: ProviderKind; providerLabel: string; modelId?: string },
+  deadline: { waitingFor: string; timeoutMs: number; elapsedMs: number },
 ): ProviderRequestError {
+  const model = options.modelId === undefined ? "" : `, model ${options.modelId}`;
   return new ProviderRequestError({
     provider: options.providerKind,
     status: 0,
-    message: `${options.providerLabel} request failed: request timed out`,
+    message: `${options.providerLabel} request failed: request timed out after ` +
+      `${deadline.elapsedMs}ms waiting for ${deadline.waitingFor} ` +
+      `(${deadline.timeoutMs}ms deadline${model})`,
     retryable: true,
   });
 }
@@ -727,6 +742,8 @@ export async function requestJson(options: {
   init: RequestInit;
   providerLabel: string;
   providerKind: ProviderKind;
+  /** Model this request is for. Reported when a deadline elapses. */
+  modelId?: string;
   timeoutMs?: number;
   maxResponseBytes?: number;
 }): Promise<unknown> {
@@ -740,11 +757,9 @@ export async function requestJson(options: {
       `maxResponseBytes must be a positive safe integer no greater than ${MAX_PROVIDER_JSON_MAX_BYTES}`,
     );
   }
-  const deadline = createRequestDeadline(
-    options.init,
-    options.timeoutMs ?? DEFAULT_PROVIDER_JSON_TIMEOUT_MS,
-    "timeoutMs",
-  );
+  const timeoutMs = options.timeoutMs ?? DEFAULT_PROVIDER_JSON_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const deadline = createRequestDeadline(options.init, timeoutMs, "timeoutMs");
 
   try {
     const response = await waitForAbortable(
@@ -776,7 +791,11 @@ export async function requestJson(options: {
     }
   } catch (error) {
     if (deadline.timedOut) {
-      throw providerTimeoutError(options);
+      throw providerTimeoutError(options, {
+        waitingFor: "the JSON response",
+        timeoutMs,
+        elapsedMs: Date.now() - startedAt,
+      });
     }
     throw error;
   } finally {
@@ -801,13 +820,14 @@ export async function requestStream(options: {
   init: RequestInit;
   providerLabel: string;
   providerKind: ProviderKind;
+  /** Model this request is for. Reported when a deadline elapses. */
+  modelId?: string;
   headersTimeoutMs?: number;
 }): Promise<ReadableStream<Uint8Array>> {
-  const deadline = createRequestDeadline(
-    options.init,
-    options.headersTimeoutMs ?? DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS,
-    "headersTimeoutMs",
-  );
+  const headersTimeoutMs = options.headersTimeoutMs ??
+    DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const deadline = createRequestDeadline(options.init, headersTimeoutMs, "headersTimeoutMs");
   let streamOwnsDeadline = false;
   let rateLimitRetryCount = 0;
   const requestBodyIsReplayable = !(deadline.init.body instanceof ReadableStream);
@@ -833,6 +853,11 @@ export async function requestStream(options: {
         ) {
           const retryDelayMs = err.retryAfterMs ??
             DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS * 2 ** rateLimitRetryCount;
+          // A wait longer than the deadline has left aborts part-way through,
+          // and the catch below would then rewrite this rate limit into a
+          // timeout the provider never caused. Retry-After routinely exceeds
+          // the 30s header deadline, so report the rate limit we actually got.
+          if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw err;
           rateLimitRetryCount++;
           await waitForProviderRateLimitRetry(retryDelayMs, deadline.deadlineSignal);
           continue;
@@ -860,7 +885,11 @@ export async function requestStream(options: {
     }
   } catch (error) {
     if (deadline.timedOut) {
-      throw providerTimeoutError(options);
+      throw providerTimeoutError(options, {
+        waitingFor: "the stream response headers",
+        timeoutMs: headersTimeoutMs,
+        elapsedMs: Date.now() - startedAt,
+      });
     }
     throw error;
   } finally {

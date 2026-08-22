@@ -517,6 +517,7 @@ export function createAnthropicModelRuntime(
           fetchImpl,
           providerLabel: config.name ?? "anthropic",
           providerKind: "anthropic",
+          modelId,
           init: createAnthropicRequestInit({
             apiKey: config.apiKey,
             authToken: config.authToken,
@@ -591,6 +592,7 @@ export function createAnthropicModelRuntime(
           fetchImpl,
           providerLabel: config.name ?? "anthropic",
           providerKind: "anthropic",
+          modelId,
           init: createAnthropicRequestInit({
             apiKey: config.apiKey,
             authToken: config.authToken,
@@ -675,6 +677,7 @@ export function createAnthropicModelRuntime(
             fetchImpl,
             providerLabel: config.name ?? "anthropic",
             providerKind: "anthropic",
+            modelId,
             init: createAnthropicRequestInit({
               apiKey: config.apiKey,
               authToken: config.authToken,

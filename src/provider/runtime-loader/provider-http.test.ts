@@ -1,4 +1,9 @@
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
@@ -109,7 +114,7 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
-    it("fails closed when an oversized OpenAI 429 body is truncated", async () => {
+    it("openai 429 truncated before it could be parsed -> retryable rate limit", async () => {
       const err = await buildProviderError(
         "openai",
         jsonResponse(429, {
@@ -117,8 +122,35 @@ describe("provider-http", () => {
         }),
       );
 
-      assertEquals(err instanceof ProviderRequestError, true);
-      assertEquals(err.retryable, false);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "a truncated body cannot prove insufficient_quota, so it stays a rate limit",
+      );
+      assertEquals(err.retryable, true, "a truncated 429 must reach the bounded retry");
+    });
+
+    it("openai 429 with an empty body -> retryable rate limit", async () => {
+      const err = await buildProviderError("openai", jsonResponse(429, ""));
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an empty body names no quota error",
+      );
+      assertEquals(err.retryable, true, "an empty 429 must reach the bounded retry");
+    });
+
+    it("openai 429 with a non-JSON body -> retryable rate limit", async () => {
+      const err = await buildProviderError(
+        "openai",
+        jsonResponse(429, "<html><body>Too Many Requests</body></html>"),
+      );
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an HTML gateway page names no quota error",
+      );
+      assertEquals(err.retryable, true, "a non-JSON 429 must reach the bounded retry");
     });
 
     it("openai 429 rate_limit_exceeded -> retryable rate limit", async () => {
@@ -202,7 +234,7 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
-    it("fails closed when an oversized Google 429 body is truncated", async () => {
+    it("google 429 truncated before it could be parsed -> retryable rate limit", async () => {
       const err = await buildProviderError(
         "google",
         jsonResponse(429, {
@@ -210,8 +242,35 @@ describe("provider-http", () => {
         }),
       );
 
-      assertEquals(err instanceof ProviderRequestError, true);
-      assertEquals(err.retryable, false);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "a truncated body cannot prove RESOURCE_EXHAUSTED, so it stays a rate limit",
+      );
+      assertEquals(err.retryable, true, "a truncated 429 must reach the bounded retry");
+    });
+
+    it("google 429 with an empty body -> retryable rate limit", async () => {
+      const err = await buildProviderError("google", jsonResponse(429, ""));
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an empty body names no quota status",
+      );
+      assertEquals(err.retryable, true, "an empty 429 must reach the bounded retry");
+    });
+
+    it("google 429 with a non-JSON body -> retryable rate limit", async () => {
+      const err = await buildProviderError(
+        "google",
+        jsonResponse(429, "<html><body>Too Many Requests</body></html>"),
+      );
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an HTML gateway page names no quota status",
+      );
+      assertEquals(err.retryable, true, "a non-JSON 429 must reach the bounded retry");
     });
 
     it("google 429 without RESOURCE_EXHAUSTED -> retryable rate limit", async () => {
@@ -223,11 +282,11 @@ describe("provider-http", () => {
       assertEquals(err.retryable, true);
     });
 
-    it("fails closed for unparseable ambiguous 429 bodies", async () => {
+    it("retries unparseable ambiguous 429 bodies", async () => {
       for (const provider of ["openai", "google"] as const) {
         const err = await buildProviderError(provider, jsonResponse(429, "{"));
-        assertEquals(err instanceof ProviderRequestError, true, provider);
-        assertEquals(err.retryable, false, provider);
+        assertEquals(err instanceof ProviderRateLimitError, true, provider);
+        assertEquals(err.retryable, true, provider);
       }
     });
 
@@ -593,6 +652,29 @@ describe("provider-http", () => {
       assertEquals(error.retryable, true);
     });
 
+    it("names the model, the elapsed time, and the deadline that fired", async () => {
+      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
+      const error = await assertRejects(
+        () =>
+          requestJson({
+            url: "https://provider.test/generate",
+            fetchImpl: neverResponds,
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            modelId: "moonshotai/kimi-k2.6",
+            timeoutMs: 5,
+          }),
+        ProviderRequestError,
+      ) as ProviderRequestError;
+
+      assertMatch(
+        error.message,
+        /^veryfront-cloud request failed: request timed out after \d+ms waiting for the JSON response \(5ms deadline, model moonshotai\/kimi-k2\.6\)$/,
+        "a JSON timeout must name the elapsed time, the deadline, and the model",
+      );
+    });
+
     it("preserves caller cancellation when a custom fetch ignores AbortSignal", async () => {
       const controller = new AbortController();
       const reason = new DOMException("caller stopped waiting", "AbortError");
@@ -735,12 +817,48 @@ describe("provider-http", () => {
             providerKind: "moonshotai",
             headersTimeoutMs: 5,
           }),
-        ProviderRequestError,
-        "request timed out",
-      ) as ProviderRequestError;
+        ProviderRateLimitError,
+      ) as ProviderRateLimitError;
 
-      assertEquals(attempts, 1);
-      assertEquals(error.retryable, true);
+      assertEquals(attempts, 1, "a delay past the deadline must not spend a second attempt");
+      assertEquals(error.retryable, true, "the rate limit is still retryable by an outer caller");
+      assertEquals(
+        error.message.includes("timed out"),
+        false,
+        "the provider rate limited us; it did not time out",
+      );
+    });
+
+    it("surfaces an unreadable 429 as a rate limit when its delay outlives the deadline", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(jsonResponse(
+                429,
+                "<html><body>Too Many Requests</body></html>",
+                { "retry-after": "60" },
+              ));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            modelId: "moonshotai/kimi-k2.6",
+            headersTimeoutMs: 20,
+          }),
+        ProviderRateLimitError,
+      ) as ProviderRateLimitError;
+
+      assertEquals(attempts, 1, "a 60s delay cannot fit a 20ms deadline, so do not retry");
+      assertEquals(error.status, 429, "the real provider status must survive");
+      assertEquals(
+        error.message.includes("timed out"),
+        false,
+        "an unreadable 429 must not be reported as a stalled gateway",
+      );
     });
 
     it("enforces its header deadline when a custom fetch ignores AbortSignal", async () => {
@@ -761,6 +879,51 @@ describe("provider-http", () => {
 
       assertEquals(error.status, 0);
       assertEquals(error.retryable, true);
+    });
+
+    it("names the model, the elapsed time, and the deadline that fired", async () => {
+      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: neverResponds,
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            modelId: "moonshotai/kimi-k2.6",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+      ) as ProviderRequestError;
+
+      assertMatch(
+        error.message,
+        /^veryfront-cloud request failed: request timed out after \d+ms waiting for the stream response headers \(5ms deadline, model moonshotai\/kimi-k2\.6\)$/,
+        "a stream-header timeout must name the elapsed time, the deadline, and the model",
+      );
+    });
+
+    it("omits the model from a timeout when the caller did not name one", async () => {
+      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: neverResponds,
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+      ) as ProviderRequestError;
+
+      assertMatch(
+        error.message,
+        /request timed out after \d+ms waiting for the stream response headers \(5ms deadline\)$/,
+        "an unnamed model must leave the rest of the diagnostic intact",
+      );
     });
 
     it("preserves caller cancellation while response headers are pending", async () => {
