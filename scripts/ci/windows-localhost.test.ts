@@ -2,8 +2,8 @@ import {
   assert,
   assertEquals,
   assertStringIncludes,
-} from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { fromFileUrl } from "#std/path";
 import { parse } from "#std/yaml/parse";
 
@@ -52,7 +52,9 @@ describe("wildcard localhost Windows contract", () => {
           "resolver reports must omit machine-specific infrastructure detail",
         );
         if (result.resolved) {
-          assertEquals(typeof result.loopbackOnly, "boolean");
+          // RFC 6761 reserves the .localhost tree for loopback. A public address
+          // here means the resolver is hijacking it, which the probe must catch.
+          assertEquals(result.loopbackOnly, true);
         } else {
           assertEquals(typeof result.errorCode, "string");
         }
