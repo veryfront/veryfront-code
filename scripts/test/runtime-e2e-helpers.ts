@@ -103,6 +103,52 @@ export async function ensureCommand(
   await runChecked(command, args, { timeoutMs: 30_000 });
 }
 
+export async function inspectModuleExports(
+  moduleUrl: URL,
+  label: string,
+  timeoutMs = 7_500,
+): Promise<string[]> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let result: Deno.CommandOutput;
+
+  try {
+    result = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "eval",
+        `--config=${new URL("../test.deno.json", import.meta.url).pathname}`,
+        "--no-check",
+        `const mod = await import(${JSON.stringify(moduleUrl.href)});\n` +
+        "console.log(JSON.stringify(Object.keys(mod).sort()));",
+      ],
+      signal: controller.signal,
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `${label} import subprocess timed out after ${timeoutMs}ms`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  const stderr = decoder.decode(result.stderr);
+  if (stderr.length > 0) {
+    throw new Error(`${label} import subprocess wrote to stderr:\n${stderr}`);
+  }
+  if (result.code !== 0) {
+    throw new Error(
+      `${label} import subprocess exited with code ${result.code}`,
+    );
+  }
+
+  return JSON.parse(decoder.decode(result.stdout)) as string[];
+}
+
 export async function packNpmPackage(
   rootDir: string,
   workDir: string,
@@ -222,12 +268,18 @@ async function collectStream(
 ): Promise<void> {
   if (!stream) return;
 
+  const streamDecoder = new TextDecoder();
   const reader = stream.getReader();
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) return;
-      output.push(decoder.decode(value));
+      if (done) {
+        const remainder = streamDecoder.decode();
+        if (remainder.length > 0) output.push(remainder);
+        return;
+      }
+      const decoded = streamDecoder.decode(value, { stream: true });
+      if (decoded.length > 0) output.push(decoded);
     }
   } finally {
     reader.releaseLock();
@@ -246,10 +298,30 @@ export function getDevServerCommand(
   };
 }
 
+export function getDevServerEnvironment(
+  overrides: Record<string, string> = {},
+): Record<string, string> {
+  return {
+    ANTHROPIC_API_KEY: "",
+    GOOGLE_API_KEY: "",
+    GOOGLE_GENERATIVE_AI_API_KEY: "",
+    LOG_FORMAT: "text",
+    MISTRAL_API_KEY: "",
+    NODE_ENV: "development",
+    OPENAI_API_KEY: "",
+    REVALIDATION_PER_PROJECT_LIMIT: "0",
+    SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
+    VERYFRONT_API_TOKEN: "",
+    VF_DISABLE_LRU_INTERVAL: "1",
+    ...overrides,
+  };
+}
+
 export function startDevServer(
   projectDir: string,
   runtime: RuntimeName,
   port: number,
+  env: Record<string, string> = {},
 ): {
   child: Deno.ChildProcess;
   status: Promise<Deno.CommandStatus>;
@@ -262,13 +334,7 @@ export function startDevServer(
   const child = new Deno.Command(command, {
     args,
     cwd: projectDir,
-    env: {
-      LOG_FORMAT: "text",
-      NODE_ENV: "development",
-      REVALIDATION_PER_PROJECT_LIMIT: "0",
-      SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
-      VF_DISABLE_LRU_INTERVAL: "1",
-    },
+    env: getDevServerEnvironment(env),
     stdout: "piped",
     stderr: "piped",
   }).spawn();
@@ -289,10 +355,16 @@ export async function stopDevServer(server: {
     return;
   }
 
+  let timeoutId: number | undefined;
+  const timeout = new Promise<boolean>((resolve) => {
+    timeoutId = setTimeout(() => resolve(false), 5_000);
+  });
   const exited = await Promise.race([
     server.status.then(() => true).catch(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000)),
-  ]);
+    timeout,
+  ]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
 
   if (!exited) {
     try {
@@ -305,7 +377,6 @@ export async function stopDevServer(server: {
 }
 
 export async function scaffoldProject(
-  rootDir: string,
   workDir: string,
   tarballPath: string,
   template: string,
@@ -344,10 +415,6 @@ export async function scaffoldProject(
     await usePackedVeryfrontDenoTasks(projectDir, tarballPath);
   } else {
     await updateVeryfrontDependency(projectDir, tarballPath);
-  }
-
-  if (rootDir.length === 0) {
-    throw new Error("Root directory could not be resolved");
   }
 
   return projectDir;

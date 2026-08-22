@@ -1,52 +1,18 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getDevServerCommand } from "./template-runtime-e2e.ts";
+import {
+  getDevServerEnvironment,
+  inspectModuleExports,
+} from "./runtime-e2e-helpers.ts";
 
 describe("template runtime E2E commands", () => {
   it("exports the shared harness without running the E2E flow on import", async () => {
-    const controller = new AbortController();
-    const timeoutMs = 7_500;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    let result: Deno.CommandOutput;
-
-    try {
-      result = await new Deno.Command(Deno.execPath(), {
-        args: [
-          "eval",
-          "--config=scripts/test.deno.json",
-          "--no-check",
-          `
-const mod = await import("./scripts/test/template-runtime-e2e.ts");
-console.log(JSON.stringify(Object.keys(mod).sort()));
-`,
-        ],
-        signal: controller.signal,
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new Error(
-          `template runtime import subprocess timed out after ${timeoutMs}ms`,
-        );
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
-
     assertEquals(
-      new TextDecoder().decode(result.stderr),
-      "",
-      "Template runtime import subprocess should not write to stderr",
-    );
-    assertEquals(
-      result.code,
-      0,
-      "Template runtime import subprocess should exit successfully",
-    );
-    assertEquals(
-      JSON.parse(new TextDecoder().decode(result.stdout)),
+      await inspectModuleExports(
+        new URL("./template-runtime-e2e.ts", import.meta.url),
+        "template runtime",
+      ),
       [
         "assertCondition",
         "ensureCommand",
@@ -91,6 +57,30 @@ console.log(JSON.stringify(Object.keys(mod).sort()));
         args: ["run", "dev", "--", "--port", "4321"],
       },
       "Bun dev command should preserve Bun's script argument separator",
+    );
+  });
+
+  it("merges child-only environment overrides with deterministic defaults", () => {
+    assertEquals(
+      getDevServerEnvironment({
+        ANTHROPIC_API_KEY: "test-key",
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:4312/v1",
+      }),
+      {
+        ANTHROPIC_API_KEY: "test-key",
+        GOOGLE_API_KEY: "",
+        GOOGLE_GENERATIVE_AI_API_KEY: "",
+        LOG_FORMAT: "text",
+        MISTRAL_API_KEY: "",
+        NODE_ENV: "development",
+        OPENAI_API_KEY: "",
+        REVALIDATION_PER_PROJECT_LIMIT: "0",
+        SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
+        VF_DISABLE_LRU_INTERVAL: "1",
+        VERYFRONT_API_TOKEN: "",
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:4312/v1",
+      },
+      "Dev server environment should blank competing credentials and isolate scenario overrides in the child process",
     );
   });
 });

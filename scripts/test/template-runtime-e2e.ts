@@ -258,7 +258,6 @@ async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
 }
 
 async function testCase(
-  rootDir: string,
   workDir: string,
   tarballPath: string,
   template: TemplateName,
@@ -267,7 +266,6 @@ async function testCase(
   const label = `${runtime}/${template}`;
   console.log(`test ${label}: scaffold`);
   const projectDir = await scaffoldProject(
-    rootDir,
     workDir,
     tarballPath,
     template,
@@ -356,7 +354,7 @@ async function main(): Promise<void> {
 
     for (const template of templates) {
       for (const runtime of runtimes) {
-        await testCase(rootDir, workDir, tarballPath, template, runtime);
+        await testCase(workDir, tarballPath, template, runtime);
       }
     }
 

@@ -31,8 +31,15 @@ const ANTHROPIC_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const ANTHROPIC_API_KEY = "vf-runtime-critical-flow-key";
 const WORKFLOW_ID = "content-pipeline";
 const NODE_ID = "call-provider";
+const APPLICATION_ROUTE_PAYLOAD = {
+  ok: true,
+  surface: "runtime-critical-flow",
+};
 const POLL_REQUEST_TIMEOUT_MS = 1_000;
 const TERMINAL_STATUSES = new Set(["failed", "completed", "cancelled"]);
+
+class UnexpectedTerminalRunError extends Error {}
+class RunTerminatedBeforeProviderReceiptError extends Error {}
 
 export function parseRuntimeSelection(args: string[]): RuntimeName[] {
   const requested = parseCommaSeparatedFlag(args, ["runtime", "runtimes"]);
@@ -86,6 +93,13 @@ export async function validateAnthropicRequest(
   request: Request,
   expectedMarker: string,
 ): Promise<void> {
+  await validateAnthropicRequestMarkers(request, [expectedMarker]);
+}
+
+async function validateAnthropicRequestMarkers(
+  request: Request,
+  expectedMarkers: string[],
+): Promise<{ marker: string; stream: boolean }> {
   const url = new URL(request.url);
   if (request.method !== "POST" || url.pathname !== "/v1/messages") {
     throw new Error(
@@ -96,6 +110,22 @@ export async function validateAnthropicRequest(
   if (request.headers.get("x-api-key") !== ANTHROPIC_API_KEY) {
     throw new Error(
       "Anthropic request did not include the expected x-api-key header",
+    );
+  }
+
+  if (request.headers.get("anthropic-version") !== "2023-06-01") {
+    throw new Error(
+      "Anthropic request did not include anthropic-version 2023-06-01",
+    );
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]
+    ?.trim().toLowerCase();
+  if (contentType !== "application/json") {
+    throw new Error(
+      `Anthropic request content-type must be application/json, got ${
+        contentType ?? "missing"
+      }`,
     );
   }
 
@@ -115,11 +145,21 @@ export async function validateAnthropicRequest(
     );
   }
 
-  if (!bodyContainsMarker(body, expectedMarker)) {
+  const matchedMarker = expectedMarkers.find((marker) =>
+    bodyContainsMarker(body, marker)
+  );
+  if (matchedMarker === undefined) {
     throw new Error(
-      `Anthropic request body did not include marker ${expectedMarker}`,
+      `Anthropic request body did not include marker ${
+        expectedMarkers.join(" or ")
+      }`,
     );
   }
+
+  const stream = body && typeof body === "object"
+    ? (body as { stream?: unknown }).stream === true
+    : false;
+  return { marker: matchedMarker, stream };
 }
 
 function isProviderValidationFailure(
@@ -157,7 +197,7 @@ export async function waitForTerminalRun(
         lastObservation = JSON.stringify(detail).slice(0, 1_000);
         if (detail.status && TERMINAL_STATUSES.has(detail.status)) {
           if (detail.status !== "failed") {
-            throw new Error(
+            throw new UnexpectedTerminalRunError(
               `Run reached unexpected terminal status ${detail.status}: ${lastObservation}`,
             );
           }
@@ -166,8 +206,7 @@ export async function waitForTerminalRun(
       }
     } catch (error) {
       if (
-        error instanceof Error &&
-        error.message.includes("unexpected terminal status")
+        error instanceof UnexpectedTerminalRunError
       ) {
         throw error;
       }
@@ -184,7 +223,7 @@ export async function waitForTerminalRun(
 
 export function parseScopedResponseJson<T>(
   label: string,
-  scope: "route/start" | "persistence/list",
+  scope: "route/start" | "route/application-api" | "persistence/list",
   body: string,
 ): T {
   try {
@@ -217,6 +256,8 @@ async function writeFixture(projectDir: string): Promise<void> {
   await Deno.mkdir(`${projectDir}/app/api/workflows/[...path]`, {
     recursive: true,
   });
+  await Deno.mkdir(`${projectDir}/app/api/ag-ui`, { recursive: true });
+  await Deno.mkdir(`${projectDir}/app/api/critical-path`, { recursive: true });
   await Deno.mkdir(`${projectDir}/agents`, { recursive: true });
   await Deno.mkdir(`${projectDir}/lib`, { recursive: true });
   await Deno.mkdir(`${projectDir}/workflows`, { recursive: true });
@@ -276,6 +317,21 @@ workflows.register(contentPipeline as Workflow<unknown, unknown>);
 `,
   );
   await Deno.writeTextFile(
+    `${projectDir}/app/api/ag-ui/route.ts`,
+    `import { createAgUiHandler } from "veryfront/agent";
+import "../../../agents/content-agent.ts";
+
+export const POST = createAgUiHandler("content-agent");
+`,
+  );
+  await Deno.writeTextFile(
+    `${projectDir}/app/api/critical-path/route.ts`,
+    `export function GET(): Response {
+  return Response.json(${JSON.stringify(APPLICATION_ROUTE_PAYLOAD)});
+}
+`,
+  );
+  await Deno.writeTextFile(
     `${projectDir}/app/api/workflows/[...path]/route.ts`,
     `import { createWorkflowHandler } from "veryfront/workflow";
 import { workflows } from "../../../../lib/workflows.ts";
@@ -286,7 +342,7 @@ export const { GET, POST } = createWorkflowHandler(workflows);
 }
 
 interface ProviderState {
-  received: Request[];
+  received: string[];
   server: Deno.HttpServer;
   abort(): void;
   closed: Promise<void>;
@@ -298,6 +354,102 @@ interface ProviderState {
 
 function stringifyError(value: unknown): string {
   return typeof value === "string" ? value : String(JSON.stringify(value));
+}
+
+export function parseAgUiTextDeltas(body: string): string[] {
+  const deltas: string[] = [];
+  for (const frame of body.split(/\r?\n\r?\n/)) {
+    const lines = frame.split(/\r?\n/);
+    const event = lines.find((line) => line.startsWith("event:"))
+      ?.slice("event:".length).trim();
+    if (event !== "TextMessageContent") continue;
+
+    const data = lines.filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trimStart()).join("\n");
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      throw new Error("AG-UI TextMessageContent event contained invalid JSON");
+    }
+    const delta = payload && typeof payload === "object"
+      ? (payload as { delta?: unknown }).delta
+      : undefined;
+    if (typeof delta !== "string") {
+      throw new Error("AG-UI TextMessageContent event omitted a string delta");
+    }
+    deltas.push(delta);
+  }
+  return deltas;
+}
+
+function anthropicStreamResponse(marker: string): Response {
+  const messageId = `msg_${crypto.randomUUID().replaceAll("-", "")}`;
+  const events = [
+    [
+      "message_start",
+      {
+        type: "message_start",
+        message: {
+          id: messageId,
+          type: "message",
+          role: "assistant",
+          model: ANTHROPIC_WIRE_MODEL,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 0 },
+        },
+      },
+    ],
+    [
+      "content_block_start",
+      {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      },
+    ],
+    [
+      "content_block_delta",
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: marker },
+      },
+    ],
+    ["content_block_stop", { type: "content_block_stop", index: 0 }],
+    [
+      "message_delta",
+      {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { output_tokens: 1 },
+      },
+    ],
+    ["message_stop", { type: "message_stop" }],
+  ] as const;
+  const body = events.map(([event, data]) =>
+    `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+  )
+    .join("");
+
+  return new Response(body, {
+    headers: { "content-type": "text/event-stream; charset=utf-8" },
+  });
+}
+
+function anthropicJsonResponse(marker: string): Response {
+  return Response.json({
+    id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
+    type: "message",
+    role: "assistant",
+    model: ANTHROPIC_WIRE_MODEL,
+    content: [{ type: "text", text: marker }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 1, output_tokens: 1 },
+  });
 }
 
 export function assertListedRunFailure(
@@ -369,10 +521,11 @@ export async function waitForProviderCancellation(
 }
 
 function startProvider(
-  expectedMarker: string,
+  agentMarker: string,
+  workflowMarker: string,
   mode: ProviderMode,
 ): ProviderState {
-  const received: Request[] = [];
+  const received: string[] = [];
   const controller = new AbortController();
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
@@ -395,8 +548,12 @@ function startProvider(
     signal: controller.signal,
     onListen: () => {},
   }, async (request) => {
+    let validated: { marker: string; stream: boolean };
     try {
-      await validateAnthropicRequest(request.clone(), expectedMarker);
+      validated = await validateAnthropicRequestMarkers(request.clone(), [
+        agentMarker,
+        workflowMarker,
+      ]);
     } catch (error) {
       validationFailure = error instanceof Error
         ? error
@@ -405,19 +562,13 @@ function startProvider(
         status: 400,
       });
     }
-    received.push(request.clone());
+    const { marker, stream } = validated;
+    received.push(marker);
 
-    if (mode === "respond") {
-      return Response.json({
-        id: `msg_${crypto.randomUUID().replaceAll("-", "")}`,
-        type: "message",
-        role: "assistant",
-        model: ANTHROPIC_WIRE_MODEL,
-        content: [{ type: "text", text: "ok" }],
-        stop_reason: "end_turn",
-        stop_sequence: null,
-        usage: { input_tokens: 1, output_tokens: 1 },
-      });
+    if (marker === agentMarker || mode === "respond") {
+      return stream
+        ? anthropicStreamResponse(marker)
+        : anthropicJsonResponse(marker);
     }
 
     return await new Promise<Response>((resolve) => {
@@ -463,13 +614,18 @@ export async function waitForProviderReceipt(
   state: ProviderState,
   runtime: RuntimeName,
   detailUrl: URL,
+  expectedMarker?: string,
 ): Promise<void> {
   const deadline = Date.now() + 5_000;
   let lastRun = "none";
   while (Date.now() < deadline) {
     const validationFailure = state.validationFailure();
     if (validationFailure) throw validationFailure;
-    if (state.received.length > 0) return;
+    if (
+      expectedMarker === undefined
+        ? state.received.length > 0
+        : state.received.includes(expectedMarker)
+    ) return;
     try {
       const response = await fetch(detailUrl, {
         signal: AbortSignal.timeout(1_000),
@@ -481,8 +637,12 @@ export async function waitForProviderReceipt(
         const validationFailure = state.validationFailure();
         if (validationFailure) throw validationFailure;
         if (detail.status && TERMINAL_STATUSES.has(detail.status)) {
-          if (state.received.length > 0) return;
-          throw new Error(
+          if (
+            expectedMarker === undefined
+              ? state.received.length > 0
+              : state.received.includes(expectedMarker)
+          ) return;
+          throw new RunTerminatedBeforeProviderReceiptError(
             `${runtime}/${
               artifactClaim(runtime)
             } provider/request: run terminated before provider receipt: ${
@@ -499,8 +659,7 @@ export async function waitForProviderReceipt(
         throw error;
       }
       if (
-        error instanceof Error &&
-        error.message.includes("run terminated before provider receipt")
+        error instanceof RunTerminatedBeforeProviderReceiptError
       ) {
         throw error;
       }
@@ -535,31 +694,97 @@ async function postJson(url: URL, body: unknown): Promise<Response> {
   });
 }
 
+async function assertApplicationPage(
+  rootUrl: URL,
+  label: string,
+  scope: "route/page" | "server/post-timeout",
+): Promise<void> {
+  const response = await fetch(rootUrl, { signal: AbortSignal.timeout(5_000) });
+  const body = await response.text();
+  assertCondition(
+    response.ok,
+    `${label} ${scope}: root returned HTTP ${response.status}`,
+  );
+  assertCondition(
+    body.includes("Content Pipeline"),
+    `${label} ${scope}: root omitted expected application content`,
+  );
+}
+
+async function assertApplicationApi(
+  rootUrl: URL,
+  label: string,
+): Promise<void> {
+  const response = await fetch(new URL("/api/critical-path", rootUrl), {
+    signal: AbortSignal.timeout(5_000),
+  });
+  const body = await response.text();
+  assertCondition(
+    response.ok,
+    `${label} route/application-api: HTTP ${response.status} ${
+      body.slice(0, 500)
+    }`,
+  );
+  const parsed = parseScopedResponseJson<Record<string, unknown>>(
+    label,
+    "route/application-api",
+    body,
+  );
+  assertCondition(
+    JSON.stringify(parsed) === JSON.stringify(APPLICATION_ROUTE_PAYLOAD),
+    `${label} route/application-api: unexpected payload ${body.slice(0, 500)}`,
+  );
+}
+
+async function assertAgentRoute(
+  rootUrl: URL,
+  label: string,
+  marker: string,
+): Promise<void> {
+  const response = await postJson(new URL("/api/ag-ui", rootUrl), {
+    messages: [{
+      id: `message-${crypto.randomUUID()}`,
+      role: "user",
+      parts: [{ type: "text", text: marker }],
+    }],
+  });
+  const body = await response.text();
+  assertCondition(
+    response.ok,
+    `${label} route/agent: HTTP ${response.status} ${body.slice(0, 500)}`,
+  );
+  assertCondition(
+    response.headers.get("content-type")?.includes("text/event-stream") ===
+      true,
+    `${label} route/agent: expected text/event-stream response`,
+  );
+  assertCondition(
+    parseAgUiTextDeltas(body).join("").includes(marker),
+    `${label} route/agent: assistant text omitted provider marker`,
+  );
+  assertCondition(
+    body.includes("event: RunFinished"),
+    `${label} route/agent: response omitted terminal RunFinished event`,
+  );
+}
+
 async function assertRuntimeJourney(
-  rootDir: string,
   workDir: string,
   tarballPath: string,
   runtime: RuntimeName,
   providerMode: ProviderMode,
 ): Promise<void> {
   const label = `${runtime}/${artifactClaim(runtime)}`;
-  const marker = `runtime-critical-flow-${runtime}-${crypto.randomUUID()}`;
-  const provider = startProvider(marker, providerMode);
+  const scenarioId = `${runtime}-${crypto.randomUUID()}`;
+  const agentMarker = `runtime-critical-agent-${scenarioId}`;
+  const workflowMarker = `runtime-critical-workflow-${scenarioId}`;
+  const provider = startProvider(agentMarker, workflowMarker, providerMode);
   let server:
     | ReturnType<typeof startDevServer>
     | undefined;
-  const previousEnv = {
-    ANTHROPIC_API_KEY: Deno.env.get("ANTHROPIC_API_KEY"),
-    ANTHROPIC_BASE_URL: Deno.env.get("ANTHROPIC_BASE_URL"),
-    VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: Deno.env.get(
-      "VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS",
-    ),
-  };
-
   try {
     console.log(`${label}: scaffold`);
     const projectDir = await scaffoldProject(
-      rootDir,
       workDir,
       tarballPath,
       "agentic-workflow",
@@ -571,17 +796,28 @@ async function assertRuntimeJourney(
     await installDependencies(projectDir, runtime, workDir);
 
     const port = allocatePort();
-    Deno.env.set("ANTHROPIC_API_KEY", ANTHROPIC_API_KEY);
-    Deno.env.set("ANTHROPIC_BASE_URL", provider.url.toString());
-    Deno.env.set("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS", "true");
-    server = startDevServer(projectDir, runtime, port);
+    server = startDevServer(projectDir, runtime, port, {
+      ANTHROPIC_API_KEY,
+      ANTHROPIC_BASE_URL: provider.url.toString(),
+      VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS: "true",
+    });
 
     const rootUrl = new URL(`http://127.0.0.1:${port}/`);
     console.log(`${label}: readiness ${rootUrl}`);
     await waitForRoute(rootUrl.toString(), 60_000);
+    await assertApplicationPage(rootUrl, label, "route/page");
+    await assertApplicationApi(rootUrl, label);
+    await assertAgentRoute(rootUrl, label, agentMarker);
+    assertCondition(
+      provider.received.filter((marker) => marker === agentMarker).length === 1,
+      `${label} provider/request: expected exactly one direct-agent request`,
+    );
 
     const startUrl = new URL(`/api/workflows/${WORKFLOW_ID}/start`, rootUrl);
-    const startResponse = await postJson(startUrl, { input: { marker } });
+    const startedAt = Date.now();
+    const startResponse = await postJson(startUrl, {
+      input: { marker: workflowMarker },
+    });
     const startBody = await startResponse.text();
     assertCondition(
       startResponse.ok,
@@ -600,13 +836,18 @@ async function assertRuntimeJourney(
     const runIdString = runId;
 
     const detailUrl = new URL(`/api/workflows/runs/${runIdString}`, rootUrl);
-    await waitForProviderReceipt(provider, runtime, detailUrl);
+    await waitForProviderReceipt(
+      provider,
+      runtime,
+      detailUrl,
+      workflowMarker,
+    );
     assertCondition(
-      provider.received.length === 1,
-      `${label} provider/request: expected exactly one request, got ${provider.received.length}`,
+      provider.received.filter((marker) => marker === workflowMarker).length ===
+        1,
+      `${label} provider/request: expected exactly one workflow request`,
     );
 
-    const startedAt = Date.now();
     const detail = await waitForTerminalRun(
       detailUrl,
       10_000,
@@ -662,12 +903,7 @@ async function assertRuntimeJourney(
     );
     assertListedRunFailure(label, list, runIdString);
 
-    const health = await fetch(rootUrl, { signal: AbortSignal.timeout(5_000) });
-    await health.body?.cancel();
-    assertCondition(
-      health.ok,
-      `${label} server/post-timeout: root returned HTTP ${health.status}`,
-    );
+    await assertApplicationPage(rootUrl, label, "server/post-timeout");
   } catch (error) {
     const logs = server ? scopedLogs(server) : "";
     throw new Error(
@@ -678,24 +914,6 @@ async function assertRuntimeJourney(
       ].filter(Boolean).join("\n\n"),
     );
   } finally {
-    if (previousEnv.ANTHROPIC_API_KEY === undefined) {
-      Deno.env.delete("ANTHROPIC_API_KEY");
-    } else {
-      Deno.env.set("ANTHROPIC_API_KEY", previousEnv.ANTHROPIC_API_KEY);
-    }
-    if (previousEnv.ANTHROPIC_BASE_URL === undefined) {
-      Deno.env.delete("ANTHROPIC_BASE_URL");
-    } else {
-      Deno.env.set("ANTHROPIC_BASE_URL", previousEnv.ANTHROPIC_BASE_URL);
-    }
-    if (previousEnv.VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS === undefined) {
-      Deno.env.delete("VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS");
-    } else {
-      Deno.env.set(
-        "VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS",
-        previousEnv.VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS,
-      );
-    }
     if (server) await stopDevServer(server);
     provider.abort();
     await provider.server.shutdown().catch(() => {});
@@ -740,7 +958,6 @@ export async function runRuntimeInferenceCriticalFlow(
 
     for (const runtime of runtimes) {
       await assertRuntimeJourney(
-        rootDir,
         workDir,
         tarballPath,
         runtime,

@@ -10,6 +10,7 @@ import { parse } from "#std/yaml/parse";
 import {
   artifactClaim,
   assertListedRunFailure,
+  parseAgUiTextDeltas,
   parseRuntimeSelection,
   parseScopedResponseJson,
   validateAnthropicRequest,
@@ -17,7 +18,10 @@ import {
   waitForProviderReceipt,
   waitForTerminalRun,
 } from "./runtime-inference-critical-flow.ts";
-import { parseCommaSeparatedFlag } from "./runtime-e2e-helpers.ts";
+import {
+  inspectModuleExports,
+  parseCommaSeparatedFlag,
+} from "./runtime-e2e-helpers.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 
 const VALID_WIRE_MODEL = "claude-haiku-4-5-20251001";
@@ -30,14 +34,28 @@ function anthropicRequest(overrides: {
   method?: string;
   path?: string;
   key?: string;
+  anthropicVersion?: string | null;
+  contentType?: string | null;
   body?: unknown;
 } = {}): Request {
+  const headers = new Headers({
+    "x-api-key": overrides.key ?? VALID_KEY,
+  });
+  if (overrides.anthropicVersion !== null) {
+    headers.set(
+      "anthropic-version",
+      overrides.anthropicVersion ?? "2023-06-01",
+    );
+  }
+  if (overrides.contentType !== null) {
+    headers.set(
+      "content-type",
+      overrides.contentType ?? "application/json",
+    );
+  }
   return new Request(`http://127.0.0.1${overrides.path ?? "/v1/messages"}`, {
     method: overrides.method ?? "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": overrides.key ?? VALID_KEY,
-    },
+    headers,
     body: JSON.stringify(
       overrides.body ?? {
         model: VALID_WIRE_MODEL,
@@ -193,9 +211,31 @@ describe("runtime inference critical-flow pure contract", () => {
     await assertRejectsWithMessage(
       () =>
         validateAnthropicRequest(
+          anthropicRequest({ anthropicVersion: null }),
+          "contract-marker",
+        ),
+      "anthropic-version",
+      "Validator should reject requests without the required Anthropic version",
+    );
+    await assertRejectsWithMessage(
+      () =>
+        validateAnthropicRequest(
+          anthropicRequest({ contentType: "text/plain" }),
+          "contract-marker",
+        ),
+      "application/json",
+      "Validator should reject requests without a JSON content type",
+    );
+    await assertRejectsWithMessage(
+      () =>
+        validateAnthropicRequest(
           new Request("http://127.0.0.1/v1/messages", {
             method: "POST",
-            headers: { "x-api-key": VALID_KEY },
+            headers: {
+              "anthropic-version": "2023-06-01",
+              "content-type": "application/json",
+              "x-api-key": VALID_KEY,
+            },
             body: "{",
           }),
           "contract-marker",
@@ -220,6 +260,32 @@ describe("runtime inference critical-flow pure contract", () => {
         ),
       "contract-marker",
       "Validator should reject requests that omit the workflow marker",
+    );
+  });
+
+  it("extracts assistant text deltas without matching user-message snapshots", () => {
+    const marker = "agent-output-marker";
+    const stream = [
+      `event: MessagesSnapshot\ndata: ${
+        JSON.stringify({ messages: [{ role: "user", content: marker }] })
+      }`,
+      `event: TextMessageContent\ndata: ${JSON.stringify({ delta: marker })}`,
+      `event: RunFinished\ndata: {}`,
+      "",
+    ].join("\n\n");
+    assertEquals(
+      parseAgUiTextDeltas(stream),
+      [marker],
+      "AG-UI output proof should read assistant TextMessageContent deltas only",
+    );
+    assertEquals(
+      parseAgUiTextDeltas(
+        `event: MessagesSnapshot\ndata: ${
+          JSON.stringify({ messages: [{ role: "user", content: marker }] })
+        }\n\n`,
+      ),
+      [],
+      "A user-message snapshot must not count as assistant/provider output",
     );
   });
 
@@ -508,6 +574,35 @@ describe("runtime inference critical-flow pure contract", () => {
       () =>
         assertListedRunFailure(
           "node/packed npm consumer",
+          { runs: [] },
+          "run-1",
+        ),
+      Error,
+      "persistence/list: failed run was not listed",
+      "List assertion should reject a response that omits the requested run",
+    );
+    assertThrows(
+      () =>
+        assertListedRunFailure(
+          "node/packed npm consumer",
+          {
+            runs: [{
+              id: "run-1",
+              status: "running",
+              nodeStates: { "call-provider": { status: "running" } },
+            }],
+          },
+          "run-1",
+        ),
+      Error,
+      "persistence/list: listed run was not failed",
+      "List assertion should reject a requested run that is not failed",
+    );
+
+    assertThrows(
+      () =>
+        assertListedRunFailure(
+          "node/packed npm consumer",
           {
             runs: [{
               id: "run-1",
@@ -591,46 +686,10 @@ describe("runtime inference critical-flow pure contract", () => {
   });
 
   it("does not execute the critical-flow journey on import", async () => {
-    const controller = new AbortController();
-    const timeoutMs = 7_500;
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    let result: Deno.CommandOutput;
-
-    try {
-      result = await new Deno.Command(Deno.execPath(), {
-        args: [
-          "eval",
-          "--config=scripts/test.deno.json",
-          "--no-check",
-          `const mod = await import("./scripts/test/runtime-inference-critical-flow.ts");
-console.log(JSON.stringify(Object.keys(mod).sort()));`,
-        ],
-        signal: controller.signal,
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-    } catch (error) {
-      if (controller.signal.aborted) {
-        throw new Error(
-          `runtime inference import subprocess timed out after ${timeoutMs}ms`,
-        );
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    assertEquals(
-      new TextDecoder().decode(result.stderr),
-      "",
-      "Critical-flow import subprocess should not write to stderr",
+    const exports = await inspectModuleExports(
+      new URL("./runtime-inference-critical-flow.ts", import.meta.url),
+      "runtime inference",
     );
-    assertEquals(
-      result.code,
-      0,
-      "Critical-flow import subprocess should exit successfully",
-    );
-    const exports = JSON.parse(new TextDecoder().decode(result.stdout));
     assert(
       exports.includes("parseRuntimeSelection"),
       "Critical-flow module should export parseRuntimeSelection on import",
