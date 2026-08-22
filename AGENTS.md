@@ -46,17 +46,23 @@ rewrites them even when nothing changed, and committing that output turns CI red
 for everyone. `deno task docs` refuses to run on the wrong version rather than
 producing a plausible-looking diff.
 
-Use these tasks rather than a hand-written `deno test` command; they deny network access to
-the LLM provider origins.
+Use these tasks rather than a hand-written `deno test` command. The unit lane grants network
+access to loopback only (`scripts/test/unit-lane-permissions.ts`), so nothing external is
+reachable and no host list has to be kept current. A test that genuinely needs the internet
+belongs in `tests/`, where the integration lane runs it and the dependency is visible. Do not
+widen the loopback list to accommodate one.
 
 To control outbound HTTP in a test, use `src/testing/mock-fetch.ts` -- `withMockFetch(mock, fn)`
 where the stub has a callback to scope, or the `installMockFetch` / `restoreMockFetch` pair for
-suites that install per test and tear down in `afterEach`. Both move `globalThis.fetch` and the
-host transport in `src/security/http/outbound-fetch.ts` together.
+suites that install per test and tear down in `afterEach`. Both move `globalThis.fetch`, the
+host transport in `src/security/http/outbound-fetch.ts`, and the egress guard's host resolver
+together.
 
 Assigning `globalThis.fetch` by hand controls only code that calls `fetch` directly. Anything
 routed through `guardedOutboundFetch` reads the host transport instead, so a hand-assigned stub
-is ignored there and the request reaches the live endpoint, failing with a confusing 401 or 405.
+is ignored there. Under the loopback-only lane that request now fails on DNS rather than
+reaching a live endpoint, because the egress guard resolves the destination before any transport
+sees it.
 
 ## Public copy rules
 

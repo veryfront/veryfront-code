@@ -5,6 +5,26 @@ import {
 
 type FetchMock = typeof globalThis.fetch | undefined;
 
+/**
+ * Address a stubbed request is pinned to instead of asking a real resolver.
+ *
+ * The egress guard resolves the destination host before it reaches the stub,
+ * so without this a fully stubbed test still performs live DNS and dies
+ * upstream of its own transport. The literal is public, which keeps the
+ * guard's internal-destination checks running exactly as they do in
+ * production; the stub transport ignores addresses, so nothing connects to it.
+ */
+const STUB_PINNED_ADDRESS = "93.184.216.34";
+
+function stubTransport(mockFetch: typeof globalThis.fetch) {
+  return {
+    fetch: mockFetch,
+    pinnedFetch: (url: URL, _addresses: readonly string[], init: RequestInit) =>
+      mockFetch(url, init),
+    resolveHost: () => Promise.resolve([STUB_PINNED_ADDRESS]),
+  };
+}
+
 /** Standard request-init fields that tests may need to observe from a fetch mock. */
 export interface ObservedFetchRequestInit {
   body?: BodyInit | null;
@@ -74,13 +94,7 @@ export async function withMockFetch<T>(
     if (typeof mockFetch !== "function") {
       return await fn();
     }
-    return await __runWithOutboundFetchTransportForTests(
-      {
-        fetch: mockFetch,
-        pinnedFetch: (url, _addresses, init) => mockFetch(url, init),
-      },
-      fn,
-    );
+    return await __runWithOutboundFetchTransportForTests(stubTransport(mockFetch), fn);
   } finally {
     Object.defineProperty(globalThis, "fetch", {
       value: originalFetch,
@@ -107,10 +121,7 @@ export async function withMockFetch<T>(
  * where there is no callback to wrap.
  */
 export function installMockFetch(mockFetch: typeof globalThis.fetch): void {
-  const restoreTransport = __installOutboundFetchTransportForTests({
-    fetch: mockFetch,
-    pinnedFetch: (url, _addresses, init) => mockFetch(url, init),
-  });
+  const restoreTransport = __installOutboundFetchTransportForTests(stubTransport(mockFetch));
   // Only the first install records the pristine state, so a test that swaps its
   // stub mid-way still restores to the real transport rather than to its own
   // earlier stub.

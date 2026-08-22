@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { stub } from "#std/testing/mock";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
@@ -11,17 +11,32 @@ describe("OAuth Client", () => {
       // Import dynamically to avoid side effects
       const { fetchOAuthToken } = await import("./oauth-client.ts");
 
-      await assertRejects(
-        () =>
-          fetchOAuthToken({
-            apiBaseUrl: "http://10.255.255.1", // Non-routable IP to force timeout
-            apiClientId: "test",
-            apiClientSecret: "test",
-            timeoutMs: 100,
-          }),
-        Error,
-        "timed out",
-      );
+      // A request that never answers, rather than a non-routable address. The
+      // deadline is then the test's own abort signal instead of the host's TCP
+      // behaviour, so this needs no egress and cannot vary by machine.
+      const neverAnswers: typeof globalThis.fetch = (_input, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = observeFetchRequestInit(init).signal;
+          signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("The signal has been aborted", "AbortError")),
+            { once: true },
+          );
+        });
+
+      await withMockFetch(neverAnswers, async () => {
+        await assertRejects(
+          () =>
+            fetchOAuthToken({
+              apiBaseUrl: "http://127.0.0.1",
+              apiClientId: "test",
+              apiClientSecret: "test",
+              timeoutMs: 100,
+            }),
+          Error,
+          "timed out",
+        );
+      });
     });
 
     it("throws on HTTP error", async () => {

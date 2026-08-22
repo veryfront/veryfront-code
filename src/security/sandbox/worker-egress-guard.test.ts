@@ -490,12 +490,17 @@ describe("worker-egress-guard admission and shutdown", () => {
   it("aborts and drains a broker request stalled during SOCKS resolution", async () => {
     const resolutionStarted = Promise.withResolvers<void>();
     const broker = startWorkerEgressBroker({
+      // A loopback name, because the suite runs with net permission narrowed to
+      // loopback and the runtime checks that permission against the request
+      // URL, not against the address the guard pins. The name still reaches the
+      // resolver, which is what this test stalls.
+      allowInternalEgress: true,
       resolveHost: () => {
         resolutionStarted.resolve();
         return new Promise<string[]>(() => {});
       },
     });
-    const pending = guardedEgressFetch("http://stalled.invalid/", undefined, {
+    const pending = guardedEgressFetch("http://localhost/", undefined, {
       options: { httpBroker: broker.config.httpBroker },
     }).then(
       () => null,
@@ -648,7 +653,11 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
     try {
       const response = await guardedEgressFetch(
-        `http://stream.invalid:${address.port}/data`,
+        // A loopback name rather than a synthetic one: the runtime checks net
+        // permission against the request URL, and the suite grants loopback
+        // only. `localhost` is not an IP literal, so the injected resolver
+        // still runs and the tunnel is still pinned to what it returns.
+        `http://localhost:${address.port}/data`,
         undefined,
         {
           fetchImpl: globalThis.fetch.bind(globalThis),

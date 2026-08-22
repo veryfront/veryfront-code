@@ -1,23 +1,24 @@
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildDenoTestCommandArgs } from "./coverage-ci.ts";
-
-const providerDenyNet =
-  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
+import { LOOPBACK_ONLY_NET } from "./unit-lane-permissions.ts";
 
 describe("coverage CI command", () => {
-  it("denies live provider egress while preserving allow-all for local test fixtures", () => {
+  it("limits network access to loopback rather than denying named hosts", () => {
     const args = buildDenoTestCommandArgs({
       coverageDir: "coverage-shard-1",
       files: ["src/provider/model-registry.test.ts"],
     });
 
-    assert(args.includes("--allow-all"));
-    assertEquals(args.includes(providerDenyNet), true);
-    assertEquals(
-      args.indexOf(providerDenyNet) > args.indexOf("--allow-all"),
-      true,
-    );
+    assertEquals(args.includes(LOOPBACK_ONLY_NET), true);
+    // `--allow-all` cannot coexist with a narrowed `--allow-net`, and any
+    // `--deny-net` would be a provider host list creeping back in.
+    assertEquals(args.includes("--allow-all"), false);
+    assert(!args.some((arg) => arg.startsWith("--deny-net")));
+    // The lane still needs everything else `--allow-all` used to grant.
+    for (const flag of ["--allow-read", "--allow-write", "--allow-env", "--allow-run"]) {
+      assertEquals(args.includes(flag), true, `${flag} must stay granted`);
+    }
   });
 });
 

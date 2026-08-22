@@ -1,5 +1,4 @@
-export const PROVIDER_EGRESS_DENY_NET =
-  "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
+import { UNIT_LANE_PERMISSIONS } from "./unit-lane-permissions.ts";
 
 export const TEST_FILE_ENV = {
   DENO_TESTING: "1",
@@ -23,8 +22,7 @@ export function buildTestFileCommandArgs(rawArgs: string[]): string[] {
     // Leaks here are load-dependent and do not reproduce on demand, so the
     // first failure has to carry the stack rather than advise a rerun.
     "--trace-leaks",
-    "--allow-all",
-    PROVIDER_EGRESS_DENY_NET,
+    ...UNIT_LANE_PERMISSIONS,
     "--unstable-worker-options",
     "--unstable-net",
     ...rawArgs,

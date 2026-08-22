@@ -130,20 +130,31 @@ describe("cicd coverage workflow", () => {
     );
   });
 
-  it("blocks live provider egress in every Deno unit coverage path", async () => {
-    const providerDenyNet =
-      "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
-    const coverageCiScript = await readRepoFile("scripts/test/coverage-ci.ts");
+  it("limits every Deno unit lane to loopback rather than denying named hosts", async () => {
+    // An allow-list, so a provider host nobody has thought of is blocked by
+    // default. The old `--deny-net` list permitted anything not on it.
+    const loopbackOnlyNet = "--allow-net=127.0.0.1,localhost,0.0.0.0,[::1],[::]";
+    const permissions = await readRepoFile("scripts/test/unit-lane-permissions.ts");
 
-    assertStringIncludes(coverageCiScript, `"${providerDenyNet}"`);
+    assertStringIncludes(permissions, `"${loopbackOnlyNet}"`);
     for (
       const taskName of [
-        "test:coverage",
+        "test:unit:parallel",
+        "test:unit:cwd",
+        "test:unit:cwd-exclusion",
         "test:coverage:unit",
-        "test:coverage:integration",
       ]
     ) {
-      assertStringIncludes(await readDenoTask(taskName), providerDenyNet);
+      const task = await readDenoTask(taskName);
+      assertStringIncludes(task, loopbackOnlyNet);
+      assert(
+        !task.includes("--deny-net"),
+        `${taskName} must not carry a provider host deny-list`,
+      );
+      assert(
+        !task.includes("--allow-all"),
+        `${taskName} must not grant blanket permissions alongside a narrowed net`,
+      );
     }
   });
 
