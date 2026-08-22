@@ -900,6 +900,11 @@ async function attemptStream(
       };
     }
   } catch (error) {
+    // The response body has been handed off, so the caller may already hold
+    // provider output. Nothing raised past that point may be reported as a
+    // replayable timeout, whatever the deadline believes — a replay there would
+    // repeat output and tool side effects the caller has already seen.
+    if (streamOwnsDeadline) throw error;
     if (deadline.timedOut) {
       return {
         outcome: "headers-timeout",

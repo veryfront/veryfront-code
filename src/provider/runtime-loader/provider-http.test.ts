@@ -1089,6 +1089,57 @@ describe("provider-http", () => {
       assertEquals(attempts, 1, "a failure after output must end the request, not replay it");
     });
 
+    it("does not replay a non-retryable provider failure", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(jsonResponse(
+                429,
+                { error: { code: "insufficient_quota", message: "quota exhausted" } },
+              ));
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        ProviderQuotaError,
+      ) as ProviderQuotaError;
+
+      assertEquals(attempts, 1, "a hard quota must not be replayed against the provider");
+      assertEquals(error.retryable, false);
+    });
+
+    it("does not replay a failure raised after the response body was claimed", async () => {
+      const claimFailure = new TypeError("response body is already locked");
+      const body = new ReadableStream<Uint8Array>();
+      Object.defineProperty(body, "getReader", {
+        configurable: true,
+        value: () => {
+          throw claimFailure;
+        },
+      });
+      let attempts = 0;
+
+      const caught = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return Promise.resolve(new Response(body));
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+        headersTimeoutMs: 5,
+      }).then(() => undefined, (error) => error);
+
+      assertStrictEquals(caught, claimFailure, "the real failure must reach the caller");
+      assertEquals(attempts, 1, "the body was claimed; the request must not be replayed");
+    });
+
     it("preserves caller cancellation while response headers are pending", async () => {
       const controller = new AbortController();
       const reason = new DOMException("caller stopped waiting", "AbortError");
