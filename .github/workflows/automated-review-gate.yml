@@ -4,7 +4,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, dismissed]
   issue_comment:
     types: [created, edited]
 
@@ -21,17 +21,24 @@ concurrency:
 jobs:
   review:
     name: publish automated review status
+    # issue_comment fires for issues too, so keep only pull request comments.
+    # pull_request_review hands fork pull requests a read-only token that cannot
+    # write a commit status, so skip it there and let the trusted
+    # pull_request_target and issue_comment runs publish the decision instead.
     if: >-
-      (github.event_name != 'issue_comment' && !github.event.pull_request.draft) ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+      (github.event_name != 'pull_request_review' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       # This workflow has pull_request_target authority. Check out only the
-      # trusted base commit and never execute files from the PR head.
+      # trusted default branch and never execute files from the PR head. The
+      # base commit of an older pull request predates this gate, so reading the
+      # gate from the default branch is what keeps the status computable.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - name: Require an automated review for the current commit
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -52,10 +59,6 @@ jobs:
               });
               pullRequest = response.data;
             }
-            if (pullRequest.draft) {
-              core.notice("Draft pull requests wait for ready_for_review.");
-              return;
-            }
             const headSha = pullRequest.head.sha;
             const result = await publishAutomatedReviewStatus({
               github,
@@ -64,8 +67,13 @@ jobs:
               pullNumber: pullRequest.number,
               headSha,
               pullUrl: pullRequest.html_url,
+              isDraft: pullRequest.draft === true,
             });
-            if (result.review) {
+            if (result.state === "pending") {
+              core.notice(
+                "Draft pull request: the automated review status stays pending.",
+              );
+            } else if (result.review) {
               core.notice(
                 `Automated review submitted by ${result.review.reviewer} for ${headSha.slice(0, 12)}.`,
               );

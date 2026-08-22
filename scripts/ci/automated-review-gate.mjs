@@ -67,7 +67,23 @@ export async function publishAutomatedReviewStatus({
   pullNumber,
   headSha,
   pullUrl,
+  isDraft = false,
 }) {
+  // Review bots skip drafts, so a draft has no verdict yet. Publish pending so
+  // "not reviewed yet" never renders as a pass and never as a missing status.
+  if (isDraft) {
+    await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: headSha,
+      state: "pending",
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description: "Draft pull request waits for ready for review",
+      target_url: pullUrl,
+    });
+    return { state: "pending", review: undefined, failure: undefined };
+  }
+
   let review;
   let failure;
   try {

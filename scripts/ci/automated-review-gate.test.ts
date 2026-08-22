@@ -150,6 +150,77 @@ describe("automated review gate", () => {
     assertEquals(statuses[1]?.state, "failure");
   });
 
+  it("fails closed when the review lookup throws", async () => {
+    const statuses: Array<Record<string, unknown>> = [];
+    const github = {
+      paginate: () => Promise.reject(new Error("secondary rate limit")),
+      rest: {
+        issues: { listComments: () => Promise.resolve() },
+        pulls: { listReviews: () => Promise.resolve() },
+        repos: {
+          createCommitStatus: (status: Record<string, unknown>) => {
+            statuses.push(status);
+            return Promise.resolve();
+          },
+        },
+      },
+    };
+    const result = await publishAutomatedReviewStatus({
+      github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD_SHA,
+      pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(result.review, undefined);
+    assert(
+      result.failure instanceof Error &&
+        result.failure.message.includes("secondary rate limit"),
+      "the transport error must be reported, not swallowed",
+    );
+    assertEquals(statuses.length, 1);
+    assertEquals(statuses[0]?.state, "failure");
+    assertEquals(statuses[0]?.sha, HEAD_SHA);
+  });
+
+  it("holds a draft pull request at pending instead of success", async () => {
+    const statuses: Array<Record<string, unknown>> = [];
+    let listed = false;
+    const github = {
+      paginate: () => {
+        listed = true;
+        return Promise.resolve([review()]);
+      },
+      rest: {
+        issues: { listComments: () => Promise.resolve() },
+        pulls: { listReviews: () => Promise.resolve() },
+        repos: {
+          createCommitStatus: (status: Record<string, unknown>) => {
+            statuses.push(status);
+            return Promise.resolve();
+          },
+        },
+      },
+    };
+    const result = await publishAutomatedReviewStatus({
+      github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD_SHA,
+      pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+      isDraft: true,
+    });
+    assertEquals(result.state, "pending");
+    assertEquals(listed, false);
+    assertEquals(statuses.length, 1);
+    assertEquals(statuses[0]?.state, "pending");
+    assertEquals(statuses[0]?.context, "Automated review");
+    assertEquals(statuses[0]?.sha, HEAD_SHA);
+  });
+
   it("uses trusted base code and reruns when a real review is submitted", async () => {
     const workflow = record(
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
@@ -162,7 +233,7 @@ describe("automated review gate", () => {
     );
     assertEquals(
       record(triggers.pull_request_review, "pull_request_review trigger").types,
-      ["submitted"],
+      ["submitted", "dismissed"],
     );
     assertEquals(
       record(triggers.issue_comment, "issue_comment trigger").types,
@@ -191,13 +262,20 @@ describe("automated review gate", () => {
         job.if.includes("github.event.issue.pull_request"),
       "issue comments must run the gate only for pull requests",
     );
+    assert(
+      typeof job.if === "string" &&
+        job.if.includes(
+          "github.event.pull_request.head.repo.full_name == github.repository",
+        ),
+      "review events must be skipped on forks, where the token cannot write a status",
+    );
 
     const steps = job.steps;
     assert(Array.isArray(steps), "automated review job steps must be an array");
     const checkout = record(steps[0], "automated review checkout");
     assertEquals(
       record(checkout.with, "automated review checkout inputs").ref,
-      "${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}",
+      "${{ github.event.repository.default_branch }}",
     );
     assertEquals(
       record(
@@ -219,6 +297,12 @@ describe("automated review gate", () => {
             "publishAutomatedReviewStatus",
           ),
       "the workflow must call the tested review gate",
+    );
+    assert(
+      String(record(gate.with, "automated review gate inputs").script).includes(
+        "isDraft: pullRequest.draft === true",
+      ),
+      "the workflow must hand draft state to the tested review gate",
     );
   });
 });
