@@ -871,17 +871,21 @@ async function attemptStream(
           deadline.deadlineSignal,
         );
         err.message = `${options.providerLabel} request failed: ${err.message}`;
+        // Retry on the typed `retryable` flag rather than one error class. A
+        // rate limit and a transient overload (Anthropic 529, OpenAI/Google
+        // 503) are both re-issuable before any output exists; quota exhaustion
+        // and ordinary 4xx are not, and they carry `retryable: false`.
         if (
-          err instanceof ProviderRateLimitError &&
+          err.retryable &&
           requestBodyIsReplayable &&
           rateLimitRetryCount < MAX_PROVIDER_STREAM_RATE_LIMIT_RETRIES
         ) {
           const retryDelayMs = err.retryAfterMs ??
             DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS * 2 ** rateLimitRetryCount;
           // A wait longer than the deadline has left aborts part-way through,
-          // and the catch below would then rewrite this rate limit into a
-          // timeout the provider never caused. Retry-After routinely exceeds
-          // the 30s header deadline, so report the rate limit we actually got.
+          // and the catch below would then rewrite this failure into a timeout
+          // the provider never caused. Retry-After routinely exceeds the 30s
+          // header deadline, so report the failure we actually got.
           if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw err;
           rateLimitRetryCount++;
           await waitForProviderRateLimitRetry(retryDelayMs, deadline.deadlineSignal);

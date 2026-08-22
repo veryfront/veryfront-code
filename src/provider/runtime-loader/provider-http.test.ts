@@ -950,6 +950,33 @@ describe("provider-http", () => {
       assertEquals(await new Response(stream).text(), "chunk");
     });
 
+    it("replays a transient provider overload before output", async () => {
+      let attempts = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return attempts === 1
+            ? Promise.resolve(new Response("overloaded", { status: 503 }))
+            : Promise.resolve(new Response("chunk"));
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "openai",
+        // Must exceed the 1s backoff: the deadline guard correctly refuses to
+        // wait longer than the attempt has left, so a tiny deadline would
+        // report the overload instead of replaying it.
+        headersTimeoutMs: 3_000,
+      });
+
+      assertEquals(
+        attempts,
+        2,
+        "a transient overload is retryable and must cost an attempt, not the run",
+      );
+      assertEquals(await new Response(stream).text(), "chunk");
+    });
+
     it("bounds stream-header timeout retries", async () => {
       const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
       let attempts = 0;
