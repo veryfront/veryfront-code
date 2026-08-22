@@ -839,10 +839,20 @@ describe("provider-http", () => {
 
       assertMatch(error.message, /200ms deadline/);
       assertMatch(error.message, /model gpt-5\.5/);
+      // The replay's clamp lands near 50ms but is not a fixed number, so pin
+      // the reported deadline by capture rather than by excluding one literal.
       assertEquals(
-        /\(50ms deadline/.test(error.message),
-        false,
+        /\((\d+)ms deadline/.exec(error.message)?.[1],
+        "200",
         "a clamped replay deadline must not be reported as the configured one",
+      );
+      // The whole wait, not just the replay's slice of it. Reporting the final
+      // attempt alone would print a number smaller than the deadline it names.
+      const reportedElapsedMs = Number(/timed out after (\d+)ms/.exec(error.message)?.[1]);
+      assertEquals(
+        reportedElapsedMs >= 200,
+        true,
+        `the reported wait must span every attempt, got ${reportedElapsedMs}ms`,
       );
     });
 

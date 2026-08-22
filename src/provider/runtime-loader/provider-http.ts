@@ -16,13 +16,21 @@ const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
 const MAX_PROVIDER_STREAM_RETRIES = 2;
 /**
- * Ceiling on total wall time spent waiting for stream response headers across
- * every attempt. Deliberately below the 45s `generic_idle` deadline the hosted
+ * Ceiling on the wall time replays may spend waiting for stream response
+ * headers. Deliberately below the 45s `generic_idle` deadline the hosted
  * child-fork watchdog applies to the first stream part
  * (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`): that watchdog arms its
  * timer around the first pull of `fullStream`, which is what drives the
  * provider call, so replays outliving this budget would be cut off mid-attempt
  * and reported as a fork stall instead of the provider timeout they are.
+ *
+ * The budget bounds the total only when it is at least as large as the
+ * per-attempt deadline, which the defaults guarantee (40s against 30s). The
+ * first attempt always keeps its configured deadline, so a caller that raises
+ * `headersTimeoutMs` above the budget gets that longer first attempt and the
+ * effective ceiling becomes `max(headersTimeoutMs, totalHeadersBudgetMs)`.
+ * Shortening the first attempt instead would sacrifice a provider that was
+ * going to answer, for a replay that may never fire.
  */
 const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
 const DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS = 1_000;
@@ -821,9 +829,11 @@ export async function requestJson(options: {
  * attempt.
  *
  * Response headers and error bodies have a 30-second default per-attempt
- * deadline. After headers arrive, caller cancellation remains connected to the
- * returned body; consumer cancellation aborts the request and cancels the
- * upstream body.
+ * deadline, and replays are additionally capped so the whole header wait stays
+ * inside a 40-second default budget. The first attempt always runs on the full
+ * per-attempt deadline; only replays are shortened to fit the budget. After
+ * headers arrive, caller cancellation remains connected to the returned body;
+ * consumer cancellation aborts the request and cancels the upstream body.
  */
 export async function requestStream(options: {
   url: string;
@@ -834,7 +844,11 @@ export async function requestStream(options: {
   /** Model this request is for. Reported when a deadline elapses. */
   modelId?: string;
   headersTimeoutMs?: number;
-  /** Ceiling on total wall time spent waiting for headers across all attempts. */
+  /**
+   * Ceiling on the wall time replays may spend waiting for headers. Defaults to
+   * 40 seconds. Set it at or above `headersTimeoutMs` for it to bound the total,
+   * because the first attempt always keeps its own deadline.
+   */
   totalHeadersBudgetMs?: number;
 }): Promise<ReadableStream<Uint8Array>> {
   const headersTimeoutMs = options.headersTimeoutMs ??
@@ -845,7 +859,7 @@ export async function requestStream(options: {
   const requestStartedAt = Date.now();
   let retryCount = 0;
   // The first attempt is never shortened to reserve room for a replay that may
-  // not happen — a provider that would have answered at 29s still wins.
+  // not happen: a provider that would have answered at 29s still wins.
   let attemptTimeoutMs = headersTimeoutMs;
 
   while (true) {
@@ -895,11 +909,12 @@ export async function requestStream(options: {
         ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
           // A replay runs on whatever the budget has left, so its deadline is
-          // an internal clamp no configuration contains. Once a replay has
-          // happened, report the configured deadline and the whole wait —
-          // otherwise this reintroduces the undiagnosable error that
+          // an internal clamp no configuration contains. Always report the
+          // configured deadline (the first attempt runs on it unchanged), and
+          // once a replay has happened report the whole wait. Reporting the
+          // clamp instead reintroduces the undiagnosable error that
           // veryfront-issue-inbox#710 was filed to remove.
-          timeoutMs: retryCount === 0 ? attemptTimeoutMs : headersTimeoutMs,
+          timeoutMs: headersTimeoutMs,
           elapsedMs: retryCount === 0 ? Date.now() - startedAt : Date.now() - requestStartedAt,
         })
         : error;
