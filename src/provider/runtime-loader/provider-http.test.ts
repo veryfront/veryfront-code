@@ -844,6 +844,76 @@ describe("provider-http", () => {
       );
     });
 
+    it("does not retry a non-retryable quota failure with a replayable body", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                jsonResponse(429, {
+                  error: { code: "insufficient_quota", message: "no credit" },
+                }),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        ProviderQuotaError,
+        "status 429",
+      ) as ProviderQuotaError;
+
+      assertEquals(error.retryable, false);
+      assertEquals(
+        attempts,
+        1,
+        "a replayable body must not license retrying a failure the classifier called terminal",
+      );
+    });
+
+    it("does not retry a typed failure raised after the body is claimed", async () => {
+      let attempts = 0;
+      const claimFailure = new ProviderOverloadedError({
+        provider: "moonshotai",
+        status: 503,
+        message: "veryfront-cloud request failed: body already claimed",
+        retryable: true,
+      });
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve({
+                ok: true,
+                status: 200,
+                body: {
+                  getReader() {
+                    throw claimFailure;
+                  },
+                },
+              } as unknown as Response);
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        ProviderOverloadedError,
+        "body already claimed",
+      ) as ProviderOverloadedError;
+
+      assertStrictEquals(error, claimFailure);
+      assertEquals(
+        attempts,
+        1,
+        "the response body is already claimed, so no attempt may be replayed",
+      );
+    });
+
     it("does not retry once provider output has reached the caller", async () => {
       let attempts = 0;
       let pulls = 0;

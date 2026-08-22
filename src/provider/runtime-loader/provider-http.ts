@@ -869,6 +869,10 @@ export async function requestStream(options: {
         deadline.dispose,
       );
     } catch (error) {
+      // Past this point `streamWithCleanup` has claimed `response.body` with
+      // `getReader()`. Retrying would replay a request whose body another
+      // reader already holds, so surface the failure whatever its shape.
+      if (streamOwnsDeadline) throw error;
       const failure = deadline.timedOut
         ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
