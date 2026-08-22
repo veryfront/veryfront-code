@@ -10,6 +10,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   guardedEgressFetch,
   isInternalEgressOverrideEnabled,
+  type ResolveWorkerHost,
   WorkerEgressBlockedError,
   type WorkerEgressFetch,
   type WorkerEgressPinnedFetch,
@@ -35,6 +36,15 @@ export interface GuardedOutboundFetchOptions {
 export interface OutboundFetchTransport {
   fetch: WorkerEgressFetch;
   pinnedFetch?: WorkerEgressPinnedFetch;
+  /**
+   * Address resolver the egress guard pins against, defaulting to real DNS.
+   *
+   * The guard resolves the destination host before it reaches `fetch` or
+   * `pinnedFetch`, so a transport that never opens a socket still triggers a
+   * live lookup unless it supplies this too. Production leaves it unset and
+   * keeps `defaultResolveHost`.
+   */
+  resolveHost?: ResolveWorkerHost;
 }
 
 /** Explicit host transport boundary used by runtime composition and tests. */
@@ -88,6 +98,7 @@ async function fetchWithHostTransport(
     options: {
       allowInternalEgress: allowInternalEgress ||
         isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
+      resolveHost: transport.resolveHost,
     },
   });
 }
@@ -137,9 +148,13 @@ function snapshotOutboundFetchTransport(
   if (transport.pinnedFetch !== undefined && typeof transport.pinnedFetch !== "function") {
     throw new TypeError("Outbound pinned transport must be a function");
   }
+  if (transport.resolveHost !== undefined && typeof transport.resolveHost !== "function") {
+    throw new TypeError("Outbound transport host resolver must be a function");
+  }
   return Object.freeze({
     fetch: transport.fetch,
     pinnedFetch: transport.pinnedFetch,
+    resolveHost: transport.resolveHost,
   });
 }
 

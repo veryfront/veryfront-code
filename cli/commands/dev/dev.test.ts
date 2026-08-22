@@ -409,3 +409,26 @@ describe("cli/commands/dev", () => {
     });
   });
 });
+
+describe("cli/commands/dev: --port 0", () => {
+  it("hands the server a concrete port and reports that same port", async () => {
+    const startedOn: number[] = [];
+    const logged: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logged.push(args.map(String).join(" "));
+
+    try {
+      const started = await startDevServerOnFreePort(0, (port) => {
+        startedOn.push(port);
+        return Promise.resolve(null);
+      });
+
+      assert(started.port > 0, `expected a real port, got ${started.port}`);
+      assertEquals(startedOn, [started.port]);
+      // The user asked for "any port", so nothing was taken from them.
+      assertEquals(logged.some((line) => line.includes("is in use")), false);
+    } finally {
+      console.log = originalLog;
+    }
+  });
+});
