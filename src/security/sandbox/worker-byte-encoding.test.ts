@@ -3,6 +3,9 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { encodeSandboxBytesAsBase64, encodeSandboxBytesAsHex } from "./worker-byte-encoding.ts";
 
+/** Mirrors the encoder chunk size so the fixture crosses a chunk boundary. */
+const BASE64_CHUNK_BYTES = 24 * 1024;
+
 describe("sandbox worker byte encoding", () => {
   it("encodes hex without Uint8Array proposal methods", () => {
     assertEquals(encodeSandboxBytesAsHex(new Uint8Array()), "");
@@ -58,17 +61,61 @@ describe("sandbox worker byte encoding", () => {
       if (originalToBase64) {
         Object.defineProperty(bytesPrototype, "toBase64", originalToBase64);
       } else {
-        delete bytesPrototype.toBase64;
+        delete (bytesPrototype as { toBase64?: unknown }).toBase64;
       }
       if (originalToHex) {
         Object.defineProperty(bytesPrototype, "toHex", originalToHex);
       } else {
-        delete bytesPrototype.toHex;
+        delete (bytesPrototype as { toHex?: unknown }).toHex;
       }
       if (originalBtoa) {
         Object.defineProperty(globalThis, "btoa", originalBtoa);
       } else {
         delete (globalThis as { btoa?: unknown }).btoa;
+      }
+    }
+  });
+
+  it("encodes tenant bytes when project code hooks species and length", () => {
+    const source = new Uint8Array(BASE64_CHUNK_BYTES + 5);
+    for (let index = 0; index < source.length; index++) {
+      source[index] = index % 256;
+    }
+    const expectedHex = encodeSandboxBytesAsHex(source);
+    const expectedBase64 = encodeSandboxBytesAsBase64(source);
+    const arrayConstructor = Uint8Array as unknown as Record<symbol, unknown>;
+    const originalSpecies = Object.getOwnPropertyDescriptor(
+      arrayConstructor,
+      Symbol.species,
+    );
+    const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+    const originalLength = Object.getOwnPropertyDescriptor(
+      typedArrayPrototype,
+      "length",
+    )!;
+
+    try {
+      Object.defineProperty(arrayConstructor, Symbol.species, {
+        configurable: true,
+        get() {
+          throw new Error("project code controlled typed array construction");
+        },
+      });
+      Object.defineProperty(typedArrayPrototype, "length", {
+        configurable: true,
+        get() {
+          throw new Error("project code controlled typed array length");
+        },
+      });
+
+      assertEquals(encodeSandboxBytesAsHex(source), expectedHex);
+      assertEquals(encodeSandboxBytesAsBase64(source), expectedBase64);
+    } finally {
+      Object.defineProperty(typedArrayPrototype, "length", originalLength);
+      if (originalSpecies) {
+        Object.defineProperty(arrayConstructor, Symbol.species, originalSpecies);
+      } else {
+        delete arrayConstructor[Symbol.species];
       }
     }
   });

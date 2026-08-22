@@ -1,15 +1,17 @@
 // Worker byte encoders run at a tenant boundary after project modules may have
 // changed globals. Capture the stable intrinsics once, before project code can
 // execute, and avoid proposal methods that are unavailable on supported Node.
+// Nothing here may reach a project-controlled hook: no species-aware typed
+// array method, no dynamic `length` read, no dynamic method lookup.
 const HEX_ALPHABET = "0123456789abcdef";
 const BASE64_CHUNK_BYTES = 24 * 1024;
+const BASE64_BATCH_BYTES = 8;
 const BinaryStringToBase64 = globalThis.btoa;
 const IntrinsicUint8Array = Uint8Array;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
 const StringFromCharCode = String.fromCharCode;
-const Uint8ArrayPrototypeSubarray = IntrinsicUint8Array.prototype.subarray;
 const TypedArrayPrototype = ObjectGetPrototypeOf(IntrinsicUint8Array.prototype);
 const TypedArrayLengthGetter = ObjectGetOwnPropertyDescriptor(
   TypedArrayPrototype,
@@ -36,13 +38,27 @@ export function encodeSandboxBytesAsBase64(bytes: Uint8Array): string {
   for (let offset = 0; offset < length; offset += BASE64_CHUNK_BYTES) {
     const proposedEnd = offset + BASE64_CHUNK_BYTES;
     const end = proposedEnd < length ? proposedEnd : length;
-    const chunk = ReflectApply(
-      Uint8ArrayPrototypeSubarray,
-      bytes,
-      [offset, end],
-    ) as Uint8Array;
-    const binary = ReflectApply(StringFromCharCode, undefined, chunk) as string;
-    encoded += ReflectApply(BinaryStringToBase64, undefined, [binary]) as string;
+    // Integer-indexed reads and fixed-arity calls only. A chunk view would go
+    // through species construction, which a project module can hook.
+    let binary = "";
+    let index = offset;
+    const batchEnd = end - BASE64_BATCH_BYTES;
+    for (; index <= batchEnd; index += BASE64_BATCH_BYTES) {
+      binary += StringFromCharCode(
+        bytes[index]!,
+        bytes[index + 1]!,
+        bytes[index + 2]!,
+        bytes[index + 3]!,
+        bytes[index + 4]!,
+        bytes[index + 5]!,
+        bytes[index + 6]!,
+        bytes[index + 7]!,
+      );
+    }
+    for (; index < end; index++) {
+      binary += StringFromCharCode(bytes[index]!);
+    }
+    encoded += BinaryStringToBase64(binary);
   }
   return encoded;
 }
