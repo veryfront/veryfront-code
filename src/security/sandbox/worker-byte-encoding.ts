@@ -4,7 +4,10 @@
 // Nothing here may reach a project-controlled hook: no species-aware typed
 // array method, no dynamic `length` read, no dynamic method lookup.
 const HEX_ALPHABET = "0123456789abcdef";
-const BASE64_CHUNK_BYTES = 24 * 1024;
+// A chunk has to be a whole number of 3-byte base64 groups, or every chunk
+// after the first starts with stray padding. Written as a multiple of 3 so a
+// later size change cannot quietly break that.
+const BASE64_CHUNK_BYTES = 3 * 8 * 1024;
 const BASE64_BATCH_BYTES = 8;
 const BinaryStringToBase64 = globalThis.btoa;
 const IntrinsicUint8Array = Uint8Array;

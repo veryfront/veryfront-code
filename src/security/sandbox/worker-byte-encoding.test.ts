@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { encodeSandboxBytesAsBase64, encodeSandboxBytesAsHex } from "./worker-byte-encoding.ts";
 
 /** Mirrors the encoder chunk size so the fixture crosses a chunk boundary. */
-const BASE64_CHUNK_BYTES = 24 * 1024;
+const BASE64_CHUNK_BYTES = 3 * 8 * 1024;
 
 describe("sandbox worker byte encoding", () => {
   it("encodes hex without Uint8Array proposal methods", () => {
