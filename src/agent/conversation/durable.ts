@@ -186,6 +186,20 @@ export function isAppendableConversationRunProjection(run: ConversationRunProjec
   );
 }
 
+/**
+ * The run reached a terminal status server-side. Both this and a `waiting_for_tool`
+ * projection are non-appendable, but only this one means the run can never be
+ * completed either, so the two must not share a stop reason
+ * (veryfront-issue-inbox#743).
+ */
+export function isTerminalConversationRunProjection(run: ConversationRunProjection): boolean {
+  return (
+    run.status === "completed" ||
+    run.status === "failed" ||
+    run.status === "cancelled"
+  );
+}
+
 /** Resync conversation run append cursor helper. */
 export async function resyncConversationRunAppendCursor(input: {
   authToken: string;
@@ -248,7 +262,11 @@ export async function recoverConversationRunCursorMismatch(input: {
   outcome: ConversationRunAppendRecoveryOutcome;
   latestEventId: number;
   latestExternalEventSequence: number;
-  disableReason?: "cursor_resyncs_exhausted" | "cursor_mismatch_ambiguous" | "non_appendable";
+  disableReason?:
+    | "cursor_resyncs_exhausted"
+    | "cursor_mismatch_ambiguous"
+    | "non_appendable"
+    | "run_terminal";
   run?: ConversationRunProjection;
 }> {
   if (!isCursorMismatchConversationRunAppendError(input.error)) {
@@ -305,7 +323,13 @@ export async function recoverConversationRunCursorMismatch(input: {
       outcome: "stopped",
       latestEventId: resynced.run.latestEventId,
       latestExternalEventSequence: resynced.run.latestExternalEventSequence,
-      disableReason: "non_appendable",
+      // A cursor mismatch can resolve to a run that is already finished. That is
+      // the same clean stop as the terminal-run append rejection and must not be
+      // lumped in with `waiting_for_tool`, which is non-appendable but still alive
+      // and still has to be completed (veryfront-issue-inbox#743).
+      disableReason: isTerminalConversationRunProjection(resynced.run)
+        ? "run_terminal"
+        : "non_appendable",
       run: resynced.run,
     };
   }

@@ -1399,6 +1399,50 @@ describe("agent/durable", () => {
     });
   });
 
+  it("stops with run_terminal when a cursor resync resolves to a terminal run", async () => {
+    for (const status of ["completed", "failed", "cancelled"] as const) {
+      const terminalController = createConversationRunEventQueueController({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_cursor_resync_terminal",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        maxEventsPerBatch: 2,
+      });
+
+      terminalController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/events")) {
+          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+        }
+
+        return jsonResponse(
+          camelCaseDurableRunProjection({
+            runId: "run_cursor_resync_terminal",
+            latestExternalEventSequence: 4,
+            status,
+          }),
+          200,
+        );
+      }) as typeof fetch;
+
+      const flushed = await terminalController.flush();
+
+      if (flushed.outcome !== "stopped") {
+        throw new Error(
+          `expected a stopped flush for a ${status} projection, got ${flushed.outcome}`,
+        );
+      }
+      assertEquals(
+        flushed.disableReason,
+        "run_terminal",
+        `expected run_terminal for a ${status} projection`,
+      );
+      assertEquals(terminalController.getSnapshot().disableReason, "run_terminal");
+    }
+  });
+
   it("merges events enqueued during an in-flight retry flush", async () => {
     let resolveAppend: (response: Response) => void = (_response) => {
       throw new Error("Append request was not started");
