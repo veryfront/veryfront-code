@@ -139,6 +139,56 @@ describe("module-loader/module-persistence", () => {
     }
   });
 
+  it("publishes concurrent cycle artifacts only from complete staged files", async () => {
+    const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const cycleArtifactPath = join(tmpDir, "cycle/artifact.js");
+    const writes: string[] = [];
+    const renames: Array<[string, string]> = [];
+    const fs = Object.create(localAdapter.fs) as typeof localAdapter.fs;
+    fs.writeFile = async (path, content) => {
+      writes.push(path);
+      await localAdapter.fs.writeFile(path, content);
+    };
+    fs.rename = async (from, to) => {
+      renames.push([from, to]);
+      await localAdapter.fs.rename!(from, to);
+    };
+    const adapter = Object.create(localAdapter) as typeof localAdapter;
+    Object.defineProperty(adapter, "fs", { value: fs });
+
+    try {
+      const paths = await Promise.all(
+        Array.from({ length: 8 }, (_, index) =>
+          persistTransformedModule({
+            filePath: join(projectDir, "app/page.ts"),
+            projectDir,
+            tmpDir,
+            transformedCode: "export const page = 1;",
+            localAdapter: adapter,
+            moduleCache: new Map(),
+            cacheKey: `cycle-${index}`,
+            cycleArtifactPath,
+          })),
+      );
+
+      assertEquals(paths, Array(8).fill(cycleArtifactPath));
+      assert(
+        writes.every((path) =>
+          path !== cycleArtifactPath && path.startsWith(`${cycleArtifactPath}.pending-`)
+        ),
+        "cycle writers must stage complete bytes away from the published path",
+      );
+      assertEquals(renames.length, 1, "identical later writers must reuse the durable artifact");
+      assertEquals(renames[0]?.[1], cycleArtifactPath);
+      assertEquals(await readTextFile(cycleArtifactPath), "export const page = 1;");
+    } finally {
+      await remove(projectDir, { recursive: true }).catch(() => undefined);
+      await remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
   it("registers the artifact under the compile mode it was transformed with", async () => {
     const projectDir = await makeTempDir({ prefix: "vf-module-persist-project-" });
     const tmpDir = await makeTempDir({ prefix: "vf-module-persist-out-" });
