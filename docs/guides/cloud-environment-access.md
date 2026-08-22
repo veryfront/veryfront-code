@@ -44,13 +44,17 @@ session. `veryfront deploy` performs this exchange to probe the environment it
 deployed. A CI smoke test can do the same:
 
 ```bash
-TOKEN=$(curl -sS -X POST https://api.veryfront.com/auth/environment-token \
-  -H "Authorization: Bearer $VERYFRONT_API_TOKEN" | jq -r .access_token)
-curl -sSf -o /dev/null --cookie "authToken=$TOKEN" <environment-url>/<route>
+TOKEN=$(curl -fsS -X POST https://api.veryfront.com/auth/environment-token \
+  -H "Authorization: Bearer $VERYFRONT_API_TOKEN" |
+  jq -er '.access_token | strings | select(length > 0)')
+curl -sS -o /dev/null -w '%{http_code}\n' --cookie "authToken=$TOKEN" \
+  <environment-url>/<route>
 ```
 
-A signed-in user who is not a member of the project gets a `403`, and so does
-an environment access token exchanged for that user's API key.
+Require the status the route normally returns. A `302` means the gate refused
+the token, not that the app answered, so do not follow redirects. A signed-in
+user who is not a member of the project gets a `403`, and so does an
+environment access token obtained by exchanging that user's API key.
 
 ## Make an environment public
 
