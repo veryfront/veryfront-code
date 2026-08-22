@@ -15,6 +15,8 @@
 #      package's build output to reach the starter templates
 #   7. the packed ai-agent starter starts under Node and renders over HTTP
 #      without unresolved generated runtime helpers
+#   8. an API route in that starter loads and responds on a Node that lacks the
+#      Uint8Array base64/hex proposal (issue #3968)
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm + curl on PATH.
 set -euo pipefail
@@ -253,6 +255,97 @@ if grep -Eq \
   "$DEV_LOG"; then
   cat "$DEV_LOG" >&2
   fail "packed ai-agent starter logged an SSR module-resolution failure"
+fi
+
+stop_dev_server
+
+echo "== 8. API route loads on a Node without the Uint8Array base64/hex proposal"
+# Regression guard for issue #3968: the API module loader hashed route source
+# with `new Uint8Array(digest).toHex()`. That method is native and unflagged in
+# Deno, so the Deno-native suite never saw it, and it is absent from every Node
+# release before 25 -- so `veryfront dev` returned 500 for *every* API route on
+# the supported Node floor while this smoke test stayed green, because step 7
+# only ever requests `/`.
+#
+# The methods are stripped explicitly rather than relying on the runner's Node
+# version. Node 25 ships them unflagged, so a version-dependent check would go
+# quietly vacuous the moment CI moves off Node 24.
+mkdir -p "$WORKDIR/app/api/health"
+cat > "$WORKDIR/app/api/health/route.ts" <<'ROUTE'
+export async function GET() {
+  return Response.json({ ok: true });
+}
+ROUTE
+
+cat > "$WORKDIR/strip-uint8array-proposal.mjs" <<'PRELOAD'
+// Simulate the oldest supported Node: remove the Uint8Array base64/hex
+// proposal that Deno provides natively.
+for (const method of ["toHex", "toBase64", "setFromHex", "setFromBase64"]) {
+  delete Uint8Array.prototype[method];
+}
+for (const method of ["fromHex", "fromBase64"]) {
+  delete Uint8Array[method];
+}
+PRELOAD
+
+# Negative control: prove the preload actually removes the methods. Without
+# this, a preload that silently stopped working would leave the whole step
+# passing for the wrong reason on a Node that still has them.
+node --import "$WORKDIR/strip-uint8array-proposal.mjs" -e '
+if (typeof Uint8Array.prototype.toHex === "function") process.exit(1);
+if (typeof Uint8Array.prototype.toBase64 === "function") process.exit(1);
+' || fail "strip preload did not remove the Uint8Array proposal methods"
+
+API_PORT="${VF_NPM_API_SMOKE_PORT:-43121}"
+API_LOG="$WORKDIR/veryfront-dev-api.log"
+API_RESPONSE="$WORKDIR/veryfront-api-response.json"
+
+CI=1 \
+NO_COLOR=1 \
+NODE_ENV=development \
+LOG_FORMAT=text \
+VERYFRONT_NO_UPDATE_CHECK=1 \
+VF_DISABLE_LRU_INTERVAL=1 \
+SSR_TRANSFORM_PER_PROJECT_LIMIT=0 \
+REVALIDATION_PER_PROJECT_LIMIT=0 \
+node --import "$WORKDIR/strip-uint8array-proposal.mjs" \
+  node_modules/veryfront/bin/veryfront.js dev --port "$API_PORT" --no-hmr \
+  </dev/null >"$API_LOG" 2>&1 &
+DEV_PID=$!
+
+API_READY=""
+for _attempt in $(seq 1 120); do
+  kill -0 "$DEV_PID" 2>/dev/null || break
+  if grep -q "Ready in" "$API_LOG"; then
+    API_READY="yes"
+    break
+  fi
+  sleep 0.25
+done
+
+if [ "$API_READY" != "yes" ]; then
+  cat "$API_LOG" >&2
+  fail "dev server did not become ready without the Uint8Array proposal"
+fi
+
+API_STATUS="$(curl --silent --show-error --max-time 30 \
+  --output "$API_RESPONSE" --write-out '%{http_code}' \
+  "http://127.0.0.1:$API_PORT/api/health" || true)"
+
+if [ "$API_STATUS" != "200" ]; then
+  echo "--- response body ---" >&2
+  head -c 2000 "$API_RESPONSE" >&2
+  echo >&2
+  cat "$API_LOG" >&2
+  fail "API route returned ${API_STATUS:-none}, expected 200 (issue #3968)"
+fi
+
+grep -q '"ok":true' "$API_RESPONSE" ||
+  fail "API route did not return its JSON body: $(head -c 500 "$API_RESPONSE")"
+
+if grep -q "is not a function" "$API_LOG"; then
+  cat "$API_LOG" >&2
+  fail "dev server logged a missing-method failure while serving the API route"
 fi
 
 stop_dev_server

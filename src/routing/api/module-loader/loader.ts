@@ -8,6 +8,7 @@ import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
+import { computeHash, computeHashBytes } from "#veryfront/utils/hash-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
@@ -121,10 +122,9 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
             `Prepared API route exceeds the ${MAX_WORKER_MODULE_SOURCE_BYTES}-byte worker limit`,
           );
         }
-        const digest = await crypto.subtle.digest("SHA-256", bytes);
         return Object.freeze({
           source,
-          sha256: new Uint8Array(digest).toHex(),
+          sha256: await computeHashBytes(bytes),
         });
       } catch (error: unknown) {
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -236,9 +236,7 @@ async function moduleRevision(fs: FileSystem, modulePath: string): Promise<strin
 }
 
 async function hashModuleSource(source: string): Promise<string> {
-  const bytes = new TextEncoder().encode(source);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return new Uint8Array(digest).toHex();
+  return await computeHash(source);
 }
 
 function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRoute> {
