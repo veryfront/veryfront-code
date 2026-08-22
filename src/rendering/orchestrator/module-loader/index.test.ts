@@ -730,39 +730,33 @@ describe("module-loader/transformModuleWithDeps", () => {
       },
       async ({ projectDir, tmpDir, config }) => {
         const pagePath = join(projectDir, "app/page.ts");
-        const [firstPath, secondPath] = await Promise.all([
-          transformModuleWithDeps(
-            pagePath,
-            tmpDir,
-            config.adapter,
-            { ...config, moduleCache: new Map() },
-          ),
-          transformModuleWithDeps(
-            pagePath,
-            tmpDir,
-            config.adapter,
-            { ...config, moduleCache: new Map() },
-          ),
-        ]);
-        assertStrictEquals(firstPath, secondPath);
+        const moduleCache = new Map<string, string>();
+        const paths = await Promise.all(
+          Array.from({ length: 8 }, () =>
+            transformModuleWithDeps(
+              pagePath,
+              tmpDir,
+              config.adapter,
+              { ...config, moduleCache },
+            )),
+        );
+        const firstPath = paths[0]!;
+        for (const path of paths) assertStrictEquals(path, firstPath);
 
-        const [firstNamespace, secondNamespace] = await Promise.all([
-          import(toFileUrl(firstPath).href),
-          import(toFileUrl(secondPath).href),
-        ]);
-        const [firstCycleNamespace, secondCycleNamespace] = await Promise.all([
-          firstNamespace.later(),
-          secondNamespace.later(),
-        ]);
+        const namespaces = await Promise.all(
+          paths.map((path) => import(toFileUrl(path).href)),
+        );
+        const cycleNamespaces = await Promise.all(
+          namespaces.map((namespace) => namespace.later()),
+        );
 
-        assertStrictEquals(firstNamespace, secondNamespace);
-        assertStrictEquals(firstCycleNamespace, firstNamespace);
-        assertStrictEquals(secondCycleNamespace, secondNamespace);
-        for (const namespace of [firstNamespace, secondNamespace]) {
+        for (let index = 0; index < namespaces.length; index++) {
+          const namespace = namespaces[index]!;
+          assertStrictEquals(namespace, namespaces[0]);
+          assertStrictEquals(cycleNamespaces[index], namespace);
           const wrapperUrl = namespace.wrapperUrl as string;
           const wrapperPath = fromFileUrl(wrapperUrl);
           assertStringIncludes(wrapperUrl, "/veryfront-cycle-manifests/");
-          assertEquals(namespace.wrapperUrl, wrapperUrl);
           assertEquals(namespace.bracketUrl, wrapperUrl);
           assertEquals(namespace.aliasUrl, wrapperUrl);
           assertEquals(namespace.filename, wrapperPath);
