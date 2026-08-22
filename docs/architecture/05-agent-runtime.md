@@ -232,7 +232,8 @@ compatibility Adapter over `runStreamLifecycle()`
 (`src/agent/streaming/lifecycle/runner.ts`); the rollout mode
 (`VF_STREAM_LIFECYCLE_MODE`: `legacy | shadow | active`, default `legacy`)
 selects the legacy reader, a read-only shadow comparison, or the lifecycle
-runner.
+runner. Setting the mode back to `legacy` restores the compatibility reader as
+the rollout rollback path without a provider redeploy.
 
 Provider idle time accrues only while one provider read is pending: the
 first-progress, semantic-idle, tool-input-idle, and commit-grace budgets pause

@@ -129,6 +129,30 @@ function parseEmbeddedErrorJson(value: string): unknown | null {
   return null;
 }
 
+function formatCreditProblemMessage(
+  body: Record<string, unknown>,
+  error: string | null,
+  suggestion: string | null,
+): string {
+  const balance = body.balance;
+  const required = body.required;
+  const fallback = suggestion ?? error ?? "Insufficient AI credits";
+  if (
+    typeof balance !== "number" || !Number.isFinite(balance) || balance < 0 ||
+    typeof required !== "number" || !Number.isFinite(required) || required < 0
+  ) {
+    return fallback;
+  }
+
+  const summary = error ?? "Insufficient AI credits";
+  const availability = error?.toLowerCase().includes("agent run credit limit")
+    ? "remaining"
+    : "available";
+  return `${summary}: ${required} credits required, ${balance} ${availability}.${
+    suggestion ? ` ${suggestion}` : ""
+  }`;
+}
+
 /** Parses known problem body. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
@@ -147,7 +171,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   if (slug === "insufficient-credits" || error === "AI credit limit exceeded") {
     return {
       code: "INSUFFICIENT_CREDITS",
-      message: suggestion ?? error ?? "Insufficient AI credits",
+      message: formatCreditProblemMessage(body, error, suggestion),
       status: 402,
     };
   }

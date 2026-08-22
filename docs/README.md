@@ -28,8 +28,12 @@ boundaries, or docs structure.
   unresolved contract questions remain.
 
 Shared plans and unresolved work belong in the GitHub issue tracker. Local
-planning notes may use `docs/plans/`; that directory is Git-ignored and excluded
-from documentation validation.
+planning notes may use `docs/plans/`; temporary rollout notes may use
+`docs/internal/`; and generated agent plans may use `docs/superpowers/`. These
+directories are Git-ignored and excluded from documentation validation. Move
+durable current-state decisions into `docs/architecture/` instead. Commit
+evidence under `docs/evidence/` only when a durable document cites it and the
+artifact is reproducible.
 
 ## API reference generation
 
@@ -57,7 +61,7 @@ deno task docs:validate
 ```
 
 This validates top-level API reference coverage, guide structure, guide imports,
-guide ordering, and local Markdown links.
+guide ordering, tracked-docs layout, and local Markdown links.
 
 For release artifact checks, build npm output first and then run:
 
