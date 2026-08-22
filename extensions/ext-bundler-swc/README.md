@@ -51,6 +51,20 @@ If `experimentalDecorators` is false or absent, the extension delegates source
 unchanged to esbuild. If only `experimentalDecorators` is true, SWC emits legacy
 decorators without runtime type metadata.
 
+## What changes when you enable it
+
+`experimentalDecorators: true` switches the TypeScript transform for the whole
+project boundary, not just for decorated files. Every `.ts` and `.tsx` module in
+the build graph is compiled by SWC instead of esbuild, so the emitted JavaScript
+differs in places that have nothing to do with decorators. The clearest example
+is enum declaration merging: esbuild emits `(function (E) { ... })(E || {})`, so
+a later block merges into the earlier one, while SWC emits
+`(function (E) { ... })({})` and each block starts fresh.
+
+Treat turning the flag on as a transform swap, not as an addition. Re-run your
+test suite after enabling it. Leaving `experimentalDecorators` false or absent
+keeps every module on esbuild with byte-identical output.
+
 ## Runtime and packaging
 
 The extension uses `@swc/wasm`, so one package works across Deno, Node.js, Bun,

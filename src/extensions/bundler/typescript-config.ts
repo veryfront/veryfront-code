@@ -1,9 +1,27 @@
 import { dirname, extname, isAbsolute, resolve } from "node:path";
 import { createRequire } from "node:module";
-import { parseExtensionManifest } from "../manifest-reader.ts";
+import { parseExtensionManifest } from "#veryfront/extensions/manifest-reader.ts";
+import { defineError } from "#veryfront/errors/types.ts";
 import type { TypeScriptDecoratorOptions } from "./bundler.ts";
 
 const MAX_TSCONFIG_EXTENDS_DEPTH = 16;
+
+const TSCONFIG_DEPTH_ERROR = defineError({
+  slug: "tsconfig-inheritance-too-deep",
+  category: "CONFIG",
+  status: 422,
+  title: "TypeScript configuration inheritance is too deep",
+  suggestion:
+    `Keep tsconfig.json "extends" chains at or below ${MAX_TSCONFIG_EXTENDS_DEPTH} levels`,
+});
+
+const TSCONFIG_CYCLE_ERROR = defineError({
+  slug: "tsconfig-inheritance-cycle",
+  category: "CONFIG",
+  status: 422,
+  title: "TypeScript configuration inheritance contains a cycle",
+  suggestion: 'Remove the tsconfig.json "extends" entry that points back at an ancestor',
+});
 
 export interface ReadTypeScriptDecoratorOptionsInput {
   readonly configPath: string;
@@ -105,12 +123,15 @@ export async function readTypeScriptDecoratorOptions(
     const cached = cache.get(path);
     if (cached) return cached;
     if (depth > MAX_TSCONFIG_EXTENDS_DEPTH) {
-      throw new Error(
-        `TypeScript configuration inheritance exceeds ${MAX_TSCONFIG_EXTENDS_DEPTH} levels`,
-      );
+      throw TSCONFIG_DEPTH_ERROR.create({
+        detail:
+          `TypeScript configuration inheritance exceeds ${MAX_TSCONFIG_EXTENDS_DEPTH} levels at ${path}`,
+      });
     }
     if (active.has(path)) {
-      throw new Error("TypeScript configuration inheritance contains a cycle");
+      throw TSCONFIG_CYCLE_ERROR.create({
+        detail: `TypeScript configuration inheritance contains a cycle at ${path}`,
+      });
     }
 
     let source: string;

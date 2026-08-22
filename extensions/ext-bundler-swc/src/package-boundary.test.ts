@@ -1,10 +1,12 @@
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { readTextFile, stat } from "#veryfront/compat/fs.ts";
+import { fileURLToPath } from "node:url";
 
 describe("ext-bundler-swc package boundary", () => {
   it("keeps SWC and reflection dependencies in the explicit extension", async () => {
     const manifest = JSON.parse(
-      await Deno.readTextFile(new URL("../deno.json", import.meta.url)),
+      await readTextFile(fileURLToPath(new URL("../deno.json", import.meta.url))),
     );
 
     assertEquals(manifest.veryfront.activation, "explicit");
@@ -20,7 +22,7 @@ describe("ext-bundler-swc package boundary", () => {
   it("ships the WASM asset used by the portable transform", async () => {
     const swcModule = await import.meta.resolve("@swc/wasm");
     const packageDirectory = new URL(".", swcModule);
-    const asset = await Deno.stat(new URL("wasm_bg.wasm", packageDirectory));
+    const asset = await stat(fileURLToPath(new URL("wasm_bg.wasm", packageDirectory)));
 
     assertEquals(asset.isFile, true);
     assertEquals((asset.size ?? 0) > 1_000_000, true);

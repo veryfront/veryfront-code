@@ -1,7 +1,12 @@
-import "reflect-metadata";
 import type { ValidationError } from "npm:class-validator@0.15.1";
-import { assertEquals, assertStrictEquals, assertStringIncludes } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import {
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
+import { cwd } from "#veryfront/compat/process.ts";
 import type {
   BundleOptions,
   Bundler,
@@ -45,6 +50,15 @@ class RecordingBundler implements Bundler {
     return Promise.resolve({ code: options.code, warnings: [] });
   }
 }
+
+/**
+ * A marker from the bundled reflect-metadata implementation.
+ *
+ * Any test realm that has already loaded reflection satisfies a functional
+ * `Reflect.getMetadata` assertion on its own, so the bundle text is the only
+ * evidence that this build carries its own reflection runtime.
+ */
+const REFLECTION_RUNTIME_MARKER = 'exporter("getMetadata"';
 
 function dataModule(code: string): Promise<Record<string, unknown>> {
   return import(`data:text/javascript;base64,${btoa(unescape(encodeURIComponent(code)))}`);
@@ -130,10 +144,10 @@ describe("SwcBundler decorator metadata", () => {
   });
 
   it("honors decorator flags inherited through tsconfig", async () => {
-    const projectDir = await Deno.makeTempDir();
+    const projectDir = await makeTempDir();
     const bundler = new SwcBundler();
     try {
-      await Deno.writeTextFile(
+      await writeTextFile(
         `${projectDir}/base.json`,
         JSON.stringify({
           compilerOptions: {
@@ -142,7 +156,7 @@ describe("SwcBundler decorator metadata", () => {
           },
         }),
       );
-      await Deno.writeTextFile(
+      await writeTextFile(
         `${projectDir}/tsconfig.json`,
         `{
           // The extension must follow the project compiler configuration.
@@ -161,7 +175,7 @@ describe("SwcBundler decorator metadata", () => {
       assertStringIncludes(result.code, "design:paramtypes");
     } finally {
       await bundler.stop();
-      await Deno.remove(projectDir, { recursive: true });
+      await remove(projectDir, { recursive: true });
     }
   });
 
@@ -192,7 +206,7 @@ describe("SwcBundler decorator metadata", () => {
         plugins: [virtualDependency],
         stdin: {
           sourcefile: "virtual-entry.ts",
-          resolveDir: Deno.cwd(),
+          resolveDir: cwd(),
           loader: "ts",
           contents: `
             import { Dependency } from "./dependency.ts";
@@ -220,11 +234,84 @@ describe("SwcBundler decorator metadata", () => {
     }
   });
 
+  it("initializes reflection for entry-point bundles", async () => {
+    const projectDir = await makeTempDir();
+    const bundler = new SwcBundler();
+    try {
+      await writeTextFile(`${projectDir}/entry.ts`, METADATA_SOURCE);
+
+      const result = await bundler.bundle({
+        entryPoints: [`${projectDir}/entry.ts`],
+        bundle: true,
+        write: false,
+        format: "esm",
+        typescriptDecoratorOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: true,
+        },
+      });
+
+      assertEquals(result.errors, []);
+      assertStringIncludes(result.outputFiles[0]!.text, "design:paramtypes");
+      assertStringIncludes(result.outputFiles[0]!.text, REFLECTION_RUNTIME_MARKER);
+    } finally {
+      await bundler.stop();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps a plugin's explicit non-TypeScript loader", async () => {
+    const bundler = new SwcBundler();
+    const rawText: BundlerPlugin = {
+      name: "raw-text",
+      setup(build) {
+        build.onResolve({ filter: /^\.\/notes\.ts$/ }, () => ({
+          path: "notes.ts",
+          namespace: "raw-text",
+        }));
+        build.onLoad(
+          { filter: /.*/, namespace: "raw-text" },
+          () => ({ contents: "class NotTypeScript {", loader: "text" }),
+        );
+      },
+    };
+
+    try {
+      const result = await bundler.bundle({
+        bundle: true,
+        write: false,
+        format: "esm",
+        plugins: [rawText],
+        stdin: {
+          sourcefile: "raw-entry.ts",
+          resolveDir: cwd(),
+          loader: "ts",
+          contents: `
+            import notes from "./notes.ts";
+            export function raw(): string { return notes; }
+          `,
+        },
+        typescriptDecoratorOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: true,
+        },
+      });
+
+      assertEquals(result.errors, []);
+      const loaded = await dataModule(result.outputFiles[0]!.text) as {
+        raw(): string;
+      };
+      assertEquals(loaded.raw(), "class NotTypeScript {");
+    } finally {
+      await bundler.stop();
+    }
+  });
+
   it("bundles and evaluates a class-validator fixture with reflection initialized", async () => {
     const bundler = new SwcBundler();
     try {
       const result = await bundler.bundle({
-        absWorkingDir: Deno.cwd(),
+        absWorkingDir: cwd(),
         bundle: true,
         write: false,
         format: "esm",
@@ -232,7 +319,7 @@ describe("SwcBundler decorator metadata", () => {
         target: "es2022",
         stdin: {
           sourcefile: "class-validator-fixture.ts",
-          resolveDir: Deno.cwd(),
+          resolveDir: cwd(),
           loader: "ts",
           contents: `
             import { IsString, validateSync } from "class-validator";
@@ -261,6 +348,7 @@ describe("SwcBundler decorator metadata", () => {
         },
       });
       assertEquals(result.errors, []);
+      assertStringIncludes(result.outputFiles[0]!.text, REFLECTION_RUNTIME_MARKER);
       const loaded = await dataModule(result.outputFiles[0]!.text) as {
         propertyType(): string;
         validateName(value: unknown): ValidationError[] | string[];

@@ -610,7 +610,6 @@ function buildTranspiledModuleSource(
         ].join("\n");
 
       const result: BuildResult = await build({
-        absWorkingDir: projectDir,
         bundle: true,
         write: false,
         format: "esm",
@@ -642,7 +641,12 @@ function buildTranspiledModuleSource(
           createHTTPPlugin({ allowedHosts, projectDir }),
           createProjectBoundaryPlugin(sourceSnapshot),
         ],
-        ...(typescriptDecoratorOptions ? { typescriptDecoratorOptions } : {}),
+        // Only the opt-in decorator transform needs a working directory: adding
+        // it unconditionally would change how the default esbuild path reports
+        // paths for every project.
+        ...(typescriptDecoratorOptions
+          ? { absWorkingDir: projectDir, typescriptDecoratorOptions }
+          : {}),
       });
 
       if (result.errors?.length) {

@@ -1,5 +1,5 @@
-import { assertEquals, assertInstanceOf } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
 import factory, { SwcBundler } from "./index.ts";
 

@@ -178,6 +178,12 @@ async function reflectMetadataSource(): Promise<string> {
   return await reflectMetadataSourcePromise;
 }
 
+function withReflectionImport(source: string, flags: TypeScriptDecoratorOptions): string {
+  return flags.emitDecoratorMetadata
+    ? `import "${REFLECT_METADATA_SPECIFIER}";\n${source}`
+    : source;
+}
+
 function wrapPlugin(
   plugin: BundlerPlugin,
   flags: TypeScriptDecoratorOptions,
@@ -193,18 +199,25 @@ function wrapPlugin(
           build.onLoad(loadOptions, async (args) => {
             const result = await callback(args);
             if (!result?.contents) return result;
-            const loader = isTypeScriptLoader(result.loader)
+            // An explicit non-TypeScript loader is the plugin's decision. Only
+            // infer from the path when the plugin left the loader unset.
+            const loader = result.loader === undefined
+              ? loaderForPath(args.path)
+              : isTypeScriptLoader(result.loader)
               ? result.loader
-              : loaderForPath(args.path);
+              : undefined;
             if (!loader) return result;
             return {
               ...result,
-              contents: await transformTypeScript(
-                sourceText(result.contents),
-                loader,
-                args.path,
+              contents: withReflectionImport(
+                await transformTypeScript(
+                  sourceText(result.contents),
+                  loader,
+                  args.path,
+                  flags,
+                  options,
+                ),
                 flags,
-                options,
               ),
               loader: "js",
             } satisfies OnLoadResult;
@@ -244,18 +257,15 @@ function createSwcFallbackPlugin(
         if (!loader) return undefined;
         options.signal?.throwIfAborted();
         const code = await readFile(args.path, "utf8");
-        const contents = await transformTypeScript(code, loader, args.path, flags, options);
+        const contents = withReflectionImport(
+          await transformTypeScript(code, loader, args.path, flags, options),
+          flags,
+        );
         options.signal?.throwIfAborted();
         return { contents, loader: "js" };
       });
     },
   };
-}
-
-function withReflectionImport(source: string, flags: TypeScriptDecoratorOptions): string {
-  return flags.emitDecoratorMetadata
-    ? `import "${REFLECT_METADATA_SPECIFIER}";\n${source}`
-    : source;
 }
 
 function delegateBundleOptions(options: BundleOptions): BundleOptions {
