@@ -504,6 +504,44 @@ async function findExistingPaths(dir: string, paths: string[]): Promise<string[]
   return existing;
 }
 
+/**
+ * Directories the scaffold has to create that are already something else.
+ *
+ * A regular file or a link named `app` hides every scaffold path under it:
+ * `app/page.tsx` cannot be resolved, so the conflict check reports nothing,
+ * and the write then either stops halfway through or follows the link and
+ * lands outside the project. Both are caught here, before anything is written.
+ */
+async function findBlockedDirectories(dir: string, paths: string[]): Promise<string[]> {
+  const fs = createFileSystem();
+  // `lstat` reports a link as "not a directory", which is exactly the answer
+  // this needs. It is optional only for virtual filesystems that have no
+  // links of their own; every runtime this CLI scaffolds on provides it, and
+  // `stat` still catches a plain file in the way if one ever does not.
+  const describe = fs.lstat?.bind(fs) ?? fs.stat.bind(fs);
+  const blocked = new Set<string>();
+
+  for (const path of paths) {
+    const segments = path.split("/").slice(0, -1);
+    for (let depth = 1; depth <= segments.length; depth++) {
+      const ancestor = segments.slice(0, depth).join("/");
+      if (blocked.has(ancestor)) break;
+      let info: Awaited<ReturnType<typeof describe>>;
+      try {
+        info = await describe(join(dir, ancestor));
+      } catch {
+        break; // Nothing there yet, so nothing below it either.
+      }
+      if (!info.isDirectory) {
+        blocked.add(ancestor);
+        break;
+      }
+    }
+  }
+
+  return [...blocked].sort();
+}
+
 export async function createProject(
   request: CreateProjectRequest,
   dependencies: CreateProjectDependencies = {},
@@ -521,6 +559,18 @@ export async function createProject(
   validateIntegrationsOrThrow(request.integrations);
 
   const assembly = await assembleScaffold(request);
+  const writePaths = scaffoldWritePaths(assembly, request);
+  const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
+
+  // Checked whatever the conflict policy is: `--force` says you accept your
+  // files being replaced, not the scaffold writing somewhere else entirely.
+  const blocked = await findBlockedDirectories(projectDir, writePaths);
+  if (blocked.length) {
+    throw createConfigError(
+      `${where} already contains ${blocked.join(", ")} as a file or a link, ` +
+        `and the scaffold needs a directory there. Move it aside or use a different name.`,
+    );
+  }
 
   // A conflict is a file the scaffold would write over - a `package.json` with
   // the author's scripts, a `README.md` - not the directory existing. So an
@@ -528,9 +578,8 @@ export async function createProject(
   // directory itself (the no-name case) all scaffold, and a `--force` is asked
   // for only when something would actually be replaced.
   if (request.conflictPolicy === "fail") {
-    const conflicts = await findExistingPaths(projectDir, scaffoldWritePaths(assembly, request));
+    const conflicts = await findExistingPaths(projectDir, writePaths);
     if (conflicts.length) {
-      const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
       throw createConfigError(
         `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
       );
