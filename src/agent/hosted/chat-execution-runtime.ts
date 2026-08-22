@@ -405,7 +405,11 @@ async function createBootstrappedHostedChatRuntime(
       streamBootstrapTimeoutMs: input.streamBootstrapTimeoutMs,
     });
   } catch (error) {
-    await dispatchConversationHostedStreamErrorState(lifecycleAdapter, error).catch(
+    await dispatchConversationHostedStreamErrorState(lifecycleAdapter, error, {
+      // A bootstrap failure can itself be the durable mirror going terminal, and
+      // completing an already-terminal run only 400s (veryfront-issue-inbox#743).
+      skipDurableRunFinalization: isDurableRunKnownTerminal(lifecycleAdapter),
+    }).catch(
       (terminalError) => {
         input.logger?.error("Durable chat bootstrap failure finalization failed", {
           error: terminalError instanceof Error ? terminalError.message : String(terminalError),
@@ -488,7 +492,11 @@ export function createHostedChatStreamFinalizationHooks(input: {
       await input.lifecycleAdapter.durableRunMirror?.flush();
     },
     dispatchTerminalState: async (terminalState) => {
-      await dispatchConversationHostedTerminalState(input.lifecycleAdapter, terminalState);
+      await dispatchConversationHostedTerminalState(input.lifecycleAdapter, terminalState, {
+        // Read at dispatch time, not when the hooks are built: flushMirror above is
+        // what can mark the run terminal (veryfront-issue-inbox#743).
+        skipDurableRunFinalization: isDurableRunKnownTerminal(input.lifecycleAdapter),
+      });
     },
     resolveTerminalState: ({ isAborted, hasIncompleteToolParts }: {
       isAborted: boolean;
