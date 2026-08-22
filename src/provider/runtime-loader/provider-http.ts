@@ -14,8 +14,8 @@ export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moon
 const MAX_ERROR_BODY_BYTES = 8_000;
 const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
-const MAX_PROVIDER_STREAM_RATE_LIMIT_RETRIES = 2;
-const DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS = 1_000;
+const MAX_PROVIDER_STREAM_RETRIES = 2;
+const DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS = 1_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
 const MAX_PROVIDER_JSON_BODY_READS = 65_536;
@@ -478,7 +478,7 @@ async function waitForAbortable<T>(
   });
 }
 
-async function waitForProviderRateLimitRetry(
+async function waitForProviderStreamRetry(
   delayMs: number,
   abortSignal: AbortSignal,
 ): Promise<void> {
@@ -805,14 +805,15 @@ export async function requestJson(options: {
 
 /**
  * Request a streaming response. When the request body is replayable,
- * classified rate-limit responses are retried up to two times before provider
- * output is exposed, with all retry waits and attempts bounded by the stream
- * header deadline. ReadableStream request bodies are not retried because fetch
- * can consume them on the first attempt.
+ * typed retryable failures are retried up to two times before provider output
+ * is exposed. Each attempt gets a fresh stream header deadline. ReadableStream
+ * request bodies are not retried because fetch can consume them on the first
+ * attempt.
  *
- * Response headers and error bodies have a 30-second default deadline. After
- * headers arrive, caller cancellation remains connected to the returned body;
- * consumer cancellation aborts the request and cancels the upstream body.
+ * Response headers and error bodies have a 30-second default per-attempt
+ * deadline. After headers arrive, caller cancellation remains connected to the
+ * returned body; consumer cancellation aborts the request and cancels the
+ * upstream body.
  */
 export async function requestStream(options: {
   url: string;
@@ -826,14 +827,15 @@ export async function requestStream(options: {
 }): Promise<ReadableStream<Uint8Array>> {
   const headersTimeoutMs = options.headersTimeoutMs ??
     DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
-  const startedAt = Date.now();
-  const deadline = createRequestDeadline(options.init, headersTimeoutMs, "headersTimeoutMs");
-  let streamOwnsDeadline = false;
-  let rateLimitRetryCount = 0;
-  const requestBodyIsReplayable = !(deadline.init.body instanceof ReadableStream);
+  const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
+  let retryCount = 0;
 
-  try {
-    while (true) {
+  while (true) {
+    const startedAt = Date.now();
+    const deadline = createRequestDeadline(options.init, headersTimeoutMs, "headersTimeoutMs");
+    let streamOwnsDeadline = false;
+
+    try {
       const response = await waitForAbortable(
         () => options.fetchImpl(options.url, deadline.init),
         deadline.deadlineSignal,
@@ -846,22 +848,6 @@ export async function requestStream(options: {
           deadline.deadlineSignal,
         );
         err.message = `${options.providerLabel} request failed: ${err.message}`;
-        if (
-          err instanceof ProviderRateLimitError &&
-          requestBodyIsReplayable &&
-          rateLimitRetryCount < MAX_PROVIDER_STREAM_RATE_LIMIT_RETRIES
-        ) {
-          const retryDelayMs = err.retryAfterMs ??
-            DEFAULT_PROVIDER_STREAM_RATE_LIMIT_RETRY_DELAY_MS * 2 ** rateLimitRetryCount;
-          // A wait longer than the deadline has left aborts part-way through,
-          // and the catch below would then rewrite this rate limit into a
-          // timeout the provider never caused. Retry-After routinely exceeds
-          // the 30s header deadline, so report the rate limit we actually got.
-          if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw err;
-          rateLimitRetryCount++;
-          await waitForProviderRateLimitRetry(retryDelayMs, deadline.deadlineSignal);
-          continue;
-        }
         throw err;
       }
 
@@ -882,18 +868,41 @@ export async function requestStream(options: {
         deadline.abort,
         deadline.dispose,
       );
+    } catch (error) {
+      const failure = deadline.timedOut
+        ? providerTimeoutError(options, {
+          waitingFor: "the stream response headers",
+          timeoutMs: headersTimeoutMs,
+          elapsedMs: Date.now() - startedAt,
+        })
+        : error;
+      if (
+        !(failure instanceof ProviderError) ||
+        !failure.retryable ||
+        !requestBodyIsReplayable ||
+        retryCount >= MAX_PROVIDER_STREAM_RETRIES
+      ) {
+        throw failure;
+      }
+
+      const retryDelayMs = failure.retryAfterMs ??
+        (deadline.timedOut ? 0 : DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS * 2 ** retryCount);
+      // A provider-specified wait that cannot fit the current attempt's
+      // remaining deadline cannot be honored. Report the provider failure we
+      // actually received instead of rewriting it as a false timeout.
+      if (retryDelayMs > 0) {
+        if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw failure;
+        try {
+          await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);
+        } catch (waitError) {
+          if (deadline.timedOut) throw failure;
+          throw waitError;
+        }
+      }
+      retryCount++;
+    } finally {
+      deadline.cancelTimeout();
+      if (!streamOwnsDeadline) deadline.dispose();
     }
-  } catch (error) {
-    if (deadline.timedOut) {
-      throw providerTimeoutError(options, {
-        waitingFor: "the stream response headers",
-        timeoutMs: headersTimeoutMs,
-        elapsedMs: Date.now() - startedAt,
-      });
-    }
-    throw error;
-  } finally {
-    deadline.cancelTimeout();
-    if (!streamOwnsDeadline) deadline.dispose();
   }
 }
