@@ -28,6 +28,7 @@ import { filesHelp } from "../commands/files/command-help.ts";
 import { knowledgeHelp } from "../commands/knowledge/command-help.ts";
 import { mergeHelp } from "../commands/merge/command-help.ts";
 import { deployHelp } from "../commands/deploy/command-help.ts";
+import { envHelp } from "../commands/env/command-help.ts";
 import { upHelp } from "../commands/up/command-help.ts";
 import { scheduleHelp } from "../commands/schedule/command-help.ts";
 import { schedulesHelp } from "../commands/schedules/command-help.ts";
@@ -79,6 +80,7 @@ export const COMMANDS: CommandRegistry = {
   knowledge: knowledgeHelp,
   merge: mergeHelp,
   deploy: deployHelp,
+  env: envHelp,
   up: upHelp,
   schedule: scheduleHelp,
   schedules: schedulesHelp,

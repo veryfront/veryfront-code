@@ -1088,9 +1088,11 @@ async function resolveEnvironmentAccess(
 ): Promise<EnvironmentAccess> {
   if (isSessionCredential(apiToken)) return { kind: "session" };
   try {
-    const token = await controlPlane.createEnvironmentAccessToken(target);
-    if (!isSessionCredential(token)) return { kind: "unavailable", failure: "unusable" };
-    return { kind: "exchanged", token };
+    const credential = await controlPlane.createEnvironmentAccessToken(target);
+    if (!isSessionCredential(credential.accessToken)) {
+      return { kind: "unavailable", failure: "unusable" };
+    }
+    return { kind: "exchanged", token: credential.accessToken };
   } catch (error) {
     return classifyEnvironmentAccessFailure(error);
   }

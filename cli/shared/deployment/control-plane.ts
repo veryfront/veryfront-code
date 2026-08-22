@@ -86,7 +86,9 @@ export interface DeployControlPlane {
    * environment. The API authorizes the key for that target and refuses the
    * token as a session.
    */
-  createEnvironmentAccessToken(target: EnvironmentAccessTarget): Promise<string>;
+  createEnvironmentAccessToken(
+    target: EnvironmentAccessTarget,
+  ): Promise<EnvironmentAccessToken>;
 }
 
 export interface EnvironmentAccessTarget {
@@ -94,8 +96,14 @@ export interface EnvironmentAccessTarget {
   environmentName: string;
 }
 
+export interface EnvironmentAccessToken {
+  accessToken: string;
+  expiresIn: number;
+}
+
 interface WireEnvironmentAccessToken {
   access_token: string;
+  expires_in: number;
 }
 
 interface WireEnvironmentDeployment {
@@ -352,7 +360,11 @@ export function createHttpDeployControlPlane(
       if (typeof token !== "string" || token.length === 0) {
         throw new Error("The API did not return an environment access token");
       }
-      return token;
+      const expiresIn = response?.expires_in;
+      if (typeof expiresIn !== "number" || !Number.isInteger(expiresIn) || expiresIn <= 0) {
+        throw new Error("The API did not return a positive integer expiry");
+      }
+      return { accessToken: token, expiresIn };
     },
   };
 }

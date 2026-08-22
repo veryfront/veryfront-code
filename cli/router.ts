@@ -54,6 +54,7 @@ const commands: Record<string, CommandLoader> = {
   "knowledge": async () => (await import("./commands/knowledge/index.ts")).handleKnowledgeCommand,
   "merge": async () => (await import("./commands/merge/handler.ts")).handleMergeCommand,
   "deploy": async () => (await import("./commands/deploy/handler.ts")).handleDeployCommand,
+  "env": async () => (await import("./commands/env/handler.ts")).handleEnvCommand,
   "up": async () => (await import("./commands/up/index.ts")).handleUpCommand,
   "schedule": async () => (await import("./commands/schedule/handler.ts")).handleScheduleCommand,
   "schedules": async () => (await import("./commands/schedules/handler.ts")).handleSchedulesCommand,
