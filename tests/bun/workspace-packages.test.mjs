@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -12,18 +13,29 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { isDirectoryPathConflict, prepareBunWorkspacePackages } from "./workspace-packages.mjs";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
+const workspaceStateRoot = mkdtempSync(
+  join(tmpdir(), "veryfront-bun-workspace-packages-"),
+);
+const nodeModulesPath = join(workspaceStateRoot, "node_modules");
+mkdirSync(nodeModulesPath, { recursive: true });
+mkdirSync(join(nodeModulesPath, "react"));
 const workspacePackagesModuleUrl = new URL("./workspace-packages.mjs", import.meta.url).href;
 const PREPARATION_ACTIVE_EXIT_CODE = 17;
 const PREPARATION_PUBLISH_INTERRUPTED_EXIT_CODE = 18;
 const LOCK_STAGING_PREFIX = ".veryfront-bun-workspace-packages.lock.staging-";
 const RECLAIMER_GUARD_PREFIX = ".veryfront-bun-workspace-packages.reclaiming-";
 const RECLAIM_BARRIER_PREFIX = ".veryfront-bun-workspace-packages.barrier-";
+
+process.on("exit", () => {
+  rmSync(workspaceStateRoot, { recursive: true, force: true });
+});
 
 test("directory conflicts include Windows access errors for existing paths", () => {
   const guardPath = reclaimerGuardPath(randomUUID());
@@ -45,16 +57,12 @@ function readJson(path) {
 }
 
 function staleLockPath() {
-  return join(
-    projectRoot,
-    "node_modules",
-    ".veryfront-bun-workspace-packages.lock",
-  );
+  return join(nodeModulesPath, ".veryfront-bun-workspace-packages.lock");
 }
 
 function reclaimerGuardPath(token) {
   const digest = createHash("sha256").update(token).digest("hex");
-  return join(projectRoot, "node_modules", `${RECLAIMER_GUARD_PREFIX}${digest}`);
+  return join(nodeModulesPath, `${RECLAIMER_GUARD_PREFIX}${digest}`);
 }
 
 function writeOwnedLockMarker(directoryPath, token, pid = 9_999_999) {
@@ -76,7 +84,10 @@ function runWorkspacePreparationChild(extraEnv = {}) {
     import { prepareBunWorkspacePackages } from ${JSON.stringify(workspacePackagesModuleUrl)};
 
     try {
-      const prepared = prepareBunWorkspacePackages(${JSON.stringify(projectRoot)});
+      const prepared = prepareBunWorkspacePackages(
+        ${JSON.stringify(projectRoot)},
+        { nodeModulesPath: ${JSON.stringify(nodeModulesPath)} },
+      );
       await setTimeout(Number(process.env.VF_BUN_WORKSPACE_HOLD_MS ?? 0));
       prepared.cleanup();
       process.exit(0);
@@ -123,7 +134,6 @@ function runWorkspacePreparationChild(extraEnv = {}) {
 }
 
 function stagingLockPaths() {
-  const nodeModulesPath = join(projectRoot, "node_modules");
   return readdirSync(nodeModulesPath)
     .filter((name) => name.startsWith(LOCK_STAGING_PREFIX))
     .map((name) => join(nodeModulesPath, name));
@@ -150,7 +160,7 @@ function releaseReclaimers(barrierPath) {
 }
 
 test("prepareBunWorkspacePackages derives native packages from every workspace export", () => {
-  const prepared = prepareBunWorkspacePackages(projectRoot);
+  const prepared = prepareBunWorkspacePackages(projectRoot, { nodeModulesPath });
   const generatedPackageRoots = [];
 
   try {
@@ -217,7 +227,7 @@ test("prepareBunWorkspacePackages derives native packages from every workspace e
 });
 
 test("workspace package cleanup is idempotent", () => {
-  const prepared = prepareBunWorkspacePackages(projectRoot);
+  const prepared = prepareBunWorkspacePackages(projectRoot, { nodeModulesPath });
   prepared.cleanup();
   prepared.cleanup();
   assert.equal(
@@ -228,7 +238,7 @@ test("workspace package cleanup is idempotent", () => {
 });
 
 test("workspace package preparation rejects an overlapping run without disturbing it", () => {
-  const prepared = prepareBunWorkspacePackages(projectRoot);
+  const prepared = prepareBunWorkspacePackages(projectRoot, { nodeModulesPath });
   const rootPackagePath = join(
     prepared.nodeModulesPath,
     "veryfront/package.json",
@@ -236,7 +246,7 @@ test("workspace package preparation rejects an overlapping run without disturbin
 
   try {
     assert.throws(
-      () => prepareBunWorkspacePackages(projectRoot),
+      () => prepareBunWorkspacePackages(projectRoot, { nodeModulesPath }),
       new Error("Bun workspace package preparation is already active"),
     );
     assert.equal(existsSync(rootPackagePath), true);
@@ -264,7 +274,7 @@ test("workspace package preparation survives interrupted lock publication", asyn
     assert.equal(existsSync(lockPath), false);
     assert.equal(stagingLockPaths().length, 1);
 
-    const prepared = prepareBunWorkspacePackages(projectRoot);
+    const prepared = prepareBunWorkspacePackages(projectRoot, { nodeModulesPath });
     prepared.cleanup();
   } finally {
     rmSync(lockPath, { recursive: true, force: true });
@@ -281,7 +291,7 @@ test("workspace package preparation reclaims a stale lock with a dead owner", ()
   rmSync(guardPath, { recursive: true, force: true });
   writeStaleLock(lockPath, staleToken);
 
-  const prepared = prepareBunWorkspacePackages(projectRoot);
+  const prepared = prepareBunWorkspacePackages(projectRoot, { nodeModulesPath });
   let guardExistsAfterCleanup = false;
   try {
     assert.equal(
@@ -302,8 +312,7 @@ test("workspace package preparation serializes concurrent stale-lock reclaimers"
   const staleToken = "raced-stale-generation";
   const guardPath = reclaimerGuardPath(staleToken);
   const barrierPath = join(
-    projectRoot,
-    "node_modules",
+    nodeModulesPath,
     `${RECLAIM_BARRIER_PREFIX}${randomUUID()}`,
   );
   rmSync(guardPath, { recursive: true, force: true });
@@ -332,7 +341,7 @@ test("workspace package preparation serializes concurrent stale-lock reclaimers"
     assert.equal(existsSync(lockPath), false);
     assert.equal(existsSync(guardPath), true);
     assert.equal(
-      existsSync(join(projectRoot, "node_modules", "veryfront/package.json")),
+      existsSync(join(nodeModulesPath, "veryfront/package.json")),
       false,
     );
   } finally {
@@ -355,7 +364,7 @@ test("workspace package preparation ignores an orphaned stale-generation guard",
   writeOwnedLockMarker(orphanGuardPath, "orphaned-generation");
   writeStaleLock(lockPath, "new-stale-generation");
 
-  const prepared = prepareBunWorkspacePackages(projectRoot);
+  const prepared = prepareBunWorkspacePackages(projectRoot, { nodeModulesPath });
   let reclaimedExistsAfterCleanup = false;
   try {
     assert.equal(existsSync(orphanGuardPath), true);
@@ -377,11 +386,7 @@ test("workspace package preparation ignores an orphaned stale-generation guard",
 });
 
 test("workspace package preparation preserves a live lock owner", () => {
-  const lockPath = join(
-    projectRoot,
-    "node_modules",
-    ".veryfront-bun-workspace-packages.lock",
-  );
+  const lockPath = join(nodeModulesPath, ".veryfront-bun-workspace-packages.lock");
   rmSync(lockPath, { recursive: true, force: true });
   mkdirSync(lockPath, { recursive: true });
   writeFileSync(
@@ -391,7 +396,7 @@ test("workspace package preparation preserves a live lock owner", () => {
 
   try {
     assert.throws(
-      () => prepareBunWorkspacePackages(projectRoot),
+      () => prepareBunWorkspacePackages(projectRoot, { nodeModulesPath }),
       new Error("Bun workspace package preparation is already active"),
     );
     assert.equal(existsSync(lockPath), true);
@@ -401,17 +406,13 @@ test("workspace package preparation preserves a live lock owner", () => {
 });
 
 test("workspace package preparation preserves a lock with a missing marker", () => {
-  const lockPath = join(
-    projectRoot,
-    "node_modules",
-    ".veryfront-bun-workspace-packages.lock",
-  );
+  const lockPath = join(nodeModulesPath, ".veryfront-bun-workspace-packages.lock");
   rmSync(lockPath, { recursive: true, force: true });
   mkdirSync(lockPath, { recursive: true });
 
   try {
     assert.throws(
-      () => prepareBunWorkspacePackages(projectRoot),
+      () => prepareBunWorkspacePackages(projectRoot, { nodeModulesPath }),
       new Error("Bun workspace package preparation is already active"),
     );
     assert.equal(existsSync(lockPath), true);
@@ -421,11 +422,7 @@ test("workspace package preparation preserves a lock with a missing marker", () 
 });
 
 test("workspace package preparation preserves an invalid owned lock marker", () => {
-  const lockPath = join(
-    projectRoot,
-    "node_modules",
-    ".veryfront-bun-workspace-packages.lock",
-  );
+  const lockPath = join(nodeModulesPath, ".veryfront-bun-workspace-packages.lock");
   rmSync(lockPath, { recursive: true, force: true });
   mkdirSync(lockPath, { recursive: true });
   writeFileSync(
@@ -435,7 +432,7 @@ test("workspace package preparation preserves an invalid owned lock marker", () 
 
   try {
     assert.throws(
-      () => prepareBunWorkspacePackages(projectRoot),
+      () => prepareBunWorkspacePackages(projectRoot, { nodeModulesPath }),
       new Error("Bun workspace package preparation is already active"),
     );
     assert.equal(existsSync(lockPath), true);
@@ -445,11 +442,7 @@ test("workspace package preparation preserves an invalid owned lock marker", () 
 });
 
 test("workspace package preparation preserves a foreign lock owner", () => {
-  const lockPath = join(
-    projectRoot,
-    "node_modules",
-    ".veryfront-bun-workspace-packages.lock",
-  );
+  const lockPath = join(nodeModulesPath, ".veryfront-bun-workspace-packages.lock");
   rmSync(lockPath, { recursive: true, force: true });
   mkdirSync(lockPath, { recursive: true });
   writeFileSync(
@@ -459,7 +452,7 @@ test("workspace package preparation preserves a foreign lock owner", () => {
 
   try {
     assert.throws(
-      () => prepareBunWorkspacePackages(projectRoot),
+      () => prepareBunWorkspacePackages(projectRoot, { nodeModulesPath }),
       new Error("Bun workspace package preparation is already active"),
     );
     assert.equal(existsSync(lockPath), true);

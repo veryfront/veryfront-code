@@ -274,8 +274,11 @@ function addWorkspaceImportsToRootExports(
   }
 }
 
-export function prepareBunWorkspacePackages(projectRoot) {
-  const nodeModulesPath = resolve(projectRoot, "node_modules");
+export function prepareBunWorkspacePackages(
+  projectRoot,
+  { nodeModulesPath = resolve(projectRoot, "node_modules") } = {},
+) {
+  nodeModulesPath = resolve(nodeModulesPath);
   const { lockPath, token } = acquirePreparationLock(nodeModulesPath);
   const createdPackages = [];
   const scopeDirectories = new Set();

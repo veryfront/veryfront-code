@@ -19,6 +19,19 @@ describe("coverage CI command", () => {
       true,
     );
   });
+
+  it("keeps the merge task loadable with npm disabled", async () => {
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: ["task", "coverage:ci:merge"],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const stderr = new TextDecoder().decode(output.stderr);
+
+    assertEquals(output.success, false);
+    assert(stderr.includes("At least one LCOV file or directory is required."));
+    assertEquals(stderr.includes("npm specifiers were requested"), false);
+  });
 });
 
 describe("buildDenoTestCommandArgs leak tracing", () => {

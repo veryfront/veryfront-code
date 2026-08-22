@@ -8,8 +8,8 @@
  *
  * The list is easy to break by accident: renaming those files, or moving them
  * out of `src/testing/`, leaves a pattern matching nothing and the runner fails
- * again the next time someone runs `deno task test:node`. Neither task runs in
- * CI, so this is the only thing standing between that and a surprised human.
+ * again in the next runtime job. Because an over-broad filter can still leave
+ * both CI jobs green, this test guards the selected inventory itself.
  *
  * @module tests/runtime-test-filters
  */
@@ -18,6 +18,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { DENO_ONLY_TESTS } from "./deno-only-tests.mjs";
 import { filterTestFiles } from "./test-file-utils.mjs";
+import { validateSuitePlan } from "./load-suite-plan.mjs";
 
 /** The files the shared list exists to exclude. */
 const DENO_ONLY_FILES = [
@@ -35,6 +36,46 @@ const ELIGIBLE_FILES = [
 ];
 
 describe("runtime test filters", () => {
+  it("rejects malformed planner output before a runtime can silently pass", () => {
+    assertEquals(
+      validateSuitePlan({
+        version: 1,
+        suite: "runtime:node",
+        runner: "node",
+        files: ["src/a.test.ts"],
+      }, "runtime:node"),
+      ["src/a.test.ts"],
+    );
+
+    for (
+      const invalid of [
+        {},
+        { version: 1, suite: "runtime:bun", runner: "node", files: [] },
+        { version: 1, suite: "runtime:node", runner: "node", files: [1] },
+        {
+          version: 1,
+          suite: "runtime:node",
+          runner: "node",
+          files: ["../outside.test.ts"],
+        },
+        {
+          version: 1,
+          suite: "runtime:node",
+          runner: "node",
+          files: ["src/z.test.ts", "src/a.test.ts"],
+        },
+      ]
+    ) {
+      let rejected = false;
+      try {
+        validateSuitePlan(invalid, "runtime:node");
+      } catch {
+        rejected = true;
+      }
+      assert(rejected, "malformed planner output must be rejected");
+    }
+  });
+
   it("excludes the Deno-only tests from non-Deno runners", () => {
     const kept = filterTestFiles(DENO_ONLY_FILES, { exclude: DENO_ONLY_TESTS });
 
