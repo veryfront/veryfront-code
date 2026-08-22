@@ -41,6 +41,7 @@ export interface ValidateTestLayoutOptions {
   readonly paths?: readonly string[];
   readonly suites?: readonly LeafTestSuite[];
   readonly migrationEntries?: readonly TestLayoutMigrationEntry[];
+  readonly migrationBaseline?: TestLayoutMigrationBaseline;
 }
 
 export interface TestLayoutViolation {
@@ -62,9 +63,27 @@ export interface TestLayoutValidationResult {
   readonly inventory: readonly TestLayoutInventoryEntry[];
 }
 
+export type TestLayoutMigrationBaseline =
+  | {
+    readonly kind: "missing";
+    readonly ref: string;
+  }
+  | {
+    readonly kind: "paths";
+    readonly ref: string;
+    readonly paths: readonly string[];
+  }
+  | {
+    readonly kind: "malformed";
+    readonly ref: string;
+    readonly reason: string;
+  };
+
 const DENO_TEST_PATTERN = /\.test\.(?:ts|tsx|js|mjs|cjs)$/;
 const PLAYWRIGHT_TEST_PATTERN = /\.playwright\.ts$/;
 const TEST_LIKE_PATTERN = /\.(?:test|spec|playwright)\.[^/]+$/;
+const STRING_LITERAL_PATTERN = /["']([^"'\n]+)["']/g;
+const MIGRATION_FILE_PATH = "scripts/test/test-layout-migration.ts";
 const IGNORED_ROOTS = new Set([
   ".git",
   ".deno_cache",
@@ -226,6 +245,14 @@ export async function validateTestLayout(
       strictStaleMigrationCheck,
     ),
   );
+  if (options.migrationBaseline) {
+    errors.push(
+      ...validateMigrationPathRatchet(
+        migrationEntries,
+        options.migrationBaseline,
+      ),
+    );
+  }
 
   const canonical =
     discovery.inventory.filter((entry) => entry.kind === "canonical").length;
@@ -264,13 +291,84 @@ export function shardTests(
     .sort((a, b) => a.localeCompare(b));
 }
 
+export function validateMigrationPathRatchet(
+  currentEntries: readonly TestLayoutMigrationEntry[],
+  baseline: TestLayoutMigrationBaseline,
+): readonly string[] {
+  if (baseline.kind === "missing") return [];
+  if (baseline.kind === "malformed") {
+    return [
+      `Test layout migration baseline at ${baseline.ref} is malformed: ${baseline.reason}`,
+    ];
+  }
+
+  const baselinePaths = new Set(baseline.paths.map(normalizeProjectPath));
+  const addedPaths = sortedUnique(
+    currentEntries
+      .map((entry) => normalizeProjectPath(entry.path))
+      .filter((path) => !baselinePaths.has(path)),
+  );
+  if (addedPaths.length === 0) return [];
+  return [
+    `Test layout migration inventory grew relative to ${baseline.ref}: ${
+      addedPaths.join(", ")
+    }`,
+  ];
+}
+
+export function parseMigrationBaselineSource(
+  source: string,
+  ref: string,
+): TestLayoutMigrationBaseline {
+  if (!source.includes("TEST_LAYOUT_MIGRATION_ENTRIES")) {
+    return {
+      kind: "malformed",
+      ref,
+      reason:
+        "base migration file does not export TEST_LAYOUT_MIGRATION_ENTRIES",
+    };
+  }
+
+  const explicitPaths: string[] = [];
+  const unsupportedTestLikePaths: string[] = [];
+  for (const match of source.matchAll(STRING_LITERAL_PATTERN)) {
+    const literal = normalizeProjectPath(match[1] ?? "");
+    if (getExecutableTestKind(literal)) {
+      explicitPaths.push(literal);
+    } else if (looksLikeTestPath(literal)) {
+      unsupportedTestLikePaths.push(literal);
+    }
+  }
+
+  if (unsupportedTestLikePaths.length > 0) {
+    return {
+      kind: "malformed",
+      ref,
+      reason: `base migration file contains unsupported test-like paths: ${
+        sortedUnique(unsupportedTestLikePaths).join(", ")
+      }`,
+    };
+  }
+  if (explicitPaths.length === 0) {
+    return {
+      kind: "malformed",
+      ref,
+      reason: "base migration file has no explicit executable migration paths",
+    };
+  }
+
+  return { kind: "paths", ref, paths: sortedUnique(explicitPaths) };
+}
+
 async function main(): Promise<void> {
   try {
     const flags = parseArgs(Deno.args, {
       boolean: ["json"],
       default: { json: false },
     });
-    const result = await validateTestLayout();
+    const result = await validateTestLayout({
+      migrationBaseline: await resolveMigrationBaselineFromGit(),
+    });
     if (flags.json) {
       console.log(JSON.stringify(result.inventory, null, 2));
       return;
@@ -282,6 +380,72 @@ async function main(): Promise<void> {
     console.error(error instanceof Error ? error.message : String(error));
     Deno.exit(1);
   }
+}
+
+async function resolveMigrationBaselineFromGit(): Promise<
+  TestLayoutMigrationBaseline
+> {
+  const ref = Deno.env.get("TEST_LAYOUT_MIGRATION_BASE_REF")?.trim() ||
+    await resolveLocalMigrationBaselineRef();
+
+  const commitCheck = await runGit(["cat-file", "-e", `${ref}^{commit}`]);
+  if (!commitCheck.ok) {
+    return {
+      kind: "malformed",
+      ref,
+      reason: `base ref is not a commit: ${commitCheck.stderr}`,
+    };
+  }
+
+  const fileCheck = await runGit([
+    "cat-file",
+    "-e",
+    `${ref}:${MIGRATION_FILE_PATH}`,
+  ]);
+  if (!fileCheck.ok) {
+    return { kind: "missing", ref };
+  }
+
+  const source = await runGit(["show", `${ref}:${MIGRATION_FILE_PATH}`]);
+  if (!source.ok) {
+    return {
+      kind: "malformed",
+      ref,
+      reason: `base migration file could not be read: ${source.stderr}`,
+    };
+  }
+  return parseMigrationBaselineSource(source.stdout, ref);
+}
+
+async function resolveLocalMigrationBaselineRef(): Promise<string> {
+  const mergeBase = await runGit(["merge-base", "HEAD", "origin/main"]);
+  if (!mergeBase.ok || mergeBase.stdout.trim() === "") {
+    throw new Error(
+      `Unable to resolve test-layout migration baseline. Set TEST_LAYOUT_MIGRATION_BASE_REF or fetch origin/main. git merge-base failed: ${mergeBase.stderr}`,
+    );
+  }
+  return mergeBase.stdout.trim();
+}
+
+async function runGit(args: readonly string[]): Promise<
+  { readonly ok: true; readonly stdout: string; readonly stderr: string } | {
+    readonly ok: false;
+    readonly stdout: string;
+    readonly stderr: string;
+  }
+> {
+  const command = new Deno.Command("git", {
+    args: [...args],
+    stdout: "piped",
+    stderr: "piped",
+  });
+  const output = await command.output();
+  const decoder = new TextDecoder();
+  const stdout = decoder.decode(output.stdout).trim();
+  const stderr = decoder.decode(output.stderr).trim();
+  return output.success
+    ? { ok: true, stdout, stderr }
+    : { ok: false, stdout, stderr };
 }
 
 function runnerForExecutableKind(
@@ -396,6 +560,12 @@ function normalizeProjectPath(path: string): string {
 
 function isIgnoredRoot(path: string): boolean {
   return IGNORED_ROOTS.has(path.split("/")[0] ?? "");
+}
+
+function sortedUnique(paths: readonly string[]): string[] {
+  return [...new Set(paths.map(normalizeProjectPath))].sort((a, b) =>
+    a.localeCompare(b)
+  );
 }
 
 function stablePathHash(path: string): number {

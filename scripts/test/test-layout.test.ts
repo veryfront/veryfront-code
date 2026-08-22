@@ -7,9 +7,12 @@ import {
   collectExecutableTestFiles,
   discoverTests,
   getExecutableTestKind,
+  parseMigrationBaselineSource,
   shardTests,
+  validateMigrationPathRatchet,
   validateTestLayout,
 } from "./test-layout.ts";
+import type { TestLayoutMigrationEntry } from "./test-layout-migration.ts";
 import { TEST_LAYOUT_MIGRATION_ENTRIES } from "./test-layout-migration.ts";
 
 describe("test path executable classification", () => {
@@ -319,6 +322,81 @@ describe("test layout inventory validation", () => {
     );
   });
 
+  it("rejects new migration paths even when a matching entry is added", () => {
+    // Production break caught: a PR can grow the temporary migration inventory
+    // by adding an off-layout test and a matching explicit migration entry.
+    const errors = validateMigrationPathRatchet(
+      [
+        migrationEntry("tests/unit/invalidation-state.test.ts"),
+        migrationEntry("tests/unit/new-off-layout.test.ts"),
+      ],
+      {
+        kind: "paths",
+        ref: "base-ref",
+        paths: ["tests/unit/invalidation-state.test.ts"],
+      },
+    );
+
+    assertEquals(errors, [
+      "Test layout migration inventory grew relative to base-ref: tests/unit/new-off-layout.test.ts",
+    ]);
+  });
+
+  it("allows migration path deletion relative to the baseline", () => {
+    // Production break caught: a shrink-only ratchet blocks legitimate removal
+    // of an explicit migration entry after a test moves to a canonical root.
+    const errors = validateMigrationPathRatchet(
+      [migrationEntry("tests/unit/invalidation-state.test.ts")],
+      {
+        kind: "paths",
+        ref: "base-ref",
+        paths: [
+          "tests/unit/invalidation-state.test.ts",
+          "tests/unit/rendering/layouts/components-layout-discovery.test.ts",
+        ],
+      },
+    );
+
+    assertEquals(errors, []);
+  });
+
+  it("allows initial migration inventory seeding when the base file is absent", () => {
+    // Production break caught: the first taxonomy PR cannot introduce the
+    // temporary inventory because the historical base has no migration file.
+    const errors = validateMigrationPathRatchet(
+      [migrationEntry("tests/unit/invalidation-state.test.ts")],
+      { kind: "missing", ref: "base-ref" },
+    );
+
+    assertEquals(errors, []);
+  });
+
+  it("fails closed for malformed base migration evidence once the base file exists", () => {
+    // Production break caught: an unsupported historical migration file shape
+    // is treated as an empty baseline, silently permitting inventory growth.
+    const baseline = parseMigrationBaselineSource(
+      `export const TEST_LAYOUT_MIGRATION_ENTRIES = Object.freeze([
+        { pathPrefix: "tests/", count: 51 },
+      ]);`,
+      "base-ref",
+    );
+
+    assertEquals(baseline, {
+      kind: "malformed",
+      ref: "base-ref",
+      reason: "base migration file has no explicit executable migration paths",
+    });
+    assertEquals(
+      validateMigrationPathRatchet(
+        [migrationEntry("tests/unit/invalidation-state.test.ts")],
+        baseline,
+      ),
+      [
+        "Test layout migration baseline at base-ref is malformed: base migration file has no explicit executable migration paths",
+      ],
+    );
+  });
+
   it("validates the current repository inventory", async () => {
     // Production break caught: the checked-in taxonomy does not classify the
     // current executable test tree end to end.
@@ -330,6 +408,17 @@ describe("test layout inventory validation", () => {
     assertEquals(result.timingMs >= 0, true);
   });
 });
+
+function migrationEntry(path: string): TestLayoutMigrationEntry {
+  return {
+    path,
+    level: "unit",
+    suite: "unit",
+    runner: "deno",
+    owner: "test-architecture",
+    removalPr: "PR 4",
+  };
+}
 
 async function writeFixture(root: string, relativePath: string): Promise<void> {
   const target = join(root, relativePath);

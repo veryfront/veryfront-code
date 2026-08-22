@@ -39,6 +39,30 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Configure test layout migration baseline
+        if: ${{ matrix.check == 'test-layout' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+          case "$EVENT_NAME" in
+            pull_request) base="$PR_BASE_SHA" ;;
+            merge_group) base="$MERGE_GROUP_BASE_SHA" ;;
+            push) base="$PUSH_BASE_SHA" ;;
+            *) base="origin/main" ;;
+          esac
+
+          if [ -z "$base" ] || printf '%s' "$base" | grep -Eq '^0+$'; then
+            git fetch --no-tags --depth=1 origin main
+            base="origin/main"
+          else
+            git fetch --no-tags --depth=1 origin "$base"
+          fi
+
+          echo "TEST_LAYOUT_MIGRATION_BASE_REF=$base" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Run ${{ matrix.check }}
