@@ -153,6 +153,55 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(result.response?.status, 200);
     });
 
+    it("serves source published between two preview renders", async () => {
+      // The adapter only observes a newer draft when freshness is established,
+      // so a render that skips the freshness boundary keeps serving the older
+      // snapshot however many times you reload.
+      let publishedSource = "Ready to Create";
+      let observedSource = publishedSource;
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = () => {
+        observedSource = publishedSource;
+        return Promise.resolve();
+      };
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () =>
+          Promise.resolve({
+            status: 200,
+            html: `<html><h1>${observedSource}</h1></html>`,
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          }),
+      }));
+      const render = () =>
+        handler.handle(
+          new Request("http://localhost/preview"),
+          makeCtx({
+            adapter,
+            isLocalProject: true,
+            projectSlug: "preview-project",
+            requestContext: {
+              token: "",
+              slug: "preview-project",
+              branch: "main",
+              mode: "preview",
+            },
+          }),
+        );
+
+      const first = await render();
+      assertStringIncludes(await first.response!.text(), "<h1>Ready to Create</h1>");
+
+      publishedSource = "Ready to Create222333444555666777888999";
+
+      const second = await render();
+      assertStringIncludes(
+        await second.response!.text(),
+        "<h1>Ready to Create222333444555666777888999</h1>",
+      );
+    });
+
     it("surfaces preview source refresh failures without rendering stale HTML", async () => {
       let renderCalls = 0;
       const adapter = createMockAdapter();
