@@ -175,6 +175,13 @@ export function assertCondition(condition: boolean, message: string): void {
   if (!condition) throw new Error(message);
 }
 
+export function allocatePort(): number {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (listener.addr as Deno.NetAddr).port;
+  listener.close();
+  return port;
+}
+
 export async function waitForRoute(
   url: string,
   timeoutMs = 60_000,
@@ -186,14 +193,17 @@ export async function waitForRoute(
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 1_000);
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (response.ok) {
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (response.ok) {
+          await response.body?.cancel();
+          return;
+        }
+        lastError = `HTTP ${response.status}`;
         await response.body?.cancel();
-        return;
+      } finally {
+        clearTimeout(timeout);
       }
-      lastError = `HTTP ${response.status}`;
-      await response.body?.cancel();
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }

@@ -1,5 +1,6 @@
 import { TEMPLATES } from "../../cli/commands/init/catalog.ts";
 import {
+  allocatePort,
   assertCondition,
   ensureCommand,
   installDependencies,
@@ -97,13 +98,6 @@ function selectedRuntimes(): RuntimeName[] {
   }
 
   return requested as RuntimeName[];
-}
-
-function allocatePort(): number {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  return port;
 }
 
 async function verifyHttpRoute(
