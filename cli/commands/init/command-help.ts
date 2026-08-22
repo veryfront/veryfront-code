@@ -26,7 +26,7 @@ export const initHelp: CommandHelp = {
     },
     {
       flag: "-f, --force",
-      description: "Overwrite existing directory",
+      description: "Overwrite existing files and directories",
     },
     {
       flag: "-c, --config <file>",

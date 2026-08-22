@@ -134,6 +134,61 @@ describe("guardedOutboundFetch", () => {
     assertEquals(calls, 0);
   });
 
+  it("pins against a transport-supplied resolver instead of real DNS", async () => {
+    let resolved: string | undefined;
+    let pinnedAddresses: readonly string[] | undefined;
+
+    const boundary = createOutboundFetchBoundary({
+      fetch: () => Promise.resolve(new Response("unexpected")),
+      pinnedFetch: (_url, addresses) => {
+        pinnedAddresses = addresses;
+        return Promise.resolve(Response.json({ pinned: true }));
+      },
+      resolveHost: (hostname) => {
+        resolved = hostname;
+        return Promise.resolve(["93.184.216.34"]);
+      },
+    });
+
+    // A name no resolver answers for, so a real lookup would fail here.
+    const response = await boundary.guardedFetch("https://vf-transport.invalid/v1/models");
+
+    assertEquals(await response.json(), { pinned: true });
+    assertEquals(resolved, "vf-transport.invalid");
+    assertEquals(pinnedAddresses, ["93.184.216.34"]);
+  });
+
+  it("still applies egress policy to what the injected resolver returns", async () => {
+    let pinnedCalls = 0;
+    const boundary = createOutboundFetchBoundary({
+      fetch: () => Promise.resolve(new Response("unexpected")),
+      pinnedFetch: () => {
+        pinnedCalls++;
+        return Promise.resolve(new Response("unexpected"));
+      },
+      resolveHost: () => Promise.resolve(["169.254.169.254"]),
+    });
+
+    await assertRejects(
+      () => boundary.guardedFetch("https://vf-transport.invalid/latest/meta-data"),
+      OutboundRequestBlockedError,
+      "blocked for host",
+    );
+    assertEquals(pinnedCalls, 0);
+  });
+
+  it("refuses a transport whose host resolver is not callable", () => {
+    assertThrows(
+      () =>
+        createOutboundFetchBoundary({
+          fetch: () => Promise.resolve(new Response("unexpected")),
+          resolveHost: "not-a-function" as unknown as () => Promise<string[]>,
+        }),
+      TypeError,
+      "host resolver must be a function",
+    );
+  });
+
   it("rejects a public hostname whose DNS answer is private", async () => {
     let calls = 0;
     await assertRejects(
