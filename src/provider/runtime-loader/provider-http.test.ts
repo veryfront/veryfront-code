@@ -844,6 +844,56 @@ describe("provider-http", () => {
       );
     });
 
+    it("does not retry once provider output has reached the caller", async () => {
+      let attempts = 0;
+      let pulls = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull(controller) {
+                  if (pulls++ === 0) {
+                    controller.enqueue(new TextEncoder().encode("chunk"));
+                    return;
+                  }
+                  controller.error(
+                    new ProviderRequestError({
+                      provider: "moonshotai",
+                      status: 0,
+                      message: "veryfront-cloud request failed: stream broke",
+                      retryable: true,
+                    }),
+                  );
+                },
+              }),
+            ),
+          );
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+      });
+
+      const reader = stream.getReader();
+      const first = await reader.read();
+      assertEquals(new TextDecoder().decode(first.value), "chunk");
+      const error = await assertRejects(
+        () => reader.read(),
+        ProviderRequestError,
+        "stream broke",
+      ) as ProviderRequestError;
+
+      assertEquals(error.retryable, true, "the failure is retryable and must still not be retried");
+      assertEquals(
+        attempts,
+        1,
+        "a replayed attempt would duplicate output the caller already received",
+      );
+    });
+
     it("does not retry a rate limit with a non-replayable stream body", async () => {
       let attempts = 0;
       const body = new ReadableStream<Uint8Array>({
