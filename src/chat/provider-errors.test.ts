@@ -71,6 +71,37 @@ describe("chat/provider-errors", () => {
     );
   });
 
+  it("falls back safely when gateway credit values are invalid", () => {
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "Agent run credit limit exceeded",
+        suggestion: "Start a new reviewed run.",
+        balance: "57.25",
+        required: 85.5,
+      }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message: "Start a new reviewed run.",
+        status: 402,
+      },
+    );
+
+    assertEquals(
+      parseProviderError({
+        slug: "insufficient-credits",
+        error: "AI credit limit exceeded",
+        balance: 12,
+        required: -1,
+      }),
+      {
+        code: "INSUFFICIENT_CREDITS",
+        message: "AI credit limit exceeded",
+        status: 402,
+      },
+    );
+  });
+
   it("parses provider overload, rate-limit, context-length, and credit messages", () => {
     assertEquals(parseProviderError({ type: "overloaded_error", message: "Overloaded" }), {
       code: "OVERLOADED_ERROR",
