@@ -119,9 +119,11 @@ browser URLs use `http://<PROJECT>.preview.localhost:<PORT>`. Browsers treat the
 reserved `.localhost` tree as loopback, including on Windows.
 
 Native Node, Deno, and command-line resolvers can depend on operating-system
-resolver behavior for wildcard names. Use literal loopback transport and keep
-the canonical virtual host when a native request does not resolve the browser
-URL:
+resolver behavior for wildcard names. Veryfront's Windows Server 2022 CI
+currently records `ENOTFOUND` from Node 24 for project and preview hosts, while
+Deno 2.7.7 resolves both to IPv4 and IPv6 loopback. Use literal loopback
+transport and keep the canonical virtual host when a native request does not
+resolve the browser URL:
 
 ```bash
 curl -H "Host: <PROJECT>.localhost:<PORT>" http://127.0.0.1:<PORT>/
