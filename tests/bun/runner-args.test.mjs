@@ -63,8 +63,9 @@ test("the Bun runner fails loudly when filters select no files", () => {
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    /Bun test runner failed: Error: Suite planner failed for runtime:bun .*selected no test files/,
+    /Bun test runner failed: Error: Suite planner failed for runtime:bun \(exit 4\):/,
   );
+  assert.match(result.stderr, /runtime:bun selected no test files/);
   assert.doesNotMatch(result.stdout, /0 passed, 0 failed/);
 });
 
