@@ -1,8 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { waitFor } from "#veryfront/testing";
 import {
+  type AgentServiceRegistrationLogger,
   createAgentServiceRegistrationLifecycle,
+  heartbeatRetrySchedule,
   resolveAgentServiceRegistrationInput,
 } from "./registration.ts";
 
@@ -223,5 +226,312 @@ describe("agent/agent-service-registration", () => {
       runtime: "node",
       region: "iad",
     });
+  });
+});
+
+type LogEntry = { message: string; metadata?: Record<string, unknown> };
+
+function recordingLogger() {
+  const warnings: LogEntry[] = [];
+  const errors: LogEntry[] = [];
+  return {
+    warnings,
+    errors,
+    logger: {
+      info: () => {},
+      warn: (message: string, metadata?: Record<string, unknown>) =>
+        void warnings.push({ message, metadata }),
+      error: (message: string, metadata?: Record<string, unknown>) =>
+        void errors.push({ message, metadata }),
+    },
+  };
+}
+
+/**
+ * Answers registration with 200 and each heartbeat with the next scripted
+ * status, repeating the last one once the script runs out.
+ */
+function scriptedHeartbeatFetch(statuses: readonly number[]) {
+  let heartbeatAttempts = 0;
+  const fetch: typeof globalThis.fetch = (input) => {
+    if (!input.toString().endsWith("/heartbeat")) {
+      return Promise.resolve(jsonResponse(serviceResponse));
+    }
+    const status = statuses[Math.min(heartbeatAttempts, statuses.length - 1)] ?? 200;
+    heartbeatAttempts++;
+    return Promise.resolve(
+      status === 200 ? jsonResponse(serviceResponse) : jsonResponse({ error: "boom" }, status),
+    );
+  };
+  return { fetch, heartbeatAttempts: () => heartbeatAttempts };
+}
+
+function lifecycleOptions(
+  fetch: typeof globalThis.fetch,
+  overrides: { heartbeatIntervalMs?: number; logger?: AgentServiceRegistrationLogger } = {},
+) {
+  return {
+    apiUrl: "https://api.example.com",
+    authToken: "token-1",
+    serviceName: "docs-agent",
+    serviceKey: "docs-agent:test",
+    scopeKind: "project" as const,
+    projectId: "11111111-1111-4111-a111-111111111111",
+    agentId: "support",
+    baseUrl: "https://agent.example.com",
+    invokeUrl: "https://agent.example.com/api/runs",
+    version: "0.1.0",
+    runtime: "node",
+    region: "iad",
+    heartbeatIntervalMs: overrides.heartbeatIntervalMs ?? 60_000,
+    fetch,
+    logger: overrides.logger,
+  };
+}
+
+describe("agent/agent-service-registration heartbeat retry", () => {
+  it("retries a transient 500 so a one-second blip never counts as a failure", async () => {
+    const script = scriptedHeartbeatFetch([500, 200]);
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { logger: log.logger }),
+    );
+
+    // Resolving is what keeps consecutiveFailures at zero: the lifecycle only
+    // increments it in the rejection handler of this same call.
+    await lifecycle.heartbeat();
+    lifecycle.stop();
+
+    assertEquals(
+      script.heartbeatAttempts(),
+      2,
+      "the 500 must be retried once and the retry must be the 200",
+    );
+    assertEquals(log.errors.length, 0, "a recovered blip must not escalate");
+    assertEquals(
+      log.warnings.map((entry) => entry.message),
+      ["Agent service heartbeat retrying after transient failure"],
+      "the only log for a recovered blip is the retry notice",
+    );
+  });
+
+  it("fails a client error immediately without retrying", async () => {
+    for (const status of [400, 401, 404]) {
+      const script = scriptedHeartbeatFetch([status]);
+      const log = recordingLogger();
+      const lifecycle = await createAgentServiceRegistrationLifecycle(
+        lifecycleOptions(script.fetch, { logger: log.logger }),
+      );
+
+      await assertRejects(() => lifecycle.heartbeat(), Error, `HTTP ${status}`);
+      lifecycle.stop();
+
+      assertEquals(
+        script.heartbeatAttempts(),
+        1,
+        `HTTP ${status} must fail on the first attempt, with no retry`,
+      );
+      assertEquals(log.warnings.length, 0, `HTTP ${status} must not log a retry notice`);
+    }
+  });
+
+  it("keeps one tick's backoff waits inside the heartbeat interval", () => {
+    // Arithmetic only. Backoff is the sole part of a tick this schedule bounds;
+    // the no-overlap property is enforced by the in-flight guard and covered by
+    // the concurrency test below.
+    for (const intervalMs of [40, 1_000, 30_000, 300_000]) {
+      const schedule = heartbeatRetrySchedule(intervalMs);
+      const totalDelayMs = schedule.delaysMs.reduce((sum, delayMs) => sum + delayMs, 0);
+
+      assert(schedule.maxAttempts >= 2, "a transient failure must get at least one retry");
+      assertEquals(
+        schedule.delaysMs.length,
+        schedule.maxAttempts - 1,
+        "every attempt except the last must be followed by a backoff",
+      );
+      assert(
+        totalDelayMs < intervalMs,
+        `backoff of ${totalDelayMs}ms must stay inside a ${intervalMs}ms interval`,
+      );
+    }
+  });
+
+  it("never runs two heartbeat ticks at once, even when attempts outlast the interval", async () => {
+    // A tick here needs 3 attempts x 120ms plus backoff, so it always outlives
+    // the 200ms interval. Without a guard the next tick starts on top of it.
+    const intervalMs = 200;
+    const attemptLatencyMs = 120;
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    let heartbeatRequests = 0;
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      inFlight++;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      return new Promise((resolve) => {
+        // Raw timer on purpose: this is the double's simulated latency, and it
+        // has to stay on the same unscaled clock as the lifecycle's setInterval.
+        setTimeout(() => {
+          inFlight--;
+          resolve(jsonResponse({ error: "boom" }, 500));
+        }, attemptLatencyMs);
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs }),
+    );
+
+    // Enough requests that several interval ticks have had to make a decision.
+    await waitFor(() => heartbeatRequests >= 6, {
+      timeout: 10_000,
+      interval: 10,
+      message: "the heartbeat never issued enough requests to observe overlap",
+    });
+    lifecycle.stop();
+    await waitFor(() => inFlight === 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "in-flight heartbeat requests never settled after stop()",
+    });
+
+    assertEquals(
+      maxConcurrent,
+      1,
+      `a tick must never start while one is still running (saw ${maxConcurrent} concurrent ` +
+        `across ${heartbeatRequests} requests)`,
+    );
+  });
+
+  it("still escalates when slow failures force ticks to be skipped", async () => {
+    // Each tick needs 3 attempts x 80ms, so it outlives the 100ms interval and
+    // the beats in between are skipped. A skipped beat is neither a success nor
+    // a failure: if it reset the counter, escalation could never be reached.
+    const intervalMs = 100;
+    const attemptLatencyMs = 80;
+    let inFlight = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      inFlight++;
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          inFlight--;
+          resolve(jsonResponse({ error: "boom" }, 500));
+        }, attemptLatencyMs);
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    await waitFor(() => log.errors.length > 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "skipped beats stopped the failure counter from ever escalating",
+    });
+    lifecycle.stop();
+    await waitFor(() => inFlight === 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "in-flight heartbeat requests never settled after stop()",
+    });
+
+    const skips = log.warnings.filter((entry) =>
+      entry.message === "Agent service heartbeat tick skipped, previous tick still running"
+    );
+    assert(
+      skips.length > 0,
+      "this test is only meaningful if beats were actually skipped; none were",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "a skipped beat must not reset or advance the counter, so 3 failed ticks still escalate",
+    );
+  });
+
+  it("cancels a pending retry backoff when the lifecycle stops", async () => {
+    let heartbeatAttempts = 0;
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatAttempts++;
+      return Promise.resolve(jsonResponse({ error: "boom" }, 500));
+    };
+
+    // Resolves the instant the retry logs its backoff, which happens on the
+    // microtask right before the timer starts — so stop() always lands inside
+    // the wait rather than racing it.
+    let enterBackoff!: () => void;
+    const enteredBackoff = new Promise<void>((resolve) => {
+      enterBackoff = resolve;
+    });
+    const logger: AgentServiceRegistrationLogger = {
+      info: () => {},
+      warn: (message) => {
+        if (message.includes("retrying")) enterBackoff();
+      },
+      error: () => {},
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: 60_000, logger }),
+    );
+
+    const inFlight = lifecycle.heartbeat();
+    await enteredBackoff;
+    lifecycle.stop();
+    await inFlight;
+
+    assertEquals(
+      heartbeatAttempts,
+      1,
+      "stop() must cancel the pending backoff, not let it wake and retry after teardown",
+    );
+  });
+
+  it("still escalates persistent 500s, in bounded time", async () => {
+    const script = scriptedHeartbeatFetch([500]);
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    // Three ticks of 40ms plus their backoff. A retry sequence that failed to
+    // terminate would hold the escalation off past this budget.
+    const escalationBudgetMs = 1_000;
+    const startedAt = Date.now();
+    await waitFor(() => log.errors.length > 0, {
+      timeout: escalationBudgetMs,
+      interval: 10,
+      message: "persistent 500s never reached the persistent-failure log",
+    });
+    const elapsedMs = Date.now() - startedAt;
+    lifecycle.stop();
+
+    assert(
+      elapsedMs < escalationBudgetMs,
+      `escalation took ${elapsedMs}ms, over the ${escalationBudgetMs}ms budget`,
+    );
+    assertEquals(
+      log.errors[0]?.message,
+      "Agent service heartbeat failing persistently",
+      "the persistent-failure log must still be the escalation signal",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "escalation must still trip on the third consecutive failed tick",
+    );
   });
 });
