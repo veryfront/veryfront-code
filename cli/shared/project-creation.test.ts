@@ -728,7 +728,7 @@ describe("createProject into an existing named directory", () => {
   });
 });
 
-describe("createProject when something blocks a scaffold directory", () => {
+describe("createProject when a path cannot be written through", () => {
   it("refuses a file where the scaffold needs a directory, before writing anything", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-blocked-file-" });
     const projectDir = join(parentDir, "contract-project");
@@ -842,6 +842,71 @@ describe("createProject when something blocks a scaffold directory", () => {
       assertEquals(await Deno.readTextFile(join(projectDir, "app", "about")), "mine\n");
       assertEquals(await exists(join(projectDir, "app", "page.tsx")), false);
       assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses a link at a scaffold path itself, dangling or not", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-link-" });
+    const projectDir = join(parentDir, "contract-project");
+    const outside = join(parentDir, "outside.md");
+
+    try {
+      await Deno.mkdir(projectDir);
+      // A dangling link resolves to nothing, so `findExistingPaths` reports it
+      // absent and the write follows it out of the project.
+      await Deno.symlink(outside, join(projectDir, "README.md"));
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains README.md as a file or a link',
+      );
+
+      assertEquals(await exists(outside), false);
+      assertEquals(await exists(join(projectDir, "AGENTS.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses a link at a scaffold path under --force as well", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-force-" });
+    const projectDir = join(parentDir, "contract-project");
+    const outside = join(parentDir, "outside.md");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.symlink(outside, join(projectDir, "README.md"));
+
+      await assertRejects(
+        () => createProject({ ...baseRequest(parentDir), conflictPolicy: "overwrite" }),
+        Error,
+        'Directory "contract-project" already contains README.md as a file or a link',
+      );
+
+      assertEquals(await exists(outside), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("still reports a real file at a scaffold path as an overwritable conflict", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-file-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(join(projectDir, "README.md"), "mine\n");
+
+      // A real file resolves fine, so it stays a conflict pointing at --force
+      // rather than the refusal above.
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains README.md. Use --force to overwrite.',
+      );
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }

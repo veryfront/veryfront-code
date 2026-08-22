@@ -505,35 +505,48 @@ async function findExistingPaths(dir: string, paths: string[]): Promise<string[]
 }
 
 /**
- * Directories the scaffold has to create that are already something else.
+ * Paths the scaffold cannot write through, checked before anything is written.
  *
- * A regular file or a link named `app` hides every scaffold path under it:
- * `app/page.tsx` cannot be resolved, so the conflict check reports nothing,
- * and the write then either stops halfway through or follows the link and
- * lands outside the project. Both are caught here, before anything is written.
+ * `findExistingPaths` resolves a whole path, so it cannot see either of these:
+ *
+ * - a link anywhere along the path. `app -> ../elsewhere` makes `app/page.tsx`
+ *   resolve outside the project, and a dangling `README.md -> ../outside.md`
+ *   resolves to nothing at all, so both are reported absent and the write then
+ *   follows the link out of the project.
+ * - a regular file where a directory has to go. `app/page.tsx` cannot resolve
+ *   through a file named `app`, so the write stops halfway through instead.
+ *
+ * A real file sitting at a scaffold path is not listed here. That one resolves
+ * fine and is the conflict `findExistingPaths` reports.
  */
-async function findBlockedDirectories(dir: string, paths: string[]): Promise<string[]> {
+async function findUnwritablePaths(dir: string, paths: string[]): Promise<string[]> {
   const fs = createFileSystem();
-  // `lstat` reports a link as "not a directory", which is exactly the answer
-  // this needs. It is optional only for virtual filesystems that have no
-  // links of their own; every runtime this CLI scaffolds on provides it, and
-  // `stat` still catches a plain file in the way if one ever does not.
+  // `lstat` is what makes a link visible: `stat` follows it and reports the
+  // target. It is optional only for virtual filesystems that have no links of
+  // their own; every runtime this CLI scaffolds on provides it, and `stat`
+  // still catches a plain file in the way if one ever does not.
   const describe = fs.lstat?.bind(fs) ?? fs.stat.bind(fs);
   const blocked = new Set<string>();
 
   for (const path of paths) {
-    const segments = path.split("/").slice(0, -1);
+    const segments = path.split("/");
     for (let depth = 1; depth <= segments.length; depth++) {
-      const ancestor = segments.slice(0, depth).join("/");
-      if (blocked.has(ancestor)) break;
+      const prefix = segments.slice(0, depth).join("/");
+      if (blocked.has(prefix)) break;
       let info: Awaited<ReturnType<typeof describe>>;
       try {
-        info = await describe(join(dir, ancestor));
+        info = await describe(join(dir, prefix));
       } catch {
         break; // Nothing there yet, so nothing below it either.
       }
-      if (!info.isDirectory) {
-        blocked.add(ancestor);
+      if (info.isSymlink) {
+        blocked.add(prefix);
+        break;
+      }
+      // The last segment is the file itself, and a real file there is a
+      // conflict rather than something to refuse outright.
+      if (depth < segments.length && !info.isDirectory) {
+        blocked.add(prefix);
         break;
       }
     }
@@ -564,11 +577,11 @@ export async function createProject(
 
   // Checked whatever the conflict policy is: `--force` says you accept your
   // files being replaced, not the scaffold writing somewhere else entirely.
-  const blocked = await findBlockedDirectories(projectDir, writePaths);
-  if (blocked.length) {
+  const unwritable = await findUnwritablePaths(projectDir, writePaths);
+  if (unwritable.length) {
     throw createConfigError(
-      `${where} already contains ${blocked.join(", ")} as a file or a link, ` +
-        `and the scaffold needs a directory there. Move it aside or use a different name.`,
+      `${where} already contains ${unwritable.join(", ")} as a file or a link ` +
+        `the scaffold cannot write through. Move it aside or use a different name.`,
     );
   }
 
