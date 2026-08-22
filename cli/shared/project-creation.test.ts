@@ -104,7 +104,7 @@ describe("createProject", () => {
       await assertRejects(
         () => createProject({ ...request, conflictPolicy: "fail" }),
         Error,
-        'Directory "contract-project" already exists',
+        'Directory "contract-project" already contains',
       );
 
       const overwritten = await createProject({
@@ -666,6 +666,62 @@ describe("createProject into the current directory", () => {
       await createProject({ ...cwdRequest(parentDir), conflictPolicy: "overwrite" });
 
       assertEquals((await Deno.readTextFile(readme)) === "mine\n", false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+});
+
+describe("createProject into an existing named directory", () => {
+  it("scaffolds into an existing empty directory", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-empty-named-" });
+
+    try {
+      // `mkdir app && veryfront init app`, or a freshly cloned empty repo.
+      await Deno.mkdir(join(parentDir, "contract-project"));
+
+      const result = await createProject(baseRequest(parentDir));
+
+      assertEquals(result.projectDir, join(parentDir, "contract-project"));
+      assertEquals(await exists(join(parentDir, "contract-project", "app", "page.tsx")), true);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("scaffolds beside files the template does not write", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-beside-named-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(join(projectDir, ".git"), { recursive: true });
+      await Deno.writeTextFile(join(projectDir, "LICENSE"), "MIT\n");
+
+      await createProject(baseRequest(parentDir));
+
+      assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
+      assertEquals(await Deno.readTextFile(join(projectDir, "LICENSE")), "MIT\n");
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("names the files it would overwrite, not just the directory", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-conflict-named-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(join(projectDir, "README.md"), "mine\n");
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains README.md',
+      );
+
+      assertEquals(await Deno.readTextFile(join(projectDir, "README.md")), "mine\n");
+      assertEquals(await exists(join(projectDir, "app")), false);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }

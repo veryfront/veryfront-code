@@ -517,29 +517,22 @@ export async function createProject(
   const projectDir = projectName === undefined
     ? request.parentDir
     : join(request.parentDir, projectName);
-  const fs = createFileSystem();
 
   validateIntegrationsOrThrow(request.integrations);
 
-  if (
-    projectName !== undefined &&
-    request.conflictPolicy === "fail" &&
-    await fs.exists(projectDir)
-  ) {
-    throw createConfigError(`Directory "${projectName}" already exists`);
-  }
-
   const assembly = await assembleScaffold(request);
 
-  // A named project gets a fresh directory, checked above. Without a name the
-  // scaffold lands in `parentDir` itself, which always exists, so the conflict
-  // is any file the scaffold would write over - a `package.json` with the
-  // author's scripts, a `README.md` - and those are refused the same way.
-  if (projectName === undefined && request.conflictPolicy === "fail") {
+  // A conflict is a file the scaffold would write over - a `package.json` with
+  // the author's scripts, a `README.md` - not the directory existing. So an
+  // empty directory, a fresh clone holding only `.git`, or the working
+  // directory itself (the no-name case) all scaffold, and a `--force` is asked
+  // for only when something would actually be replaced.
+  if (request.conflictPolicy === "fail") {
     const conflicts = await findExistingPaths(projectDir, scaffoldWritePaths(assembly, request));
     if (conflicts.length) {
+      const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
       throw createConfigError(
-        `Directory already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
+        `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
       );
     }
   }
