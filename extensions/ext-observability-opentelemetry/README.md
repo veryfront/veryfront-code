@@ -96,12 +96,17 @@ name their spans differently, and the difference decides which problem you get:
 Two consequences worth planning for:
 
 - **Span volume.** A map over 10,000 items yields at least 10,000 node spans in a single
-  trace, before any agent spans nested beneath them. The framework applies no cap; use the
-  batch span processor's queue settings (`OTEL_BSP_MAX_QUEUE_SIZE`,
-  `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`) or collector-side tail sampling to bound it.
+  trace, before any agent spans nested beneath them. The framework applies no cap on `items`,
+  so the caller is the only bound on how large a map can get. `OTEL_BSP_MAX_QUEUE_SIZE` and
+  `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` govern the SDK's export buffer, not span generation: once
+  the queue fills, further spans are dropped rather than exported. Collector-side tail
+  sampling decides whether to keep or drop an entire trace, not how many spans it contains.
+  Neither control substitutes for keeping map size bounded at the call site.
 - **Name cardinality.** Backends that aggregate by span name, for example Tempo's metrics
   generator, see one series per map item. Loop iterations add no name cardinality. Drop or
-  rewrite `workflow.node` names at the collector if map fan-out matters for your backend.
+  rewrite the `workflow.node <id>` span name at the collector if map fan-out matters for your
+  backend; `workflow.node.id` is a separate attribute and rewriting the span name leaves it
+  untouched unless you rewrite it too.
 
 `workflow.run` is always a trace root. Started from an instrumented HTTP handler, webhook,
 or approval callback it does **not** join that request's trace: a run is durable work that
