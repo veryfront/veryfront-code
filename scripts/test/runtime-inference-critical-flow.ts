@@ -4,6 +4,7 @@ import {
   ensureCommand,
   installDependencies,
   packNpmPackage,
+  runChecked,
   scaffoldProject,
   startDevServer,
   stopDevServer,
@@ -30,7 +31,6 @@ const WORKFLOW_ID = "content-pipeline";
 const NODE_ID = "call-provider";
 const POLL_REQUEST_TIMEOUT_MS = 1_000;
 const TERMINAL_STATUSES = new Set(["failed", "completed", "cancelled"]);
-const decoder = new TextDecoder();
 
 function parseCsvFlag(args: string[], names: string[]): string[] | null {
   for (const name of names) {
@@ -295,6 +295,7 @@ interface ProviderState {
   server: Deno.HttpServer;
   abort(): void;
   closed: Promise<void>;
+  validationFailure(): Error | undefined;
   url: URL;
 }
 
@@ -308,6 +309,7 @@ function startProvider(
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
   });
+  let validationFailure: Error | undefined;
   const pendingResponses = new Set<() => void>();
   const server = Deno.serve({
     hostname: "127.0.0.1",
@@ -315,7 +317,16 @@ function startProvider(
     signal: controller.signal,
     onListen: () => {},
   }, async (request) => {
-    await validateAnthropicRequest(request.clone(), expectedMarker);
+    try {
+      await validateAnthropicRequest(request.clone(), expectedMarker);
+    } catch (error) {
+      validationFailure = error instanceof Error
+        ? error
+        : new Error(String(error));
+      return Response.json({ error: validationFailure.message }, {
+        status: 400,
+      });
+    }
     received.push(request.clone());
 
     if (mode === "respond") {
@@ -349,11 +360,14 @@ function startProvider(
       pendingResponses.clear();
     },
     closed,
+    validationFailure() {
+      return validationFailure;
+    },
     url: new URL(`http://127.0.0.1:${server.addr.port}/v1`),
   };
 }
 
-async function waitForProviderReceipt(
+export async function waitForProviderReceipt(
   state: ProviderState,
   runtime: RuntimeName,
   detailUrl: URL,
@@ -361,6 +375,8 @@ async function waitForProviderReceipt(
   const deadline = Date.now() + 5_000;
   let lastRun = "none";
   while (Date.now() < deadline) {
+    const validationFailure = state.validationFailure();
+    if (validationFailure) throw validationFailure;
     if (state.received.length > 0) return;
     try {
       const response = await fetch(detailUrl, {
@@ -612,21 +628,10 @@ export async function runRuntimeInferenceCriticalFlow(
 
     if (!skipBuild) {
       console.log("build npm package");
-      const output = await new Deno.Command("deno", {
-        args: ["task", "build:npm"],
+      await runChecked("deno", ["task", "build:npm"], {
         cwd: rootDir,
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      if (output.code !== 0) {
-        throw new Error(
-          [
-            `deno task build:npm failed with exit code ${output.code}`,
-            decoder.decode(output.stdout).trim(),
-            decoder.decode(output.stderr).trim(),
-          ].filter(Boolean).join("\n"),
-        );
-      }
+        timeoutMs: 300_000,
+      });
     }
 
     console.log("pack npm package");

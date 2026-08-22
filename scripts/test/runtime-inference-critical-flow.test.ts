@@ -10,6 +10,7 @@ import {
   artifactClaim,
   parseRuntimeSelection,
   validateAnthropicRequest,
+  waitForProviderReceipt,
   waitForTerminalRun,
 } from "./runtime-inference-critical-flow.ts";
 
@@ -146,6 +147,40 @@ describe("runtime inference critical-flow pure contract", () => {
     );
   });
 
+  it("surfaces provider validation failures instead of generic receipt timeouts", async () => {
+    const detailCalls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((input: URL | RequestInfo) => {
+      detailCalls.push(String(input));
+      return Promise.resolve(Response.json({ status: "running" }));
+    }) as typeof fetch;
+
+    try {
+      await assertRejectsWithMessage(
+        () =>
+          waitForProviderReceipt(
+            {
+              received: [],
+              server: {} as Deno.HttpServer,
+              abort() {},
+              closed: Promise.resolve(),
+              validationFailure: () =>
+                new Error(
+                  `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+                ),
+              url: new URL("http://127.0.0.1:1/v1"),
+            },
+            "node",
+            new URL("http://127.0.0.1/runs/validation-failed"),
+          ),
+        `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+      );
+      assertEquals(detailCalls.length, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("polls through non-terminal states and returns terminal failure details", async () => {
     const states = [
       { status: "pending" },
@@ -228,17 +263,34 @@ describe("runtime inference critical-flow pure contract", () => {
   });
 
   it("does not execute the critical-flow journey on import", async () => {
-    const result = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "eval",
-        "--config=scripts/test.deno.json",
-        "--no-check",
-        `const mod = await import("./scripts/test/runtime-inference-critical-flow.ts");
+    const controller = new AbortController();
+    const timeoutMs = 7_500;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let result: Deno.CommandOutput;
+
+    try {
+      result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          "--config=scripts/test.deno.json",
+          "--no-check",
+          `const mod = await import("./scripts/test/runtime-inference-critical-flow.ts");
 console.log(JSON.stringify(Object.keys(mod).sort()));`,
-      ],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+        ],
+        signal: controller.signal,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          `runtime inference import subprocess timed out after ${timeoutMs}ms`,
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     assertEquals(new TextDecoder().decode(result.stderr), "");
     assertEquals(result.code, 0);
