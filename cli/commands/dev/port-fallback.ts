@@ -140,7 +140,43 @@ export async function isPortAvailable(port: number): Promise<boolean> {
 }
 
 /**
+ * Asks the OS for an unused ephemeral port and releases it again.
+ *
+ * Same runtime split as `isPortAvailable`, for the same reason: the npm build's
+ * `Deno.listen` is a shim that does not work under a real Deno.
+ */
+async function allocateEphemeralPort(): Promise<number> {
+  const deno = getDenoRuntime();
+  if (deno) {
+    const listener = deno.listen({ hostname: LOCALHOST.IPV4, port: 0 });
+    const { port } = listener.addr as { port: number };
+    listener.close();
+    return port;
+  }
+
+  const net = await import("node:net");
+  return await new Promise<number>((resolve, reject) => {
+    const server = net.createServer();
+    server.unref?.();
+    server.once("error", reject);
+    server.listen({ port: 0, host: LOCALHOST.IPV4, exclusive: true }, () => {
+      const address = server.address();
+      const port = address && typeof address === "object" ? address.port : 0;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/**
  * Returns `requestedPort`, or the first free port after it.
+ *
+ * Port 0 means "any free port", but it cannot be passed through: everything
+ * downstream - the MCP port, `VERYFRONT_DEV_PORT`, the module server URL, the
+ * printed `http://localhost:<port>` - is derived from the number the dev server
+ * is handed, so handing it 0 lets the OS pick a port nothing else is told
+ * about. It is resolved to a concrete ephemeral port here instead, and checked
+ * with `probe` like any other candidate because the OS pool is per address
+ * family while the dev server needs the port free on all of them.
  *
  * The scan stops at `MAX_TCP_PORT`: a runtime rejects port 65536 as an invalid
  * port rather than as an address in use, so scanning past the end of the range
@@ -157,6 +193,18 @@ export async function findAvailablePort(
   probe: (port: number) => Promise<boolean> = isPortAvailable,
 ): Promise<number> {
   const attempts = Math.max(1, maxAttempts);
+
+  if (requestedPort === 0) {
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const port = await allocateEphemeralPort();
+      if (await probe(port)) return port;
+    }
+    throw PORT_IN_USE.create({
+      detail: `Could not find a free port after ${attempts} attempts`,
+      context: { requestedPort, attempts },
+    });
+  }
+
   let lastPort = requestedPort;
 
   for (let attempt = 0; attempt < attempts; attempt++) {

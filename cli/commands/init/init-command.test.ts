@@ -181,6 +181,41 @@ describe("InitCommand Types", () => {
   });
 });
 
+describe("initCommand target directory", () => {
+  it("rejects an existing target directory so the CLI exits non-zero", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-init-existing-" });
+    const name = "taken";
+    const keepsake = join(parentDir, name, "README.md");
+
+    try {
+      await Deno.mkdir(join(parentDir, name));
+      await Deno.writeTextFile(keepsake, "keep me\n");
+
+      // `veryfront init x && cd x && npm run dev` must stop at the refusal. A
+      // printed message with a zero exit lets the chain run on in the wrong
+      // directory, so the refusal has to surface as an error, not a return.
+      await assertRejects(
+        () =>
+          initCommand({
+            name,
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          }),
+        Error,
+        `Directory "${name}" already exists`,
+      );
+
+      assertEquals(await Deno.readTextFile(keepsake), "keep me\n");
+      assertEquals(await exists(join(parentDir, name, "app")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+});
+
 describe("initCommand into the current directory", () => {
   it("refuses to overwrite files already in the directory without --force", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-init-cwd-" });
