@@ -13,6 +13,7 @@ import { register, tryResolve, unregister } from "#veryfront/extensions/contract
 import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
 import { getErrorCollector, resetErrorCollector } from "#veryfront/observability";
 import {
+  browserServerExportsStripInternals,
   browserServerExportsStripPlugin,
   moduleReferenceWalkers,
   stripServerOnlyExports,
@@ -30,9 +31,73 @@ function occurrences(haystack: string, name: string): number {
   return haystack.match(new RegExp(`\\b${name}\\b`, "g"))?.length ?? 0;
 }
 
+async function assertUnsafeServerDestructuring(code: string): Promise<VeryfrontError> {
+  const error = await assertRejects(
+    () => stripServerOnlyExports(code, "pages/unsafe-destructuring.tsx"),
+    VeryfrontError,
+  );
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, "server-only-in-client");
+  assertStringIncludes(error.message, "Move the destructuring into getServerData");
+  assertStringIncludes(error.message, "Declare client initialization separately");
+  assertStringIncludes(error.message, 'import { getEnv } from "veryfront"');
+  assertStringIncludes(error.message, "export default function Page()");
+  return error;
+}
+
+async function bindingPatternAnalysis(source: string) {
+  const parser = tryResolve<CodeParser>("CodeParser");
+  if (!parser) throw new Error("CodeParser extension is not registered");
+  const ast = await parser.parse({ code: source, filePath: "pattern.ts" });
+  const statement = (ast as unknown as { program: { body: Array<Record<string, unknown>> } })
+    .program.body[0];
+  if (!statement) throw new Error(`No statement parsed from: ${source}`);
+  const declarator = (statement.declarations as Array<Record<string, unknown>> | undefined)?.[0];
+  if (!declarator) throw new Error(`No declarator parsed from: ${source}`);
+  return browserServerExportsStripInternals.analyzeBindingPattern(declarator.id);
+}
+
 describe("browser-server-exports-strip", () => {
   afterAll(async () => {
     await stopEsbuild();
+  });
+
+  describe("binding-pattern classification", () => {
+    it("collects nested object, array, hole, rest, and renamed binding positions", async () => {
+      const analysis = await bindingPatternAnalysis(
+        "const { plain, renamed: alias, nested: { value }, list: [first, , ...tail], ...rest } = source;",
+      );
+
+      assertEquals(analysis.bindingNames, ["plain", "alias", "value", "first", "tail", "rest"]);
+      assertEquals(analysis.hazards, []);
+    });
+
+    it("separates a default expression from its binding position", async () => {
+      const analysis = await bindingPatternAnalysis("const { source: value = fallback } = input;");
+
+      assertEquals(analysis.bindingNames, ["value"]);
+      assertEquals(analysis.possibleNames, ["value"]);
+      assertEquals(analysis.hazards, ["default-value"]);
+    });
+
+    it("separates a computed key from its binding position", async () => {
+      const analysis = await bindingPatternAnalysis("const { [keyName]: value } = input;");
+
+      assertEquals(analysis.bindingNames, ["value"]);
+      assertEquals(analysis.possibleNames, ["value"]);
+      assertEquals(analysis.hazards, ["computed-key"]);
+    });
+
+    it("classifies unknown pattern syntax without trusting possible bindings", () => {
+      const analysis = browserServerExportsStripInternals.analyzeBindingPattern({
+        type: "FutureBindingPattern",
+        child: { type: "Identifier", name: "possibleBinding" },
+      });
+
+      assertEquals(analysis.bindingNames, []);
+      assertEquals(analysis.possibleNames, ["possibleBinding"]);
+      assertEquals(analysis.hazards, ["unknown-syntax"]);
+    });
   });
 
   describe("emptying server-only hooks", () => {
@@ -931,7 +996,48 @@ describe("browser-server-exports-strip", () => {
       assertEquals(occurrences(result, "rest"), 0);
     });
 
-    it("conservatively keeps a pattern with a default value", async () => {
+    it("drops a known-framework rest pattern when an unused sibling is outside the hook closure", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { unusedByEveryone, ...rest } = getEnv("SERVER_ONLY");`,
+        `export async function getServerData() { return { props: { rest } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SERVER_ONLY");
+      assertNotIncludes(result, "getEnv");
+      assertEquals(occurrences(result, "unusedByEveryone"), 0);
+      assertEquals(occurrences(result, "rest"), 0);
+    });
+
+    it("recognizes aliased and namespace framework imports as known server initializers", async () => {
+      const variants = [
+        [
+          `import { getEnv as readEnv } from "veryfront";`,
+          `const { unused, ...rest } = readEnv("SERVER_ONLY");`,
+        ],
+        [
+          `import * as vf from "veryfront";`,
+          `const { unused, ...rest } = vf.getEnv("SERVER_ONLY");`,
+        ],
+      ];
+
+      for (const [importLine, declaration] of variants) {
+        const result = await stripServerOnlyExports([
+          importLine,
+          declaration,
+          `export async function getServerData() { return { props: { rest } }; }`,
+          `export default function Page() { return null; }`,
+        ].join("\n"));
+
+        assertNotIncludes(result, "SERVER_ONLY");
+        assertNotIncludes(result, "veryfront");
+      }
+    });
+
+    it("rejects a server-hook destructuring default instead of shipping it", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const DEFAULT = getEnv("CLIENT_FALLBACK");`,
@@ -940,15 +1046,10 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return DEFAULT; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "CLIENT_FALLBACK");
-      assertStringIncludes(result, "DEFAULT");
-      assertStringIncludes(result, "SERVER_ONLY");
-      assertStringIncludes(result, "a = DEFAULT");
+      await assertUnsafeServerDestructuring(code);
     });
 
-    it("conservatively keeps a pattern with a computed key", async () => {
+    it("rejects a computed server-hook pattern instead of shipping it", async () => {
       const code = [
         `import { getEnv } from "veryfront";`,
         `const KEY = getEnv("CLIENT_KEY");`,
@@ -957,12 +1058,7 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return KEY; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "CLIENT_KEY");
-      assertStringIncludes(result, "KEY");
-      assertStringIncludes(result, "SERVER_ONLY");
-      assertStringIncludes(result, "[KEY]: value");
+      await assertUnsafeServerDestructuring(code);
     });
 
     it("removes one destructuring declarator without dropping its client sibling", async () => {
@@ -981,44 +1077,131 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(result, "return client");
     });
 
-    it("keeps a destructuring default with an unrelated client effect", async () => {
+    it("does not let a hazardous co-declarator pin a known server rest pattern", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { unused, ...rest } = getEnv("SERVER_REST"), { client = startClient() } = loadClient();`,
+        `export async function getServerData() { return { props: { rest } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SERVER_REST");
+      assertNotIncludes(result, "getEnv");
+      assertStringIncludes(result, "client = startClient()");
+      assertStringIncludes(result, "loadClient()");
+    });
+
+    it("does not let a hazardous co-declarator pin a simple server value", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const token = getEnv("SERVER_SIMPLE"), { client = startClient() } = loadClient();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertNotIncludes(result, "SERVER_SIMPLE");
+      assertNotIncludes(result, "getEnv");
+      assertStringIncludes(result, "client = startClient()");
+      assertStringIncludes(result, "loadClient()");
+    });
+
+    it("keeps a server declarator a hazardous client co-declarator still reads", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const token = getEnv("CLIENT_FALLBACK"), { client = token } = loadClient();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "CLIENT_FALLBACK");
+      assertStringIncludes(result, "getEnv");
+      assertStringIncludes(result, "client = token");
+      assertStringIncludes(result, "loadClient()");
+    });
+
+    it("rejects a destructuring default with an unrelated client effect", async () => {
       const code = [
         `const { token, client = startClient() } = loadSecret();`,
         `export async function getServerData() { return { props: { token } }; }`,
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "client = startClient()");
-      assertStringIncludes(result, "loadSecret()");
+      await assertUnsafeServerDestructuring(code);
     });
 
-    it("keeps a computed pattern key with an unrelated client effect", async () => {
+    it("rejects a computed pattern key with an unrelated client effect", async () => {
       const code = [
         `const { [startClient()]: token } = loadSecret();`,
         `export async function getServerData() { return { props: { token } }; }`,
         `export default function Page() { return null; }`,
       ].join("\n");
 
-      const result = await stripServerOnlyExports(code);
-
-      assertStringIncludes(result, "[startClient()]: token");
-      assertStringIncludes(result, "loadSecret()");
+      await assertUnsafeServerDestructuring(code);
     });
 
-    it("keeps a destructuring declarator with a sibling outside the hook closure", async () => {
+    it("rejects an unknown side-effecting initializer with a sibling outside the hook closure", async () => {
       const code = [
         `const { token, client } = loadSecret();`,
         `export async function getServerData() { return { props: { token } }; }`,
         `export default function Page() { return null; }`,
       ].join("\n");
 
+      await assertUnsafeServerDestructuring(code);
+    });
+
+    it("rejects a project-local initializer with a sibling outside the hook closure", async () => {
+      const code = [
+        `import { loadSecret } from "./server.ts";`,
+        `const { token, client } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      await assertUnsafeServerDestructuring(code);
+    });
+
+    it("rejects an effectful argument to a known-framework initializer", async () => {
+      const code = [
+        `import { getEnv } from "veryfront";`,
+        `const { token, client } = getEnv(startClient());`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      await assertUnsafeServerDestructuring(code);
+    });
+
+    it("keeps a destructuring initializer when the browser reads a sibling binding", async () => {
+      const code = [
+        `const { token, client } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return client; }`,
+      ].join("\n");
+
       const result = await stripServerOnlyExports(code);
 
       assertStringIncludes(result, "loadSecret()");
-      assertEquals(occurrences(result, "token"), 1);
-      assertEquals(occurrences(result, "client"), 1);
+      assertStringIncludes(result, "return client");
+    });
+
+    it("keeps an evaluated pattern when the browser reads a sibling binding", async () => {
+      const code = [
+        `const { token, client = startClient() } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return client; }`,
+      ].join("\n");
+
+      const result = await stripServerOnlyExports(code);
+
+      assertStringIncludes(result, "loadSecret()");
+      assertStringIncludes(result, "client = startClient()");
+      assertStringIncludes(result, "return client");
     });
 
     it("keeps an import that the client still references", async () => {
@@ -1304,6 +1487,47 @@ describe("browser-server-exports-strip", () => {
       assertStringIncludes(sideEffectImports[0] ?? "", "/_veryfront/fs/");
       assertEquals(occurrences(code, "initClientMetrics"), 0);
     }
+
+    it("removes a known server destructuring dependency from the browser pipeline", async () => {
+      const source = [
+        `import { getEnv } from "veryfront";`,
+        `const { unused, ...rest } = getEnv("SERVER_ONLY_PIPELINE_VALUE");`,
+        `export async function getServerData() { return { props: { rest } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const result = await runPipeline(
+        source,
+        "/project/pages/destructuring.tsx",
+        "/project",
+        { projectId: "server-destructuring-strip", dev: false, ssr: false },
+      );
+
+      assertNotIncludes(result.code, "SERVER_ONLY_PIPELINE_VALUE");
+      assertNotIncludes(result.code, "getEnv");
+    });
+
+    it("returns a stable boundary error for ambiguous browser destructuring", async () => {
+      const source = [
+        `const { token, unused } = loadSecret();`,
+        `export async function getServerData() { return { props: { token } }; }`,
+        `export default function Page() { return null; }`,
+      ].join("\n");
+
+      const error = await assertRejects(
+        () =>
+          runPipeline(
+            source,
+            "/project/pages/ambiguous.tsx",
+            "/project",
+            { projectId: "ambiguous-server-destructuring", dev: false, ssr: false },
+          ),
+        VeryfrontError,
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "server-only-in-client");
+    });
 
     it("accepts decorators after export before compiling browser modules", async () => {
       const source = [

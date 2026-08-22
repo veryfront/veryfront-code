@@ -57,7 +57,7 @@
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { ASTNode, CodeParser } from "#veryfront/extensions/parser/index.ts";
-import { COMPILATION_ERROR } from "#veryfront/errors";
+import { COMPILATION_ERROR, SERVER_ONLY_IN_CLIENT } from "#veryfront/errors";
 import { getErrorCollector } from "#veryfront/observability";
 import { getLoaderFromPath, isGeneratedContentOutput } from "../../esm/transform-utils.ts";
 import { isTypeScript } from "../context.ts";
@@ -388,90 +388,112 @@ async function parseStubs(parser: CodeParser): Promise<{ body: Node; init: Node 
   return { body, init };
 }
 
-/** Every binding identifier a variable or parameter pattern introduces. */
-function patternBindingIds(pattern: Node): Node[] {
-  const bindings: Node[] = [];
+type BindingPatternHazard = "computed-key" | "default-value" | "unknown-syntax";
 
-  const collect = (node: Node): void => {
-    if (node.type === "Identifier") {
-      bindings.push(node);
-      return;
-    }
-
-    if (node.type === "AssignmentPattern") {
-      if (isNode(node.left)) collect(node.left);
-      return;
-    }
-
-    if (node.type === "RestElement") {
-      if (isNode(node.argument)) collect(node.argument);
-      return;
-    }
-
-    // `constructor(private dep: Dep)` binds `dep` as a parameter and assigns
-    // it to `this` at runtime.
-    if (node.type === "TSParameterProperty") {
-      if (isNode(node.parameter)) collect(node.parameter);
-      return;
-    }
-
-    if (node.type === "ArrayPattern") {
-      for (const element of Array.isArray(node.elements) ? node.elements : []) {
-        if (isNode(element)) collect(element);
-      }
-      return;
-    }
-
-    if (node.type === "ObjectPattern") {
-      for (const property of Array.isArray(node.properties) ? node.properties : []) {
-        if (!isNode(property)) continue;
-        if (property.type === "RestElement") {
-          if (isNode(property.argument)) collect(property.argument);
-          continue;
-        }
-        if (property.type === "ObjectProperty" && isNode(property.value)) {
-          collect(property.value);
-        }
-      }
-    }
-  };
-
-  collect(pattern);
-
-  return bindings;
+interface BindingPatternAnalysis {
+  bindingIds: Node[];
+  possibleNames: string[];
+  hazards: Set<BindingPatternHazard>;
 }
 
-/** Whether evaluating a pattern can run code outside its binding positions. */
-function patternHasEvaluatedValuePosition(pattern: Node): boolean {
-  if (pattern.type === "Identifier") return false;
-  if (pattern.type === "AssignmentPattern") return true;
-  if (pattern.type === "RestElement") {
-    return !isNode(pattern.argument) || patternHasEvaluatedValuePosition(pattern.argument);
+function mergePatternAnalysis(
+  target: BindingPatternAnalysis,
+  nested: BindingPatternAnalysis,
+): void {
+  target.bindingIds.push(...nested.bindingIds);
+  target.possibleNames.push(...nested.possibleNames);
+  for (const hazard of nested.hazards) target.hazards.add(hazard);
+}
+
+/**
+ * Classify one binding pattern without confusing its bindings with expressions
+ * evaluated while destructuring. Unknown syntax stays visible as a hazard so a
+ * server-hook dependency can fail closed instead of silently leaving code in
+ * the browser artifact.
+ */
+function analyzeBindingPattern(value: unknown): BindingPatternAnalysis {
+  const analysis: BindingPatternAnalysis = {
+    bindingIds: [],
+    possibleNames: [],
+    hazards: new Set(),
+  };
+  if (!isNode(value)) {
+    analysis.hazards.add("unknown-syntax");
+    return analysis;
   }
-  if (pattern.type === "TSParameterProperty") {
-    return !isNode(pattern.parameter) || patternHasEvaluatedValuePosition(pattern.parameter);
+
+  if (value.type === "Identifier") {
+    const name = nodeName(value);
+    analysis.bindingIds.push(value);
+    if (name) analysis.possibleNames.push(name);
+    else analysis.hazards.add("unknown-syntax");
+    return analysis;
   }
-  if (pattern.type === "ArrayPattern") {
-    return (Array.isArray(pattern.elements) ? pattern.elements : []).some((element) =>
-      isNode(element) && patternHasEvaluatedValuePosition(element)
-    );
+
+  if (value.type === "AssignmentPattern") {
+    analysis.hazards.add("default-value");
+    mergePatternAnalysis(analysis, analyzeBindingPattern(value.left));
+    return analysis;
   }
-  if (pattern.type === "ObjectPattern") {
-    return (Array.isArray(pattern.properties) ? pattern.properties : []).some((property) => {
-      if (!isNode(property)) return false;
-      if (property.type === "RestElement") {
-        return patternHasEvaluatedValuePosition(property);
+
+  if (value.type === "RestElement") {
+    mergePatternAnalysis(analysis, analyzeBindingPattern(value.argument));
+    return analysis;
+  }
+
+  // `constructor(private dep: Dep)` binds `dep` as a parameter and assigns
+  // it to `this` at runtime.
+  if (value.type === "TSParameterProperty") {
+    mergePatternAnalysis(analysis, analyzeBindingPattern(value.parameter));
+    return analysis;
+  }
+
+  if (value.type === "ArrayPattern") {
+    for (const element of Array.isArray(value.elements) ? value.elements : []) {
+      if (element === null || element === undefined) continue;
+      mergePatternAnalysis(analysis, analyzeBindingPattern(element));
+    }
+    return analysis;
+  }
+
+  if (value.type === "ObjectPattern") {
+    for (const property of Array.isArray(value.properties) ? value.properties : []) {
+      if (!isNode(property)) {
+        analysis.hazards.add("unknown-syntax");
+        continue;
       }
-      return property.type !== "ObjectProperty" || property.computed === true ||
-        !isNode(property.value) || patternHasEvaluatedValuePosition(property.value);
-    });
+      if (property.type === "RestElement") {
+        mergePatternAnalysis(analysis, analyzeBindingPattern(property.argument));
+        continue;
+      }
+      if (property.type !== "ObjectProperty") {
+        mergePatternAnalysis(analysis, analyzeBindingPattern(property));
+        analysis.hazards.add("unknown-syntax");
+        continue;
+      }
+      if (property.computed === true) analysis.hazards.add("computed-key");
+      mergePatternAnalysis(analysis, analyzeBindingPattern(property.value));
+    }
+    return analysis;
   }
-  return true;
+
+  // Preserve every identifier as a possible binding for the conservative
+  // error decision, but never add it to bindingIds: its position is unknown.
+  walk(value, (node) => {
+    if (node.type !== "Identifier") return true;
+    const name = nodeName(node);
+    if (name) analysis.possibleNames.push(name);
+    return true;
+  });
+  analysis.hazards.add("unknown-syntax");
+  return analysis;
 }
 
 /** Every binding name a destructuring pattern introduces. */
 function patternBoundNames(pattern: Node): string[] {
-  return patternBindingIds(pattern).map(nodeName).filter((name): name is string => Boolean(name));
+  return analyzeBindingPattern(pattern).bindingIds.map(nodeName).filter(
+    (name): name is string => Boolean(name),
+  );
 }
 
 /**
@@ -691,16 +713,28 @@ interface ModuleScopeDecl {
   bindingIds: Node[];
 }
 
+interface DestructuredModuleScopeDecl {
+  declarator: Node;
+  bindingIds: Node[];
+  analysis: BindingPatternAnalysis;
+}
+
+interface ModuleScopeDeclarationAnalysis {
+  declarations: ModuleScopeDecl[];
+  destructured: DestructuredModuleScopeDecl[];
+}
+
 /**
  * Non-exported top-level `const`/`let`/`var`/`function`/`class` declarations
  * whose bindings we could safely drop if nothing references them. Exported
  * declarations are part of the module's contract and are never candidates.
- * Patterns with defaults or computed keys stay fail-closed because evaluating
- * them can run unrelated client code. In supported patterns, only binding
- * positions are excluded from liveness analysis.
+ * Patterns with defaults or computed keys are classified separately so an
+ * unsafe hook-related declaration can fail closed. In supported patterns,
+ * only binding positions are excluded from liveness analysis.
  */
-function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
+function analyzeModuleScopeDeclarations(body: Node[]): ModuleScopeDeclarationAnalysis {
   const decls: ModuleScopeDecl[] = [];
+  const destructured: DestructuredModuleScopeDecl[] = [];
 
   for (const statement of body) {
     if (statement.type === "FunctionDeclaration" || statement.type === "ClassDeclaration") {
@@ -728,16 +762,19 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
       ) {
         if (!isNode(declarator)) continue;
         const id = declarator.id;
-        if (!isNode(id) || patternHasEvaluatedValuePosition(id)) {
-          variableDecls.length = 0;
-          break;
+        if (!isNode(id)) continue;
+        const analysis = analyzeBindingPattern(id);
+        if (id.type !== "Identifier") {
+          destructured.push({
+            declarator,
+            bindingIds: analysis.bindingIds,
+            analysis,
+          });
         }
-        const bindingIds = patternBindingIds(id);
+        if (analysis.hazards.size > 0) continue;
+        const bindingIds = analysis.bindingIds;
         const names = bindingIds.map(nodeName).filter((name): name is string => Boolean(name));
-        if (names.length === 0 || names.length !== bindingIds.length) {
-          variableDecls.length = 0;
-          break;
-        }
+        if (names.length === 0 || names.length !== bindingIds.length) continue;
         variableDecls.push({ statement, declarator, names, bindingIds });
       }
 
@@ -745,7 +782,7 @@ function moduleScopeDeclarations(body: Node[]): ModuleScopeDecl[] {
     }
   }
 
-  return decls;
+  return { declarations: decls, destructured };
 }
 
 /** Whether a name is bound in the current lexical stack. */
@@ -1433,7 +1470,11 @@ function failOnAmbiguousCompilerNameHelperDuplicates(
   if (candidates.length === 0) return;
 
   const excluded = new WeakSet<Node>();
-  for (const decl of moduleScopeDeclarations(body)) {
+  const scopeDeclarations = analyzeModuleScopeDeclarations(body);
+  for (const decl of scopeDeclarations.declarations) {
+    for (const id of decl.bindingIds) excluded.add(id);
+  }
+  for (const decl of scopeDeclarations.destructured) {
     for (const id of decl.bindingIds) excluded.add(id);
   }
   for (const registration of compilerNameRegistrations(body)) excluded.add(registration.target);
@@ -1511,6 +1552,125 @@ function jsxPragmaBindings(ast: ASTNode): Set<string> {
   return pinned;
 }
 
+function isBrowserDroppableImportSource(source: unknown): source is string {
+  return typeof source === "string" &&
+    (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
+}
+
+function knownServerImportBindings(body: Node[]): Set<string> {
+  const bindings = new Set<string>();
+  for (const statement of body) {
+    if (statement.type !== "ImportDeclaration" || statement.importKind === "type") continue;
+    const source = isNode(statement.source) ? statement.source.value : undefined;
+    if (!isBrowserDroppableImportSource(source)) continue;
+    for (const binding of importedBindings(statement)) bindings.add(binding);
+  }
+  return bindings;
+}
+
+function staticCalleeRoot(node: Node | undefined): string | null {
+  if (!node) return null;
+  if (node.type === "Identifier") return nodeName(node);
+  if (
+    (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") &&
+    node.computed !== true && isNode(node.object)
+  ) {
+    return staticCalleeRoot(node.object);
+  }
+  return null;
+}
+
+/** A deliberately small data-only subset, not a general purity analysis. */
+function isStaticInitializerArgument(node: Node): boolean {
+  if (node.type === "TemplateLiteral") {
+    return !Array.isArray(node.expressions) || node.expressions.length === 0;
+  }
+  return node.type === "Literal" || node.type.endsWith("Literal");
+}
+
+function isKnownServerInitializer(node: Node | undefined, trustedBindings: Set<string>): boolean {
+  if (!node) return false;
+  if (node.type === "Identifier") return trustedBindings.has(nodeName(node) ?? "");
+  if (node.type === "MemberExpression" || node.type === "OptionalMemberExpression") {
+    const root = staticCalleeRoot(node);
+    return root !== null && trustedBindings.has(root);
+  }
+  if (node.type !== "CallExpression") return false;
+  const root = staticCalleeRoot(isNode(node.callee) ? node.callee : undefined);
+  if (root === null || !trustedBindings.has(root)) return false;
+  return (Array.isArray(node.arguments) ? node.arguments : []).every((argument) =>
+    isNode(argument) && isStaticInitializerArgument(argument)
+  );
+}
+
+type DestructuringDisposition =
+  | "keep-client-live"
+  | "not-hook-related"
+  | "reject-initializer"
+  | "reject-pattern"
+  | "remove";
+
+interface DestructuringDecisionInput {
+  analysis: BindingPatternAnalysis;
+  clientReferences: Set<string>;
+  hookClosure: Set<string>;
+  initializerIsKnownServer: boolean;
+  pinned: Set<string>;
+}
+
+function decideDestructuringDisposition(
+  input: DestructuringDecisionInput,
+): DestructuringDisposition {
+  const { analysis, clientReferences, hookClosure, initializerIsKnownServer, pinned } = input;
+  if (!analysis.possibleNames.some((name) => hookClosure.has(name))) return "not-hook-related";
+  if (analysis.hazards.has("unknown-syntax")) return "reject-pattern";
+
+  const names = analysis.bindingIds.map(nodeName).filter((name): name is string => Boolean(name));
+  if (names.some((name) => clientReferences.has(name) || pinned.has(name))) {
+    return "keep-client-live";
+  }
+  if (analysis.hazards.size > 0) return "reject-pattern";
+  if (names.length > 0 && names.every((name) => hookClosure.has(name))) return "remove";
+  return initializerIsKnownServer ? "remove" : "reject-initializer";
+}
+
+function throwUnsafeServerDestructuring(disposition: DestructuringDisposition): never {
+  const reason = disposition === "reject-pattern"
+    ? "the binding pattern evaluates a default value, a computed key, or unsupported syntax"
+    : "the initializer or one of its arguments may run unproven client side effects";
+  throw SERVER_ONLY_IN_CLIENT.create({
+    message:
+      `Cannot safely remove module-scope destructuring used by a server-only hook because ${reason}. ` +
+      "Move the destructuring into getServerData or the server-only hook that uses it. " +
+      "Declare client initialization separately.\n\n" +
+      'import { getEnv } from "veryfront";\n\n' +
+      "export async function getServerData() {\n" +
+      '  const { serverValue } = getEnv("<KEY>");\n' +
+      "  return { props: { serverValue } };\n" +
+      "}\n\n" +
+      'const clientValue = "<CLIENT_VALUE>";\n\n' +
+      "export default function Page() {\n" +
+      "  return clientValue;\n" +
+      "}",
+    detail: "Ambiguous module-scope destructuring crosses the server and browser boundary",
+    context: { reason: disposition },
+  });
+}
+
+/** @internal Stable test seams for the browser server-export safety policy. */
+export const browserServerExportsStripInternals = Object.freeze({
+  analyzeBindingPattern(value: unknown) {
+    const analysis = analyzeBindingPattern(value);
+    return {
+      bindingNames: analysis.bindingIds.map(nodeName).filter(
+        (name): name is string => Boolean(name),
+      ),
+      possibleNames: [...analysis.possibleNames],
+      hazards: [...analysis.hazards].sort(),
+    };
+  },
+});
+
 /**
  * Drop the top-level declarations the emptied server-only hooks closed over.
  *
@@ -1534,12 +1694,13 @@ function dropUnusedModuleScopeBindings(
   let current = body;
 
   for (;;) {
-    const decls = moduleScopeDeclarations(current);
-    if (decls.length === 0) return current;
+    const { declarations: decls, destructured } = analyzeModuleScopeDeclarations(current);
+    if (decls.length === 0 && destructured.length === 0) return current;
     failOnAmbiguousCompilerNameHelperDuplicates(current, hookClosure, filePath);
 
     const excluded = new WeakSet<Node>();
     for (const decl of decls) for (const id of decl.bindingIds) excluded.add(id);
+    for (const decl of destructured) for (const id of decl.bindingIds) excluded.add(id);
 
     // Esbuild's generated name-registration call is metadata for a declaration,
     // not an independent browser consumer of it. Ignore that target reference
@@ -1549,12 +1710,35 @@ function dropUnusedModuleScopeBindings(
     for (const registration of nameRegistrations) excluded.add(registration.target);
 
     const referenced = referencedIdentifiers(current, excluded);
+    const trustedBindings = knownServerImportBindings(current);
+    const destructuringDecisions = new Map<Node, DestructuringDisposition>();
+    for (const decl of destructured) {
+      const disposition = decideDestructuringDisposition({
+        analysis: decl.analysis,
+        clientReferences: referenced,
+        hookClosure,
+        initializerIsKnownServer: isKnownServerInitializer(
+          isNode(decl.declarator.init) ? decl.declarator.init : undefined,
+          trustedBindings,
+        ),
+        pinned,
+      });
+      if (disposition === "reject-initializer" || disposition === "reject-pattern") {
+        throwUnsafeServerDestructuring(disposition);
+      }
+      destructuringDecisions.set(decl.declarator, disposition);
+    }
 
     const removableStatements = new Set<Node>();
     const removableDeclarators = new Map<Node, Set<Node>>();
     const removedDecls: ModuleScopeDecl[] = [];
     for (const decl of decls) {
-      const inClosure = decl.names.every((name) => hookClosure.has(name));
+      const destructuringDecision = decl.declarator === undefined
+        ? undefined
+        : destructuringDecisions.get(decl.declarator);
+      const inClosure = destructuringDecision === undefined
+        ? decl.names.every((name) => hookClosure.has(name))
+        : destructuringDecision === "remove";
       const unused = decl.names.every((name) => !referenced.has(name) && !pinned.has(name));
       if (!inClosure || !unused) continue;
 
@@ -1657,8 +1841,7 @@ function dropUnusedImportBindings(
     if (bindings.some((binding) => referenced.has(binding) || pinned.has(binding))) return true;
 
     const source = isNode(statement.source) ? statement.source.value : undefined;
-    const isKnownDroppableSource = typeof source === "string" &&
-      (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
+    const isKnownDroppableSource = isBrowserDroppableImportSource(source);
     // A node: or veryfront source is unsafe or pointless as a browser
     // side-effect import whatever used it. Any other source is deleted when the
     // stripped hook owned at least one binding and no surviving code reads any
