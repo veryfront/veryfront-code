@@ -181,6 +181,38 @@ describe("runtime inference critical-flow pure contract", () => {
     }
   });
 
+  it("surfaces provider validation failures that arrive with terminal detail", async () => {
+    const originalFetch = globalThis.fetch;
+    let validationFailure: Error | undefined;
+    globalThis.fetch = (() => {
+      validationFailure = new Error(
+        `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+      );
+      return Promise.resolve(Response.json({ status: "failed" }));
+    }) as typeof fetch;
+
+    try {
+      await assertRejectsWithMessage(
+        () =>
+          waitForProviderReceipt(
+            {
+              received: [],
+              server: {} as Deno.HttpServer,
+              abort() {},
+              closed: Promise.resolve(),
+              validationFailure: () => validationFailure,
+              url: new URL("http://127.0.0.1:1/v1"),
+            },
+            "node",
+            new URL("http://127.0.0.1/runs/terminal-validation-failed"),
+          ),
+        `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("polls through non-terminal states and returns terminal failure details", async () => {
     const states = [
       { status: "pending" },

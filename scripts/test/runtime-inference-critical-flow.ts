@@ -386,6 +386,8 @@ export async function waitForProviderReceipt(
       lastRun = `HTTP ${response.status}: ${body.slice(0, 1_000)}`;
       if (response.ok) {
         const detail = JSON.parse(body) as WorkflowRunDetail;
+        const validationFailure = state.validationFailure();
+        if (validationFailure) throw validationFailure;
         if (detail.status && TERMINAL_STATUSES.has(detail.status)) {
           if (state.received.length > 0) return;
           throw new Error(
