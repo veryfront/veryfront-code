@@ -291,7 +291,7 @@ export const { GET, POST } = createWorkflowHandler(workflows);
   );
 }
 
-export interface ProviderState {
+interface ProviderState {
   received: Request[];
   server: Deno.HttpServer;
   abort(): void;
@@ -303,7 +303,7 @@ export interface ProviderState {
 }
 
 function stringifyError(value: unknown): string {
-  return typeof value === "string" ? value : JSON.stringify(value);
+  return typeof value === "string" ? value : String(JSON.stringify(value));
 }
 
 export function assertListedRunFailure(
@@ -336,13 +336,11 @@ export function assertListedRunFailure(
     );
   }
 
-  if (node.error !== undefined) {
-    const nodeError = stringifyError(node.error);
-    assertCondition(
-      nodeError.includes("timed out after 2000ms"),
-      `${label} persistence/list: expected 2000ms timeout evidence for ${NODE_ID}, got ${nodeError}`,
-    );
-  }
+  const nodeError = stringifyError(node.error);
+  assertCondition(
+    nodeError.includes("timed out after 2000ms"),
+    `${label} persistence/list: expected 2000ms timeout evidence for ${NODE_ID}, got ${nodeError}`,
+  );
 
   return listed;
 }

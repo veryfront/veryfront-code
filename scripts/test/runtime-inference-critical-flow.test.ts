@@ -520,6 +520,45 @@ describe("runtime inference critical-flow pure contract", () => {
       "persistence/list: call-provider was not failed",
       "List assertion should reject a listed run whose provider node is not failed",
     );
+    assertThrows(
+      () =>
+        assertListedRunFailure(
+          "node/packed npm consumer",
+          {
+            runs: [{
+              id: "run-1",
+              status: "failed",
+              nodeStates: { "call-provider": { status: "failed" } },
+            }],
+          },
+          "run-1",
+        ),
+      Error,
+      "expected 2000ms timeout evidence for call-provider",
+      "List assertion should reject a failed provider node with missing timeout error evidence",
+    );
+    assertThrows(
+      () =>
+        assertListedRunFailure(
+          "node/packed npm consumer",
+          {
+            runs: [{
+              id: "run-1",
+              status: "failed",
+              nodeStates: {
+                "call-provider": {
+                  status: "failed",
+                  error: "provider returned 401",
+                },
+              },
+            }],
+          },
+          "run-1",
+        ),
+      Error,
+      "expected 2000ms timeout evidence for call-provider",
+      "List assertion should reject a failed provider node with non-timeout error evidence",
+    );
   });
 
   it("classifies successful plaintext start responses as route/start JSON failures", () => {
