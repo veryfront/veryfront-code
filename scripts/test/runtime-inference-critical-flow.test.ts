@@ -10,6 +10,7 @@ import { parse } from "#std/yaml/parse";
 import {
   artifactClaim,
   parseRuntimeSelection,
+  parseScopedResponseJson,
   validateAnthropicRequest,
   waitForProviderReceipt,
   waitForTerminalRun,
@@ -336,6 +337,32 @@ describe("runtime inference critical-flow pure contract", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("classifies successful plaintext start responses as route/start JSON failures", () => {
+    assertThrows(
+      () =>
+        parseScopedResponseJson(
+          "node/packed npm consumer",
+          "route/start",
+          "this is not json",
+        ),
+      Error,
+      "node/packed npm consumer route/start: response was not JSON: this is not json",
+    );
+  });
+
+  it("classifies successful plaintext list responses as persistence/list JSON failures", () => {
+    assertThrows(
+      () =>
+        parseScopedResponseJson(
+          "bun/packed package consumer",
+          "persistence/list",
+          "plain text list response",
+        ),
+      Error,
+      "bun/packed package consumer persistence/list: response was not JSON: plain text list response",
+    );
   });
 
   it("does not execute the critical-flow journey on import", async () => {

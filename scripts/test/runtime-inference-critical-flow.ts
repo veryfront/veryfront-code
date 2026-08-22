@@ -202,6 +202,20 @@ export async function waitForTerminalRun(
   );
 }
 
+export function parseScopedResponseJson<T>(
+  label: string,
+  scope: "route/start" | "persistence/list",
+  body: string,
+): T {
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw new Error(
+      `${label} ${scope}: response was not JSON: ${body.slice(0, 500)}`,
+    );
+  }
+}
+
 function hasFlag(args: string[], name: string): boolean {
   return args.includes(`--${name}`);
 }
@@ -504,10 +518,10 @@ async function assertRuntimeJourney(
         startBody.slice(0, 500)
       }`,
     );
-    const started = JSON.parse(startBody) as {
+    const started = parseScopedResponseJson<{
       runId?: unknown;
       id?: unknown;
-    };
+    }>(label, "route/start", startBody);
     const runId = started.runId ?? started.id;
     assertCondition(
       typeof runId === "string" && runId.length > 0,
@@ -571,7 +585,11 @@ async function assertRuntimeJourney(
         listBody.slice(0, 500)
       }`,
     );
-    const list = JSON.parse(listBody) as { runs?: WorkflowRunDetail[] };
+    const list = parseScopedResponseJson<{ runs?: WorkflowRunDetail[] }>(
+      label,
+      "persistence/list",
+      listBody,
+    );
     const listed = list.runs?.find((run) => run.id === runId);
     assertCondition(
       listed?.status === "failed",
