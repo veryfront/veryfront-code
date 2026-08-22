@@ -1,58 +1,112 @@
 import { assertEquals, assertRejects, assertThrows } from "#std/assert";
+import { ensureDir } from "#std/fs/ensure-dir";
+import { dirname, join } from "#std/path";
 import { describe, it } from "#std/testing/bdd";
 import {
   classifyTestPath,
   collectExecutableTestFiles,
+  discoverTests,
   getExecutableTestKind,
+  shardTests,
   validateTestLayout,
 } from "./test-layout.ts";
+import { TEST_LAYOUT_MIGRATION_ENTRIES } from "./test-layout-migration.ts";
 
 describe("test path executable classification", () => {
-  it("accepts every supported executable test extension and Playwright name", () => {
-    // Production break caught: a supported runner file can be orphaned because
-    // the executable detector forgets one extension or Playwright pattern.
-    assertEquals(getExecutableTestKind("tests/unit/example.test.ts"), "deno");
-    assertEquals(getExecutableTestKind("tests/unit/example.test.tsx"), "deno");
-    assertEquals(getExecutableTestKind("tests/unit/example.test.js"), "deno");
-    assertEquals(getExecutableTestKind("tests/unit/example.test.mjs"), "deno");
-    assertEquals(getExecutableTestKind("tests/unit/example.test.cjs"), "deno");
+  it("accepts exactly the supported executable filename contract", () => {
+    // Production break caught: test discovery accepts a filename pattern before
+    // the taxonomy registry has explicit ownership for that executable form.
+    assertEquals(getExecutableTestKind("src/example.test.ts"), "deno");
+    assertEquals(getExecutableTestKind("src/example.test.tsx"), "deno");
+    assertEquals(getExecutableTestKind("src/example.test.js"), "deno");
+    assertEquals(getExecutableTestKind("src/example.test.mjs"), "deno");
+    assertEquals(getExecutableTestKind("src/example.test.cjs"), "deno");
     assertEquals(
       getExecutableTestKind("tests/e2e/example.playwright.ts"),
       "playwright",
     );
+
+    assertEquals(getExecutableTestKind("src/example.test.jsx"), undefined);
+    assertEquals(getExecutableTestKind("src/example.spec.ts"), undefined);
+    assertEquals(
+      getExecutableTestKind("tests/e2e/example.playwright.tsx"),
+      undefined,
+    );
+    assertEquals(
+      getExecutableTestKind("tests/e2e/example.playwright.js"),
+      undefined,
+    );
+    assertEquals(
+      getExecutableTestKind("tests/e2e/example.playwright.mjs"),
+      undefined,
+    );
+    assertEquals(
+      getExecutableTestKind("tests/e2e/example.playwright.cjs"),
+      undefined,
+    );
   });
 
-  it("rejects support files, fixtures, and unsupported extensions", () => {
-    // Production break caught: helper fixtures or unsupported executable names
-    // are treated as runnable suites and get assigned an owner.
-    assertEquals(getExecutableTestKind("tests/_helpers/server.ts"), undefined);
-    assertEquals(
-      getExecutableTestKind("tests/fixtures/test-data-factory.ts"),
-      undefined,
-    );
-    assertEquals(
-      getExecutableTestKind("tests/unit/example.test.md"),
-      undefined,
-    );
-    assertThrows(
-      () => classifyTestPath("tests/unit/example.test.md"),
-      Error,
-      "Unsupported or non-executable test path",
-    );
+  it("discovers unsupported test-like files instead of silently dropping them", async () => {
+    // Production break caught: src/foo.test.jsx, src/foo.spec.ts, and
+    // tests/e2e/foo.playwright.js are invisible to repository validation.
+    const root = await Deno.makeTempDir();
+    try {
+      await writeFixture(root, "src/ok.test.ts");
+      await writeFixture(root, "src/bad.test.jsx");
+      await writeFixture(root, "src/bad.spec.ts");
+      await writeFixture(root, "tests/e2e/bad.playwright.js");
+
+      const result = await discoverTests({ root });
+
+      assertEquals(result.inventory.map((entry) => entry.path), [
+        "src/ok.test.ts",
+      ]);
+      assertEquals(result.violations.map((violation) => violation.path), [
+        "src/bad.spec.ts",
+        "src/bad.test.jsx",
+        "tests/e2e/bad.playwright.js",
+      ]);
+      assertEquals(
+        result.violations.map((violation) => violation.reason),
+        [
+          "unsupported test-like filename",
+          "unsupported test-like filename",
+          "unsupported test-like filename",
+        ],
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
   });
 });
 
 describe("test layout path ownership", () => {
-  it("classifies every valid canonical location into level, leaf suite, and runner", () => {
-    // Production break caught: canonical test directories can resolve to the
-    // wrong level, suite, variant, or runner.
-    assertEquals(classifyTestPath("tests/unit/rendering/layout.test.ts"), {
-      kind: "canonical",
-      path: "tests/unit/rendering/layout.test.ts",
-      level: "unit",
-      suite: "unit",
-      runner: "deno",
-    });
+  it("classifies approved canonical unit roots as unit leaf ownership", () => {
+    // Production break caught: colocated unit roots are kept in the migration
+    // inventory while tests/unit is treated as the canonical destination.
+    for (
+      const path of [
+        "src/agent/factory.test.ts",
+        "cli/router.test.ts",
+        "extensions/ext-bundler-esbuild/src/binary.test.ts",
+        "templates/scaffold-parity.test.ts",
+        "scripts/test/test-layout.test.ts",
+        "react/react.test.ts",
+      ]
+    ) {
+      assertEquals(classifyTestPath(path), {
+        kind: "canonical",
+        path,
+        level: "unit",
+        suite: "unit",
+        runner: "deno",
+      });
+    }
+  });
+
+  it("classifies integration and e2e canonical trees into runner inventory fields", () => {
+    // Production break caught: validation counts files but drops the emitted
+    // path-to-level-to-leaf-suite-to-runner inventory needed by later PRs.
     assertEquals(classifyTestPath("tests/integration/server/build.test.ts"), {
       kind: "canonical",
       path: "tests/integration/server/build.test.ts",
@@ -67,42 +121,56 @@ describe("test layout path ownership", () => {
       suite: "e2e",
       runner: "playwright",
     });
-    assertEquals(classifyTestPath("tests/node/loader.test.mjs"), {
-      kind: "canonical",
-      path: "tests/node/loader.test.mjs",
-      level: "runtime",
-      suite: "runtime",
-      variant: "node",
-      runner: "node",
-    });
-    assertEquals(classifyTestPath("tests/bun/runner-args.test.mjs"), {
-      kind: "canonical",
-      path: "tests/bun/runner-args.test.mjs",
-      level: "runtime",
-      suite: "runtime",
-      variant: "bun",
-      runner: "bun",
-    });
-    assertEquals(classifyTestPath("scripts/test/test-layout.test.ts"), {
-      kind: "canonical",
-      path: "scripts/test/test-layout.test.ts",
-      level: "tooling",
-      suite: "scripts",
-      runner: "deno",
-    });
   });
 
-  it("keeps current off-layout tests on a finite migration entry", () => {
-    // Production break caught: taxonomy-only migration starts moving ownership
-    // rules into runner selection or loses the temporary migration owner.
-    assertEquals(classifyTestPath("src/agent/factory.test.ts"), {
+  it("keeps current off-layout tests on explicit migration entries with owner and removal PR", () => {
+    // Production break caught: a broad prefix/count allowlist can own new
+    // off-layout tests without recording a finite path-level migration item.
+    assertEquals(classifyTestPath("tests/unit/invalidation-state.test.ts"), {
       kind: "migration",
-      path: "src/agent/factory.test.ts",
+      path: "tests/unit/invalidation-state.test.ts",
       level: "unit",
       suite: "unit",
       runner: "deno",
-      migrationEntry: "src",
+      migrationEntry: {
+        path: "tests/unit/invalidation-state.test.ts",
+        owner: "test-architecture",
+        removalPr: "PR 4",
+      },
     });
+    assertEquals(
+      TEST_LAYOUT_MIGRATION_ENTRIES.every((entry) =>
+        "path" in entry && "owner" in entry && "removalPr" in entry &&
+        !("pathPrefix" in entry) && !("count" in entry)
+      ),
+      true,
+    );
+  });
+
+  it("rejects executable fixtures and support files before migration ownership", () => {
+    // Production break caught: tests/fixtures/leak.test.ts and
+    // tests/**/support/leak.test.ts pass through the normal migration-enabled
+    // classifier because a broad tests/ prefix owns them first.
+    assertThrows(
+      () => classifyTestPath("tests/fixtures/leak.test.ts"),
+      Error,
+      "support or fixture executable",
+    );
+    assertThrows(
+      () => classifyTestPath("tests/integration/support/leak.test.ts"),
+      Error,
+      "support or fixture executable",
+    );
+    assertThrows(
+      () => classifyTestPath("tests/support/leak.test.ts"),
+      Error,
+      "support or fixture executable",
+    );
+    assertThrows(
+      () => classifyTestPath("tests/e2e/fixtures/leak.test.ts"),
+      Error,
+      "support or fixture executable",
+    );
   });
 
   it("fails orphan tests and deliberate duplicate canonical owners", () => {
@@ -115,19 +183,23 @@ describe("test layout path ownership", () => {
     );
     assertThrows(
       () =>
-        classifyTestPath("tests/unit/overlap.test.ts", {
+        classifyTestPath("src/agent/overlap.test.ts", {
           suites: [
             {
               id: "unit",
               level: "unit",
-              pathPrefix: "tests/unit/",
+              pathSelectors: ["src/"],
               runner: "deno",
+              prOwner: "test-architecture",
+              supportExclusions: [],
             },
             {
-              id: "unit",
-              level: "unit",
-              pathPrefix: "tests/unit/overlap",
+              id: "integration",
+              level: "integration",
+              pathSelectors: ["src/agent/"],
               runner: "deno",
+              prOwner: "test-architecture",
+              supportExclusions: [],
             },
           ],
           migrationEntries: [],
@@ -136,22 +208,84 @@ describe("test layout path ownership", () => {
       "multiple test layout owners",
     );
   });
-
-  it("rejects executable support and fixture tests outside canonical ownership", () => {
-    // Production break caught: a support fixture named like a test becomes a
-    // runnable suite instead of failing loudly.
-    assertThrows(
-      () =>
-        classifyTestPath("tests/_helpers/playwright.test.ts", {
-          migrationEntries: [],
-        }),
-      Error,
-      "support or fixture executable",
-    );
-  });
 });
 
 describe("test layout inventory validation", () => {
+  it("discovers tests in lexical order", async () => {
+    // Production break caught: filesystem traversal order leaks into the
+    // emitted inventory, causing unstable evidence and shard inputs.
+    const result = await discoverTests({
+      paths: [
+        "src/zeta.test.ts",
+        "src/alpha.test.ts",
+        "tests/e2e/smoke.playwright.ts",
+      ],
+    });
+
+    assertEquals(result.inventory.map((entry) => entry.path), [
+      "src/alpha.test.ts",
+      "src/zeta.test.ts",
+      "tests/e2e/smoke.playwright.ts",
+    ]);
+  });
+
+  it("shards test paths by stable hash independent of input order", () => {
+    // Production break caught: sharding depends on caller or filesystem order
+    // instead of a stable path hash.
+    const paths = [
+      "src/agent/factory.test.ts",
+      "cli/router.test.ts",
+      "tests/e2e/smoke.playwright.ts",
+      "tests/integration/server/build.test.ts",
+    ];
+
+    assertEquals(
+      shardTests(paths, 1, 2),
+      shardTests([...paths].reverse(), 1, 2),
+    );
+    assertEquals(
+      shardTests(paths, 2, 2),
+      shardTests([...paths].reverse(), 2, 2),
+    );
+  });
+
+  it("emits path to level to leaf suite to runner inventory", async () => {
+    // Production break caught: validateTestLayout proves only aggregate counts
+    // and cannot feed later suite-selection work from concrete ownership data.
+    const result = await validateTestLayout({
+      paths: [
+        "tests/bun/runner-args.test.mjs",
+        "src/agent/factory.test.ts",
+        "tests/e2e/smoke.playwright.ts",
+      ],
+    });
+
+    assertEquals(result.inventory, [
+      {
+        path: "src/agent/factory.test.ts",
+        level: "unit",
+        suite: "unit",
+        runner: "deno",
+        kind: "canonical",
+      },
+      {
+        path: "tests/bun/runner-args.test.mjs",
+        level: "unit",
+        suite: "runtime",
+        runner: "bun",
+        variant: "bun",
+        kind: "migration",
+      },
+      {
+        path: "tests/e2e/smoke.playwright.ts",
+        level: "e2e",
+        suite: "e2e",
+        runner: "playwright",
+        kind: "canonical",
+      },
+    ]);
+  });
+
   it("collects executable tests from the repo without vendored node_modules", async () => {
     // Production break caught: dependency tests under node_modules contaminate
     // the project inventory and hide real owner counts.
@@ -164,24 +298,24 @@ describe("test layout inventory validation", () => {
     );
   });
 
-  it("rejects migration allowlist growth against real filesystem behavior", async () => {
-    // Production break caught: adding a test under a migrated prefix silently
-    // grows the temporary inventory instead of forcing an explicit decision.
+  it("rejects migration entries that no longer match a current violation", async () => {
+    // Production break caught: deleted or canonicalized migration paths can stay
+    // in the temporary inventory instead of forcing monotonic shrinkage.
     await assertRejects(
       () =>
         validateTestLayout({
-          root: ".",
+          paths: ["src/agent/factory.test.ts"],
           migrationEntries: [{
-            id: "src",
-            pathPrefix: "src/",
-            count: 1,
+            path: "tests/unit/invalidation-state.test.ts",
             level: "unit",
             suite: "unit",
             runner: "deno",
+            owner: "test-architecture",
+            removalPr: "PR 4",
           }],
         }),
       Error,
-      "migration allowlist count changed",
+      "stale migration entry",
     );
   });
 
@@ -192,6 +326,13 @@ describe("test layout inventory validation", () => {
 
     assertEquals(result.errors, []);
     assertEquals(result.files > 0, true);
+    assertEquals(result.inventory.length, result.files);
     assertEquals(result.timingMs >= 0, true);
   });
 });
+
+async function writeFixture(root: string, relativePath: string): Promise<void> {
+  const target = join(root, relativePath);
+  await ensureDir(dirname(target));
+  await Deno.writeTextFile(target, "");
+}
