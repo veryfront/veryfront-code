@@ -1046,7 +1046,9 @@ describe("browser-server-exports-strip", () => {
         `export default function Page() { return DEFAULT; }`,
       ].join("\n");
 
-      await assertUnsafeServerDestructuring(code);
+      const error = await assertUnsafeServerDestructuring(code);
+      assertStringIncludes(error.message, "Module: pages/unsafe-destructuring.tsx");
+      assertStringIncludes(error.message, "Bindings: a");
     });
 
     it("rejects a computed server-hook pattern instead of shipping it", async () => {

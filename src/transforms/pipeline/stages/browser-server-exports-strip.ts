@@ -1634,13 +1634,19 @@ function decideDestructuringDisposition(
   return initializerIsKnownServer ? "remove" : "reject-initializer";
 }
 
-function throwUnsafeServerDestructuring(disposition: DestructuringDisposition): never {
+function throwUnsafeServerDestructuring(
+  disposition: DestructuringDisposition,
+  filePath: string | undefined,
+  bindingNames: string[],
+): never {
   const reason = disposition === "reject-pattern"
     ? "the binding pattern evaluates a default value, a computed key, or unsupported syntax"
     : "the initializer or one of its arguments may run unproven client side effects";
   throw SERVER_ONLY_IN_CLIENT.create({
     message:
       `Cannot safely remove module-scope destructuring used by a server-only hook because ${reason}. ` +
+      `Module: ${filePath ?? "this module"}. ` +
+      `Bindings: ${bindingNames.join(", ") || "unknown"}. ` +
       "Move the destructuring into getServerData or the server-only hook that uses it. " +
       "Declare client initialization separately.\n\n" +
       'import { getEnv } from "veryfront";\n\n' +
@@ -1692,6 +1698,7 @@ function dropUnusedModuleScopeBindings(
   pinned: Set<string>,
 ): Node[] {
   let current = body;
+  const trustedBindings = knownServerImportBindings(body);
 
   for (;;) {
     const { declarations: decls, destructured } = analyzeModuleScopeDeclarations(current);
@@ -1710,7 +1717,6 @@ function dropUnusedModuleScopeBindings(
     for (const registration of nameRegistrations) excluded.add(registration.target);
 
     const referenced = referencedIdentifiers(current, excluded);
-    const trustedBindings = knownServerImportBindings(current);
     const destructuringDecisions = new Map<Node, DestructuringDisposition>();
     for (const decl of destructured) {
       const disposition = decideDestructuringDisposition({
@@ -1724,7 +1730,13 @@ function dropUnusedModuleScopeBindings(
         pinned,
       });
       if (disposition === "reject-initializer" || disposition === "reject-pattern") {
-        throwUnsafeServerDestructuring(disposition);
+        throwUnsafeServerDestructuring(
+          disposition,
+          filePath,
+          decl.analysis.bindingIds.map(nodeName).filter(
+            (name): name is string => Boolean(name),
+          ),
+        );
       }
       destructuringDecisions.set(decl.declarator, disposition);
     }
