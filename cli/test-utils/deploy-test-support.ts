@@ -23,6 +23,7 @@ import type {
   DeployProjectRecord,
   DeployRelease,
   DeployReleaseFile,
+  EnvironmentAccessToken,
 } from "../shared/deployment/control-plane.ts";
 
 export const CONTROL_PLANE = "https://control.example.test/api";
@@ -308,7 +309,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
 
   async createEnvironmentAccessToken(
     target: { projectId: string; environmentName: string },
-  ): Promise<string> {
+  ): Promise<EnvironmentAccessToken> {
     this.environmentAccessTokenRequests.push({ ...target });
     if (this.environmentAccessToken === null) {
       // Shaped like the CLI API client's error: a status, and a message that
@@ -320,7 +321,7 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
         { status: this.environmentAccessTokenFailureStatus },
       );
     }
-    return this.environmentAccessToken;
+    return { accessToken: this.environmentAccessToken, expiresIn: 300 };
   }
 
   async getDeployment(_reference: string, deploymentId: string): Promise<DeployDeployment> {

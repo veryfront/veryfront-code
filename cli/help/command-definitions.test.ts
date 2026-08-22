@@ -26,6 +26,7 @@ describe("command-definitions", () => {
       assertExists(COMMANDS.uploads);
       assertExists(COMMANDS.files);
       assertExists(COMMANDS.knowledge);
+      assertExists(COMMANDS.env);
     });
 
     it("each command has required properties", () => {

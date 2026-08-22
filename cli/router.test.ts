@@ -498,6 +498,26 @@ describe("cli/router helpers", () => {
       }
     });
 
+    it("routes env to its subcommand handler", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit({ _: ["env"], json: true } as ParsedArgs);
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]!);
+        assertEquals(parsed.command, "env");
+        assertEquals(parsed.error.registrySlug, "invalid-argument");
+        assertEquals(
+          parsed.error.message,
+          "Environment subcommand is required. Usage: veryfront env token --env <name>",
+        );
+      } finally {
+        restoreAll();
+      }
+    });
+
     const DUPLICATED_BINARY_MESSAGE =
       '  You already included "veryfront". Remove the extra "veryfront" argument and run the command again.';
 

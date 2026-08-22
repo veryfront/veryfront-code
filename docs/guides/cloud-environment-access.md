@@ -41,18 +41,16 @@ authenticates the CLI against the Cloud API, not requests to the deployed app.
 Exchange it for an environment access token for the key owner instead. The gate
 accepts it for five minutes, and the Cloud API refuses it as a session.
 `veryfront deploy` performs this exchange to probe the environment it
-deployed. A CI smoke test can do the same:
+deployed. Use `veryfront env token` to mint the same bound credential for a
+manual check or a later CI smoke test:
 
 ```bash
 set -euo pipefail
-TOKEN=$(curl -fsS -X POST https://api.veryfront.com/auth/environment-token \
-  -H "Authorization: Bearer $VERYFRONT_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"project_reference":"<PROJECT_ID>","environment_name":"production"}' |
-  jq -er '.access_token | strings | select(length > 0)')
-STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --cookie "authToken=$TOKEN" \
-  <environment-url>/<route>)
+TOKEN="$(veryfront env token --env production --project <PROJECT_ID>)"
+STATUS="$(curl -sS -o /dev/null -w '%{http_code}' \
+  --cookie "authToken=$TOKEN" <environment-url>/<route>)"
 [ "$STATUS" = "200" ] || { echo "expected 200, got $STATUS" >&2; exit 1; }
+unset TOKEN
 ```
 
 Compare against the status the route normally returns. The probe does not
@@ -62,7 +60,10 @@ minutes and an expired token is refused the same way, so mint it immediately
 before the probe rather than once for a long suite. The token is bound to
 the project and environment named in the exchange. A key scoped to another
 project, or a key whose owner is not a member of the project gets a `403` at
-the exchange.
+the exchange. Human output contains only the token so command substitution can
+capture it without placing the credential in shell history. With `--json`, read
+the token from `.data.access_token` and its API-provided lifetime from
+`.data.expires_in`.
 
 ## Make an environment public
 

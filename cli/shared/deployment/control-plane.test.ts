@@ -39,7 +39,7 @@ async function collectReleaseFiles(files: AsyncIterable<DeployReleaseFile>) {
 }
 
 describe("createHttpDeployControlPlane", () => {
-  it("exchanges the API key for an environment access token", async () => {
+  it("preserves the environment access token expiry returned by the API", async () => {
     const calls: Array<{ path: string; body: unknown }> = [];
     const controlPlane = createHttpDeployControlPlane(
       config,
@@ -60,7 +60,10 @@ describe("createHttpDeployControlPlane", () => {
         projectId: "11111111-1111-4111-8111-111111111111",
         environmentName: "production",
       }),
-      "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+      {
+        accessToken: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+        expiresIn: 300,
+      },
     );
     assertEquals(calls, [{
       path: "/auth/environment-token",
@@ -69,6 +72,31 @@ describe("createHttpDeployControlPlane", () => {
         environment_name: "production",
       },
     }]);
+  });
+
+  it("rejects an environment access token without a positive integer expiry", async () => {
+    for (const expiresIn of [undefined, 0, 1.5]) {
+      const controlPlane = createHttpDeployControlPlane(
+        config,
+        mockClientReturning({
+          post: () =>
+            Promise.resolve({
+              access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+              expires_in: expiresIn,
+            }),
+        }),
+      );
+
+      await assertRejects(
+        () =>
+          controlPlane.createEnvironmentAccessToken({
+            projectId: "11111111-1111-4111-8111-111111111111",
+            environmentName: "production",
+          }),
+        Error,
+        "positive integer expiry",
+      );
+    }
   });
 
   it("treats only not-found release asset manifests as polling absence", async () => {
