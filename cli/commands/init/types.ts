@@ -26,7 +26,7 @@ export interface InitOptions {
   quiet?: boolean;
   /** Deploy to cloud after scaffolding */
   deploy?: boolean;
-  /** Overwrite existing directory */
+  /** Overwrite existing files and directories */
   force?: boolean;
   /** Runtime for the scaffolded project. Defaults to "node". */
   runtime?: InitRuntime;
