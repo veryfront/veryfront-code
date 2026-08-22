@@ -7,7 +7,10 @@ import {
   filterTestFiles,
   listTestFiles,
 } from "../../tests/test-file-utils.mjs";
-import { buildDenoSuiteCommandArgs } from "./run-deno-suite.ts";
+import {
+  buildDenoSuiteCommandArgs,
+  parseDenoSuiteArgs,
+} from "./run-deno-suite.ts";
 import {
   formatSuitePlan,
   planSuiteFiles,
@@ -136,14 +139,19 @@ describe("migration command surface", () => {
     const parallel = buildDenoSuiteCommandArgs("unit:parallel", [
       "src/a test.test.ts",
     ]);
-    const cwd = buildDenoSuiteCommandArgs("unit:cwd", ["cli/router.test.ts"]);
+    const cwd = buildDenoSuiteCommandArgs("unit:cwd", [
+      "cli/router.test.ts",
+    ]);
     const integration = buildDenoSuiteCommandArgs(
       "integration:legacy-tests-root",
       ["tests/routes.test.ts"],
     );
-    const cliIntegration = buildDenoSuiteCommandArgs("integration:cli", [
-      "cli/routes.integration.test.ts",
-    ]);
+    const cliIntegration = buildDenoSuiteCommandArgs(
+      "integration:cli",
+      [
+        "cli/routes.integration.test.ts",
+      ],
+    );
 
     assert(parallel.includes("--parallel"));
     assert(parallel.includes("--trace-leaks"));
@@ -160,6 +168,25 @@ describe("migration command surface", () => {
       false,
     );
     assertEquals(cliIntegration.at(-1), "cli/routes.integration.test.ts");
+  });
+
+  it("forwards task-level Deno flags before selected files", () => {
+    const parsed = parseDenoSuiteArgs([
+      "--suite=integration:legacy-tests-root",
+      "--no-lock",
+    ]);
+    assertEquals(parsed, {
+      suite: "integration:legacy-tests-root",
+      passthroughArgs: ["--no-lock"],
+    });
+
+    const args = buildDenoSuiteCommandArgs(
+      "integration:legacy-tests-root",
+      ["tests/routes.test.ts"],
+      parsed,
+    );
+
+    assertEquals(args.slice(-2), ["--no-lock", "tests/routes.test.ts"]);
   });
 
   it("routes affected compatibility tasks through declared suite profiles", async () => {

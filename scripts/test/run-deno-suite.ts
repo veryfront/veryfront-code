@@ -18,11 +18,52 @@ const DENO_SUITES = new Set<DenoSuitePlanId>([
 const PROVIDER_EGRESS_DENY_NET =
   "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
 
+interface DenoSuiteCommandOptions {
+  readonly coverageDir?: string;
+  readonly passthroughArgs?: readonly string[];
+}
+
+interface ParsedDenoSuiteArgs extends DenoSuiteCommandOptions {
+  readonly suite?: string;
+  readonly passthroughArgs: readonly string[];
+}
+
+export function parseDenoSuiteArgs(
+  args: readonly string[],
+): ParsedDenoSuiteArgs {
+  const adapterArgs: string[] = [];
+  const passthroughArgs: string[] = [];
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--suite" || arg === "--coverage-dir") {
+      adapterArgs.push(arg);
+      if (index + 1 < args.length) adapterArgs.push(args[++index]);
+    } else if (
+      arg.startsWith("--suite=") || arg.startsWith("--coverage-dir=")
+    ) {
+      adapterArgs.push(arg);
+    } else {
+      passthroughArgs.push(arg);
+    }
+  }
+
+  const flags = parseArgs(adapterArgs, {
+    string: ["suite", "coverage-dir"],
+  });
+  return {
+    ...(flags.suite ? { suite: flags.suite } : {}),
+    ...(flags["coverage-dir"] ? { coverageDir: flags["coverage-dir"] } : {}),
+    passthroughArgs,
+  };
+}
+
 export function buildDenoSuiteCommandArgs(
   suite: DenoSuitePlanId,
   files: readonly string[],
-  options: { readonly coverageDir?: string } = {},
+  options: DenoSuiteCommandOptions = {},
 ): string[] {
+  const passthroughArgs = options.passthroughArgs ?? [];
   if (suite === "coverage:unit") {
     return [
       "test",
@@ -37,6 +78,7 @@ export function buildDenoSuiteCommandArgs(
       "--ignore=tests,src/workflow/__tests__",
       "--unstable-worker-options",
       "--unstable-net",
+      ...passthroughArgs,
       ...files,
     ];
   }
@@ -49,6 +91,7 @@ export function buildDenoSuiteCommandArgs(
       "--allow-all",
       "--unstable-worker-options",
       "--unstable-net",
+      ...passthroughArgs,
       ...files,
     ];
   }
@@ -63,6 +106,7 @@ export function buildDenoSuiteCommandArgs(
       "--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts",
       "--unstable-worker-options",
       "--unstable-net",
+      ...passthroughArgs,
       ...files,
     ];
   }
@@ -78,14 +122,13 @@ export function buildDenoSuiteCommandArgs(
     "--v8-flags=--max-old-space-size=8192",
     "--unstable-worker-options",
     "--unstable-net",
+    ...passthroughArgs,
     ...files,
   ];
 }
 
 if (import.meta.main) {
-  const flags = parseArgs(Deno.args, {
-    string: ["suite", "coverage-dir"],
-  });
+  const flags = parseDenoSuiteArgs(Deno.args);
   if (!flags.suite || !DENO_SUITES.has(flags.suite as DenoSuitePlanId)) {
     console.error("Usage: run-deno-suite.ts --suite=<Deno suite profile>");
     Deno.exit(2);
@@ -95,7 +138,8 @@ if (import.meta.main) {
   const plan = await planSuiteFiles({ suite });
   const status = await new Deno.Command("deno", {
     args: buildDenoSuiteCommandArgs(suite, plan.files, {
-      ...(flags["coverage-dir"] ? { coverageDir: flags["coverage-dir"] } : {}),
+      ...(flags.coverageDir ? { coverageDir: flags.coverageDir } : {}),
+      passthroughArgs: flags.passthroughArgs,
     }),
     stdin: "inherit",
     stdout: "inherit",
