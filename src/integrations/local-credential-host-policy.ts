@@ -1,4 +1,6 @@
+import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { localIntegrationConfigurationError } from "#veryfront/integrations/local-integration-errors.ts";
 
 /**
  * Operator-owned grant for resolving and using local integration credentials.
@@ -14,4 +16,20 @@ export function isHostLocalIntegrationCredentialsEnabled(
   value: string | undefined = getHostEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV),
 ): boolean {
   return value === "1";
+}
+
+/**
+ * Refuse local credential discovery and execution unless the host granted it.
+ *
+ * Every source that resolves credentials from the host environment calls this
+ * before it lists or executes a tool, so a source cannot inherit the capability
+ * by omitting its own call-site check. A proxy runtime is refused even when the
+ * grant is set, because it never owns the credentials it would forward.
+ */
+export function assertLocalCredentialHostGrant(): void {
+  if (getEnvironmentConfig().proxyMode || !isHostLocalIntegrationCredentialsEnabled()) {
+    localIntegrationConfigurationError(
+      "Local integration credentials are available only in local or self-hosted runtimes",
+    );
+  }
 }

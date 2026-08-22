@@ -13,6 +13,7 @@ import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outboun
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { connectors } from "./_data.ts";
+import { assertLocalCredentialHostGrant } from "./local-credential-host-policy.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
@@ -719,7 +720,14 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
 
   return Object.freeze({
     id: "salesforce-service-account",
+    // A refused host grant rejects rather than throwing synchronously, so a
+    // caller that only awaits discovery still sees the refusal.
     listTools(): Promise<ToolDefinition[]> {
+      try {
+        assertLocalCredentialHostGrant();
+      } catch (cause) {
+        return Promise.reject(cause);
+      }
       return Promise.resolve([...definitions]);
     },
     async executeTool(
@@ -727,6 +735,7 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
       rawArgs: Record<string, unknown>,
       context?: ToolExecutionContext,
     ): Promise<unknown> {
+      assertLocalCredentialHostGrant();
       context?.abortSignal?.throwIfAborted();
       const tool = toolByName.get(toolName);
       if (!tool?.endpoint) {

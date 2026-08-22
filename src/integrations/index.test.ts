@@ -9,6 +9,7 @@ import {
   filterVisibleIntegrations,
   HOST_ADAPTER_INTEGRATIONS_ENV,
 } from "./feature-flags.ts";
+import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
 import {
   createSalesforceServiceAccountToolSource,
   getConnector,
@@ -19,7 +20,10 @@ import {
 } from "./index.ts";
 
 describe("integrations/index", () => {
-  afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
+  afterEach(() => {
+    Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV);
+    Deno.env.delete(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+  });
 
   it("exposes default-visible connector data through lookup helpers", () => {
     const visibleConnectors = filterVisibleIntegrations(connectors);
@@ -80,6 +84,7 @@ describe("integrations/index", () => {
   });
 
   it("exports the explicit local Salesforce service-account source", async () => {
+    Deno.env.set(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, "1");
     assertEquals(SALESFORCE_SERVICE_ACCOUNT_ENV_VARS, [
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",

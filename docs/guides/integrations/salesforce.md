@@ -103,7 +103,8 @@ export default agent({
 
 This path needs no Veryfront account, project token, or hosted integration API.
 The host must set `VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1` before
-it lists or executes a local integration tool.
+it lists or executes a local integration tool. The same grant covers
+`createSalesforceServiceAccountToolSource` below.
 It reads the three service-account variables from the active project environment,
 exchanges them at the configured Salesforce My Domain, and sends the resulting
 bearer token only to that org's returned My Domain instance. Raw credentials and

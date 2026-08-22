@@ -1,4 +1,3 @@
-import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
@@ -23,7 +22,7 @@ import {
   localIntegrationConfigurationError,
   safeLocalIntegrationIdentifier,
 } from "#veryfront/integrations/local-integration-errors.ts";
-import { isHostLocalIntegrationCredentialsEnabled } from "#veryfront/integrations/local-credential-host-policy.ts";
+import { assertLocalCredentialHostGrant } from "#veryfront/integrations/local-credential-host-policy.ts";
 import { MAX_LOCAL_INTEGRATION_TOOLS } from "#veryfront/integrations/limits.ts";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { IntegrationConfig, IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -488,15 +487,6 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
   });
 }
 
-function assertLocalRuntime(): void {
-  const environment = getEnvironmentConfig();
-  if (environment.proxyMode || !isHostLocalIntegrationCredentialsEnabled()) {
-    configurationError(
-      "Local integration credentials are available only in local or self-hosted runtimes",
-    );
-  }
-}
-
 function createLocalIntegrationToolSourceInternal(
   options: LocalIntegrationToolSourceOptions,
   transport?: LocalIntegrationEndpointTransport,
@@ -516,7 +506,7 @@ function createLocalIntegrationToolSourceInternal(
   return freeze({
     id: "veryfront-local-integrations",
     async listTools(): Promise<ToolDefinition[]> {
-      assertLocalRuntime();
+      assertLocalCredentialHostGrant();
       const validatedConnectors = new SetConstructor<string>();
       for (let index = 0; index < snapshot.tools.length; index++) {
         const toolId = snapshot.tools[index]!;
@@ -536,7 +526,7 @@ function createLocalIntegrationToolSourceInternal(
       args: Record<string, unknown>,
       context?: ToolExecutionContext,
     ): Promise<unknown> {
-      assertLocalRuntime();
+      assertLocalCredentialHostGrant();
       throwIfCallerAborted(context?.abortSignal);
       const tool = mapValue(admitted, toolName);
       if (!tool) {

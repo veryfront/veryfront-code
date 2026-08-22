@@ -30,14 +30,17 @@ Choose substitutes for managed capabilities before you deploy.
 | Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 
 Allow local integration credentials in the host process before you materialize
-a local catalog source:
+any local source, both the catalog source and the Salesforce service-account
+source below:
 
 ```dotenv title=".env"
 VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1
 ```
 
 This is a host-owned capability. Project environment overlays cannot enable it.
-Leave it unset on shared or proxy runtimes.
+Leave it unset on shared or proxy runtimes. Without it, both sources refuse to
+list or execute a tool. If you already run a local source, set this variable
+before you upgrade, or discovery starts failing.
 
 For supported fixed REST tools, create a local source with the exact canonical
 tool IDs the application grants:
