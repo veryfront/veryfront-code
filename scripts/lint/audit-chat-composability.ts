@@ -18,9 +18,9 @@
  * Where the rule comes from: RFC 29's node contract — "there is never an inner
  * div you can't class, because you rendered it" — which only holds if the parts
  * a doc names are parts you can actually reach.
- * See `docs/rfcs/29-chat-api-shape.md` ("L2 - Primitives", node contract).
- * `audit-rfc-status.ts` is the sibling lint that keeps that RFC's own pages
- * honest about what has shipped.
+ * See veryfront/veryfront-issue-inbox#739 ("L2 - Primitives", node contract).
+ * Proposal status lives in the issue tracker; this lint owns the durable
+ * shipped composition contract.
  */
 
 import { walk } from "#std/fs";

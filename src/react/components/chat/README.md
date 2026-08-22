@@ -110,4 +110,4 @@ parts on the same pattern.
 
 - [`../README.md`](../README.md) — sibling framework components
 - [`../../README.md`](../../README.md) — the React module as a whole
-- [`docs/rfcs/29-chat-api-shape.md`](../../../../docs/rfcs/29-chat-api-shape.md) — why the composition surface is shaped this way
+- [Chat API shape issue](https://github.com/veryfront/veryfront-issue-inbox/issues/739) — proposal history behind the composition surface
