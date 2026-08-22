@@ -1,17 +1,17 @@
-import type { RuntimeName } from "./template-runtime-e2e.ts";
 import {
   assertCondition,
   ensureCommand,
   installDependencies,
   packNpmPackage,
   runChecked,
+  type RuntimeName,
   scaffoldProject,
   startDevServer,
   stopDevServer,
   waitForRoute,
-} from "./template-runtime-e2e.ts";
+} from "./runtime-e2e-helpers.ts";
 
-export type { RuntimeName } from "./template-runtime-e2e.ts";
+export type { RuntimeName } from "./runtime-e2e-helpers.ts";
 
 export interface WorkflowRunDetail {
   id?: string;
@@ -497,17 +497,18 @@ async function assertRuntimeJourney(
 
     const startUrl = new URL(`/api/workflows/${WORKFLOW_ID}/start`, rootUrl);
     const startResponse = await postJson(startUrl, { input: { marker } });
-    const started = await startResponse.json() as {
+    const startBody = await startResponse.text();
+    assertCondition(
+      startResponse.ok,
+      `${label} route/start: HTTP ${startResponse.status} ${
+        startBody.slice(0, 500)
+      }`,
+    );
+    const started = JSON.parse(startBody) as {
       runId?: unknown;
       id?: unknown;
     };
     const runId = started.runId ?? started.id;
-    assertCondition(
-      startResponse.ok,
-      `${label} route/start: HTTP ${startResponse.status} ${
-        JSON.stringify(started)
-      }`,
-    );
     assertCondition(
       typeof runId === "string" && runId.length > 0,
       `${label} route/start: response omitted runId`,
@@ -563,12 +564,15 @@ async function assertRuntimeJourney(
       new URL(`/api/workflows/runs?workflowId=${WORKFLOW_ID}`, rootUrl),
       { signal: AbortSignal.timeout(5_000) },
     );
-    const list = await listResponse.json() as { runs?: WorkflowRunDetail[] };
-    const listed = list.runs?.find((run) => run.id === runId);
+    const listBody = await listResponse.text();
     assertCondition(
       listResponse.ok,
-      `${label} persistence/list: HTTP ${listResponse.status}`,
+      `${label} persistence/list: HTTP ${listResponse.status} ${
+        listBody.slice(0, 500)
+      }`,
     );
+    const list = JSON.parse(listBody) as { runs?: WorkflowRunDetail[] };
+    const listed = list.runs?.find((run) => run.id === runId);
     assertCondition(
       listed?.status === "failed",
       `${label} persistence/list: failed run was not listed: ${

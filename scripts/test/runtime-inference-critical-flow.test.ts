@@ -6,6 +6,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { parse } from "#std/yaml/parse";
 import {
   artifactClaim,
   parseRuntimeSelection,
@@ -16,6 +17,8 @@ import {
 
 const VALID_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const VALID_KEY = "vf-runtime-critical-flow-key";
+const FLOW_TEST_PATH = "scripts/test/runtime-inference-critical-flow.test.ts";
+const FLOW_HARNESS_PATH = "scripts/test/runtime-inference-critical-flow.ts";
 
 function anthropicRequest(overrides: {
   method?: string;
@@ -44,6 +47,14 @@ async function assertRejectsWithMessage(
 ): Promise<void> {
   const error = await assertRejects(fn, Error);
   assertStringIncludes((error as Error).message, expected);
+}
+
+function yamlRecord(value: unknown, context: string): Record<string, unknown> {
+  assert(
+    value !== null && typeof value === "object" && !Array.isArray(value),
+    `${context} must be an object`,
+  );
+  return value as Record<string, unknown>;
 }
 
 describe("runtime inference critical-flow pure contract", () => {
@@ -213,7 +224,7 @@ describe("runtime inference critical-flow pure contract", () => {
     }
   });
 
-  it("does not downgrade terminal-detail validation failures at the deadline edge", async () => {
+  it("preserves terminal-detail validation failure observed during provider wait", async () => {
     const originalFetch = globalThis.fetch;
     const expectedMessage =
       `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`;
@@ -362,5 +373,68 @@ console.log(JSON.stringify(Object.keys(mod).sort()));`,
     const exports = JSON.parse(new TextDecoder().decode(result.stdout));
     assert(exports.includes("parseRuntimeSelection"));
     assert(exports.includes("runRuntimeInferenceCriticalFlow"));
+  });
+});
+
+describe("runtime inference critical-flow CI contract", () => {
+  it("exposes the focused script test and executable runtime task", async () => {
+    const denoConfig = JSON.parse(await Deno.readTextFile("deno.json")) as {
+      tasks: Record<string, string | { command: string }>;
+    };
+
+    const testScripts = String(denoConfig.tasks["test:scripts"]);
+    assertStringIncludes(testScripts, FLOW_TEST_PATH);
+
+    const task = denoConfig.tasks["test:e2e:runtime-inference-critical-flow"];
+    assertEquals(typeof task, "string");
+    assertStringIncludes(
+      String(task),
+      `deno run --allow-all ${FLOW_HARNESS_PATH}`,
+    );
+  });
+
+  it("runs a dedicated runtime critical-flow matrix with stable check names", async () => {
+    const workflow = yamlRecord(
+      parse(await Deno.readTextFile(".github/workflows/cicd.yml")),
+      "cicd workflow",
+    );
+    const jobs = yamlRecord(workflow.jobs, "cicd workflow jobs");
+    const job = yamlRecord(
+      jobs["tests-runtime-critical-flow"],
+      "tests-runtime-critical-flow job",
+    );
+
+    assertEquals(
+      job.name,
+      "tests (runtime critical flow: ${{ matrix.runtime }})",
+    );
+    assertEquals(job["runs-on"], "ubuntu-latest");
+    assertEquals(job["timeout-minutes"], 20);
+
+    const strategy = yamlRecord(job.strategy, "runtime critical-flow strategy");
+    const matrix = yamlRecord(strategy.matrix, "runtime critical-flow matrix");
+    assertEquals(matrix.runtime, ["deno", "node", "bun"]);
+
+    const steps = job.steps as Array<Record<string, unknown>>;
+    assert(steps.some((step) => step.uses === "./.github/actions/setup-deno"));
+    assert(
+      steps.some((step) =>
+        step.uses ===
+          "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020" &&
+        yamlRecord(step.with, "setup-node with")["node-version"] === "24"
+      ),
+    );
+    assert(
+      steps.some((step) =>
+        step.uses ===
+          "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6" &&
+        yamlRecord(step.with, "setup-bun with")["bun-version"] === "1.3.6"
+      ),
+    );
+    assert(steps.some((step) =>
+      step.name === "Run runtime critical flow" &&
+      step.run ===
+        "deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}"
+    ));
   });
 });
