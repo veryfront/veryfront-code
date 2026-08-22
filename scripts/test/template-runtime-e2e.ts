@@ -1,9 +1,9 @@
 import { TEMPLATES } from "../../cli/commands/init/catalog.ts";
 
-type RuntimeName = "node" | "bun" | "deno";
+export type RuntimeName = "node" | "bun" | "deno";
 type TemplateName = typeof TEMPLATES[number]["id"];
 
-interface CommandResult {
+export interface CommandResult {
   code: number;
   stdout: string;
   stderr: string;
@@ -143,7 +143,7 @@ async function runCommand(
   }
 }
 
-async function runChecked(
+export async function runChecked(
   command: string,
   args: string[],
   options: {
@@ -165,14 +165,14 @@ async function runChecked(
   return result;
 }
 
-async function ensureCommand(
+export async function ensureCommand(
   command: string,
   args: string[] = ["--version"],
 ): Promise<void> {
   await runChecked(command, args, { timeoutMs: 30_000 });
 }
 
-async function packNpmPackage(
+export async function packNpmPackage(
   rootDir: string,
   workDir: string,
 ): Promise<string> {
@@ -240,7 +240,7 @@ async function usePackedVeryfrontDenoTasks(
   );
 }
 
-function assertCondition(condition: boolean, message: string): void {
+export function assertCondition(condition: boolean, message: string): void {
   if (!condition) {
     throw new Error(message);
   }
@@ -253,7 +253,10 @@ function allocatePort(): number {
   return port;
 }
 
-async function waitForRoute(url: string, timeoutMs = 60_000): Promise<void> {
+export async function waitForRoute(
+  url: string,
+  timeoutMs = 60_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError = "";
 
@@ -328,7 +331,7 @@ async function collectStream(
   }
 }
 
-function startDevServer(
+export function startDevServer(
   projectDir: string,
   runtime: RuntimeName,
   port: number,
@@ -373,7 +376,7 @@ export function getDevServerCommand(
   };
 }
 
-async function stopDevServer(server: {
+export async function stopDevServer(server: {
   child: Deno.ChildProcess;
   status: Promise<Deno.CommandStatus>;
 }): Promise<void> {
@@ -474,7 +477,7 @@ async function verifyBrowserRoute(
   }
 }
 
-async function scaffoldProject(
+export async function scaffoldProject(
   rootDir: string,
   workDir: string,
   tarballPath: string,
@@ -523,7 +526,7 @@ async function scaffoldProject(
   return projectDir;
 }
 
-async function installDependencies(
+export async function installDependencies(
   projectDir: string,
   runtime: RuntimeName,
   workDir: string,
