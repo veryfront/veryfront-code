@@ -239,11 +239,9 @@ const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
 /**
  * Share of one heartbeat interval the retry backoff may occupy.
  *
- * This bounds the waits between attempts and nothing else. A request has no
- * deadline, so a slow control plane can still push a tick past its interval —
- * overlap is prevented by the in-flight guard on the interval below, not here.
- * Keeping backoff well inside the interval only stops the waits from being the
- * thing that provokes a skip.
+ * This bounds only the waits between attempts. Each request has its own
+ * interval-sized deadline, so a complete retry sequence can still outlive one
+ * interval. The in-flight guard below prevents overlap in that case.
  */
 const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
 
@@ -474,6 +472,7 @@ async function heartbeatAgentPushRuntimeService(
   return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
     maxAttempts: schedule.maxAttempts,
     abortSignal: options.abortSignal,
+    timeoutMs: input.heartbeatIntervalMs,
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
     shouldRetry: isRetryableHeartbeatFailure,
     onRetry: ({ error, attempt, delay }) => {

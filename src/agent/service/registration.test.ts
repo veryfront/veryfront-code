@@ -459,6 +459,67 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
+  it("times out a permanently hung heartbeat and escalates in bounded time", async () => {
+    const intervalMs = 20;
+    let heartbeatRequests = 0;
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      inFlight++;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      const signal = init?.signal;
+      return new Promise<Response>((_resolve, reject) => {
+        const abort = () => {
+          inFlight--;
+          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        };
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    const escalationBudgetMs = 1_500;
+    const startedAt = Date.now();
+    try {
+      await waitFor(() => log.errors.length > 0, {
+        timeout: escalationBudgetMs,
+        interval: 10,
+        message: "hung heartbeat attempts never reached persistent-failure escalation",
+      });
+      assert(
+        Date.now() - startedAt < escalationBudgetMs,
+        "hung heartbeat escalation exceeded its bounded test budget",
+      );
+      assertEquals(
+        log.errors[0]?.metadata?.consecutiveFailures,
+        3,
+        "a timeout must count as one failed tick after its retries are exhausted",
+      );
+      assert(
+        heartbeatRequests >= 9,
+        "three failed ticks must each exhaust the three-attempt retry policy",
+      );
+      assertEquals(maxConcurrent, 1, "timeouts must preserve the in-flight guard");
+    } finally {
+      lifecycle.stop();
+      await waitFor(() => inFlight === 0, {
+        timeout: 1_000,
+        interval: 10,
+        message: "stop() did not abort the hung heartbeat request",
+      });
+    }
+  });
+
   it("cancels a pending retry backoff when the lifecycle stops", async () => {
     let heartbeatAttempts = 0;
     const fetch: typeof globalThis.fetch = (input) => {
