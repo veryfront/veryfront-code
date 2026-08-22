@@ -142,6 +142,13 @@ export async function validateAnthropicRequest(
   }
 }
 
+function isProviderValidationFailure(
+  error: Error,
+  state: ProviderState,
+): boolean {
+  return state.validationFailure() === error;
+}
+
 async function fetchWithTimeout(url: URL): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), POLL_REQUEST_TIMEOUT_MS);
@@ -400,6 +407,12 @@ export async function waitForProviderReceipt(
         }
       }
     } catch (error) {
+      if (
+        error instanceof Error &&
+        isProviderValidationFailure(error, state)
+      ) {
+        throw error;
+      }
       if (
         error instanceof Error &&
         error.message.includes("run terminated before provider receipt")

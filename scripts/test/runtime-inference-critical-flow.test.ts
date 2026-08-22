@@ -213,6 +213,39 @@ describe("runtime inference critical-flow pure contract", () => {
     }
   });
 
+  it("does not downgrade terminal-detail validation failures at the deadline edge", async () => {
+    const originalFetch = globalThis.fetch;
+    const expectedMessage =
+      `Expected Anthropic model ${VALID_WIRE_MODEL}, got wrong`;
+    let validationFailure: Error | undefined;
+    globalThis.fetch = (() => {
+      validationFailure = new Error(expectedMessage);
+      return Promise.resolve(Response.json({ status: "failed" }));
+    }) as typeof fetch;
+
+    try {
+      const error = await assertRejects(
+        () =>
+          waitForProviderReceipt(
+            {
+              received: [],
+              server: {} as Deno.HttpServer,
+              abort() {},
+              closed: Promise.resolve(),
+              validationFailure: () => validationFailure,
+              url: new URL("http://127.0.0.1:1/v1"),
+            },
+            "node",
+            new URL("http://127.0.0.1/runs/deadline-edge-validation-failed"),
+          ),
+        Error,
+      );
+      assertEquals((error as Error).message, expectedMessage);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("polls through non-terminal states and returns terminal failure details", async () => {
     const states = [
       { status: "pending" },
