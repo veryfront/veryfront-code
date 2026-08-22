@@ -39,6 +39,38 @@ async function collectReleaseFiles(files: AsyncIterable<DeployReleaseFile>) {
 }
 
 describe("createHttpDeployControlPlane", () => {
+  it("exchanges the API key for an environment access token", async () => {
+    const calls: Array<{ path: string; body: unknown }> = [];
+    const controlPlane = createHttpDeployControlPlane(
+      config,
+      mockClientReturning({
+        post: (path, body) => {
+          calls.push({ path, body });
+          return Promise.resolve({
+            access_token: "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+            token_type: "Bearer",
+            expires_in: 300,
+          });
+        },
+      }),
+    );
+
+    assertEquals(
+      await controlPlane.createEnvironmentAccessToken({
+        projectId: "11111111-1111-4111-8111-111111111111",
+        environmentName: "production",
+      }),
+      "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEifQ.sig",
+    );
+    assertEquals(calls, [{
+      path: "/auth/environment-token",
+      body: {
+        project_reference: "11111111-1111-4111-8111-111111111111",
+        environment_name: "production",
+      },
+    }]);
+  });
+
   it("treats only not-found release asset manifests as polling absence", async () => {
     const notFound = { status: 404 };
     const forbidden = { status: 403 };

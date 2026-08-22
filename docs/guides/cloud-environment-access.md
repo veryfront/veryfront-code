@@ -36,9 +36,33 @@ A non-browser client can still authenticate by sending the `authToken` cookie
 with a project member's session token. Store that token as a secret and account
 for its expiration.
 
-`VERYFRONT_API_TOKEN` does not open a protected environment. It authenticates
-the CLI against the Cloud API, not requests to the deployed app. A signed-in
-user who is not a member of the project gets a `403`.
+`VERYFRONT_API_TOKEN` does not open a protected environment on its own. It
+authenticates the CLI against the Cloud API, not requests to the deployed app.
+Exchange it for an environment access token for the key owner instead. The gate
+accepts it for five minutes, and the Cloud API refuses it as a session.
+`veryfront deploy` performs this exchange to probe the environment it
+deployed. A CI smoke test can do the same:
+
+```bash
+set -euo pipefail
+TOKEN=$(curl -fsS -X POST https://api.veryfront.com/auth/environment-token \
+  -H "Authorization: Bearer $VERYFRONT_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"project_reference":"<PROJECT_ID>","environment_name":"production"}' |
+  jq -er '.access_token | strings | select(length > 0)')
+STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --cookie "authToken=$TOKEN" \
+  <environment-url>/<route>)
+[ "$STATUS" = "200" ] || { echo "expected 200, got $STATUS" >&2; exit 1; }
+```
+
+Compare against the status the route normally returns. The probe does not
+follow redirects: a `302` means the gate refused the token, not that the app
+answered, and the comparison turns it into a failed job. The token lives five
+minutes and an expired token is refused the same way, so mint it immediately
+before the probe rather than once for a long suite. The token is bound to
+the project and environment named in the exchange. A key scoped to another
+project, or a key whose owner is not a member of the project gets a `403` at
+the exchange.
 
 ## Make an environment public
 
@@ -63,4 +87,6 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
 Validate the status that route normally returns. Do not require a `200` from
 the environment root when the project has no static page at `/`.
 
-See [Deployment behavior](./deploying.md) for readiness and URL semantics.
+See [Deployment behavior](./deploying.md) for readiness and URL semantics, and
+[Environment access gate](../architecture/29-environment-access-gate.md) for how
+the gate decides.

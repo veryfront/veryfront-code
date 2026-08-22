@@ -55,9 +55,11 @@ deployed site.
 
 Veryfront Cloud environments are protected by default. An unauthenticated
 request is redirected to sign-in, and `VERYFRONT_API_TOKEN` does not open a
-protected environment. To make the environment public, open **Environments** in
-Veryfront Studio, select the environment, enable **Public Environment**, and
-confirm **Make Public**.
+protected environment on its own. Deploy exchanges it for a short-lived
+environment access token, probes the environment with that, and reports
+`urlVerification: "served"` in `--json` output once the app answers. To make the
+environment public, open **Environments** in Veryfront Studio, select the
+environment, enable **Public Environment**, and confirm **Make Public**.
 
 See [Cloud environment access](../guides/cloud-environment-access.md) for
 authenticated requests and status codes. See

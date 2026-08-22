@@ -208,6 +208,12 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
   environmentDomains: string[] = ["https://my-project.production.veryfront.com"];
   /** Whether the default environment sits behind the platform access gate. */
   environmentProtected = false;
+  /** What the API hands back for the stored API key; null means the exchange fails. */
+  environmentAccessToken: string | null = null;
+  /** HTTP status the failed exchange reports, as the CLI API client attaches it. */
+  environmentAccessTokenFailureStatus = 404;
+  readonly environmentAccessTokenRequests: Array<{ projectId: string; environmentName: string }> =
+    [];
   releaseVersion: string | null = "2026.07.30-1";
   releaseProjectId = PROJECT_ID;
   releaseFiles: DeployReleaseFile[] = [
@@ -298,6 +304,23 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
     this.deployment = deployment;
     this.createdDeployments.push(deployment);
     return deployment;
+  }
+
+  async createEnvironmentAccessToken(
+    target: { projectId: string; environmentName: string },
+  ): Promise<string> {
+    this.environmentAccessTokenRequests.push({ ...target });
+    if (this.environmentAccessToken === null) {
+      // Shaped like the CLI API client's error: a status, and a message that
+      // carries whatever the server said, which must never reach a warning.
+      throw Object.assign(
+        new Error(
+          `API request failed: ${this.environmentAccessTokenFailureStatus} server detail: internal-host-10.0.0.7`,
+        ),
+        { status: this.environmentAccessTokenFailureStatus },
+      );
+    }
+    return this.environmentAccessToken;
   }
 
   async getDeployment(_reference: string, deploymentId: string): Promise<DeployDeployment> {

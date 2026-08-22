@@ -272,7 +272,9 @@ configured environment.
 ## Verify it worked
 
 1. Confirm the staging CI job reports successful Push and Deploy steps.
-2. Confirm the final deployment evidence names the merged commit.
+2. Confirm the final deployment evidence names the merged commit and reports
+   `urlVerification: "served"`, which means Deploy observed the protected
+   environment answer behind its access gate.
 3. Open the staging environment with `veryfront open --env staging`.
 4. Check the changed route or API behavior.
 5. Record the Admin or Owner staging approval before production promotion.

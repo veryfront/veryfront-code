@@ -81,6 +81,21 @@ export interface DeployControlPlane {
     input: { releaseId: string; environmentId: string },
   ): Promise<DeployDeployment>;
   getDeployment(reference: string, deploymentId: string): Promise<DeployDeployment>;
+  /**
+   * Exchanges the stored API key for a short-lived token bound to one protected
+   * environment. The API authorizes the key for that target and refuses the
+   * token as a session.
+   */
+  createEnvironmentAccessToken(target: EnvironmentAccessTarget): Promise<string>;
+}
+
+export interface EnvironmentAccessTarget {
+  projectId: string;
+  environmentName: string;
+}
+
+interface WireEnvironmentAccessToken {
+  access_token: string;
 }
 
 interface WireEnvironmentDeployment {
@@ -326,6 +341,18 @@ export function createHttpDeployControlPlane(
       return normalizeDeployment(
         await client.get<WireDeployment>(`/projects/${reference}/deployments/${deploymentId}`),
       );
+    },
+
+    async createEnvironmentAccessToken(target) {
+      const response = await client.post<WireEnvironmentAccessToken>("/auth/environment-token", {
+        project_reference: target.projectId,
+        environment_name: target.environmentName,
+      });
+      const token = response?.access_token;
+      if (typeof token !== "string" || token.length === 0) {
+        throw new Error("The API did not return an environment access token");
+      }
+      return token;
     },
   };
 }

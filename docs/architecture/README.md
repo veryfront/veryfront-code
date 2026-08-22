@@ -44,6 +44,7 @@ one runtime concern. Architecture pages do not duplicate the user guides in
 | [22-chat-collection-composition-contract.md](./22-chat-collection-composition-contract.md)   | Chat collection composition and conformance    |
 | [24-context-compaction-current-state.md](./24-context-compaction-current-state.md)           | Current Code and API compaction review         |
 | [27-agent-message-stream-dataflow.md](./27-agent-message-stream-dataflow.md)                 | Agent prompt, stream, tool, and replay flow    |
+| [29-environment-access-gate.md](./29-environment-access-gate.md)                             | Protected environment gate and access tokens   |
 
 ## Runtime boundaries
 

@@ -163,8 +163,12 @@ Use the environment URL that Deploy printed and repeat the check from
 development and preview. Validate the status or behavior that the selected
 route normally returns.
 
-For a protected environment, verify in a browser signed in as a project member.
-For a public agent route:
+For a protected environment, Deploy already probes the URL with an environment
+access token obtained by exchanging your API key and prints a warning when only
+the access gate answered. Repeat the check in a browser signed in as a project
+member, or exchange the token yourself as described in
+[Cloud environment access](./cloud-environment-access.md). For a public agent
+route:
 
 ```bash
 curl -sSf -N -X POST <environment-url>/api/ag-ui \
