@@ -83,6 +83,8 @@ function helperControlPlane(overrides: Partial<DeployControlPlane>): DeployContr
     getReleaseAssetManifest: () => Promise.resolve(null),
     createDeployment: () => Promise.reject(new Error("unexpected createDeployment call")),
     getDeployment: () => Promise.reject(new Error("unexpected getDeployment call")),
+    createEnvironmentAccessToken: () =>
+      Promise.reject(new Error("unexpected createEnvironmentAccessToken call")),
     ...overrides,
   };
 }
@@ -116,6 +118,11 @@ async function executeApply(
       }, observer),
   );
 }
+
+// JWT-shaped, as the API mints it; the probe refuses anything else.
+const EXCHANGED_SESSION_TOKEN =
+  "eyJhbGciOiJSUzI1NiJ9.eyJ1c2VySWQiOiJ1XzEiLCJ0b2tlblVzZSI6ImVudmlyb25tZW50X2FjY2VzcyJ9.sig";
+const API_KEY_TOKEN = "vf_d157f0000000000000000000000000000000000";
 
 describe("DeployProject", () => {
   it("prefers the request projectSlug over configured project references", async () => {
@@ -623,6 +630,110 @@ describe("DeployProject", () => {
     });
   });
 
+  it("verifies a protected environment with an environment access token exchanged for the API key", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentProtected = true;
+      controlPlane.environmentAccessToken = EXCHANGED_SESSION_TOKEN;
+      const events: DeployEvent[] = [];
+      const cookies: Array<string | null> = [];
+      try {
+        const outcome = await withFetchStub(
+          (input, init) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const cookie = request.headers.get("cookie");
+            cookies.push(cookie);
+            // The gate admits the minted token and the app answers behind it.
+            if (cookie === `authToken=${EXCHANGED_SESSION_TOKEN}`) return new Response("ready");
+            return new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            });
+          },
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        assertEquals(controlPlane.environmentAccessTokenRequests.length, 1);
+        assertEquals(cookies, [`authToken=${EXCHANGED_SESSION_TOKEN}`]);
+        assertEquals(
+          events.some((event) =>
+            event.kind === "warning" && event.code === "environment-url-unverified"
+          ),
+          false,
+        );
+        assertEquals(
+          outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,
+          "served",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    }, { VERYFRONT_API_TOKEN: API_KEY_TOKEN });
+  });
+
+  it("degrades to the gated outcome when the environment access token exchange fails", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.environmentProtected = true;
+      controlPlane.environmentAccessToken = null;
+      const events: DeployEvent[] = [];
+      const cookies: Array<string | null> = [];
+      try {
+        const outcome = await withFetchStub(
+          (input, init) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            cookies.push(request.headers.get("cookie"));
+            return new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            });
+          },
+          () =>
+            createDeployment(controlPlane).execute({
+              projectDir,
+              environment: "production",
+              mode: "apply",
+              source: { kind: "already-pushed" },
+            }, {
+              onEvent(event) {
+                events.push(event);
+              },
+            }),
+        );
+
+        assertEquals(outcome.kind, "deployed");
+        // The raw API key must never reach the gate, exchange or no exchange.
+        assertEquals(cookies, [null]);
+        const warning = events.find((event) =>
+          event.kind === "warning" && event.code === "environment-url-unverified"
+        );
+        assertStringIncludes(
+          warning?.kind === "warning" ? warning.message : "",
+          "could not exchange the API key for an environment access token (API request failed: 404 Not Found)",
+        );
+        assertEquals(
+          outcome.kind === "deployed" ? outcome.result.urlVerification : undefined,
+          "gated",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("records the environment URL as served when the probe sees the app answer", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -837,6 +948,46 @@ describe("environment URL readiness", () => {
     );
 
     assertEquals(cookie, `authToken=${sessionToken}`);
+  });
+
+  it("sends an exchanged session token instead of the API key it was exchanged for", async () => {
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+          sessionToken,
+        }),
+    );
+
+    assertEquals(cookie, `authToken=${sessionToken}`);
+  });
+
+  it("reports a refused exchanged token as gated instead of failing the committed deploy", async () => {
+    const readiness = await withMockFetch(
+      () => Promise.resolve(new Response("forbidden", { status: 403 })),
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+          apiToken: apiKeyToken,
+          sessionToken,
+        }, { pollIntervalMs: 1, timeoutMs: 1_000 }),
+    );
+
+    assertEquals(readiness, {
+      kind: "gated",
+      url: "https://my-project.production.veryfront.com/",
+      status: 403,
+    });
   });
 
   it("does not send an API key to the protected environment gate", async () => {

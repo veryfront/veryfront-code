@@ -208,6 +208,9 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
   environmentDomains: string[] = ["https://my-project.production.veryfront.com"];
   /** Whether the default environment sits behind the platform access gate. */
   environmentProtected = false;
+  /** What the API hands back for the stored API key; null means the exchange fails. */
+  environmentAccessToken: string | null = null;
+  readonly environmentAccessTokenRequests: number[] = [];
   releaseVersion: string | null = "2026.07.30-1";
   releaseProjectId = PROJECT_ID;
   releaseFiles: DeployReleaseFile[] = [
@@ -298,6 +301,14 @@ export class InMemoryDeployControlPlane implements DeployControlPlane {
     this.deployment = deployment;
     this.createdDeployments.push(deployment);
     return deployment;
+  }
+
+  async createEnvironmentAccessToken(): Promise<string> {
+    this.environmentAccessTokenRequests.push(Date.now());
+    if (this.environmentAccessToken === null) {
+      throw new Error("API request failed: 404 Not Found");
+    }
+    return this.environmentAccessToken;
   }
 
   async getDeployment(_reference: string, deploymentId: string): Promise<DeployDeployment> {

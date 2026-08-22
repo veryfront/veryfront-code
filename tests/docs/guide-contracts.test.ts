@@ -312,6 +312,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "protected by default",
       "`authToken` cookie",
       "VERYFRONT_API_TOKEN",
+      "/auth/environment-token",
       "Public Environment",
       "<environment-url>/<route>",
     ],

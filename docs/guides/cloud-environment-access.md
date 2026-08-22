@@ -36,9 +36,21 @@ A non-browser client can still authenticate by sending the `authToken` cookie
 with a project member's session token. Store that token as a secret and account
 for its expiration.
 
-`VERYFRONT_API_TOKEN` does not open a protected environment. It authenticates
-the CLI against the Cloud API, not requests to the deployed app. A signed-in
-user who is not a member of the project gets a `403`.
+`VERYFRONT_API_TOKEN` does not open a protected environment on its own. It
+authenticates the CLI against the Cloud API, not requests to the deployed app.
+Exchange it for an environment access token instead: a user token for the key
+owner that the gate accepts for five minutes and that the Cloud API refuses as a
+session. `veryfront deploy` performs this exchange to probe the environment it
+deployed. A CI smoke test can do the same:
+
+```bash
+TOKEN=$(curl -sS -X POST https://api.veryfront.com/auth/environment-token \
+  -H "Authorization: Bearer $VERYFRONT_API_TOKEN" | jq -r .access_token)
+curl -sSf -o /dev/null --cookie "authToken=$TOKEN" <environment-url>/<route>
+```
+
+A signed-in user who is not a member of the project gets a `403`, and so does
+an environment access token exchanged for that user's API key.
 
 ## Make an environment public
 
