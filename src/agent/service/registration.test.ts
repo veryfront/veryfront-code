@@ -589,63 +589,49 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
-  it("retries a heartbeat whose response body stalls after the headers arrive", async () => {
-    // The deadline can fire after the headers land, while the JSON body is
-    // still arriving. That abort surfaces from the body read, not from the
-    // fetch call, and it is just as transient as a failed connect.
-    //
-    // What this test pins is the classification, not the clock: the wait gets
-    // the same generous budget as the other lifecycle tests here, because a
-    // loaded runner stretches these timers well past their nominal values.
-    const intervalMs = 50;
+  it("retries a heartbeat whose response body read fails after the headers arrive", async () => {
+    // A body read can fail after the headers land: the deadline fires while
+    // the JSON is still arriving, or the connection resets mid-body. That
+    // error surfaces from the read rather than from the fetch call, so it used
+    // to escape the transport-error wrapper and be classified as permanent.
+    // It is as transient as a failed connect and gets the same retries.
     let heartbeatRequests = 0;
     const log = recordingLogger();
 
-    const fetch: typeof globalThis.fetch = (input, init) => {
+    const fetch: typeof globalThis.fetch = (input) => {
       if (!input.toString().endsWith("/heartbeat")) {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
       heartbeatRequests++;
-      const signal = init?.signal;
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          const fail = () =>
-            controller.error(signal?.reason ?? new DOMException("Aborted", "AbortError"));
-          if (signal?.aborted) fail();
-          else signal?.addEventListener("abort", fail, { once: true });
-        },
-      });
-      return Promise.resolve(
-        new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }),
-      );
+      const response = jsonResponse(serviceResponse);
+      // Headers delivered, body read fails. A raw DOMException on purpose:
+      // that is what an aborted or reset body read throws, and being a
+      // non-Veryfront error is exactly what used to make it look permanent.
+      response.json = () =>
+        Promise.reject(new DOMException("The signal has been aborted", "AbortError"));
+      return Promise.resolve(response);
     };
 
     const lifecycle = await createAgentServiceRegistrationLifecycle(
-      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+      lifecycleOptions(fetch, { logger: log.logger }),
     );
 
-    try {
-      await waitFor(() => log.errors.length > 0, {
-        timeout: 10_000,
-        interval: 10,
-        message: "stalled body reads never reached persistent-failure escalation",
-      });
-      const retries = log.warnings.filter((entry) =>
-        entry.message === "Agent service heartbeat retrying after transient failure"
-      );
-      assert(
-        retries.length >= 2,
-        `a stalled body read must use the remaining retries, saw ${retries.length} retry notices ` +
-          `across ${heartbeatRequests} requests`,
-      );
-      assertEquals(
-        log.errors[0]?.metadata?.consecutiveFailures,
-        3,
-        "a stalled body read must count as one failed tick once its retries are exhausted",
-      );
-    } finally {
-      lifecycle.stop();
-    }
+    await assertRejects(() => lifecycle.heartbeat(), Error);
+    lifecycle.stop();
+
+    assertEquals(
+      heartbeatRequests,
+      3,
+      "a failed body read must use the full three-attempt retry policy",
+    );
+    assertEquals(
+      log.warnings.map((entry) => entry.message),
+      [
+        "Agent service heartbeat retrying after transient failure",
+        "Agent service heartbeat retrying after transient failure",
+      ],
+      "each retry of a failed body read must log its retry notice",
+    );
   });
 
   it("cancels a pending retry backoff when the lifecycle stops", async () => {
