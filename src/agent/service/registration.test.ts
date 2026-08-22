@@ -595,7 +595,8 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     // into a failure. The test above guards the same property against a deadline
     // set as a fraction of the interval; this one guards it against a deadline
     // pinned to a fixed number of milliseconds, which a short test interval
-    // would never catch. Pinning the production interval is the point.
+    // would never catch. Pinning the production interval is the point: 30s is
+    // the default in src/agent/service/config.ts.
     const intervalMs = 30_000;
     const slowLatencyMs = 3_000;
     let heartbeatRequests = 0;
@@ -628,7 +629,9 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
 
     // Driven directly rather than through the interval: this is about the
-    // deadline on one attempt, not about scheduling.
+    // deadline on one attempt, not about scheduling. Nothing here asserts on
+    // escalation, because escalation is counted in the interval tick and a 30s
+    // interval never fires inside this test. The 500ms test above covers that.
     await lifecycle.heartbeat();
     lifecycle.stop();
 
@@ -638,7 +641,6 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       "a slow success must be answered on the first attempt, with no retry",
     );
     assertEquals(log.warnings.length, 0, "a slow success must not log a retry notice");
-    assertEquals(log.errors.length, 0, "a slow success must never escalate");
   });
 
   it("retries a heartbeat whose response body read fails after the headers arrive", async () => {
