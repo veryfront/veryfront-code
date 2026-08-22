@@ -407,6 +407,58 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
+  it("still escalates when slow failures force ticks to be skipped", async () => {
+    // Each tick needs 3 attempts x 80ms, so it outlives the 100ms interval and
+    // the beats in between are skipped. A skipped beat is neither a success nor
+    // a failure: if it reset the counter, escalation could never be reached.
+    const intervalMs = 100;
+    const attemptLatencyMs = 80;
+    let inFlight = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      inFlight++;
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          inFlight--;
+          resolve(jsonResponse({ error: "boom" }, 500));
+        }, attemptLatencyMs);
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    await waitFor(() => log.errors.length > 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "skipped beats stopped the failure counter from ever escalating",
+    });
+    lifecycle.stop();
+    await waitFor(() => inFlight === 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "in-flight heartbeat requests never settled after stop()",
+    });
+
+    const skips = log.warnings.filter((entry) =>
+      entry.message === "Agent service heartbeat tick skipped, previous tick still running"
+    );
+    assert(
+      skips.length > 0,
+      "this test is only meaningful if beats were actually skipped; none were",
+    );
+    assertEquals(
+      log.errors[0]?.metadata?.consecutiveFailures,
+      3,
+      "a skipped beat must not reset or advance the counter, so 3 failed ticks still escalate",
+    );
+  });
+
   it("cancels a pending retry backoff when the lifecycle stops", async () => {
     let heartbeatAttempts = 0;
     const fetch: typeof globalThis.fetch = (input) => {
