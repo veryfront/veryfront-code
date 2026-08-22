@@ -1538,8 +1538,6 @@
       },
       "extensions/ext-bundler-swc": {
         "dependencies": [
-          "jsr:@std/assert@1.0.19",
-          "jsr:@std/testing@1.0.17",
           "npm:@swc/wasm@1.16.1",
           "npm:reflect-metadata@0.2.2"
         ]
