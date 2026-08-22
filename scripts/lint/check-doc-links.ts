@@ -16,9 +16,9 @@ const filesToCheck = [
   "extensions/README.md",
 ];
 
-// Local planning notes are intentionally untracked and are not part of the
-// repository documentation contract.
-const ignoredPrefixes = ["docs/plans/"];
+// Local planning and rollout notes are intentionally untracked and are not part
+// of the repository documentation contract.
+const ignoredPrefixes = ["docs/internal/", "docs/plans/", "docs/superpowers/"];
 
 let broken = 0;
 let checked = 0;
