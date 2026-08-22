@@ -21,6 +21,7 @@ import {
 import { buildRuntimeUsageTraceAttributes } from "#veryfront/agent/runtime/trace-usage.ts";
 import { getProviderNativeToolNames } from "#veryfront/agent/runtime/provider-native-tool-inventory.ts";
 import { selectProviderCompatibleToolNames } from "#veryfront/agent/runtime/provider-tool-compat.ts";
+import { INVOKE_AGENT_TOOL_ID } from "#veryfront/agent/runtime/agent-delegation.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
@@ -526,6 +527,20 @@ function applyRuntimeToolAllowlist(
   );
 }
 
+function applyDelegationAuthority(
+  mergedTools: Agent["config"]["tools"],
+  allowDelegation: RuntimeRunAgentInput["allowDelegation"],
+): Agent["config"]["tools"] {
+  if (allowDelegation !== false || !mergedTools || mergedTools === true) {
+    return mergedTools;
+  }
+
+  const filtered = Object.fromEntries(
+    Object.entries(mergedTools).filter(([toolName]) => toolName !== INVOKE_AGENT_TOOL_ID),
+  );
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
 function getRequiredLocalToolNames(input: {
   mergedTools: Agent["config"]["tools"];
   availableLocalTools: Record<string, Tool | boolean>;
@@ -746,27 +761,33 @@ export async function createRuntimeAgentStreamResponse(
         sourceRemoteFilterBase === undefined
       ? await getDeclaredRemoteSourceToolNames({ agent, runInput: input, deps })
       : undefined;
-    const allowedRemoteToolNames = runtimeToolAllowlist === null
+    const runtimeAllowedRemoteToolNames = runtimeToolAllowlist === null
       ? grantedRemoteToolNames
       : (grantedRemoteToolNames ?? sourceRemoteFilterBase ?? remoteFallbackBase ?? []).filter(
         (toolName) => runtimeToolAllowlist.has(toolName),
       );
+    const allowedRemoteToolNames = input.allowDelegation === false
+      ? runtimeAllowedRemoteToolNames?.filter((toolName) => toolName !== INVOKE_AGENT_TOOL_ID)
+      : runtimeAllowedRemoteToolNames;
     const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
     closeSandbox = sandboxTools.closeSandbox ?? closeSandbox;
     const availableLocalTools = {
       ...(deps.localTools ?? {}),
       ...(sandboxTools.tools ?? {}),
     };
-    const mergedTools = applyRuntimeToolAllowlist(
-      buildMergedTools(
+    const mergedTools = applyDelegationAuthority(
+      applyRuntimeToolAllowlist(
+        buildMergedTools(
+          agent,
+          input,
+          deps.sessionManager,
+          availableForwardedToolNames,
+          Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
+        ),
+        runtimeToolAllowlist,
         agent,
-        input,
-        deps.sessionManager,
-        availableForwardedToolNames,
-        Object.keys(availableLocalTools).length > 0 ? availableLocalTools : undefined,
       ),
-      runtimeToolAllowlist,
-      agent,
+      input.allowDelegation,
     );
     // Provider-native tools (e.g. web_search) are provider-side and bypass the
     // merged tool record, so cap them against the allowlist explicitly.

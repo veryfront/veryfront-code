@@ -1767,6 +1767,51 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["read_baseline"]);
   });
 
+  it("withholds invoke_agent when the signed runtime request denies delegation", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "ops-agent",
+      config: {
+        id: "ops-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          read_baseline: { description: "Read the telemetry baseline" },
+          invoke_agent: { description: "Delegate to another agent" },
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "ops-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      allowDelegation: false,
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(input, agent, {
+      sessionManager,
+      createRuntime: (_agent, mergedTools) => {
+        capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+        return {
+          stream: async () =>
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            }),
+        };
+      },
+    });
+
+    assertEquals(capturedToolNames, ["read_baseline"]);
+  });
+
   it("preserves invoke_agent delegation when visible skills are hidden from the catalog", async () => {
     registerSkill("handoff", {
       id: "handoff",

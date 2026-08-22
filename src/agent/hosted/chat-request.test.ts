@@ -1455,6 +1455,17 @@ describe("agent/hosted-chat-request", () => {
     });
   });
 
+  it("preserves explicit delegation denial from runtime invocations", () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      allowDelegation: false,
+    });
+
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+
+    assertEquals(request.allowDelegation, false);
+  });
+
   it("builds hosted chat requests with raw replay tool parts from runtime invocations", () => {
     const invocation = RuntimeAgentRunInvocationSchema.parse({
       ...createRuntimeInvocation(),

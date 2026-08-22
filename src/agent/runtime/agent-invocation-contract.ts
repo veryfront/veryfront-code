@@ -352,6 +352,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
       (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
       { message: "context must be less than 64 KB total" },
     ),
+    allowDelegation: v.boolean().optional(),
     agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
@@ -426,6 +427,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   messages: RuntimeAgentRunInvocation["messages"];
   tools: RuntimeAgentRunInvocation["tools"];
   context: RuntimeAgentRunInvocation["context"];
+  allowDelegation?: RuntimeAgentRunInvocation["allowDelegation"];
   runtimeTargetKind: NonNullable<RuntimeAgentProjectContext["runtimeTargetKind"]>;
   runtimeTargetEnvironmentId?: RuntimeAgentProjectContext["runtimeTargetEnvironmentId"];
   runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
@@ -447,6 +449,7 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     messages: input.messages,
     tools: input.tools,
     context: input.context,
+    ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
     runtimeTargetKind: input.run.project.runtimeTargetKind ?? "main_branch",
     runtimeTargetEnvironmentId: input.run.project.runtimeTargetEnvironmentId ?? null,
     runtimeTargetBranchId: input.run.project.runtimeTargetBranchId ?? null,
