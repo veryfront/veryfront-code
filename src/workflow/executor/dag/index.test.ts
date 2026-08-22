@@ -1982,6 +1982,134 @@ describe("DAGExecutor", () => {
       // parked run, not a dead worker, and must not restart the branch.
       assertEquals(first.nodeStates["gate"]!.status, "running");
     });
+
+    it("spends no recovery on a queued node that a parked wait stops from starting", async () => {
+      // Queueing a node for recovery is not starting it. At maxConcurrency 1
+      // the wait ahead of it in the queue parks and ends the pass, so the
+      // interrupted step never runs. Charging it there burns its only recovery
+      // on work that never happened, and the next pass fails the whole run as
+      // out of budget even though the step still has not executed once.
+      const executed: string[] = [];
+      const persistedAttempts: number[] = [];
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onRecoveryScheduled: ({ nodeId, nodeStates }) => {
+          persistedAttempts.push(nodeStates[nodeId]?.attempt ?? 0);
+        },
+        maxConcurrency: 1,
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "m" } as any,
+        },
+        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      // Crash-recovery pass: the worker died with the step in flight, and the
+      // wait has not been raised yet.
+      const first = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            "side-effect": {
+              nodeId: "side-effect",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(first.waiting, true);
+      assertEquals(executed, []);
+      assertEquals(persistedAttempts, []);
+      assertEquals(
+        first.nodeStates["side-effect"]!.attempt,
+        1,
+        "a queued node that never started must keep its recovery",
+      );
+
+      // Approval-resume pass: nothing is ahead of the step now, so it runs.
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates: {
+            ...first.nodeStates,
+            gate: { ...first.nodeStates["gate"]!, status: "completed", completedAt: new Date() },
+          },
+          context: first.context,
+        }),
+      );
+
+      assertEquals(second.error, undefined);
+      assertEquals(second.completed, true);
+      assertEquals(executed, ["side-effect"]);
+      assertEquals(persistedAttempts, [2]);
+      assertEquals(second.nodeStates["side-effect"]!.status, "completed");
+    });
+
+    it("spends exactly one recovery on a node that does start, and bounds the next death", async () => {
+      // The other direction. Deferring the charge must not stop charging it: a
+      // node admitted to a batch has its raised attempt persisted before it
+      // executes, so a worker that dies again resumes out of budget instead of
+      // re-running the side effect forever.
+      const executed: string[] = [];
+      let persisted: Record<string, NodeState> | undefined;
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onRecoveryScheduled: ({ nodeStates }) => {
+          persisted = structuredClone(nodeStates);
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
+      ];
+      const interrupted = (attempt: number): Record<string, NodeState> => ({
+        "side-effect": {
+          nodeId: "side-effect",
+          status: "running",
+          attempt,
+          startedAt: new Date(),
+        },
+      });
+
+      const first = await exec.execute(
+        nodes,
+        createTestRun({ status: "running", nodeStates: interrupted(1) }),
+      );
+
+      assertEquals(first.completed, true);
+      assertEquals(executed, ["side-effect"]);
+      // The durable write the second worker death would resume from.
+      assertEquals(persisted?.["side-effect"]?.attempt, 2);
+
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: { "side-effect": { ...persisted!["side-effect"]!, status: "running" } },
+        }),
+      );
+
+      assertEquals(second.completed, false);
+      assertEquals(
+        executed,
+        ["side-effect"],
+        "the recovery budget must not stretch to a second run",
+      );
+      assertStringIncludes(second.error ?? "", "retry budget exhausted");
+    });
   });
 
   describe("wait resume inside a nested composite", () => {
