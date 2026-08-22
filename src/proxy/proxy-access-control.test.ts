@@ -339,4 +339,30 @@ describe("environment access tokens at the gate", () => {
       { status: 403, message: "Access denied" },
     );
   });
+  it("requires both bindings on the token and a known environment at the gate", async () => {
+    // A token naming only the project is not a credential this gate issued.
+    assertEquals(
+      toProxyPrincipal({
+        userId: "user-1",
+        aud: "environment-gate",
+        tokenUse: "environment_access",
+        projectId: "project-1",
+      }),
+      undefined,
+    );
+    // An environment the proxy cannot identify fails closed.
+    assertEquals(
+      await checkProtectedProxyAccess({
+        url,
+        matchingEnv: { name: "preview", protected: true },
+        projectId: "project-1",
+        userToken: "environment-token",
+        users: [{ id: "user-1" }],
+        apiBaseUrl: "https://api.example.com",
+        isSignedInternalControlPlaneRequest: false,
+        extractPrincipal: () => Promise.resolve(bound),
+      }),
+      { status: 403, message: "Access denied" },
+    );
+  });
 });

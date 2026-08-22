@@ -21,7 +21,7 @@ export interface ProtectedProxyEnvironment {
 export interface ProxyPrincipal {
   userId: string;
   /** Present for an environment access token: the one target it may open. */
-  environmentAccess?: { projectId: string; environmentId?: string };
+  environmentAccess?: { projectId: string; environmentId: string };
 }
 
 const ENVIRONMENT_ACCESS_TOKEN_USE = "environment_access";
@@ -39,9 +39,9 @@ function hasGateAudience(payload: unknown): boolean {
  * Reads the principal off a verified payload.
  *
  * A plain user token speaks for its user. An environment access token has to
- * say so twice, by audience and by use, and name the project it is bound to;
- * anything that claims only part of that is not a credential this gate issued
- * for and is refused outright.
+ * say so twice, by audience and by use, and name both the project and the
+ * environment it is bound to; anything that claims only part of that is not a
+ * credential this gate issued for and is refused outright.
  */
 export function toProxyPrincipal(payload: unknown): ProxyPrincipal | undefined {
   const userId = readOwnString(payload, "userId", 512);
@@ -53,12 +53,9 @@ export function toProxyPrincipal(payload: unknown): ProxyPrincipal | undefined {
   if (tokenUse !== ENVIRONMENT_ACCESS_TOKEN_USE || !gateAudience) return undefined;
 
   const projectId = readOwnString(payload, "projectId", 512);
-  if (!projectId) return undefined;
   const environmentId = readOwnString(payload, "environmentId", 512);
-  return {
-    userId,
-    environmentAccess: { projectId, ...(environmentId ? { environmentId } : {}) },
-  };
+  if (!projectId || !environmentId) return undefined;
+  return { userId, environmentAccess: { projectId, environmentId } };
 }
 
 export interface ProtectedProxyProjectUser {
@@ -347,11 +344,12 @@ export async function checkProtectedProxyAccess(input: {
   }
   const { userId, environmentAccess } = principal;
   if (environmentAccess) {
-    // A bound token opens the one environment it names, nothing else.
+    // A bound token opens the one environment it names, nothing else. An
+    // environment the proxy cannot identify fails closed.
     const boundElsewhere = input.projectId === undefined ||
       environmentAccess.projectId !== input.projectId ||
-      (environmentAccess.environmentId !== undefined &&
-        environmentAccess.environmentId !== matchingEnv.id);
+      matchingEnv.id === undefined ||
+      environmentAccess.environmentId !== matchingEnv.id;
     if (boundElsewhere) {
       logger?.info("Environment access token is bound to another target", {
         ...logContext,

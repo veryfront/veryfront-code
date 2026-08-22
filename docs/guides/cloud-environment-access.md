@@ -85,4 +85,6 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
 Validate the status that route normally returns. Do not require a `200` from
 the environment root when the project has no static page at `/`.
 
-See [Deployment behavior](./deploying.md) for readiness and URL semantics.
+See [Deployment behavior](./deploying.md) for readiness and URL semantics, and
+[Environment access gate](../architecture/29-environment-access-gate.md) for how
+the gate decides.
