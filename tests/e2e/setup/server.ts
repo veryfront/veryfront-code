@@ -19,7 +19,7 @@ let workspaceRoot: string | null = null;
 // so `<slug>.localhost` can fail with EAI_AGAIN on a plain glibc NSS setup; bare
 // `localhost` always resolves. The dev server reads `x-project-slug` inbound
 // (src/server/context/request-context.ts), so routing is preserved.
-let readinessUrl = "http://localhost:8080/";
+let readinessUrl = "http://localhost:8080/_vf_debug/context";
 let readinessProjectSlug = "blank";
 
 async function writeProjectFile(
@@ -284,7 +284,7 @@ export async function startServer(
     ? options.projectSlugs
     : getProjectsToProvision();
   workspaceRoot = await createPlaywrightWorkspace(projectSlugs);
-  readinessUrl = "http://localhost:8080/";
+  readinessUrl = "http://localhost:8080/_vf_debug/context";
   readinessProjectSlug = projectSlugs[0]!;
   await persistWorkspaceState(workspaceRoot);
 

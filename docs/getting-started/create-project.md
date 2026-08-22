@@ -112,6 +112,25 @@ Open [http://localhost:3000](http://localhost:3000). `localhost` resolves to
 `127.0.0.1` on every machine without a DNS lookup. File changes reload the
 browser.
 
+### Use project hosts from native clients
+
+Multi-project browser URLs use `http://<PROJECT>.localhost:<PORT>`. Preview
+browser URLs use `http://<PROJECT>.preview.localhost:<PORT>`. Browsers treat the
+reserved `.localhost` tree as loopback, including on Windows.
+
+Native Node, Deno, and command-line resolvers can depend on operating-system
+resolver behavior for wildcard names. Use literal loopback transport and keep
+the canonical virtual host when a native request does not resolve the browser
+URL:
+
+```bash
+curl -H "Host: <PROJECT>.localhost:<PORT>" http://127.0.0.1:<PORT>/
+curl -H "Host: <PROJECT>.preview.localhost:<PORT>" http://127.0.0.1:<PORT>/
+```
+
+This fallback stays on the local machine and preserves the distinction between
+project and preview routes. Do not replace it with a public loopback DNS name.
+
 ### Change the port
 
 The dev server binds port 3000. Pass `--port` to bind a different one:
