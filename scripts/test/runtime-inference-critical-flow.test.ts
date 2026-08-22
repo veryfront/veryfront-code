@@ -24,6 +24,7 @@ const VALID_WIRE_MODEL = "claude-haiku-4-5-20251001";
 const VALID_KEY = "vf-runtime-critical-flow-key";
 const FLOW_TEST_PATH = "scripts/test/runtime-inference-critical-flow.test.ts";
 const FLOW_HARNESS_PATH = "scripts/test/runtime-inference-critical-flow.ts";
+const REPO_ROOT = new URL("../../", import.meta.url);
 
 function anthropicRequest(overrides: {
   method?: string;
@@ -643,7 +644,9 @@ console.log(JSON.stringify(Object.keys(mod).sort()));`,
 
 describe("runtime inference critical-flow CI contract", () => {
   it("exposes the focused script test and executable runtime task", async () => {
-    const denoConfig = JSON.parse(await Deno.readTextFile("deno.json")) as {
+    const denoConfig = JSON.parse(
+      await Deno.readTextFile(new URL("deno.json", REPO_ROOT)),
+    ) as {
       tasks: Record<string, string | { command: string }>;
     };
 
@@ -669,7 +672,11 @@ describe("runtime inference critical-flow CI contract", () => {
 
   it("runs a dedicated runtime critical-flow matrix with stable check names", async () => {
     const workflow = yamlRecord(
-      parse(await Deno.readTextFile(".github/workflows/cicd.yml")),
+      parse(
+        await Deno.readTextFile(
+          new URL(".github/workflows/cicd.yml", REPO_ROOT),
+        ),
+      ),
       "cicd workflow",
     );
     const jobs = yamlRecord(workflow.jobs, "cicd workflow jobs");
