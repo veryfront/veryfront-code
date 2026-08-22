@@ -4,7 +4,7 @@
  *******************************/
 
 import { cliLogger as logger, isVerbose } from "#cli/utils";
-import { brand, dim, red } from "#cli/ui";
+import { brand, dim } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
 import { join } from "veryfront/platform/path";
 import { createError, toError } from "veryfront/errors";
@@ -141,17 +141,19 @@ export async function initCommand(
     }
   }
 
-  // Check if directory already exists before entering the wizard
+  // Refuse an existing directory before entering the wizard. This has to be an
+  // error rather than a printed message: `veryfront init x && cd x` must stop
+  // here, not carry on into a directory that was never scaffolded.
   if (name && !options.force) {
     const fs = createFileSystem();
-    const targetDir = join(parentDir, name);
-    if (await fs.exists(targetDir)) {
-      console.error(
-        red(
-          `Directory "${name}" already exists. Choose a different name or use --force to overwrite.`,
-        ),
+    if (await fs.exists(join(parentDir, name))) {
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            `Directory "${name}" already exists. Choose a different name or use --force to overwrite.`,
+        }),
       );
-      return;
     }
   }
 
