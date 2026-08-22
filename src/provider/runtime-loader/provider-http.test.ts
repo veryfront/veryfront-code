@@ -815,6 +815,104 @@ describe("provider-http", () => {
       assertEquals(error.retryable, true, "the exhausted timeout remains retryable upstream");
     });
 
+    it("caps total header wait across retries so it stays under the fork idle watchdog", async () => {
+      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
+      let attempts = 0;
+      const startedAt = Date.now();
+      await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: (...args) => {
+              attempts++;
+              return neverResponds(...args);
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 200,
+            totalHeadersBudgetMs: 250,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      );
+      const elapsedMs = Date.now() - startedAt;
+
+      assertEquals(attempts >= 2, true, `a retry must still be issued (attempts=${attempts})`);
+      assertEquals(
+        elapsedMs < 400,
+        true,
+        `three unclamped 200ms attempts run ~600ms; the budget must cut it short (elapsed=${elapsedMs}ms)`,
+      );
+    });
+
+    it("never shortens the first attempt to reserve budget for a retry", async () => {
+      let attempts = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return new Promise<Response>((resolve) => {
+            setTimeout(() => resolve(new Response("chunk")), 120);
+          });
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+        headersTimeoutMs: 200,
+        // Deliberately below the per-attempt deadline: a first attempt clamped
+        // to the total budget would abort at 50ms and lose a response that
+        // arrives comfortably inside its own deadline.
+        totalHeadersBudgetMs: 50,
+      });
+
+      assertEquals(attempts, 1);
+      assertEquals(await new Response(stream).text(), "chunk");
+    });
+
+    it("reports the configured deadline and total wait after a retry, not the last clamp", async () => {
+      // A retry runs on whatever the budget has left, so its deadline is a
+      // clamp nobody configured. Surfacing that number sends a responder
+      // looking for a setting that does not exist, and issue #710 asked for an
+      // error that names the deadline which fired.
+      //
+      // The first attempt consumes the full 100ms, so the retry is clamped to
+      // at most 60ms and can never equal the configured deadline. A message
+      // naming 100ms therefore proves the restatement ran.
+      let attempts = 0;
+      const startedAt = Date.now();
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return new Promise<Response>(() => {});
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            modelId: "gpt-5.5",
+            headersTimeoutMs: 100,
+            totalHeadersBudgetMs: 160,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      ) as ProviderRequestError;
+      const elapsedMs = Date.now() - startedAt;
+
+      assertEquals(attempts >= 2, true, `the budget must buy a retry (attempts=${attempts})`);
+      assertMatch(error.message, /100ms deadline/);
+      assertMatch(error.message, /model gpt-5\.5/);
+      // The reported wait is the whole request, not just the clamped attempt.
+      const reportedMs = Number(error.message.match(/timed out after (\d+)ms/)?.[1]);
+      assertEquals(
+        reportedMs > 100 && reportedMs <= elapsedMs,
+        true,
+        `the total wait must be reported, not one attempt (reported=${reportedMs}ms, elapsed=${elapsedMs}ms)`,
+      );
+    });
+
     it("retries other typed retryable failures before provider output", async () => {
       let attempts = 0;
       const stream = await requestStream({

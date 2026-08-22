@@ -15,6 +15,19 @@ const MAX_ERROR_BODY_BYTES = 8_000;
 const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
 const MAX_PROVIDER_STREAM_RETRIES = 2;
+/**
+ * Ceiling on the total wall time a stream request may spend before it exposes
+ * provider output, across every attempt and every retry wait.
+ *
+ * It sits below the 45s `generic_idle` deadline the hosted child-fork watchdog
+ * applies to the first stream part
+ * (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`). That watchdog arms its
+ * timer around the first pull of `fullStream`, which is what drives the
+ * provider call, so a retry chain that outlived this budget would be cut off
+ * mid-attempt and reported as a fork stall instead of the provider timeout it
+ * is. Three full 30s attempts would take 90s and always lose that race.
+ */
+const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
 const DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS = 1_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
@@ -810,6 +823,12 @@ export async function requestJson(options: {
  * request bodies are not retried because fetch can consume them on the first
  * attempt.
  *
+ * Every attempt and every retry wait together are capped by
+ * `totalHeadersBudgetMs`, so the whole chain stays inside the hosted
+ * child-fork idle watchdog. The first attempt always gets the full header
+ * deadline: only a retry is shortened to what the budget has left, so a
+ * provider that would have answered just inside the deadline still wins.
+ *
  * Response headers and error bodies have a 30-second default per-attempt
  * deadline. After headers arrive, caller cancellation remains connected to the
  * returned body; consumer cancellation aborts the request and cancels the
@@ -824,15 +843,26 @@ export async function requestStream(options: {
   /** Model this request is for. Reported when a deadline elapses. */
   modelId?: string;
   headersTimeoutMs?: number;
+  /**
+   * Ceiling on total wall time spent before provider output is exposed, across
+   * every attempt and retry wait.
+   */
+  totalHeadersBudgetMs?: number;
 }): Promise<ReadableStream<Uint8Array>> {
   const headersTimeoutMs = options.headersTimeoutMs ??
     DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
+  const totalHeadersBudgetMs = options.totalHeadersBudgetMs ??
+    DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS;
   const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
+  const firstAttemptStartedAt = Date.now();
   let retryCount = 0;
+  // The first attempt is never shortened to reserve room for a retry that may
+  // never happen. Only a retry runs on what the budget has left.
+  let attemptTimeoutMs = headersTimeoutMs;
 
   while (true) {
     const startedAt = Date.now();
-    const deadline = createRequestDeadline(options.init, headersTimeoutMs, "headersTimeoutMs");
+    const deadline = createRequestDeadline(options.init, attemptTimeoutMs, "headersTimeoutMs");
     let streamOwnsDeadline = false;
 
     try {
@@ -876,34 +906,56 @@ export async function requestStream(options: {
       const failure = deadline.timedOut
         ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
-          timeoutMs: headersTimeoutMs,
+          timeoutMs: attemptTimeoutMs,
           elapsedMs: Date.now() - startedAt,
         })
         : error;
+      // A retry runs on whatever the budget has left, so the last attempt's
+      // deadline is a clamp nobody configured. Once a retry has happened,
+      // report the configured deadline and the total wait instead, so a
+      // responder is not sent hunting for a setting that does not exist. A
+      // first attempt is never clamped, so its error is already exact.
+      const reportable = () =>
+        retryCount > 0 && deadline.timedOut
+          ? providerTimeoutError(options, {
+            waitingFor: "the stream response headers",
+            timeoutMs: headersTimeoutMs,
+            elapsedMs: Date.now() - firstAttemptStartedAt,
+          })
+          : failure;
       if (
         !(failure instanceof ProviderError) ||
         !failure.retryable ||
         !requestBodyIsReplayable ||
-        retryCount >= MAX_PROVIDER_STREAM_RETRIES
+        retryCount >= MAX_PROVIDER_STREAM_RETRIES ||
+        totalHeadersBudgetMs - (Date.now() - firstAttemptStartedAt) <= 0
       ) {
-        throw failure;
+        throw reportable();
       }
 
       const retryDelayMs = failure.retryAfterMs ??
         (deadline.timedOut ? 0 : DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS * 2 ** retryCount);
       // A provider-specified wait that cannot fit the current attempt's
       // remaining deadline cannot be honored. Report the provider failure we
-      // actually received instead of rewriting it as a false timeout.
+      // actually received instead of rewriting it as a false timeout. The
+      // total budget bounds the wait for the same reason: a backoff that
+      // consumes it leaves no room to re-issue the request at all.
       if (retryDelayMs > 0) {
-        if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw failure;
+        if (retryDelayMs >= attemptTimeoutMs - (Date.now() - startedAt)) throw reportable();
+        if (retryDelayMs >= totalHeadersBudgetMs - (Date.now() - firstAttemptStartedAt)) {
+          throw reportable();
+        }
         try {
           await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);
         } catch (waitError) {
-          if (deadline.timedOut) throw failure;
+          if (deadline.timedOut) throw reportable();
           throw waitError;
         }
       }
       retryCount++;
+      const remainingBudgetMs = totalHeadersBudgetMs - (Date.now() - firstAttemptStartedAt);
+      if (remainingBudgetMs <= 0) throw reportable();
+      attemptTimeoutMs = Math.min(headersTimeoutMs, remainingBudgetMs);
     } finally {
       deadline.cancelTimeout();
       if (!streamOwnsDeadline) deadline.dispose();
