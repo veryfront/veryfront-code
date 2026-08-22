@@ -1,7 +1,7 @@
 import { RENDER_ERROR } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSRHandler } from "./ssr.handler.ts";
 import { __setComponentSourceLoaderForTests } from "./error-page-fallback.ts";
@@ -10,7 +10,7 @@ import {
   __injectReactDOMServerForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
-import type { HandlerContext } from "../../types.ts";
+import type { HandlerContext, HandlerResult } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
 import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.test-helpers.ts";
@@ -103,6 +103,126 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - with mock SSRService", () => {
+    it("awaits the current preview source snapshot before rendering", async () => {
+      const events: string[] = [];
+      let releaseRefresh!: () => void;
+      const refreshPending = new Promise<void>((resolve) => {
+        releaseRefresh = resolve;
+      });
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = async () => {
+        events.push("refresh-start");
+        await refreshPending;
+        events.push("refresh-complete");
+      };
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          events.push("render");
+          return Promise.resolve({
+            status: 200,
+            html: "<html>current draft</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          });
+        },
+      }));
+      const handling = handler.handle(
+        new Request("http://localhost/preview"),
+        makeCtx({
+          adapter,
+          isLocalProject: true,
+          projectSlug: "preview-project",
+          requestContext: {
+            token: "",
+            slug: "preview-project",
+            branch: "main",
+            mode: "preview",
+          },
+        }),
+      );
+
+      await Promise.resolve();
+      await Promise.resolve();
+      assertEquals(events, ["refresh-start"]);
+
+      releaseRefresh();
+      const result = await handling;
+
+      assertEquals(events, ["refresh-start", "refresh-complete", "render"]);
+      assertEquals(result.response?.status, 200);
+    });
+
+    it("surfaces preview source refresh failures without rendering stale HTML", async () => {
+      let renderCalls = 0;
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = () =>
+        Promise.reject(new Error("preview snapshot refresh failed"));
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>stale</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          });
+        },
+      }));
+
+      await assertRejects(
+        () =>
+          handler.handle(
+            new Request("http://localhost/preview"),
+            makeCtx({
+              adapter,
+              isLocalProject: true,
+              projectSlug: "preview-project",
+              requestContext: {
+                token: "",
+                slug: "preview-project",
+                branch: "main",
+                mode: "preview",
+              },
+            }),
+          ),
+        Error,
+        "preview snapshot refresh failed",
+      );
+      assertEquals(renderCalls, 0);
+    });
+
+    it("does not refresh immutable production source before rendering", async () => {
+      let refreshCalls = 0;
+      const adapter = createMockAdapter();
+      adapter.fs.ensureSourceSnapshotFresh = () => {
+        refreshCalls++;
+        return Promise.resolve();
+      };
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/production"),
+        makeCtx({
+          adapter,
+          isLocalProject: true,
+          projectSlug: "production-project",
+          releaseId: "release-1",
+          resolvedEnvironment: "production",
+          requestContext: {
+            token: "",
+            slug: "production-project",
+            branch: null,
+            mode: "production",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(refreshCalls, 0);
+    });
+
     it("passes only application headers into project rendering", async () => {
       let renderedRequest: Request | undefined;
       const mockService = createMockSSRService({
@@ -510,6 +630,61 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(calls.runWithContext, undefined);
       assertEquals(result.response?.status, 503);
       assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+    });
+
+    it("refreshes preview source inside the matching project context", async () => {
+      const events: string[] = [];
+      let inProjectContext = false;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          events.push(inProjectContext ? "render-in-context" : "render-outside-context");
+          return Promise.resolve({
+            status: 200,
+            html: "<html>current preview</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "page",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+      const { ctx } = makeExtendedCtx({}, {
+        allowHostProjectCodeExecution: true,
+        projectSlug: "preview-project",
+        projectId: "project-1",
+        releaseId: undefined,
+        requestContext: {
+          token: "project-token",
+          slug: "preview-project",
+          branch: "main",
+          mode: "preview",
+        },
+      });
+      const fs = ctx.adapter.fs as unknown as {
+        runWithContext: (
+          slug: string,
+          token: string,
+          fn: () => Promise<HandlerResult>,
+        ) => Promise<HandlerResult>;
+        ensureSourceSnapshotFresh: (reason?: string) => Promise<void>;
+      };
+      fs.runWithContext = async (_slug, _token, fn) => {
+        inProjectContext = true;
+        try {
+          return await fn();
+        } finally {
+          inProjectContext = false;
+        }
+      };
+      fs.ensureSourceSnapshotFresh = () => {
+        events.push(inProjectContext ? "refresh-in-context" : "refresh-outside-context");
+        return Promise.resolve();
+      };
+
+      const result = await handler.handle(new Request("http://localhost/page"), ctx);
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(events, ["refresh-in-context", "render-in-context"]);
     });
 
     it("skips runWithContext when projectSlug is missing", async () => {
