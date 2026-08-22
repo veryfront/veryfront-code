@@ -24,6 +24,30 @@ tests/
 └── integration/          # Integration tests (multiple components, I/O, servers)
 ```
 
+### Canonical Leaf Suites
+
+The executable test tree is classified by `deno task test:layout` before quick
+verification and in the earliest CI job. The gate maps every executable test path
+to exactly one `level -> leaf suite -> runner` owner and reports timing without
+gating on duration.
+
+Canonical leaves are:
+
+- `tests/unit/` -> `unit -> unit -> deno`
+- `tests/integration/` -> `integration -> integration -> deno`
+- `tests/e2e/` -> `e2e -> e2e -> playwright`
+- `tests/node/` -> `runtime -> runtime[node] -> node`
+- `tests/bun/` -> `runtime -> runtime[bun] -> bun`
+- `tests/validation/` -> `validation -> validation -> deno`
+- `tests/docs/` -> `docs -> docs -> deno`
+- `tests/build/` -> `build -> build -> deno`
+- `scripts/test/` -> `tooling -> scripts -> deno`
+
+Runtime is a suite variant, not a competing leaf owner. Existing off-layout
+tests are covered by the temporary migration inventory in
+`scripts/test/test-layout-migration.ts`; that inventory is a ratchet and must
+only shrink unless a deliberate taxonomy update changes the canonical registry.
+
 **Key Principles:**
 
 - **Unit tests** (pure functions, no I/O, no external dependencies) are **colocated** with source code in `src/`

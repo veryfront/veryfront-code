@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [format, lint, typecheck]
+        check: [test-layout, format, lint, typecheck]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,6 +44,7 @@ jobs:
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
+            test-layout) deno task test:layout ;;
             format) deno fmt --check ;;
             # The chain lives in the lint:ci task so a contributor can run this
             # shard locally instead of learning what it covers from a red CI run.
