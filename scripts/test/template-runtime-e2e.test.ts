@@ -4,19 +4,36 @@ import { getDevServerCommand } from "./template-runtime-e2e.ts";
 
 describe("template runtime E2E commands", () => {
   it("exports the shared harness without running the E2E flow on import", async () => {
-    const result = await new Deno.Command(Deno.execPath(), {
-      args: [
-        "eval",
-        "--config=scripts/test.deno.json",
-        "--no-check",
-        `
+    const controller = new AbortController();
+    const timeoutMs = 7_500;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let result: Deno.CommandOutput;
+
+    try {
+      result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          "--config=scripts/test.deno.json",
+          "--no-check",
+          `
 const mod = await import("./scripts/test/template-runtime-e2e.ts");
 console.log(JSON.stringify(Object.keys(mod).sort()));
 `,
-      ],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+        ],
+        signal: controller.signal,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          `template runtime import subprocess timed out after ${timeoutMs}ms`,
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     assertEquals(new TextDecoder().decode(result.stderr), "");
     assertEquals(result.code, 0);
