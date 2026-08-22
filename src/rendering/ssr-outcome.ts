@@ -231,17 +231,28 @@ function isFileNotFoundError(error: unknown): error is VeryfrontError {
  * EIO, aborts and timeouts into it. Both are server faults, and answering them
  * with a 404 would hide a real outage behind a status nothing alerts on.
  *
- * `code` narrows it to that one raiser: of the sixteen in-tree raisers of this
- * slug, `createNotFoundLikeError` is the only one that sets ENOENT alongside
- * it, and removing that assignment reddens tests in four files.
+ * `code` narrows it: of the sixteen in-tree raisers of this slug, exactly two
+ * set ENOENT alongside it -- `createNotFoundLikeError`, and the re-raise in
+ * `rendering/orchestrator/pipeline.ts`, which carries the marker across that
+ * boundary only when every critical failure already had it. Removing either
+ * assignment reddens tests.
  *
- * This is a correctness guard, not a security boundary. `FILE_NOT_FOUND` is
- * public API via the `veryfront/errors/general` export, so project code can
- * raise this slug and can set an own `code` of its own. Reading the own data
- * descriptor rules out an accessor -- no project getter runs during
- * classification, and a getter cannot stand in for the marker -- but a plain
- * assignment still passes, and project code can already reach a 404 through
- * `notFound()` by design. Nothing here depends on the tenant being unable to.
+ * This is a correctness guard, not a security boundary, and the distinction
+ * matters because the check reads as though it were one. `FILE_NOT_FOUND` and
+ * `VeryfrontError` are public API via `veryfront/errors`, so project code can
+ * raise this slug and assign an own `code` that this predicate accepts. The
+ * own-data-descriptor read stops an accidental accessor, not a determined
+ * forgery, and no project getter runs during classification. A project that
+ * did forge it would route its own route to 404 and suppress its own alerting;
+ * nothing cross-tenant turns on it, and `notFound()` already lets a project
+ * reach a 404 by design.
+ *
+ * The narrowing is deliberately conservative: adapters that raise the slug
+ * without ENOENT -- `runtime/cloudflare/filesystem.ts`, `fs/github`, `mock.ts`,
+ * `skill/testing.ts` -- answer 500 for a genuinely absent file rather than 404.
+ * Wrong in the safe direction today because SSR is served through the
+ * veryfront-api adapter. If SSR is ever served through one of those, the
+ * symptom this guard exists to fix returns there and they need the marker too.
  *
  * Message text is never consulted, so an error that merely reads "not found"
  * stays a fault.
