@@ -77,6 +77,16 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.credentials?.authToken, "request-scoped-user-token");
   });
 
+  it("preserves explicit delegation denial across the control-plane transform", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      allowDelegation: false,
+    }));
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(parsed.allowDelegation, false);
+    assertEquals(request.allowDelegation, false);
+  });
+
   it("accepts main branch runtime targets without branch or environment selectors", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       run: {

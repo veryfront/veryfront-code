@@ -403,6 +403,7 @@ describe("internal-agents/schema", () => {
       runId: "run_1",
       ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
+      allowDelegation: false,
       messages: [
         {
           id: "user_1",
@@ -429,6 +430,7 @@ describe("internal-agents/schema", () => {
     assertEquals(toRuntimeRunAgentInput(internalRequest) as unknown, {
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      allowDelegation: false,
       messages: [
         {
           id: "user_1",

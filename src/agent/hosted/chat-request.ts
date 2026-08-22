@@ -581,6 +581,7 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
 
   return {
     messages: normalizeHostedRuntimeInvocationMessages(input.messages),
+    ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
     context: {
       conversationId: input.run.conversationId,
       projectId: input.run.project.projectId,
