@@ -2117,11 +2117,12 @@ describe("DAGExecutor", () => {
     });
 
     it("still spends only one recovery when the interrupted state has no startedAt", async () => {
-      // `startedAt` is optional on NodeState, and nodeStates is a public input
-      // to execute(), so a third-party backend or an SDK caller can hand back a
-      // running node without it. The recovery budget must come from `attempt`
-      // alone: inferring "never started" from a missing timestamp hands such a
-      // node a second recovery and duplicates its side effect.
+      // `startedAt` is optional on NodeState, and `WorkflowBackend` is an
+      // exported interface a project can implement, so a backend that does not
+      // round-trip the timestamp hands back a running node without it. The
+      // recovery budget must come from `attempt` alone: inferring "never
+      // started" from a missing timestamp gives such a node a second recovery
+      // and duplicates its side effect.
       const executed: string[] = [];
       let lastDurable: Record<string, NodeState> | undefined;
       let atExecution: Record<string, NodeState> | undefined;
