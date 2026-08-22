@@ -237,9 +237,13 @@ const HEARTBEAT_MAX_ATTEMPTS = 3;
 /** Backoff before the first retry when the heartbeat interval leaves room for it. */
 const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
 /**
- * Share of one heartbeat interval the retry backoff may occupy. Retrying into
- * the next scheduled tick would put two heartbeats in flight at once, which is
- * worse than the single missed beat the retry exists to prevent.
+ * Share of one heartbeat interval the retry backoff may occupy.
+ *
+ * This bounds the waits between attempts and nothing else. A request has no
+ * deadline, so a slow control plane can still push a tick past its interval —
+ * overlap is prevented by the in-flight guard on the interval below, not here.
+ * Keeping backoff well inside the interval only stops the waits from being the
+ * thing that provokes a skip.
  */
 const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
 
@@ -519,8 +523,20 @@ export async function createAgentServiceRegistrationLifecycle(
   };
 
   let consecutiveHeartbeatFailures = 0;
+  let heartbeatInFlight = false;
 
   const interval = setInterval(() => {
+    // Retries make a tick outlive its interval whenever the control plane is
+    // slow. Starting another tick on top would double the load on a service
+    // that is already struggling, and would let the failure counter advance
+    // out of order, so the beat is skipped instead.
+    if (heartbeatInFlight) {
+      options.logger?.warn?.("Agent service heartbeat tick skipped, previous tick still running", {
+        serviceId: service.id,
+      });
+      return;
+    }
+    heartbeatInFlight = true;
     void heartbeat().then(() => {
       consecutiveHeartbeatFailures = 0;
     }).catch((error: unknown) => {
@@ -539,6 +555,8 @@ export async function createAgentServiceRegistrationLifecycle(
           error: getErrorMessage(error),
         });
       }
+    }).finally(() => {
+      heartbeatInFlight = false;
     });
   }, input.heartbeatIntervalMs);
 

@@ -335,7 +335,10 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     }
   });
 
-  it("keeps one tick's retry sequence inside the heartbeat interval", async () => {
+  it("keeps one tick's backoff waits inside the heartbeat interval", () => {
+    // Arithmetic only. Backoff is the sole part of a tick this schedule bounds;
+    // the no-overlap property is enforced by the in-flight guard and covered by
+    // the concurrency test below.
     for (const intervalMs of [40, 1_000, 30_000, 300_000]) {
       const schedule = heartbeatRetrySchedule(intervalMs);
       const totalDelayMs = schedule.delaysMs.reduce((sum, delayMs) => sum + delayMs, 0);
@@ -348,24 +351,59 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       );
       assert(
         totalDelayMs < intervalMs,
-        `retry backoff ${totalDelayMs}ms must stay inside a ${intervalMs}ms interval`,
+        `backoff of ${totalDelayMs}ms must stay inside a ${intervalMs}ms interval`,
       );
     }
+  });
 
-    const intervalMs = 1_000;
-    const script = scriptedHeartbeatFetch([500]);
+  it("never runs two heartbeat ticks at once, even when attempts outlast the interval", async () => {
+    // A tick here needs 3 attempts x 120ms plus backoff, so it always outlives
+    // the 200ms interval. Without a guard the next tick starts on top of it.
+    const intervalMs = 200;
+    const attemptLatencyMs = 120;
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    let heartbeatRequests = 0;
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      inFlight++;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      return new Promise((resolve) => {
+        // Raw timer on purpose: this is the double's simulated latency, and it
+        // has to stay on the same unscaled clock as the lifecycle's setInterval.
+        setTimeout(() => {
+          inFlight--;
+          resolve(jsonResponse({ error: "boom" }, 500));
+        }, attemptLatencyMs);
+      });
+    };
+
     const lifecycle = await createAgentServiceRegistrationLifecycle(
-      lifecycleOptions(script.fetch, { heartbeatIntervalMs: intervalMs }),
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs }),
     );
 
-    const startedAt = Date.now();
-    await assertRejects(() => lifecycle.heartbeat(), Error, "HTTP 500");
-    const elapsedMs = Date.now() - startedAt;
+    // Enough requests that several interval ticks have had to make a decision.
+    await waitFor(() => heartbeatRequests >= 6, {
+      timeout: 10_000,
+      interval: 10,
+      message: "the heartbeat never issued enough requests to observe overlap",
+    });
     lifecycle.stop();
+    await waitFor(() => inFlight === 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "in-flight heartbeat requests never settled after stop()",
+    });
 
-    assert(
-      elapsedMs < intervalMs,
-      `exhausting the retries took ${elapsedMs}ms, which reaches the next ${intervalMs}ms tick`,
+    assertEquals(
+      maxConcurrent,
+      1,
+      `a tick must never start while one is still running (saw ${maxConcurrent} concurrent ` +
+        `across ${heartbeatRequests} requests)`,
     );
   });
 
