@@ -1,4 +1,4 @@
-import { serverLogger } from "#veryfront/utils";
+import { computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
 import type { BuildResult, Plugin } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -14,7 +14,6 @@ import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { isCompiledBinary } from "#veryfront/utils";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import {
@@ -121,10 +120,9 @@ export function prepareHandlerModule(options: LoadModuleOptions): Promise<Prepar
             `Prepared API route exceeds the ${MAX_WORKER_MODULE_SOURCE_BYTES}-byte worker limit`,
           );
         }
-        const digest = await crypto.subtle.digest("SHA-256", bytes);
         return Object.freeze({
           source,
-          sha256: new Uint8Array(digest).toHex(),
+          sha256: await computeHash(source),
         });
       } catch (error: unknown) {
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -227,18 +225,12 @@ async function moduleRevision(fs: FileSystem, modulePath: string): Promise<strin
   try {
     const { mtime } = await fs.stat(modulePath);
     const source = await fs.readTextFile(modulePath);
-    const digest = await hashModuleSource(source);
+    const digest = await computeHash(source);
     return `${mtime?.getTime() ?? "unknown"}-${digest}`;
   } catch {
     // An unreadable path still has to load; fall through to the clock.
   }
   return String(Date.now());
-}
-
-async function hashModuleSource(source: string): Promise<string> {
-  const bytes = new TextEncoder().encode(source);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return new Uint8Array(digest).toHex();
 }
 
 function loadTSModuleDirect(modulePath: string, revision: string): Promise<APIRoute> {
@@ -722,7 +714,7 @@ const bundledModules = new Map<string, Promise<APIRoute>>();
 const MAX_BUNDLED_MODULES = 64;
 
 async function bundledModuleKey(owner: string, code: string): Promise<string> {
-  return await hashModuleSource(`${owner}\u0000${code}`);
+  return await computeHash(`${owner}\u0000${code}`);
 }
 
 function loadModuleFromCode(
