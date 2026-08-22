@@ -122,14 +122,22 @@ describe("provider-http", () => {
         }),
       );
 
-      assertEquals(err instanceof ProviderRateLimitError, true);
-      assertEquals(err.retryable, true);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "a truncated body cannot prove insufficient_quota, so it stays a rate limit",
+      );
+      assertEquals(err.retryable, true, "a truncated 429 must reach the bounded retry");
     });
 
     it("openai 429 with an empty body -> retryable rate limit", async () => {
       const err = await buildProviderError("openai", jsonResponse(429, ""));
-      assertEquals(err instanceof ProviderRateLimitError, true);
-      assertEquals(err.retryable, true);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an empty body names no quota error",
+      );
+      assertEquals(err.retryable, true, "an empty 429 must reach the bounded retry");
     });
 
     it("openai 429 with a non-JSON body -> retryable rate limit", async () => {
@@ -137,8 +145,12 @@ describe("provider-http", () => {
         "openai",
         jsonResponse(429, "<html><body>Too Many Requests</body></html>"),
       );
-      assertEquals(err instanceof ProviderRateLimitError, true);
-      assertEquals(err.retryable, true);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an HTML gateway page names no quota error",
+      );
+      assertEquals(err.retryable, true, "a non-JSON 429 must reach the bounded retry");
     });
 
     it("openai 429 rate_limit_exceeded -> retryable rate limit", async () => {
@@ -230,14 +242,22 @@ describe("provider-http", () => {
         }),
       );
 
-      assertEquals(err instanceof ProviderRateLimitError, true);
-      assertEquals(err.retryable, true);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "a truncated body cannot prove RESOURCE_EXHAUSTED, so it stays a rate limit",
+      );
+      assertEquals(err.retryable, true, "a truncated 429 must reach the bounded retry");
     });
 
     it("google 429 with an empty body -> retryable rate limit", async () => {
       const err = await buildProviderError("google", jsonResponse(429, ""));
-      assertEquals(err instanceof ProviderRateLimitError, true);
-      assertEquals(err.retryable, true);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an empty body names no quota status",
+      );
+      assertEquals(err.retryable, true, "an empty 429 must reach the bounded retry");
     });
 
     it("google 429 with a non-JSON body -> retryable rate limit", async () => {
@@ -245,8 +265,12 @@ describe("provider-http", () => {
         "google",
         jsonResponse(429, "<html><body>Too Many Requests</body></html>"),
       );
-      assertEquals(err instanceof ProviderRateLimitError, true);
-      assertEquals(err.retryable, true);
+      assertEquals(
+        err instanceof ProviderRateLimitError,
+        true,
+        "an HTML gateway page names no quota status",
+      );
+      assertEquals(err.retryable, true, "a non-JSON 429 must reach the bounded retry");
     });
 
     it("google 429 without RESOURCE_EXHAUSTED -> retryable rate limit", async () => {
@@ -647,6 +671,7 @@ describe("provider-http", () => {
       assertMatch(
         error.message,
         /^veryfront-cloud request failed: request timed out after \d+ms waiting for the JSON response \(5ms deadline, model moonshotai\/kimi-k2\.6\)$/,
+        "a JSON timeout must name the elapsed time, the deadline, and the model",
       );
     });
 
@@ -839,6 +864,7 @@ describe("provider-http", () => {
       assertMatch(
         error.message,
         /^veryfront-cloud request failed: request timed out after \d+ms waiting for the stream response headers \(5ms deadline, model moonshotai\/kimi-k2\.6\)$/,
+        "a stream-header timeout must name the elapsed time, the deadline, and the model",
       );
     });
 
@@ -860,6 +886,7 @@ describe("provider-http", () => {
       assertMatch(
         error.message,
         /request timed out after \d+ms waiting for the stream response headers \(5ms deadline\)$/,
+        "an unnamed model must leave the rest of the diagnostic intact",
       );
     });
 
