@@ -30,6 +30,20 @@ import { dirname, relative, resolve, sep } from "node:path";
 const TEST_FILE_RE = /\.test\.[cm]?[jt]sx?$/i;
 const GLOB_CHARS_RE = /[\*\?\[{]/;
 
+/** First-line metadata for files whose Deno references are runtime-guarded. */
+export const RUNTIME_GUARDED_DENO_HEADER = "// @veryfront-test runtime-guarded-deno";
+
+/** Whether a test source must be omitted from non-Deno runtime suites. */
+export function isDenoDependentTestSource(source) {
+  if (source.startsWith(`${RUNTIME_GUARDED_DENO_HEADER}\n`)) return false;
+  return (
+    /\bDeno\./.test(source) ||
+    /\bDeno\.test\s*\(/.test(source) ||
+    /tests\/_helpers\/utils\.ts/.test(source) ||
+    /\bcreateMockServer\s*\(/.test(source)
+  );
+}
+
 function toPosixPath(path) {
   return path.split(sep).join("/");
 }
