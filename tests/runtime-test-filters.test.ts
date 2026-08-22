@@ -8,8 +8,10 @@
  *
  * The list is easy to break by accident: renaming those files, or moving them
  * out of `src/testing/`, leaves a pattern matching nothing and the runner fails
- * again in the next runtime job. Because an over-broad filter can still leave
- * both CI jobs green, this test guards the selected inventory itself.
+ * again in the next runtime job. An over-broad filter can still leave both CI
+ * jobs green, so the selected inventory itself is pinned by the parity test in
+ * `scripts/test/run-suite.test.ts`. This file guards the exclusion list and the
+ * plan envelope the runtime adapters accept.
  *
  * @module tests/runtime-test-filters
  */

@@ -16,11 +16,11 @@ import { fromFileUrl } from "#veryfront/platform/compat/path/index.ts";
  *    concurrent reader inside the window still resolves against the wrong
  *    directory. Which files share a process is decided by the suite planner's
  *    ordinal shard selection (`index % 8` over the sorted file list), so adding
- *    any test file anywhere reshuffles the pairing. This module read repo files by cwd-relative path
- *    and failed in CI with `NotFound: readfile '.github/workflows/cicd.yml'`
- *    the moment a shard reshuffle put it beside a chdir. Resolving through
- *    `import.meta.url` removes the dependency instead of trying to coordinate
- *    with other tests.
+ *    any test file anywhere reshuffles the pairing. This module read repo files
+ *    by cwd-relative path and failed in CI with `NotFound: readfile
+ *    '.github/workflows/cicd.yml'` the moment a shard reshuffle put it beside a
+ *    chdir. Resolving through `import.meta.url` removes the dependency instead
+ *    of trying to coordinate with other tests.
  *
  * 2. NOT AT MODULE SCOPE. A top-level `await` that throws is an *uncaught*
  *    module error: the runner fails the whole file, the shard fails, and
