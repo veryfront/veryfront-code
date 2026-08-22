@@ -330,3 +330,17 @@ describe("cli/commands/dev/port-fallback", () => {
     });
   });
 });
+
+describe("cli/commands/dev/port-fallback: port 0", () => {
+  it("resolves --port 0 to a concrete ephemeral port before the server starts", async () => {
+    // Everything downstream of the dev server - the MCP port, VERYFRONT_DEV_PORT,
+    // the module server URL, the printed http://localhost:<port> - is derived
+    // from the number the server was handed. Handing it 0 would let the OS pick
+    // a port nothing else is told about.
+    const port = await findAvailablePort(0);
+
+    assert(port > 0, `expected a real port, got ${port}`);
+    assert(port <= MAX_TCP_PORT, `expected a TCP port, got ${port}`);
+    assertEquals(await isPortAvailable(port), true);
+  });
+});

@@ -25,6 +25,7 @@ import {
   serializeError,
   snapshotWorkerRequest,
 } from "./worker-script.ts";
+import { encodeSandboxBytesAsHex } from "./worker-byte-encoding.ts";
 
 const TEST_SOURCE_INTEGRATION_POLICY = {
   schemaVersion: 1,
@@ -40,7 +41,7 @@ async function prepareWorkerModule(
   );
   return {
     source,
-    sha256: new Uint8Array(digest).toHex(),
+    sha256: encodeSandboxBytesAsHex(new Uint8Array(digest)),
   };
 }
 

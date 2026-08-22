@@ -477,6 +477,33 @@ async function assembleScaffold(request: {
   };
 }
 
+/**
+ * Every path `createProject` writes outright, in the order it writes them.
+ *
+ * `.gitignore` is absent on purpose: it is merged with whatever is already
+ * there rather than replaced, so an existing one is never a conflict.
+ */
+function scaffoldWritePaths(assembly: ScaffoldAssembly, request: CreateProjectRequest): string[] {
+  const paths = assembly.files
+    .map((file) => file.path)
+    .filter((path) => path !== ".env" && path !== ".env.example");
+  if (request.includePackageMetadata) {
+    paths.push("package.json");
+    if (request.runtime === "deno") paths.push("deno.json");
+  }
+  if (assembly.envVars.length) paths.push(".env", ".env.example");
+  return paths;
+}
+
+async function findExistingPaths(dir: string, paths: string[]): Promise<string[]> {
+  const fs = createFileSystem();
+  const existing: string[] = [];
+  for (const path of paths) {
+    if (await fs.exists(join(dir, path))) existing.push(path);
+  }
+  return existing;
+}
+
 export async function createProject(
   request: CreateProjectRequest,
   dependencies: CreateProjectDependencies = {},
@@ -503,6 +530,19 @@ export async function createProject(
   }
 
   const assembly = await assembleScaffold(request);
+
+  // A named project gets a fresh directory, checked above. Without a name the
+  // scaffold lands in `parentDir` itself, which always exists, so the conflict
+  // is any file the scaffold would write over - a `package.json` with the
+  // author's scripts, a `README.md` - and those are refused the same way.
+  if (projectName === undefined && request.conflictPolicy === "fail") {
+    const conflicts = await findExistingPaths(projectDir, scaffoldWritePaths(assembly, request));
+    if (conflicts.length) {
+      throw createConfigError(
+        `Directory already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
+      );
+    }
+  }
 
   if (projectName !== undefined) await ensureDir(projectDir);
 
