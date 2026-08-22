@@ -51,8 +51,10 @@ the LLM provider origins.
 
 To control outbound HTTP in a test, use `src/testing/mock-fetch.ts` -- `withMockFetch(mock, fn)`
 where the stub has a callback to scope, or the `installMockFetch` / `restoreMockFetch` pair for
-suites that install per test and tear down in `afterEach`. Both move `globalThis.fetch` and the
-host transport in `src/security/http/outbound-fetch.ts` together.
+suites that install per test and tear down in `afterEach`. Both move `globalThis.fetch`, the
+host transport in `src/security/http/outbound-fetch.ts`, and the egress guard's host resolver
+together, so a stubbed request performs no DNS at all. Supplying only a transport is not enough:
+the guard resolves the destination before any transport sees the request.
 
 Assigning `globalThis.fetch` by hand controls only code that calls `fetch` directly. Anything
 routed through `guardedOutboundFetch` reads the host transport instead, so a hand-assigned stub
