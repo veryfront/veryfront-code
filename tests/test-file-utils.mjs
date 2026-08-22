@@ -33,9 +33,21 @@ const GLOB_CHARS_RE = /[\*\?\[{]/;
 /** First-line metadata for files whose Deno references are runtime-guarded. */
 export const RUNTIME_GUARDED_DENO_HEADER = "// @veryfront-test runtime-guarded-deno";
 
+/**
+ * Whether a source opens with the runtime-guarded header line. A Windows
+ * checkout with `core.autocrlf=true` ends that line in CRLF, and treating it as
+ * unguarded would silently drop the file from every non-Deno suite.
+ */
+export function hasRuntimeGuardedDenoHeader(source) {
+  const lineEnd = source.indexOf("\n");
+  if (lineEnd === -1) return false;
+  const firstLine = source.slice(0, lineEnd).replace(/\r$/, "");
+  return firstLine === RUNTIME_GUARDED_DENO_HEADER;
+}
+
 /** Whether a test source must be omitted from non-Deno runtime suites. */
 export function isDenoDependentTestSource(source) {
-  if (source.startsWith(`${RUNTIME_GUARDED_DENO_HEADER}\n`)) return false;
+  if (hasRuntimeGuardedDenoHeader(source)) return false;
   return (
     /\bDeno\./.test(source) ||
     /\bDeno\.test\s*\(/.test(source) ||

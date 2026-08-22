@@ -19,8 +19,8 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { DENO_ONLY_TESTS } from "./deno-only-tests.mjs";
 import {
   filterTestFiles,
+  hasRuntimeGuardedDenoHeader,
   isDenoDependentTestSource,
-  RUNTIME_GUARDED_DENO_HEADER,
 } from "./test-file-utils.mjs";
 
 /** The files the shared list exists to exclude. */
@@ -79,7 +79,7 @@ describe("runtime test filters", () => {
     );
 
     assertEquals(
-      source.startsWith(`${RUNTIME_GUARDED_DENO_HEADER}\n`),
+      hasRuntimeGuardedDenoHeader(source),
       true,
       "the broad loader suite must declare that its Deno-only cases are guarded",
     );

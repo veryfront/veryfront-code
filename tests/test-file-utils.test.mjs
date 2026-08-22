@@ -13,7 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { describe, it } from "node:test";
-import { isDenoDependentTestSource, RUNTIME_GUARDED_DENO_HEADER } from "./test-file-utils.mjs";
+import {
+  hasRuntimeGuardedDenoHeader,
+  isDenoDependentTestSource,
+  RUNTIME_GUARDED_DENO_HEADER,
+} from "./test-file-utils.mjs";
 
 const utilsUrl = new URL("./test-file-utils.mjs", import.meta.url).href;
 
@@ -66,6 +70,19 @@ describe("non-Deno runtime source filtering", () => {
       isDenoDependentTestSource(`// explanation\n${RUNTIME_GUARDED_DENO_HEADER}\nDeno.test('x')`),
       true,
     );
+    deepStrictEqual(isDenoDependentTestSource(RUNTIME_GUARDED_DENO_HEADER), false);
+    deepStrictEqual(
+      isDenoDependentTestSource(`${RUNTIME_GUARDED_DENO_HEADER} extra\nDeno.test('x')`),
+      true,
+    );
+  });
+
+  it("keeps the header guard working on a CRLF checkout", () => {
+    // A Windows clone with core.autocrlf=true rewrites the header line ending.
+    // Reading that as unguarded drops the whole file from the Node suite.
+    const crlf = `${RUNTIME_GUARDED_DENO_HEADER}\r\nawait Deno.readTextFile('x');\r\n`;
+    deepStrictEqual(hasRuntimeGuardedDenoHeader(crlf), true);
+    deepStrictEqual(isDenoDependentTestSource(crlf), false);
   });
 });
 
