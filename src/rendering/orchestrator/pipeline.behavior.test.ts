@@ -5,7 +5,14 @@ import { FakeTime } from "#std/testing/time";
 import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions, RenderResult } from "./types.ts";
 import { isTenantBuildFailure, markBuildFailure } from "./module-loader/build-failure.ts";
-import { COMPILATION_ERROR, createError, SSG_GENERATION_ERROR, toError } from "#veryfront/errors";
+import {
+  COMPILATION_ERROR,
+  createError,
+  FILE_NOT_FOUND,
+  SSG_GENERATION_ERROR,
+  toError,
+  VeryfrontError,
+} from "#veryfront/errors";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
 import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
@@ -15,7 +22,7 @@ import {
   registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
-import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
   finalizeRequestProfiling,
   resetRequestProfiles,
@@ -33,6 +40,14 @@ import {
   unwrapDataResponseMetadataError,
 } from "#veryfront/data/response-metadata.ts";
 import { notFound } from "#veryfront/data/helpers.ts";
+import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
+import { isMissingProjectSourceError } from "#veryfront/rendering/ssr-outcome.ts";
+import {
+  __registerLogRecordEmitter,
+  __resetLoggerConfigForTests,
+  __resetLogRecordEmitterForTests,
+  type LogEntry,
+} from "#veryfront/utils/logger/logger.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 
@@ -153,14 +168,35 @@ async function primeReadyReleaseCssManifest(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
 }
 
+/** Collect the warn-and-above log records emitted while a test runs. Reset by the suite's afterEach. */
+function captureLogs(): LogEntry[] {
+  const entries: LogEntry[] = [];
+  setEnv("LOG_LEVEL", "WARN");
+  __resetLoggerConfigForTests();
+  __registerLogRecordEmitter((entry) => entries.push(entry));
+  return entries;
+}
+
+/** The record reporting that `path` failed to load, ignoring surrounding progress logs. */
+function findModuleFailureLog(entries: LogEntry[], path: string): LogEntry | undefined {
+  return entries.find((entry) =>
+    entry.context?.path === path && typeof entry.context?.error === "string"
+  );
+}
+
 describe("RenderPipeline behavior", () => {
   const originalManifestFlag = getHostEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
+  const originalLogLevel = getHostEnv("LOG_LEVEL");
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
     resetRequestProfiles();
     clearReleaseAssetManifestCache();
+    if (originalLogLevel === undefined) deleteEnv("LOG_LEVEL");
+    else setEnv("LOG_LEVEL", originalLogLevel);
+    __resetLoggerConfigForTests();
+    __resetLogRecordEmitterForTests();
   });
 
   it("threads render cancellation through layout preload and application", async () => {
@@ -208,6 +244,151 @@ describe("RenderPipeline behavior", () => {
 
     assertEquals(preloadSignal, controller.signal);
     assertEquals(applySignal, controller.signal);
+  });
+
+  /** Build a pipeline whose single TSX layout fails to load with `error`. */
+  function createPipelineWithFailingLayout(error: Error): RenderPipeline {
+    const pipeline = createPipeline("/project/pages/index.tsx", {
+      layoutOrchestrator: {
+        collectLayouts: async () => ({
+          layoutBundle: undefined,
+          nestedLayouts: [{ kind: "tsx", componentPath: "/project/app/layout.tsx" }],
+        }),
+        preloadLayoutModules: async () => ({
+          tsxTotal: 1,
+          tsxSuccess: 0,
+          tsxFailures: ["/project/app/layout.tsx"],
+          mdxTotal: 0,
+          mdxSuccess: 0,
+          mdxFailures: [],
+          importMapSuccess: true,
+          durationMs: 0,
+          allSuccess: false,
+        }),
+        applyLayoutsAndWrappers: async (element: unknown) => element,
+      },
+    } as unknown as Partial<RenderPipelineConfig>);
+
+    (pipeline as unknown as { loadModule: (path: string) => Promise<unknown> }).loadModule = (
+      path: string,
+    ) => path === "/project/app/layout.tsx" ? Promise.reject(error) : Promise.resolve({});
+
+    return pipeline;
+  }
+
+  it("does not call a terminal layout failure non-critical", async () => {
+    // The apply phase reloads the layout from the same source. When that source
+    // is gone the reload fails identically and the render is over, so a warning
+    // labelled "non-critical" misleads anyone triaging by severity.
+    const entries = captureLogs();
+    const pipeline = createPipelineWithFailingLayout(
+      createNotFoundLikeError("app/layout.tsx"),
+    );
+
+    await pipeline.resolvePageData("/", {
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    });
+
+    const entry = findModuleFailureLog(entries, "/project/app/layout.tsx");
+    assert(entry, "expected a log entry for the failed layout module");
+    assertEquals(entry.level, "error", "a failure about to be terminal is not a warning");
+    assertEquals(
+      entry.message.includes("non-critical"),
+      false,
+      "the message must not claim non-critical for a terminal failure",
+    );
+  });
+
+  it("still treats a recoverable layout load failure as a warning", async () => {
+    const entries = captureLogs();
+    const pipeline = createPipelineWithFailingLayout(new Error("connection reset"));
+
+    await pipeline.resolvePageData("/", {
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    });
+
+    const entry = findModuleFailureLog(entries, "/project/app/layout.tsx");
+    assert(entry, "expected a log entry for the failed layout module");
+    assertEquals(entry.level, "warn", "the apply phase can still recover this one");
+  });
+
+  it("keeps the file-not-found identity of an unretrievable page module", async () => {
+    // The page module reads the same unreachable source as the layout. A
+    // render-error wrapper would drop that identity and answer 500 for the very
+    // deletion the layout path already answers 404 for.
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    (pipeline as unknown as { loadModule: () => Promise<unknown> }).loadModule = () =>
+      Promise.reject(createNotFoundLikeError("pages/index.tsx"));
+
+    const error = await assertRejects(() =>
+      pipeline.resolvePageData("/", {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+      })
+    );
+
+    assertEquals(
+      (error as VeryfrontError).slug,
+      "file-not-found",
+      "resolveSSRFailure reads this slug to answer 404",
+    );
+    assertEquals(
+      isMissingProjectSourceError(error),
+      true,
+      "the absent-source identity must survive the re-raise intact",
+    );
+  });
+
+  it("keeps a render-error identity for an infrastructure file-not-found", async () => {
+    // http-cache raises `file-not-found` when a bundle write reports success and
+    // the file still is not there. That is a server fault reachable from
+    // loadModule, and routing it to 404 would page nobody.
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    (pipeline as unknown as { loadModule: () => Promise<unknown> }).loadModule = () =>
+      Promise.reject(
+        FILE_NOT_FOUND.create({
+          detail: "[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist",
+        }),
+      );
+
+    const error = await assertRejects(() =>
+      pipeline.resolvePageData("/", {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+      })
+    );
+
+    assertEquals(
+      (error as VeryfrontError).slug,
+      "render-error",
+      "an infrastructure fault must keep a 500 identity",
+    );
+  });
+
+  it("keeps a render-error identity for a page module that loaded and threw", async () => {
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    (pipeline as unknown as { loadModule: () => Promise<unknown> }).loadModule = () =>
+      Promise.reject(new Error("Cannot read properties of undefined (reading 'map')"));
+
+    const error = await assertRejects(() =>
+      pipeline.resolvePageData("/", {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+      })
+    );
+
+    assertEquals(
+      isMissingProjectSourceError(error),
+      false,
+      "a genuine fault must not be downgraded to a 404",
+    );
+    assertEquals(
+      (error as VeryfrontError).slug,
+      "render-error",
+      "the existing render-error identity is unchanged",
+    );
   });
 
   it("resolves request-scoped module loader identity and the configured React version", async () => {

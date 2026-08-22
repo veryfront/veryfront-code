@@ -10,7 +10,7 @@
 import { createFileSystem, exists, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
-import { BUILD_FAILED, BUNDLE_ERROR, FILE_NOT_FOUND, retryWithBackoff } from "#veryfront/errors";
+import { BUILD_FAILED, BUNDLE_ERROR, retryWithBackoff } from "#veryfront/errors";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
@@ -28,6 +28,7 @@ import { unbrand } from "./http-cache-types.ts";
 import { asLocalModuleCode, VeryfrontError } from "./http-cache-invariants.ts";
 import {
   CACHE_DIR_TOKEN,
+  CACHE_INVARIANT_VIOLATION,
   detokenizeAllCachePaths,
   detokenizeCachePaths,
   tokenizeAllCachePaths,
@@ -570,7 +571,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
           () => Promise.resolve(),
           async () => {
             if (!(await exists(cachePath))) {
-              throw FILE_NOT_FOUND.create({
+              throw CACHE_INVARIANT_VIOLATION.create({
                 detail:
                   `[HTTP-CACHE] INVARIANT VIOLATION: Redis recovery write succeeded but file does not exist: ${cachePath}`,
               });
@@ -667,7 +668,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       },
       async () => {
         if (!(await exists(cachePath))) {
-          throw FILE_NOT_FOUND.create({
+          throw CACHE_INVARIANT_VIOLATION.create({
             detail:
               `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
           });

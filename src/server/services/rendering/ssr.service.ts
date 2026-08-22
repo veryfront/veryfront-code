@@ -8,7 +8,11 @@ import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import type { SSRFailureOutcome } from "#veryfront/rendering/ssr-outcome.ts";
-import { findSSRControlOutcome, resolveSSRFailure } from "#veryfront/rendering/ssr-outcome.ts";
+import {
+  findSSRControlOutcome,
+  isMissingProjectSourceError,
+  resolveSSRFailure,
+} from "#veryfront/rendering/ssr-outcome.ts";
 import { REDIRECT_DESTINATION_NOT_ALLOWED } from "#veryfront/errors/index.ts";
 import {
   isRedirectDestinationAllowed,
@@ -22,6 +26,9 @@ import {
   startRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
 import { getErrorCollector, profilePhase } from "#veryfront/observability";
+// Not on the `#veryfront/observability` barrel: that surface is frozen by an
+// export-snapshot test, and the sibling in-process recorders sit here too.
+import { recordSSRSourceUnavailable } from "#veryfront/observability/simple-metrics/index.ts";
 import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 import { ErrorOverlay, parseErrorLocation } from "../../dev-server/error-overlay/index.ts";
 import { ErrorPages } from "../../utils/error-html.ts";
@@ -449,7 +456,20 @@ export class SSRService implements SSRServiceLike {
           );
         }
       case "not-found":
-        logger.debug("SSR notFound", { slug });
+        if (isMissingProjectSourceError(error)) {
+          // This 404 used to be a 500, and the error report it raised was the
+          // only thing that made an unreadable release visible. Reclassifying it
+          // must not make it silent, so count it and say so once per request at
+          // a level Loki can alert on -- a routine deletion moves this a bounded
+          // number of times, an API-side regression moves it continuously.
+          recordSSRSourceUnavailable();
+          logger.warn("Project source unavailable; served 404", {
+            slug,
+            projectSlug: ctx.projectSlug,
+          });
+        } else {
+          logger.debug("SSR notFound", { slug });
+        }
         return buildNotFoundResult({
           ...outcome,
           ...mergeDataResponseMetadata([

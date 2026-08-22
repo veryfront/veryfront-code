@@ -30,6 +30,7 @@ export const state: MetricsState = {
   ssrHistogram: undefined,
   rscStreamHistogram: undefined,
   corsRejections: 0,
+  ssrSourceUnavailable: 0,
   securityHeadersApplied: 0,
   apiRequests2xx: 0,
   apiRequests4xx: 0,
@@ -81,6 +82,7 @@ export function createSnapshot(): VeryfrontMetrics {
     routeManifestLruHits: state.routeManifestLruHits,
     routeManifestLruMisses: state.routeManifestLruMisses,
     corsRejections: state.corsRejections,
+    ssrSourceUnavailable: state.ssrSourceUnavailable,
     securityHeadersApplied: state.securityHeadersApplied,
     apiRequests2xx: state.apiRequests2xx,
     apiRequests4xx: state.apiRequests4xx,
@@ -135,6 +137,7 @@ export function resetMetrics(): void {
   state.routeManifestLruHits = 0;
   state.routeManifestLruMisses = 0;
   state.corsRejections = 0;
+  state.ssrSourceUnavailable = 0;
   state.securityHeadersApplied = 0;
   state.apiRequests2xx = 0;
   state.apiRequests4xx = 0;

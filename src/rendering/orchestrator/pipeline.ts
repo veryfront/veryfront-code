@@ -20,6 +20,7 @@ import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { FILE_NOT_FOUND, RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
+import { isMissingProjectSourceError } from "../ssr-outcome.ts";
 import { buildQueryAwareCacheKey } from "#veryfront/cache/keys.ts";
 import {
   buildDependencyPinnedRenderCacheKey,
@@ -370,8 +371,11 @@ export class RenderPipeline {
    * we throw an error instead of silently continuing with missing props. This prevents
    * users from seeing broken pages with no indication of the problem.
    *
-   * Layout modules are considered non-critical - their failures are logged as warnings
-   * and the page continues to render (possibly without that layout's data).
+   * A layout module that fails to load does not stop this phase: the page
+   * continues without that layout's data, and the apply phase loads the layout
+   * again. That second attempt is what decides the render, so a failure here is
+   * only provisional - unless the project's source is gone, in which case the
+   * reload fails identically and the render is already over.
    */
   private async loadModulesInParallel(
     modules: ModuleToLoad[],
@@ -415,6 +419,7 @@ export class RenderPipeline {
       error: string;
       buildFailure: boolean;
       tenantBuildFailure: boolean;
+      missingSource: boolean;
     }> = [];
 
     for (const result of results) {
@@ -433,6 +438,7 @@ export class RenderPipeline {
           error: errorMessage,
           buildFailure: isBuildFailure(result.error),
           tenantBuildFailure: isTenantBuildFailure(result.error),
+          missingSource: isMissingProjectSourceError(result.error),
         });
         renderPageLog.error("Critical page module failed to load", {
           path: result.path,
@@ -441,7 +447,18 @@ export class RenderPipeline {
         continue;
       }
 
-      renderPageLog.warn("Layout module failed to load (non-critical)", {
+      if (isMissingProjectSourceError(result.error)) {
+        // The apply phase reloads this layout from the same unreachable source,
+        // so the render is already lost. Logging it as a recoverable warning
+        // misleads anyone triaging by severity.
+        renderPageLog.error("Layout module source is unavailable; render will fail", {
+          path: result.path,
+          error: errorMessage,
+        });
+        continue;
+      }
+
+      renderPageLog.warn("Layout module failed to load; apply phase will retry it", {
         path: result.path,
         error: errorMessage,
       });
@@ -451,7 +468,17 @@ export class RenderPipeline {
       const failedDetails = criticalFailures
         .map((f) => `${f.path}: ${f.error}`)
         .join("\n");
-      throw RENDER_ERROR.create({
+      // A page module the adapter could not retrieve is the same condition the
+      // layout path already answers 404 for, so it is re-raised with the same
+      // identity the adapter used. Wrapping it in a `render-error` would answer
+      // 500 for a deleted project on the page path while answering 404 on the
+      // layout path.
+      //
+      // `every`, matching `tenantBuildFailure` below: one module that loaded and
+      // threw, or an infrastructure `file-not-found` such as http-cache's write
+      // verification, must not be reported as an absent release.
+      const missingSource = criticalFailures.every((f) => f.missingSource);
+      const failure = (missingSource ? FILE_NOT_FOUND : RENDER_ERROR).create({
         detail: `Critical page module(s) failed to load:\n${failedDetails}`,
         context: {
           criticalFailures,
@@ -473,6 +500,11 @@ export class RenderPipeline {
           totalModules: modules.length,
         },
       });
+
+      // Carry the adapter's own marker across the re-raise so that one notion of
+      // "absent project source" holds on both sides of this boundary, rather
+      // than the slug alone standing in for it here.
+      throw missingSource ? Object.assign(failure, { code: "ENOENT" }) : failure;
     }
 
     return loaded;

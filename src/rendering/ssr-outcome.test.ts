@@ -12,12 +12,14 @@ import {
 import type { SSRFailureOutcome } from "./ssr-outcome.ts";
 import {
   findSSRControlOutcome,
+  isMissingProjectSourceError,
   isSSRBuildFailure,
   isSSRControlOutcome,
   resolveSSRControlOutcome,
   resolveSSRFailure,
 } from "./ssr-outcome.ts";
 import { attachDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
 
 function assertSSRFailureOutcome(
   actual: SSRFailureOutcome,
@@ -316,6 +318,80 @@ describe("ssr-outcome.ts", () => {
           testCase.name,
         );
       }
+    });
+
+    it("does not treat every file-not-found as an absent project source", () => {
+      // `file-not-found` is raised in-tree for conditions that are not an
+      // absent source: http-cache raises it when a bundle write reports success
+      // and the file still is not there, and discovery/transpiler folds EACCES
+      // and EIO into it. Routing those to 404 would hide a real fault behind a
+      // status nothing alerts on -- the exact inversion this PR exists to stop.
+      const invariantViolation = FILE_NOT_FOUND.create({
+        detail: "[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist",
+      });
+
+      assertEquals(
+        isMissingProjectSourceError(invariantViolation),
+        false,
+        "an infrastructure fault must not be read as a deleted release",
+      );
+      assertEquals(
+        isMissingProjectSourceError(createNotFoundLikeError("app/layout.tsx")),
+        true,
+        "the filesystem adapter's own absence error still qualifies",
+      );
+    });
+
+    it("reads the ENOENT marker as an own data property only", () => {
+      // Pins the shape of the check, not just its answer. A plain
+      // `error.code === "ENOENT"` passes every other assertion in this file
+      // while accepting an accessor and an inherited value, so without this the
+      // narrowing could be "simplified" away and CI would stay green.
+      const withGetter = FILE_NOT_FOUND.create({ detail: "accessor" });
+      Object.defineProperty(withGetter, "code", { get: () => "ENOENT" });
+
+      const proto = Object.assign(FILE_NOT_FOUND.create({ detail: "proto" }), {
+        code: "ENOENT",
+      });
+      const inherited = Object.create(proto);
+
+      assertEquals(
+        isMissingProjectSourceError(withGetter),
+        false,
+        "an accessor must not stand in for the marker, and must not be invoked",
+      );
+      assertEquals(
+        isMissingProjectSourceError(inherited),
+        false,
+        "an inherited marker is not this error's own",
+      );
+      assertEquals(
+        isMissingProjectSourceError(proto),
+        true,
+        "an own data property is the shape the adapter writes",
+      );
+    });
+
+    it("keeps a layout that exists but throws a server error", () => {
+      // The regression guard for the file-not-found branch above: only the
+      // framework's own absence error becomes a 404. Project code that loaded
+      // and then threw is still a fault, including when its message names a
+      // missing file or it sets ENOENT itself.
+      const thrown = new Error("404 Not Found: app/layout.tsx");
+      const enoent = Object.assign(new Error("Cannot read properties of undefined"), {
+        code: "ENOENT",
+      });
+
+      assertSSRFailureOutcome(
+        resolveSSRFailure(thrown, { isLocalProject: false }),
+        { kind: "server-error", exposure: "generic", error: thrown },
+        "message text must never be read as a routing decision",
+      );
+      assertSSRFailureOutcome(
+        resolveSSRFailure(enoent, { isLocalProject: false }),
+        { kind: "server-error", exposure: "generic", error: enoent },
+        "an unbranded ENOENT is not the framework's absence error",
+      );
     });
 
     it("defaults service-overloaded to 503 when the error has no status", () => {

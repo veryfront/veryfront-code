@@ -1207,6 +1207,53 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("reports a publish-verification invariant as a server fault, not an absent file", async () => {
+    // The bundle write succeeds and the file still is not there. That is a
+    // cache invariant violation -- a 500 -- and it must not borrow the
+    // `file-not-found` identity: SSR routes that slug to a 404, which would
+    // turn disk pressure or an eviction race into a status nothing alerts on.
+    const moduleUrl = "https://93.184.216.34/invariant/module.js";
+    const originalRename = Deno.rename.bind(Deno);
+
+    Deno.rename = async (oldPath, newPath) => {
+      if (
+        String(newPath).includes("veryfront-http-bundle") || String(oldPath).includes(".pending-")
+      ) {
+        await remove(String(oldPath));
+        return;
+      }
+      await originalRename(oldPath, newPath);
+    };
+
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("export const loaded = true;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      )) as typeof fetch;
+
+    try {
+      await withIsolatedHttpCache("vf-esm-invariant-slug-", mockFetch, async (tempDir) => {
+        const error = await assertRejects(() =>
+          cacheHttpImportsToLocal(`import "${moduleUrl}";`, {
+            cacheDir: tempDir,
+            importMap: { imports: {}, scopes: {} },
+          })
+        );
+
+        assertInstanceOf(error, VeryfrontError);
+        assertNotEquals(
+          error.slug,
+          "file-not-found",
+          "an invariant violation must not claim the identity SSR routes to 404",
+        );
+        assertEquals(error.status, 500, "a broken cache invariant is a server fault");
+      });
+    } finally {
+      Deno.rename = originalRename;
+    }
+  });
+
   it("does not retry permanent HTTP module failures", async () => {
     let fetchCount = 0;
     let bodyCancelled = false;

@@ -5,11 +5,14 @@ import { buildFileCacheKeyPrefix } from "./cache-keys.ts";
 import {
   assertProjectSourcePath,
   buildReadFetchState,
+  createNotFoundLikeError,
   getResolvedCacheKey,
   isNotFoundLikeError,
   READ_OPERATION_EXTENSION_PRIORITY,
   splitKnownFileExtension,
 } from "./read-operations-helpers.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import type { ResolvedContentContext } from "./types.ts";
 
 describe("read-operations helpers", () => {
@@ -119,6 +122,39 @@ describe("read-operations helpers", () => {
         true,
       );
       assertEquals(isNotFoundLikeError(new Error("500 Internal Server Error")), false);
+    });
+
+    it("raises the registry file-not-found error, not a raw Error", () => {
+      const error = createNotFoundLikeError("app/layout.tsx");
+
+      assertEquals(
+        error instanceof VeryfrontError,
+        true,
+        "the adapter's absence error must carry a registry identity",
+      );
+      assertEquals(
+        (error as VeryfrontError).slug,
+        "file-not-found",
+        "slug is what resolveSSRFailure reads to answer 404",
+      );
+      assertEquals((error as VeryfrontError).status, 404, "file-not-found is a 404 condition");
+      assertEquals(error.message, "404 Not Found: app/layout.tsx", "message shape is unchanged");
+    });
+
+    it("keeps the ENOENT contract its own callers depend on", () => {
+      const error = createNotFoundLikeError("app/layout.tsx");
+
+      assertEquals(error.code, "ENOENT", "isNotFoundLikeError and Node-style checks read code");
+      assertEquals(
+        isNotFoundLikeError(error),
+        true,
+        "the adapter's own optional-file catches must still treat it as a miss",
+      );
+      assertEquals(
+        isCanonicalNotFoundError(error),
+        true,
+        "fail-closed filesystem boundaries must still see ordinary absence",
+      );
     });
   });
 });
