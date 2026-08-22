@@ -2,6 +2,7 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { resolveConfigWithAuth, type ResolvedConfig } from "#cli/shared/config";
+import { projectApiReference } from "#cli/shared/project-resolution";
 import {
   createHttpDeployControlPlane,
   type DeployControlPlane,
@@ -45,7 +46,7 @@ export async function mintEnvironmentAccessToken(
   const resolveConfig = dependencies.resolveConfig ?? resolveConfigWithAuth;
   const createControlPlane = dependencies.createControlPlane ?? createHttpDeployControlPlane;
   const config = await resolveConfig(options.projectDir);
-  const projectReference = options.projectReference ?? config.projectSlug;
+  const projectReference = options.projectReference ?? projectApiReference(config);
   const targetConfig = options.projectReference
     ? { ...config, projectId: undefined, projectSlug: projectReference }
     : config;

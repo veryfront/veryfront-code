@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 import { setJsonMode } from "../../shared/json-output.ts";
@@ -69,7 +74,9 @@ describe("handleEnvCommand", () => {
 
       assertEquals(output.stderr, []);
       assertEquals(output.stdout.length, 1);
-      assertEquals(JSON.parse(output.stdout[0]), {
+      const [jsonOutput] = output.stdout;
+      assertExists(jsonOutput);
+      assertEquals(JSON.parse(jsonOutput), {
         success: true,
         command: "env",
         data: {

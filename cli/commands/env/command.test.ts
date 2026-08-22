@@ -57,13 +57,17 @@ describe("veryfront env token", () => {
     ]);
   });
 
-  it("uses the configured project when --project is omitted", async () => {
+  it("prefers the linked project id when --project is omitted", async () => {
     const projectReferences: string[] = [];
 
     await mintEnvironmentAccessToken(
       { environment: "production" },
       {
-        resolveConfig: () => Promise.resolve(config),
+        resolveConfig: () =>
+          Promise.resolve({
+            ...config,
+            projectId: "linked-project-id",
+          }),
         createControlPlane: () => ({
           getProject(reference) {
             projectReferences.push(reference);
@@ -75,6 +79,6 @@ describe("veryfront env token", () => {
       },
     );
 
-    assertEquals(projectReferences, ["configured-project"]);
+    assertEquals(projectReferences, ["linked-project-id"]);
   });
 });
