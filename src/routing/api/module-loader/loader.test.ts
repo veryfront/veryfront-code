@@ -22,6 +22,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { env, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { LoadModuleOptions } from "./types.ts";
 import { executeAppRoute } from "../route-executor.ts";
@@ -1670,7 +1671,6 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("rejects API handlers with remote imports when the project lockfile cannot be written for non-read-only reasons", async () => {
-    const originalFetch = globalThis.fetch;
     const realDir = await makeTempDir();
     await fs.mkdir(join(realDir, "pages", "api"), { recursive: true });
 
@@ -1695,13 +1695,19 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       },
     };
 
-    try {
-      globalThis.fetch = (async () =>
+    // The remote import is served by the stub, not by the CDN. It has to move
+    // the guarded outbound transport as well as the ambient fetch, or the
+    // module loader resolves esm.sh for real and never reaches the lockfile
+    // failure this test is about.
+    const serveModule: typeof globalThis.fetch = () =>
+      Promise.resolve(
         new Response(`export function parse() { return {}; }`, {
           status: 200,
           headers: { "content-type": "application/javascript" },
-        })) as typeof fetch;
+        }),
+      );
 
+    await withMockFetch(serveModule, async () => {
       await assertRejects(
         async () => {
           await loadHandlerModule({
@@ -1714,9 +1720,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         Error,
         "No such file or directory",
       );
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    });
   });
 });
 

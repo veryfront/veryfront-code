@@ -58,6 +58,17 @@ import {
 } from "./context-patch.ts";
 
 const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
+const MAX_STALLED_GRAPH_NODE_DETAILS = 10;
+
+function getUnfinishedNodeDetails(
+  nodes: WorkflowNode[],
+  nodeStates: Record<string, NodeState>,
+): Array<{ nodeId: string; status: NodeState["status"] }> {
+  return nodes.flatMap((node) => {
+    const status = nodeStates[node.id]?.status ?? "pending";
+    return status === "completed" || status === "skipped" ? [] : [{ nodeId: node.id, status }];
+  });
+}
 
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
@@ -450,6 +461,26 @@ export class DAGExecutor {
         queued.add(nodeId);
         ready.push(nodeId);
       }
+    }
+
+    const unfinished = getUnfinishedNodeDetails(nodes, nodeStates);
+    if (unfinished.length > 0) {
+      const graph = run.id === scope.rootRunId
+        ? "the root graph"
+        : `child graph ${JSON.stringify(run.id)}`;
+      const details = unfinished.slice(0, MAX_STALLED_GRAPH_NODE_DETAILS)
+        .map(({ nodeId, status }) => `${JSON.stringify(nodeId)} (${status})`)
+        .join(", ");
+      const omitted = unfinished.length - MAX_STALLED_GRAPH_NODE_DETAILS;
+      return {
+        completed: false,
+        waiting: false,
+        context,
+        nodeStates,
+        contextPatch,
+        error: `Workflow run ${JSON.stringify(scope.rootRunId)} stalled in ${graph}; ` +
+          `unfinished nodes: ${details}${omitted > 0 ? `, and ${omitted} more` : ""}`,
+      };
     }
 
     return {
