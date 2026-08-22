@@ -24,7 +24,7 @@ describe("tracked docs validation", () => {
         "docs\\internal\\temporary.md",
         "docs/architecture/current-state.md",
         "docs/evidence/reproducible.json",
-        "docs/rfcs/proposal.md",
+        "docs/guides/proposal.md",
       ]),
       ["docs/internal/temporary.md"],
     );
