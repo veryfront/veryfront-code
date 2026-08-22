@@ -4,8 +4,8 @@
  * promises. "Published" means the same three directories the sibling docs
  * contracts scan (`guide-contracts.test.ts`, `guide-code-examples.test.ts`):
  * getting-started, guides, concepts. Generated pages (`docs/api-reference`) and
- * unpublished material (`docs/rfcs`, `docs/evidence`) is out of scope — it may
- * quote a broken invocation deliberately.
+ * unpublished evidence (`docs/evidence`) is out of scope — it may quote a
+ * broken invocation deliberately.
  *
  * The install command takes its target from `--target` or from the first
  * positional argument (`veryfront install agents`). A command line that selects
