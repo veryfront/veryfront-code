@@ -8,6 +8,7 @@ import {
 
 const HEAD_SHA = "a".repeat(40);
 const STALE_SHA = "b".repeat(40);
+const CODEX_BOT_ID = 199175422;
 const WORKFLOW_PATH = new URL(
   "../../.github/workflows/automated-review-gate.yml",
   import.meta.url,
@@ -43,6 +44,25 @@ function codeRabbitSummary(
   };
 }
 
+function codexNoFindingComment(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    user: {
+      login: "chatgpt-codex-connector[bot]",
+      type: "Bot",
+      id: CODEX_BOT_ID,
+    },
+    body: [
+      "Codex Review: Didn't find any major issues. Nice work!",
+      `**Reviewed commit:** \`${HEAD_SHA.slice(0, 10)}\``,
+    ].join("\n\n"),
+    html_url:
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-2",
+    ...overrides,
+  };
+}
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`${label} must be a record`);
@@ -51,38 +71,139 @@ function record(value: unknown, label: string): Record<string, unknown> {
 }
 
 describe("automated review gate", () => {
-  it("accepts submitted CodeRabbit and Codex reviews for the current head", () => {
+  it("accepts submitted CodeRabbit and Codex reviews for the current head", async () => {
     assertEquals(
-      findAutomatedReview({ reviews: [review()], comments: [] }, HEAD_SHA)
+      (await findAutomatedReview(
+        { reviews: [review()], comments: [] },
+        HEAD_SHA,
+      ))
         ?.reviewer,
       "coderabbitai[bot]",
     );
     assertEquals(
-      findAutomatedReview({
+      (await findAutomatedReview({
         reviews: [
           review({ user: { login: "chatgpt-codex-connector[bot]" } }),
         ],
         comments: [],
-      }, HEAD_SHA)?.reviewer,
+      }, HEAD_SHA))?.reviewer,
       "chatgpt-codex-connector[bot]",
     );
     assertEquals(
-      findAutomatedReview(
+      (await findAutomatedReview(
         { reviews: [], comments: [codeRabbitSummary()] },
         HEAD_SHA,
-      )
+      ))
         ?.source,
       "summary",
     );
   });
 
-  it("rejects skipped comments, stale reviews, pending reviews, and humans", () => {
+  it("accepts an authenticated Codex no-finding comment for the current head", async () => {
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment()],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ),
+      {
+        reviewer: "chatgpt-codex-connector[bot]",
+        source: "summary",
+        state: "COMMENTED",
+        url:
+          "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-2",
+      },
+    );
+  });
+
+  it("rejects a Codex comment unless it resolves to the exact full head", async () => {
+    for (
+      const resolvedCommit of [STALE_SHA, HEAD_SHA.slice(0, 39), undefined]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [codexNoFindingComment()],
+            resolveCommit: () => Promise.resolve(resolvedCommit),
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("rejects stale or unauthenticated Codex issue comments", async () => {
+    const currentHeadBody = [
+      "Codex Review: Didn't find any major issues. Nice work!",
+      `**Reviewed commit:** \`${HEAD_SHA.slice(0, 10)}\``,
+    ].join("\n\n");
+    const rejectedComments = [
+      codexNoFindingComment({
+        body: [
+          "Codex Review: Didn't find any major issues. Nice work!",
+          `**Reviewed commit:** \`${STALE_SHA.slice(0, 10)}\``,
+        ].join("\n\n"),
+      }),
+      codexNoFindingComment({
+        user: { login: "maintainer", type: "User", id: 1 },
+      }),
+      codexNoFindingComment({
+        user: {
+          login: "chatgpt-codex-connector[bot]",
+          type: "Bot",
+          id: CODEX_BOT_ID + 1,
+        },
+      }),
+      codexNoFindingComment({
+        user: {
+          login: "chatgpt-codex-connector[bot]",
+          type: "User",
+          id: CODEX_BOT_ID,
+        },
+      }),
+      codexNoFindingComment({ body: "@codex review" }),
+      codexNoFindingComment({
+        body: `Codex Review: Action not completed.\n\n${currentHeadBody}`,
+      }),
+      codexNoFindingComment({
+        body:
+          `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${
+            HEAD_SHA.slice(0, 9)
+          }\``,
+      }),
+      codexNoFindingComment({
+        body:
+          `Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`${
+            HEAD_SHA.slice(0, 11)
+          }\``,
+      }),
+    ];
+    const resolveCommit = (ref: string) =>
+      Promise.resolve(ref === HEAD_SHA.slice(0, 10) ? HEAD_SHA : STALE_SHA);
+
+    for (const comment of rejectedComments) {
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [comment], resolveCommit },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+  });
+
+  it("rejects skipped comments, stale reviews, pending reviews, and humans", async () => {
     const skippedIssueComment = {
       user: { login: "coderabbitai[bot]" },
       body: "rate limited, review skipped",
     };
     assertEquals(
-      findAutomatedReview({
+      await findAutomatedReview({
         reviews: [
           review({ commit_id: STALE_SHA }),
           review({ state: "PENDING" }),
@@ -148,6 +269,90 @@ describe("automated review gate", () => {
     );
     assertEquals(statuses[1]?.sha, STALE_SHA);
     assertEquals(statuses[1]?.state, "failure");
+  });
+
+  it("resolves a Codex comment to the exact commit before publishing success", async () => {
+    const statuses: Array<Record<string, unknown>> = [];
+    const resolvedRefs: string[] = [];
+    const listReviews = () => Promise.resolve();
+    const listComments = () => Promise.resolve();
+    const github = {
+      paginate: (endpoint: unknown) =>
+        Promise.resolve(
+          endpoint === listComments ? [codexNoFindingComment()] : [],
+        ),
+      rest: {
+        issues: { listComments },
+        pulls: { listReviews },
+        repos: {
+          createCommitStatus: (status: Record<string, unknown>) => {
+            statuses.push(status);
+            return Promise.resolve();
+          },
+          getCommit: ({ ref }: { ref: string }) => {
+            resolvedRefs.push(ref);
+            return Promise.resolve({ data: { sha: HEAD_SHA } });
+          },
+        },
+      },
+    };
+
+    const result = await publishAutomatedReviewStatus({
+      github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD_SHA,
+      pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+    });
+
+    assertEquals(result.state, "success");
+    assertEquals(resolvedRefs, [HEAD_SHA.slice(0, 10)]);
+    assertEquals(statuses[0]?.state, "success");
+    assertEquals(
+      statuses[0]?.target_url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-2",
+    );
+  });
+
+  it("publishes failure when a Codex commit cannot be resolved exactly", async () => {
+    const statuses: Array<Record<string, unknown>> = [];
+    const listReviews = () => Promise.resolve();
+    const listComments = () => Promise.resolve();
+    const github = {
+      paginate: (endpoint: unknown) =>
+        Promise.resolve(
+          endpoint === listComments ? [codexNoFindingComment()] : [],
+        ),
+      rest: {
+        issues: { listComments },
+        pulls: { listReviews },
+        repos: {
+          createCommitStatus: (status: Record<string, unknown>) => {
+            statuses.push(status);
+            return Promise.resolve();
+          },
+          getCommit: () =>
+            Promise.reject(Object.assign(new Error("ambiguous commit"), {
+              status: 422,
+            })),
+        },
+      },
+    };
+
+    const result = await publishAutomatedReviewStatus({
+      github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD_SHA,
+      pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
+    });
+
+    assertEquals(result.state, "failure");
+    assertEquals(result.review, undefined);
+    assertEquals(statuses[0]?.state, "failure");
+    assertEquals(statuses[0]?.sha, HEAD_SHA);
   });
 
   it("fails closed when the review lookup throws", async () => {
