@@ -520,6 +520,127 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     }
   });
 
+  it("leaves healthy and intermittently slow heartbeats alone", async () => {
+    // The deadline is one interval, so a heartbeat that answers inside its own
+    // interval must never be cut off. This is the false-positive guard: an
+    // eager timeout would escalate a merely slow control plane.
+    const intervalMs = 200;
+    const slowLatencyMs = 140;
+    let heartbeatRequests = 0;
+    let inFlight = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      // Alternate a fast answer with one that eats most of the interval.
+      const latencyMs = heartbeatRequests % 2 === 0 ? slowLatencyMs : 5;
+      const signal = init?.signal;
+      inFlight++;
+      return new Promise<Response>((resolve, reject) => {
+        // Honour the abort the way a real fetch does, so a deadline that fires
+        // early actually shows up here instead of being answered late anyway.
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          inFlight--;
+          resolve(jsonResponse(serviceResponse));
+        }, latencyMs);
+        function onAbort() {
+          clearTimeout(timer);
+          inFlight--;
+          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        }
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    await waitFor(() => heartbeatRequests >= 4, {
+      timeout: 10_000,
+      interval: 10,
+      message: "the heartbeat never issued enough requests to observe the deadline",
+    });
+    lifecycle.stop();
+    await waitFor(() => inFlight === 0, {
+      timeout: 10_000,
+      interval: 10,
+      message: "in-flight heartbeat requests never settled after stop()",
+    });
+
+    assertEquals(
+      log.errors.length,
+      0,
+      "a heartbeat answering inside its interval must never escalate",
+    );
+    assertEquals(
+      log.warnings.length,
+      0,
+      `a heartbeat answering inside its interval must not retry or skip, saw ` +
+        `${log.warnings.map((entry) => entry.message).join(", ")}`,
+    );
+  });
+
+  it("retries a heartbeat whose response body stalls after the headers arrive", async () => {
+    // The deadline can fire after the headers land, while the JSON body is
+    // still arriving. That abort surfaces from the body read, not from the
+    // fetch call, and it is just as transient as a failed connect.
+    const intervalMs = 20;
+    let heartbeatRequests = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      const signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const fail = () =>
+            controller.error(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          if (signal?.aborted) fail();
+          else signal?.addEventListener("abort", fail, { once: true });
+        },
+      });
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    try {
+      await waitFor(() => log.errors.length > 0, {
+        timeout: 1_500,
+        interval: 10,
+        message: "stalled body reads never reached persistent-failure escalation",
+      });
+      const retries = log.warnings.filter((entry) =>
+        entry.message === "Agent service heartbeat retrying after transient failure"
+      );
+      assert(
+        retries.length >= 2,
+        `a stalled body read must use the remaining retries, saw ${retries.length} retry notices ` +
+          `across ${heartbeatRequests} requests`,
+      );
+      assertEquals(
+        log.errors[0]?.metadata?.consecutiveFailures,
+        3,
+        "a stalled body read must count as one failed tick once its retries are exhausted",
+      );
+    } finally {
+      lifecycle.stop();
+    }
+  });
+
   it("cancels a pending retry backoff when the lifecycle stops", async () => {
     let heartbeatAttempts = 0;
     const fetch: typeof globalThis.fetch = (input) => {
