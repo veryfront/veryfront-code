@@ -304,5 +304,13 @@ describe("automated review gate", () => {
       ),
       "the workflow must hand draft state to the tested review gate",
     );
+    const script = String(
+      record(gate.with, "automated review gate inputs").script,
+    );
+    assert(
+      script.includes("Review gate is unavailable on the default branch") &&
+        script.includes('state: "failure"'),
+      "a gate that fails to load must publish a failure status, not no status",
+    );
   });
 });

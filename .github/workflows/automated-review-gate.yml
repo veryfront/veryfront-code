@@ -49,7 +49,6 @@ jobs:
             const gateUrl = pathToFileURL(
               `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
             ).href;
-            const { publishAutomatedReviewStatus } = await import(gateUrl);
             let pullRequest = context.payload.pull_request;
             if (!pullRequest) {
               const response = await github.rest.pulls.get({
@@ -60,6 +59,26 @@ jobs:
               pullRequest = response.data;
             }
             const headSha = pullRequest.head.sha;
+            let publishAutomatedReviewStatus;
+            try {
+              ({ publishAutomatedReviewStatus } = await import(gateUrl));
+            } catch (error) {
+              // A missing or broken gate must show up as a red status, not as
+              // an absent one. Absent is what a skipped review already looks
+              // like, and telling those apart is the point of this workflow.
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: headSha,
+                state: "failure",
+                context: "Automated review",
+                description:
+                  "Review gate is unavailable on the default branch",
+                target_url: pullRequest.html_url,
+              });
+              core.setFailed(`Could not load the review gate: ${error}`);
+              return;
+            }
             const result = await publishAutomatedReviewStatus({
               github,
               owner: context.repo.owner,
