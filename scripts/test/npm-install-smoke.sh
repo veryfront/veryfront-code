@@ -15,6 +15,8 @@
 #      package's build output to reach the starter templates
 #   7. the packed ai-agent starter starts under Node, renders a page, and loads
 #      an API route without unresolved or runtime-specific generated helpers
+#   8. a packed agent workflow reaches a non-responsive provider, respects its
+#      configured deadline, persists failure, and leaves the server healthy
 #
 # Requires: `deno task build:npm` output in ./npm, node + npm + curl on PATH.
 set -euo pipefail
@@ -208,6 +210,79 @@ export function GET(): Response {
   return Response.json({ ok: true });
 }
 EOF
+mkdir -p \
+  "$WORKDIR/app/api/npm-black-hole/messages" \
+  "$WORKDIR/app/api/workflows/[...path]" \
+  "$WORKDIR/agents" \
+  "$WORKDIR/lib" \
+  "$WORKDIR/workflows"
+cat >"$WORKDIR/app/api/npm-black-hole/messages/route.ts" <<'EOF'
+export async function POST(request: Request): Promise<Response> {
+  const body = await request.json() as { model?: unknown };
+  const url = new URL(request.url);
+  if (
+    url.pathname !== "/api/npm-black-hole/messages" ||
+    request.headers.get("x-api-key") !== "npm-smoke-key" ||
+    body.model !== "claude-haiku-4-5-20251001"
+  ) {
+    return Response.json({ error: "unexpected Anthropic request" }, { status: 400 });
+  }
+  console.log("NPM_SMOKE_BLACK_HOLE_RECEIVED");
+  return await new Promise<Response>(() => {});
+}
+EOF
+cat >"$WORKDIR/agents/timeout-smoke.ts" <<'EOF'
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "timeout-smoke",
+  model: "anthropic/claude-haiku-4-5-20251001",
+  system: "Reply with OK.",
+  maxSteps: 1,
+});
+EOF
+cat >"$WORKDIR/workflows/timeout-smoke.ts" <<'EOF'
+import { agentStep, workflow } from "veryfront/workflow";
+import { defineSchema } from "veryfront/schemas";
+
+export default workflow({
+  id: "timeout-smoke",
+  inputSchema: defineSchema((v) => v.object({ message: v.string() }))(),
+  steps: [
+    agentStep("call-provider", "timeout-smoke", {
+      input: (context) => (context.input as { message: string }).message,
+      timeout: "2s",
+    }),
+  ],
+});
+EOF
+cat >"$WORKDIR/lib/workflows.ts" <<'EOF'
+import { getAgent, getAllAgentIds } from "veryfront/agent";
+import { toolRegistry } from "veryfront/tool";
+import { createWorkflowClient, type Workflow } from "veryfront/workflow";
+import timeoutSmoke from "../workflows/timeout-smoke.ts";
+
+const globalScope = globalThis as typeof globalThis & {
+  npmSmokeWorkflowClient?: ReturnType<typeof createWorkflowClient>;
+};
+
+export const workflows = globalScope.npmSmokeWorkflowClient ??= createWorkflowClient({
+  executor: {
+    stepExecutor: {
+      agentRegistry: { get: getAgent, list: getAllAgentIds },
+      toolRegistry,
+    },
+  },
+});
+
+workflows.register(timeoutSmoke as Workflow<unknown, unknown>);
+EOF
+cat >"$WORKDIR/app/api/workflows/[...path]/route.ts" <<'EOF'
+import { createWorkflowHandler } from "veryfront/workflow";
+import { workflows } from "../../../../lib/workflows.ts";
+
+export const { GET, POST } = createWorkflowHandler(workflows);
+EOF
 
 DEV_PORT="${VF_NPM_SSR_SMOKE_PORT:-43119}"
 DEV_URL="http://127.0.0.1:$DEV_PORT/"
@@ -223,6 +298,9 @@ VERYFRONT_NO_UPDATE_CHECK=1 \
 VF_DISABLE_LRU_INTERVAL=1 \
 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 \
 REVALIDATION_PER_PROJECT_LIMIT=0 \
+ANTHROPIC_API_KEY=npm-smoke-key \
+ANTHROPIC_BASE_URL="${DEV_URL}api/npm-black-hole" \
+VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=true \
 node node_modules/veryfront/bin/veryfront.js dev --port "$DEV_PORT" --no-hmr \
   </dev/null >"$DEV_LOG" 2>&1 &
 DEV_PID=$!
@@ -275,6 +353,54 @@ if grep -Eq \
   cat "$DEV_LOG" >&2
   fail "packed ai-agent starter logged an SSR module-resolution failure"
 fi
+
+echo "== 8. packed workflow: provider hang reaches a durable timeout"
+node --input-type=module - "$DEV_URL" <<'EOF' || {
+const rootUrl = process.argv[2];
+const startResponse = await fetch(new URL("api/workflows/timeout-smoke/start", rootUrl), {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ input: { message: "hello" } }),
+  signal: AbortSignal.timeout(30_000),
+});
+const started = await startResponse.json();
+if (!startResponse.ok || typeof started.runId !== "string" || started.runId.length === 0) {
+  throw new Error(`Workflow start failed (${startResponse.status}): ${JSON.stringify(started)}`);
+}
+
+const detailUrl = new URL(`api/workflows/runs/${started.runId}`, rootUrl);
+const pollingDeadline = Date.now() + 10_000;
+let run;
+while (Date.now() < pollingDeadline) {
+  const response = await fetch(detailUrl, { signal: AbortSignal.timeout(5_000) });
+  if (response.ok) {
+    run = await response.json();
+    if (run.nodeStates?.["call-provider"]?.status === "failed") break;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 250));
+}
+
+const node = run?.nodeStates?.["call-provider"];
+if (node?.status !== "failed") {
+  throw new Error(`Workflow did not reach terminal failure: ${JSON.stringify(run)}`);
+}
+if (typeof node.error !== "string" || !node.error.includes("timed out after 2000ms")) {
+  throw new Error(`Workflow reported the wrong failure: ${JSON.stringify(node)}`);
+}
+
+const health = await fetch(new URL("api/npm-smoke", rootUrl), {
+  signal: AbortSignal.timeout(5_000),
+});
+if (!health.ok) throw new Error(`Server unhealthy after timeout: HTTP ${health.status}`);
+EOF
+  cat "$DEV_LOG" >&2
+  fail "packed workflow timeout journey failed"
+}
+
+grep -q "NPM_SMOKE_BLACK_HOLE_RECEIVED" "$DEV_LOG" || {
+  cat "$DEV_LOG" >&2
+  fail "packed workflow timed out before reaching the provider transport"
+}
 
 stop_dev_server
 
