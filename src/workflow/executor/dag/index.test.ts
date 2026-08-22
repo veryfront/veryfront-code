@@ -2091,15 +2091,16 @@ describe("DAGExecutor", () => {
 
       assertEquals(first.completed, true);
       assertEquals(executed, ["side-effect"]);
-      // The durable write the second worker death would resume from.
+      // The durable write a second worker death resumes from: the node is
+      // still recorded running (nothing terminal was ever written for it) and
+      // its attempt is already raised.
+      assertEquals(persisted?.["side-effect"]?.status, "running");
       assertEquals(persisted?.["side-effect"]?.attempt, 2);
 
+      // Resume from that write verbatim, exactly as a second worker would.
       const second = await exec.execute(
         nodes,
-        createTestRun({
-          status: "running",
-          nodeStates: { "side-effect": { ...persisted!["side-effect"]!, status: "running" } },
-        }),
+        createTestRun({ status: "running", nodeStates: persisted! }),
       );
 
       assertEquals(second.completed, false);
