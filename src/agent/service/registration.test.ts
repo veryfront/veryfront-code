@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  type AgentServiceRegistrationLogger,
   createAgentServiceRegistrationLifecycle,
+  heartbeatRetrySchedule,
   resolveAgentServiceRegistrationInput,
 } from "./registration.ts";
 
@@ -223,5 +225,169 @@ describe("agent/agent-service-registration", () => {
       runtime: "node",
       region: "iad",
     });
+  });
+});
+
+type LogEntry = { message: string; metadata?: Record<string, unknown> };
+
+function recordingLogger() {
+  const warnings: LogEntry[] = [];
+  const errors: LogEntry[] = [];
+  return {
+    warnings,
+    errors,
+    logger: {
+      info: () => {},
+      warn: (message: string, metadata?: Record<string, unknown>) =>
+        void warnings.push({ message, metadata }),
+      error: (message: string, metadata?: Record<string, unknown>) =>
+        void errors.push({ message, metadata }),
+    },
+  };
+}
+
+/**
+ * Answers registration with 200 and each heartbeat with the next scripted
+ * status, repeating the last one once the script runs out.
+ */
+function scriptedHeartbeatFetch(statuses: readonly number[]) {
+  let heartbeatAttempts = 0;
+  const fetch: typeof globalThis.fetch = (input) => {
+    if (!input.toString().endsWith("/heartbeat")) {
+      return Promise.resolve(jsonResponse(serviceResponse));
+    }
+    const status = statuses[Math.min(heartbeatAttempts, statuses.length - 1)] ?? 200;
+    heartbeatAttempts++;
+    return Promise.resolve(
+      status === 200 ? jsonResponse(serviceResponse) : jsonResponse({ error: "boom" }, status),
+    );
+  };
+  return { fetch, heartbeatAttempts: () => heartbeatAttempts };
+}
+
+function lifecycleOptions(
+  fetch: typeof globalThis.fetch,
+  overrides: { heartbeatIntervalMs?: number; logger?: AgentServiceRegistrationLogger } = {},
+) {
+  return {
+    apiUrl: "https://api.example.com",
+    authToken: "token-1",
+    serviceName: "docs-agent",
+    serviceKey: "docs-agent:test",
+    scopeKind: "project" as const,
+    projectId: "11111111-1111-4111-a111-111111111111",
+    agentId: "support",
+    baseUrl: "https://agent.example.com",
+    invokeUrl: "https://agent.example.com/api/runs",
+    version: "0.1.0",
+    runtime: "node",
+    region: "iad",
+    heartbeatIntervalMs: overrides.heartbeatIntervalMs ?? 60_000,
+    fetch,
+    logger: overrides.logger,
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await sleep(5);
+  }
+  return condition();
+}
+
+describe("agent/agent-service-registration heartbeat retry", () => {
+  it("retries a transient 500 so a one-second blip never counts as a failure", async () => {
+    const script = scriptedHeartbeatFetch([500, 200]);
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { logger: log.logger }),
+    );
+
+    // Resolving is what keeps consecutiveFailures at zero: the lifecycle only
+    // increments it in the rejection handler of this same call.
+    await lifecycle.heartbeat();
+    lifecycle.stop();
+
+    assertEquals(script.heartbeatAttempts(), 2);
+    assertEquals(log.errors.length, 0);
+    assertEquals(
+      log.warnings.map((entry) => entry.message),
+      ["Agent service heartbeat retrying after transient failure"],
+    );
+  });
+
+  it("fails a client error immediately without retrying", async () => {
+    for (const status of [400, 401, 404]) {
+      const script = scriptedHeartbeatFetch([status]);
+      const log = recordingLogger();
+      const lifecycle = await createAgentServiceRegistrationLifecycle(
+        lifecycleOptions(script.fetch, { logger: log.logger }),
+      );
+
+      await assertRejects(() => lifecycle.heartbeat(), Error, `HTTP ${status}`);
+      lifecycle.stop();
+
+      assertEquals(script.heartbeatAttempts(), 1);
+      assertEquals(log.warnings.length, 0);
+    }
+  });
+
+  it("keeps one tick's retry sequence inside the heartbeat interval", async () => {
+    for (const intervalMs of [40, 1_000, 30_000, 300_000]) {
+      const schedule = heartbeatRetrySchedule(intervalMs);
+      const totalDelayMs = schedule.delaysMs.reduce((sum, delayMs) => sum + delayMs, 0);
+
+      assert(schedule.maxAttempts >= 2, "a transient failure must get at least one retry");
+      assertEquals(schedule.delaysMs.length, schedule.maxAttempts - 1);
+      assert(
+        totalDelayMs < intervalMs,
+        `retry backoff ${totalDelayMs}ms must stay inside a ${intervalMs}ms interval`,
+      );
+    }
+
+    const intervalMs = 1_000;
+    const script = scriptedHeartbeatFetch([500]);
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: intervalMs }),
+    );
+
+    const startedAt = Date.now();
+    await assertRejects(() => lifecycle.heartbeat(), Error, "HTTP 500");
+    const elapsedMs = Date.now() - startedAt;
+    lifecycle.stop();
+
+    assert(
+      elapsedMs < intervalMs,
+      `exhausting the retries took ${elapsedMs}ms, which reaches the next ${intervalMs}ms tick`,
+    );
+  });
+
+  it("still escalates persistent 500s, in bounded time", async () => {
+    const script = scriptedHeartbeatFetch([500]);
+    const log = recordingLogger();
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(script.fetch, { heartbeatIntervalMs: 40, logger: log.logger }),
+    );
+
+    // Three ticks of 40ms plus their backoff; anything slower means a retry
+    // sequence is not terminating and the escalation is being held off.
+    const escalationBudgetMs = 1_000;
+    const startedAt = Date.now();
+    const escalated = await waitUntil(() => log.errors.length > 0, escalationBudgetMs);
+    const elapsedMs = Date.now() - startedAt;
+    lifecycle.stop();
+    // Let any backoff timer from the last in-flight tick expire.
+    await sleep(100);
+
+    assert(escalated, "persistent 500s must still reach the persistent-failure log");
+    assert(elapsedMs < escalationBudgetMs, `escalation took ${elapsedMs}ms`);
+    assertEquals(log.errors[0]?.message, "Agent service heartbeat failing persistently");
+    assertEquals(log.errors[0]?.metadata?.consecutiveFailures, 3);
   });
 });
