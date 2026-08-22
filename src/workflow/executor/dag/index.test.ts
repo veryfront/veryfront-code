@@ -1176,6 +1176,55 @@ describe("DAGExecutor", () => {
       assertEquals(second.nodeStates["after-wait"]!.status, "completed");
     });
 
+    it("fails a resumed iteration whose stale wait leaves its child graph stuck", async () => {
+      const order: string[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        order.push(node.id);
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "the-loop",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => loop.iteration < 1,
+            steps: [
+              {
+                id: "inner-wait",
+                dependsOn: [],
+                config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+              },
+              { id: "after-wait", dependsOn: ["inner-wait"], config: { type: "step" } as any },
+            ],
+          } as any,
+        },
+      ];
+
+      const first = await exec.execute(nodes, createTestRun());
+      assertEquals(first.waiting, true);
+
+      const nodeStates = { ...first.nodeStates };
+      delete nodeStates["inner-wait"];
+      const second = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          nodeStates,
+          context: first.context,
+        }),
+      );
+
+      assertEquals(second.completed, false, "an unfinished child graph cannot report success");
+      assertEquals(order, [], "a dependent of the unresolved wait must not execute");
+      assertStringIncludes(second.error ?? "", 'Workflow run "test-run" stalled');
+      assertStringIncludes(second.error ?? "", 'child graph "the-loop_iter_0"');
+      assertStringIncludes(second.error ?? "", '"inner-wait" (running)');
+      assertStringIncludes(second.error ?? "", '"after-wait" (pending)');
+    });
+
     it("removes child node states from previous dynamic loop iterations", async () => {
       const nodes: WorkflowNode[] = [
         {
@@ -1945,6 +1994,47 @@ describe("DAGExecutor", () => {
 
       assertEquals(executed, []);
       assertEquals(result.nodeStates["approve"]!.status, "running");
+    });
+
+    it("bounds the node details reported for a stuck graph", async () => {
+      const blockedNodes: WorkflowNode[] = Array.from({ length: 11 }, (_, index) => ({
+        id: `blocked-${index}`,
+        dependsOn: ["approve"],
+        config: { type: "step" } as any,
+      }));
+      const nodes: WorkflowNode[] = [
+        {
+          id: "approve",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "m" } as any,
+        },
+        ...blockedNodes,
+      ];
+      const exec = new DAGExecutor({ stepExecutor: new MockStepExecutor() });
+      const result = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            approve: {
+              nodeId: "approve",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, false);
+      assertStringIncludes(result.error ?? "", '"approve" (running)');
+      assertStringIncludes(result.error ?? "", '"blocked-8" (pending)');
+      assertEquals(
+        (result.error ?? "").includes('"blocked-9" (pending)'),
+        false,
+        "the diagnostic must stop after ten node details",
+      );
+      assertStringIncludes(result.error ?? "", "and 2 more");
     });
 
     it("leaves a composite parked on a nested wait alone", async () => {

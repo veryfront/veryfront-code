@@ -14,19 +14,8 @@ export type ProviderKind = "anthropic" | "openai" | "google" | "mistral" | "moon
 const MAX_ERROR_BODY_BYTES = 8_000;
 const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
-const MAX_PROVIDER_STREAM_RESPONSE_ERROR_RETRIES = 2;
-const MAX_PROVIDER_STREAM_HEADERS_TIMEOUT_RETRIES = 2;
-/**
- * Ceiling on total wall time spent waiting for stream response headers across
- * every attempt. Deliberately below the 45s `generic_idle` deadline the hosted
- * child-fork watchdog applies to the first stream part
- * (`DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS`): that watchdog arms its
- * timer around the first pull of `fullStream`, which is what drives the provider
- * call, so replays that outlived this budget would be cut off mid-attempt and
- * reported as a fork stall instead of the provider timeout they are.
- */
-const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
-const DEFAULT_PROVIDER_STREAM_RESPONSE_ERROR_RETRY_DELAY_MS = 1_000;
+const MAX_PROVIDER_STREAM_RETRIES = 2;
+const DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS = 1_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
 const MAX_PROVIDER_JSON_BODY_READS = 65_536;
@@ -814,8 +803,19 @@ export async function requestJson(options: {
   }
 }
 
-/** Options shared by a stream request and each of its attempts. */
-interface StreamRequestOptions {
+/**
+ * Request a streaming response. When the request body is replayable,
+ * typed retryable failures are retried up to two times before provider output
+ * is exposed. Each attempt gets a fresh stream header deadline. ReadableStream
+ * request bodies are not retried because fetch can consume them on the first
+ * attempt.
+ *
+ * Response headers and error bodies have a 30-second default per-attempt
+ * deadline. After headers arrive, caller cancellation remains connected to the
+ * returned body; consumer cancellation aborts the request and cancels the
+ * upstream body.
+ */
+export async function requestStream(options: {
   url: string;
   fetchImpl: typeof globalThis.fetch;
   init: RequestInit;
@@ -824,41 +824,18 @@ interface StreamRequestOptions {
   /** Model this request is for. Reported when a deadline elapses. */
   modelId?: string;
   headersTimeoutMs?: number;
-  /** Ceiling on total wall time spent waiting for headers across all attempts. */
-  totalHeadersBudgetMs?: number;
-}
+}): Promise<ReadableStream<Uint8Array>> {
+  const headersTimeoutMs = options.headersTimeoutMs ??
+    DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
+  const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
+  let retryCount = 0;
 
-/**
- * The result of one streaming attempt.
- *
- * A header deadline that elapsed is reported here rather than thrown so the
- * caller can decide to replay it without matching on an error message. Every
- * other failure — including caller cancellation — still throws.
- */
-type StreamAttempt =
-  | { readonly outcome: "stream"; readonly stream: ReadableStream<Uint8Array> }
-  | { readonly outcome: "headers-timeout"; readonly error: ProviderRequestError };
+  while (true) {
+    const startedAt = Date.now();
+    const deadline = createRequestDeadline(options.init, headersTimeoutMs, "headersTimeoutMs");
+    let streamOwnsDeadline = false;
 
-/**
- * Issue one streaming request under its own header deadline.
- *
- * The deadline timer is cancelled the moment the response body is handed back,
- * so `deadline.timedOut` can only be true while the caller has seen nothing.
- * That is what makes a `headers-timeout` outcome safe to replay: it is
- * unreachable once provider output exists.
- */
-async function attemptStream(
-  options: StreamRequestOptions,
-  headersTimeoutMs: number,
-): Promise<StreamAttempt> {
-  const startedAt = Date.now();
-  const deadline = createRequestDeadline(options.init, headersTimeoutMs, "headersTimeoutMs");
-  let streamOwnsDeadline = false;
-  let responseErrorRetryCount = 0;
-  const requestBodyIsReplayable = !(deadline.init.body instanceof ReadableStream);
-
-  try {
-    while (true) {
+    try {
       const response = await waitForAbortable(
         () => options.fetchImpl(options.url, deadline.init),
         deadline.deadlineSignal,
@@ -871,29 +848,6 @@ async function attemptStream(
           deadline.deadlineSignal,
         );
         err.message = `${options.providerLabel} request failed: ${err.message}`;
-        // Retry on the typed `retryable` flag rather than one error class.
-        // That admits rate limits plus every status in
-        // TRANSIENT_PROVIDER_STATUSES (500, 502, 503, 504, 520-527, 529, 530,
-        // 598, 599) -- the set buildProviderError already curated as
-        // "transient upstream failure an unchanged retry can fix". Quota
-        // exhaustion and ordinary 4xx carry `retryable: false` and are not
-        // re-issued, even when they share the 429 status.
-        if (
-          err.retryable &&
-          requestBodyIsReplayable &&
-          responseErrorRetryCount < MAX_PROVIDER_STREAM_RESPONSE_ERROR_RETRIES
-        ) {
-          const retryDelayMs = err.retryAfterMs ??
-            DEFAULT_PROVIDER_STREAM_RESPONSE_ERROR_RETRY_DELAY_MS * 2 ** responseErrorRetryCount;
-          // A wait longer than the deadline has left aborts part-way through,
-          // and the catch below would then rewrite this failure into a timeout
-          // the provider never caused. Retry-After routinely exceeds the 30s
-          // header deadline, so report the failure we actually got.
-          if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw err;
-          responseErrorRetryCount++;
-          await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);
-          continue;
-        }
         throw err;
       }
 
@@ -908,99 +862,51 @@ async function attemptStream(
 
       deadline.cancelTimeout();
       streamOwnsDeadline = true;
-      return {
-        outcome: "stream",
-        stream: streamWithCleanup(
-          response.body,
-          deadline.deadlineSignal,
-          deadline.abort,
-          deadline.dispose,
-        ),
-      };
-    }
-  } catch (error) {
-    // The response body has been handed off, so the caller may already hold
-    // provider output. Nothing raised past that point may be reported as a
-    // replayable timeout, whatever the deadline believes — a replay there would
-    // repeat output and tool side effects the caller has already seen.
-    if (streamOwnsDeadline) throw error;
-    if (deadline.timedOut) {
-      return {
-        outcome: "headers-timeout",
-        error: providerTimeoutError(options, {
+      return streamWithCleanup(
+        response.body,
+        deadline.deadlineSignal,
+        deadline.abort,
+        deadline.dispose,
+      );
+    } catch (error) {
+      // Past this point `streamWithCleanup` has claimed `response.body` with
+      // `getReader()`. Retrying would replay a request whose body another
+      // reader already holds, so surface the failure whatever its shape.
+      if (streamOwnsDeadline) throw error;
+      const failure = deadline.timedOut
+        ? providerTimeoutError(options, {
           waitingFor: "the stream response headers",
           timeoutMs: headersTimeoutMs,
           elapsedMs: Date.now() - startedAt,
-        }),
-      };
+        })
+        : error;
+      if (
+        !(failure instanceof ProviderError) ||
+        !failure.retryable ||
+        !requestBodyIsReplayable ||
+        retryCount >= MAX_PROVIDER_STREAM_RETRIES
+      ) {
+        throw failure;
+      }
+
+      const retryDelayMs = failure.retryAfterMs ??
+        (deadline.timedOut ? 0 : DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS * 2 ** retryCount);
+      // A provider-specified wait that cannot fit the current attempt's
+      // remaining deadline cannot be honored. Report the provider failure we
+      // actually received instead of rewriting it as a false timeout.
+      if (retryDelayMs > 0) {
+        if (retryDelayMs >= headersTimeoutMs - (Date.now() - startedAt)) throw failure;
+        try {
+          await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);
+        } catch (waitError) {
+          if (deadline.timedOut) throw failure;
+          throw waitError;
+        }
+      }
+      retryCount++;
+    } finally {
+      deadline.cancelTimeout();
+      if (!streamOwnsDeadline) deadline.dispose();
     }
-    throw error;
-  } finally {
-    deadline.cancelTimeout();
-    if (!streamOwnsDeadline) deadline.dispose();
-  }
-}
-
-/**
- * Request a streaming response. When the request body is replayable,
- * typed retryable response failures are retried up to two times before provider
- * output is exposed, with all retry waits and attempts bounded by the stream
- * header deadline. A response whose headers never arrived within the deadline
- * is replayed up to two further times. The first attempt always gets the full
- * deadline; only replays are shortened, and every attempt together is capped by
- * `totalHeadersBudgetMs` so the total stays under the hosted child-fork idle
- * watchdog. ReadableStream request bodies are not retried because fetch can
- * consume them on the first attempt.
- *
- * Both retries are confined to the window before any provider output exists.
- * The header deadline is cancelled before the response body is returned, so a
- * stall or failure after the caller has seen output can no longer be reported
- * as a timeout and can never be replayed — a replay there would repeat output
- * and tool side effects that already reached the caller.
- *
- * Response headers and error bodies have a 30-second default deadline. After
- * headers arrive, caller cancellation remains connected to the returned body;
- * consumer cancellation aborts the request and cancels the upstream body.
- */
-export async function requestStream(
-  options: StreamRequestOptions,
-): Promise<ReadableStream<Uint8Array>> {
-  const headersTimeoutMs = options.headersTimeoutMs ??
-    DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
-  const totalHeadersBudgetMs = options.totalHeadersBudgetMs ??
-    DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS;
-  const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
-  const startedAt = Date.now();
-  let headersTimeoutRetryCount = 0;
-  // The first attempt is never shortened to reserve room for a replay that may
-  // not happen — a slow provider that would have answered at 29s still wins.
-  let attemptTimeoutMs = headersTimeoutMs;
-
-  while (true) {
-    const attempt = await attemptStream(options, attemptTimeoutMs);
-    if (attempt.outcome === "stream") return attempt.stream;
-
-    const remainingBudgetMs = totalHeadersBudgetMs - (Date.now() - startedAt);
-    if (
-      !requestBodyIsReplayable ||
-      headersTimeoutRetryCount >= MAX_PROVIDER_STREAM_HEADERS_TIMEOUT_RETRIES ||
-      remainingBudgetMs <= 0
-    ) {
-      // A replay runs on whatever the budget has left, so the last attempt's
-      // deadline is a clamp nobody configured. Reporting it sends a responder
-      // hunting for a setting that does not exist. Once a replay has happened,
-      // restate the wait as the configured deadline, the total elapsed, and how
-      // total elapsed. The message shape is deliberately unchanged: it is the
-      // contract issue #710 asked for. The single-attempt error is already
-      // exact, so only a replayed wait is restated.
-      if (headersTimeoutRetryCount === 0) throw attempt.error;
-      throw providerTimeoutError(options, {
-        waitingFor: "the stream response headers",
-        timeoutMs: headersTimeoutMs,
-        elapsedMs: Date.now() - startedAt,
-      });
-    }
-    headersTimeoutRetryCount++;
-    attemptTimeoutMs = Math.min(headersTimeoutMs, remainingBudgetMs);
   }
 }

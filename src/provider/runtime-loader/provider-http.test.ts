@@ -46,10 +46,6 @@ async function waitWithin<T>(
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 describe("provider-http", () => {
   describe("parseRetryAfterMs", () => {
     it("parses delta-seconds", () => {
@@ -771,6 +767,203 @@ describe("provider-http", () => {
       assertEquals(error.retryable, true);
     });
 
+    it("retries a stream-header timeout before provider output", async () => {
+      let attempts = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return attempts === 1
+            ? new Promise<Response>(() => {})
+            : Promise.resolve(new Response("chunk"));
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+        modelId: "moonshotai/kimi-k2.6",
+        headersTimeoutMs: 5,
+      });
+
+      assertEquals(attempts, 2, "a retryable header timeout must spend one new attempt");
+      assertEquals(
+        await new Response(stream).text(),
+        "chunk",
+        "the successful retry must supply the returned stream",
+      );
+    });
+
+    it("bounds stream-header timeout retries", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return new Promise<Response>(() => {});
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      ) as ProviderRequestError;
+
+      assertEquals(attempts, 3, "a persistent timeout must stop after two retries");
+      assertEquals(error.retryable, true, "the exhausted timeout remains retryable upstream");
+    });
+
+    it("retries other typed retryable failures before provider output", async () => {
+      let attempts = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return Promise.resolve(
+            attempts === 1
+              ? jsonResponse(
+                503,
+                { error: { message: "temporarily unavailable" } },
+                { "retry-after": "0" },
+              )
+              : new Response("chunk"),
+          );
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+      });
+
+      assertEquals(attempts, 2, "the retry loop must honor the typed retryable flag");
+      assertEquals(
+        await new Response(stream).text(),
+        "chunk",
+        "the successful retry must supply the returned stream",
+      );
+    });
+
+    it("does not retry a non-retryable quota failure with a replayable body", async () => {
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                jsonResponse(429, {
+                  error: { code: "insufficient_quota", message: "no credit" },
+                }),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        ProviderQuotaError,
+        "status 429",
+      ) as ProviderQuotaError;
+
+      assertEquals(error.retryable, false);
+      assertEquals(
+        attempts,
+        1,
+        "a replayable body must not license retrying a failure the classifier called terminal",
+      );
+    });
+
+    it("does not retry a typed failure raised after the body is claimed", async () => {
+      let attempts = 0;
+      const claimFailure = new ProviderOverloadedError({
+        provider: "moonshotai",
+        status: 503,
+        message: "veryfront-cloud request failed: body already claimed",
+        retryable: true,
+      });
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve({
+                ok: true,
+                status: 200,
+                body: {
+                  getReader() {
+                    throw claimFailure;
+                  },
+                },
+              } as unknown as Response);
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+          }),
+        ProviderOverloadedError,
+        "body already claimed",
+      ) as ProviderOverloadedError;
+
+      assertStrictEquals(error, claimFailure);
+      assertEquals(
+        attempts,
+        1,
+        "the response body is already claimed, so no attempt may be replayed",
+      );
+    });
+
+    it("does not retry once provider output has reached the caller", async () => {
+      let attempts = 0;
+      let pulls = 0;
+      const stream = await requestStream({
+        url: "https://provider.test/stream",
+        fetchImpl: () => {
+          attempts++;
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull(controller) {
+                  if (pulls++ === 0) {
+                    controller.enqueue(new TextEncoder().encode("chunk"));
+                    return;
+                  }
+                  controller.error(
+                    new ProviderRequestError({
+                      provider: "moonshotai",
+                      status: 0,
+                      message: "veryfront-cloud request failed: stream broke",
+                      retryable: true,
+                    }),
+                  );
+                },
+              }),
+            ),
+          );
+        },
+        init: { method: "POST" },
+        providerLabel: "veryfront-cloud",
+        providerKind: "moonshotai",
+      });
+
+      const reader = stream.getReader();
+      const first = await reader.read();
+      assertEquals(new TextDecoder().decode(first.value), "chunk");
+      const error = await assertRejects(
+        () => reader.read(),
+        ProviderRequestError,
+        "stream broke",
+      ) as ProviderRequestError;
+
+      assertEquals(error.retryable, true, "the failure is retryable and must still not be retried");
+      assertEquals(
+        attempts,
+        1,
+        "a replayed attempt would duplicate output the caller already received",
+      );
+    });
+
     it("does not retry a rate limit with a non-replayable stream body", async () => {
       let attempts = 0;
       const body = new ReadableStream<Uint8Array>({
@@ -800,6 +993,34 @@ describe("provider-http", () => {
 
       assertEquals(attempts, 1);
       assertEquals(error.retryable, true);
+    });
+
+    it("does not retry a timeout with a non-replayable stream body", async () => {
+      let attempts = 0;
+      const body = new ReadableStream<Uint8Array>();
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return new Promise<Response>(() => {});
+            },
+            init: { method: "POST", body },
+            providerLabel: "veryfront-cloud",
+            providerKind: "moonshotai",
+            headersTimeoutMs: 5,
+          }),
+        ProviderRequestError,
+        "request timed out",
+      ) as ProviderRequestError;
+
+      assertEquals(attempts, 1, "a consumed request stream cannot be replayed safely");
+      assertEquals(
+        error.retryable,
+        true,
+        "the timeout remains retryable for a higher-level caller",
+      );
     });
 
     it("keeps rate-limit backoff inside the stream header deadline", async () => {
@@ -930,368 +1151,13 @@ describe("provider-http", () => {
       );
     });
 
-    it("retries a stream request whose response headers never arrived", async () => {
-      let attempts = 0;
-      const stream = await requestStream({
-        url: "https://provider.test/stream",
-        fetchImpl: () => {
-          attempts++;
-          return attempts === 1
-            ? new Promise<Response>(() => {})
-            : Promise.resolve(new Response("chunk"));
-        },
-        init: { method: "POST" },
-        providerLabel: "veryfront-cloud",
-        providerKind: "moonshotai",
-        headersTimeoutMs: 5,
-      });
-
-      assertEquals(attempts, 2, "a stalled gateway must cost an attempt, not the run");
-      assertEquals(await new Response(stream).text(), "chunk");
-    });
-
-    it("reports the configured deadline and total wait after replays, not the last clamp", async () => {
-      // Replays are clamped by the remaining budget, so the final attempt runs
-      // on a deadline nobody configured. Surfacing that number sends a
-      // responder looking for a setting that does not exist (issue #710's
-      // second defect: the error must say which deadline fired).
-      let attempts = 0;
-      const error = await assertRejects(
-        () =>
-          requestStream({
-            url: "https://provider.test/stream",
-            fetchImpl: () => {
-              attempts++;
-              return new Promise<Response>(() => {});
-            },
-            init: { method: "POST" },
-            providerLabel: "veryfront-cloud",
-            providerKind: "openai",
-            modelId: "gpt-5.5",
-            headersTimeoutMs: 5,
-            totalHeadersBudgetMs: 12,
-          }),
-        ProviderRequestError,
-        "request timed out",
-      ) as ProviderRequestError;
-
-      assertEquals(attempts > 1, true, "the budget must buy at least one replay");
-      assertMatch(error.message, /5ms deadline/);
-      assertMatch(error.message, /model gpt-5\.5/);
-      assertEquals(
-        error.message.includes("2ms deadline"),
-        false,
-        "a clamped replay deadline must not be reported as the configured one",
-      );
-    });
-
-    it("does not retry a quota failure that shares the rate limit status", async () => {
-      // 429 + insufficient_quota classifies as ProviderQuotaError with
-      // retryable: false. The retry decision keys on that flag, not on the
-      // status code, so this must cost exactly one attempt.
-      let attempts = 0;
-      const error = await assertRejects(
-        () =>
-          requestStream({
-            url: "https://provider.test/stream",
-            fetchImpl: () => {
-              attempts++;
-              return Promise.resolve(
-                new Response(
-                  JSON.stringify({ error: { code: "insufficient_quota", message: "no credit" } }),
-                  { status: 429, headers: { "content-type": "application/json" } },
-                ),
-              );
-            },
-            init: { method: "POST" },
-            providerLabel: "veryfront-cloud",
-            providerKind: "openai",
-            headersTimeoutMs: 3_000,
-          }),
-        ProviderQuotaError,
-      ) as ProviderQuotaError;
-
-      assertEquals(attempts, 1, "an exhausted quota must not be replayed");
-      assertEquals(error.retryable, false);
-    });
-
-    it("replays a transient provider overload before output", async () => {
-      let attempts = 0;
-      const stream = await requestStream({
-        url: "https://provider.test/stream",
-        fetchImpl: () => {
-          attempts++;
-          return attempts === 1
-            ? Promise.resolve(new Response("overloaded", { status: 503 }))
-            : Promise.resolve(new Response("chunk"));
-        },
-        init: { method: "POST" },
-        providerLabel: "veryfront-cloud",
-        providerKind: "openai",
-        // Must exceed the 1s backoff: the deadline guard correctly refuses to
-        // wait longer than the attempt has left, so a tiny deadline would
-        // report the overload instead of replaying it.
-        headersTimeoutMs: 3_000,
-      });
-
-      assertEquals(
-        attempts,
-        2,
-        "a transient overload is retryable and must cost an attempt, not the run",
-      );
-      assertEquals(await new Response(stream).text(), "chunk");
-    });
-
-    it("bounds stream-header timeout retries", async () => {
-      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
-      let attempts = 0;
-      const error = await assertRejects(
-        () =>
-          requestStream({
-            url: "https://provider.test/stream",
-            fetchImpl: (...args) => {
-              attempts++;
-              return neverResponds(...args);
-            },
-            init: { method: "POST" },
-            providerLabel: "veryfront-cloud",
-            providerKind: "moonshotai",
-            headersTimeoutMs: 5,
-          }),
-        ProviderRequestError,
-        "request timed out",
-      ) as ProviderRequestError;
-
-      assertEquals(attempts, 3, "replays must be bounded and then give up");
-      assertEquals(error.status, 0);
-      assertEquals(error.retryable, true);
-    });
-
-    it("caps total header wait across replays so it stays under the fork idle watchdog", async () => {
-      const neverResponds: typeof fetch = () => new Promise<Response>(() => {});
-      let attempts = 0;
-      const startedAt = Date.now();
-      await assertRejects(
-        () =>
-          requestStream({
-            url: "https://provider.test/stream",
-            fetchImpl: (...args) => {
-              attempts++;
-              return neverResponds(...args);
-            },
-            init: { method: "POST" },
-            providerLabel: "veryfront-cloud",
-            providerKind: "moonshotai",
-            headersTimeoutMs: 200,
-            totalHeadersBudgetMs: 250,
-          }),
-        ProviderRequestError,
-        "request timed out",
-      );
-      const elapsedMs = Date.now() - startedAt;
-
-      assertEquals(attempts >= 2, true, `a replay must still be issued (attempts=${attempts})`);
-      assertEquals(
-        elapsedMs < 400,
-        true,
-        `three unclamped 200ms attempts run ~600ms; the budget must cut it short (elapsed=${elapsedMs}ms)`,
-      );
-    });
-
-    it("never shortens the first attempt to reserve budget for a replay", async () => {
-      let attempts = 0;
-      const stream = await requestStream({
-        url: "https://provider.test/stream",
-        fetchImpl: () => {
-          attempts++;
-          return new Promise<Response>((resolve) => {
-            setTimeout(() => resolve(new Response("chunk")), 120);
-          });
-        },
-        init: { method: "POST" },
-        providerLabel: "veryfront-cloud",
-        providerKind: "moonshotai",
-        headersTimeoutMs: 200,
-        // Deliberately below the per-attempt deadline: a first attempt clamped
-        // to the total budget would abort at 50ms and lose a response that
-        // arrives comfortably inside its own deadline.
-        totalHeadersBudgetMs: 50,
-      });
-
-      assertEquals(attempts, 1);
-      assertEquals(await new Response(stream).text(), "chunk");
-    });
-
-    it("does not replay a stream-header timeout with a non-replayable request body", async () => {
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode("request"));
-          controller.close();
-        },
-      });
-      let attempts = 0;
-      await assertRejects(
-        () =>
-          requestStream({
-            url: "https://provider.test/stream",
-            fetchImpl: () => {
-              attempts++;
-              return new Promise<Response>(() => {});
-            },
-            init: { method: "POST", body },
-            providerLabel: "veryfront-cloud",
-            providerKind: "moonshotai",
-            headersTimeoutMs: 5,
-          }),
-        ProviderRequestError,
-        "request timed out",
-      );
-
-      assertEquals(attempts, 1, "fetch can consume a stream body, so it cannot be replayed");
-    });
-
-    it("never replays a stream once provider output has been exposed", async () => {
-      const encoder = new TextEncoder();
-      const decoder = new TextDecoder();
-      const headersTimeoutMs = 5;
-      let attempts = 0;
-      let bodyController!: ReadableStreamDefaultController<Uint8Array>;
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          bodyController = controller;
-        },
-      });
-
-      const stream = await requestStream({
-        url: "https://provider.test/stream",
-        fetchImpl: () => {
-          attempts++;
-          return Promise.resolve(new Response(body));
-        },
-        init: { method: "POST" },
-        providerLabel: "veryfront-cloud",
-        providerKind: "moonshotai",
-        headersTimeoutMs,
-      });
-      const reader = stream.getReader();
-      bodyController.enqueue(encoder.encode("first"));
-      assertEquals(
-        decoder.decode((await waitWithin(reader.read(), "the first chunk")).value),
-        "first",
-      );
-
-      // Idle well past the header deadline with output already delivered. The
-      // deadline timer is cancelled before the body is handed back, so this
-      // window must not produce a timeout — and therefore cannot produce a
-      // replay of output the caller has already seen.
-      await sleep(headersTimeoutMs * 10);
-
-      bodyController.enqueue(encoder.encode("second"));
-      bodyController.close();
-      assertEquals(
-        decoder.decode((await waitWithin(reader.read(), "the second chunk")).value),
-        "second",
-      );
-      assertEquals((await waitWithin(reader.read(), "the stream to close")).done, true);
-      assertEquals(attempts, 1, "exposed output must never be replayed");
-    });
-
-    it("does not replay a stream that fails after provider output", async () => {
-      const encoder = new TextEncoder();
-      const decoder = new TextDecoder();
-      const failure = new Error("upstream body failed");
-      let attempts = 0;
-      let bodyController!: ReadableStreamDefaultController<Uint8Array>;
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          bodyController = controller;
-        },
-      });
-
-      const stream = await requestStream({
-        url: "https://provider.test/stream",
-        fetchImpl: () => {
-          attempts++;
-          return Promise.resolve(new Response(body));
-        },
-        init: { method: "POST" },
-        providerLabel: "veryfront-cloud",
-        providerKind: "moonshotai",
-        headersTimeoutMs: 5,
-      });
-      const reader = stream.getReader();
-      bodyController.enqueue(encoder.encode("first"));
-      assertEquals(
-        decoder.decode((await waitWithin(reader.read(), "the first chunk")).value),
-        "first",
-      );
-
-      bodyController.error(failure);
-
-      const caught = await waitWithin(
-        reader.read().then(() => undefined, (error) => error),
-        "the mid-stream failure to propagate",
-      );
-      assertStrictEquals(caught, failure, "the caller must see the real failure");
-      assertEquals(attempts, 1, "a failure after output must end the request, not replay it");
-    });
-
-    it("does not replay a non-retryable provider failure", async () => {
-      let attempts = 0;
-      const error = await assertRejects(
-        () =>
-          requestStream({
-            url: "https://provider.test/stream",
-            fetchImpl: () => {
-              attempts++;
-              return Promise.resolve(jsonResponse(
-                429,
-                { error: { code: "insufficient_quota", message: "quota exhausted" } },
-              ));
-            },
-            init: { method: "POST" },
-            providerLabel: "veryfront-cloud",
-            providerKind: "moonshotai",
-          }),
-        ProviderQuotaError,
-      ) as ProviderQuotaError;
-
-      assertEquals(attempts, 1, "a hard quota must not be replayed against the provider");
-      assertEquals(error.retryable, false);
-    });
-
-    it("does not replay a failure raised after the response body was claimed", async () => {
-      const claimFailure = new TypeError("response body is already locked");
-      const body = new ReadableStream<Uint8Array>();
-      Object.defineProperty(body, "getReader", {
-        configurable: true,
-        value: () => {
-          throw claimFailure;
-        },
-      });
-      let attempts = 0;
-
-      const caught = await requestStream({
-        url: "https://provider.test/stream",
-        fetchImpl: () => {
-          attempts++;
-          return Promise.resolve(new Response(body));
-        },
-        init: { method: "POST" },
-        providerLabel: "veryfront-cloud",
-        providerKind: "moonshotai",
-        headersTimeoutMs: 5,
-      }).then(() => undefined, (error) => error);
-
-      assertStrictEquals(caught, claimFailure, "the real failure must reach the caller");
-      assertEquals(attempts, 1, "the body was claimed; the request must not be replayed");
-    });
-
     it("preserves caller cancellation while response headers are pending", async () => {
       const controller = new AbortController();
       const reason = new DOMException("caller stopped waiting", "AbortError");
+      let attempts = 0;
       let receivedSignal: AbortSignal | null | undefined;
       const neverResponds: typeof fetch = (input, init) => {
+        attempts++;
         receivedSignal = new Request(input, init).signal;
         return new Promise<Response>(() => {});
       };
@@ -1311,6 +1177,7 @@ describe("provider-http", () => {
       );
 
       assertStrictEquals(error, reason);
+      assertEquals(attempts, 1, "caller cancellation must not start a retry");
       assertEquals(receivedSignal?.aborted, true);
       assertStrictEquals(receivedSignal?.reason, reason);
     });
