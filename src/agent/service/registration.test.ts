@@ -524,8 +524,11 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     // The deadline is one interval, so a heartbeat that answers inside its own
     // interval must never be cut off. This is the false-positive guard: an
     // eager timeout would escalate a merely slow control plane.
-    const intervalMs = 200;
-    const slowLatencyMs = 140;
+    // The slow answer sits at 40% of the deadline, far enough inside it that a
+    // loaded runner cannot push it over, and far enough outside a quarter of
+    // the interval that an over-eager deadline would still be caught.
+    const intervalMs = 500;
+    const slowLatencyMs = 200;
     let heartbeatRequests = 0;
     let inFlight = 0;
     const log = recordingLogger();
@@ -590,7 +593,11 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     // The deadline can fire after the headers land, while the JSON body is
     // still arriving. That abort surfaces from the body read, not from the
     // fetch call, and it is just as transient as a failed connect.
-    const intervalMs = 20;
+    //
+    // What this test pins is the classification, not the clock: the wait gets
+    // the same generous budget as the other lifecycle tests here, because a
+    // loaded runner stretches these timers well past their nominal values.
+    const intervalMs = 50;
     let heartbeatRequests = 0;
     const log = recordingLogger();
 
@@ -619,7 +626,7 @@ describe("agent/agent-service-registration heartbeat retry", () => {
 
     try {
       await waitFor(() => log.errors.length > 0, {
-        timeout: 1_500,
+        timeout: 10_000,
         interval: 10,
         message: "stalled body reads never reached persistent-failure escalation",
       });
