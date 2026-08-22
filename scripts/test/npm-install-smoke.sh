@@ -213,6 +213,7 @@ EOF
 mkdir -p \
   "$WORKDIR/app/api/npm-black-hole/messages" \
   "$WORKDIR/app/api/workflows/[...path]" \
+  "$WORKDIR/agents" \
   "$WORKDIR/lib" \
   "$WORKDIR/workflows"
 cat >"$WORKDIR/app/api/npm-black-hole/messages/route.ts" <<'EOF'
