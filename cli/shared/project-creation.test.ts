@@ -624,6 +624,38 @@ describe("createProject into the current directory", () => {
     }
   });
 
+  it("names every path a fresh scaffold writes, so the conflict list cannot drift", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-drift-" });
+    // Deno plus an integration is the widest scaffold there is: template files,
+    // package.json, deno.json, .env and .env.example all get written.
+    const request: CreateProjectRequest = {
+      ...cwdRequest(parentDir),
+      runtime: "deno",
+      integrations: ["github"],
+    };
+
+    try {
+      const written = await createProject(request);
+
+      // Run again over what the first run just wrote. Every one of those paths
+      // has to come back named, which is what stops the conflict list drifting
+      // when a new write lands in createProject and nobody mirrors it into
+      // scaffoldWritePaths. .gitignore is merged, so it stays off the list.
+      const error = await createProject(request).then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+      assert(error instanceof Error, "expected the second run to reject");
+      for (const path of written.createdPaths) {
+        if (path === ".gitignore") continue;
+        assertStringIncludes(error.message, path);
+      }
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("overwrites when the policy says so", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-overwrite-" });
     const readme = join(parentDir, "README.md");
