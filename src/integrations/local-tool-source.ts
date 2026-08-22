@@ -23,6 +23,7 @@ import {
   localIntegrationConfigurationError,
   safeLocalIntegrationIdentifier,
 } from "#veryfront/integrations/local-integration-errors.ts";
+import { isHostLocalIntegrationCredentialsEnabled } from "#veryfront/integrations/local-credential-host-policy.ts";
 import { MAX_LOCAL_INTEGRATION_TOOLS } from "#veryfront/integrations/limits.ts";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { IntegrationConfig, IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -489,7 +490,7 @@ function admitTool(canonicalToolId: string): AdmittedLocalIntegrationTool {
 
 function assertLocalRuntime(): void {
   const environment = getEnvironmentConfig();
-  if (environment.proxyMode || environment.veryfrontMode === "hosted") {
+  if (environment.proxyMode || !isHostLocalIntegrationCredentialsEnabled()) {
     configurationError(
       "Local integration credentials are available only in local or self-hosted runtimes",
     );

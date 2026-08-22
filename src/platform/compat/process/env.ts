@@ -10,6 +10,12 @@ import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
 
+const apply = Reflect.apply;
+const MapConstructor = Map;
+const mapEntries = Map.prototype.entries;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+
 export type EnvOverlayStorage = {
   getStore: () => unknown;
   run?: <T>(store: unknown, fn: () => T) => T;
@@ -19,18 +25,18 @@ export type EnvOverlayStorage = {
 function getEnvOverlayStore(): EnvOverlayStore | null {
   const storage = getEnvOverlayStorage();
   const store = storage?.getStore();
-  return store instanceof Map ? store as EnvOverlayStore : null;
+  return store instanceof MapConstructor ? store as EnvOverlayStore : null;
 }
 
 function getOverlayEnvValue(
   store: EnvOverlayStore | null,
   key: string,
 ): { hasValue: boolean; value: string | undefined } {
-  if (!store?.has(key)) {
+  if (!store || !apply(mapHas, store, [key])) {
     return { hasValue: false, value: undefined };
   }
 
-  const value = store.get(key);
+  const value = apply(mapGet, store, [key]);
   return { hasValue: true, value: value ?? undefined };
 }
 
@@ -54,7 +60,7 @@ export function env(): Record<string, string> {
   const overlay = getEnvOverlayStore();
   if (!overlay) return base;
 
-  for (const [key, value] of overlay.entries()) {
+  for (const [key, value] of apply(mapEntries, overlay, [])) {
     if (value === null) {
       delete base[key];
       continue;

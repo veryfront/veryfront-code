@@ -29,6 +29,16 @@ Choose substitutes for managed capabilities before you deploy.
 | Sandbox sessions                           | Requires a backing API or service layer | Configure authenticated sandbox session APIs.                             |
 | Veryfront Cloud routing, storage, and runs | Requires Veryfront Cloud                | These capabilities depend on project and control-plane context.           |
 
+Allow local integration credentials in the host process before you materialize
+a local catalog source:
+
+```dotenv title=".env"
+VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1
+```
+
+This is a host-owned capability. Project environment overlays cannot enable it.
+Leave it unset on shared or proxy runtimes.
+
 For supported fixed REST tools, create a local source with the exact canonical
 tool IDs the application grants:
 
