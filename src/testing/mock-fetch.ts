@@ -114,7 +114,8 @@ export async function withMockFetch<T>(
  * Assigning `globalThis.fetch` alone controls only code that calls `fetch`
  * directly. Anything routed through `guardedOutboundFetch` reads the host
  * transport instead and would reach the real network, so both move together
- * here or neither does.
+ * here or neither does. The transport carries a host resolver too, because the
+ * egress guard resolves the destination before any transport sees the request.
  *
  * Prefer `withMockFetch` where the stub has a single callback to scope. This
  * pair exists for suites that install per test and tear down in `afterEach`,

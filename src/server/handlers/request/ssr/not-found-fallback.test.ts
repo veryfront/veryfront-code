@@ -79,7 +79,6 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 
 describe(
   "server/handlers/request/ssr/not-found-fallback",
-  { sanitizeOps: false, sanitizeResources: false },
   () => {
     afterAll(async () => {
       await cleanupBundler();
