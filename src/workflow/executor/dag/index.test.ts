@@ -2030,6 +2030,10 @@ describe("DAGExecutor", () => {
       assertEquals(first.waiting, true);
       assertEquals(executed, []);
       assertEquals(persistedAttempts, []);
+      // #715's invariant still holds: the pass parks rather than reporting
+      // completion, and the unexecuted step is still named as running.
+      assertEquals(first.completed, false);
+      assertEquals(first.nodeStates["side-effect"]!.status, "running");
       assertEquals(
         first.nodeStates["side-effect"]!.attempt,
         1,
