@@ -950,6 +950,36 @@ describe("provider-http", () => {
       assertEquals(await new Response(stream).text(), "chunk");
     });
 
+    it("does not retry a quota failure that shares the rate limit status", async () => {
+      // 429 + insufficient_quota classifies as ProviderQuotaError with
+      // retryable: false. The retry decision keys on that flag, not on the
+      // status code, so this must cost exactly one attempt.
+      let attempts = 0;
+      const error = await assertRejects(
+        () =>
+          requestStream({
+            url: "https://provider.test/stream",
+            fetchImpl: () => {
+              attempts++;
+              return Promise.resolve(
+                new Response(
+                  JSON.stringify({ error: { code: "insufficient_quota", message: "no credit" } }),
+                  { status: 429, headers: { "content-type": "application/json" } },
+                ),
+              );
+            },
+            init: { method: "POST" },
+            providerLabel: "veryfront-cloud",
+            providerKind: "openai",
+            headersTimeoutMs: 3_000,
+          }),
+        ProviderQuotaError,
+      ) as ProviderQuotaError;
+
+      assertEquals(attempts, 1, "an exhausted quota must not be replayed");
+      assertEquals(error.retryable, false);
+    });
+
     it("replays a transient provider overload before output", async () => {
       let attempts = 0;
       const stream = await requestStream({
