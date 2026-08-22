@@ -345,7 +345,7 @@ export function createHttpDeployControlPlane(
 
     async createEnvironmentAccessToken(target) {
       const response = await client.post<WireEnvironmentAccessToken>("/auth/environment-token", {
-        project_id: target.projectId,
+        project_reference: target.projectId,
         environment_name: target.environmentName,
       });
       const token = response?.access_token;

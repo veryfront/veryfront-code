@@ -64,7 +64,10 @@ describe("createHttpDeployControlPlane", () => {
     );
     assertEquals(calls, [{
       path: "/auth/environment-token",
-      body: { project_id: "11111111-1111-4111-8111-111111111111", environment_name: "production" },
+      body: {
+        project_reference: "11111111-1111-4111-8111-111111111111",
+        environment_name: "production",
+      },
     }]);
   });
 

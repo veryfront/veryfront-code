@@ -48,7 +48,7 @@ set -euo pipefail
 TOKEN=$(curl -fsS -X POST https://api.veryfront.com/auth/environment-token \
   -H "Authorization: Bearer $VERYFRONT_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"project_id":"<PROJECT_ID>","environment_name":"production"}' |
+  -d '{"project_reference":"<PROJECT_ID>","environment_name":"production"}' |
   jq -er '.access_token | strings | select(length > 0)')
 STATUS=$(curl -sS -o /dev/null -w '%{http_code}' --cookie "authToken=$TOKEN" \
   <environment-url>/<route>)
