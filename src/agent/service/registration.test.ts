@@ -634,6 +634,45 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
+  it("fails a heartbeat whose body does not match the schema, without retrying", async () => {
+    // A body that arrived intact but does not parse is a permanent protocol
+    // mismatch. Retrying it spends all three attempts of every tick on a
+    // response that will never parse, and buys nothing: escalation still waits
+    // for three failed ticks either way. This is the counterpart to the test
+    // above, which pins that a body read that *fails* is retried. The two
+    // together are what keep the transport wrapper off the schema parse.
+    let heartbeatRequests = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      // HTTP 200, valid JSON, wrong shape.
+      return Promise.resolve(jsonResponse({ nope: true } as never));
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { logger: log.logger }),
+    );
+
+    await assertRejects(() => lifecycle.heartbeat(), Error);
+    lifecycle.stop();
+
+    assertEquals(
+      heartbeatRequests,
+      1,
+      "a body that fails the schema must fail on the first attempt, with no retry",
+    );
+    assertEquals(
+      log.warnings.length,
+      0,
+      `a permanent schema mismatch must not log a retry notice, saw ` +
+        `${log.warnings.map((entry) => entry.message).join(", ")}`,
+    );
+  });
+
   it("cancels a pending retry backoff when the lifecycle stops", async () => {
     let heartbeatAttempts = 0;
     const fetch: typeof globalThis.fetch = (input) => {
