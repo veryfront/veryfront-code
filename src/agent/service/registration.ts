@@ -239,11 +239,9 @@ const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
 /**
  * Share of one heartbeat interval the retry backoff may occupy.
  *
- * This bounds the waits between attempts and nothing else. A request has no
- * deadline, so a slow control plane can still push a tick past its interval —
- * overlap is prevented by the in-flight guard on the interval below, not here.
- * Keeping backoff well inside the interval only stops the waits from being the
- * thing that provokes a skip.
+ * This bounds only the waits between attempts. Each request has its own
+ * interval-sized deadline, so a complete retry sequence can still outlive one
+ * interval. The in-flight guard below prevents overlap in that case.
  */
 const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
 
@@ -423,22 +421,27 @@ async function sendHeartbeatRequest(
   fetchImpl: typeof globalThis.fetch,
   abortSignal: AbortSignal | undefined,
 ): Promise<AgentPushRuntimeServiceRest> {
-  let response: Response;
   try {
-    response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
+    const response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
       method: "POST",
       headers: createHeaders(input.authToken),
       signal: abortSignal,
     });
+    return await readAgentPushRuntimeServiceResponse(response);
   } catch (cause) {
-    // No response, so the request never reached a handler and applied nothing.
-    // It carries no httpStatus, which is what marks it transport-level below.
+    // An error that is already ours is already classified: a non-ok response
+    // carries its httpStatus, and that status is what keeps a 4xx from being
+    // retried. Rethrow it untouched.
+    if (isVeryfrontError(cause)) throw cause;
+    // Anything else is transport-level: the connect failed, or the deadline
+    // fired while the body was still arriving after the headers landed. Either
+    // way no complete response came back and nothing upstream was applied. It
+    // carries no httpStatus, which is what marks it retryable below.
     throw NETWORK_ERROR.create({
       detail: getErrorMessage(cause),
       cause,
     });
   }
-  return await readAgentPushRuntimeServiceResponse(response);
 }
 
 /** Upstream response status recorded on a heartbeat failure, if it got one. */
@@ -474,6 +477,13 @@ async function heartbeatAgentPushRuntimeService(
   return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
     maxAttempts: schedule.maxAttempts,
     abortSignal: options.abortSignal,
+    // One interval is the deadline for a single attempt. A heartbeat that has
+    // not answered by the time the next one is due is not slow, it is gone, and
+    // without a deadline a hung request never fails, so the failure counter
+    // never advances and the service looks alive to itself while doing nothing.
+    // Deriving the deadline from the configured interval keeps the two in step:
+    // raise the interval for a slow link and the deadline moves with it.
+    timeoutMs: input.heartbeatIntervalMs,
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
     shouldRetry: isRetryableHeartbeatFailure,
     onRetry: ({ error, attempt, delay }) => {
