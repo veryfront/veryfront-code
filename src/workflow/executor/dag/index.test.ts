@@ -2116,6 +2116,76 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["side-effect"]!.status, "completed");
     });
 
+    it("does not spend a recovery reserved behind a wait before it starts", async () => {
+      const executed: string[] = [];
+      const persistedReservations: NodeState[] = [];
+      const exec = new DAGExecutor({
+        maxConcurrency: 1,
+        stepExecutor: new MockStepExecutor(new Map(), (node) => {
+          executed.push(node.id);
+          return { success: true, output: node.id, executionTime: 1 };
+        }),
+        onRecoveryScheduled: ({ nodeId, nodeStates }) => {
+          persistedReservations.push(structuredClone(nodeStates[nodeId]!));
+        },
+      });
+      const nodes: WorkflowNode[] = [
+        {
+          id: "gate",
+          dependsOn: [],
+          config: { type: "wait", waitType: "approval", message: "m" } as any,
+        },
+        { id: "side-effect", dependsOn: [], config: { type: "step" } as any },
+      ];
+
+      const first = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "running",
+          nodeStates: {
+            "side-effect": {
+              nodeId: "side-effect",
+              status: "running",
+              attempt: 1,
+              startedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "gate");
+      assertEquals(executed, []);
+      assertEquals(persistedReservations[0]?.attempt, 2);
+      assertEquals(
+        persistedReservations[0]?.startedAt,
+        undefined,
+        "a reserved recovery must remain distinguishable from one that started",
+      );
+
+      const resumed = await exec.execute(
+        nodes,
+        createTestRun({
+          status: "waiting",
+          context: first.context,
+          nodeStates: {
+            ...first.nodeStates,
+            gate: {
+              ...first.nodeStates.gate!,
+              status: "completed",
+              completedAt: new Date(),
+            },
+          },
+        }),
+      );
+
+      assertEquals(resumed.error, undefined);
+      assertEquals(resumed.completed, true);
+      assertEquals(executed, ["side-effect"]);
+      assertEquals(resumed.nodeStates["side-effect"]!.status, "completed");
+      assertEquals(resumed.nodeStates["side-effect"]!.attempt, 2);
+    });
+
     it("never reports completion while an interrupted step is out of budget", async () => {
       // The same shape once the budget is gone. Failing loudly is the only
       // honest answer; reporting success would drop the step on the floor.
