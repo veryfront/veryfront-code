@@ -10,7 +10,15 @@ export const MINIMUM_NODE_RELEASE_LINE = MINIMUM_NODE_VERSION.slice(
   MINIMUM_NODE_VERSION.indexOf("."),
 );
 
-/** Node.js releases that exercise the clean-room npm artifact boundary. */
+/**
+ * Node.js releases that exercise the clean-room npm artifact boundary.
+ *
+ * These are release lines, so `setup-node` resolves each to its newest patch.
+ * That covers the lines, not the exact `MINIMUM_NODE_VERSION` the published
+ * `engines.node` accepts: the packed artifact is currently broken from 22.3.0
+ * through 22.12.0 and only works from 22.14.0 up. Pin the exact floor here once
+ * veryfront-issue-inbox#748 either fixes that range or raises the floor.
+ */
 export const NPM_SMOKE_NODE_VERSIONS = Object.freeze([
   MINIMUM_NODE_RELEASE_LINE,
   CURRENT_CI_NODE_RELEASE_LINE,
