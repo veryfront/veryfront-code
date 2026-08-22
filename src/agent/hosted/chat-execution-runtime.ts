@@ -55,7 +55,7 @@ import {
 import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
-import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
+import { finalizeHostedChatRun, isDurableRunKnownTerminal } from "./hosted-chat-finalization.ts";
 import {
   runWithMandatoryRunEventSink,
   scopeAsyncIterableWithMandatoryRunEventSink,
@@ -593,7 +593,11 @@ async function finalizeExecutionFailure(input: {
   logMessage: string;
   logger?: HostedChatExecutionRuntimeLogger;
 }): Promise<void> {
-  await dispatchConversationHostedStreamErrorState(input.lifecycleAdapter, input.error).catch(
+  await dispatchConversationHostedStreamErrorState(input.lifecycleAdapter, input.error, {
+    // The run is already terminal server-side; completing it here can only 400 and
+    // would turn a clean stop back into a Sentry error (veryfront-issue-inbox#743).
+    skipDurableRunFinalization: isDurableRunKnownTerminal(input.lifecycleAdapter),
+  }).catch(
     (finalizeError) => {
       input.logger?.error(input.logMessage, {
         conversationId: input.conversationId,

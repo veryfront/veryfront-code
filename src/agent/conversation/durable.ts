@@ -25,6 +25,7 @@ import {
   isIgnorableConversationRunAppendError,
   isPayloadTooLargeConversationRunAppendError,
   isPermanentAuthConversationRunAppendError,
+  isTerminalRunConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 
@@ -341,6 +342,7 @@ export async function recoverConversationRunAppendFailure(input: {
     | "cursor_mismatch_ambiguous"
     | "non_appendable"
     | "ignorable_append_rejection"
+    | "run_terminal"
     | "payload_too_large"
     | "auth_rejected";
   errorMessage?: string;
@@ -377,6 +379,22 @@ export async function recoverConversationRunAppendFailure(input: {
       latestEventId: cursorRecovery.latestEventId,
       latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
       disableReason: cursorRecovery.disableReason,
+      ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+    };
+  }
+
+  // veryfront-issue-inbox#743: a terminal-run rejection is the API telling the
+  // runtime the run is finished and its row may already be gone (a project delete
+  // cancels its in-flight runs first). Classify it distinctly from the other
+  // ignorable rejections so finalization can skip completing a run that can only
+  // 400 -- an absent run or a run waiting for a tool result must keep the generic
+  // stop, and every other rejection must still retry or surface.
+  if (isTerminalRunConversationRunAppendError(input.error)) {
+    return {
+      outcome: "stopped",
+      latestEventId: cursorRecovery.latestEventId,
+      latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
+      disableReason: "run_terminal",
       ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
     };
   }
@@ -460,6 +478,7 @@ export async function recoverConversationRunAppendExecution(input: {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   }
@@ -600,6 +619,7 @@ export async function flushConversationRunEventBatches(input: {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   }
@@ -721,6 +741,7 @@ export async function flushConversationRunEventQueue(input: {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   }

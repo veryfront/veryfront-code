@@ -1878,8 +1878,74 @@ describe("agent/durable", () => {
         outcome: "stopped",
         latestEventId: 2,
         latestExternalEventSequence: 4,
+        disableReason: "run_terminal",
+      },
+    );
+
+    // veryfront-issue-inbox#743: only the terminal-run detail earns the
+    // finalization-skipping stop. A run waiting for a tool result is still alive
+    // and a missing run is a different condition, so both keep the generic
+    // ignorable stop -- and any other `validation-failed` detail must still retry
+    // rather than be silently swallowed.
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "Cannot append external events while the run is waiting for a tool result",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_waiting",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
         disableReason: "ignorable_append_rejection",
       },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({ status: 404 }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_missing",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "ignorable_append_rejection",
+      },
+    );
+
+    assertEquals(
+      (await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "Agent run event type is not supported",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_other_validation",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      })).outcome,
+      "retry_scheduled",
     );
 
     assertEquals(
@@ -2046,7 +2112,7 @@ describe("agent/durable", () => {
         outcome: "stopped",
         latestEventId: 2,
         latestExternalEventSequence: 4,
-        disableReason: "ignorable_append_rejection",
+        disableReason: "run_terminal",
       },
     );
 

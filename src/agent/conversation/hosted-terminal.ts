@@ -87,16 +87,29 @@ export interface ConversationHostedTerminalRuntimeAdapter {
   >;
 }
 
+/** Options accepted by conversation hosted terminal state dispatch. */
+export interface DispatchConversationHostedTerminalStateOptions {
+  /**
+   * Skip the durable run completion call while still reporting the terminal state
+   * locally. Set only when the run is already known to be terminal server-side, so
+   * completing it could never succeed.
+   */
+  skipDurableRunFinalization?: boolean;
+}
+
 /** State for dispatch conversation hosted terminal. */
 export async function dispatchConversationHostedTerminalState(
   adapter: ConversationHostedTerminalRuntimeAdapter,
   state: ConversationHostedTerminalStateInput,
+  options?: DispatchConversationHostedTerminalStateOptions,
 ): Promise<HostedLifecycleTerminalState> {
   const terminalState = adapter.terminal.toTerminalState(state);
-  if (terminalState.status === "cancelled") {
-    await adapter.terminal.cancelRun(terminalState);
-  } else {
-    await adapter.terminal.finalizeRun(terminalState);
+  if (!options?.skipDurableRunFinalization) {
+    if (terminalState.status === "cancelled") {
+      await adapter.terminal.cancelRun(terminalState);
+    } else {
+      await adapter.terminal.finalizeRun(terminalState);
+    }
   }
   await adapter.terminal.onTerminalState(terminalState);
   return terminalState;
@@ -106,10 +119,12 @@ export async function dispatchConversationHostedTerminalState(
 export async function dispatchConversationHostedStreamErrorState(
   adapter: ConversationHostedTerminalRuntimeAdapter,
   error: unknown,
+  options?: DispatchConversationHostedTerminalStateOptions,
 ): Promise<HostedLifecycleTerminalState> {
   return dispatchConversationHostedTerminalState(
     adapter,
     resolveConversationHostedStreamErrorState(error),
+    options,
   );
 }
 
