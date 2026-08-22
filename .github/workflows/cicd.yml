@@ -34,16 +34,40 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [format, lint, typecheck]
+        check: [test-layout, format, lint, typecheck]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Configure test layout migration baseline
+        if: ${{ matrix.check == 'test-layout' }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+          case "$EVENT_NAME" in
+            pull_request) fetch_ref="$PR_BASE_SHA"; base="$PR_BASE_SHA" ;;
+            merge_group) fetch_ref="$MERGE_GROUP_BASE_SHA"; base="$MERGE_GROUP_BASE_SHA" ;;
+            push) fetch_ref="$PUSH_BASE_SHA"; base="$PUSH_BASE_SHA" ;;
+            *) fetch_ref="main"; base="origin/main" ;;
+          esac
+
+          if [ -z "$base" ] || printf '%s' "$base" | grep -Eq '^0+$'; then
+            fetch_ref="main"
+            base="origin/main"
+          fi
+          git fetch --no-tags --depth=1 origin "$fetch_ref"
+
+          echo "TEST_LAYOUT_MIGRATION_BASE_REF=$base" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - name: Run ${{ matrix.check }}
         run: |
           case "${{ matrix.check }}" in
+            test-layout) deno task test:layout ;;
             format) deno fmt --check ;;
             # The chain lives in the lint:ci task so a contributor can run this
             # shard locally instead of learning what it covers from a red CI run.

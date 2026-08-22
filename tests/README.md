@@ -15,18 +15,62 @@ src/                      # Source code with colocated unit tests
 ├── module/
 │   ├── function.ts
 │   └── function.test.ts  # Unit test colocated with source
+cli/                      # CLI source with colocated unit tests
+extensions/               # Extension source with colocated unit tests
+templates/                # Template source with colocated unit tests
+scripts/                  # Repository scripts with colocated unit tests
+react/                    # React package source with colocated unit tests
 
 tests/
 ├── _helpers/             # Shared test utilities (TestContext, etc.)
 ├── _examples/            # Example tests demonstrating best practices
-├── e2e/                  # End-to-end tests (Playwright)
+├── e2e/                  # End-to-end journeys (Deno and Playwright)
 ├── fixtures/             # Test data and mock implementations
 └── integration/          # Integration tests (multiple components, I/O, servers)
 ```
 
+### Canonical Leaf Suites
+
+The executable test tree is classified by `deno task test:layout` before quick
+verification and in the earliest CI job. The gate maps every executable test path
+to exactly one `level -> leaf suite -> runner` owner and reports timing without
+gating on duration.
+
+Canonical leaves are:
+
+- `src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, `react/` -> `unit -> unit -> deno`
+- `tests/integration/` -> `integration -> integration -> deno`
+- `tests/e2e/**/*.test.*` -> `e2e -> e2e -> deno`
+- `tests/e2e/**/*.playwright.ts` -> `e2e -> e2e -> playwright`
+
+Runtime is a suite variant, not a competing leaf owner. Runtime metadata lives
+on one registry record and can assign variant runners, but it does not create a
+second canonical owner for a path. Existing off-layout tests are covered by the
+temporary explicit-path migration inventory in
+`scripts/test/test-layout-migration.ts`; each entry carries an owner and removal
+PR. That inventory is a shrink-only migration aid, not a permanent all-test
+manifest.
+
+Executable test filenames are limited to:
+
+- `*.test.ts`
+- `*.test.tsx`
+- `*.test.js`
+- `*.test.mjs`
+- `*.test.cjs`
+- `*.playwright.ts`
+
+Unsupported test-like names such as `*.test.jsx`, `*.spec.ts`, and
+`*.playwright.js` fail layout validation until the registry deliberately owns
+them. Executable-looking files below `tests/**/fixtures/**` or
+`tests/**/support/**` also fail; fixture and support directories are not runner
+entry points.
+
 **Key Principles:**
 
-- **Unit tests** (pure functions, no I/O, no external dependencies) are **colocated** with source code in `src/`
+- **Unit tests** (pure functions, no I/O, no external dependencies) are
+  **colocated** with source code in `src/`, `cli/`, `extensions/`,
+  `templates/`, `scripts/`, or `react/`
 - **Integration tests** (servers, databases, file systems, multiple components) live in `tests/integration/`
 - **E2E tests** live in `tests/e2e/` when full user-flow coverage is needed
 
