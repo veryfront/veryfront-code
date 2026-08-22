@@ -48,6 +48,7 @@ export {
   recordRSCStreamDuration,
   recordSecurityHeaders,
   recordSSR,
+  recordSSRSourceUnavailable,
 } from "./metrics-recorder.ts";
 
 export type { ContentCacheLayer, ModuleServeStatus } from "./metrics-recorder.ts";
@@ -70,6 +71,7 @@ import {
   recordRSCStreamDuration,
   recordSecurityHeaders,
   recordSSR,
+  recordSSRSourceUnavailable,
 } from "./metrics-recorder.ts";
 import { createSnapshot, getRequestCount } from "./metrics-state.ts";
 
@@ -91,6 +93,7 @@ export const metrics = {
   recordModuleServe,
   recordModuleTransform,
   recordRouteManifestLookup,
+  recordSSRSourceUnavailable,
   snapshot: createSnapshot,
   getRequestCount,
 };

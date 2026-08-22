@@ -216,16 +216,33 @@ function extractRedirectLocation(
   }
 }
 
-/**
- * True for the framework's own "this path is not in the project" error.
- *
- * The slug is the identity; message text is never consulted. Only framework
- * filesystem adapters raise it, and only where the source could not be
- * retrieved, so project code that loaded and then threw never matches -- which
- * is what keeps a genuine render fault a fault rather than a 404.
- */
-export function isFileNotFoundError(error: unknown): error is VeryfrontError {
+function isFileNotFoundError(error: unknown): error is VeryfrontError {
   return error instanceof VeryfrontError && error.slug === "file-not-found";
+}
+
+/**
+ * True for the veryfront-api filesystem adapter's own "this path is not in the
+ * release" error, and for nothing else.
+ *
+ * The `file-not-found` slug alone is not safe to route a status on. It is
+ * raised in-tree for conditions that are not an absent source at all:
+ * `transforms/esm/http-cache.ts` raises it when a bundle write reports success
+ * and the file still is not there, and `discovery/transpiler.ts` folds EACCES,
+ * EIO, aborts and timeouts into it. Both are server faults, and answering them
+ * with a 404 would hide a real outage behind a status nothing alerts on.
+ *
+ * `code` narrows it to the adapter: `createNotFoundLikeError` is the only
+ * raiser that sets ENOENT alongside the slug, and a test pins that. It is read
+ * as an own data property so a project-owned getter cannot forge it.
+ *
+ * Message text is never consulted, so an error that merely reads "not found"
+ * stays a fault.
+ */
+export function isMissingProjectSourceError(error: unknown): boolean {
+  if (!isFileNotFoundError(error)) return false;
+
+  const code = Object.getOwnPropertyDescriptor(error, "code");
+  return code !== undefined && "value" in code && code.value === "ENOENT";
 }
 
 function isUndeployedFileListError(error: unknown): boolean {

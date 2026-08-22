@@ -8,6 +8,7 @@ import { isTenantBuildFailure, markBuildFailure } from "./module-loader/build-fa
 import {
   COMPILATION_ERROR,
   createError,
+  FILE_NOT_FOUND,
   SSG_GENERATION_ERROR,
   toError,
   VeryfrontError,
@@ -40,7 +41,7 @@ import {
 } from "#veryfront/data/response-metadata.ts";
 import { notFound } from "#veryfront/data/helpers.ts";
 import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
-import { isFileNotFoundError } from "#veryfront/rendering/ssr-outcome.ts";
+import { isMissingProjectSourceError } from "#veryfront/rendering/ssr-outcome.ts";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
@@ -329,9 +330,40 @@ describe("RenderPipeline behavior", () => {
     );
 
     assertEquals(
-      isFileNotFoundError(error),
-      true,
+      (error as VeryfrontError).slug,
+      "file-not-found",
       "resolveSSRFailure reads this slug to answer 404",
+    );
+    assertEquals(
+      isMissingProjectSourceError(error),
+      true,
+      "the absent-source identity must survive the re-raise intact",
+    );
+  });
+
+  it("keeps a render-error identity for an infrastructure file-not-found", async () => {
+    // http-cache raises `file-not-found` when a bundle write reports success and
+    // the file still is not there. That is a server fault reachable from
+    // loadModule, and routing it to 404 would page nobody.
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    (pipeline as unknown as { loadModule: () => Promise<unknown> }).loadModule = () =>
+      Promise.reject(
+        FILE_NOT_FOUND.create({
+          detail: "[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist",
+        }),
+      );
+
+    const error = await assertRejects(() =>
+      pipeline.resolvePageData("/", {
+        request: new Request("http://localhost/"),
+        url: new URL("http://localhost/"),
+      })
+    );
+
+    assertEquals(
+      (error as VeryfrontError).slug,
+      "render-error",
+      "an infrastructure fault must keep a 500 identity",
     );
   });
 
@@ -348,7 +380,7 @@ describe("RenderPipeline behavior", () => {
     );
 
     assertEquals(
-      isFileNotFoundError(error),
+      isMissingProjectSourceError(error),
       false,
       "a genuine fault must not be downgraded to a 404",
     );

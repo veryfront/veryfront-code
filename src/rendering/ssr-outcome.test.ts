@@ -12,12 +12,14 @@ import {
 import type { SSRFailureOutcome } from "./ssr-outcome.ts";
 import {
   findSSRControlOutcome,
+  isMissingProjectSourceError,
   isSSRBuildFailure,
   isSSRControlOutcome,
   resolveSSRControlOutcome,
   resolveSSRFailure,
 } from "./ssr-outcome.ts";
 import { attachDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
 
 function assertSSRFailureOutcome(
   actual: SSRFailureOutcome,
@@ -316,6 +318,28 @@ describe("ssr-outcome.ts", () => {
           testCase.name,
         );
       }
+    });
+
+    it("does not treat every file-not-found as an absent project source", () => {
+      // `file-not-found` is raised in-tree for conditions that are not an
+      // absent source: http-cache raises it when a bundle write reports success
+      // and the file still is not there, and discovery/transpiler folds EACCES
+      // and EIO into it. Routing those to 404 would hide a real fault behind a
+      // status nothing alerts on -- the exact inversion this PR exists to stop.
+      const invariantViolation = FILE_NOT_FOUND.create({
+        detail: "[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist",
+      });
+
+      assertEquals(
+        isMissingProjectSourceError(invariantViolation),
+        false,
+        "an infrastructure fault must not be read as a deleted release",
+      );
+      assertEquals(
+        isMissingProjectSourceError(createNotFoundLikeError("app/layout.tsx")),
+        true,
+        "the filesystem adapter's own absence error still qualifies",
+      );
     });
 
     it("keeps a layout that exists but throws a server error", () => {

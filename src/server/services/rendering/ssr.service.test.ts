@@ -18,6 +18,7 @@ import {
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
 import { createNotFoundLikeError } from "#veryfront/platform/adapters/fs/veryfront/read-operations-helpers.ts";
+import { resetMetrics, state } from "#veryfront/observability/simple-metrics/index.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   return {
@@ -560,6 +561,51 @@ describe("server/services/rendering/ssr.service", () => {
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 404, "a deleted project is a 404, not a 500");
         assertEquals(result.failure?.kind, "not-found", "classified as a routing outcome");
+      });
+
+      it("counts an unreadable project source so the 404 is not silent", async () => {
+        // The old 500 raised a Sentry event per request. Dropping that must not
+        // leave an API-side regression invisible, so the condition is counted:
+        // an ordinary route miss stays uncounted, a source that cannot be read
+        // moves the counter.
+        resetMetrics();
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw createNotFoundLikeError("app/layout.tsx");
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        await service.renderPage(makeCtx(), makeRenderOptions());
+
+        assertEquals(
+          state.ssrSourceUnavailable,
+          1,
+          "an unreadable release must remain visible after the Sentry event is gone",
+        );
+      });
+
+      it("does not count an ordinary route miss as an unreadable source", async () => {
+        resetMetrics();
+        const adapter = createMockRendererAdapter({
+          renderPage: () => {
+            throw notFound();
+          },
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        const result = await service.renderPage(makeCtx(), makeRenderOptions());
+
+        assertEquals(result.status, 404, "a route miss is still a 404");
+        assertEquals(
+          state.ssrSourceUnavailable,
+          0,
+          "routine 404s must not drown the signal they would otherwise raise",
+        );
       });
 
       it("still answers 500 when a layout exists but throws", async () => {
