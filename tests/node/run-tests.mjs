@@ -3,7 +3,12 @@
 import { spawn } from "node:child_process";
 import os from "node:os";
 import { readFileSync } from "node:fs";
-import { filterTestFiles, listTestFiles, splitIntoShards } from "../test-file-utils.mjs";
+import {
+  filterTestFiles,
+  isDenoDependentTestSource,
+  listTestFiles,
+  splitIntoShards,
+} from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
 import { DENO_ONLY_TESTS } from "../deno-only-tests.mjs";
 
@@ -68,10 +73,7 @@ const hasFilters = includePatterns.length > 0 || envExcludePatterns.length > 0;
 function isDenoDependentTest(file) {
   try {
     const source = readFileSync(file, "utf-8");
-    return /\bDeno\./.test(source) ||
-      /\bDeno\.test\s*\(/.test(source) ||
-      /tests\/_helpers\/utils\.ts/.test(source) ||
-      /\bcreateMockServer\s*\(/.test(source);
+    return isDenoDependentTestSource(source);
   } catch {
     return false;
   }
