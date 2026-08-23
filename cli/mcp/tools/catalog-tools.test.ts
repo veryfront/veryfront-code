@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "veryfront/platform/path";
+import { dirname, join } from "veryfront/platform/path";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
 import {
   resolveCreateProjectPaths,
@@ -218,11 +218,51 @@ describe("mcp/tools/catalog-tools", () => {
       });
     });
 
-    it("keeps the existing-directory failure response", async () => {
+    it("refuses a directory holding files the scaffold would overwrite", async () => {
       const parentDir = await Deno.makeTempDir();
       createdDirs.push(parentDir);
       const projectDir = join(parentDir, "example-app");
       await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(join(projectDir, "README.md"), "mine\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      // Same rule and same words as `veryfront init`: the conflict is the file,
+      // and it is named.
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains README.md"), true);
+      assertEquals(await Deno.readTextFile(join(projectDir, "README.md")), "mine\n");
+    });
+
+    it("scaffolds into an existing empty directory", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      await Deno.mkdir(projectDir);
+
+      await withFakeNpm(async () => {
+        const result = await vfCreateProject.execute({
+          name: "Example App",
+          template: "minimal",
+          directory: parentDir,
+        });
+
+        assertEquals(result.success, true);
+        assertEquals(result.projectDir, projectDir);
+      });
+    });
+
+    it("refuses a linked project directory instead of scaffolding outside the parent", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const outside = await Deno.makeTempDir();
+      createdDirs.push(outside);
+      await Deno.symlink(outside, join(parentDir, "example-app"));
 
       const result = await vfCreateProject.execute({
         name: "Example App",
@@ -231,7 +271,197 @@ describe("mcp/tools/catalog-tools", () => {
       });
 
       assertEquals(result.success, false);
-      assertEquals(result.message, `Directory already exists: ${projectDir}`);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("is a link the scaffold cannot write through"), true);
+      // The link target is outside the requested parent; nothing was written there.
+      const written: string[] = [];
+      for await (const entry of Deno.readDir(outside)) written.push(entry.name);
+      assertEquals(written, []);
+    });
+
+    it("refuses a linked .gitignore instead of merging through it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const outside = join(parentDir, "outside-gitignore");
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outside, "keep-me\n");
+      await Deno.symlink(outside, join(projectDir, ".gitignore"));
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains .gitignore as a file or a link"),
+        true,
+      );
+      assertEquals(await Deno.readTextFile(outside), "keep-me\n");
+      assertEquals(await Deno.readTextFile(join(projectDir, ".gitignore")), "keep-me\n");
+    });
+
+    it("refuses a .gitignore directory before partially scaffolding", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      await Deno.mkdir(join(projectDir, ".gitignore"), { recursive: true });
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains .gitignore as a file or a link"),
+        true,
+      );
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, ".gitignore", "README.md")).catch(
+          () => "absent",
+        ),
+        "absent",
+      );
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses a non-file .gitignore before partially scaffolding", async () => {
+      if (Deno.build.os === "windows") return;
+
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      await Deno.mkdir(projectDir, { recursive: true });
+      const command = new Deno.Command("mkfifo", {
+        args: [join(projectDir, ".gitignore")],
+      });
+      const output = await command.output();
+      if (!output.success) return;
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains .gitignore as a file or a link"),
+        true,
+      );
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses a package lock before dependency installation can replace it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const lockfile = join(projectDir, "package-lock.json");
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains package-lock.json"), true);
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses npm's hidden lockfile before dependency installation can replace it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const lockfile = join(projectDir, "node_modules", ".package-lock.json");
+      await Deno.mkdir(join(projectDir, "node_modules"), { recursive: true });
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains node_modules/.package-lock.json"),
+        true,
+      );
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses npm shrinkwrap before dependency installation can replace it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const lockfile = join(projectDir, "npm-shrinkwrap.json");
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains npm-shrinkwrap.json"), true);
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses existing node_modules before dependency installation can prune it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const userFile = join(projectDir, "node_modules", "user-owned", "data.txt");
+      await Deno.mkdir(dirname(userFile), { recursive: true });
+      await Deno.writeTextFile(userFile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains node_modules"), true);
+      assertEquals(await Deno.readTextFile(userFile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
     });
 
     it("reports project-name validation failures", async () => {
