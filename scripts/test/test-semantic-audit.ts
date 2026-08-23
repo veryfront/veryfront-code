@@ -323,6 +323,8 @@ const PROCESS_STATE_METHODS = new Set([
   "setEnv",
 ]);
 
+const PUBLIC_PLATFORM_PROCESS_METHODS = new Set(["env", "getArgs"]);
+
 const PROCESS_ARGUMENT_PROPERTIES = new Set(["args", "argv"]);
 
 const TESTING_RUNTIME_WRITE_METHODS = new Set([
@@ -2541,22 +2543,15 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
           bindings.filesystemWrite.add(local);
         }
       }
-      if (isProcessSpecifier(source)) {
+      if (isProcessEffectSpecifier(source)) {
         if (SHARED_CWD_METHODS.has(importedName)) {
           bindings.sharedCwd.add(local);
-        } else if (isProcessEffectMethod(importedName)) {
+        } else if (
+          isProcessEffectMethod(importedName) ||
+          isPublicPlatformProcessMethod(source, importedName)
+        ) {
           bindings.process.add(local);
         }
-      } else if (
-        isPublicPlatformSpecifier(source) &&
-        SHARED_CWD_METHODS.has(importedName)
-      ) {
-        bindings.sharedCwd.add(local);
-      } else if (
-        isPublicPlatformSpecifier(source) &&
-        isProcessEffectMethod(importedName)
-      ) {
-        bindings.process.add(local);
       }
       if (isTestingRuntimeSpecifier(source)) {
         const effect = effectForModuleMethod(source, importedName);
@@ -2617,7 +2612,9 @@ function addRuntimeNamespaceImport(
     bindings.runtimeNamespaces.set(local, source);
   }
   if (isFilesystemSpecifier(source)) bindings.filesystemNamespaces.add(local);
-  if (isProcessSpecifier(source)) bindings.processNamespaces.add(local);
+  if (isProcessEffectSpecifier(source)) {
+    bindings.processNamespaces.add(local);
+  }
   if (isServerSpecifier(source)) bindings.serverNamespaces.add(local);
   if (isPlaywrightSpecifier(source)) bindings.playwrightNamespaces.add(local);
 }
@@ -3746,10 +3743,13 @@ function moduleRuntimeBindingForProperty(
   if (isFilesystemSpecifier(source) && FILESYSTEM_OPEN_METHODS.has(property)) {
     return { kind: "filesystem-open", source };
   }
-  if (isProcessSpecifier(source) && property === "env") {
+  if (isPublicPlatformProcessMethod(source, property)) {
+    return { kind: "effect", effect: "process" };
+  }
+  if (isProcessEffectSpecifier(source) && property === "env") {
     return { kind: "effect-object", effect: "process" };
   }
-  if (isProcessSpecifier(source) && property === "argv") {
+  if (isProcessEffectSpecifier(source) && property === "argv") {
     return { kind: "effect-object", effect: "process" };
   }
   const effect = effectForModuleMethod(source, property);
@@ -4251,6 +4251,10 @@ function isPublicPlatformSpecifier(source: string): boolean {
   return source === "veryfront/platform" || source === "#veryfront/platform";
 }
 
+function isProcessEffectSpecifier(source: string): boolean {
+  return isProcessSpecifier(source) || isPublicPlatformSpecifier(source);
+}
+
 function isTestingRuntimeSpecifier(source: string): boolean {
   return source === "#veryfront/testing" ||
     source === "#veryfront/testing/deno-compat" ||
@@ -4265,6 +4269,14 @@ function isTestingRuntimeSpecifier(source: string): boolean {
 function isProcessEffectMethod(method: string): boolean {
   return PROCESS_METHODS.has(method) || PROCESS_CONSTRUCTORS.has(method) ||
     PROCESS_STATE_METHODS.has(method);
+}
+
+function isPublicPlatformProcessMethod(
+  source: string,
+  method: string,
+): boolean {
+  return isPublicPlatformSpecifier(source) &&
+    PUBLIC_PLATFORM_PROCESS_METHODS.has(method);
 }
 
 function isServerSpecifier(source: string): boolean {
@@ -4284,7 +4296,7 @@ function isCreateRequireSpecifier(source: string): boolean {
 }
 
 function isRuntimeEffectModule(source: string): boolean {
-  return isFilesystemSpecifier(source) || isProcessSpecifier(source) ||
+  return isFilesystemSpecifier(source) || isProcessEffectSpecifier(source) ||
     isServerSpecifier(source) || isDnsSpecifier(source) ||
     isPlaywrightSpecifier(source) ||
     isTestingRuntimeSpecifier(source);
@@ -4315,13 +4327,16 @@ function effectForModuleMethod(
     if (READ_METHODS.has(method)) return "filesystem-read";
     if (WRITE_METHODS.has(method)) return "filesystem-write";
   }
-  if (isProcessSpecifier(source) && SHARED_CWD_METHODS.has(method)) {
+  if (isProcessEffectSpecifier(source) && SHARED_CWD_METHODS.has(method)) {
     return "shared-cwd";
   }
-  if (isProcessSpecifier(source) && isProcessEffectMethod(method)) {
+  if (isProcessEffectSpecifier(source) && isProcessEffectMethod(method)) {
     return "process";
   }
-  if (isProcessSpecifier(source) && method === "argv") return "process";
+  if (isPublicPlatformProcessMethod(source, method)) {
+    return "process";
+  }
+  if (isProcessEffectSpecifier(source) && method === "argv") return "process";
   if (isServerSpecifier(source) && SERVER_METHODS.has(method)) return "server";
   if (isServerSpecifier(source) && NETWORK_METHODS.has(method)) {
     return "network";
