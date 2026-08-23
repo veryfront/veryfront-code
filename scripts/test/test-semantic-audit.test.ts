@@ -1972,6 +1972,21 @@ const copied = [() => undefined];
 copied.copyWithin(Deno.writeTextFile, 0);
 const [copiedRun] = [...copied];
 copiedRun();
+
+const popped = [() => undefined, Deno.writeTextFile];
+popped.pop();
+const [poppedRun] = popped;
+poppedRun();
+
+const definedNamed = { run: () => undefined };
+Object.defineProperty(definedNamed, "write", {
+  value: Deno.writeTextFile,
+});
+definedNamed.run();
+
+const reflectedNamed = { run: () => undefined };
+Reflect.set(reflectedNamed, "write", Deno.writeTextFile);
+reflectedNamed.run();
 `,
         "src/local-non-mutating-array-calls.test.ts",
       ),

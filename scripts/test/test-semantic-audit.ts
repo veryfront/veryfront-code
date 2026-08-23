@@ -4102,11 +4102,20 @@ function bindRuntimeCallMutation(
           invocation.binding.method !== "push" &&
           invocation.binding.method !== "unshift"
         ) {
-          bindRuntimeArrayShapeMutation(
-            invocation.target,
-            imports,
-            scopes,
-          );
+          if (invocation.binding.method === "pop") {
+            bindRuntimeUnknownPropertyMutation(
+              invocation.target,
+              undefined,
+              imports,
+              scopes,
+            );
+          } else {
+            bindRuntimeArrayShapeMutation(
+              invocation.target,
+              imports,
+              scopes,
+            );
+          }
         }
       } else {
         for (const expression of inserted) {
@@ -4135,6 +4144,9 @@ function bindRuntimeCallMutation(
       canonicalName,
       invocation.args,
     );
+    const propertyName = GLOBAL_SINGLE_PROPERTY_MUTATORS.has(canonicalName)
+      ? literalValue(invocation.args[1])
+      : undefined;
     if (canonicalName === "Object.assign" && assigned.length === 0) continue;
     if (assigned.length === 0) {
       bindRuntimeUnknownPropertyMutation(
@@ -4146,12 +4158,22 @@ function bindRuntimeCallMutation(
       continue;
     }
     for (const expression of assigned) {
-      bindRuntimeUnknownPropertyMutation(
-        target,
-        expression,
-        imports,
-        scopes,
-      );
+      if (propertyName) {
+        bindRuntimeNamedPropertyMutation(
+          target,
+          propertyName,
+          expression,
+          imports,
+          scopes,
+        );
+      } else {
+        bindRuntimeUnknownPropertyMutation(
+          target,
+          expression,
+          imports,
+          scopes,
+        );
+      }
     }
     for (
       const descriptor of localMutationAccessorDescriptors(
@@ -4159,7 +4181,13 @@ function bindRuntimeCallMutation(
         invocation.args,
       )
     ) {
-      bindRuntimeAccessorMutation(target, descriptor, imports, scopes);
+      bindRuntimeAccessorMutation(
+        target,
+        descriptor,
+        imports,
+        scopes,
+        propertyName,
+      );
     }
   }
 }
@@ -4295,6 +4323,7 @@ function bindRuntimeAccessorMutation(
   descriptor: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  propertyName?: string,
 ): void {
   const getter = runtimeDescriptorGetterExpressions(descriptor);
   const needsConservativeBinding = getter.unknown;
@@ -4306,21 +4335,44 @@ function bindRuntimeAccessorMutation(
       scopes,
     );
     if (!binding && aliasTargets.length === 0) continue;
-    bindRuntimeUnknownPropertyMutation(
+    if (propertyName) {
+      bindRuntimeNamedPropertyMutation(
+        target,
+        propertyName,
+        expression,
+        imports,
+        scopes,
+      );
+    } else {
+      bindRuntimeUnknownPropertyMutation(
+        target,
+        expression,
+        imports,
+        scopes,
+      );
+    }
+  }
+  if (!needsConservativeBinding) return;
+  if (propertyName) {
+    const receiver = unwrapExpression(target);
+    if (!receiver) return;
+    bindRuntimeMemberAssignment(
+      runtimePropertyExpression(receiver, propertyName),
+      conservativeSemanticEffectBinding(),
+      undefined,
+      imports,
+      scopes,
+      false,
+    );
+  } else {
+    bindRuntimeUnknownPropertyMutationBinding(
       target,
-      expression,
+      conservativeSemanticEffectBinding(),
+      undefined,
       imports,
       scopes,
     );
   }
-  if (!needsConservativeBinding) return;
-  bindRuntimeUnknownPropertyMutationBinding(
-    target,
-    conservativeSemanticEffectBinding(),
-    undefined,
-    imports,
-    scopes,
-  );
 }
 
 function runtimeDescriptorGetterExpressions(descriptor: unknown): {
@@ -4454,6 +4506,25 @@ function bindRuntimeUnknownPropertyMutation(
     assignedExpression,
     imports,
     scopes,
+  );
+}
+
+function bindRuntimeNamedPropertyMutation(
+  target: unknown,
+  property: string,
+  assignedExpression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): void {
+  const receiver = unwrapExpression(target);
+  if (!receiver) return;
+  bindRuntimeMemberAssignment(
+    runtimePropertyExpression(receiver, property),
+    runtimeBindingForExpression(assignedExpression, imports, scopes),
+    assignedExpression,
+    imports,
+    scopes,
+    false,
   );
 }
 
