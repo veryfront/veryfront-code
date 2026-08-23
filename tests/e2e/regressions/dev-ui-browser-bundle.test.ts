@@ -4,9 +4,15 @@ import {
   closeChromium,
   getBrowserDiagnosticMessages,
   launchChromium,
-} from "../../../tests/_helpers/playwright.ts";
-import { DEV_UI_BROWSER_BUNDLE, DEV_UI_BROWSER_BUNDLE_SHA256 } from "./dev-ui-bundle.generated.ts";
-import { DEV_UI_STYLES, DEV_UI_STYLES_SHA256 } from "./dev-ui-styles.generated.ts";
+} from "../../_helpers/playwright.ts";
+import {
+  DEV_UI_BROWSER_BUNDLE,
+  DEV_UI_BROWSER_BUNDLE_SHA256,
+} from "../../../extensions/ext-dev-ui-react/src/dev-ui-bundle.generated.ts";
+import {
+  DEV_UI_STYLES,
+  DEV_UI_STYLES_SHA256,
+} from "../../../extensions/ext-dev-ui-react/src/dev-ui-styles.generated.ts";
 
 const MAX_PRODUCTION_BUNDLE_BYTES = 512 * 1024;
 const STYLE_IDENTITY_ATTRIBUTE = "data-veryfront-dev-ui-styles";

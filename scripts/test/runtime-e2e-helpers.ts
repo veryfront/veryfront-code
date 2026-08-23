@@ -154,18 +154,55 @@ export async function inspectModuleExports(
   return JSON.parse(decoder.decode(result.stdout)) as string[];
 }
 
-export async function packNpmPackage(
-  rootDir: string,
-  workDir: string,
-): Promise<string> {
-  const packDir = `${workDir}/packed`;
-  await Deno.mkdir(packDir, { recursive: true });
+/**
+ * The locally built packages a scaffolded fixture installs.
+ *
+ * `veryfront` pins its co-published extensions to its own exact version, so a
+ * fixture given only the root tarball resolves those pins from the npm
+ * registry. On a release-cut branch that version is not published yet. It is
+ * what the release job publishes, and the install fails with ETARGET. Packing
+ * the extensions alongside the root keeps the whole matched set local, which is
+ * also the set a user receives.
+ */
+export interface PackedWorkspace {
+  /** Tarball for the root `veryfront` package. */
+  readonly root: string;
+  /** Names of the extensions pinned by the root package itself. */
+  readonly rootExtensionNames: readonly string[];
+  /** Named tarballs for root and selected-template extensions, in pack order. */
+  readonly extensions: readonly PackedExtension[];
+}
+
+export interface PackedExtension {
+  readonly name: string;
+  readonly tarball: string;
+}
+
+const VERYFRONT_EXTENSION_PREFIX = "@veryfront/ext-";
+const VERYFRONT_SCOPE_PREFIX = "@veryfront/";
+
+function extensionDirectoryName(name: string): string {
+  if (
+    !name.startsWith(VERYFRONT_EXTENSION_PREFIX) ||
+    name.length === VERYFRONT_EXTENSION_PREFIX.length ||
+    name.slice(VERYFRONT_SCOPE_PREFIX.length).includes("/")
+  ) {
+    throw new Error(`Unsupported first-party extension package: ${name}`);
+  }
+  return name.slice(VERYFRONT_SCOPE_PREFIX.length);
+}
+
+function compareNames(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+async function packOne(packageDir: string, packDir: string): Promise<string> {
   const result = await runChecked("npm", [
     "pack",
     "--pack-destination",
     packDir,
   ], {
-    cwd: `${rootDir}/npm`,
+    cwd: packageDir,
     timeoutMs: 120_000,
   });
   const tarball = result.stdout.split(/\r?\n/)
@@ -179,37 +216,251 @@ export async function packNpmPackage(
   return `${packDir}/${tarball}`;
 }
 
+/**
+ * The extensions the root pins to its own exact version, the only ones whose
+ * pin cannot be satisfied from the registry on a release-cut branch.
+ *
+ * Derived from the built root manifest rather than a directory listing: the
+ * build emits 29 extension packages but the root co-publishes 6, and installing
+ * the other 23 would change what the fixture exercises.
+ */
+async function listCoPublishedExtensions(
+  rootDir: string,
+): Promise<Array<{ name: string; directory: string }>> {
+  const manifest = JSON.parse(
+    await Deno.readTextFile(`${rootDir}/npm/package.json`),
+  ) as { version?: string; dependencies?: Record<string, string> };
+  const version = manifest.version;
+  if (typeof version !== "string") {
+    throw new Error("built npm package.json has no version");
+  }
+  return Object.entries(manifest.dependencies ?? {})
+    .filter(([name, range]) =>
+      name.startsWith(VERYFRONT_EXTENSION_PREFIX) && range === version
+    )
+    .map(([name]) => ({
+      name,
+      directory: `${rootDir}/npm/extensions/${extensionDirectoryName(name)}`,
+    }))
+    .sort((left, right) => compareNames(left.name, right.name));
+}
+
+export async function packNpmPackage(
+  rootDir: string,
+  workDir: string,
+  additionalExtensionNames: readonly string[] = [],
+): Promise<PackedWorkspace> {
+  const packDir = `${workDir}/packed`;
+  await Deno.mkdir(packDir, { recursive: true });
+  const root = await packOne(`${rootDir}/npm`, packDir);
+  const coPublished = await listCoPublishedExtensions(rootDir);
+  const directories = new Map(
+    coPublished.map(({ name, directory }) => [name, directory]),
+  );
+  for (const name of additionalExtensionNames) {
+    directories.set(
+      name,
+      `${rootDir}/npm/extensions/${extensionDirectoryName(name)}`,
+    );
+  }
+  const extensions: PackedExtension[] = [];
+  for (
+    const [name, directory] of [...directories].sort(([left], [right]) =>
+      compareNames(left, right)
+    )
+  ) {
+    extensions.push({ name, tarball: await packOne(directory, packDir) });
+  }
+  return {
+    root,
+    rootExtensionNames: coPublished.map(({ name }) => name),
+    extensions,
+  };
+}
+
+/** Resolve selected named packages to local file dependencies. */
+export function packedFileDependencies(
+  packed: PackedWorkspace,
+  names: readonly string[],
+): Record<string, string> {
+  const dependencies: Record<string, string> = {};
+  for (const { name, tarball } of selectPackedExtensions(packed, names)) {
+    dependencies[name] = `file:${tarball}`;
+  }
+  return dependencies;
+}
+
+function selectPackedExtensions(
+  packed: PackedWorkspace,
+  names: readonly string[],
+): PackedExtension[] {
+  const extensions = new Map(
+    packed.extensions.map((extension) => [extension.name, extension]),
+  );
+  return [...new Set(names)].sort().map((name) => {
+    const extension = extensions.get(name);
+    if (!extension) {
+      throw new Error(`Packed extension is unavailable: ${name}`);
+    }
+    return extension;
+  });
+}
+
+async function extractPackedDenoDependencies(
+  packed: PackedWorkspace,
+  names: readonly string[],
+  destinationRoot: string,
+  dependencyPrefix: string,
+): Promise<Record<string, string>> {
+  const dependencies: Record<string, string> = {};
+  for (const { name, tarball } of selectPackedExtensions(packed, names)) {
+    const directoryName = extensionDirectoryName(name);
+    const destination = `${destinationRoot}/${directoryName}`;
+    await Deno.mkdir(destination, { recursive: true });
+    await runChecked("tar", ["-xzf", tarball, "-C", destination], {
+      timeoutMs: 30_000,
+    });
+    dependencies[name] = `file:${dependencyPrefix}/${directoryName}/package`;
+  }
+  return dependencies;
+}
+
+async function replaceDirectorySymlink(
+  path: string,
+  target: string,
+): Promise<void> {
+  try {
+    await Deno.remove(path, { recursive: true });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+  await Deno.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+  await Deno.symlink(target, path, { type: "dir" });
+}
+
+async function preparePackedDenoDependencies(
+  packed: PackedWorkspace,
+  names: readonly string[],
+  destinationRoot: string,
+  dependencyPrefix: string,
+  veryfrontPackageDir: string,
+): Promise<Record<string, string>> {
+  // Deno resolves a file dependency from its extracted real path instead of
+  // hoisting its dependencies and Veryfront peer into the caller's tree.
+  // Install each trusted packed extension in place, then link its Veryfront
+  // peer to the matching extracted root package.
+  const dependencies = await extractPackedDenoDependencies(
+    packed,
+    names,
+    destinationRoot,
+    dependencyPrefix,
+  );
+  for (const { name } of selectPackedExtensions(packed, names)) {
+    const extensionPackageDir = `${destinationRoot}/${
+      extensionDirectoryName(name)
+    }/package`;
+    const manifestPath = `${extensionPackageDir}/package.json`;
+    const manifest = JSON.parse(await Deno.readTextFile(manifestPath));
+    if (manifest.peerDependencies?.veryfront !== undefined) {
+      delete manifest.peerDependencies.veryfront;
+      if (Object.keys(manifest.peerDependencies).length === 0) {
+        delete manifest.peerDependencies;
+      }
+      await Deno.writeTextFile(
+        manifestPath,
+        `${JSON.stringify(manifest, null, 2)}\n`,
+      );
+    }
+    await runChecked("deno", ["install"], {
+      cwd: extensionPackageDir,
+      timeoutMs: 180_000,
+    });
+    await replaceDirectorySymlink(
+      `${extensionPackageDir}/node_modules/veryfront`,
+      veryfrontPackageDir,
+    );
+  }
+  return dependencies;
+}
+
 async function updateVeryfrontDependency(
   projectDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
+  extensionNames: readonly string[],
+  runtime: "node" | "bun",
 ): Promise<void> {
   const packagePath = `${projectDir}/package.json`;
   const pkg = JSON.parse(await Deno.readTextFile(packagePath));
   pkg.dependencies ??= {};
-  pkg.dependencies.veryfront = `file:${tarballPath}`;
+  pkg.dependencies.veryfront = `file:${packed.root}`;
+  const localExtensions = packedFileDependencies(packed, extensionNames);
+  Object.assign(pkg.dependencies, localExtensions);
+  if (runtime === "bun") {
+    pkg.overrides ??= {};
+    Object.assign(pkg.overrides, localExtensions);
+  }
   await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
 async function usePackedVeryfrontDenoTasks(
   projectDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
+  projectExtensionNames: readonly string[],
 ): Promise<void> {
   const packagePath = `${projectDir}/package.json`;
   const pkg = JSON.parse(await Deno.readTextFile(packagePath));
   delete pkg.dependencies?.veryfront;
-  await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+  pkg.dependencies ??= {};
 
   const packedCliDir = `${projectDir}/.veryfront-packed-cli`;
   await Deno.mkdir(packedCliDir, { recursive: true });
-  await runChecked("tar", ["-xzf", tarballPath, "-C", packedCliDir], {
+  await runChecked("tar", ["-xzf", packed.root, "-C", packedCliDir], {
     timeoutMs: 30_000,
   });
+  const packedCliPackageDir = `${packedCliDir}/package`;
+  const packedCliPackagePath = `${packedCliPackageDir}/package.json`;
+  const packedCliPackage = JSON.parse(
+    await Deno.readTextFile(packedCliPackagePath),
+  );
+  packedCliPackage.dependencies ??= {};
+  Object.assign(
+    packedCliPackage.dependencies,
+    await preparePackedDenoDependencies(
+      packed,
+      packed.rootExtensionNames,
+      `${packedCliPackageDir}/.veryfront-local-extensions`,
+      "./.veryfront-local-extensions",
+      packedCliPackageDir,
+    ),
+  );
+  await Deno.writeTextFile(
+    packedCliPackagePath,
+    `${JSON.stringify(packedCliPackage, null, 2)}\n`,
+  );
   await runChecked("deno", ["install"], {
-    cwd: `${packedCliDir}/package`,
+    cwd: packedCliPackageDir,
     timeoutMs: 180_000,
   });
+  await replaceDirectorySymlink(
+    `${packedCliPackageDir}/node_modules/veryfront`,
+    packedCliPackageDir,
+  );
 
-  const cliPath = JSON.stringify(`${packedCliDir}/package/esm/cli/main.js`);
+  Object.assign(
+    pkg.dependencies,
+    await preparePackedDenoDependencies(
+      packed,
+      projectExtensionNames,
+      `${projectDir}/.veryfront-packed-extensions`,
+      "./.veryfront-packed-extensions",
+      packedCliPackageDir,
+    ),
+  );
+  await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+
+  const cliPath = JSON.stringify(
+    `${packedCliPackageDir}/esm/cli/main.js`,
+  );
   const denoConfigPath = `${projectDir}/deno.json`;
   const config = JSON.parse(await Deno.readTextFile(denoConfigPath));
   config.tasks ??= {};
@@ -339,9 +590,10 @@ export async function stopDevServer(server: {
 
 export async function scaffoldProject(
   workDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
   template: string,
   runtime: RuntimeName,
+  templateExtensionNames: readonly string[] = [],
 ): Promise<string> {
   const caseDir = `${workDir}/${runtime}-${template}`;
   const projectName = `vf-${runtime}-${template}`;
@@ -349,8 +601,17 @@ export async function scaffoldProject(
   await runChecked("npm", [
     "exec",
     "--yes",
-    "--package",
-    tarballPath,
+    // `npm exec` resolves the CLI package's dependencies into its own prefix,
+    // so the co-published extensions have to be named here too. Otherwise this
+    // reaches the registry for a version that is not published yet.
+    ...[
+      packed.root,
+      ...packed.extensions
+        .filter(({ name }) => packed.rootExtensionNames.includes(name))
+        .map(({ tarball }) => tarball),
+    ].flatMap((
+      tarball,
+    ) => ["--package", tarball]),
     "--",
     "veryfront",
     "init",
@@ -373,9 +634,18 @@ export async function scaffoldProject(
 
   const projectDir = `${caseDir}/${projectName}`;
   if (runtime === "deno") {
-    await usePackedVeryfrontDenoTasks(projectDir, tarballPath);
+    await usePackedVeryfrontDenoTasks(
+      projectDir,
+      packed,
+      templateExtensionNames,
+    );
   } else {
-    await updateVeryfrontDependency(projectDir, tarballPath);
+    await updateVeryfrontDependency(
+      projectDir,
+      packed,
+      [...packed.rootExtensionNames, ...templateExtensionNames],
+      runtime,
+    );
   }
 
   return projectDir;
