@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
@@ -9,6 +8,7 @@ import type { AgentRunModelCallContextEvent } from "../../runtime/model-call-con
 import { runWithRunEventSink } from "../../runtime/run-event-sink-context.ts";
 import { createGoogleModelRuntime } from "../../../extensions/ext-llm-google/src/google-provider.ts";
 import { reconcileGoogleProviderMetadata } from "../../../extensions/ext-llm-google/src/google-thought-signatures.ts";
+import { scriptedModel } from "./model-runtime.test-helpers.ts";
 
 function readRequestBody(init: unknown): string {
   return String((init as { body?: unknown } | undefined)?.body);
@@ -48,15 +48,6 @@ function readAllAssistantProviderMetadata(options: unknown): unknown[] {
   );
 }
 
-function streamFrom(parts: unknown[]): ReadableStream<unknown> {
-  return new ReadableStream({
-    start(controller) {
-      for (const part of parts) controller.enqueue(part);
-      controller.close();
-    },
-  });
-}
-
 async function withStreamLifecycleMode(
   mode: "legacy" | "active",
   operation: () => Promise<void>,
@@ -73,39 +64,14 @@ async function withStreamLifecycleMode(
 
 describe("agent provider metadata continuation", () => {
   it("replays generate provider metadata on the tool-result leg", async () => {
-    let callCount = 0;
-    let continuedProviderMetadata: unknown;
     const modelCallEvents: AgentRunModelCallContextEvent[] = [];
-    const model: ModelRuntime = {
-      provider: "google",
-      modelId: "gemini-3.5-flash",
-      async doGenerate(options: unknown) {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "lookup-1",
-              toolName: "lookup",
-              input: '{"query":"Veryfront"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            providerMetadata,
-          };
-        }
-
-        continuedProviderMetadata = readAssistantProviderMetadata(options);
-        return {
-          content: [{ type: "text", text: "Done" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
+    const model = scriptedModel([
+      {
+        toolCalls: [{ id: "lookup-1", name: "lookup", input: '{"query":"Veryfront"}' }],
+        providerMetadata,
       },
-      async doStream() {
-        throw new Error("not used");
-      },
-    };
+      { text: "Done" },
+    ], { provider: "google", modelId: "gemini-3.5-flash", only: "generate" });
     const assistant = agent({
       model: "google/gemini-3.5-flash",
       system: "Use the lookup tool.",
@@ -122,8 +88,8 @@ describe("agent provider metadata continuation", () => {
     );
 
     assertEquals(result.text, "Done");
-    assertEquals(callCount, 2);
-    assertEquals(continuedProviderMetadata, providerMetadata);
+    assertEquals(model.callCount, 2);
+    assertEquals(readAssistantProviderMetadata(model.calls[1]), providerMetadata);
     assertEquals(JSON.stringify(result.messages).includes("test-thought-signature"), false);
     assertEquals(JSON.stringify(modelCallEvents).includes("test-thought-signature"), false);
   });
@@ -141,53 +107,17 @@ describe("agent provider metadata continuation", () => {
         }],
       },
     };
-    let callCount = 0;
-    let secondRequestMetadata: unknown[] = [];
-    let thirdRequestMetadata: unknown[] = [];
-    const model: ModelRuntime = {
-      provider: "google",
-      modelId: "gemini-3.5-flash",
-      async doGenerate(options: unknown) {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "lookup-1",
-              toolName: "lookup",
-              input: '{"query":"Veryfront"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            providerMetadata,
-          };
-        }
-        if (callCount === 2) {
-          secondRequestMetadata = readAllAssistantProviderMetadata(options);
-          return {
-            content: [{
-              type: "tool-call",
-              toolCallId: "lookup-2",
-              toolName: "lookup",
-              input: '{"query":"Gemini"}',
-            }],
-            finishReason: "tool-calls",
-            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            providerMetadata: secondProviderMetadata,
-          };
-        }
-
-        thirdRequestMetadata = readAllAssistantProviderMetadata(options);
-        return {
-          content: [{ type: "text", text: "Done" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
+    const model = scriptedModel([
+      {
+        toolCalls: [{ id: "lookup-1", name: "lookup", input: '{"query":"Veryfront"}' }],
+        providerMetadata,
       },
-      async doStream() {
-        throw new Error("not used");
+      {
+        toolCalls: [{ id: "lookup-2", name: "lookup", input: '{"query":"Gemini"}' }],
+        providerMetadata: secondProviderMetadata,
       },
-    };
+      { text: "Done" },
+    ], { provider: "google", modelId: "gemini-3.5-flash", only: "generate" });
     const assistant = agent({
       model: "google/gemini-3.5-flash",
       system: "Use the lookup tool twice.",
@@ -199,57 +129,25 @@ describe("agent provider metadata continuation", () => {
     const result = await assistant.generate({ input: "Look up Veryfront and Gemini" });
 
     assertEquals(result.text, "Done");
-    assertEquals(callCount, 3);
-    assertEquals(secondRequestMetadata, [providerMetadata]);
-    assertEquals(thirdRequestMetadata, [providerMetadata, secondProviderMetadata]);
+    assertEquals(model.callCount, 3);
+    assertEquals(readAllAssistantProviderMetadata(model.calls[1]), [providerMetadata]);
+    assertEquals(
+      readAllAssistantProviderMetadata(model.calls[2]),
+      [providerMetadata, secondProviderMetadata],
+    );
     assertEquals(JSON.stringify(result.messages).includes("test-thought-signature"), false);
   });
 
   for (const lifecycleMode of ["legacy", "active"] as const) {
     it(`replays streamed provider metadata through the ${lifecycleMode} lifecycle`, () =>
       withStreamLifecycleMode(lifecycleMode, async () => {
-        let callCount = 0;
-        let continuedProviderMetadata: unknown;
-        const model: ModelRuntime = {
-          provider: "google",
-          modelId: "gemini-3.5-flash",
-          async doGenerate() {
-            throw new Error("not used");
+        const model = scriptedModel([
+          {
+            toolCalls: [{ id: "lookup-1", name: "lookup", input: '{"query":"Veryfront"}' }],
+            providerMetadata,
           },
-          async doStream(options: unknown) {
-            callCount++;
-            if (callCount === 1) {
-              return {
-                stream: streamFrom([
-                  {
-                    type: "tool-call",
-                    toolCallId: "lookup-1",
-                    toolName: "lookup",
-                    input: '{"query":"Veryfront"}',
-                  },
-                  {
-                    type: "finish",
-                    finishReason: "tool-calls",
-                    usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                    providerMetadata,
-                  },
-                ]),
-              };
-            }
-
-            continuedProviderMetadata = readAssistantProviderMetadata(options);
-            return {
-              stream: streamFrom([
-                { type: "text-delta", delta: "Done" },
-                {
-                  type: "finish",
-                  finishReason: "stop",
-                  usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                },
-              ]),
-            };
-          },
-        };
+          { text: "Done" },
+        ], { provider: "google", modelId: "gemini-3.5-flash", only: "stream" });
         const assistant = agent({
           model: "google/gemini-3.5-flash",
           system: "Use the lookup tool.",
@@ -262,8 +160,12 @@ describe("agent provider metadata continuation", () => {
           .toDataStreamResponse()
           .text();
 
-        assertEquals(callCount, 2);
-        assertEquals(continuedProviderMetadata, providerMetadata);
+        assertEquals(model.callCount, 2);
+        assertEquals(readAssistantProviderMetadata(model.calls[1]), providerMetadata);
+        // The mistyped `{ delta: "Done" }` part this fake used to emit was
+        // silently dropped by the active lifecycle decoder; the typed helper
+        // emits `{ text: "Done" }`, so the reply must now reach the client.
+        assertStringIncludes(body, "Done");
         assertEquals(body.includes("test-thought-signature"), false);
       }));
   }
@@ -345,62 +247,30 @@ describe("agent provider metadata continuation", () => {
   });
 
   it("asks the model runtime to reconcile metadata after suppressing a tool call", async () => {
-    let callCount = 0;
-    let continuedProviderMetadata: unknown = "unread";
     let reconciledSuppressions: unknown;
-    const model: ModelRuntime = {
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { id: "stale-1", name: "missing_tool", input: '{"query":"stale"}' },
+          { id: "lookup-1", name: "lookup", input: '{"query":"Veryfront"}' },
+        ],
+        providerMetadata,
+      },
+      { text: "Done" },
+    ], {
       provider: "google",
       modelId: "gemini-3.5-flash",
-      _reconcileProviderMetadata({ providerMetadata: metadata, suppressedToolCalls }: {
-        providerMetadata: Record<string, unknown>;
-        suppressedToolCalls: readonly { id: string; name: string }[];
-      }) {
-        reconciledSuppressions = suppressedToolCalls;
-        return metadata;
+      only: "stream",
+      properties: {
+        _reconcileProviderMetadata({ providerMetadata: metadata, suppressedToolCalls }: {
+          providerMetadata: Record<string, unknown>;
+          suppressedToolCalls: readonly { id: string; name: string }[];
+        }) {
+          reconciledSuppressions = suppressedToolCalls;
+          return metadata;
+        },
       },
-      async doGenerate() {
-        throw new Error("not used");
-      },
-      async doStream(options: unknown) {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            stream: streamFrom([
-              {
-                type: "tool-call",
-                toolCallId: "stale-1",
-                toolName: "missing_tool",
-                input: '{"query":"stale"}',
-              },
-              {
-                type: "tool-call",
-                toolCallId: "lookup-1",
-                toolName: "lookup",
-                input: '{"query":"Veryfront"}',
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                providerMetadata,
-              },
-            ]),
-          };
-        }
-
-        continuedProviderMetadata = readAssistantProviderMetadata(options);
-        return {
-          stream: streamFrom([
-            { type: "text-delta", delta: "Done" },
-            {
-              type: "finish",
-              finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            },
-          ]),
-        };
-      },
-    };
+    });
     const assistant = agent({
       model: "google/gemini-3.5-flash",
       system: "Use the lookup tool.",
@@ -413,61 +283,26 @@ describe("agent provider metadata continuation", () => {
       .toDataStreamResponse()
       .text();
 
-    assertEquals(callCount, 2);
+    assertEquals(model.callCount, 2);
     assertEquals(reconciledSuppressions, [{ id: "stale-1", name: "missing_tool" }]);
-    assertEquals(continuedProviderMetadata, providerMetadata);
+    assertEquals(readAssistantProviderMetadata(model.calls[1]), providerMetadata);
+    // Previously unasserted: the fake's mistyped `delta:` reply never reached
+    // the stream; the typed helper makes the reply observable.
+    assertStringIncludes(body, "Done");
     assertEquals(body.includes("test-thought-signature"), false);
   });
 
   it("falls back to synthesized replay for runtimes without a metadata reconciler", async () => {
-    let callCount = 0;
-    let continuedProviderMetadata: unknown = "unread";
-    const model: ModelRuntime = {
-      provider: "custom",
-      modelId: "custom-model",
-      async doGenerate() {
-        throw new Error("not used");
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { id: "stale-1", name: "missing_tool", input: '{"query":"stale"}' },
+          { id: "lookup-1", name: "lookup", input: '{"query":"Veryfront"}' },
+        ],
+        providerMetadata,
       },
-      async doStream(options: unknown) {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            stream: streamFrom([
-              {
-                type: "tool-call",
-                toolCallId: "stale-1",
-                toolName: "missing_tool",
-                input: '{"query":"stale"}',
-              },
-              {
-                type: "tool-call",
-                toolCallId: "lookup-1",
-                toolName: "lookup",
-                input: '{"query":"Veryfront"}',
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                providerMetadata,
-              },
-            ]),
-          };
-        }
-
-        continuedProviderMetadata = readAssistantProviderMetadata(options);
-        return {
-          stream: streamFrom([
-            { type: "text-delta", delta: "Done" },
-            {
-              type: "finish",
-              finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            },
-          ]),
-        };
-      },
-    };
+      { text: "Done" },
+    ], { provider: "custom", modelId: "custom-model", only: "stream" });
     const assistant = agent({
       model: "custom/custom-model",
       system: "Use the lookup tool.",
@@ -481,8 +316,8 @@ describe("agent provider metadata continuation", () => {
       .text();
 
     assertStringIncludes(body, "Done");
-    assertEquals(callCount, 2);
-    assertEquals(continuedProviderMetadata, undefined);
+    assertEquals(model.callCount, 2);
+    assertEquals(readAssistantProviderMetadata(model.calls[1]), undefined);
   });
 
   it("preserves the signed surviving Gemini call after suppressing an unavailable call", async () => {
@@ -582,65 +417,48 @@ describe("agent provider metadata continuation", () => {
     const signedProviderMetadata = {
       google: { rawAssistantParts: [signedThoughtPart, staleRawPart] },
     };
-    let callCount = 0;
-    let continuedProviderMetadata: unknown = "unread";
-    const model: ModelRuntime = {
+    const model = scriptedModel([
+      {
+        parts: [
+          { type: "reasoning-start", id: "reasoning-0" },
+          {
+            type: "reasoning-delta",
+            id: "reasoning-0",
+            delta: "Private reasoning.",
+          },
+          {
+            type: "reasoning-end",
+            id: "reasoning-0",
+            signature: "surviving-thought-signature",
+          },
+          {
+            type: "tool-call",
+            toolCallId: "stale-1",
+            toolName: "missing_tool",
+            input: '{"query":"stale"}',
+          },
+          {
+            type: "finish",
+            finishReason: "tool-calls",
+            totalUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            providerMetadata: signedProviderMetadata,
+          },
+        ],
+      },
+      { text: "Done" },
+    ], {
       provider: "google",
       modelId: "gemini-3.5-flash",
-      _reconcileProviderMetadata({ providerMetadata, suppressedToolCalls }: {
-        providerMetadata: Record<string, unknown>;
-        suppressedToolCalls: readonly { id: string; name: string }[];
-      }) {
-        return reconcileGoogleProviderMetadata(providerMetadata, suppressedToolCalls);
+      only: "stream",
+      properties: {
+        _reconcileProviderMetadata({ providerMetadata, suppressedToolCalls }: {
+          providerMetadata: Record<string, unknown>;
+          suppressedToolCalls: readonly { id: string; name: string }[];
+        }) {
+          return reconcileGoogleProviderMetadata(providerMetadata, suppressedToolCalls);
+        },
       },
-      async doGenerate() {
-        throw new Error("not used");
-      },
-      async doStream(options: unknown) {
-        callCount++;
-        if (callCount === 1) {
-          return {
-            stream: streamFrom([
-              { type: "reasoning-start", id: "reasoning-0" },
-              {
-                type: "reasoning-delta",
-                id: "reasoning-0",
-                delta: "Private reasoning.",
-              },
-              {
-                type: "reasoning-end",
-                id: "reasoning-0",
-                signature: "surviving-thought-signature",
-              },
-              {
-                type: "tool-call",
-                toolCallId: "stale-1",
-                toolName: "missing_tool",
-                input: '{"query":"stale"}',
-              },
-              {
-                type: "finish",
-                finishReason: "tool-calls",
-                usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-                providerMetadata: signedProviderMetadata,
-              },
-            ]),
-          };
-        }
-
-        continuedProviderMetadata = readAssistantProviderMetadata(options);
-        return {
-          stream: streamFrom([
-            { type: "text-delta", delta: "Done" },
-            {
-              type: "finish",
-              finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            },
-          ]),
-        };
-      },
-    };
+    });
     const assistant = agent({
       model: "google/gemini-3.5-flash",
       system: "Use the lookup tool.",
@@ -654,8 +472,8 @@ describe("agent provider metadata continuation", () => {
       .text();
 
     assertStringIncludes(body, "Done");
-    assertEquals(callCount, 2);
-    assertEquals(continuedProviderMetadata, {
+    assertEquals(model.callCount, 2);
+    assertEquals(readAssistantProviderMetadata(model.calls[1]), {
       google: {
         rawAssistantParts: [signedThoughtPart],
         rawAssistantPartIndexes: [0],

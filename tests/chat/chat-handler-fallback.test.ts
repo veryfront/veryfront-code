@@ -7,27 +7,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
-import type { ModelRuntime } from "../../src/provider/types.ts";
+import { scriptedModel } from "../../src/agent/runtime/model-runtime.test-helpers.ts";
 
 import { createError, fromError, toError } from "#veryfront/errors";
 
-function createMockStreamingModel(
-  provider: string,
-  modelId: string,
-  parts: unknown[],
-): ModelRuntime {
-  return {
+function createMockStreamingModel(provider: string, modelId: string, text: string) {
+  return scriptedModel([{ text }], {
     provider,
     modelId,
     specificationVersion: "v3",
-    doGenerate: async () => ({
-      content: [],
-      finishReason: { unified: "stop", raw: "stop" },
-    }),
-    doStream: async () => ({
-      stream: ReadableStream.from(parts),
-    }),
-  };
+    only: "stream",
+  });
 }
 
 describe("no_ai_available error type", () => {
@@ -219,17 +209,7 @@ describe("runtime inference mode metadata", () => {
       );
       clearModelProviders();
 
-      const mockModel = createMockStreamingModel("mock", "mock-model", [
-        { type: "text-delta", delta: "Hi" },
-        {
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-          usage: {
-            inputTokens: { total: 5 },
-            outputTokens: { total: 1 },
-          },
-        },
-      ]);
+      const mockModel = createMockStreamingModel("mock", "mock-model", "Hi");
 
       // Register as "mock" provider to test cloud inferenceMode detection
       registerModelProvider("mock", () => mockModel);
@@ -350,17 +330,7 @@ describe("runtime inference mode metadata", () => {
       );
       clearModelProviders();
 
-      const mockLocal = createMockStreamingModel("local", "qwen3.5-0.8b", [
-        { type: "text-delta", delta: "Hi" },
-        {
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-          usage: {
-            inputTokens: { total: 5 },
-            outputTokens: { total: 1 },
-          },
-        },
-      ]);
+      const mockLocal = createMockStreamingModel("local", "qwen3.5-0.8b", "Hi");
 
       registerModelProvider("local", () => mockLocal);
 
@@ -429,17 +399,7 @@ describe("runtime inference mode metadata", () => {
       );
       clearModelProviders();
 
-      const mockLocal = createMockStreamingModel("local", "qwen3.5-0.8b", [
-        { type: "text-delta", delta: "Hi from local" },
-        {
-          type: "finish",
-          finishReason: { unified: "stop", raw: "stop" },
-          usage: {
-            inputTokens: { total: 5 },
-            outputTokens: { total: 3 },
-          },
-        },
-      ]);
+      const mockLocal = createMockStreamingModel("local", "qwen3.5-0.8b", "Hi from local");
 
       registerModelProvider("local", () => mockLocal);
 
