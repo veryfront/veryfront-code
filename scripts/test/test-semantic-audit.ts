@@ -107,24 +107,46 @@ const UNIT_ROOTS = [
 ] as const;
 
 const READ_METHODS = new Set([
-  "readFile",
-  "readFileSync",
-  "readTextFile",
-  "readTextFileSync",
   "access",
   "accessSync",
+  "createReadStream",
   "exists",
   "existsSync",
+  "fstat",
+  "fstatSync",
+  "glob",
+  "globSync",
+  "lstat",
+  "lstatSync",
+  "openAsBlob",
+  "opendir",
+  "opendirSync",
+  "read",
   "readDir",
   "readDirSync",
+  "readFile",
+  "readFileSync",
+  "readLink",
+  "readLinkSync",
+  "readSync",
+  "readTextFile",
+  "readTextFileSync",
+  "readv",
+  "readvSync",
   "readdir",
   "readdirSync",
+  "readlink",
+  "readlinkSync",
   "realPath",
   "realPathSync",
   "stat",
+  "statfs",
+  "statfsSync",
   "statSync",
-  "lstat",
-  "lstatSync",
+  "unwatchFile",
+  "watch",
+  "watchFile",
+  "watchFs",
 ]);
 
 const WRITE_METHODS = new Set([
@@ -387,6 +409,8 @@ const SCOPE_NODES = new Set([
   "ObjectMethod",
   "ClassMethod",
   "ClassPrivateMethod",
+  "ClassDeclaration",
+  "ClassExpression",
   "ForStatement",
   "ForInStatement",
   "ForOfStatement",
@@ -1634,10 +1658,20 @@ function collectLocalDeclaredNames(
     node.type === "ClassMethod" ||
     node.type === "ClassPrivateMethod"
   ) {
+    if (node.type === "FunctionExpression" && isNode(node.id)) {
+      names.add(node.id.name as string);
+    }
     for (const param of Array.isArray(node.params) ? node.params : []) {
       collectPatternNames(param, names);
       collectPlaywrightFixtureNames(param, playwrightFixtures);
     }
+    return;
+  }
+  if (
+    (node.type === "ClassDeclaration" || node.type === "ClassExpression") &&
+    isNode(node.id)
+  ) {
+    names.add(node.id.name as string);
     return;
   }
   if (

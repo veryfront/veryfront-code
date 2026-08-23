@@ -548,6 +548,40 @@ utimes("tmp.txt", new Date(), new Date(), () => undefined);
     );
   });
 
+  it("classifies filesystem streams, watchers, descriptor reads, and links", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import fs, {
+  createReadStream,
+  read,
+  readlink,
+  watch,
+} from "node:fs";
+Deno.watchFs(".");
+Deno.readLink("link");
+createReadStream("fixture.txt");
+read(1, new Uint8Array(1), 0, 1, 0, () => undefined);
+readlink("link", () => undefined);
+watch(".", () => undefined);
+fs.createReadStream("fixture.txt");
+await fs.promises.readlink("link");
+`,
+        "src/filesystem-observation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "Deno.watchFs"],
+        ["filesystem-read", "Deno.readLink"],
+        ["filesystem-read", "createReadStream"],
+        ["filesystem-read", "read"],
+        ["filesystem-read", "readlink"],
+        ["filesystem-read", "watch"],
+        ["filesystem-read", "fs.createReadStream"],
+        ["filesystem-read", "fs.promises.readlink"],
+      ],
+    );
+  });
+
   it("classifies writable filesystem open modes without widening static reads", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -644,6 +678,25 @@ fs.readFile("fixture");
 childProcess.spawn();
 `,
         "src/local-loaders.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("binds named function and class expressions in their own scopes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const recurse = function fetch(count: number): number {
+  return count > 0 ? fetch(count - 1) : count;
+};
+const LocalWorker = class Worker {
+  clone() {
+    return new Worker();
+  }
+};
+`,
+        "src/named-expression-scope.test.ts",
       ),
       [],
     );
