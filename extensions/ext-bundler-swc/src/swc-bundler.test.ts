@@ -81,6 +81,21 @@ describe("SwcBundler decorator metadata", () => {
     assertEquals(result.code, options.code);
   });
 
+  it("delegates non-TypeScript before reading TypeScript configuration", async () => {
+    const delegate = new RecordingBundler();
+    const bundler = new SwcBundler({ delegate });
+    const options: TransformOptions = {
+      code: `export const value = 1;`,
+      loader: "js",
+      tsconfigRaw: "{ invalid jsonc",
+    };
+
+    const result = await bundler.transform(options);
+
+    assertStrictEquals(delegate.transformed, options);
+    assertEquals(result.code, options.code);
+  });
+
   it("keeps framework-only compiler state out of the esbuild delegate", async () => {
     const delegate = new RecordingBundler();
     const bundler = new SwcBundler({ delegate });
@@ -260,6 +275,65 @@ describe("SwcBundler decorator metadata", () => {
       });
 
       assertStringIncludes(result.code, "design:paramtypes");
+    } finally {
+      await bundler.stop();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("preserves CommonJS output for .cts transforms", async () => {
+    const projectDir = await makeTempDir();
+    const bundler = new SwcBundler();
+    try {
+      const result = await bundler.transform({
+        code: `
+          function decorateClass(): ClassDecorator { return () => {}; }
+          @decorateClass()
+          class Service {}
+          export = Service;
+        `,
+        loader: "ts",
+        sourcefile: "service.cts",
+        tsconfigRaw: {
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: false,
+          },
+        },
+      });
+
+      assertStringIncludes(result.code, "module.exports");
+
+      await writeTextFile(
+        `${projectDir}/service.cts`,
+        `
+          function decorateClass(): ClassDecorator { return () => {}; }
+          @decorateClass()
+          class BundledService { static kind = "cts"; }
+          export = BundledService;
+        `,
+      );
+      await writeTextFile(
+        `${projectDir}/entry.js`,
+        `
+          import BundledService from "./service.cts";
+          export const serviceKind = BundledService.kind;
+        `,
+      );
+      const bundled = await bundler.bundle({
+        absWorkingDir: projectDir,
+        entryPoints: [`${projectDir}/entry.js`],
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "neutral",
+        typescriptDecoratorOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: false,
+        },
+      });
+      const loaded = await dataModule(bundled.outputFiles[0]!.text);
+      assertEquals(loaded.serviceKind, "cts");
     } finally {
       await bundler.stop();
       await remove(projectDir, { recursive: true });

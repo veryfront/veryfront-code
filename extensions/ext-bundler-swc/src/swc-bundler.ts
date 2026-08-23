@@ -166,12 +166,13 @@ async function transformTypeScript(
 ): Promise<string> {
   const transform = reactTransform(options);
   transform.decoratorMetadata = flags.emitDecoratorMetadata;
+  const moduleType = extname(filename).toLowerCase() === ".cts" ? "commonjs" : "es6";
   const result = await transformWithSwc(code, {
     filename,
     swcrc: false,
     configFile: false,
     sourceMaps: false,
-    module: { type: "es6" },
+    module: { type: moduleType },
     jsc: {
       parser: {
         syntax: "typescript",
@@ -374,8 +375,11 @@ export class SwcBundler implements Bundler {
   }
 
   async transform(options: TransformOptions): Promise<TransformResult> {
+    if (!isTypeScriptLoader(options.loader)) {
+      return await this.#delegate.transform(delegateTransformOptions(options));
+    }
     const flags = await decoratorOptions(options);
-    if (!flags.experimentalDecorators || !isTypeScriptLoader(options.loader)) {
+    if (!flags.experimentalDecorators) {
       return await this.#delegate.transform(delegateTransformOptions(options));
     }
     assertLegacyDecoratorSourceMapsDisabled(options);
