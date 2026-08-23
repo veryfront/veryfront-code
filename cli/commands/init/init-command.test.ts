@@ -8,7 +8,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { initCommand } from "./init-command.ts";
@@ -37,7 +36,6 @@ describe("InitCommand Types", () => {
     it("creates a named project beneath parentDir", async () => {
       const parentDir = await makeTempDir({ prefix: "veryfront-init-parent-" });
       const name = `parent-target-${crypto.randomUUID()}`;
-      const cwdTarget = join(cwd(), name);
 
       try {
         await initCommand({
@@ -50,11 +48,12 @@ describe("InitCommand Types", () => {
         });
 
         assertEquals(await exists(join(parentDir, name, "app")), true);
-        assertEquals(await exists(join(parentDir, name, "package.json")), false);
-        assertEquals(await exists(cwdTarget), false);
+        assertEquals(
+          await exists(join(parentDir, name, "package.json")),
+          false,
+        );
       } finally {
         await remove(parentDir, { recursive: true }).catch(() => {});
-        await remove(cwdTarget, { recursive: true }).catch(() => {});
       }
     });
 

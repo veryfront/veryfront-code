@@ -2,15 +2,15 @@ import {
   ALREADY_EXISTS,
   createError,
   INVALID_ARGUMENT,
+  NOT_SUPPORTED,
   TEMPLATE_NOT_FOUND,
   toError,
 } from "veryfront/errors";
 import { isNotFoundError } from "veryfront/fs";
 import { cliLogger as logger } from "#cli/utils";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { LOCKFILE_CLIENTS, NPM_FAMILY_CLIENTS } from "veryfront/utils/package-client";
-import { ensureDir } from "#std/fs.ts";
 import { buildDenoConfig, createDenoConfig } from "../commands/init/deno-config-generator.ts";
 import {
   buildPackageJson,
@@ -82,10 +82,31 @@ export interface ProjectCreationObserver {
 
 export interface CreateProjectDependencies {
   observer?: ProjectCreationObserver;
+  /** Filesystem capability used for preflight and materialization. */
+  fileSystem?: FileSystem;
   resolveEnvironmentFiles?: (
     variables: EnvVarConfig[],
     values: Record<string, string>,
   ) => Promise<Pick<EnvPromptResult, "envContent" | "envExampleContent">>;
+}
+
+type ProjectCreationFileSystem =
+  & FileSystem
+  & Required<Pick<FileSystem, "lstat" | "rename">>;
+
+function assertProjectCreationFileSystemCapabilities(
+  fs: FileSystem,
+): asserts fs is ProjectCreationFileSystem {
+  if (!fs.lstat) {
+    throw NOT_SUPPORTED.create({
+      detail: "Filesystem does not support symlink-aware project preflight.",
+    });
+  }
+  if (!fs.rename) {
+    throw NOT_SUPPORTED.create({
+      detail: "Filesystem does not support atomic .gitignore replacement.",
+    });
+  }
 }
 
 const INTEGRATION_ICONS: Record<string, string> = {
@@ -334,8 +355,8 @@ async function assembleIntegrationFiles(
 async function writeScaffoldFiles(
   projectDir: string,
   templateFiles: TemplateFile[],
+  fs: FileSystem,
 ): Promise<string[]> {
-  const fs = createFileSystem();
   const createdPaths: string[] = [];
 
   for (const file of templateFiles) {
@@ -344,7 +365,7 @@ async function writeScaffoldFiles(
     const filePath = join(projectDir, file.path);
     const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
 
-    if (fileDir !== projectDir) await ensureDir(fileDir);
+    if (fileDir !== projectDir) await fs.mkdir(fileDir, { recursive: true });
 
     await fs.writeTextFile(filePath, file.content);
     createdPaths.push(file.path);
@@ -359,10 +380,10 @@ async function writeEnvFiles(
   envVars: EnvVarConfig[],
   request: CreateProjectRequest,
   dependencies: CreateProjectDependencies,
+  fs: FileSystem,
 ): Promise<string[]> {
   if (!envVars.length) return [];
 
-  const fs = createFileSystem();
   const resolveEnvironmentFiles = dependencies.resolveEnvironmentFiles ??
     ((variables, values) =>
       promptForEnvVars(variables, {
@@ -382,11 +403,10 @@ async function writeEnvFiles(
   return [".env", ".env.example"];
 }
 
-async function writeGitignore(projectDir: string): Promise<void> {
-  const fs = createFileSystem();
-  if (!fs.rename) {
-    throw createConfigError("Filesystem does not support atomic .gitignore replacement.");
-  }
+async function writeGitignore(
+  projectDir: string,
+  fs: ProjectCreationFileSystem,
+): Promise<void> {
   const gitignorePath = join(projectDir, ".gitignore");
   const temporaryPath = join(projectDir, `.gitignore.veryfront-${crypto.randomUUID()}.tmp`);
   let existingGitignore: string | undefined;
@@ -397,8 +417,8 @@ async function writeGitignore(projectDir: string): Promise<void> {
     existingGitignore = undefined;
   }
 
-  await fs.writeTextFile(temporaryPath, generateGitignoreContent(existingGitignore));
   try {
+    await fs.writeTextFile(temporaryPath, generateGitignoreContent(existingGitignore));
     await fs.rename(temporaryPath, gitignorePath);
   } catch (error) {
     await fs.remove(temporaryPath).catch(() => {});
@@ -556,8 +576,11 @@ function protectedLeafPaths(request: CreateProjectRequest): string[] {
   return [...protectedMergePaths(), ...installerWritePaths(request)];
 }
 
-async function findExistingPaths(dir: string, paths: string[]): Promise<string[]> {
-  const fs = createFileSystem();
+async function findExistingPaths(
+  dir: string,
+  paths: string[],
+  fs: FileSystem,
+): Promise<string[]> {
   const existing: string[] = [];
   for (const path of paths) {
     if (await fs.exists(join(dir, path))) existing.push(path);
@@ -567,15 +590,17 @@ async function findExistingPaths(dir: string, paths: string[]): Promise<string[]
 
 /**
  * True when `path` is a symlink. `lstat` is what makes a link visible: `stat`
- * follows it and reports the target. Adapters without `lstat` have no links of
- * their own, so nothing can be one.
+ * follows it and reports the target. Project creation rejects filesystems that
+ * cannot make this distinction before it writes anything.
  */
-async function isSymlinkPath(path: string): Promise<boolean> {
-  const fs = createFileSystem();
-  if (!fs.lstat) return false;
+async function isSymlinkPath(
+  path: string,
+  fs: ProjectCreationFileSystem,
+): Promise<boolean> {
   try {
     return (await fs.lstat(path)).isSymlink === true;
-  } catch {
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     return false; // Nothing there, so nothing to write through.
   }
 }
@@ -599,13 +624,9 @@ async function findUnwritablePaths(
   dir: string,
   paths: string[],
   protectedLeafPaths: string[] = [],
+  fs: ProjectCreationFileSystem,
 ): Promise<string[]> {
-  const fs = createFileSystem();
-  // `lstat` is what makes a link visible: `stat` follows it and reports the
-  // target. It is optional only for virtual filesystems that have no links of
-  // their own; every runtime this CLI scaffolds on provides it, and `stat`
-  // still catches a plain file in the way if one ever does not.
-  const describe = fs.lstat?.bind(fs) ?? fs.stat.bind(fs);
+  const describe = fs.lstat.bind(fs);
   const blocked = new Set<string>();
 
   for (const path of [...paths, ...protectedLeafPaths]) {
@@ -616,7 +637,8 @@ async function findUnwritablePaths(
       let info: Awaited<ReturnType<typeof describe>>;
       try {
         info = await describe(join(dir, prefix));
-      } catch {
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
         break; // Nothing there yet, so nothing below it either.
       }
       if (info.isSymlink) {
@@ -643,6 +665,7 @@ export async function createProject(
   request: CreateProjectRequest,
   dependencies: CreateProjectDependencies = {},
 ): Promise<CreateProjectResult> {
+  const fs = dependencies.fileSystem ?? createFileSystem();
   const projectName = request.name;
   if (projectName !== undefined) {
     const nameError = validateProjectName(projectName);
@@ -656,6 +679,7 @@ export async function createProject(
   validateIntegrationsOrThrow(request.integrations);
 
   const assembly = await assembleScaffold(request);
+  assertProjectCreationFileSystemCapabilities(fs);
   const writePaths = conflictWritePaths(assembly, request);
   const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
 
@@ -664,7 +688,7 @@ export async function createProject(
   // named, possibly outside the parent entirely. Refuse it for the same reason
   // a link at any other scaffold path is refused. A parent directory the caller
   // passed in is their own choice, so only the derived path is checked.
-  if (projectName !== undefined && await isSymlinkPath(projectDir)) {
+  if (projectName !== undefined && await isSymlinkPath(projectDir, fs)) {
     throw ALREADY_EXISTS.create({
       detail: `${where} is a link the scaffold cannot write through. ` +
         `Move it aside or use a different name.`,
@@ -674,7 +698,12 @@ export async function createProject(
 
   // Checked whatever the conflict policy is: `--force` says you accept your
   // files being replaced, not the scaffold writing somewhere else entirely.
-  const unwritable = await findUnwritablePaths(projectDir, writePaths, protectedLeafPaths(request));
+  const unwritable = await findUnwritablePaths(
+    projectDir,
+    writePaths,
+    protectedLeafPaths(request),
+    fs,
+  );
   if (unwritable.length) {
     throw ALREADY_EXISTS.create({
       detail: `${where} already contains ${unwritable.join(", ")} as a file or a link ` +
@@ -689,7 +718,7 @@ export async function createProject(
   // directory itself (the no-name case) all scaffold, and a `--force` is asked
   // for only when something would actually be replaced.
   if (request.conflictPolicy === "fail") {
-    const conflicts = await findExistingPaths(projectDir, writePaths);
+    const conflicts = await findExistingPaths(projectDir, writePaths, fs);
     if (conflicts.length) {
       throw ALREADY_EXISTS.create({
         detail: `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
@@ -698,27 +727,29 @@ export async function createProject(
     }
   }
 
-  if (projectName !== undefined) await ensureDir(projectDir);
+  if (projectName !== undefined) await fs.mkdir(projectDir, { recursive: true });
 
-  await writeGitignore(projectDir);
+  await writeGitignore(projectDir, fs);
   const createdPaths = [".gitignore"];
 
-  createdPaths.push(...await writeScaffoldFiles(projectDir, assembly.files));
+  createdPaths.push(...await writeScaffoldFiles(projectDir, assembly.files, fs));
   const setupTips = assembly.tips;
   const allEnvVars = assembly.envVars;
 
   if (request.includePackageMetadata) {
-    await createPackageJson(projectDir, projectName, assembly.packageJsonOptions);
+    await createPackageJson(projectDir, projectName, assembly.packageJsonOptions, fs);
     createdPaths.push("package.json");
 
     if (request.runtime === "deno") {
-      await createDenoConfig(projectDir);
+      await createDenoConfig(projectDir, fs, {
+        overwrite: request.conflictPolicy === "overwrite",
+      });
       createdPaths.push("deno.json");
     }
   }
 
   createdPaths.push(
-    ...await writeEnvFiles(projectDir, allEnvVars, request, dependencies),
+    ...await writeEnvFiles(projectDir, allEnvVars, request, dependencies, fs),
   );
 
   const packageManager = await detectPackageManager(

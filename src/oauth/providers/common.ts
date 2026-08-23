@@ -1,7 +1,7 @@
 import { isVisibleIntegration } from "../../integrations/feature-flags.ts";
 import type { OAuthServiceConfig } from "../types.ts";
 
-/** Configuration used by github. */
+/** Configuration used by GitHub. */
 export const githubConfig: OAuthServiceConfig = {
   providerId: "github",
   serviceId: "github",

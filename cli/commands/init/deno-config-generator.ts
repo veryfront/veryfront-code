@@ -1,6 +1,6 @@
 import { VERSION } from "#cli/utils";
 import { join } from "veryfront/platform/path";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
 
 const VERYFRONT_DENO_SPEC = `npm:veryfront@${VERSION}`;
 
@@ -22,18 +22,26 @@ export function buildDenoConfig(): string {
   return JSON.stringify(DENO_CONFIG, null, 2) + "\n";
 }
 
+export interface CreateDenoConfigOptions {
+  /** Replace an existing config after the caller has completed conflict checks. */
+  overwrite?: boolean;
+}
+
 /**
  * Write a thin `deno.json` to the scaffolded project directory. Relies on
  * exact-version `npm:` specs so task execution stays hosted by Deno without
  * drifting to a newer CLI than the scaffolded dependencies.
  *
- * Throws if `deno.json` already exists at the destination — no template
- * ships one today, so an existing file means something unexpected.
+ * Refuses an existing file by default. Project creation may opt into replacing
+ * it after its conflict policy and path-safety preflight have both succeeded.
  */
-export async function createDenoConfig(projectDir: string): Promise<void> {
-  const fs = createFileSystem();
+export async function createDenoConfig(
+  projectDir: string,
+  fs: FileSystem = createFileSystem(),
+  options: CreateDenoConfigOptions = {},
+): Promise<void> {
   const target = join(projectDir, "deno.json");
-  if (await fs.exists(target)) {
+  if (!options.overwrite && await fs.exists(target)) {
     throw new Error(`Refusing to overwrite existing deno.json at ${target}`);
   }
   await fs.writeTextFile(target, buildDenoConfig());

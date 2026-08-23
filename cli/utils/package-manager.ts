@@ -6,7 +6,7 @@
 
 import { join } from "veryfront/platform/path";
 import { cliLogger as logger } from "#cli/utils";
-import { getEnv, getOsType, runCommand } from "veryfront/platform";
+import { env as environment, getEnv, getOsType, runCommand } from "veryfront/platform";
 import { LOCKFILE_CLIENTS, type PackageClient } from "veryfront/utils/package-client";
 import { getFs } from "./fs.ts";
 
@@ -55,6 +55,8 @@ async function executeCommand(
   const result = await runCommand(cmd, {
     args,
     cwd,
+    env: environment(),
+    clearEnv: true,
     inherit: !silent,
     shell: isWindows(), // Use shell on Windows for .cmd files
   });

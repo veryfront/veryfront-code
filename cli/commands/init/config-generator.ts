@@ -1,6 +1,6 @@
 import { cliLogger as logger, VERSION } from "#cli/utils";
 import { join } from "veryfront/platform/path";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
 
 // Keep init scaffold aligned with current framework default React major/minor.
 const DEFAULT_INIT_REACT_VERSION = "19.2.4";
@@ -114,9 +114,8 @@ export async function createPackageJson(
   projectDir: string,
   projectName?: string,
   options: CreatePackageJsonOptions = {},
+  fs: FileSystem = createFileSystem(),
 ): Promise<void> {
-  const fs = createFileSystem();
-
   // Read any existing package.json (e.g. from template) to merge dependencies
   const pkgPath = join(projectDir, "package.json");
   let existingDependencies: Record<string, string> | undefined;

@@ -2547,6 +2547,16 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
         } else if (isProcessEffectMethod(importedName)) {
           bindings.process.add(local);
         }
+      } else if (
+        isPublicPlatformSpecifier(source) &&
+        SHARED_CWD_METHODS.has(importedName)
+      ) {
+        bindings.sharedCwd.add(local);
+      } else if (
+        isPublicPlatformSpecifier(source) &&
+        isProcessEffectMethod(importedName)
+      ) {
+        bindings.process.add(local);
       }
       if (isTestingRuntimeSpecifier(source)) {
         const effect = effectForModuleMethod(source, importedName);
@@ -4235,6 +4245,10 @@ function isProcessSpecifier(source: string): boolean {
     source === CANONICAL_COMPAT_PROCESS_SOURCE ||
     source === "#veryfront/compat/process.ts" ||
     source === "#veryfront/platform/compat/process.ts";
+}
+
+function isPublicPlatformSpecifier(source: string): boolean {
+  return source === "veryfront/platform" || source === "#veryfront/platform";
 }
 
 function isTestingRuntimeSpecifier(source: string): boolean {
