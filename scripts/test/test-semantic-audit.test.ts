@@ -2822,6 +2822,30 @@ getterReturned.path = "second.txt";
     );
   });
 
+  it("preserves returned target properties skipped by Object.assign", () => {
+    const markers = collectSemanticMarkers(
+      `
+const target = { run: Deno.remove };
+const source = {};
+Object.defineProperty(source, "run", { value: () => undefined });
+Object.defineProperty(source, "observed", {
+  enumerable: true,
+  get: Deno.cwd,
+});
+Object.assign(target, source).run("retained.txt");
+`,
+      "src/runtime-object-assign-non-enumerable-return.test.ts",
+    );
+    assertEquals(
+      markers.map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "run"],
+        ["shared-cwd", "Object.assign(source getter)"],
+      ],
+    );
+  });
+
   it("clears accessors replaced by descriptor definitions", () => {
     assertEquals(
       collectSemanticMarkers(

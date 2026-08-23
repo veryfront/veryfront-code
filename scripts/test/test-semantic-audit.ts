@@ -4938,19 +4938,28 @@ function mutationCallResultRuntimeBinding(
             : [];
           if (sourceBinding && getterEnumerabilities.length > 0) {
             for (const property of namespacePropertyNames(sourceBinding)) {
+              const sourceResolution = runtimePropertyResolution(
+                sourceBinding,
+                property,
+                true,
+                true,
+              );
+              if (sourceResolution.enumerable === false) continue;
               const preservesSetter = runtimePropertySetterBinding(
                 result,
                 property,
               ) !== undefined;
+              const definitelyCopies = sourceResolution.enumerable === true &&
+                !sourceResolution.defaultMayRun;
               result = appendRuntimeMutationResultProperty(
                 result,
                 property,
                 runtimeEnumerablePropertyBinding(sourceBinding, property),
                 {
-                  preservesPrevious: preservesSetter,
-                  allowClearing: !preservesSetter,
-                  configurable: true,
-                  enumerable: true,
+                  preservesPrevious: preservesSetter || !definitelyCopies,
+                  allowClearing: !preservesSetter && definitelyCopies,
+                  configurable: definitelyCopies ? true : undefined,
+                  enumerable: definitelyCopies ? true : undefined,
                 },
               );
             }
