@@ -2387,6 +2387,16 @@ Object.defineProperty(getterBox, "source", {
   get: () => source,
 });
 Object.assign({}, getterBox.source).run();
+const literalGetterBox = {
+  get source() {
+    return source;
+  },
+};
+Object.assign({}, literalGetterBox.source).run();
+const attributedBox = { source };
+Object.defineProperty(attributedBox, "source", { enumerable: true });
+const copiedBox = Object.assign({}, attributedBox);
+Object.assign({}, copiedBox.source).run();
 `,
       "src/runtime-object-assign-partial-source.test.ts",
     ).map((marker) => marker.effect);

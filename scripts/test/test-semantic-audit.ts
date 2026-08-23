@@ -6038,7 +6038,7 @@ function retainedRuntimeDescriptorBinding(
     : undefined;
   return {
     changed: true,
-    binding: unionRuntimeBindings(
+    binding: unionRuntimeBindingsPreservingPartial(
       flattenRuntimeBindings(existing).flatMap((candidate) => {
         const retained = candidate.kind === "property-setter"
           ? !fields.has("set")
@@ -8014,7 +8014,7 @@ function runtimeGetterResolution(
     return binding ? [binding] : [];
   });
   return {
-    binding: unionRuntimeBindings(bindings),
+    binding: unionRuntimeBindingsPreservingPartial(bindings),
     aliasTargets: uniqueRuntimeAliasTargets(
       returned.expressions.flatMap((expression) =>
         runtimeNamespaceAliasTargetsForExpression(expression, imports, scopes)
@@ -8665,7 +8665,7 @@ function runtimeUnknownPropertySetterBinding(
 function runtimeReadablePropertyBinding(
   binding: RuntimeBinding | undefined,
 ): RuntimeBinding | undefined {
-  return unionRuntimeBindings(
+  return unionRuntimeBindingsPreservingPartial(
     flattenRuntimeBindings(binding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? [candidate.binding]
@@ -8684,7 +8684,7 @@ function runtimeEnumerablePropertyBinding(
   const resolution = runtimePropertyResolution(binding, property, true, true);
   if (resolution.enumerable === false) return undefined;
   const rawBinding = resolution.binding;
-  return unionRuntimeBindings(
+  return unionRuntimeBindingsPreservingPartial(
     flattenRuntimeBindings(rawBinding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? candidate.enumerable === false ? [] : [candidate.binding]
