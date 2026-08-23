@@ -618,6 +618,7 @@ type NamespacePropertyOperation =
     readonly crossesFunctionBoundary?: boolean;
     readonly minimumArrayIndex?: number;
     readonly fallbackOnly?: boolean;
+    readonly replacesFallback?: boolean;
   };
 
 const MAX_MATERIALIZED_ARRAY_SPREAD_ENTRIES = 256;
@@ -654,6 +655,7 @@ type RuntimeBinding =
     readonly binding: RuntimeBinding;
     readonly enumerable?: boolean;
   }
+  | { readonly kind: "property-metadata"; readonly enumerable?: boolean }
   | { readonly kind: "property-setter"; readonly binding: RuntimeBinding }
   | {
     readonly kind: "namespace-object";
@@ -4505,6 +4507,7 @@ function bindRuntimeDeleteMutation(
     true,
     undefined,
     false,
+    false,
     true,
   );
 }
@@ -4594,6 +4597,7 @@ function bindRuntimeCallMutation(
         invocation.args[1],
         imports,
         scopes,
+        canonicalName === "Object.setPrototypeOf",
       );
       continue;
     }
@@ -4614,13 +4618,15 @@ function bindRuntimeCallMutation(
         invocation.args,
       )
     ) {
-      clearRuntimeDescriptorProperty(
-        target,
-        accessor.property,
-        accessor.descriptor,
-        imports,
-        scopes,
-      );
+      if (canonicalName !== "Reflect.defineProperty") {
+        clearRuntimeDescriptorProperty(
+          target,
+          accessor.property,
+          accessor.descriptor,
+          imports,
+          scopes,
+        );
+      }
     }
     const assigned = localMutationAssignedEntries(
       canonicalName,
@@ -4874,6 +4880,7 @@ function mutationCallResultRuntimeBinding(
           false,
           false,
           true,
+          true,
         );
       } else if (canonicalName === "Object.assign") {
         for (const source of invocation.args.slice(1)) {
@@ -4889,6 +4896,14 @@ function mutationCallResultRuntimeBinding(
             : [];
           if (sourceBinding && getterEnumerabilities.length > 0) {
             for (const property of namespacePropertyNames(sourceBinding)) {
+              if (
+                runtimePropertyIsDefinitelyNonEnumerable(
+                  sourceBinding,
+                  property,
+                )
+              ) {
+                continue;
+              }
               const preservesSetter = runtimePropertySetterBinding(
                 result,
                 property,
@@ -4971,6 +4986,12 @@ function mutationCallResultRuntimeBinding(
         const accessors = runtimeDescriptorAccessorExpressions(
           accessor.descriptor,
         );
+        const effectiveEnumerable = runtimeDescriptorEffectiveEnumerable(
+          result,
+          accessor.property,
+          accessor.descriptor,
+          accessors.enumerable,
+        );
         const getterInvocationBinding = unionRuntimeBindings([
           ...accessors.getterInvocationExpressions.flatMap((expression) =>
             runtimeBindingForExpression(expression, imports, scopes) ?? []
@@ -4986,7 +5007,7 @@ function mutationCallResultRuntimeBinding(
             ? {
               kind: "property-getter-effect",
               binding: getterInvocationBinding,
-              enumerable: accessors.enumerable,
+              enumerable: effectiveEnumerable,
             }
             : undefined,
           true,
@@ -5006,7 +5027,7 @@ function mutationCallResultRuntimeBinding(
             ? {
               kind: "property-getter-value",
               binding: getterBinding,
-              enumerable: accessors.enumerable,
+              enumerable: effectiveEnumerable,
             }
             : undefined,
           getterInvocationBinding !== undefined,
@@ -5105,8 +5126,12 @@ function appendRuntimeMutationResultProperty(
   preservesPrevious: boolean,
   allowClearing = false,
   fallbackOnly = false,
+  replacesFallback = false,
 ): RuntimeBinding {
-  if (!binding && (property === undefined || !allowClearing)) return existing;
+  if (
+    !binding && (property === undefined || !allowClearing) &&
+    !replacesFallback
+  ) return existing;
   return appendRuntimePropertyOperation(
     existing,
     property === undefined
@@ -5116,6 +5141,7 @@ function appendRuntimeMutationResultProperty(
         defaultMayRun: true,
         crossesFunctionBoundary: false,
         fallbackOnly,
+        replacesFallback,
       }
       : {
         kind: "define",
@@ -5207,7 +5233,8 @@ function localMutationAssignedEntries(
     return [{
       property: literalPropertyName(args[1]),
       expression: runtimeDescriptorValueExpression(args[2]),
-      definiteOverwrite: runtimeDescriptorDefinesField(args[2], "value"),
+      definiteOverwrite: canonicalName === "Object.defineProperty" &&
+        runtimeDescriptorDefinesField(args[2], "value"),
     }];
   }
   if (canonicalName === "Reflect.set") {
@@ -5378,6 +5405,7 @@ function bindRuntimePrototypeMutation(
   prototype: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  replaceFallback: boolean,
 ): void {
   const propertyExpression = runtimeUnknownPropertyExpression(prototype);
   const binding = runtimePrototypeMutationBinding(
@@ -5393,6 +5421,7 @@ function bindRuntimePrototypeMutation(
     scopes,
     undefined,
     true,
+    replaceFallback,
   );
 }
 
@@ -5469,6 +5498,13 @@ function bindRuntimeAccessorMutation(
   scopes: readonly Scope[],
 ): void {
   const accessors = runtimeDescriptorAccessorExpressions(descriptor);
+  const targetBinding = runtimeBindingForExpression(target, imports, scopes);
+  const effectiveEnumerable = runtimeDescriptorEffectiveEnumerable(
+    targetBinding,
+    property,
+    descriptor,
+    accessors.enumerable,
+  );
   const getterInvocationBinding = unionRuntimeBindings([
     ...accessors.getterInvocationExpressions.flatMap((expression) =>
       runtimeBindingForExpression(expression, imports, scopes) ?? []
@@ -5485,7 +5521,7 @@ function bindRuntimeAccessorMutation(
       {
         kind: "property-getter-effect",
         binding: getterInvocationBinding,
-        enumerable: accessors.enumerable,
+        enumerable: effectiveEnumerable,
       },
       accessors.getterInvocationExpressions[0],
       imports,
@@ -5505,7 +5541,7 @@ function bindRuntimeAccessorMutation(
       ? {
         kind: "property-getter-value" as const,
         binding,
-        enumerable: accessors.enumerable,
+        enumerable: effectiveEnumerable,
       }
       : undefined;
     if (property) {
@@ -5535,7 +5571,7 @@ function bindRuntimeAccessorMutation(
         {
           kind: "property-getter-value",
           binding: conservativeSemanticEffectBinding(),
-          enumerable: accessors.enumerable,
+          enumerable: effectiveEnumerable,
         },
         undefined,
         imports,
@@ -5547,7 +5583,7 @@ function bindRuntimeAccessorMutation(
         {
           kind: "property-getter-value",
           binding: conservativeSemanticEffectBinding(),
-          enumerable: accessors.enumerable,
+          enumerable: effectiveEnumerable,
         },
         undefined,
         imports,
@@ -5643,25 +5679,64 @@ function retainedRuntimeDescriptorBinding(
   const enumerable = changesEnumerable
     ? runtimeDescriptorBooleanField(descriptor, "enumerable")
     : undefined;
+  const existingBindings = flattenRuntimeBindings(existing);
+  const existingEnumerable = existingBindings.find((candidate) =>
+    candidate.kind === "property-getter-effect" ||
+    candidate.kind === "property-getter-value" ||
+    candidate.kind === "property-metadata"
+  )?.enumerable;
+  const retainedBindings: RuntimeBinding[] = existingBindings.flatMap(
+    (candidate) => {
+      const retained = candidate.kind === "property-setter"
+        ? !fields.has("set")
+        : candidate.kind === "property-getter-effect" ||
+            candidate.kind === "property-getter-value"
+        ? !fields.has("get")
+        : candidate.kind === "property-metadata"
+        ? true
+        : !changesProperty;
+      if (!retained) return [];
+      return changesEnumerable &&
+          (candidate.kind === "property-getter-effect" ||
+            candidate.kind === "property-getter-value" ||
+            candidate.kind === "property-metadata")
+        ? [{ ...candidate, enumerable }]
+        : [candidate];
+    },
+  );
+  if (
+    changesProperty && !changesEnumerable &&
+    existingBindings.some((candidate) =>
+      candidate.kind === "property-getter-effect" ||
+      candidate.kind === "property-getter-value"
+    )
+  ) {
+    retainedBindings.push({
+      kind: "property-metadata",
+      enumerable: existingEnumerable,
+    });
+  }
   return {
     changed: true,
-    binding: unionRuntimeBindings(
-      flattenRuntimeBindings(existing).flatMap((candidate) => {
-        const retained = candidate.kind === "property-setter"
-          ? !fields.has("set")
-          : candidate.kind === "property-getter-effect" ||
-              candidate.kind === "property-getter-value"
-          ? !fields.has("get")
-          : !changesProperty;
-        if (!retained) return [];
-        return changesEnumerable &&
-            (candidate.kind === "property-getter-effect" ||
-              candidate.kind === "property-getter-value")
-          ? [{ ...candidate, enumerable }]
-          : [candidate];
-      }),
-    ),
+    binding: unionRuntimeBindings(retainedBindings),
   };
+}
+
+function runtimeDescriptorEffectiveEnumerable(
+  target: RuntimeBinding | undefined,
+  property: string | undefined,
+  descriptor: unknown,
+  declared: boolean | undefined,
+): boolean | undefined {
+  if (runtimeDescriptorDefinesField(descriptor, "enumerable")) return declared;
+  if (!target || property === undefined) return declared;
+  return flattenRuntimeBindings(
+    runtimePropertyResolution(target, property, true).binding,
+  ).find((candidate) =>
+    candidate.kind === "property-getter-effect" ||
+    candidate.kind === "property-getter-value" ||
+    candidate.kind === "property-metadata"
+  )?.enumerable ?? declared;
 }
 
 function runtimeDescriptorAccessorExpressions(descriptor: unknown): {
@@ -5969,6 +6044,7 @@ function bindRuntimeNamedPropertyMutationBinding(
     allowClearing,
     undefined,
     false,
+    false,
     clearAccessors,
   );
 }
@@ -5981,6 +6057,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
   scopes: readonly Scope[],
   minimumArrayIndex?: number,
   fallbackOnly = false,
+  replacesFallback = false,
 ): void {
   const receiver = unwrapExpression(target);
   if (!receiver) return;
@@ -5994,6 +6071,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
     false,
     minimumArrayIndex,
     fallbackOnly,
+    replacesFallback,
   );
 }
 
@@ -6006,6 +6084,7 @@ function bindRuntimeMemberAssignment(
   allowClearing: boolean,
   minimumArrayIndex?: number,
   fallbackOnly = false,
+  replacesFallback = false,
   clearAccessors = false,
 ): boolean {
   if (
@@ -6110,6 +6189,7 @@ function bindRuntimeMemberAssignment(
       allowClearing,
       minimumArrayIndex,
       fallbackOnly,
+      replacesFallback,
       clearAccessors,
     );
   }
@@ -6128,6 +6208,7 @@ function bindRuntimeMemberAssignmentTarget(
   allowClearing: boolean,
   minimumArrayIndex?: number,
   fallbackOnly = false,
+  replacesFallback = false,
   clearAccessors = false,
 ): void {
   const { scope, root } = target;
@@ -6167,6 +6248,7 @@ function bindRuntimeMemberAssignmentTarget(
       aliasTargets,
       minimumArrayIndex,
       fallbackOnly,
+      replacesFallback,
     )
     : assignRuntimeProperty(
       existing,
@@ -6579,6 +6661,7 @@ function assignUnknownRuntimeProperty(
   aliasTargets: readonly RuntimeAliasTarget[] = [],
   minimumArrayIndex?: number,
   fallbackOnly = false,
+  replacesFallback = false,
 ): RuntimeBinding {
   const [property, ...rest] = objectPath;
   if (property) {
@@ -6591,6 +6674,7 @@ function assignUnknownRuntimeProperty(
       aliasTargets,
       minimumArrayIndex,
       fallbackOnly,
+      replacesFallback,
     );
     return assignRuntimeProperty(existing, [property], nested, false, false);
   }
@@ -6602,6 +6686,7 @@ function assignUnknownRuntimeProperty(
     crossesFunctionBoundary,
     minimumArrayIndex,
     fallbackOnly,
+    replacesFallback,
   });
 }
 
@@ -6609,6 +6694,19 @@ function appendRuntimePropertyOperation(
   existing: RuntimeBinding | undefined,
   operation: NamespacePropertyOperation,
 ): RuntimeBinding {
+  if (
+    existing?.kind === "namespace-object" &&
+    existing.propertyOperations && operation.kind === "define-unknown" &&
+    operation.replacesFallback === true
+  ) {
+    existing = {
+      ...existing,
+      propertyOperations: existing.propertyOperations.filter((candidate) =>
+        candidate.kind !== "define-unknown" ||
+        candidate.fallbackOnly !== true
+      ),
+    };
+  }
   if (existing?.kind === "namespace-object" && existing.propertyOperations) {
     const previous = existing.propertyOperations.at(-1);
     if (
@@ -6641,6 +6739,7 @@ function appendRuntimePropertyOperation(
               operation.crossesFunctionBoundary === true,
             minimumArrayIndex: operation.minimumArrayIndex,
             fallbackOnly: operation.fallbackOnly,
+            replacesFallback: operation.replacesFallback,
           },
         ],
       };
@@ -8218,7 +8317,8 @@ function runtimeReadablePropertyBinding(
       candidate.kind === "property-getter-value"
         ? [candidate.binding]
         : candidate.kind === "property-getter-effect" ||
-            candidate.kind === "property-setter"
+            candidate.kind === "property-setter" ||
+            candidate.kind === "property-metadata"
         ? []
         : [candidate]
     ),
@@ -8235,11 +8335,26 @@ function runtimeEnumerablePropertyBinding(
       candidate.kind === "property-getter-value"
         ? candidate.enumerable === false ? [] : [candidate.binding]
         : candidate.kind === "property-getter-effect" ||
-            candidate.kind === "property-setter"
+            candidate.kind === "property-setter" ||
+            candidate.kind === "property-metadata"
         ? []
         : [candidate]
     ),
   );
+}
+
+function runtimePropertyIsDefinitelyNonEnumerable(
+  binding: RuntimeBinding,
+  property: string,
+): boolean {
+  const accessorBindings = flattenRuntimeBindings(
+    runtimePropertyResolution(binding, property, true).binding,
+  ).filter((candidate) =>
+    candidate.kind === "property-getter-effect" ||
+    candidate.kind === "property-getter-value"
+  );
+  return accessorBindings.length > 0 &&
+    accessorBindings.every((candidate) => candidate.enumerable === false);
 }
 
 function runtimeUnknownEnumerablePropertyBinding(
@@ -8282,6 +8397,7 @@ function runtimePropertyResolution(
 ): RuntimePropertyResolution {
   type ResolutionFrame =
     | { readonly kind: "resolve"; readonly binding: RuntimeBinding }
+    | { readonly kind: "combine-partial" }
     | { readonly kind: "combine-one-of"; readonly count: number }
     | {
       readonly kind: "combine-namespace";
@@ -8296,6 +8412,16 @@ function runtimePropertyResolution(
   while (frames.length > 0) {
     const frame = frames.pop();
     if (!frame) continue;
+    if (frame.kind === "combine-partial") {
+      const resolution = resolutions.pop() ?? { defaultMayRun: true };
+      resolutions.push({
+        ...resolution,
+        binding: resolution.binding
+          ? { kind: "partial", binding: resolution.binding }
+          : undefined,
+      });
+      continue;
+    }
     if (frame.kind === "combine-one-of") {
       const candidates = frame.count === 0
         ? []
@@ -8326,7 +8452,7 @@ function runtimePropertyResolution(
       for (const operation of frame.binding.propertyOperations ?? []) {
         if (operation.kind === "define") {
           if (operation.name === property) {
-            const operationBinding = unionRuntimeBindings(
+            const operationBinding = unionRuntimeBindingsPreservingPartial(
               [
                 operation.binding,
                 currentRuntimeAliasBinding(operation.aliasTargets),
@@ -8411,6 +8537,11 @@ function runtimePropertyResolution(
           : resolution,
         includeSetters,
       ));
+      continue;
+    }
+    if (frame.binding.kind === "partial") {
+      frames.push({ kind: "combine-partial" });
+      frames.push({ kind: "resolve", binding: frame.binding.binding });
       continue;
     }
     if (frame.binding.kind === "one-of") {
@@ -8534,7 +8665,8 @@ function finalizeRuntimePropertyResolution(
   const accessorOnly = !includeSetters && resolvedBinding === undefined &&
     flattenRuntimeBindings(resolution.binding).some((candidate) =>
       candidate.kind === "property-getter-effect" ||
-      candidate.kind === "property-setter"
+      candidate.kind === "property-setter" ||
+      candidate.kind === "property-metadata"
     );
   return {
     ...resolution,
@@ -8571,6 +8703,14 @@ function unionRuntimeBindings(
   const values = [...unique.values(), ...identitySensitive];
   if (values.length === 0) return undefined;
   return values.length === 1 ? values[0] : { kind: "one-of", bindings: values };
+}
+
+function unionRuntimeBindingsPreservingPartial(
+  bindings: readonly RuntimeBinding[],
+): RuntimeBinding | undefined {
+  const partial = bindings.some(runtimeBindingHasPartialAlternative);
+  const binding = unionRuntimeBindings(bindings);
+  return partial && binding ? { kind: "partial", binding } : binding;
 }
 
 function flattenRuntimeBindings(
@@ -8690,6 +8830,9 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
     return `property-getter-value:${binding.enumerable ?? "unknown"}:${
       runtimeBindingKey(binding.binding)
     }`;
+  }
+  if (binding.kind === "property-metadata") {
+    return `property-metadata:${binding.enumerable ?? "unknown"}`;
   }
   if (binding.kind === "property-setter") {
     return `property-setter:${runtimeBindingKey(binding.binding)}`;

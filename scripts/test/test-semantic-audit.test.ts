@@ -2375,6 +2375,8 @@ declare const maybe: boolean;
 declare function loadSource(): object;
 const source = maybe ? { run: Deno.cwd } : loadSource();
 Object.assign({}, source).run();
+const box = { source: maybe ? { run: Deno.cwd } : loadSource() };
+Object.assign({}, box.source).run();
 `,
       "src/runtime-object-assign-partial-source.test.ts",
     ).map((marker) => marker.effect);
@@ -2460,10 +2462,22 @@ const deleteTarget = {};
 Object.defineProperty(deleteTarget, "run", { value: Deno.remove });
 Reflect.deleteProperty(deleteTarget, "run");
 deleteTarget.run("delete.txt");
+
+const defineTarget = {};
+Object.defineProperty(defineTarget, "run", { value: Deno.remove });
+Reflect.defineProperty(defineTarget, "run", { value: () => undefined });
+defineTarget.run("define.txt");
+
+const assignTarget = {};
+Object.defineProperty(assignTarget, "run", { value: Deno.remove });
+try {
+  Object.assign(assignTarget, { run: () => undefined });
+} catch {}
+assignTarget.run("assign.txt");
 `,
         "src/runtime-reflect-failed-mutations.test.ts",
       ).map((marker) => marker.effect),
-      ["filesystem-write", "filesystem-write"],
+      Array.from({ length: 4 }, () => "filesystem-write"),
     );
   });
 
@@ -2551,6 +2565,11 @@ const reflectedDelete = { run: () => undefined };
 Object.setPrototypeOf(reflectedDelete, { run: Deno.remove });
 Reflect.deleteProperty(reflectedDelete, "run");
 reflectedDelete.run("reflected-delete-prototype.txt");
+
+const replacedPrototype = {};
+Object.setPrototypeOf(replacedPrototype, { run: Deno.remove });
+Object.setPrototypeOf(replacedPrototype, null);
+replacedPrototype.run();
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
@@ -2803,6 +2822,9 @@ const hiddenReturn = Object.defineProperty({}, "run", {
 });
 Object.assign({}, hiddenReturn).run();
 
+const hiddenPreserved = { run: Deno.remove };
+Object.assign(hiddenPreserved, hiddenReturn).run("preserved.txt");
+
 const madeEnumerable = {};
 Object.defineProperty(madeEnumerable, "run", {
   configurable: true,
@@ -2822,6 +2844,7 @@ returned.path;
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "Object.assign(source getter)"],
         ["shared-cwd", "source.* getter"],
+        ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "returned.path getter"],
