@@ -57,7 +57,7 @@ export const spec: RatchetSpec = {
     module: import.meta.url,
   },
   advice:
-    "Don't add new it.skip/it.ignore (or skip/ignore: true) — fix and re-enable " +
+    "Don't add new it.skip/it.ignore (or skip/ignore: true). Fix and re-enable " +
     "the test, or delete it and record why in the commit/issue.",
 };
 

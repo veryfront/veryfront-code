@@ -257,7 +257,7 @@ describe("runRatchet", () => {
     assertEquals(await runRatchet(perFile(), { repoRoot: root, ...io }), 2);
     assertMatch(
       stderr.join("\n"),
-      /todos\.json is missing — run with --update/,
+      /todos\.json is missing\. Run with --update/,
     );
   });
 

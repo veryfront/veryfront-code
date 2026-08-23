@@ -50,7 +50,7 @@ export const spec: RatchetSpec = {
   scan: findFocusedTests,
   baseline: { kind: "zero" },
   advice:
-    "Focused tests (.only(...) or only: true) silently skip sibling tests — remove the focus.",
+    "Focused tests (.only(...) or only: true) silently skip sibling tests. Remove the focus.",
 };
 
 if (import.meta.main) {

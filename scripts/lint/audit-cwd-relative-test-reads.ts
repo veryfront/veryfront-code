@@ -360,10 +360,10 @@ export const spec: RatchetSpec = {
     path: "scripts/lint/cwd-relative-test-reads-baseline.json",
   },
   blockingTitle:
-    "Cwd-relative repo reads at test MODULE scope (never allowed — an uncaught " +
+    "Cwd-relative repo reads at test MODULE scope (never allowed: an uncaught " +
     "module error fails the whole shard):",
   advice:
-    "Resolve the path from import.meta.url instead of the process cwd — see the " +
+    "Resolve the path from import.meta.url instead of the process cwd. See the " +
     "header of scripts/lint/audit-cwd-relative-test-reads.ts for why.",
 };
 

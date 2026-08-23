@@ -343,7 +343,7 @@ export const spec: RatchetSpec = {
   },
   advice:
     "Keep the precise type or parse at the boundary instead of asserting through " +
-    "it — see the header of scripts/lint/audit-anti-slop.ts.",
+    "it. See the header of scripts/lint/audit-anti-slop.ts.",
 };
 
 if (import.meta.main) {

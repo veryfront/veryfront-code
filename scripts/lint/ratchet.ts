@@ -156,8 +156,8 @@ export function isIgnoredDirectory(name: string): boolean {
 export class MissingScanRoot extends Error {
   constructor(readonly root: string, readonly repoRoot: string) {
     super(
-      `Scan root "${root}" does not exist under ${repoRoot} — ` +
-        `fix the ratchet's scope or deno.json include list.`,
+      `Scan root "${root}" does not exist under ${repoRoot}. ` +
+        `Fix the ratchet's scope or deno.json include list.`,
     );
     this.name = "MissingScanRoot";
   }
@@ -635,7 +635,7 @@ export async function runRatchet(
     if (blocking.length > 0) {
       err(
         `${spec.label}: refusing to produce a baseline while blocking findings ` +
-          `exist — they are never baselined, so the check would still fail:`,
+          `exist. They are never baselined, so the check would still fail:`,
       );
       for (const finding of blocking) err(formatFinding(finding));
       return 1;
@@ -758,7 +758,7 @@ async function loadBaseline(
       } catch (error) {
         if (error instanceof Deno.errors.NotFound) {
           throw new Error(
-            `baseline file ${store.path} is missing — run with --update to create it.`,
+            `baseline file ${store.path} is missing. Run with --update to create it.`,
           );
         }
         throw error;
@@ -822,7 +822,7 @@ async function writeBaseline(
 
   if (regressions.length > 0) {
     err(
-      `Warning: ${regressions.length} key(s) were raised — a baseline should only go down:`,
+      `Warning: ${regressions.length} key(s) were raised. A baseline should only go down:`,
     );
     for (const delta of regressions) err(formatDelta(delta));
   }

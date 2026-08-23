@@ -82,7 +82,7 @@ export const spec: RatchetSpec = {
   scan: findUnawaitedCleanupCalls,
   baseline: { kind: "zero" },
   advice:
-    "These calls return promises — add `await` so the cleanup finishes before the next step.",
+    "These calls return promises. Add `await` so the cleanup finishes before the next step.",
 };
 
 if (import.meta.main) {

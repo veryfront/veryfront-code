@@ -47,7 +47,7 @@ export const spec: RatchetSpec = {
     module: import.meta.url,
   },
   advice:
-    "New tests should not add sanitizeResources/Ops/Exit: false — fix the leak " +
+    "New tests should not add sanitizeResources/Ops/Exit: false. Fix the leak " +
     "(close handles, await pending ops) instead.",
 };
 
