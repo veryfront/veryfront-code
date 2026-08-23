@@ -1004,6 +1004,11 @@ Object.assign(globalThis, { document: {} });
 Reflect.set(globalThis, "WebSocket", class {});
 Object.defineProperties(window, { document: { value: {} } });
 Reflect.defineProperty(self, key, { value: {} });
+Reflect.set(Array.prototype, Symbol.iterator, () => undefined);
+Object.defineProperty(Object.prototype, key, { value: {} });
+Object.defineProperty(Promise, "resolve", { value: () => undefined });
+String.prototype.trim = () => "";
+delete RegExp.prototype.test;
 globalThis.window = {} as typeof globalThis;
 delete globalThis.navigator;
 `,
@@ -1017,6 +1022,11 @@ delete globalThis.navigator;
         ["network", "Reflect.set(globalThis.WebSocket)"],
         ["process", "Object.defineProperties(window.*)"],
         ["process", "Reflect.defineProperty(self.*)"],
+        ["process", "Reflect.set(Array.prototype.*)"],
+        ["process", "Object.defineProperty(Object.prototype.*)"],
+        ["process", "Object.defineProperty(Promise.resolve)"],
+        ["process", "String.prototype.trim"],
+        ["process", "RegExp.prototype.test"],
         ["process", "globalThis.window"],
         ["process", "globalThis.navigator"],
       ],
@@ -1033,6 +1043,15 @@ Reflect.set(globalThis, "navigator", {});
 function mutate(globalThis: { window: unknown; navigator?: unknown }) {
   globalThis.window = {};
   delete globalThis.navigator;
+}
+function mutateIntrinsics(
+  Array: { prototype: object },
+  Promise: object,
+  String: { prototype: { trim(): string } },
+) {
+  Object.defineProperty(Array.prototype, "x", { value: 1 });
+  Object.defineProperty(Promise, "resolve", { value: () => undefined });
+  String.prototype.trim = () => "";
 }
 `,
         "src/local-global-runtime-mutation.test.ts",

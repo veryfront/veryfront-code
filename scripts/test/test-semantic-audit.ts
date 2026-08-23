@@ -304,6 +304,72 @@ const NETWORK_METHODS = new Set([
 
 const GLOBAL_RUNTIME_RECEIVERS = new Set(["globalThis", "window", "self"]);
 
+const GLOBAL_INTRINSIC_OBJECTS = new Set([
+  "AbortController",
+  "AbortSignal",
+  "Array",
+  "ArrayBuffer",
+  "Atomics",
+  "BigInt",
+  "BigInt64Array",
+  "BigUint64Array",
+  "Blob",
+  "Boolean",
+  "DataView",
+  "Date",
+  "DOMException",
+  "Error",
+  "EvalError",
+  "Event",
+  "EventTarget",
+  "File",
+  "FinalizationRegistry",
+  "Float32Array",
+  "Float64Array",
+  "FormData",
+  "Function",
+  "Headers",
+  "Int8Array",
+  "Int16Array",
+  "Int32Array",
+  "Intl",
+  "JSON",
+  "Map",
+  "Math",
+  "Number",
+  "Object",
+  "Promise",
+  "Proxy",
+  "RangeError",
+  "ReadableStream",
+  "ReferenceError",
+  "Reflect",
+  "RegExp",
+  "Request",
+  "Response",
+  "Set",
+  "SharedArrayBuffer",
+  "String",
+  "Symbol",
+  "SyntaxError",
+  "TextDecoder",
+  "TextEncoder",
+  "TransformStream",
+  "TypeError",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Uint16Array",
+  "Uint32Array",
+  "URIError",
+  "URL",
+  "URLSearchParams",
+  "WeakMap",
+  "WeakRef",
+  "WeakSet",
+  "WebAssembly",
+  "WritableStream",
+]);
+
 const COMMENT_KEYS = new Set([
   "leadingComments",
   "trailingComments",
@@ -1231,25 +1297,64 @@ function globalPropertyMutationMarker(
     return undefined;
   }
   const args = Array.isArray(node.arguments) ? node.arguments : [];
-  const target = unwrapExpression(args[0]);
+  const target = sharedGlobalMutationTarget(
+    args[0],
+    scopes,
+    importedNames,
+  );
   const property = mutatesSingleProperty ? literalValue(args[1]) : undefined;
-  if (
-    !target || target.type !== "Identifier" ||
-    !isGlobalRuntimeReceiver(
-      target.name as string,
-      scopes,
-      importedNames,
-    )
-  ) {
-    return undefined;
-  }
+  if (!target) return undefined;
   return {
-    effect: mutatesSingleProperty
+    effect: mutatesSingleProperty && target.kind === "runtime-root"
       ? globalRuntimeMutationEffect(property)
       : "process",
     line,
-    symbol: `${calleeName}(${target.name}.${property ?? "*"})`,
+    symbol: `${calleeName}(${target.symbol}.${property ?? "*"})`,
   };
+}
+
+function sharedGlobalMutationTarget(
+  target: unknown,
+  scopes: readonly Scope[],
+  importedNames: ReadonlySet<string>,
+):
+  | { readonly kind: "runtime-root" | "shared-object"; readonly symbol: string }
+  | undefined {
+  const value = unwrapExpression(target);
+  if (!value) return undefined;
+  if (value.type === "Identifier") {
+    const name = value.name as string;
+    if (isGlobalRuntimeReceiver(name, scopes, importedNames)) {
+      return { kind: "runtime-root", symbol: name };
+    }
+    return isGlobalIntrinsic(name, scopes, importedNames)
+      ? { kind: "shared-object", symbol: name }
+      : undefined;
+  }
+  if (
+    value.type !== "MemberExpression" &&
+    value.type !== "OptionalMemberExpression"
+  ) {
+    return undefined;
+  }
+  const chain = memberChain(value);
+  if (!chain || chain.length < 2) return undefined;
+  if (
+    isGlobalRuntimeReceiver(chain[0], scopes, importedNames) ||
+    isGlobalIntrinsic(chain[0], scopes, importedNames)
+  ) {
+    return { kind: "shared-object", symbol: chain.join(".") };
+  }
+  return undefined;
+}
+
+function isGlobalIntrinsic(
+  name: string,
+  scopes: readonly Scope[],
+  importedNames: ReadonlySet<string>,
+): boolean {
+  return GLOBAL_INTRINSIC_OBJECTS.has(name) &&
+    !isGlobalShadowed(name, scopes, importedNames);
 }
 
 function globalRuntimeMemberMutationMarker(
@@ -1267,24 +1372,17 @@ function globalRuntimeMemberMutationMarker(
     return undefined;
   }
   const chain = memberChain(value);
-  const directReceiver = isNode(value.object)
-    ? unwrapExpression(value.object)
+  const target = isNode(value.object)
+    ? sharedGlobalMutationTarget(value.object, scopes, importedNames)
     : undefined;
-  const receiver = chain?.[0] ??
-    (directReceiver?.type === "Identifier"
-      ? directReceiver.name as string
-      : undefined);
-  if (
-    !receiver ||
-    !isGlobalRuntimeReceiver(receiver, scopes, importedNames)
-  ) {
-    return undefined;
-  }
-  const property = chain?.[1] ?? memberProperty(value);
+  if (!target) return undefined;
+  const property = memberProperty(value);
   return {
-    effect: globalRuntimeMutationEffect(property),
+    effect: target.kind === "runtime-root"
+      ? globalRuntimeMutationEffect(property)
+      : "process",
     line,
-    symbol: chain?.join(".") ?? `${receiver}.${property ?? "*"}`,
+    symbol: chain?.join(".") ?? `${target.symbol}.${property ?? "*"}`,
   };
 }
 
