@@ -1,3 +1,4 @@
+import { fromFileUrl } from "#std/path";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildDenoTestCommandArgs } from "./coverage-ci.ts";
@@ -21,8 +22,10 @@ describe("coverage CI command", () => {
   });
 
   it("keeps the merge task loadable with npm disabled", async () => {
+    const repoRoot = fromFileUrl(new URL("../../", import.meta.url));
     const output = await new Deno.Command(Deno.execPath(), {
       args: ["task", "coverage:ci:merge"],
+      cwd: repoRoot,
       stdout: "piped",
       stderr: "piped",
     }).output();

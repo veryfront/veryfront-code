@@ -1,6 +1,10 @@
-import { assert, assertEquals, assertRejects } from "#std/assert";
 import { walk } from "#std/fs/walk";
-import { describe, it } from "#std/testing/bdd";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import { relative } from "node:path";
 import { DENO_ONLY_TESTS } from "../../tests/deno-only-tests.mjs";
 import {
@@ -15,6 +19,7 @@ import {
 import {
   formatSuitePlan,
   planSuiteFiles,
+  selectOrdinalShard,
   type SuitePlanId,
 } from "./run-suite.ts";
 
@@ -90,6 +95,16 @@ describe("suite planning parity", () => {
     for (const plan of shards) assertEquals(plan.files, sorted(plan.files));
   });
 
+  it("uses locale-independent ordinal ordering for shard membership", () => {
+    assertEquals(
+      selectOrdinalShard(
+        ["src/a.test.ts", "src/Z.test.ts"],
+        { index: 1, total: 1 },
+      ),
+      ["src/Z.test.ts", "src/a.test.ts"],
+    );
+  });
+
   it("fails closed when an unfiltered profile selects no files", async () => {
     const root = await Deno.makeTempDir();
     try {
@@ -106,6 +121,18 @@ describe("suite planning parity", () => {
     } finally {
       await Deno.remove(root, { recursive: true });
     }
+  });
+
+  it("rejects runtime-only patterns for Deno suites", async () => {
+    await assertRejects(
+      () =>
+        planSuiteFiles({
+          suite: "unit:parallel",
+          patterns: ["src/example.test.ts"],
+        }),
+      Error,
+      "does not accept pattern arguments",
+    );
   });
 
   it("retains Node's filtered empty-selection compatibility only", async () => {
@@ -369,5 +396,7 @@ async function legacyRuntimeFiles(runtime: "node" | "bun"): Promise<string[]> {
 }
 
 function sorted(paths: readonly string[]): string[] {
-  return [...paths].sort((a, b) => a.localeCompare(b));
+  return [...paths].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
 }

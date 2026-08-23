@@ -71,9 +71,7 @@ export function validateSuitePlan(value, expectedSuite) {
     : undefined;
   const files = Array.isArray(value?.files) ? value.files : undefined;
   const safeFiles = files?.every(isSafeRelativePlanPath) ?? false;
-  const sortedFiles = safeFiles
-    ? [...files].sort((left, right) => left.localeCompare(right))
-    : undefined;
+  const sortedFiles = safeFiles ? [...files].sort(compareOrdinal) : undefined;
   if (
     !value || typeof value !== "object" || value.version !== 1 ||
     value.suite !== expectedSuite || value.runner !== expectedRunner ||
@@ -89,11 +87,15 @@ export function validateSuitePlan(value, expectedSuite) {
 function isSafeRelativePlanPath(path) {
   if (
     typeof path !== "string" || path.length === 0 || path.includes("\\") ||
-    path.includes("\0") || path.startsWith("/") || /^[A-Za-z]:\//.test(path)
+    path.includes("\0") || path.startsWith("/") || /^[A-Za-z]:/.test(path)
   ) {
     return false;
   }
   return path.split("/").every((segment) =>
     segment.length > 0 && segment !== "." && segment !== ".."
   );
+}
+
+function compareOrdinal(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
 }

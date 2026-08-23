@@ -191,6 +191,13 @@ async function discoverCandidatePaths(
     return relativePaths;
   }
 
+  if (patterns?.length) {
+    throw new SuitePlannerError(
+      2,
+      `${suite} does not accept pattern arguments`,
+    );
+  }
+
   const discovery = await discoverTests({ root });
   if (discovery.violations.length > 0) {
     throw new SuitePlannerError(
@@ -303,7 +310,11 @@ function sortedUnique(paths: readonly string[]): string[] {
     ...new Set(
       paths.map((path) => path.replaceAll("\\", "/").replace(/^\.\//, "")),
     ),
-  ].sort((a, b) => a.localeCompare(b));
+  ].sort(compareOrdinal);
+}
+
+function compareOrdinal(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 class SuitePlannerError extends Error {

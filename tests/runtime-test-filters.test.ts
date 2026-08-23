@@ -68,6 +68,12 @@ describe("runtime test filters", () => {
           version: 1,
           suite: "runtime:node",
           runner: "node",
+          files: ["C:outside.test.ts"],
+        },
+        {
+          version: 1,
+          suite: "runtime:node",
+          runner: "node",
           files: ["src/z.test.ts", "src/a.test.ts"],
         },
       ]
@@ -80,6 +86,18 @@ describe("runtime test filters", () => {
       }
       assert(rejected, "malformed planner output must be rejected");
     }
+  });
+
+  it("accepts locale-independent ordinal planner ordering", () => {
+    assertEquals(
+      validateSuitePlan({
+        version: 1,
+        suite: "runtime:node",
+        runner: "node",
+        files: ["src/Z.test.ts", "src/a.test.ts"],
+      }, "runtime:node"),
+      ["src/Z.test.ts", "src/a.test.ts"],
+    );
   });
 
   it("excludes the Deno-only tests from non-Deno runners", () => {
