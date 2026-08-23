@@ -10,8 +10,14 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
-const CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN =
-  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between((?:[ \t]+[^\r\n]*?)?)(?:[ \t]+|[ \t]*\r?\n[ \t]*)and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})[^\r\n]*))/gi;
+const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
+  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
+  /(^|[ \t])and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
+const CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN =
+  /^[ \t]*([0-9a-f]{40})(?![0-9a-f])/i;
+const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
+  /^[ \t]*and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
@@ -327,7 +333,9 @@ function codeRabbitRangeEvidenceStatements(content) {
   const statements = [];
   let fenceIndex = 0;
   for (
-    const match of content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN)
+    const match of content.matchAll(
+      CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN,
+    )
   ) {
     const statementIndex = match.index + match[0].indexOf(match[1]);
     while (
@@ -340,13 +348,77 @@ function codeRabbitRangeEvidenceStatements(content) {
       fenceRanges[fenceIndex][0] <= statementIndex &&
       statementIndex < fenceRanges[fenceIndex][1];
     if (insideFence) continue;
-    statements.push({
-      baseToken: match[2].trim().toLowerCase(),
-      statement: match[1],
-      tipToken: match[3].toLowerCase(),
-    });
+    const statement = parseCodeRabbitRangeStatement(content, match);
+    if (statement) statements.push(statement);
   }
   return statements;
+}
+
+function parseCodeRabbitRangeStatement(content, match) {
+  const statementStart = match[1];
+  const firstLineTail = match[2];
+  const sameLineSeparator = firstLineTail.match(
+    CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN,
+  );
+  if (sameLineSeparator) {
+    return {
+      baseSegment: firstLineTail.slice(0, sameLineSeparator.index).trim()
+        .toLowerCase(),
+      statement: statementStart + firstLineTail,
+      tipToken: sameLineSeparator[2].toLowerCase(),
+      trailingStatement: firstLineTail.slice(
+        sameLineSeparator.index + sameLineSeparator[0].length,
+      ),
+    };
+  }
+
+  const nextLine = codeRabbitNextLine(content, match.index + match[0].length);
+  if (!nextLine) return undefined;
+  const trailingAnd = firstLineTail.match(/(^|[ \t])and[ \t]*$/i);
+  if (trailingAnd) {
+    const wrappedTip = nextLine.content.match(
+      CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN,
+    );
+    if (wrappedTip) {
+      return {
+        baseSegment: firstLineTail.slice(0, trailingAnd.index).trim()
+          .toLowerCase(),
+        statement: statementStart + firstLineTail + nextLine.separator +
+          nextLine.content,
+        tipToken: wrappedTip[1].toLowerCase(),
+        trailingStatement: nextLine.content.slice(wrappedTip[0].length),
+      };
+    }
+  }
+
+  const wrappedSeparator = nextLine.content.match(
+    CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN,
+  );
+  if (!wrappedSeparator) return undefined;
+  return {
+    baseSegment: firstLineTail.trim().toLowerCase(),
+    statement: statementStart + firstLineTail + nextLine.separator +
+      nextLine.content,
+    tipToken: wrappedSeparator[1].toLowerCase(),
+    trailingStatement: nextLine.content.slice(wrappedSeparator[0].length),
+  };
+}
+
+function codeRabbitNextLine(content, lineEnd) {
+  const separator = content.startsWith("\r\n", lineEnd)
+    ? "\r\n"
+    : content.startsWith("\n", lineEnd)
+    ? "\n"
+    : undefined;
+  if (!separator) return undefined;
+  const contentStart = lineEnd + separator.length;
+  const nextLineEnd = content.slice(contentStart).search(/[\r\n]/);
+  return {
+    content: nextLineEnd < 0
+      ? content.slice(contentStart)
+      : content.slice(contentStart, contentStart + nextLineEnd),
+    separator,
+  };
 }
 
 function markdownFenceRanges(content) {
@@ -387,22 +459,17 @@ function markdownFenceRanges(content) {
 
 function parseCodeRabbitRangeEvidence(evidence, headSha) {
   const normalizedHeadSha = headSha.toLowerCase();
-  const tipIndex = evidence.statement.toLowerCase().indexOf(
-    evidence.tipToken,
-  );
-  const trailingStatement = tipIndex < 0
-    ? ""
-    : evidence.statement.slice(tipIndex + evidence.tipToken.length);
   const extraTokens = [
-    ...trailingStatement.matchAll(FULL_COMMIT_TOKEN_PATTERN),
+    ...evidence.trailingStatement.matchAll(FULL_COMMIT_TOKEN_PATTERN),
   ].map((match) => match[2].toLowerCase());
   const exactMatch = evidence.statement.match(CODERABBIT_REVIEW_RANGE_PATTERN);
   return {
     tipIsHead: evidence.tipToken === normalizedHeadSha,
     extraHasHead: extraTokens.includes(normalizedHeadSha),
-    isExactProduction: exactMatch?.[1]?.toLowerCase() === evidence.baseToken &&
+    isExactProduction:
+      exactMatch?.[1]?.toLowerCase() === evidence.baseSegment &&
       exactMatch?.[2]?.toLowerCase() === evidence.tipToken &&
-      FULL_COMMIT_PATTERN.test(evidence.baseToken) &&
+      FULL_COMMIT_PATTERN.test(evidence.baseSegment) &&
       extraTokens.length === 0,
   };
 }

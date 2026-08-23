@@ -1065,6 +1065,33 @@ describe("automated review gate", () => {
       "summary",
     );
 
+    const newerWhitespaceOnlyRangeStart = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between" +
+        " ".repeat(2_000),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:50Z",
+      updated_at: "2026-08-22T12:04:50Z",
+    });
+    const whitespaceOnlyStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerWhitespaceOnlyRangeStart],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - whitespaceOnlyStartedAt < 1_000,
+      "whitespace-only malformed range parsing must stay linear",
+    );
+
     const newerExactCurrentWithDiagnostic = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",
