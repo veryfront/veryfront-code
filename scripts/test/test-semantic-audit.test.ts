@@ -1413,6 +1413,26 @@ spread${depth}[key]("deep-spread.txt", "x");
       ).map((marker) => [marker.effect, marker.symbol]),
       [["filesystem-write", `spread${depth}.*`]],
     );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const mutationSpread0 = { run: () => undefined };
+${
+          Array.from(
+            { length: depth },
+            (_, index) =>
+              `const mutationSpread${
+                index + 1
+              } = { ...mutationSpread${index} };`,
+          ).join("\n")
+        }
+mutationSpread${depth}.run = Deno.writeTextFile;
+mutationSpread${depth}.run("deep-spread-mutation.txt", "x");
+`,
+        "src/deep-runtime-spread-mutation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", `mutationSpread${depth}.run`]],
+    );
   });
 
   it("retains runtime provenance stored through unknown computed properties", () => {
@@ -2364,6 +2384,104 @@ localValues.sort(() => 0);
         ["network", "conditionalValues.sort(comparator)"],
         ["filesystem-write", "computedValues.sort(comparator)"],
         ["network", "computedValues.sort(comparator)"],
+      ],
+    );
+  });
+
+  it("preserves every callable comparator and setter effect", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const maybe: boolean;
+const values = [2, 1];
+values.sort(maybe ? Deno.remove : fetch);
+values.sort(Deno.open);
+
+const conditionalSetter = Object.defineProperty({}, "path", {
+  set: maybe ? Deno.remove : fetch,
+});
+conditionalSetter.path = "conditional.txt";
+
+declare const unknownDescriptor: PropertyDescriptor;
+const unknownSetter = Object.defineProperty({}, "path", unknownDescriptor);
+unknownSetter.path = "unknown.txt";
+`,
+        "src/runtime-multi-effect-callables.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "values.sort(comparator)"],
+        ["network", "values.sort(comparator)"],
+        ["filesystem-read", "values.sort(comparator)"],
+        ["filesystem-write", "conditionalSetter.path setter"],
+        ["network", "conditionalSetter.path setter"],
+        ["browser", "unknownSetter.path setter"],
+        ["filesystem-read", "unknownSetter.path setter"],
+        ["filesystem-watch", "unknownSetter.path setter"],
+        ["filesystem-write", "unknownSetter.path setter"],
+        ["network", "unknownSetter.path setter"],
+        ["process", "unknownSetter.path setter"],
+        ["server", "unknownSetter.path setter"],
+        ["shared-cwd", "unknownSetter.path setter"],
+      ],
+    );
+  });
+
+  it("preserves receiver and prototype provenance through returned Object APIs", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+Object.freeze({ run: Deno.remove }).run("freeze.txt");
+Object.seal({ run: Deno.remove }).run("seal.txt");
+Object.preventExtensions({ run: Deno.remove }).run("prevent-extensions.txt");
+Object.setPrototypeOf({}, { run: Deno.remove }).run("prototype.txt");
+`,
+        "src/runtime-object-receiver-returns.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from({ length: 4 }, () => "filesystem-write"),
+    );
+  });
+
+  it("keeps exact array removal and bulk descriptor return provenance", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const popped = [Deno.remove, () => undefined].pop();
+popped();
+const shifted = [() => undefined, Deno.remove].shift();
+shifted();
+const [spliced] = [() => undefined, Deno.remove].splice(0, 1);
+spliced();
+const [negativeSpliced] = [Deno.remove, () => undefined].splice(-1, 1);
+negativeSpliced();
+`,
+        "src/runtime-exact-array-removal-results.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const defined = Object.defineProperties({}, {
+  safe: { value: () => undefined },
+  run: { value: Deno.remove },
+  nested: { get: () => ({ run: Deno.remove }) },
+  [1]: { value: Deno.remove },
+  ["computed"]: { get: () => Deno.remove },
+});
+defined.safe();
+defined.run("run.txt");
+defined.nested.run("nested.txt");
+defined[1]("numeric.txt");
+defined.computed("computed.txt");
+`,
+        "src/runtime-bulk-descriptor-return-values.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "defined.run"],
+        ["filesystem-write", "defined.nested.run"],
+        ["filesystem-write", "defined.1"],
+        ["filesystem-write", "defined.computed"],
       ],
     );
   });

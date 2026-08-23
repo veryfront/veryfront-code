@@ -1699,6 +1699,23 @@ function markersForRuntimeBinding(
   });
 }
 
+function callableRuntimeBindingMarkers(
+  binding: RuntimeBinding | undefined,
+  symbol: string,
+  line: number,
+): readonly SemanticMarker[] {
+  const effects = sortedUnique(
+    flattenRuntimeBindings(binding).flatMap((candidate) =>
+      candidate.kind === "effect"
+        ? [candidate.effect]
+        : candidate.kind === "filesystem-open"
+        ? [filesystemOpenEffect(undefined)]
+        : []
+    ),
+  );
+  return effects.map((effect) => ({ effect, line, symbol }));
+}
+
 function memberRuntimeEffectMarker(
   member: Node,
   line: number,
@@ -1865,19 +1882,12 @@ function memberSetterRuntimeEffectMarkers(
   const setterBinding = property === undefined
     ? runtimeUnknownPropertySetterBinding(objectBinding)
     : runtimePropertySetterBinding(objectBinding, property);
-  const effects = sortedUnique(
-    flattenRuntimeBindings(setterBinding).flatMap((candidate) =>
-      candidate.kind === "effect" ? [candidate.effect] : []
-    ),
-  );
-  if (effects.length === 0) return [];
   const chain = memberChain(member);
-  const symbol = `${chain?.join(".") ?? invocationSymbol(member)} setter`;
-  return effects.map((effect) => ({
-    effect,
+  return callableRuntimeBindingMarkers(
+    setterBinding,
+    `${chain?.join(".") ?? invocationSymbol(member)} setter`,
     line,
-    symbol,
-  }));
+  );
 }
 
 function isProcessModuleEnvDetail(
@@ -2610,18 +2620,12 @@ function mutationCallMarker(
       imports,
       scopes,
     );
-    const effects = sortedUnique(
-      flattenRuntimeBindings(comparatorBinding).flatMap((candidate) =>
-        candidate.kind === "effect" ? [candidate.effect] : []
-      ),
+    const markers = callableRuntimeBindingMarkers(
+      comparatorBinding,
+      `${calleeName}(comparator)`,
+      line,
     );
-    return effects.length > 0
-      ? effects.map((effect) => ({
-        effect,
-        line,
-        symbol: `${calleeName}(comparator)`,
-      }))
-      : undefined;
+    return markers.length > 0 ? markers : undefined;
   }
   const canonicalName = `${binding.receiver}.${binding.method}`;
   let setterMarkers: readonly SemanticMarker[] = [];
@@ -4568,13 +4572,15 @@ function mutationCallResultRuntimeBinding(
       (invocation.binding.method === "pop" ||
         invocation.binding.method === "shift")
     ) {
-      const exactLength = exactRuntimeArrayLength(targetBinding);
-      const removed = targetBinding && exactLength !== undefined
-        ? exactLength === 0 ? undefined : runtimePropertyBinding(
-          targetBinding,
-          invocation.binding.method === "pop" ? String(exactLength - 1) : "0",
-        )
-        : targetBinding
+      const exactRemoved = exactArrayElementRemovalResult(
+        invocation.binding.method,
+        targetBinding,
+      );
+      if (exactRemoved.exact) {
+        if (exactRemoved.binding) results.push(exactRemoved.binding);
+        continue;
+      }
+      const removed = targetBinding
         ? runtimeUnknownPropertyResolution(targetBinding).binding
         : undefined;
       if (removed) results.push(removed);
@@ -4584,6 +4590,14 @@ function mutationCallResultRuntimeBinding(
       invocation.binding.receiver === "Array" &&
       invocation.binding.method === "splice"
     ) {
+      const exactRemoved = exactArraySpliceResult(
+        targetBinding,
+        invocation.args,
+      );
+      if (exactRemoved) {
+        results.push(exactRemoved);
+        continue;
+      }
       const removed = targetBinding
         ? runtimeUnknownPropertyResolution(targetBinding).binding
         : undefined;
@@ -4703,6 +4717,70 @@ function mutationCallResultRuntimeBinding(
     results.push(result);
   }
   return unionRuntimeBindings(results);
+}
+
+function exactArrayElementRemovalResult(
+  method: "pop" | "shift",
+  binding: RuntimeBinding | undefined,
+): { readonly exact: boolean; readonly binding?: RuntimeBinding } {
+  const length = exactRuntimeArrayLength(binding);
+  if (length === undefined || !binding) return { exact: false };
+  if (length === 0) return { exact: true };
+  const index = method === "pop" ? length - 1 : 0;
+  return {
+    exact: true,
+    binding: runtimePropertyResolution(binding, String(index)).binding,
+  };
+}
+
+function exactArraySpliceResult(
+  binding: RuntimeBinding | undefined,
+  args: readonly unknown[],
+): RuntimeBinding | undefined {
+  const length = exactRuntimeArrayLength(binding);
+  const startValue = finiteNumericLiteral(args[0]);
+  if (length === undefined || !binding || startValue === undefined) {
+    return undefined;
+  }
+  const integerStart = Math.trunc(startValue);
+  const start = integerStart < 0
+    ? Math.max(length + integerStart, 0)
+    : Math.min(integerStart, length);
+  let deleteCount = length - start;
+  if (args.length > 1) {
+    const deleteValue = finiteNumericLiteral(args[1]);
+    if (deleteValue === undefined) return undefined;
+    deleteCount = Math.min(
+      Math.max(Math.trunc(deleteValue), 0),
+      length - start,
+    );
+  }
+  const properties = new Map<string, RuntimeBinding>();
+  for (let index = 0; index < deleteCount; index++) {
+    const removed = runtimePropertyResolution(
+      binding,
+      String(start + index),
+    ).binding;
+    if (removed) properties.set(String(index), removed);
+  }
+  return {
+    kind: "namespace-object",
+    shape: "array",
+    exactArrayLength: deleteCount,
+    properties,
+  };
+}
+
+function finiteNumericLiteral(value: unknown): number | undefined {
+  const literal = unwrapExpression(value);
+  const number = literal?.type === "NumericLiteral"
+    ? literal.value as number
+    : literal?.type === "UnaryExpression" && literal.operator === "-" &&
+        isNode(literal.argument) && literal.argument.type === "NumericLiteral"
+    ? -(literal.argument.value as number)
+    : undefined;
+  if (number === undefined) return undefined;
+  return Number.isFinite(number) ? number : undefined;
 }
 
 function appendRuntimeMutationResultProperty(
@@ -4849,20 +4927,25 @@ function localMutationResultAssignedEntries(
   if (canonicalName === "Object.defineProperties") {
     const descriptors = unwrapExpression(args[1]);
     if (descriptors?.type === "ObjectExpression") {
-      return (Array.isArray(descriptors.properties)
+      const properties = Array.isArray(descriptors.properties)
         ? descriptors.properties
-        : []).map((property) => {
-          const descriptor = isNode(property) &&
-              property.type === "ObjectProperty"
-            ? property.value
-            : undefined;
-          return {
-            property: isNode(property)
-              ? staticObjectPropertyName(property)
-              : undefined,
-            expression: runtimePropertyExpression(descriptor, "value"),
-          };
+        : [];
+      const entries: Array<{
+        readonly property: string;
+        readonly expression: unknown;
+      }> = [];
+      for (
+        const property of properties
+      ) {
+        if (!isNode(property) || property.type !== "ObjectProperty") break;
+        const propertyName = staticObjectPropertyName(property);
+        if (propertyName === undefined) break;
+        entries.push({
+          property: propertyName,
+          expression: runtimePropertyExpression(property.value, "value"),
         });
+      }
+      if (entries.length === properties.length) return entries;
     }
   }
   return localMutationAssignedEntries(canonicalName, args);
@@ -7675,44 +7758,65 @@ function runtimePropertyHasCrossFunctionMutation(
   binding: RuntimeBinding | undefined,
   path: readonly string[],
 ): boolean {
-  const [property, ...rest] = path;
-  return flattenRuntimeBindings(binding).some((candidate) => {
-    if (candidate.kind !== "namespace-object") return false;
-    if (candidate.propertyOperations) {
-      return candidate.propertyOperations.some((operation) => {
-        if (operation.kind === "spread") {
-          return runtimePropertyHasCrossFunctionMutation(
-            operation.binding,
-            path,
-          );
-        }
-        if (operation.kind === "define-unknown") {
-          const propertyIndex = runtimeArrayIndex(property);
-          if (
-            operation.minimumArrayIndex !== undefined &&
-            (propertyIndex === undefined ||
-              propertyIndex < operation.minimumArrayIndex)
-          ) {
-            return false;
+  if (path.length === 0) return false;
+  const pending: Array<{
+    readonly binding: RuntimeBinding;
+    readonly pathIndex: number;
+  }> = flattenRuntimeBindings(binding).map((candidate) => ({
+    binding: candidate,
+    pathIndex: 0,
+  }));
+  const visited = new Map<RuntimeBinding, Set<number>>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    for (const candidate of flattenRuntimeBindings(current.binding)) {
+      if (candidate.kind !== "namespace-object") continue;
+      const visitedIndexes = visited.get(candidate) ?? new Set<number>();
+      if (visitedIndexes.has(current.pathIndex)) continue;
+      visitedIndexes.add(current.pathIndex);
+      visited.set(candidate, visitedIndexes);
+      const property = path[current.pathIndex];
+      const hasRest = current.pathIndex + 1 < path.length;
+      if (candidate.propertyOperations) {
+        for (const operation of candidate.propertyOperations) {
+          if (operation.kind === "spread") {
+            pending.push({
+              binding: operation.binding,
+              pathIndex: current.pathIndex,
+            });
+            continue;
           }
-          return operation.crossesFunctionBoundary === true ||
-            (rest.length > 0 &&
-              runtimePropertyHasCrossFunctionMutation(
-                operation.binding,
-                rest,
-              ));
+          if (operation.kind === "define-unknown") {
+            const propertyIndex = runtimeArrayIndex(property);
+            if (
+              operation.minimumArrayIndex !== undefined &&
+              (propertyIndex === undefined ||
+                propertyIndex < operation.minimumArrayIndex)
+            ) continue;
+          } else if (operation.name !== property) {
+            continue;
+          }
+          if (operation.crossesFunctionBoundary === true) return true;
+          if (hasRest && operation.binding) {
+            pending.push({
+              binding: operation.binding,
+              pathIndex: current.pathIndex + 1,
+            });
+          }
         }
-        if (operation.name !== property) return false;
-        return operation.crossesFunctionBoundary === true ||
-          (rest.length > 0 &&
-            runtimePropertyHasCrossFunctionMutation(operation.binding, rest));
-      });
+        continue;
+      }
+      const nested = candidate.properties.get(property);
+      if (hasRest && nested) {
+        pending.push({
+          binding: nested,
+          pathIndex: current.pathIndex + 1,
+        });
+      }
     }
-    return rest.length > 0 && runtimePropertyHasCrossFunctionMutation(
-      candidate.properties.get(property),
-      rest,
-    );
-  });
+  }
+  return false;
 }
 
 function runtimeBindingKey(binding: RuntimeBinding): string {
