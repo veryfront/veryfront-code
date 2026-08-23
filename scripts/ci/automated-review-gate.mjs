@@ -214,7 +214,7 @@ async function classifyAutomatedReviewEvent(
     CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN.test(line)
   );
   const rangeCandidateHasCurrentTip = rangeCandidates?.some((line) =>
-    lastFullCommitToken(line)?.toLowerCase() === headSha.toLowerCase()
+    rangeCandidateReferencesTip(line, headSha)
   );
   const reviewedTips = rangeCandidates?.map((line) =>
     line.match(CODERABBIT_REVIEW_RANGE_PATTERN)?.[2]
@@ -265,12 +265,14 @@ function codeRabbitRecentReview(body) {
   return end < 0 ? undefined : body.slice(contentStart, end);
 }
 
-function lastFullCommitToken(value) {
-  let lastToken;
-  for (const match of value.matchAll(FULL_COMMIT_TOKEN_PATTERN)) {
-    lastToken = match[1];
-  }
-  return lastToken;
+function rangeCandidateReferencesTip(value, headSha) {
+  const tokens = [...value.matchAll(FULL_COMMIT_TOKEN_PATTERN)].map((match) =>
+    match[1]?.toLowerCase()
+  );
+  const normalizedHeadSha = headSha.toLowerCase();
+  if (tokens.length === 1) return tokens[0] === normalizedHeadSha;
+  if (tokens[1] === normalizedHeadSha) return true;
+  return tokens.slice(2).includes(normalizedHeadSha);
 }
 
 /** Publish the current automated-review decision on the exact PR head SHA. */

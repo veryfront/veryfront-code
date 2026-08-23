@@ -497,6 +497,7 @@ describe("automated review gate", () => {
       const malformedCurrentRange of [
         `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
         codeRabbitReviewRange() + " but this is not the final review.",
+        codeRabbitReviewRange() + ` Later requested ${STALE_SHA}.`,
         codeRabbitReviewRange().replace("Reviewing", "reviewing"),
         codeRabbitReviewRange().replace("files that", "files  that"),
         codeRabbitReviewRange().replace(HEAD_SHA, HEAD_SHA.toUpperCase()),
@@ -530,7 +531,7 @@ describe("automated review gate", () => {
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
         codeRabbitReviewRange(HEAD_SHA, STALE_SHA) +
-        " but this is not the final review.",
+        ` but this is not the final review. Later requested ${STALE_SHA}.`,
         "<!-- recent_review_end -->",
       ].join("\n"),
       created_at: "2026-08-22T12:03:00Z",
