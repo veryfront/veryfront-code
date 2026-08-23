@@ -16,9 +16,10 @@ export function formatSemanticAuditFailure(
   errors: readonly string[],
   candidateCount: number,
 ): string {
-  const staleOnly = errors.length > 0 && errors.every((error) =>
-    error.startsWith("stale semantic disposition must be removed:")
-  );
+  const staleOnly = errors.length > 0 &&
+    errors.every((error) =>
+      error.startsWith("stale semantic disposition must be removed:")
+    );
   if (staleOnly) {
     return [
       `Semantic unit-boundary debt shrank to ${candidateCount} file(s).`,
