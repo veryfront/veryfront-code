@@ -248,6 +248,23 @@ describe("automated review gate", () => {
       }, HEAD_SHA),
       undefined,
     );
+
+    const newerUnmarkedCurrentSkip = codeRabbitSummary({
+      body: `Review skipped for current commit ${HEAD_SHA}.`,
+      created_at: "2026-08-22T12:06:00Z",
+      updated_at: "2026-08-22T12:06:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment(), newerUnmarkedCurrentSkip],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
   });
 
   it("makes the newest CodeRabbit summary authoritative", async () => {
@@ -264,6 +281,24 @@ describe("automated review gate", () => {
     assertEquals(
       await findAutomatedReview(
         { reviews: [], comments: [codeRabbitSummary(), skipped] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const undatedSkip = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "Review limit reached. This review was skipped.",
+        `Requested commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: undefined,
+      updated_at: undefined,
+    });
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [codeRabbitSummary(), undatedSkip] },
         HEAD_SHA,
       ),
       undefined,

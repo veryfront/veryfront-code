@@ -2375,6 +2375,8 @@ declare const maybe: boolean;
 declare function loadSource(): object;
 const source = maybe ? { run: Deno.cwd } : loadSource();
 Object.assign({}, source).run();
+const box = { source: maybe ? { run: Deno.cwd } : loadSource() };
+Object.assign({}, box.source).run();
 `,
       "src/runtime-object-assign-partial-source.test.ts",
     ).map((marker) => marker.effect);
@@ -2460,10 +2462,22 @@ const deleteTarget = {};
 Object.defineProperty(deleteTarget, "run", { value: Deno.remove });
 Reflect.deleteProperty(deleteTarget, "run");
 deleteTarget.run("delete.txt");
+
+const defineTarget = {};
+Object.defineProperty(defineTarget, "run", { value: Deno.remove });
+Reflect.defineProperty(defineTarget, "run", { value: () => undefined });
+defineTarget.run("define.txt");
+
+const assignTarget = {};
+Object.defineProperty(assignTarget, "run", { value: Deno.remove });
+try {
+  Object.assign(assignTarget, { run: () => undefined });
+} catch {}
+assignTarget.run("assign.txt");
 `,
         "src/runtime-reflect-failed-mutations.test.ts",
       ).map((marker) => marker.effect),
-      ["filesystem-write", "filesystem-write"],
+      Array.from({ length: 4 }, () => "filesystem-write"),
     );
   });
 
@@ -2551,6 +2565,11 @@ const reflectedDelete = { run: () => undefined };
 Object.setPrototypeOf(reflectedDelete, { run: Deno.remove });
 Reflect.deleteProperty(reflectedDelete, "run");
 reflectedDelete.run("reflected-delete-prototype.txt");
+
+const replacedPrototype = {};
+Object.setPrototypeOf(replacedPrototype, { run: Deno.remove });
+Object.setPrototypeOf(replacedPrototype, null);
+replacedPrototype.run();
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
@@ -2633,6 +2652,7 @@ Object.defineProperty(unread, "path", { set: Deno.remove });
 unread.path;
 
 declare const unknownProperty: string;
+declare const maybe: boolean;
 const multiple = {};
 Object.defineProperty(multiple, "path", { set: Deno.remove });
 Object.defineProperty(multiple, "url", { set: fetch });
@@ -3042,6 +3062,9 @@ const hiddenReturn = Object.defineProperty({}, "run", {
 });
 Object.assign({}, hiddenReturn).run();
 
+const hiddenPreserved = { run: Deno.remove };
+Object.assign(hiddenPreserved, hiddenReturn).run("preserved.txt");
+
 const madeEnumerable = {};
 Object.defineProperty(madeEnumerable, "run", {
   configurable: true,
@@ -3064,6 +3087,7 @@ returned.path;
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "Object.assign(enumerableSource getter)"],
         ["shared-cwd", "enumerableSource.* getter"],
+        ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "returned.path getter"],
@@ -3149,6 +3173,82 @@ Object.assign({}, inherited).run("inherited-assign.txt");
         "src/runtime-inherited-descriptor-enumerability.test.ts",
       ),
       [],
+    );
+  });
+
+  it("distinguishes new own descriptors from inherited and blocked definitions", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = { run: Deno.remove };
+
+const defined = Object.setPrototypeOf({}, prototype);
+Object.defineProperty(defined, "run", {});
+defined.run("defined.txt");
+
+const attributed = Object.setPrototypeOf({}, prototype);
+Object.defineProperty(attributed, "run", { enumerable: true });
+attributed.run("attributed.txt");
+
+const reflected = Object.setPrototypeOf({}, prototype);
+Reflect.defineProperty(reflected, "run", {});
+reflected.run("reflected.txt");
+
+const definedMany = Object.setPrototypeOf({}, prototype);
+Object.defineProperties(definedMany, { run: {} });
+definedMany.run("defined-many.txt");
+
+const own = { run: Deno.remove };
+Object.defineProperty(own, "run", { enumerable: true });
+own.run("own.txt");
+
+const blockedObject = Object.setPrototypeOf(
+  Object.preventExtensions({}),
+  prototype,
+);
+try {
+  Object.defineProperty(blockedObject, "run", {});
+} catch {}
+blockedObject.run("blocked-object.txt");
+
+const blockedReflect = Object.setPrototypeOf(
+  Object.preventExtensions({}),
+  prototype,
+);
+Reflect.defineProperty(blockedReflect, "run", {});
+blockedReflect.run("blocked-reflect.txt");
+
+const blockedInPlace = Object.setPrototypeOf({}, prototype);
+Object.preventExtensions(blockedInPlace);
+try {
+  Object.defineProperty(blockedInPlace, "run", {});
+} catch {}
+blockedInPlace.run("blocked-in-place.txt");
+
+const blockedReflectInPlace = Object.setPrototypeOf({}, prototype);
+Reflect.preventExtensions(blockedReflectInPlace);
+Reflect.defineProperty(blockedReflectInPlace, "run", {});
+blockedReflectInPlace.run("blocked-reflect-in-place.txt");
+
+const blockedMany = Object.setPrototypeOf(
+  Object.preventExtensions({}),
+  prototype,
+);
+try {
+  Object.defineProperties(blockedMany, { run: {} });
+} catch {}
+blockedMany.run("blocked-many.txt");
+`,
+        "src/runtime-descriptor-ownness.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "own.run"],
+        ["filesystem-write", "blockedObject.run"],
+        ["filesystem-write", "blockedReflect.run"],
+        ["filesystem-write", "blockedInPlace.run"],
+        ["filesystem-write", "blockedReflectInPlace.run"],
+        ["filesystem-write", "blockedMany.run"],
+      ],
     );
   });
 

@@ -354,6 +354,13 @@ const LOCAL_PROPERTY_MUTATORS = new Set([
   "Reflect.setPrototypeOf",
 ]);
 
+const OBJECT_EXTENSIBILITY_MUTATORS = new Set([
+  "Object.freeze",
+  "Object.preventExtensions",
+  "Object.seal",
+  "Reflect.preventExtensions",
+]);
+
 const PROCESS_ENV_METHODS = new Set([
   "delete",
   "get",
@@ -620,6 +627,7 @@ type NamespacePropertyOperation =
     readonly crossesFunctionBoundary?: boolean;
     readonly minimumArrayIndex?: number;
     readonly fallbackOnly?: boolean;
+    readonly replacesFallback?: boolean;
     readonly enumerable?: boolean;
     readonly configurable?: boolean;
   };
@@ -665,6 +673,7 @@ type RuntimeBinding =
     readonly kind: "namespace-object";
     readonly shape?: "array" | "object";
     readonly exactArrayLength?: number;
+    readonly extensible?: boolean;
     readonly properties: ReadonlyMap<string, RuntimeBinding>;
     readonly propertyOperations?: readonly NamespacePropertyOperation[];
   }
@@ -3663,6 +3672,7 @@ function emptyRuntimeNamespaceBinding(): Extract<
 > {
   return {
     kind: "namespace-object",
+    extensible: true,
     properties: new Map(),
     propertyOperations: [],
   };
@@ -4238,6 +4248,9 @@ function mergeRuntimeNamespaceBindings(
   return {
     kind: "namespace-object",
     shape: existing.shape === incoming.shape ? existing.shape : undefined,
+    extensible: existing.extensible === incoming.extensible
+      ? existing.extensible
+      : undefined,
     properties,
   };
 }
@@ -4608,14 +4621,19 @@ function bindRuntimeCallMutation(
       }
       continue;
     }
-    if (!LOCAL_PROPERTY_MUTATORS.has(canonicalName)) continue;
     const target = invocation.args[0];
+    if (OBJECT_EXTENSIBILITY_MUTATORS.has(canonicalName)) {
+      bindRuntimeExtensibilityMutation(target, imports, scopes);
+      continue;
+    }
+    if (!LOCAL_PROPERTY_MUTATORS.has(canonicalName)) continue;
     if (isPrototypeMutation(canonicalName)) {
       bindRuntimePrototypeMutation(
         target,
         invocation.args[1],
         imports,
         scopes,
+        canonicalName === "Object.setPrototypeOf",
       );
       continue;
     }
@@ -4635,6 +4653,7 @@ function bindRuntimeCallMutation(
         canonicalName,
         target,
         literalPropertyName(invocation.args[1]),
+        invocation.args[2],
         imports,
         scopes,
       );
@@ -4667,7 +4686,7 @@ function bindRuntimeCallMutation(
       invocation.args,
     );
     if (canonicalName === "Object.assign" && assigned.length === 0) continue;
-    if (assigned.length === 0) {
+    if (assigned.length === 0 && descriptorMutations.length === 0) {
       bindRuntimeUnknownPropertyMutation(
         target,
         undefined,
@@ -4725,19 +4744,53 @@ function bindRuntimeCallMutation(
   }
 }
 
+function bindRuntimeExtensibilityMutation(
+  target: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): void {
+  for (
+    const alias of runtimeNamespaceAliasTargetsForExpression(
+      target,
+      imports,
+      scopes,
+    )
+  ) {
+    const existing = alias.scope.runtimeBindings.get(alias.root);
+    if (!existing) continue;
+    alias.scope.runtimeBindings.set(
+      alias.root,
+      withRuntimeExtensibility(existing, false),
+    );
+    if (
+      alias.root !== THIS_RUNTIME_ROOT &&
+      alias.scope.classRuntimeBindings?.name === alias.root
+    ) {
+      syncClassStaticRuntimeBinding(alias.scope);
+    }
+  }
+}
+
 function runtimePropertyMutationAllowsClearing(
   canonicalName: string,
   target: unknown,
   property: string | undefined,
+  descriptor: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): boolean {
-  if (canonicalName !== "Reflect.defineProperty") return true;
+  if (
+    canonicalName !== "Object.defineProperty" &&
+    canonicalName !== "Reflect.defineProperty"
+  ) return true;
   if (property === undefined) return false;
   const targetBinding = runtimeBindingForExpression(target, imports, scopes);
-  return targetBinding !== undefined &&
-    runtimePropertyResolution(targetBinding, property, true).configurable ===
-      true;
+  if (!targetBinding) return false;
+  return runtimeDescriptorDefinitionAllowsClearing(
+    targetBinding,
+    property,
+    descriptor,
+  );
 }
 
 function bindRuntimeArrayShapeMutation(
@@ -4909,6 +4962,13 @@ function mutationCallResultRuntimeBinding(
     let result = targetBinding ?? emptyRuntimeNamespaceBinding();
     const canonicalName =
       `${invocation.binding.receiver}.${invocation.binding.method}`;
+    if (
+      canonicalName === "Object.freeze" ||
+      canonicalName === "Object.preventExtensions" ||
+      canonicalName === "Object.seal"
+    ) {
+      result = withRuntimeExtensibility(result, false);
+    }
     const descriptorMutations = invocation.binding.receiver === "Object"
       ? localMutationAccessorDescriptors(canonicalName, invocation.args).map(
         (accessor) => ({
@@ -4939,7 +4999,11 @@ function mutationCallResultRuntimeBinding(
             imports,
             scopes,
           ),
-          { preservesPrevious: false, fallbackOnly: true },
+          {
+            preservesPrevious: false,
+            fallbackOnly: true,
+            replacesFallback: true,
+          },
         );
       } else if (canonicalName === "Object.assign") {
         for (const source of invocation.args.slice(1)) {
@@ -5205,6 +5269,7 @@ interface RuntimeMutationResultPropertyOptions {
   readonly configurable?: boolean;
   readonly enumerable?: boolean;
   readonly fallbackOnly?: boolean;
+  readonly replacesFallback?: boolean;
 }
 
 function appendRuntimeMutationResultProperty(
@@ -5213,7 +5278,10 @@ function appendRuntimeMutationResultProperty(
   binding: RuntimeBinding | undefined,
   options: RuntimeMutationResultPropertyOptions,
 ): RuntimeBinding {
-  if (!binding && (property === undefined || !options.allowClearing)) {
+  if (
+    !binding && (property === undefined || !options.allowClearing) &&
+    !options.replacesFallback
+  ) {
     return existing;
   }
   return appendRuntimePropertyOperation(
@@ -5225,6 +5293,7 @@ function appendRuntimeMutationResultProperty(
         defaultMayRun: true,
         crossesFunctionBoundary: false,
         fallbackOnly: options.fallbackOnly,
+        replacesFallback: options.replacesFallback,
       }
       : {
         kind: "define",
@@ -5319,6 +5388,8 @@ function localMutationAssignedEntries(
     canonicalName === "Object.defineProperty" ||
     canonicalName === "Reflect.defineProperty"
   ) {
+    const fields = runtimeDescriptorDefinedFields(args[2]);
+    if (fields && !fields.has("value")) return [];
     return [{
       property: literalPropertyName(args[1]),
       expression: runtimeDescriptorValueExpression(args[2]),
@@ -5453,20 +5524,31 @@ function bindRuntimeLiteralDescriptorMutations(
       ? staticObjectPropertyName(property)
       : undefined;
     const assignedExpression = runtimeDescriptorValueExpression(descriptor);
+    const targetBinding = runtimeBindingForExpression(target, imports, scopes);
     const attributes = runtimeDescriptorMutationAttributes(
-      runtimeBindingForExpression(target, imports, scopes),
+      targetBinding,
       propertyName,
       descriptor,
     );
-    clearRuntimeDescriptorProperty(
-      target,
-      propertyName,
-      descriptor,
-      imports,
-      scopes,
-      attributes,
-    );
-    if (propertyName) {
+    if (
+      targetBinding && propertyName &&
+      runtimeDescriptorDefinitionAllowsClearing(
+        targetBinding,
+        propertyName,
+        descriptor,
+      )
+    ) {
+      clearRuntimeDescriptorProperty(
+        target,
+        propertyName,
+        descriptor,
+        imports,
+        scopes,
+        attributes,
+      );
+    }
+    const fields = runtimeDescriptorDefinedFields(descriptor);
+    if (propertyName && (!fields || fields.has("value"))) {
       bindRuntimeNamedPropertyMutation(
         target,
         propertyName,
@@ -5476,7 +5558,7 @@ function bindRuntimeLiteralDescriptorMutations(
         attributes.enumerable,
         attributes.configurable,
       );
-    } else {
+    } else if (!propertyName) {
       bindRuntimeUnknownPropertyMutation(
         target,
         assignedExpression,
@@ -5506,6 +5588,7 @@ function bindRuntimePrototypeMutation(
   prototype: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  replaceFallback: boolean,
 ): void {
   const propertyExpression = runtimeUnknownPropertyExpression(prototype);
   const binding = runtimePrototypeMutationBinding(
@@ -5519,7 +5602,7 @@ function bindRuntimePrototypeMutation(
     propertyExpression,
     imports,
     scopes,
-    { fallbackOnly: true },
+    { fallbackOnly: true, replacesFallback: replaceFallback },
   );
 }
 
@@ -5629,6 +5712,59 @@ function runtimeDescriptorMutationAttributes(
     configurable: attribute("configurable"),
     enumerable: attribute("enumerable"),
   };
+}
+
+function runtimeDescriptorCreatesOwnProperty(
+  target: RuntimeBinding,
+  property: string,
+  descriptor: unknown,
+): boolean {
+  return runtimeDescriptorDefinedFields(descriptor) !== undefined &&
+    runtimeOwnPropertyDefinitelyAbsent(target, property) &&
+    runtimeBindingExtensibility(target) === true;
+}
+
+function runtimeDescriptorDefinitionAllowsClearing(
+  target: RuntimeBinding,
+  property: string,
+  descriptor: unknown,
+): boolean {
+  return runtimeDescriptorCreatesOwnProperty(target, property, descriptor) ||
+    runtimePropertyResolution(target, property, true).configurable === true;
+}
+
+function runtimeBindingExtensibility(
+  binding: RuntimeBinding,
+): boolean | undefined {
+  if (binding.kind === "partial") return undefined;
+  if (binding.kind === "one-of") {
+    const values = binding.bindings.map(runtimeBindingExtensibility);
+    return values.every((value) => value === values[0]) ? values[0] : undefined;
+  }
+  return binding.kind === "namespace-object" ? binding.extensible : undefined;
+}
+
+function withRuntimeExtensibility(
+  binding: RuntimeBinding,
+  extensible: boolean,
+): RuntimeBinding {
+  if (binding.kind === "partial") {
+    return {
+      kind: "partial",
+      binding: withRuntimeExtensibility(binding.binding, extensible),
+    };
+  }
+  if (binding.kind === "one-of") {
+    return {
+      kind: "one-of",
+      bindings: binding.bindings.map((candidate) =>
+        withRuntimeExtensibility(candidate, extensible)
+      ),
+    };
+  }
+  return binding.kind === "namespace-object"
+    ? { ...binding, extensible }
+    : binding;
 }
 
 function runtimeOwnPropertyDefinitelyAbsent(
@@ -5885,6 +6021,9 @@ function retainedRuntimeDescriptorBinding(
   );
   const changesEnumerable = fields.has("enumerable");
   const changesConfigurable = fields.has("configurable");
+  if (runtimeDescriptorCreatesOwnProperty(target, property, descriptor)) {
+    return { changed: true };
+  }
   if (!changesProperty && !changesEnumerable && !changesConfigurable) {
     return { changed: false };
   }
@@ -6210,6 +6349,7 @@ interface RuntimeMemberMutationOptions {
   readonly enumerable?: boolean;
   readonly fallbackOnly?: boolean;
   readonly minimumArrayIndex?: number;
+  readonly replacesFallback?: boolean;
 }
 
 function bindRuntimeNamedPropertyMutationBinding(
@@ -6415,6 +6555,7 @@ function bindRuntimeMemberAssignmentTarget(
       aliasTargets,
       options.minimumArrayIndex,
       options.fallbackOnly === true,
+      options.replacesFallback === true,
       options.enumerable,
       options.configurable,
     )
@@ -6837,6 +6978,7 @@ function assignUnknownRuntimeProperty(
   aliasTargets: readonly RuntimeAliasTarget[] = [],
   minimumArrayIndex?: number,
   fallbackOnly = false,
+  replacesFallback = false,
   enumerable?: boolean,
   configurable?: boolean,
 ): RuntimeBinding {
@@ -6851,6 +6993,7 @@ function assignUnknownRuntimeProperty(
       aliasTargets,
       minimumArrayIndex,
       fallbackOnly,
+      replacesFallback,
       enumerable,
       configurable,
     );
@@ -6864,6 +7007,7 @@ function assignUnknownRuntimeProperty(
     crossesFunctionBoundary,
     minimumArrayIndex,
     fallbackOnly,
+    replacesFallback,
     enumerable,
     configurable,
   });
@@ -6873,6 +7017,19 @@ function appendRuntimePropertyOperation(
   existing: RuntimeBinding | undefined,
   operation: NamespacePropertyOperation,
 ): RuntimeBinding {
+  if (
+    existing?.kind === "namespace-object" &&
+    existing.propertyOperations && operation.kind === "define-unknown" &&
+    operation.replacesFallback === true
+  ) {
+    existing = {
+      ...existing,
+      propertyOperations: existing.propertyOperations.filter((candidate) =>
+        candidate.kind !== "define-unknown" ||
+        candidate.fallbackOnly !== true
+      ),
+    };
+  }
   if (existing?.kind === "namespace-object" && existing.propertyOperations) {
     const previous = existing.propertyOperations.at(-1);
     if (
@@ -6880,12 +7037,15 @@ function appendRuntimePropertyOperation(
       operation.kind === "define-unknown" &&
       previous.minimumArrayIndex === operation.minimumArrayIndex &&
       previous.fallbackOnly === operation.fallbackOnly &&
-      previous.enumerable === operation.enumerable
+      previous.replacesFallback === operation.replacesFallback &&
+      previous.enumerable === operation.enumerable &&
+      previous.configurable === operation.configurable
     ) {
       return {
         kind: "namespace-object",
         shape: existing.shape,
         exactArrayLength: updatedRuntimeArrayLength(existing, operation),
+        extensible: existing.extensible,
         properties: existing.properties,
         propertyOperations: [
           ...existing.propertyOperations.slice(0, -1),
@@ -6906,7 +7066,9 @@ function appendRuntimePropertyOperation(
               operation.crossesFunctionBoundary === true,
             minimumArrayIndex: operation.minimumArrayIndex,
             fallbackOnly: operation.fallbackOnly,
+            replacesFallback: operation.replacesFallback,
             enumerable: operation.enumerable,
+            configurable: operation.configurable,
           },
         ],
       };
@@ -6915,6 +7077,7 @@ function appendRuntimePropertyOperation(
       kind: "namespace-object",
       shape: existing.shape,
       exactArrayLength: updatedRuntimeArrayLength(existing, operation),
+      extensible: existing.extensible,
       properties: existing.properties,
       propertyOperations: [...existing.propertyOperations, operation],
     };
@@ -6924,6 +7087,9 @@ function appendRuntimePropertyOperation(
     shape: existing?.kind === "namespace-object" ? existing.shape : undefined,
     exactArrayLength: existing?.kind === "namespace-object"
       ? updatedRuntimeArrayLength(existing, operation)
+      : undefined,
+    extensible: existing?.kind === "namespace-object"
+      ? existing.extensible
       : undefined,
     properties: new Map(),
     propertyOperations: existing
@@ -7687,6 +7853,7 @@ function arrayLiteralRuntimeBinding(
     kind: "namespace-object",
     shape: "array",
     exactArrayLength: nextIndex,
+    extensible: true,
     properties,
     propertyOperations,
   };
@@ -7825,6 +7992,7 @@ function objectLiteralRuntimeBinding(
   return {
     kind: "namespace-object",
     shape: "object",
+    extensible: true,
     properties,
     propertyOperations,
   };
@@ -8553,6 +8721,7 @@ function runtimePropertyResolution(
       readonly binding: RuntimeBinding;
       readonly ownEnumerableOnly: boolean;
     }
+    | { readonly kind: "combine-partial" }
     | { readonly kind: "combine-one-of"; readonly count: number }
     | {
       readonly kind: "combine-namespace";
@@ -8572,12 +8741,22 @@ function runtimePropertyResolution(
   while (frames.length > 0) {
     const frame = frames.pop();
     if (!frame) continue;
+    if (frame.kind === "combine-partial") {
+      const resolution = resolutions.pop() ?? { defaultMayRun: true };
+      resolutions.push({
+        ...resolution,
+        binding: resolution.binding
+          ? { kind: "partial", binding: resolution.binding }
+          : undefined,
+      });
+      continue;
+    }
     if (frame.kind === "combine-one-of") {
       const candidates = frame.count === 0
         ? []
         : resolutions.splice(-frame.count, frame.count);
       resolutions.push({
-        binding: unionRuntimeBindings(
+        binding: unionRuntimeBindingsPreservingPartial(
           candidates.flatMap((resolution) => resolution.binding ?? []),
         ),
         aliasTargets: uniqueRuntimeAliasTargets(
@@ -8622,7 +8801,7 @@ function runtimePropertyResolution(
               };
               continue;
             }
-            const operationBinding = unionRuntimeBindings(
+            const operationBinding = unionRuntimeBindingsPreservingPartial(
               [
                 operation.binding,
                 currentRuntimeAliasBinding(operation.aliasTargets),
@@ -8630,7 +8809,7 @@ function runtimePropertyResolution(
             );
             resolution = operation.preservesPrevious
               ? {
-                binding: unionRuntimeBindings(
+                binding: unionRuntimeBindingsPreservingPartial(
                   [resolution.binding, operationBinding].flatMap(
                     (candidate) => candidate ?? [],
                   ),
@@ -8680,7 +8859,7 @@ function runtimePropertyResolution(
           defaultMayRun: true,
         };
         resolution = {
-          binding: unionRuntimeBindings(
+          binding: unionRuntimeBindingsPreservingPartial(
             [
               spreadResolution.binding,
               spreadResolution.defaultMayRun ? resolution.binding : undefined,
@@ -8714,7 +8893,7 @@ function runtimePropertyResolution(
         mutation
           ? {
             ...resolution,
-            binding: unionRuntimeBindings(
+            binding: unionRuntimeBindingsPreservingPartial(
               [resolution.binding, mutation].flatMap((candidate) =>
                 candidate ?? []
               ),
@@ -8723,6 +8902,15 @@ function runtimePropertyResolution(
           : resolution,
         includeSetters,
       ));
+      continue;
+    }
+    if (frame.binding.kind === "partial") {
+      frames.push({ kind: "combine-partial" });
+      frames.push({
+        kind: "resolve",
+        binding: frame.binding.binding,
+        ownEnumerableOnly: frame.ownEnumerableOnly,
+      });
       continue;
     }
     if (frame.binding.kind === "one-of") {
@@ -8786,7 +8974,7 @@ function applyRuntimeUnknownPropertyOperation(
     return resolution;
   }
   return {
-    binding: unionRuntimeBindings(
+    binding: unionRuntimeBindingsPreservingPartial(
       [
         resolution.binding,
         operation.binding,
@@ -8907,6 +9095,14 @@ function unionRuntimeBindings(
   const values = [...unique.values(), ...identitySensitive];
   if (values.length === 0) return undefined;
   return values.length === 1 ? values[0] : { kind: "one-of", bindings: values };
+}
+
+function unionRuntimeBindingsPreservingPartial(
+  bindings: readonly RuntimeBinding[],
+): RuntimeBinding | undefined {
+  const partial = bindings.some(runtimeBindingHasPartialAlternative);
+  const binding = unionRuntimeBindings(bindings);
+  return partial && binding ? { kind: "partial", binding } : binding;
 }
 
 function flattenRuntimeBindings(

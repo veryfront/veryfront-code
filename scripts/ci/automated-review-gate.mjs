@@ -42,15 +42,23 @@ export async function findAutomatedReview(
       kind: "review",
       value: review,
       order: index,
-      time: automatedReviewEventTime(review, index),
+      time: automatedReviewEventTime(review),
     })),
     ...comments.map((comment, index) => ({
       kind: "comment",
       value: comment,
       order: reviews.length + index,
-      time: automatedReviewEventTime(comment, reviews.length + index),
+      time: automatedReviewEventTime(comment),
     })),
-  ].sort((left, right) => right.time - left.time || right.order - left.order);
+  ];
+  const everyEventIsTimestamped = events.every((event) =>
+    event.time !== undefined
+  );
+  events.sort((left, right) =>
+    everyEventIsTimestamped
+      ? right.time - left.time || right.order - left.order
+      : right.order - left.order
+  );
 
   for (const event of events) {
     if (event.kind === "review") {
@@ -114,17 +122,23 @@ export async function findAutomatedReview(
     if (
       typeof login === "string" &&
       login.toLowerCase() === CODERABBIT_LOGIN &&
-      typeof body === "string" &&
-      body.includes(CODERABBIT_RECENT_REVIEW_MARKER)
+      typeof body === "string"
     ) {
-      const recentReview = codeRabbitRecentReview(body);
-      const reviewedTip = recentReview?.match(
-        CODERABBIT_REVIEW_RANGE_PATTERN,
-      )?.[2];
       const skippedTip = body.match(CODERABBIT_SKIPPED_COMMIT_PATTERN)?.[1];
       const requestedTip = body.match(
         CODERABBIT_REQUESTED_COMMIT_PATTERN,
       )?.[1];
+      if (
+        skippedTip?.toLowerCase() === headSha.toLowerCase() ||
+        requestedTip?.toLowerCase() === headSha.toLowerCase()
+      ) {
+        return undefined;
+      }
+      if (!body.includes(CODERABBIT_RECENT_REVIEW_MARKER)) continue;
+      const recentReview = codeRabbitRecentReview(body);
+      const reviewedTip = recentReview?.match(
+        CODERABBIT_REVIEW_RANGE_PATTERN,
+      )?.[2];
       const outcomeTip = skippedTip?.toLowerCase() === headSha.toLowerCase()
         ? skippedTip
         : reviewedTip ?? requestedTip;
@@ -151,7 +165,7 @@ export async function findAutomatedReview(
   return undefined;
 }
 
-function automatedReviewEventTime(value, fallback) {
+function automatedReviewEventTime(value) {
   for (
     const timestamp of [
       value?.updated_at,
@@ -163,7 +177,7 @@ function automatedReviewEventTime(value, fallback) {
     const parsed = Date.parse(timestamp);
     if (Number.isFinite(parsed)) return parsed;
   }
-  return fallback;
+  return undefined;
 }
 
 function codeRabbitRecentReview(body) {
