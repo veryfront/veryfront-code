@@ -4,8 +4,7 @@ const AUTOMATED_REVIEW_LOGINS = new Set([
 ]);
 const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
-const CODERABBIT_RECENT_REVIEW_MARKER_PATTERN =
-  /<!-- recent_review_start -->|<!-- recent_review_end -->/g;
+const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
 const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
@@ -22,7 +21,7 @@ const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
   /^[ \t]*and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN =
-  /^([ \t]{0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
+  /^( {0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
 const MARKDOWN_LIST_PREFIX_PATTERN =
   /([-*+]|\d+[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
 const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
@@ -279,10 +278,8 @@ function codeRabbitSelectedRecentReview(body) {
   const groups = [];
   let openGroup;
   let previousFallbackContent;
-  for (
-    const marker of body.matchAll(CODERABBIT_RECENT_REVIEW_MARKER_PATTERN)
-  ) {
-    if (marker[0] === CODERABBIT_RECENT_REVIEW_MARKER) {
+  for (const marker of markdownReviewMarkers(body)) {
+    if (marker.value === CODERABBIT_RECENT_REVIEW_MARKER) {
       if (openGroup) {
         openGroup.invalid = true;
       } else {
@@ -369,7 +366,16 @@ function codeRabbitRangeEvidenceStatements(content) {
 }
 
 function markdownExcludedRanges(content) {
+  return scanMarkdownStructure(content).excludedRanges;
+}
+
+function markdownReviewMarkers(content) {
+  return scanMarkdownStructure(content).reviewMarkers;
+}
+
+function scanMarkdownStructure(content) {
   const ranges = [];
+  const reviewMarkers = [];
   let openFence;
   let openHtmlCommentStart;
   let lineStart = 0;
@@ -393,6 +399,7 @@ function markdownExcludedRanges(content) {
         lineStart,
         relativeCloseStart + 3,
         ranges,
+        reviewMarkers,
       );
       lineStart = lineEnd;
       continue;
@@ -443,6 +450,7 @@ function markdownExcludedRanges(content) {
       lineStart,
       0,
       ranges,
+      reviewMarkers,
     );
     lineStart = lineEnd;
   }
@@ -451,7 +459,7 @@ function markdownExcludedRanges(content) {
   } else if (openFence !== undefined) {
     ranges.push([openFence.start, content.length]);
   }
-  return ranges;
+  return { excludedRanges: ranges, reviewMarkers };
 }
 
 function scanMarkdownHtmlComments(
@@ -460,6 +468,7 @@ function scanMarkdownHtmlComments(
   lineStart,
   searchStart,
   ranges,
+  reviewMarkers,
 ) {
   while (searchStart < line.length) {
     const relativeCommentStart = line.indexOf("<!--", searchStart);
@@ -469,10 +478,36 @@ function scanMarkdownHtmlComments(
       searchStart = relativeCommentStart + 4;
       continue;
     }
+    const reviewMarker = codeRabbitReviewMarkerAt(line, relativeCommentStart);
+    if (reviewMarker) {
+      reviewMarkers.push({ value: reviewMarker, index: commentStart });
+      searchStart = relativeCommentStart + reviewMarker.length;
+      continue;
+    }
     const relativeCloseStart = line.indexOf("-->", relativeCommentStart + 4);
     if (relativeCloseStart < 0) return commentStart;
     ranges.push([commentStart, lineStart + relativeCloseStart + 3]);
     searchStart = relativeCloseStart + 3;
+  }
+  return undefined;
+}
+
+function codeRabbitReviewMarkerAt(line, markerStart) {
+  if (markerStart > 3) return undefined;
+  const prefix = line.slice(0, markerStart);
+  if (prefix.trim().length > 0 || markdownColumns(prefix) > 3) {
+    return undefined;
+  }
+  for (
+    const marker of [
+      CODERABBIT_RECENT_REVIEW_MARKER,
+      CODERABBIT_RECENT_REVIEW_END_MARKER,
+    ]
+  ) {
+    if (
+      line.startsWith(marker, markerStart) &&
+      line.slice(markerStart + marker.length).trim().length === 0
+    ) return marker;
   }
   return undefined;
 }
@@ -615,8 +650,23 @@ function markdownFenceContainer(prefix) {
     ),
     continuationIndent: listPrefixes.length === 0
       ? 0
-      : prefix.length - (prefix.lastIndexOf(">") + 1),
+      : markdownContainerIndentColumns(prefix),
   };
+}
+
+function markdownContainerIndentColumns(prefix) {
+  const structuralEnd = prefix.lastIndexOf(">") + 1;
+  const structuralColumns = markdownColumns(prefix.slice(0, structuralEnd));
+  return markdownColumns(prefix.slice(structuralEnd), structuralColumns) -
+    structuralColumns;
+}
+
+function markdownColumns(value, initialColumn = 0) {
+  let column = initialColumn;
+  for (const character of value) {
+    column += character === "\t" ? 4 - (column % 4) : 1;
+  }
+  return column;
 }
 
 function markdownClosingFenceMarker(line, fence) {
@@ -627,7 +677,7 @@ function markdownClosingFenceMarker(line, fence) {
     codeRabbitMarkdownPrefixSignature(linePrefix) !==
       fence.container.structuralPrefix
   ) return undefined;
-  const indentation = linePrefix.match(/[ \t]*$/)?.[0].length ?? 0;
+  const indentation = markdownContainerIndentColumns(linePrefix);
   if (
     indentation < fence.container.continuationIndent ||
     indentation > fence.container.continuationIndent + 3
@@ -653,7 +703,7 @@ function continuesMarkdownFenceContainer(line, container) {
       container.structuralPrefix
   ) return false;
   if (linePrefix.length === line.length) return true;
-  return (linePrefix.match(/[ \t]*$/)?.[0].length ?? 0) >=
+  return markdownContainerIndentColumns(linePrefix) >=
     container.continuationIndent;
 }
 

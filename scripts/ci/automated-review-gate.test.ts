@@ -1119,6 +1119,104 @@ describe("automated review gate", () => {
       );
     }
 
+    for (
+      const tabSensitiveFence of [
+        ["- ```text", "\t```", malformedCurrentRange],
+        ["\t```text", malformedCurrentRange],
+      ]
+    ) {
+      const newerVisibleCurrentRangeAroundTabFence = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...tabSensitiveFence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRangeAroundTabFence],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    for (
+      const nonStructuralMarkerExample of [
+        [
+          "```md",
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "<!-- recent_review_end -->",
+          "```",
+        ],
+        [
+          "`<!-- recent_review_start -->`",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "`<!-- recent_review_end -->`",
+        ],
+        [
+          "    <!-- recent_review_start -->",
+          "    No actionable comments were generated in the recent review.",
+          `    ${codeRabbitReviewRange(HEAD_SHA, STALE_SHA)}`,
+          "    <!-- recent_review_end -->",
+        ],
+      ]
+    ) {
+      const newerLiveCurrentRangeBeforeMarkerExample = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          malformedCurrentRange,
+          "<!-- recent_review_end -->",
+          ...nonStructuralMarkerExample,
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerLiveCurrentRangeBeforeMarkerExample],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerCurrentRangeInsideThreeSpaceFence = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "   ```text",
+        malformedCurrentRange,
+        "   ```",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerCurrentRangeInsideThreeSpaceFence],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
     const newerHtmlCommentedCurrentRange = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",
