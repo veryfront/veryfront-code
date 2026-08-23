@@ -2604,6 +2604,7 @@ conditional.path = "conditional.txt";
 const assigned = {};
 Object.defineProperty(assigned, "path", { set: Deno.remove });
 Object.assign(assigned, { path: "assigned.txt" });
+assigned.path = "assigned-again.txt";
 `,
         "src/runtime-descriptor-setters.test.ts",
       ).map((marker) => marker.effect),
@@ -2621,6 +2622,75 @@ Object.assign(assigned, { path: "assigned.txt" });
         "filesystem-write",
         "network",
         "filesystem-write",
+        "filesystem-write",
+      ],
+    );
+  });
+
+  it("classifies filesystem-open setters with their assigned values", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const direct = {};
+Object.defineProperty(direct, "options", {
+  set: Deno.open.bind(Deno, "direct.txt"),
+});
+direct.options = { write: true, create: true };
+
+const loop = {};
+Object.defineProperty(loop, "options", {
+  set: Deno.open.bind(Deno, "loop.txt"),
+});
+for (loop.options of [{ write: true, create: true }]) {}
+
+const assigned = {};
+Object.defineProperty(assigned, "options", {
+  set: Deno.open.bind(Deno, "assigned.txt"),
+});
+Object.assign(assigned, { options: { write: true, create: true } });
+`,
+        "src/runtime-filesystem-open-setters.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "direct.options setter"],
+        ["filesystem-write", "loop.options setter"],
+        ["filesystem-write", "assigned.options setter"],
+      ],
+    );
+  });
+
+  it("invokes inherited descriptor setters without bypassing own properties", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "path", { set: Deno.remove });
+
+const direct = Object.setPrototypeOf({}, prototype);
+direct.path = "direct.txt";
+
+const assigned = Object.setPrototypeOf({}, prototype);
+Object.assign(assigned, { path: "assigned.txt" });
+
+const openPrototype = {};
+Object.defineProperty(openPrototype, "options", {
+  set: Deno.open.bind(Deno, "inherited.txt"),
+});
+const opened = Object.setPrototypeOf({}, openPrototype);
+opened.options = { write: true, create: true };
+
+const own = Object.setPrototypeOf(
+  { path: "safe" },
+  prototype,
+);
+own.path = "still-safe";
+`,
+        "src/runtime-inherited-setters.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "direct.path setter"],
+        ["filesystem-write", "assigned.path setter"],
+        ["filesystem-write", "opened.options setter"],
       ],
     );
   });
@@ -2716,6 +2786,15 @@ Object.assign({}, hidden);
 const hiddenSpread = { ...hidden };
 void hiddenSpread;
 
+const enumerableSource = {};
+Object.defineProperty(enumerableSource, "path", {
+  get: Deno.cwd,
+  enumerable: true,
+});
+Object.assign({}, enumerableSource);
+const enumerableSpread = { ...enumerableSource };
+void enumerableSpread;
+
 const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
 returned.path;
 `,
@@ -2728,8 +2807,90 @@ returned.path;
         ["shared-cwd", "Object.assign(source getter)"],
         ["shared-cwd", "source.* getter"],
         ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "Object.assign(enumerableSource getter)"],
+        ["shared-cwd", "enumerableSource.* getter"],
+        ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "returned.path getter"],
       ],
+    );
+  });
+
+  it("copies only own enumerable descriptor properties", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const hidden = {};
+Object.defineProperty(hidden, "run", {
+  value: Deno.remove,
+});
+Object.assign({}, hidden).run("hidden-assign.txt");
+({ ...hidden }).run("hidden-spread.txt");
+`,
+        "src/runtime-hidden-descriptor-enumerability.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const visible = {};
+Object.defineProperty(visible, "run", {
+  value: Deno.remove,
+  enumerable: true,
+});
+Object.assign({}, visible).run("visible-assign.txt");
+({ ...visible }).run("visible-spread.txt");
+
+const revealed = {};
+Object.defineProperty(revealed, "run", {
+  value: () => undefined,
+  configurable: true,
+});
+Object.defineProperty(revealed, "run", {
+  value: Deno.remove,
+  enumerable: true,
+});
+Object.assign({}, revealed).run("revealed-assign.txt");
+({ ...revealed }).run("revealed-spread.txt");
+
+const concealed = {};
+Object.defineProperty(concealed, "run", {
+  value: Deno.remove,
+  enumerable: true,
+  configurable: true,
+});
+Object.defineProperty(concealed, "run", {
+  value: Deno.remove,
+});
+Object.assign({}, concealed).run("concealed-assign.txt");
+({ ...concealed }).run("concealed-spread.txt");
+`,
+        "src/runtime-visible-descriptor-enumerability.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+      ],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "run", {
+  value: Deno.remove,
+  enumerable: true,
+});
+const inherited = Object.setPrototypeOf({}, prototype);
+Object.assign({}, inherited).run("inherited-assign.txt");
+({ ...inherited }).run("inherited-spread.txt");
+`,
+        "src/runtime-inherited-descriptor-enumerability.test.ts",
+      ),
+      [],
     );
   });
 
@@ -2742,6 +2903,9 @@ declare const descriptor: PropertyDescriptor;
 const direct = {};
 Object.defineProperty(direct, "path", descriptor);
 direct.path;
+Object.assign({}, direct);
+const directSpread = { ...direct };
+void directSpread;
 
 const returned = Object.defineProperty({}, "path", descriptor);
 returned.path;
@@ -2756,6 +2920,22 @@ delete deleted.path;
         "src/runtime-opaque-descriptor-getters.test.ts",
       ).map((marker) => marker.effect),
       [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
         "browser",
         "filesystem-read",
         "filesystem-watch",

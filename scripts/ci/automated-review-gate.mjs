@@ -9,8 +9,10 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /Reviewing files between\s+([0-9a-f]{40})\s+and\s+([0-9a-f]{40})(?:\.|\s|$)/i;
-const CODERABBIT_CURRENT_HEAD_PATTERN =
-  /(?:Requested commit:|Review skipped for current commit)\s*([0-9a-f]{40})/i;
+const CODERABBIT_REQUESTED_COMMIT_PATTERN =
+  /Requested commit:\s*([0-9a-f]{40})/i;
+const CODERABBIT_SKIPPED_COMMIT_PATTERN =
+  /Review skipped for current commit\s*([0-9a-f]{40})/i;
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const CODEX_BOT_ID = 199175422;
 const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
@@ -119,21 +121,21 @@ export async function findAutomatedReview(
       const reviewedTip = recentReview?.match(
         CODERABBIT_REVIEW_RANGE_PATTERN,
       )?.[2];
-      const explicitOutcomeTip = body.match(
-        CODERABBIT_CURRENT_HEAD_PATTERN,
+      const skippedTip = body.match(CODERABBIT_SKIPPED_COMMIT_PATTERN)?.[1];
+      const requestedTip = body.match(
+        CODERABBIT_REQUESTED_COMMIT_PATTERN,
       )?.[1];
+      const outcomeTip = skippedTip?.toLowerCase() === headSha.toLowerCase()
+        ? skippedTip
+        : reviewedTip ?? requestedTip;
       if (
-        explicitOutcomeTip?.toLowerCase() === headSha.toLowerCase()
-      ) {
-        return undefined;
-      }
-      if (
-        typeof reviewedTip !== "string" ||
-        reviewedTip.toLowerCase() !== headSha.toLowerCase()
+        typeof outcomeTip !== "string" ||
+        outcomeTip.toLowerCase() !== headSha.toLowerCase()
       ) {
         continue;
       }
       return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) &&
+          skippedTip?.toLowerCase() !== headSha.toLowerCase() &&
           reviewedTip?.toLowerCase() === headSha.toLowerCase()
         ? {
           reviewer: login,

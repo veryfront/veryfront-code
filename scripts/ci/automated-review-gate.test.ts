@@ -270,6 +270,32 @@ describe("automated review gate", () => {
     );
   });
 
+  it("lets a current-head skip override a stale retained review range", async () => {
+    const staleRangeWithCurrentSkip = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [olderSuccess, staleRangeWithCurrentSkip] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
   it("makes the newest exact-head bot outcome authoritative across reviewers", async () => {
     const failedCodex = codexNoFindingComment({
       body: [
