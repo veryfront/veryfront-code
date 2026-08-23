@@ -4142,6 +4142,17 @@ function bindRuntimeCallMutation(
       );
       continue;
     }
+    if (
+      canonicalName === "Object.defineProperties" &&
+      bindRuntimeLiteralDescriptorMutations(
+        target,
+        invocation.args[1],
+        imports,
+        scopes,
+      )
+    ) {
+      continue;
+    }
     const assigned = localMutationAssignedExpressions(
       canonicalName,
       invocation.args,
@@ -4307,6 +4318,53 @@ function localMutationAssignedExpressions(
   }
   if (canonicalName === "Reflect.set") return [args[2]];
   return [];
+}
+
+function bindRuntimeLiteralDescriptorMutations(
+  target: unknown,
+  descriptors: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): boolean {
+  const descriptorMap = unwrapExpression(descriptors);
+  if (!descriptorMap || descriptorMap.type !== "ObjectExpression") return false;
+  for (
+    const property of Array.isArray(descriptorMap.properties)
+      ? descriptorMap.properties
+      : []
+  ) {
+    const descriptor = isNode(property) && property.type === "ObjectProperty"
+      ? property.value
+      : undefined;
+    const propertyName = isNode(property)
+      ? staticObjectPropertyName(property)
+      : undefined;
+    const assignedExpression = runtimePropertyExpression(descriptor, "value");
+    if (propertyName) {
+      bindRuntimeNamedPropertyMutation(
+        target,
+        propertyName,
+        assignedExpression,
+        imports,
+        scopes,
+      );
+    } else {
+      bindRuntimeUnknownPropertyMutation(
+        target,
+        assignedExpression,
+        imports,
+        scopes,
+      );
+    }
+    bindRuntimeAccessorMutation(
+      target,
+      descriptor,
+      imports,
+      scopes,
+      propertyName,
+    );
+  }
+  return true;
 }
 
 function isPrototypeMutation(canonicalName: string): boolean {

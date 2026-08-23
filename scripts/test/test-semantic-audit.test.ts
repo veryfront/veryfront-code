@@ -2003,6 +2003,13 @@ definedNamed.run();
 const reflectedNamed = { run: () => undefined };
 Reflect.set(reflectedNamed, "write", Deno.writeTextFile);
 reflectedNamed.run();
+
+const definedBulkNamed = { safe: () => undefined };
+Object.defineProperties(definedBulkNamed, {
+  safe: { value: () => undefined },
+  write: { value: Deno.writeTextFile },
+});
+definedBulkNamed.safe();
 `,
         "src/local-non-mutating-array-calls.test.ts",
       ),
