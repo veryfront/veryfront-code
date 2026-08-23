@@ -25,6 +25,33 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 5));
 }
 
+async function waitForElement(
+  container: ParentNode,
+  selector: string,
+  message: string,
+): Promise<HTMLElement> {
+  const deadline = Date.now() + 250;
+  let element = container.querySelector<HTMLElement>(selector);
+  while (!element && Date.now() < deadline) {
+    await tick();
+    element = container.querySelector<HTMLElement>(selector);
+  }
+  assert(element, message);
+  return element;
+}
+
+async function waitForNoElement(
+  container: ParentNode,
+  selector: string,
+  message: string,
+): Promise<void> {
+  const deadline = Date.now() + 250;
+  while (container.querySelector(selector) && Date.now() < deadline) {
+    await tick();
+  }
+  assertEquals(container.querySelector(selector), null, message);
+}
+
 function installDomGlobals(dom: JSDOM): () => void {
   const window = dom.window;
   const keys = [
@@ -121,17 +148,20 @@ describe("HoverCard behaviour", () => {
     try {
       assertEquals(scope.querySelector('[data-testid="hc"]'), null, "closed initially");
       await hoverIn();
-      const content = scope.querySelector('[data-testid="hc"]');
-      assert(content, "content renders once the trigger is hovered");
+      const content = await waitForElement(
+        scope,
+        '[data-testid="hc"]',
+        "content renders once the trigger is hovered",
+      );
       // MANDATORY: the portalled surface stays inside the [data-vf-ui] token
       // scope, never escaping to <body>.
       assertEquals(
-        content!.closest("[data-vf-ui],[data-vf-chat]"),
+        content.closest("[data-vf-ui],[data-vf-chat]"),
         scope,
         "portalled content must stay within the token scope, not document.body",
       );
-      assert(content!.textContent?.includes("Preview"), "content renders children");
-      assertEquals(content!.getAttribute("data-state"), "open", "data-state flips to open");
+      assert(content.textContent?.includes("Preview"), "content renders children");
+      assertEquals(content.getAttribute("data-state"), "open", "data-state flips to open");
     } finally {
       cleanup();
     }
@@ -146,11 +176,11 @@ describe("HoverCard behaviour", () => {
     );
     try {
       await hoverIn();
-      assert(scope.querySelector('[data-testid="hc"]'), "open after hover in");
+      await waitForElement(scope, '[data-testid="hc"]', "open after hover in");
       await hoverOut();
-      assertEquals(
-        scope.querySelector('[data-testid="hc"]'),
-        null,
+      await waitForNoElement(
+        scope,
+        '[data-testid="hc"]',
         "content unmounts after the pointer leaves",
       );
     } finally {
@@ -186,8 +216,7 @@ describe("HoverCard behaviour", () => {
     );
     try {
       await hoverIn();
-      const content = scope.querySelector('[data-testid="hc"]') as HTMLElement;
-      assert(content, "content renders");
+      const content = await waitForElement(scope, '[data-testid="hc"]', "content renders");
       assert(
         content.className.includes("bg-[var(--popover)]"),
         "base surface class is preserved",
@@ -216,7 +245,7 @@ describe("HoverCard behaviour", () => {
       assertEquals(link.tagName.toLowerCase(), "a", "no wrapper button is injected");
       assertEquals(scope.querySelector("button"), null, "the anchor is the trigger");
       await hoverIn();
-      assert(scope.querySelector('[data-testid="hc"]'), "hovering the link opens the card");
+      await waitForElement(scope, '[data-testid="hc"]', "hovering the link opens the card");
     } finally {
       cleanup();
     }
