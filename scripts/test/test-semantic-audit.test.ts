@@ -1606,6 +1606,31 @@ BeforeRestClass.write("before-rest-class.txt", "x");
     );
   });
 
+  it("keeps post-spread array positions conservative until length is proven", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const dynamic = [() => undefined];
+dynamic[Math.random()] = Deno.writeTextFile;
+const [, possibleDynamicWrite] = [...dynamic, () => undefined];
+possibleDynamicWrite("possible-dynamic-write.txt", "x");
+
+const [, knownLocal, knownWrite] = [
+  ...[() => undefined, () => undefined],
+  Deno.writeTextFile,
+];
+knownLocal();
+knownWrite("known-write.txt", "x");
+`,
+        "src/post-spread-array-positions.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "possibleDynamicWrite"],
+        ["filesystem-write", "knownWrite"],
+      ],
+    );
+  });
+
   it("classifies optional runtime calls", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2462,6 +2487,62 @@ ComputedAlias.write = Deno.writeTextFile;
 LocalComputedClass.write("local-computed.txt", "x");
 `,
         "src/local-class-receiver-object-aliases.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("preserves namespace aliases through conditional and logical assignment receivers", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class ConditionalReceiverA {}
+class ConditionalReceiverB {}
+const conditionalA = { Receiver: ConditionalReceiverA };
+const conditionalB = { Receiver: ConditionalReceiverB };
+(maybe ? conditionalA.Receiver : conditionalB.Receiver).write =
+  Deno.writeTextFile;
+ConditionalReceiverA.write("conditional-a.txt", "x");
+ConditionalReceiverB.write("conditional-b.txt", "x");
+
+class LogicalReceiverA {}
+class LogicalReceiverB {}
+const logicalA = { Receiver: LogicalReceiverA };
+const logicalB = { Receiver: LogicalReceiverB };
+(maybe && logicalA.Receiver || logicalB.Receiver).write = Deno.writeTextFile;
+LogicalReceiverA.write("logical-a.txt", "x");
+LogicalReceiverB.write("logical-b.txt", "x");
+`,
+        "src/alternative-assignment-receivers.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "ConditionalReceiverA.write"],
+        ["filesystem-write", "ConditionalReceiverB.write"],
+        ["filesystem-write", "LogicalReceiverA.write"],
+        ["filesystem-write", "LogicalReceiverB.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class LocalConditionalA {}
+class LocalConditionalB {}
+const conditionalA = { Receiver: {} };
+const conditionalB = { Receiver: {} };
+(maybe ? conditionalA.Receiver : conditionalB.Receiver).write =
+  Deno.writeTextFile;
+LocalConditionalA.write("local-conditional-a.txt", "x");
+LocalConditionalB.write("local-conditional-b.txt", "x");
+
+class LocalLogicalA {}
+class LocalLogicalB {}
+const logicalA = { Receiver: {} };
+const logicalB = { Receiver: {} };
+(maybe && logicalA.Receiver || logicalB.Receiver).write = Deno.writeTextFile;
+LocalLogicalA.write("local-logical-a.txt", "x");
+LocalLogicalB.write("local-logical-b.txt", "x");
+`,
+        "src/local-alternative-assignment-receivers.test.ts",
       ),
       [],
     );
