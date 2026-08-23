@@ -205,7 +205,7 @@ describe("initCommand target directory", () => {
             quiet: true,
           }),
         Error,
-        `Directory "${name}" already exists`,
+        `Directory "${name}" already contains README.md`,
       );
 
       assertEquals(await Deno.readTextFile(keepsake), "keep me\n");

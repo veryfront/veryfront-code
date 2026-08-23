@@ -4,6 +4,14 @@ const AUTOMATED_REVIEW_LOGINS = new Set([
 ]);
 const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
+const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
+const CODEX_BOT_ID = 199175422;
+const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
+const CODEX_REVIEWED_COMMIT_PATTERN =
+  /\*\*Reviewed commit:\*\*\s*`([0-9a-f]{10})`/i;
+const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
+/** @type {(ref: string) => Promise<string | undefined>} */
+const NO_COMMIT_RESOLVER = () => Promise.resolve(undefined);
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 const SUBMITTED_REVIEW_STATES = new Set([
   "APPROVED",
@@ -12,7 +20,14 @@ const SUBMITTED_REVIEW_STATES = new Set([
 ]);
 
 /** Find an actual automated review submitted against the current PR head. */
-export function findAutomatedReview({ reviews, comments }, headSha) {
+export async function findAutomatedReview(
+  {
+    reviews,
+    comments,
+    resolveCommit = NO_COMMIT_RESOLVER,
+  },
+  headSha,
+) {
   for (let index = reviews.length - 1; index >= 0; index--) {
     const review = reviews[index];
     const login = review?.user?.login;
@@ -40,6 +55,33 @@ export function findAutomatedReview({ reviews, comments }, headSha) {
     const comment = comments[index];
     const login = comment?.user?.login;
     const body = comment?.body;
+    if (
+      typeof login === "string" &&
+      login.toLowerCase() === CODEX_LOGIN &&
+      comment?.user?.type === "Bot" &&
+      comment?.user?.id === CODEX_BOT_ID &&
+      typeof body === "string" &&
+      body.startsWith(CODEX_NO_FINDING_PREFIX)
+    ) {
+      const reviewedCommit = body.match(CODEX_REVIEWED_COMMIT_PATTERN)?.[1];
+      if (typeof reviewedCommit === "string") {
+        const resolvedCommit = await resolveCommit(reviewedCommit);
+        if (
+          typeof resolvedCommit === "string" &&
+          FULL_COMMIT_PATTERN.test(resolvedCommit) &&
+          resolvedCommit.toLowerCase() === headSha.toLowerCase()
+        ) {
+          return {
+            reviewer: login,
+            source: "summary",
+            state: "COMMENTED",
+            url: typeof comment.html_url === "string"
+              ? comment.html_url
+              : undefined,
+          };
+        }
+      }
+    }
     if (
       typeof login !== "string" ||
       login.toLowerCase() !== CODERABBIT_LOGIN ||
@@ -99,7 +141,25 @@ export async function publishAutomatedReviewStatus({
       issue_number: pullNumber,
       per_page: 100,
     });
-    review = findAutomatedReview({ reviews, comments }, headSha);
+    review = await findAutomatedReview({
+      reviews,
+      comments,
+      resolveCommit: async (ref) => {
+        try {
+          const response = await github.rest.repos.getCommit({
+            owner,
+            repo,
+            ref,
+          });
+          const sha = response?.data?.sha;
+          return typeof sha === "string" && FULL_COMMIT_PATTERN.test(sha)
+            ? sha
+            : undefined;
+        } catch {
+          return undefined;
+        }
+      },
+    }, headSha);
     if (!review) {
       failure = new Error(
         `No automated review was submitted for current commit ${

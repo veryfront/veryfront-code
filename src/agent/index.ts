@@ -1036,6 +1036,7 @@ export {
   type CreateConversationHostedTerminalAdapterOptions,
   dispatchConversationHostedStreamErrorState,
   dispatchConversationHostedTerminalState,
+  type DispatchConversationHostedTerminalStateOptions,
   resolveConversationHostedStreamErrorState,
   resolveConversationHostedTerminalState,
   type ResolveConversationHostedTerminalStateInput,
