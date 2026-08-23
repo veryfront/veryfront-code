@@ -259,6 +259,8 @@ const PROCESS_METHODS = new Set([
   "spawnSync",
   "exec",
   "execFile",
+  "execFileSync",
+  "execSync",
   "exit",
   "fork",
   "kill",
@@ -693,12 +695,6 @@ export function collectSemanticMarkers(
         );
       }
     }
-    bindRuntimeAssignment(
-      node,
-      bindings,
-      nextScopes,
-      allowAssignmentClearing,
-    );
     const nodeMarkers = suppressMarker
       ? undefined
       : markerForNode(node, bindings, nextScopes);
@@ -709,6 +705,12 @@ export function collectSemanticMarkers(
         ),
       );
     }
+    bindRuntimeAssignment(
+      node,
+      bindings,
+      nextScopes,
+      allowAssignmentClearing,
+    );
 
     for (const key of Object.keys(node)) {
       if (
@@ -1207,7 +1209,12 @@ function markerForNode(
       bindings.importedNames,
     );
     if (globalMarker) return globalMarker;
-    return memberRuntimeEffectMarker(node.left, line, bindings, scopes);
+    return memberAssignmentRuntimeEffectMarker(
+      node.left,
+      line,
+      bindings,
+      scopes,
+    );
   }
 
   if (node.type === "UpdateExpression" && isNode(node.argument)) {
@@ -1632,6 +1639,30 @@ function memberRuntimeEffectMarker(
   return effect
     ? { effect, line, symbol: `${objectName}.${method}` }
     : undefined;
+}
+
+function memberAssignmentRuntimeEffectMarker(
+  member: Node,
+  line: number,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): SemanticMarker | undefined {
+  if (
+    member.type !== "MemberExpression" &&
+    member.type !== "OptionalMemberExpression"
+  ) return undefined;
+  const object = unwrapExpression(member.object);
+  const objectBinding = object
+    ? runtimeBindingForExpression(object, imports, scopes)
+    : undefined;
+  const objectBindings = flattenRuntimeBindings(objectBinding);
+  if (
+    objectBindings.length > 0 &&
+    objectBindings.every((binding) => binding.kind === "namespace-object")
+  ) {
+    return undefined;
+  }
+  return memberRuntimeEffectMarker(member, line, imports, scopes);
 }
 
 function isProcessModuleEnvDetail(
@@ -3158,11 +3189,89 @@ function bindRuntimeAssignment(
     return;
   }
   const binding = runtimeBindingForExpression(node.right, imports, scopes);
+  if (
+    bindRuntimeMemberAssignment(
+      node.left,
+      binding,
+      scopes,
+      allowClearing,
+    )
+  ) {
+    return;
+  }
   if (binding) {
     bindRuntimeAssignmentPattern(node.left, binding, scopes, !allowClearing);
   } else if (allowClearing) {
     clearCurrentScopeRuntimeAssignmentPattern(node.left, scopes);
   }
+}
+
+function bindRuntimeMemberAssignment(
+  member: Node,
+  binding: RuntimeBinding | undefined,
+  scopes: readonly Scope[],
+  allowClearing: boolean,
+): boolean {
+  const chain = memberChain(member);
+  if (!chain || chain.length < 2) return false;
+  const root = chain[0];
+  const scope = binding
+    ? declaringScopeForName(root, scopes)
+    : scopes.at(-1)?.names.has(root)
+    ? scopes.at(-1)
+    : undefined;
+  if (!scope || (!binding && !allowClearing)) return true;
+  const existing = scope.runtimeBindings.get(root);
+  if (
+    existing &&
+    !flattenRuntimeBindings(existing).every((candidate) =>
+      candidate.kind === "namespace-object"
+    )
+  ) {
+    return true;
+  }
+  const assigned = assignRuntimeProperty(
+    existing,
+    chain.slice(1),
+    binding,
+  );
+  scope.runtimeBindings.set(
+    root,
+    mergeRuntimeBinding(existing, assigned, !allowClearing),
+  );
+  return true;
+}
+
+function assignRuntimeProperty(
+  existing: RuntimeBinding | undefined,
+  path: readonly string[],
+  binding: RuntimeBinding | undefined,
+): RuntimeBinding {
+  const [property, ...rest] = path;
+  const assigned = rest.length === 0 ? binding : assignRuntimeProperty(
+    existing ? runtimePropertyBinding(existing, property) : undefined,
+    rest,
+    binding,
+  );
+  const operation: NamespacePropertyOperation = {
+    kind: "define",
+    name: property,
+    binding: assigned,
+  };
+  if (existing?.kind === "namespace-object" && existing.propertyOperations) {
+    return {
+      kind: "namespace-object",
+      properties: existing.properties,
+      propertyOperations: [...existing.propertyOperations, operation],
+    };
+  }
+  return {
+    kind: "namespace-object",
+    properties: new Map(),
+    propertyOperations: existing
+      ? [{ kind: "spread", binding: existing }, operation]
+      : [operation],
+  };
 }
 
 function bindRuntimeAssignmentPattern(

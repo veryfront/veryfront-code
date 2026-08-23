@@ -414,6 +414,39 @@ childProcess.spawn("git");
     );
   });
 
+  it("classifies synchronous child-process execution across import shapes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { execFileSync as runFileSync, execSync } from "node:child_process";
+import * as childProcess from "child_process";
+const run = execSync;
+execSync("git status");
+runFileSync("git", ["status"]);
+childProcess.execSync("git status");
+const { execFileSync: namespaceRunFile } = childProcess;
+namespaceRunFile("git", ["status"]);
+run("git status");
+function local(
+  execSync: (command: string) => void,
+  childProcess: { execFileSync(command: string): void },
+) {
+  execSync("git status");
+  childProcess.execFileSync("git");
+}
+`,
+        "src/synchronous-child-process.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "execSync"],
+        ["process", "runFileSync"],
+        ["process", "childProcess.execSync"],
+        ["process", "namespaceRunFile"],
+        ["process", "run"],
+      ],
+    );
+  });
+
   it("classifies canonical compat filesystem and process imports", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -998,6 +1031,48 @@ function local(fetch: () => Promise<Response>) {
         ["network", "spreadDns.lookup"],
         ["filesystem-write", "spreadWrite"],
         ["filesystem-write", "restored.writeFileSync"],
+      ],
+    );
+  });
+
+  it("tracks callable effects assigned to statically known object properties", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const ops = {};
+ops.run = fetch;
+await ops.run("https://example.com/assigned");
+ops.run = () => undefined;
+ops.run("https://example.com/cleared");
+ops.run = Deno.writeTextFile;
+await ops.run("tmp.txt", "x");
+const nested = {};
+nested.io = {};
+nested.io.run = fetch;
+await nested.io.run("https://example.com/nested");
+const computed = {};
+computed["run"] = fetch;
+await computed.run("https://example.com/computed");
+const conditional = {};
+if (maybe) conditional.run = fetch;
+await conditional.run("https://example.com/conditional");
+const cleared = { run: fetch };
+cleared.run = () => undefined;
+cleared.run("https://example.com/not-network");
+function local(fetch: () => Promise<Response>) {
+  const localOps = {};
+  localOps.run = fetch;
+  return localOps.run();
+}
+`,
+        "src/assigned-object-property-effects.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "ops.run"],
+        ["filesystem-write", "ops.run"],
+        ["network", "nested.io.run"],
+        ["network", "computed.run"],
+        ["network", "conditional.run"],
       ],
     );
   });
