@@ -2869,6 +2869,39 @@ sealed.run("sealed.txt");
     );
   });
 
+  it("retains exact array elements when removals may fail", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const frozenPopped = Object.freeze([Deno.remove]);
+try {
+  frozenPopped.pop();
+} catch {}
+frozenPopped[0]("frozen.txt");
+
+const sealedShifted = Object.seal([Deno.remove]);
+try {
+  sealedShifted.shift();
+} catch {}
+sealedShifted[0]("sealed.txt");
+
+const locked = [Deno.remove];
+Object.defineProperty(locked, "0", { configurable: false });
+try {
+  locked.pop();
+} catch {}
+locked[0]("locked.txt");
+`,
+        "src/runtime-failed-exact-array-removals.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "frozenPopped.0"],
+        ["filesystem-write", "sealedShifted.0"],
+        ["filesystem-write", "locked.0"],
+      ],
+    );
+  });
+
   it("keeps exact array removal and bulk descriptor return provenance", () => {
     assertEquals(
       collectSemanticMarkers(

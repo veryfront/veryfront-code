@@ -4594,6 +4594,7 @@ function bindRuntimeCallMutation(
           invocation.binding.method,
           imports,
           scopes,
+          allowClearing,
         );
         continue;
       }
@@ -4840,6 +4841,7 @@ function bindRuntimeArrayRemovalMutation(
   method: "pop" | "shift",
   imports: ImportBindings,
   scopes: readonly Scope[],
+  allowClearing: boolean,
 ): void {
   const targetBinding = runtimeBindingForExpression(target, imports, scopes);
   const exactLength = exactRuntimeArrayLength(targetBinding);
@@ -4853,6 +4855,14 @@ function bindRuntimeArrayRemovalMutation(
     return;
   }
   if (exactLength === 0) return;
+  const removedProperty = runtimePropertyResolution(
+    targetBinding,
+    String(exactLength - 1),
+    true,
+  );
+  const removalAllowsClearing = allowClearing &&
+    runtimeBindingExtensibility(targetBinding) === true &&
+    removedProperty.configurable === true;
   if (method === "shift") {
     const shifted = Array.from({ length: exactLength - 1 }, (_, index) => {
       const sourceIndex = String(index + 1);
@@ -4870,7 +4880,7 @@ function bindRuntimeArrayRemovalMutation(
         entry.expression,
         imports,
         scopes,
-        { allowClearing: true },
+        { allowClearing: removalAllowsClearing },
       );
     }
   }
@@ -4881,7 +4891,7 @@ function bindRuntimeArrayRemovalMutation(
     undefined,
     imports,
     scopes,
-    { allowClearing: true },
+    { allowClearing: removalAllowsClearing },
   );
   bindRuntimeNamedPropertyMutationBinding(
     target,
