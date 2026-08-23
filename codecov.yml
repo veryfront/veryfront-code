@@ -2,7 +2,7 @@
 # Docs: https://docs.codecov.com/docs/codecov-yaml
 #
 # Coverage is uploaded from the `coverage shard N/8` jobs in
-# .github/workflows/cicd.yml — one upload per shard, merged by Codecov.
+# .github/workflows/cicd.yml: one upload per shard, merged by Codecov.
 #
 # Codecov is ADVISORY here. The blocking threshold is still enforced in CI by
 # `deno task coverage:gate` (scripts/lint/check-coverage.ts, 80% line coverage).
@@ -42,13 +42,18 @@ comment:
   require_changes: false
   after_n_builds: 8
 
-# Mirrors the filters in `buildCoverageCommandArgs` (scripts/test/coverage-ci.ts):
-# only src/ is measured, with test files excluded. Listed again here so uploads
-# stay consistent if the coverage command ever changes.
+# Belt and braces for paths `buildCoverageCommandArgs` (scripts/test/coverage-ci.ts)
+# already keeps out of the lcov, so an upload stays consistent if the coverage
+# command ever changes.
+#
+# Do not add `extensions/**` here. `deno coverage --include` matches on path
+# substring, so `--include=src/` also selects `extensions/*/src/**`. Those files
+# are in the lcov and the `coverage gate` job counts them (447 records, 23,654
+# lines, 35% covered as of this change). Ignoring them here would make Codecov
+# report a materially higher number than the gate for the same commit.
 ignore:
   - "tests/**"
   - "scripts/**"
-  - "extensions/**"
   - "templates/**"
   - "docs/**"
   - "npm/**"
