@@ -54,6 +54,7 @@ export async function findAutomatedReview(
     };
   }
 
+  let latestCodeRabbitSummary;
   for (let index = comments.length - 1; index >= 0; index--) {
     const comment = comments[index];
     const login = comment?.user?.login;
@@ -85,20 +86,29 @@ export async function findAutomatedReview(
         }
       }
     }
-    const recentReview = codeRabbitRecentReview(body);
     if (
-      typeof login !== "string" ||
-      login.toLowerCase() !== CODERABBIT_LOGIN ||
-      !recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) ||
-      !recentReview.includes(headSha)
+      latestCodeRabbitSummary === undefined &&
+      typeof login === "string" &&
+      login.toLowerCase() === CODERABBIT_LOGIN &&
+      typeof body === "string" &&
+      body.includes(CODERABBIT_RECENT_REVIEW_MARKER)
     ) {
-      continue;
+      latestCodeRabbitSummary = comment;
     }
+  }
+  const latestCodeRabbitBody = latestCodeRabbitSummary?.body;
+  const recentReview = codeRabbitRecentReview(latestCodeRabbitBody);
+  if (
+    recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) &&
+    recentReview.includes(headSha)
+  ) {
     return {
-      reviewer: login,
+      reviewer: latestCodeRabbitSummary.user.login,
       source: "summary",
       state: "COMMENTED",
-      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
+      url: typeof latestCodeRabbitSummary.html_url === "string"
+        ? latestCodeRabbitSummary.html_url
+        : undefined,
     };
   }
   return undefined;
