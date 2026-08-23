@@ -646,6 +646,7 @@ type RuntimeBinding =
   | {
     readonly kind: "property-getter-effect";
     readonly binding: RuntimeBinding;
+    readonly enumerable?: boolean;
   }
   | { readonly kind: "property-setter"; readonly binding: RuntimeBinding }
   | {
@@ -1339,6 +1340,7 @@ function markerForNode(
       line,
       bindings,
       scopes,
+      node.right,
     );
     return markers.length > 0 ? markers : undefined;
   }
@@ -1349,6 +1351,7 @@ function markerForNode(
       line,
       bindings,
       scopes,
+      unknownRuntimeValueExpression(),
     );
     return markers.length > 0 ? markers : undefined;
   }
@@ -1362,6 +1365,7 @@ function markerForNode(
       line,
       bindings,
       scopes,
+      unknownRuntimeValueExpression(),
     );
     return markers.length > 0 ? markers : undefined;
   }
@@ -1734,13 +1738,25 @@ function callableRuntimeBindingMarkers(
   binding: RuntimeBinding | undefined,
   symbol: string,
   line: number,
+  invocationArguments: readonly unknown[] = [],
+  includeUnboundInvocationArguments = true,
 ): readonly SemanticMarker[] {
   const effects = sortedUnique(
     flattenRuntimeBindings(binding).flatMap((candidate) =>
       candidate.kind === "effect"
         ? [candidate.effect]
         : candidate.kind === "filesystem-open"
-        ? [filesystemOpenEffect(filesystemOpenOptions(candidate, []))]
+        ? [
+          filesystemOpenEffect(
+            filesystemOpenOptions(
+              candidate,
+              includeUnboundInvocationArguments ||
+                (candidate.boundArguments?.length ?? 0) > 0
+                ? invocationArguments
+                : [],
+            ),
+          ),
+        ]
         : []
     ),
   );
@@ -1835,7 +1851,7 @@ function spreadGetterRuntimeEffectMarkers(
 ): readonly SemanticMarker[] {
   const binding = runtimeBindingForExpression(argument, imports, scopes);
   return getterRuntimeEffectMarkers(
-    runtimeUnknownPropertyGetterEffectBinding(binding),
+    runtimeUnknownPropertyGetterEffectBinding(binding, true),
     `${invocationSymbol(argument)}.* getter`,
     line,
   );
@@ -1859,6 +1875,7 @@ function memberAssignmentRuntimeEffectMarkers(
   line: number,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  assignedValue?: unknown,
 ): readonly SemanticMarker[] {
   if (
     member.type !== "MemberExpression" &&
@@ -1869,6 +1886,7 @@ function memberAssignmentRuntimeEffectMarkers(
     line,
     imports,
     scopes,
+    assignedValue,
   );
   if (setterMarkers.length > 0) return setterMarkers;
   const object = unwrapExpression(member.object);
@@ -1891,6 +1909,7 @@ function assignmentTargetRuntimeEffectMarkers(
   line: number,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  assignedValue?: unknown,
 ): readonly SemanticMarker[] {
   const unwrapped = unwrapExpression(target);
   if (!unwrapped) return [];
@@ -1920,6 +1939,7 @@ function assignmentTargetRuntimeEffectMarkers(
       line,
       imports,
       scopes,
+      assignedValue,
     );
   }
   if (unwrapped.type === "AssignmentPattern" && isNode(unwrapped.left)) {
@@ -1928,6 +1948,7 @@ function assignmentTargetRuntimeEffectMarkers(
       line,
       imports,
       scopes,
+      assignedValue,
     );
   }
   if (unwrapped.type === "RestElement" && isNode(unwrapped.argument)) {
@@ -1936,6 +1957,7 @@ function assignmentTargetRuntimeEffectMarkers(
       line,
       imports,
       scopes,
+      assignedValue,
     );
   }
   const children = unwrapped.type === "ObjectPattern"
@@ -1953,6 +1975,7 @@ function assignmentTargetRuntimeEffectMarkers(
       line,
       imports,
       scopes,
+      unknownRuntimeValueExpression(),
     );
   });
 }
@@ -1962,6 +1985,7 @@ function memberSetterRuntimeEffectMarkers(
   line: number,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  assignedValue?: unknown,
 ): readonly SemanticMarker[] {
   if (
     member.type !== "MemberExpression" &&
@@ -1981,7 +2005,12 @@ function memberSetterRuntimeEffectMarkers(
     setterBinding,
     `${chain?.join(".") ?? invocationSymbol(member)} setter`,
     line,
+    assignedValue === undefined ? [] : [assignedValue],
   );
+}
+
+function unknownRuntimeValueExpression(): Node {
+  return { type: "Identifier", name: "unknownRuntimeValue" };
 }
 
 function isProcessModuleEnvDetail(
@@ -2722,6 +2751,8 @@ function mutationCallMarker(
       comparatorBinding,
       `${calleeName}(comparator)`,
       line,
+      [unknownRuntimeValueExpression(), unknownRuntimeValueExpression()],
+      false,
     );
     return markers.length > 0 ? markers : undefined;
   }
@@ -2737,6 +2768,7 @@ function mutationCallMarker(
       line,
       imports,
       scopes,
+      args[2],
     );
   } else if (canonicalName === "Object.assign") {
     setterMarkers = objectAssignSetterMarkers(args, line, imports, scopes);
@@ -2787,7 +2819,7 @@ function objectAssignGetterMarkers(
   return args.slice(1).flatMap((source) => {
     const sourceBinding = runtimeBindingForExpression(source, imports, scopes);
     return getterRuntimeEffectMarkers(
-      runtimeUnknownPropertyGetterEffectBinding(sourceBinding),
+      runtimeUnknownPropertyGetterEffectBinding(sourceBinding, true),
       `Object.assign(${
         invocationSymbol(
           unwrapExpression(source) ?? {
@@ -2817,6 +2849,7 @@ function objectAssignSetterMarkers(
           line,
           imports,
           scopes,
+          unknownRuntimeValueExpression(),
         ),
       );
       continue;
@@ -2837,6 +2870,9 @@ function objectAssignSetterMarkers(
           line,
           imports,
           scopes,
+          property.type === "ObjectProperty"
+            ? property.value
+            : unknownRuntimeValueExpression(),
         ),
       );
     }
@@ -4780,11 +4816,24 @@ function mutationCallResultRuntimeBinding(
       for (
         const entry of assignedEntries
       ) {
+        let preservesPrevious = false;
+        if (
+          canonicalName === "Object.setPrototypeOf" &&
+          entry.property !== undefined
+        ) {
+          const receiverProperty = runtimePropertyResolution(
+            result,
+            entry.property,
+            true,
+          );
+          if (!receiverProperty.defaultMayRun) continue;
+          preservesPrevious = receiverProperty.binding !== undefined;
+        }
         result = appendRuntimeMutationResultProperty(
           result,
           entry.property,
           runtimeBindingForExpression(entry.expression, imports, scopes),
-          false,
+          preservesPrevious,
           true,
         );
       }
@@ -4837,6 +4886,7 @@ function mutationCallResultRuntimeBinding(
             ? {
               kind: "property-getter-effect",
               binding: getterInvocationBinding,
+              enumerable: accessors.enumerable,
             }
             : undefined,
           true,
@@ -5156,6 +5206,39 @@ function bindRuntimePrototypeMutation(
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): void {
+  const entries = literalObjectResultAssignedEntries(prototype);
+  if (entries) {
+    for (const entry of entries) {
+      if (entry.property === undefined) {
+        bindRuntimeUnknownPropertyMutation(
+          target,
+          entry.expression,
+          imports,
+          scopes,
+        );
+        continue;
+      }
+      const targetBinding = runtimeBindingForExpression(
+        target,
+        imports,
+        scopes,
+      );
+      const receiverProperty = targetBinding
+        ? runtimePropertyResolution(targetBinding, entry.property, true)
+        : { defaultMayRun: true };
+      if (!receiverProperty.defaultMayRun) continue;
+      bindRuntimeNamedPropertyMutationBinding(
+        target,
+        entry.property,
+        runtimeBindingForExpression(entry.expression, imports, scopes),
+        entry.expression,
+        imports,
+        scopes,
+        receiverProperty.binding === undefined,
+      );
+    }
+    return;
+  }
   const propertyExpression = runtimeUnknownPropertyExpression(prototype);
   const propertyBinding = runtimeBindingForExpression(
     propertyExpression,
@@ -5245,7 +5328,11 @@ function bindRuntimeAccessorMutation(
       property === undefined
         ? runtimeUnknownPropertyExpression(target)
         : runtimePropertyExpression(target, property),
-      { kind: "property-getter-effect", binding: getterInvocationBinding },
+      {
+        kind: "property-getter-effect",
+        binding: getterInvocationBinding,
+        enumerable: accessors.enumerable,
+      },
       accessors.getterInvocationExpressions[0],
       imports,
       scopes,
@@ -5317,6 +5404,7 @@ function bindRuntimeAccessorMutation(
 }
 
 function runtimeDescriptorAccessorExpressions(descriptor: unknown): {
+  readonly enumerable?: boolean;
   readonly getterInvocationExpressions: readonly unknown[];
   readonly getterInvocationUnknown: boolean;
   readonly getterExpressions: readonly unknown[];
@@ -5327,6 +5415,7 @@ function runtimeDescriptorAccessorExpressions(descriptor: unknown): {
   const value = unwrapExpression(descriptor);
   if (!value || value.type !== "ObjectExpression") {
     return {
+      enumerable: undefined,
       getterInvocationExpressions: [],
       getterInvocationUnknown: false,
       getterExpressions: [],
@@ -5379,6 +5468,7 @@ function runtimeDescriptorAccessorExpressions(descriptor: unknown): {
     getterUnknown ||= !returned.known;
   }
   return {
+    enumerable: runtimeDescriptorEnumerable(value),
     getterInvocationExpressions,
     getterInvocationUnknown,
     getterExpressions,
@@ -5386,6 +5476,28 @@ function runtimeDescriptorAccessorExpressions(descriptor: unknown): {
     setterExpressions,
     setterUnknown,
   };
+}
+
+function runtimeDescriptorEnumerable(descriptor: Node): boolean | undefined {
+  let enumerable: boolean | undefined = false;
+  for (
+    const property of Array.isArray(descriptor.properties)
+      ? descriptor.properties
+      : []
+  ) {
+    if (!isNode(property) || property.type === "SpreadElement") {
+      enumerable = undefined;
+      continue;
+    }
+    if (staticObjectPropertyName(property) !== "enumerable") continue;
+    const value = property.type === "ObjectProperty"
+      ? unwrapExpression(property.value)
+      : undefined;
+    enumerable = value?.type === "BooleanLiteral"
+      ? value.value as boolean
+      : undefined;
+  }
+  return enumerable;
 }
 
 function runtimeFunctionReturnExpressions(value: Node): {
@@ -7613,25 +7725,34 @@ function runtimePropertyBinding(
 function runtimePropertyGetterEffectBinding(
   binding: RuntimeBinding,
   property: string,
+  enumerableOnly = false,
 ): RuntimeBinding | undefined {
   if (!runtimeBindingMayContainGetterEffect(binding)) return undefined;
   const rawBinding = runtimePropertyResolution(binding, property, true).binding;
   return unionRuntimeBindings(
     flattenRuntimeBindings(rawBinding).flatMap((candidate) =>
-      candidate.kind === "property-getter-effect" ? [candidate.binding] : []
+      candidate.kind === "property-getter-effect" &&
+        (!enumerableOnly || candidate.enumerable !== false)
+        ? [candidate.binding]
+        : []
     ),
   );
 }
 
 function runtimeUnknownPropertyGetterEffectBinding(
   binding: RuntimeBinding | undefined,
+  enumerableOnly = false,
 ): RuntimeBinding | undefined {
   if (!runtimeBindingMayContainGetterEffect(binding)) return undefined;
   return unionRuntimeBindings(
     flattenRuntimeBindings(binding).flatMap((candidate) =>
       candidate.kind === "namespace-object"
         ? [...namespaceUnknownPropertyNames(candidate)].flatMap((property) =>
-          runtimePropertyGetterEffectBinding(candidate, property) ?? []
+          runtimePropertyGetterEffectBinding(
+            candidate,
+            property,
+            enumerableOnly,
+          ) ?? []
         )
         : []
     ),
@@ -8097,7 +8218,9 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
     return `effect-object:${binding.effect}`;
   }
   if (binding.kind === "property-getter-effect") {
-    return `property-getter-effect:${runtimeBindingKey(binding.binding)}`;
+    return `property-getter-effect:${binding.enumerable ?? "unknown"}:${
+      runtimeBindingKey(binding.binding)
+    }`;
   }
   if (binding.kind === "property-setter") {
     return `property-setter:${runtimeBindingKey(binding.binding)}`;

@@ -2424,6 +2424,13 @@ Object.setPrototypeOf(
   { safe: () => undefined },
   { run: Deno.remove },
 ).safe();
+Object.setPrototypeOf(
+  { run: () => undefined },
+  { run: Deno.remove },
+).run();
+const prototypeTarget = { run: () => undefined };
+Object.setPrototypeOf(prototypeTarget, { run: Deno.remove });
+prototypeTarget.run();
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
@@ -2584,6 +2591,44 @@ void unusedGetter;
     );
   });
 
+  it("passes assigned values to bound filesystem-open setters", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "options", {
+  set: Deno.open.bind(Deno, "assigned.txt"),
+});
+target.options = { write: true, create: true };
+for (target.options of [{ write: true, create: true }]) {}
+`,
+        "src/runtime-bound-open-setter-values.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "target.options setter"],
+        ["filesystem-write", "target.options setter"],
+      ],
+    );
+  });
+
+  it("preserves setters after Object.assign invokes them", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "path", { set: Deno.remove });
+Object.assign(target, { path: "first.txt" });
+target.path = "second.txt";
+`,
+        "src/runtime-object-assign-setter-preservation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "target.path setter"],
+        ["filesystem-write", "target.path setter"],
+      ],
+    );
+  });
+
   it("invokes descriptor getters on property reads and copies", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2593,10 +2638,16 @@ Object.defineProperty(direct, "path", { get: Deno.cwd });
 direct.path;
 
 const source = {};
-Object.defineProperty(source, "path", { get: Deno.cwd });
+Object.defineProperty(source, "path", { get: Deno.cwd, enumerable: true });
 Object.assign({}, source);
 const spread = { ...source };
 void spread;
+
+const hidden = {};
+Object.defineProperty(hidden, "request", { get: fetch });
+Object.assign({}, hidden);
+const hiddenSpread = { ...hidden };
+void hiddenSpread;
 
 const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
 returned.path;

@@ -330,6 +330,29 @@ describe("automated review gate", () => {
       ))?.reviewer,
       "chatgpt-codex-connector[bot]",
     );
+
+    const newerCurrentSkipWithStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+        "<!-- recent_review_end -->",
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ].join("\n"),
+      created_at: "2026-08-22T12:05:00Z",
+      updated_at: "2026-08-22T12:05:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment(), newerCurrentSkipWithStaleRange],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
   });
 
   it("publishes the automated review decision on the exact pull request head", async () => {

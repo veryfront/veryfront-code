@@ -119,11 +119,17 @@ export async function findAutomatedReview(
       const reviewedTip = recentReview?.match(
         CODERABBIT_REVIEW_RANGE_PATTERN,
       )?.[2];
-      const outcomeTip = reviewedTip ??
-        body.match(CODERABBIT_CURRENT_HEAD_PATTERN)?.[1];
+      const explicitOutcomeTip = body.match(
+        CODERABBIT_CURRENT_HEAD_PATTERN,
+      )?.[1];
       if (
-        typeof outcomeTip !== "string" ||
-        outcomeTip.toLowerCase() !== headSha.toLowerCase()
+        explicitOutcomeTip?.toLowerCase() === headSha.toLowerCase()
+      ) {
+        return undefined;
+      }
+      if (
+        typeof reviewedTip !== "string" ||
+        reviewedTip.toLowerCase() !== headSha.toLowerCase()
       ) {
         continue;
       }
