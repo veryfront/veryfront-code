@@ -173,7 +173,27 @@ async function loadModule(args: {
     allowHostTypeScriptConfigReads,
   } = args;
 
-  if (modulePath.endsWith(".js")) return loadJSModule(modulePath);
+  if (modulePath.endsWith(".js")) {
+    const bundler = selectedTypeScriptBundler();
+    if (!bundler) return loadJSModule(modulePath);
+    const decoratorOptions = await readProjectTypeScriptDecoratorOptions(
+      projectDir,
+      await createProjectSourceSnapshot(projectDir, adapter),
+      allowHostTypeScriptConfigReads,
+    );
+    if (!bundlerForcesTypeScript(bundler, decoratorOptions)) {
+      return loadJSModule(modulePath);
+    }
+    return loadAndTranspileModule(
+      modulePath,
+      projectDir,
+      adapter,
+      fs,
+      config,
+      decoratorOptions,
+      allowHostTypeScriptConfigReads,
+    );
+  }
 
   // Always transpile TypeScript in compiled binaries - they can't import raw .ts files
   if (!isDeno || isCompiledBinary()) {

@@ -236,6 +236,36 @@ describe("SwcBundler decorator metadata", () => {
     }
   });
 
+  it("resolves an explicit relative tsconfig from absWorkingDir", async () => {
+    const projectDir = await makeTempDir();
+    const bundler = new SwcBundler();
+    try {
+      await writeTextFile(
+        `${projectDir}/legacy.json`,
+        JSON.stringify({
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+          },
+        }),
+      );
+
+      const result = await bundler.transform({
+        absWorkingDir: projectDir,
+        tsconfig: "legacy.json",
+        sourcefile: `${projectDir}/fixture.ts`,
+        code: METADATA_SOURCE,
+        loader: "ts",
+        format: "esm",
+      });
+
+      assertStringIncludes(result.code, "design:paramtypes");
+    } finally {
+      await bundler.stop();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("transforms TypeScript returned by virtual project loaders", async () => {
     const bundler = new SwcBundler();
     const virtualDependency: BundlerPlugin = {

@@ -179,6 +179,61 @@ describe("API route decorator metadata", () => {
     }
   });
 
+  it("transforms opted-in TypeScript imported by a JavaScript route", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = join(projectDir, "handler.js");
+    const previousBundler = tryResolve<Bundler>("Bundler");
+    const swcBundler = new SwcBundler();
+
+    try {
+      await Deno.writeTextFile(
+        join(projectDir, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+          },
+        }),
+      );
+      await Deno.writeTextFile(
+        join(projectDir, "dependency.ts"),
+        `
+          function decorate(..._args: unknown[]): void {}
+          export class Subject { @decorate value!: string; }
+          export function propertyType() {
+            return Reflect.getMetadata("design:type", Subject.prototype, "value")?.name;
+          }
+        `,
+      );
+      await Deno.writeTextFile(
+        modulePath,
+        `
+          import { propertyType } from "./dependency.ts";
+          export function GET() { return Response.json(propertyType()); }
+        `,
+      );
+
+      register("Bundler", swcBundler);
+      const route = await loadHandlerModule({
+        projectDir,
+        modulePath,
+        adapter: denoAdapter,
+        allowHostProjectCodeExecution: true,
+      });
+      const handler = route?.GET as AppRouteHandler;
+      const response = await handler(
+        new Request("http://localhost/api/javascript-entry"),
+        { params: {}, env: {} } satisfies AppRouteContext,
+      );
+      assertEquals(await response.json(), "String");
+    } finally {
+      unregister("Bundler");
+      if (previousBundler) register("Bundler", previousBundler);
+      await swcBundler.stop();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("keeps flags-off local routes in one shared Deno module graph", async () => {
     const projectDir = await Deno.makeTempDir();
     const previousBundler = tryResolve<Bundler>("Bundler");

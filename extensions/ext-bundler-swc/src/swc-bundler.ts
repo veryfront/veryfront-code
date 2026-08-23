@@ -3,7 +3,7 @@ import { EsbuildBundler } from "@veryfront/ext-bundler-esbuild";
 import { parseExtensionManifest } from "veryfront/extensions";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { extname, join } from "node:path";
+import { extname, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import type {
   BuildContext,
@@ -82,7 +82,9 @@ async function decoratorOptions(
   if (raw) return raw;
 
   const configPath = typeof options.tsconfig === "string"
-    ? options.tsconfig
+    ? isAbsolute(options.tsconfig)
+      ? options.tsconfig
+      : resolve(workingDirectory(options), options.tsconfig)
     : join(workingDirectory(options), "tsconfig.json");
   return await readTypeScriptDecoratorOptions({ configPath });
 }
