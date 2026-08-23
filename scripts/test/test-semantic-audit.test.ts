@@ -2404,6 +2404,79 @@ Object.assign({}, copiedBox.source).run();
     assertEquals(effects.includes("filesystem-write"), true);
   });
 
+  it("fails closed for partial alternatives copied by object spread", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+({ ...source }).run();
+`,
+      "src/runtime-object-spread-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
+  it("preserves partial provenance when reading stored properties", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const box = { source: maybe ? { run: Deno.cwd } : loadSource() };
+Object.assign({}, box.source).run();
+`,
+      "src/runtime-stored-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
+  it("preserves partial provenance returned by object getters", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const box = { get source() { return source; } };
+Object.assign({}, box.source).run();
+`,
+      "src/runtime-getter-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
+  it("preserves partial provenance while copying enumerable values", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const holder = { source: maybe ? { run: Deno.cwd } : loadSource() };
+const copied = Object.assign({}, holder);
+Object.assign({}, copied.source).run();
+`,
+      "src/runtime-copied-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
+  it("preserves partial provenance through descriptor reconciliation", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const holder = { source: maybe ? { run: Deno.cwd } : loadSource() };
+Object.defineProperty(holder, "source", { enumerable: true });
+Object.assign({}, holder.source).run();
+`,
+      "src/runtime-descriptor-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
   it("preserves every possible sort comparator effect", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2519,6 +2592,42 @@ caughtDefineManyTarget.run("caught-define-many.txt");
     );
   });
 
+  it("writes explicit Reflect.set receivers without mutating the target", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { run: () => undefined };
+const receiver = {};
+Reflect.set(target, "run", Deno.remove, receiver);
+target.run();
+receiver.run("receiver.txt");
+`,
+        "src/runtime-reflect-set-receiver.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "receiver.run"]],
+    );
+  });
+
+  it("stops Object.defineProperties after the first failed descriptor", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { run: Deno.remove };
+Object.defineProperty(target, "locked", { value: 1 });
+try {
+  Object.defineProperties(target, {
+    locked: { configurable: true },
+    run: { value: () => undefined },
+  });
+} catch {}
+target.run("retained.txt");
+`,
+        "src/runtime-define-properties-short-circuit.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "target.run"]],
+    );
+  });
+
   it("preserves every callable comparator and setter effect", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2620,6 +2729,28 @@ retainedPrototype.run("retained-prototype.txt");
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
       Array.from({ length: 8 }, () => "filesystem-write"),
+    );
+  });
+
+  it("keeps frozen and sealed property provenance after failed mutations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const frozen = Object.freeze({ run: Deno.remove });
+Reflect.set(frozen, "run", () => undefined);
+Reflect.deleteProperty(frozen, "run");
+frozen.run("frozen.txt");
+
+const sealed = Object.seal({ run: Deno.remove });
+Reflect.deleteProperty(sealed, "run");
+sealed.run("sealed.txt");
+`,
+        "src/runtime-property-integrity-levels.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "frozen.run"],
+        ["filesystem-write", "sealed.run"],
+      ],
     );
   });
 
@@ -3007,6 +3138,36 @@ opaque.path;
         ["process", "opaque.path getter"],
         ["server", "opaque.path getter"],
         ["shared-cwd", "opaque.path getter"],
+      ],
+    );
+  });
+
+  it("preserves both outcomes when delete configurability is unknown", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const configurable: boolean;
+const deleted = { run: Deno.cwd };
+Object.defineProperty(deleted, "run", { configurable });
+Object.setPrototypeOf(deleted, { run: Deno.remove });
+delete deleted.run;
+deleted.run("delete.txt");
+
+const reflected = { run: Deno.cwd };
+Object.defineProperty(reflected, "run", { configurable });
+Object.setPrototypeOf(reflected, { run: Deno.remove });
+Reflect.deleteProperty(reflected, "run");
+reflected.run("reflect-delete.txt");
+`,
+        "src/runtime-unknown-property-delete.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "deleted.run"],
+        ["shared-cwd", "deleted.run"],
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "reflected.run"],
+        ["shared-cwd", "reflected.run"],
       ],
     );
   });
