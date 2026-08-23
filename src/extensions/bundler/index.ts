@@ -26,6 +26,7 @@ export type {
   StdinOptions,
   TransformOptions,
   TransformResult,
+  TypeScriptDecoratorOptions,
 } from "./bundler.ts";
 
 // Back-compat type aliases that the old top-level src/extensions/bundler.ts
@@ -45,3 +46,7 @@ export type {
 export type { ImportSpecifier, ModuleLexer } from "./module-lexer.ts";
 
 export { build, context, getBundler, stop, transform } from "./helper.ts";
+export {
+  readTypeScriptDecoratorOptions,
+  type ReadTypeScriptDecoratorOptionsInput,
+} from "./typescript-config.ts";

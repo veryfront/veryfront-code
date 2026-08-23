@@ -1,5 +1,12 @@
 import { computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
-import type { BuildResult, Plugin } from "veryfront/extensions/bundler";
+import type {
+  BuildResult,
+  BundleOptions,
+  Bundler,
+  Plugin,
+  TypeScriptDecoratorOptions,
+} from "veryfront/extensions/bundler";
+import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
@@ -7,9 +14,11 @@ import { validateHTTPImports } from "./http-validator.ts";
 import { loadSecurityConfig } from "./security-config.ts";
 import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -50,6 +59,7 @@ export {
 } from "./external-import-rewriter.ts";
 
 const logger = serverLogger.component("api");
+const MAX_TYPESCRIPT_CONFIG_BYTES = 1024 * 1024;
 
 export { toCjsDestructureBindings } from "./loader-helpers.ts";
 
@@ -68,7 +78,14 @@ export function loadHandlerModule(options: LoadHostModuleOptions): Promise<APIRo
       validateModulePath(modulePath, projectDir);
 
       try {
-        const module = await loadModule({ modulePath, projectDir, adapter, fs, config });
+        const module = await loadModule({
+          modulePath,
+          projectDir,
+          adapter,
+          fs,
+          config,
+          allowHostTypeScriptConfigReads: true,
+        });
         return extractAPIRouteHandlers(module);
       } catch (error: unknown) {
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -145,18 +162,73 @@ async function loadModule(args: {
   adapter: RuntimeAdapter;
   fs: FileSystem;
   config?: VeryfrontConfig;
+  allowHostTypeScriptConfigReads: boolean;
 }): Promise<APIRoute> {
-  const { modulePath, projectDir, adapter, fs, config } = args;
+  const {
+    modulePath,
+    projectDir,
+    adapter,
+    fs,
+    config,
+    allowHostTypeScriptConfigReads,
+  } = args;
 
-  if (modulePath.endsWith(".js")) return loadJSModule(modulePath);
+  if (modulePath.endsWith(".js")) {
+    const bundler = selectedTypeScriptBundler();
+    if (!bundler) return loadJSModule(modulePath);
+    const decoratorOptions = await readProjectTypeScriptDecoratorOptions(
+      projectDir,
+      await createProjectSourceSnapshot(projectDir, adapter),
+      allowHostTypeScriptConfigReads,
+    );
+    if (!bundlerForcesTypeScript(bundler, decoratorOptions)) {
+      return loadJSModule(modulePath);
+    }
+    return loadAndTranspileModule(
+      modulePath,
+      projectDir,
+      adapter,
+      fs,
+      config,
+      decoratorOptions,
+      allowHostTypeScriptConfigReads,
+    );
+  }
 
   // Always transpile TypeScript in compiled binaries - they can't import raw .ts files
   if (!isDeno || isCompiledBinary()) {
-    return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    return loadAndTranspileModule(
+      modulePath,
+      projectDir,
+      adapter,
+      fs,
+      config,
+      undefined,
+      allowHostTypeScriptConfigReads,
+    );
   }
 
   const fileExistsLocally = await fs.exists(modulePath);
   if (fileExistsLocally) {
+    const bundler = selectedTypeScriptBundler();
+    const decoratorOptions = bundler
+      ? await readProjectTypeScriptDecoratorOptions(
+        projectDir,
+        await createProjectSourceSnapshot(projectDir, adapter),
+        allowHostTypeScriptConfigReads,
+      )
+      : undefined;
+    if (decoratorOptions && bundlerForcesTypeScript(bundler, decoratorOptions)) {
+      return loadAndTranspileModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+        allowHostTypeScriptConfigReads,
+      );
+    }
     try {
       return await loadTSModuleDirect(modulePath, await moduleRevision(fs, modulePath));
     } catch (error) {
@@ -171,12 +243,156 @@ async function loadModule(args: {
         modulePath,
         error: error instanceof Error ? error.message : String(error),
       });
-      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+      return loadAndTranspileModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+        allowHostTypeScriptConfigReads,
+      );
     }
   }
 
   logger.debug(`File not local, using adapter-based loading: ${modulePath}`);
-  return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+  return loadAndTranspileModule(
+    modulePath,
+    projectDir,
+    adapter,
+    fs,
+    config,
+    undefined,
+    allowHostTypeScriptConfigReads,
+  );
+}
+
+/** @internal Exported for the runtime-selection regression test. */
+export function bundlerForcesTypeScript(
+  bundler: Pick<Bundler, "shouldBundleTypeScript"> | undefined,
+  options: TypeScriptDecoratorOptions,
+): boolean {
+  return bundler?.shouldBundleTypeScript?.(options) === true;
+}
+
+/** @internal Exported for the runtime-selection regression test. */
+export function typeScriptBuildOptions(
+  projectDir: string,
+  options: TypeScriptDecoratorOptions,
+  bundleTypeScript: boolean,
+): Pick<BundleOptions, "typescriptDecoratorOptions"> & { absWorkingDir?: string } {
+  return {
+    typescriptDecoratorOptions: options,
+    ...(bundleTypeScript ? { absWorkingDir: projectDir } : {}),
+  };
+}
+
+function selectedTypeScriptBundler():
+  | Pick<Bundler, "shouldBundleTypeScript">
+  | undefined {
+  const bundler = tryResolveExtensionContract<Bundler>("Bundler");
+  return bundler?.shouldBundleTypeScript ? bundler : undefined;
+}
+
+async function readProjectTypeScriptDecoratorOptions(
+  projectDir: string,
+  sourceSnapshot: ProjectSourceSnapshot,
+  allowHostConfigReads: boolean,
+): Promise<TypeScriptDecoratorOptions> {
+  const projectRoot = pathHelper.resolve(projectDir);
+  return await readTypeScriptDecoratorOptions({
+    configPath: pathHelper.join(projectRoot, "tsconfig.json"),
+    readTextFile: async (path) => {
+      const resolvedPath = pathHelper.resolve(path);
+      if (isWithinDirectory(projectRoot, resolvedPath)) {
+        return await sourceSnapshot.readTextFileWithinLimit(
+          resolvedPath,
+          MAX_TYPESCRIPT_CONFIG_BYTES,
+          "TypeScript configuration",
+        );
+      }
+      if (!allowHostConfigReads) {
+        throw new TypeError(
+          "TypeScript configuration inheritance outside the project directory requires trusted host execution",
+        );
+      }
+      return await readTrustedHostTypeScriptConfig(resolvedPath);
+    },
+    ...(allowHostConfigReads ? {} : {
+      resolveExtends: (specifier: string, fromPath: string) =>
+        resolveIsolatedTypeScriptExtends(specifier, fromPath, projectRoot),
+    }),
+  });
+}
+
+function withTypeScriptConfigExtension(path: string): string {
+  const extension = pathHelper.extname(path).toLowerCase();
+  return extension === ".json" || extension === ".jsonc" ? path : `${path}.json`;
+}
+
+function rejectExternalTypeScriptConfig(): never {
+  throw new TypeError(
+    "TypeScript configuration inheritance outside the project directory requires trusted host execution",
+  );
+}
+
+function resolveIsolatedTypeScriptExtends(
+  specifier: string,
+  fromPath: string,
+  projectRoot: string,
+): Promise<string> {
+  let candidate: string;
+  if (pathHelper.isAbsolute(specifier) || specifier.startsWith(".")) {
+    candidate = withTypeScriptConfigExtension(
+      pathHelper.resolve(pathHelper.dirname(fromPath), specifier),
+    );
+  } else {
+    if (specifier.includes("\\") || specifier.includes(":")) {
+      rejectExternalTypeScriptConfig();
+    }
+    const parts = specifier.split("/");
+    const packagePartCount = specifier.startsWith("@") ? 2 : 1;
+    if (
+      parts.length < packagePartCount ||
+      parts.some((part) => part.length === 0 || part === "." || part === "..")
+    ) {
+      rejectExternalTypeScriptConfig();
+    }
+    const packageRoot = pathHelper.join(
+      projectRoot,
+      "node_modules",
+      ...parts.slice(0, packagePartCount),
+    );
+    const subpath = parts.slice(packagePartCount);
+    candidate = subpath.length === 0
+      ? pathHelper.join(packageRoot, "tsconfig.json")
+      : withTypeScriptConfigExtension(pathHelper.join(packageRoot, ...subpath));
+  }
+
+  if (!isWithinDirectory(projectRoot, candidate)) {
+    rejectExternalTypeScriptConfig();
+  }
+  return Promise.resolve(candidate);
+}
+
+async function readTrustedHostTypeScriptConfig(path: string): Promise<string> {
+  const hostFileSystem = createFileSystem();
+  if (!hostFileSystem.lstat) {
+    throw new TypeError("Trusted TypeScript configuration requires lstat support");
+  }
+  const info = await hostFileSystem.lstat(path);
+  if (!info.isFile || info.isSymlink) {
+    throw new TypeError("Trusted TypeScript configuration must be a regular file");
+  }
+  const reader = captureBoundedTextReader(
+    hostFileSystem,
+    "Trusted TypeScript configuration reader",
+  );
+  return (await reader.readUtf8(
+    path,
+    MAX_TYPESCRIPT_CONFIG_BYTES,
+    "TypeScript configuration",
+  )).content;
 }
 
 /**
@@ -500,12 +716,16 @@ async function loadAndTranspileModule(
   adapter: RuntimeAdapter,
   fs: FileSystem,
   config?: VeryfrontConfig,
+  decoratorOptions?: TypeScriptDecoratorOptions,
+  allowHostTypeScriptConfigReads = false,
 ): Promise<APIRoute> {
   const source = await buildTranspiledModuleSource(
     modulePath,
     projectDir,
     adapter,
     config,
+    decoratorOptions,
+    allowHostTypeScriptConfigReads,
   );
   return await loadModuleFromCode(source, fs, `${projectDir}\u0000${modulePath}`);
 }
@@ -515,6 +735,8 @@ function buildTranspiledModuleSource(
   projectDir: string,
   adapter: RuntimeAdapter,
   config?: VeryfrontConfig,
+  resolvedDecoratorOptions?: TypeScriptDecoratorOptions,
+  allowHostTypeScriptConfigReads = false,
 ): Promise<string> {
   return withSpan(
     "api.buildTranspiledModuleSource",
@@ -542,6 +764,17 @@ function buildTranspiledModuleSource(
       validateHTTPImports(source, allowedHosts);
 
       const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
+      const typeScriptBundler = selectedTypeScriptBundler();
+      const typescriptDecoratorOptions = resolvedDecoratorOptions ??
+        (typeScriptBundler
+          ? await readProjectTypeScriptDecoratorOptions(
+            projectDir,
+            sourceSnapshot,
+            allowHostTypeScriptConfigReads,
+          )
+          : undefined);
+      const bundleTypeScript = typescriptDecoratorOptions !== undefined &&
+        bundlerForcesTypeScript(typeScriptBundler, typescriptDecoratorOptions);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -617,6 +850,12 @@ function buildTranspiledModuleSource(
           createHTTPPlugin({ allowedHosts, projectDir }),
           createProjectBoundaryPlugin(sourceSnapshot),
         ],
+        // Only the opt-in decorator transform needs a working directory: adding
+        // it unconditionally would change how the default esbuild path reports
+        // paths for every project.
+        ...(typescriptDecoratorOptions
+          ? typeScriptBuildOptions(projectDir, typescriptDecoratorOptions, bundleTypeScript)
+          : {}),
       });
 
       if (result.errors?.length) {

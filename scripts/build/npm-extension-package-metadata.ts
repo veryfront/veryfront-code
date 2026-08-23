@@ -1,4 +1,4 @@
-import { dirname, join, normalize, relative, toFileUrl } from "#std/path";
+import { dirname, isAbsolute, join, normalize, relative, toFileUrl } from "#std/path";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
 import { MINIMUM_NODE_VERSION, NPM_NODE_ENGINE } from "./runtime-support.ts";
 
@@ -168,6 +168,40 @@ export function manifestDependencies(
   );
 }
 
+function localFirstPartyExtensionDependencies(
+  manifest: ExtensionManifest,
+  manifestDir: string,
+  version: string,
+): Record<string, string> {
+  const dependencies: Record<string, string> = {};
+  for (const [specifier, target] of Object.entries(manifest.imports ?? {})) {
+    if (!specifier.startsWith("@veryfront/ext-") || !target.startsWith(".")) continue;
+    if (specifier === manifest.name) {
+      throw new Error(`${manifest.name} cannot depend on itself`);
+    }
+
+    const dependencyDirectory = join(
+      "extensions",
+      extensionPackageDirectoryName(specifier),
+    );
+    const resolvedTarget = normalize(join(manifestDir, target));
+    const relativeTarget = relative(dependencyDirectory, resolvedTarget);
+    if (
+      relativeTarget === "" ||
+      relativeTarget === ".." ||
+      relativeTarget.startsWith("../") ||
+      relativeTarget.startsWith("..\\") ||
+      isAbsolute(relativeTarget)
+    ) {
+      throw new Error(
+        `${manifest.name} import "${specifier}" must target its matching first-party extension directory`,
+      );
+    }
+    dependencies[specifier] = version;
+  }
+  return dependencies;
+}
+
 export function normalizeExtensionEntryPoints(input: {
   manifestPath: string;
   manifestDir: string;
@@ -262,7 +296,16 @@ function createBaseExtensionPackageSpec(input: {
   }
 
   const packageDirectoryName = extensionPackageDirectoryName(packageName);
-  const dependencies = manifestDependencies(input.manifest);
+  const dependencies = Object.fromEntries(
+    Object.entries({
+      ...manifestDependencies(input.manifest),
+      ...localFirstPartyExtensionDependencies(
+        input.manifest,
+        manifestDir,
+        input.version,
+      ),
+    }).toSorted(([left], [right]) => left.localeCompare(right)),
+  );
   const veryfrontPeerRange = `^${input.version}`;
   const entryPoints = normalizeExtensionEntryPoints({
     manifestPath: input.manifestPath,
@@ -696,6 +739,14 @@ function createVeryfrontDntMappings(input: {
   for (
     const [specifier, target] of Object.entries(input.manifest.imports ?? {})
   ) {
+    if (specifier.startsWith("@veryfront/ext-") && target.startsWith(".")) {
+      const resolvedTarget = resolveManifestTarget(input.manifestDir, target);
+      mappings[toFileUrl(join(input.rootDir, resolvedTarget)).href] = {
+        name: specifier,
+        version: input.version,
+      };
+      continue;
+    }
     if (!specifier.startsWith("veryfront/")) continue;
 
     const exportSubpath = `./${specifier.slice("veryfront/".length)}`;
