@@ -221,12 +221,20 @@ describe("readTypeScriptDecoratorOptions", () => {
         join(projectDir, "tsconfig.json"),
         JSON.stringify({ extends: "./absent.json" }),
       );
-      await assertRejects(() =>
-        readTypeScriptDecoratorOptions({
-          configPath: join(projectDir, "tsconfig.json"),
-          readTextFile,
-        })
+      const error = await assertRejects(
+        () =>
+          readTypeScriptDecoratorOptions({
+            configPath: join(projectDir, "tsconfig.json"),
+            readTextFile,
+          }),
+        VeryfrontError,
       );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "tsconfig-read-failed");
+      assertEquals(error.message.includes(projectDir), false);
+      assertEquals(error.detail?.includes(projectDir) ?? false, false);
+      assertEquals(JSON.stringify(error.context ?? {}).includes(projectDir), false);
+      assertEquals(String(error.cause).includes(projectDir), false);
     } finally {
       await remove(projectDir, { recursive: true });
     }

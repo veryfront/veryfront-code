@@ -24,6 +24,14 @@ const TSCONFIG_CYCLE_ERROR = defineError({
   suggestion: 'Remove the tsconfig.json "extends" entry that points back at an ancestor',
 });
 
+const TSCONFIG_READ_ERROR = defineError({
+  slug: "tsconfig-read-failed",
+  category: "CONFIG",
+  status: 422,
+  title: "TypeScript configuration could not be read",
+  suggestion: 'Check the tsconfig.json "extends" entry and filesystem permissions',
+});
+
 /**
  * Input for {@link readTypeScriptDecoratorOptions}.
  *
@@ -152,7 +160,12 @@ export async function readTypeScriptDecoratorOptions(
       source = await readTextFile(path);
     } catch (error) {
       if (root && isMissingFileError(error)) return {};
-      throw error;
+      throw TSCONFIG_READ_ERROR.create({
+        detail: root
+          ? "TypeScript configuration could not be read"
+          : "Inherited TypeScript configuration could not be read",
+        cause: new Error("TypeScript configuration read failed"),
+      });
     }
 
     active.add(path);
