@@ -41,7 +41,7 @@ Extension availability is separate from contract requirement:
 | Package                                                   | Contract                  | Description                                                               |
 | --------------------------------------------------------- | ------------------------- | ------------------------------------------------------------------------- |
 | [`@veryfront/ext-bundler-esbuild`](./ext-bundler-esbuild) | `Bundler`, `ModuleLexer`  | ESM bundling and module analysis via `esbuild` and `es-module-lexer`      |
-| [`@veryfront/ext-bundler-swc`](./ext-bundler-swc)         | `Bundler`                 | Opt-in legacy decorator metadata through SWC before esbuild bundling     |
+| [`@veryfront/ext-bundler-swc`](./ext-bundler-swc)         | `Bundler`                 | Opt-in legacy decorator metadata through SWC before esbuild bundling      |
 | [`@veryfront/ext-css-lightning`](./ext-css-lightning)     | `CSSOptimizationEngine`   | Explicit CSS compilation, minification, browser targets, and source maps  |
 | [`@veryfront/ext-css-purgecss`](./ext-css-purgecss)       | `CSSPurgingEngine`        | Explicit parser-backed unused and critical CSS extraction via PurgeCSS    |
 | [`@veryfront/ext-css-tailwind`](./ext-css-tailwind)       | `CSSProcessor`            | Tailwind CSS v4 compilation with pinned local plugins                     |
@@ -129,7 +129,7 @@ subset used by ordinary apps and local development.
 | `@veryfront/ext-schema-zod`                  | `SchemaValidator`             | Direct built-in                           |
 | `@veryfront/ext-auth-jwt`                    | `AuthProvider`                | Deferred; install when auth is configured |
 | `@veryfront/ext-bundler-esbuild`             | `Bundler`, `ModuleLexer`      | Deferred; standard npm baseline           |
-| `@veryfront/ext-bundler-swc`                 | `Bundler`                     | Explicit; install for decorator metadata   |
+| `@veryfront/ext-bundler-swc`                 | `Bundler`                     | Explicit; install for decorator metadata  |
 | `@veryfront/ext-parser-babel`                | `CodeParser`                  | Deferred; standard npm baseline           |
 | `@veryfront/ext-yaml`                        | `SkillDocumentParserProvider` | Deferred; standard npm baseline           |
 | `@veryfront/ext-content-mdx`                 | `ContentProcessor`            | Deferred; standard npm baseline           |
