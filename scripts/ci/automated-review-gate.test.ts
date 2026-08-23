@@ -958,6 +958,50 @@ describe("automated review gate", () => {
       );
     }
 
+    for (
+      const fenceWithMarkdownLookingCode of [
+        [
+          "- ```md",
+          "  # example",
+          `  ${malformedCurrentRange}`,
+          "  ```",
+        ],
+        [
+          "> ```md",
+          "> - example",
+          `> ${malformedCurrentRange}`,
+          "> ```",
+        ],
+        [
+          "> - ```md",
+          ">   # example",
+          `>   ${malformedCurrentRange}`,
+          ">   ```",
+        ],
+      ]
+    ) {
+      const newerMarkdownLookingCodeInsideFence = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...fenceWithMarkdownLookingCode,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerMarkdownLookingCodeInsideFence],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
     const newerHtmlCommentedCurrentRange = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",

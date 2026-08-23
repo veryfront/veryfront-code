@@ -25,6 +25,7 @@ const MARKDOWN_FENCE_LINE_PATTERN =
   /^([ \t]{0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
 const MARKDOWN_LIST_PREFIX_PATTERN =
   /([-*+]|\d+[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
+const MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN = /^[ \t]*(?:>[ \t]*)*/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
@@ -624,7 +625,7 @@ function continuesMarkdownFenceContainer(line, container) {
     container.continuationIndent === 0
   ) return true;
   const linePrefix = line.match(
-    CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
+    MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN,
   )?.[0] ?? "";
   if (
     codeRabbitMarkdownPrefixSignature(linePrefix) !==
