@@ -8,6 +8,7 @@ import {
 import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
+import { LOCKFILE_CLIENTS } from "veryfront/utils/package-client";
 import { ensureDir } from "#std/fs.ts";
 import { buildDenoConfig, createDenoConfig } from "../commands/init/deno-config-generator.ts";
 import {
@@ -27,7 +28,6 @@ import {
   installDependencies,
   type PackageManager,
 } from "../utils/package-manager.ts";
-import { LOCKFILE_CLIENTS } from "veryfront/utils/package-client";
 import {
   loadIntegrationBaseConfig,
   loadIntegrationBaseFilesFromDirectory,
@@ -551,21 +551,6 @@ async function findExistingPaths(dir: string, paths: string[]): Promise<string[]
 }
 
 /**
- * Paths the scaffold cannot write through, checked before anything is written.
- *
- * `findExistingPaths` resolves a whole path, so it cannot see either of these:
- *
- * - a link anywhere along the path. `app -> ../elsewhere` makes `app/page.tsx`
- *   resolve outside the project, and a dangling `README.md -> ../outside.md`
- *   resolves to nothing at all, so both are reported absent and the write then
- *   follows the link out of the project.
- * - a regular file where a directory has to go. `app/page.tsx` cannot resolve
- *   through a file named `app`, so the write stops halfway through instead.
- *
- * A real file sitting at a scaffold path is not listed here. That one resolves
- * fine and is the conflict `findExistingPaths` reports.
- */
-/**
  * True when `path` is a symlink. `lstat` is what makes a link visible: `stat`
  * follows it and reports the target. Adapters without `lstat` have no links of
  * their own, so nothing can be one.
@@ -580,6 +565,21 @@ async function isSymlinkPath(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Paths the scaffold cannot write through, checked before anything is written.
+ *
+ * `findExistingPaths` resolves a whole path, so it cannot see either of these:
+ *
+ * - a link anywhere along the path. `app -> ../elsewhere` makes `app/page.tsx`
+ *   resolve outside the project, and a dangling `README.md -> ../outside.md`
+ *   resolves to nothing at all, so both are reported absent and the write then
+ *   follows the link out of the project.
+ * - a regular file where a directory has to go. `app/page.tsx` cannot resolve
+ *   through a file named `app`, so the write stops halfway through instead.
+ *
+ * A real file sitting at a scaffold path is not listed here. That one resolves
+ * fine and is the conflict `findExistingPaths` reports.
+ */
 async function findUnwritablePaths(
   dir: string,
   paths: string[],
