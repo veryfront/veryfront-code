@@ -6,7 +6,14 @@ import { fileURLToPath } from "node:url";
 describe("ext-bundler-swc package boundary", () => {
   it("keeps SWC and reflection dependencies in the explicit extension", async () => {
     const manifest = JSON.parse(
-      await readTextFile(fileURLToPath(new URL("../deno.json", import.meta.url))),
+      await readTextFile(
+        fileURLToPath(
+          new URL(
+            "../../../../extensions/ext-bundler-swc/deno.json",
+            import.meta.url,
+          ),
+        ),
+      ),
     );
 
     assertEquals(manifest.veryfront.activation, "explicit");
@@ -21,7 +28,7 @@ describe("ext-bundler-swc package boundary", () => {
   });
 
   it("ships the WASM asset used by the portable transform", async () => {
-    const swcModule = await import.meta.resolve("@swc/wasm");
+    const swcModule = await import.meta.resolve("npm:@swc/wasm@1.16.1");
     const packageDirectory = new URL(".", swcModule);
     const asset = await stat(fileURLToPath(new URL("wasm_bg.wasm", packageDirectory)));
 

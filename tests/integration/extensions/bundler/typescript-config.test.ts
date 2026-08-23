@@ -3,7 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { makeTempDir, mkdir, readTextFile, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { VeryfrontError } from "#veryfront/errors";
-import { readTypeScriptDecoratorOptions } from "./typescript-config.ts";
+import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 
 describe("readTypeScriptDecoratorOptions", () => {
   it("resolves inherited JSONC compiler flags with child overrides", async () => {

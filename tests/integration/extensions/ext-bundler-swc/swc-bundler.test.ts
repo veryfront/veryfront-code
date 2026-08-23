@@ -16,7 +16,7 @@ import type {
   TransformResult,
 } from "veryfront/extensions/bundler";
 import type { BundlerPlugin } from "veryfront/extensions/bundler";
-import { SwcBundler } from "./swc-bundler.ts";
+import { SwcBundler } from "@veryfront/ext-bundler-swc";
 
 const METADATA_SOURCE = `
 function decorate(..._args: unknown[]): void {}

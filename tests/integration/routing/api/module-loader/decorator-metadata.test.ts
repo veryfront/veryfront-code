@@ -11,8 +11,14 @@ import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
 import type { Bundler } from "#veryfront/extensions/bundler/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
-import { loadHandlerModule, prepareHandlerModule } from "./loader.ts";
-import type { AppRouteContext, AppRouteHandler } from "./types.ts";
+import {
+  loadHandlerModule,
+  prepareHandlerModule,
+} from "#veryfront/routing/api/module-loader/loader.ts";
+import type {
+  AppRouteContext,
+  AppRouteHandler,
+} from "#veryfront/routing/api/module-loader/types.ts";
 
 describe("API route decorator metadata", () => {
   it("allows trusted host config inheritance but rejects it during isolated preparation", async () => {
