@@ -2368,7 +2368,7 @@ conditionalTarget.write("conditional.txt");
     );
   });
 
-  it("fails closed when only part of an Object.assign source resolves", () => {
+  it("fails closed when only part of a copied source resolves", () => {
     const expectedEffects = [
       "browser",
       "filesystem-read",
@@ -2422,6 +2422,18 @@ Object.assign({}, getterBox.source).run();
 `,
       },
       {
+        name: "returned-descriptor-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const returnedGetterBox = Object.defineProperty({}, "source", {
+  get: () => source,
+});
+Object.assign({}, returnedGetterBox.source).run();
+`,
+      },
+      {
         name: "literal-getter",
         source: `
 declare const maybe: boolean;
@@ -2445,6 +2457,25 @@ const attributedBox = { source };
 Object.defineProperty(attributedBox, "source", { enumerable: true });
 const copiedBox = Object.assign({}, attributedBox);
 Object.assign({}, copiedBox.source).run();
+`,
+      },
+      {
+        name: "copied-property",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const copiedBox = Object.assign({}, { source });
+Object.assign({}, copiedBox.source).run();
+`,
+      },
+      {
+        name: "object-spread",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+({ ...source }).run();
 `,
       },
     ] as const;
@@ -2579,6 +2610,42 @@ caughtDefineManyTarget.run("caught-define-many.txt");
     );
   });
 
+  it("writes explicit Reflect.set receivers without mutating the target", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { run: () => undefined };
+const receiver = {};
+Reflect.set(target, "run", Deno.remove, receiver);
+target.run();
+receiver.run("receiver.txt");
+`,
+        "src/runtime-reflect-set-receiver.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "receiver.run"]],
+    );
+  });
+
+  it("stops Object.defineProperties after the first failed descriptor", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { run: Deno.remove };
+Object.defineProperty(target, "locked", { value: 1 });
+try {
+  Object.defineProperties(target, {
+    locked: { configurable: true },
+    run: { value: () => undefined },
+  });
+} catch {}
+target.run("retained.txt");
+`,
+        "src/runtime-define-properties-short-circuit.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "target.run"]],
+    );
+  });
+
   it("preserves every callable comparator and setter effect", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2680,6 +2747,28 @@ retainedPrototype.run("retained-prototype.txt");
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
       Array.from({ length: 8 }, () => "filesystem-write"),
+    );
+  });
+
+  it("keeps frozen and sealed property provenance after failed mutations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const frozen = Object.freeze({ run: Deno.remove });
+Reflect.set(frozen, "run", () => undefined);
+Reflect.deleteProperty(frozen, "run");
+frozen.run("frozen.txt");
+
+const sealed = Object.seal({ run: Deno.remove });
+Reflect.deleteProperty(sealed, "run");
+sealed.run("sealed.txt");
+`,
+        "src/runtime-property-integrity-levels.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "frozen.run"],
+        ["filesystem-write", "sealed.run"],
+      ],
     );
   });
 
@@ -3067,6 +3156,36 @@ opaque.path;
         ["process", "opaque.path getter"],
         ["server", "opaque.path getter"],
         ["shared-cwd", "opaque.path getter"],
+      ],
+    );
+  });
+
+  it("preserves both outcomes when delete configurability is unknown", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const configurable: boolean;
+const deleted = { run: Deno.cwd };
+Object.defineProperty(deleted, "run", { configurable });
+Object.setPrototypeOf(deleted, { run: Deno.remove });
+delete deleted.run;
+deleted.run("delete.txt");
+
+const reflected = { run: Deno.cwd };
+Object.defineProperty(reflected, "run", { configurable });
+Object.setPrototypeOf(reflected, { run: Deno.remove });
+Reflect.deleteProperty(reflected, "run");
+reflected.run("reflect-delete.txt");
+`,
+        "src/runtime-unknown-property-delete.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "deleted.run"],
+        ["shared-cwd", "deleted.run"],
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "reflected.run"],
+        ["shared-cwd", "reflected.run"],
       ],
     );
   });

@@ -453,6 +453,26 @@ describe("automated review gate", () => {
     );
   });
 
+  it("fails closed on tied cross-source exact-head outcomes", async () => {
+    const timestamp = "2026-08-22T12:00:00Z";
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({
+            state: "CHANGES_REQUESTED",
+            submitted_at: timestamp,
+          })],
+          comments: [codeRabbitSummary({
+            created_at: timestamp,
+            updated_at: timestamp,
+          })],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
   it("publishes the automated review decision on the exact pull request head", async () => {
     const statuses: Array<Record<string, unknown>> = [];
     const listReviews = () => Promise.resolve();
