@@ -159,8 +159,8 @@ export async function inspectModuleExports(
  *
  * `veryfront` pins its co-published extensions to its own exact version, so a
  * fixture given only the root tarball resolves those pins from the npm
- * registry. On a release-cut branch that version is not published yet — it is
- * what the release job publishes — and the install fails with ETARGET. Packing
+ * registry. On a release-cut branch that version is not published yet. It is
+ * what the release job publishes, and the install fails with ETARGET. Packing
  * the extensions alongside the root keeps the whole matched set local, which is
  * also the set a user receives.
  */
@@ -217,7 +217,7 @@ async function packOne(packageDir: string, packDir: string): Promise<string> {
 }
 
 /**
- * The extensions the root pins to its own exact version — the only ones whose
+ * The extensions the root pins to its own exact version, the only ones whose
  * pin cannot be satisfied from the registry on a release-cut branch.
  *
  * Derived from the built root manifest rather than a directory listing: the
