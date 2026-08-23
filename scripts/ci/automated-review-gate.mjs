@@ -11,7 +11,7 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN =
-  /(?:^|\r?\n)[ \t]*(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+))*(Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between\s+[0-9a-f]{40}\s+and(?:[ \t]*\r?\n)?[ \t]*[0-9a-f]{40}[^\r\n]*)/gi;
+  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+))*(?:Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between[ \t]+([^ \t\r\n]+)[ \t]+and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})[^\r\n]*))/gi;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
@@ -324,24 +324,32 @@ function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
 function codeRabbitRangeEvidenceStatements(content) {
   return [...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN)].map((
     match,
-  ) => match[0].replace(/^\r?\n/, ""));
+  ) => ({
+    baseToken: match[2].toLowerCase(),
+    statement: match[1],
+    tipToken: match[3].toLowerCase(),
+  }));
 }
 
-function parseCodeRabbitRangeEvidence(block, headSha) {
-  const betweenIndex = block.search(/\bbetween\b/i);
-  if (betweenIndex < 0) return undefined;
-  const tokens = [
-    ...block.slice(betweenIndex).matchAll(FULL_COMMIT_TOKEN_PATTERN),
-  ].map((match) => match[2].toLowerCase());
-  if (tokens.length < 2) return undefined;
+function parseCodeRabbitRangeEvidence(evidence, headSha) {
   const normalizedHeadSha = headSha.toLowerCase();
-  const exactMatch = block.match(CODERABBIT_REVIEW_RANGE_PATTERN);
+  const tipIndex = evidence.statement.toLowerCase().indexOf(
+    evidence.tipToken,
+  );
+  const trailingStatement = tipIndex < 0
+    ? ""
+    : evidence.statement.slice(tipIndex + evidence.tipToken.length);
+  const extraTokens = [
+    ...trailingStatement.matchAll(FULL_COMMIT_TOKEN_PATTERN),
+  ].map((match) => match[2].toLowerCase());
+  const exactMatch = evidence.statement.match(CODERABBIT_REVIEW_RANGE_PATTERN);
   return {
-    tipIsHead: tokens[1] === normalizedHeadSha,
-    extraHasHead: tokens.slice(2).includes(normalizedHeadSha),
-    isExactProduction: exactMatch?.[1]?.toLowerCase() === tokens[0] &&
-      exactMatch?.[2]?.toLowerCase() === tokens[1] &&
-      tokens.length === 2,
+    tipIsHead: evidence.tipToken === normalizedHeadSha,
+    extraHasHead: extraTokens.includes(normalizedHeadSha),
+    isExactProduction: exactMatch?.[1]?.toLowerCase() === evidence.baseToken &&
+      exactMatch?.[2]?.toLowerCase() === evidence.tipToken &&
+      FULL_COMMIT_PATTERN.test(evidence.baseToken) &&
+      extraTokens.length === 0,
   };
 }
 

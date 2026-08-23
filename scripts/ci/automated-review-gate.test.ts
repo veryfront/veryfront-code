@@ -496,6 +496,11 @@ describe("automated review gate", () => {
     for (
       const malformedCurrentRange of [
         `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        `Reviewing files that changed from the base of the PR and between ${
+          STALE_SHA.slice(0, 12)
+        } and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and ${HEAD_SHA}.`,
         codeRabbitReviewRange() + " but this is not the final review.",
         codeRabbitReviewRange() + ` Later requested ${STALE_SHA}.`,
         codeRabbitReviewRange().replace("Reviewing", "reviewing"),
@@ -530,8 +535,12 @@ describe("automated review gate", () => {
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        codeRabbitReviewRange(HEAD_SHA, STALE_SHA) +
-        ` but this is not the final review. Later requested ${STALE_SHA}.`,
+        [
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA) +
+          ` but this is not the final review. Later requested ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between " +
+          `not-a-sha and ${STALE_SHA}.`,
+        ].join("\n"),
         "<!-- recent_review_end -->",
       ].join("\n"),
       created_at: "2026-08-22T12:03:00Z",
