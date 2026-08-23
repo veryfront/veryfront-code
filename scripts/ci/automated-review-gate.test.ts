@@ -332,6 +332,42 @@ describe("automated review gate", () => {
     );
   });
 
+  it("fails closed when exact-head event chronology is indeterminate", async () => {
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({ state: "PENDING", submitted_at: undefined })],
+          comments: [olderSuccess],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [
+            review({ state: "PENDING", submitted_at: "2026-08-22T12:02:00Z" }),
+          ],
+          comments: [
+            olderSuccess,
+            {
+              user: { login: "human" },
+              body: "untimestamped noise",
+            },
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
   it("makes the newest exact-head bot outcome authoritative across reviewers", async () => {
     const failedCodex = codexNoFindingComment({
       body: [
