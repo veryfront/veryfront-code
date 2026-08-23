@@ -623,6 +623,7 @@ type NamespacePropertyOperation =
     readonly crossesFunctionBoundary?: boolean;
     readonly enumerable?: boolean;
     readonly configurable?: boolean;
+    readonly writable?: boolean;
   }
   | {
     readonly kind: "define-unknown";
@@ -635,6 +636,7 @@ type NamespacePropertyOperation =
     readonly replacesFallback?: boolean;
     readonly enumerable?: boolean;
     readonly configurable?: boolean;
+    readonly writable?: boolean;
   };
 
 const MAX_MATERIALIZED_ARRAY_SPREAD_ENTRIES = 256;
@@ -645,6 +647,7 @@ interface RuntimePropertyResolution {
   readonly defaultMayRun: boolean;
   readonly enumerable?: boolean;
   readonly configurable?: boolean;
+  readonly writable?: boolean;
 }
 
 interface RuntimePatternEntry {
@@ -4754,6 +4757,7 @@ function bindRuntimeCallMutation(
             configurable: attributes
               ? attributes.configurable
               : entry.configurable,
+            writable: attributes ? attributes.writable : entry.writable,
           },
         );
       } else {
@@ -5135,6 +5139,7 @@ function mutationCallResultRuntimeBinding(
                 allowClearing: entry.definiteOverwrite === true &&
                   !preservesSetter,
                 configurable: entry.configurable,
+                writable: entry.writable,
                 enumerable: entry.enumerable,
               },
             );
@@ -5160,6 +5165,7 @@ function mutationCallResultRuntimeBinding(
               configurable: attributes
                 ? attributes.configurable
                 : entry.configurable,
+              writable: attributes ? attributes.writable : entry.writable,
               enumerable: attributes ? attributes.enumerable : entry.enumerable,
             },
           );
@@ -5339,6 +5345,7 @@ interface RuntimeMutationResultPropertyOptions {
   readonly allowClearing?: boolean;
   readonly configurable?: boolean;
   readonly enumerable?: boolean;
+  readonly writable?: boolean;
   readonly fallbackOnly?: boolean;
   readonly replacesFallback?: boolean;
 }
@@ -5375,6 +5382,7 @@ function appendRuntimeMutationResultProperty(
         crossesFunctionBoundary: false,
         enumerable: options.enumerable,
         configurable: options.configurable,
+        writable: options.writable,
       },
   );
 }
@@ -5401,6 +5409,7 @@ interface LocalMutationAssignedEntry {
   readonly definiteOverwrite?: boolean;
   readonly enumerable?: boolean;
   readonly configurable?: boolean;
+  readonly writable?: boolean;
   readonly copyEnumerableOnly?: boolean;
 }
 
@@ -5467,6 +5476,7 @@ function localMutationAssignedEntries(
       definiteOverwrite: runtimeDescriptorDefinesField(args[2], "value"),
       enumerable: runtimeDescriptorEnumerable(args[2]),
       configurable: runtimeDescriptorConfigurable(args[2]),
+      writable: runtimeDescriptorWritable(args[2]),
     }];
   }
   if (canonicalName === "Reflect.set") {
@@ -5570,6 +5580,7 @@ function localMutationResultAssignedEntries(
           ),
           enumerable: runtimeDescriptorEnumerable(property.value),
           configurable: runtimeDescriptorConfigurable(property.value),
+          writable: runtimeDescriptorWritable(property.value),
         });
       }
       if (entries.length === properties.length) return entries;
@@ -5632,6 +5643,7 @@ function bindRuntimeLiteralDescriptorMutations(
         scopes,
         attributes.enumerable,
         attributes.configurable,
+        attributes.writable,
       );
     } else if (!propertyName) {
       bindRuntimeUnknownPropertyMutation(
@@ -5764,6 +5776,7 @@ function localMutationAccessorDescriptors(
 interface RuntimeDescriptorAttributes {
   readonly configurable?: boolean;
   readonly enumerable?: boolean;
+  readonly writable?: boolean;
 }
 
 function runtimeDescriptorMutationAttributes(
@@ -5780,7 +5793,7 @@ function runtimeDescriptorMutationAttributes(
     property,
   );
   const attribute = (
-    field: "configurable" | "enumerable",
+    field: "configurable" | "enumerable" | "writable",
   ): boolean | undefined =>
     fields.has(field)
       ? runtimeDescriptorBooleanField(descriptor, field)
@@ -5792,6 +5805,7 @@ function runtimeDescriptorMutationAttributes(
   return {
     configurable: attribute("configurable"),
     enumerable: attribute("enumerable"),
+    writable: attribute("writable"),
   };
 }
 
@@ -5810,8 +5824,40 @@ function runtimeDescriptorDefinitionAllowsClearing(
   property: string,
   descriptor: unknown,
 ): boolean {
-  return runtimeDescriptorCreatesOwnProperty(target, property, descriptor) ||
-    runtimePropertyResolution(target, property, true).configurable === true;
+  if (runtimeDescriptorCreatesOwnProperty(target, property, descriptor)) {
+    return true;
+  }
+  const existing = runtimePropertyResolution(target, property, true);
+  if (existing.configurable === true) return true;
+  if (existing.configurable !== false || existing.defaultMayRun) return false;
+  const fields = runtimeDescriptorDefinedFields(descriptor);
+  if (!fields) return false;
+  if (
+    fields.has("configurable") &&
+    runtimeDescriptorBooleanField(descriptor, "configurable") !== false
+  ) return false;
+  if (fields.has("enumerable")) {
+    const enumerable = runtimeDescriptorBooleanField(descriptor, "enumerable");
+    if (enumerable === undefined || enumerable !== existing.enumerable) {
+      return false;
+    }
+  }
+  const hasAccessor = flattenRuntimeBindings(existing.binding).some((binding) =>
+    binding.kind === "property-getter-effect" ||
+    binding.kind === "property-getter-value" ||
+    binding.kind === "property-setter"
+  );
+  if (fields.has("get") || fields.has("set")) return false;
+  if (hasAccessor && (fields.has("value") || fields.has("writable"))) {
+    return false;
+  }
+  if (fields.has("value") && existing.writable !== true) return false;
+  if (fields.has("writable")) {
+    const writable = runtimeDescriptorBooleanField(descriptor, "writable");
+    if (writable === undefined) return false;
+    if (writable && existing.writable !== true) return false;
+  }
+  return true;
 }
 
 function runtimeBindingExtensibility(
@@ -6076,6 +6122,7 @@ function clearRuntimeDescriptorProperty(
       clearAccessors: true,
       configurable: effectiveAttributes.configurable,
       enumerable: effectiveAttributes.enumerable,
+      writable: effectiveAttributes.writable,
     },
   );
 }
@@ -6104,6 +6151,7 @@ function clearRuntimeDescriptorResultProperty(
         allowClearing: true,
         configurable: effectiveAttributes.configurable,
         enumerable: effectiveAttributes.enumerable,
+        writable: effectiveAttributes.writable,
       },
     )
     : target;
@@ -6121,10 +6169,14 @@ function retainedRuntimeDescriptorBinding(
   );
   const changesEnumerable = fields.has("enumerable");
   const changesConfigurable = fields.has("configurable");
+  const changesWritable = fields.has("writable");
   if (runtimeDescriptorCreatesOwnProperty(target, property, descriptor)) {
     return { changed: true };
   }
-  if (!changesProperty && !changesEnumerable && !changesConfigurable) {
+  if (
+    !changesProperty && !changesEnumerable && !changesConfigurable &&
+    !changesWritable
+  ) {
     return { changed: false };
   }
   const existing = runtimePropertyResolution(target, property, true).binding;
@@ -6251,9 +6303,15 @@ function runtimeDescriptorConfigurable(
   return runtimeDescriptorBooleanField(descriptor, "configurable");
 }
 
+function runtimeDescriptorWritable(
+  descriptor: unknown,
+): boolean | undefined {
+  return runtimeDescriptorBooleanField(descriptor, "writable");
+}
+
 function runtimeDescriptorBooleanField(
   descriptor: unknown,
-  field: "configurable" | "enumerable",
+  field: "configurable" | "enumerable" | "writable",
 ): boolean | undefined {
   const value = unwrapExpression(descriptor);
   if (!value || value.type !== "ObjectExpression") return undefined;
@@ -6415,6 +6473,7 @@ function bindRuntimeUnknownPropertyMutation(
   minimumArrayIndex?: number,
   enumerable?: boolean,
   configurable?: boolean,
+  writable?: boolean,
 ): void {
   bindRuntimeUnknownPropertyMutationBinding(
     target,
@@ -6422,7 +6481,7 @@ function bindRuntimeUnknownPropertyMutation(
     assignedExpression,
     imports,
     scopes,
-    { minimumArrayIndex, enumerable, configurable },
+    { minimumArrayIndex, enumerable, configurable, writable },
   );
 }
 
@@ -6434,6 +6493,7 @@ function bindRuntimeNamedPropertyMutation(
   scopes: readonly Scope[],
   enumerable?: boolean,
   configurable?: boolean,
+  writable?: boolean,
 ): void {
   bindRuntimeNamedPropertyMutationBinding(
     target,
@@ -6442,7 +6502,7 @@ function bindRuntimeNamedPropertyMutation(
     assignedExpression,
     imports,
     scopes,
-    { enumerable, configurable },
+    { enumerable, configurable, writable },
   );
 }
 
@@ -6451,6 +6511,7 @@ interface RuntimeMemberMutationOptions {
   readonly clearAccessors?: boolean;
   readonly configurable?: boolean;
   readonly enumerable?: boolean;
+  readonly writable?: boolean;
   readonly fallbackOnly?: boolean;
   readonly minimumArrayIndex?: number;
   readonly replacesFallback?: boolean;
@@ -6662,6 +6723,7 @@ function bindRuntimeMemberAssignmentTarget(
       options.replacesFallback === true,
       options.enumerable,
       options.configurable,
+      options.writable,
     )
     : assignRuntimeProperty(
       existing,
@@ -6673,6 +6735,7 @@ function bindRuntimeMemberAssignmentTarget(
       !canClear,
       options.enumerable,
       options.configurable,
+      options.writable,
     );
   scope.runtimeBindings.set(root, assigned);
   if (
@@ -7044,6 +7107,7 @@ function assignRuntimeProperty(
   preservesPrevious = false,
   enumerable?: boolean,
   configurable?: boolean,
+  writable?: boolean,
 ): RuntimeBinding {
   const [property, ...rest] = path;
   const assigned = rest.length === 0 ? binding : assignRuntimeProperty(
@@ -7056,6 +7120,7 @@ function assignRuntimeProperty(
     preservesPrevious,
     enumerable,
     configurable,
+    writable,
   );
   const operation: NamespacePropertyOperation = {
     kind: "define",
@@ -7069,6 +7134,7 @@ function assignRuntimeProperty(
       : false,
     enumerable: rest.length === 0 ? enumerable : undefined,
     configurable: rest.length === 0 ? configurable : undefined,
+    writable: rest.length === 0 ? writable : undefined,
   };
   return appendRuntimePropertyOperation(existing, operation);
 }
@@ -7085,6 +7151,7 @@ function assignUnknownRuntimeProperty(
   replacesFallback = false,
   enumerable?: boolean,
   configurable?: boolean,
+  writable?: boolean,
 ): RuntimeBinding {
   const [property, ...rest] = objectPath;
   if (property) {
@@ -7100,6 +7167,7 @@ function assignUnknownRuntimeProperty(
       replacesFallback,
       enumerable,
       configurable,
+      writable,
     );
     return assignRuntimeProperty(existing, [property], nested, false, false);
   }
@@ -7114,6 +7182,7 @@ function assignUnknownRuntimeProperty(
     replacesFallback,
     enumerable,
     configurable,
+    writable,
   });
 }
 
@@ -7143,7 +7212,8 @@ function appendRuntimePropertyOperation(
       previous.fallbackOnly === operation.fallbackOnly &&
       previous.replacesFallback === operation.replacesFallback &&
       previous.enumerable === operation.enumerable &&
-      previous.configurable === operation.configurable
+      previous.configurable === operation.configurable &&
+      previous.writable === operation.writable
     ) {
       return {
         kind: "namespace-object",
@@ -7174,6 +7244,7 @@ function appendRuntimePropertyOperation(
             replacesFallback: operation.replacesFallback,
             enumerable: operation.enumerable,
             configurable: operation.configurable,
+            writable: operation.writable,
           },
         ],
       };
@@ -7903,6 +7974,9 @@ function arrayLiteralRuntimeBinding(
             binding: resolution.binding,
             aliasTargets: resolution.aliasTargets,
             defaultMayRun: resolution.defaultMayRun,
+            configurable: true,
+            enumerable: true,
+            writable: true,
           });
           if (resolution.binding) properties.set(name, resolution.binding);
         }
@@ -7919,6 +7993,9 @@ function arrayLiteralRuntimeBinding(
         aliasTargets: resolution.aliasTargets,
         defaultMayRun: true,
         minimumArrayIndex: minimumUnknownIndex,
+        configurable: true,
+        enumerable: true,
+        writable: true,
       });
       nextIndex = undefined;
       continue;
@@ -7942,6 +8019,9 @@ function arrayLiteralRuntimeBinding(
         aliasTargets,
         defaultMayRun: true,
         minimumArrayIndex: minimumUnknownIndex,
+        configurable: true,
+        enumerable: true,
+        writable: true,
       });
       continue;
     }
@@ -7954,6 +8034,7 @@ function arrayLiteralRuntimeBinding(
       defaultMayRun,
       configurable: true,
       enumerable: true,
+      writable: true,
     });
     if (binding) properties.set(name, binding);
     nextIndex++;
@@ -8038,6 +8119,7 @@ function objectLiteralRuntimeBinding(
           ),
           configurable: true,
           enumerable: true,
+          writable: true,
         });
       } else if (
         property.type === "ObjectMethod" && property.kind === "get"
@@ -8072,6 +8154,7 @@ function objectLiteralRuntimeBinding(
         defaultMayRun: false,
         configurable: true,
         enumerable: true,
+        writable: property.kind === "method" ? true : undefined,
       });
       continue;
     }
@@ -8097,6 +8180,7 @@ function objectLiteralRuntimeBinding(
       ),
       configurable: true,
       enumerable: true,
+      writable: true,
     });
     if (binding) {
       properties.set(name, binding);
@@ -8905,6 +8989,11 @@ function runtimePropertyResolution(
           )
           ? candidates[0]?.configurable
           : undefined,
+        writable: candidates.every((resolution) =>
+            resolution.writable === candidates[0]?.writable
+          )
+          ? candidates[0]?.writable
+          : undefined,
       });
       continue;
     }
@@ -8928,6 +9017,7 @@ function runtimePropertyResolution(
                 defaultMayRun: true,
                 enumerable: false,
                 configurable: operation.configurable,
+                writable: operation.writable,
               };
               continue;
             }
@@ -8956,6 +9046,9 @@ function runtimePropertyResolution(
                 configurable: resolution.configurable === operation.configurable
                   ? resolution.configurable
                   : undefined,
+                writable: resolution.writable === operation.writable
+                  ? resolution.writable
+                  : undefined,
               }
               : {
                 binding: operationBinding,
@@ -8963,6 +9056,7 @@ function runtimePropertyResolution(
                 defaultMayRun: operation.defaultMayRun,
                 enumerable: operation.enumerable,
                 configurable: operation.configurable,
+                writable: operation.writable,
               };
           }
           continue;
@@ -9012,6 +9106,7 @@ function runtimePropertyResolution(
             resolution.defaultMayRun,
           enumerable: spreadResolution.defaultMayRun ? undefined : true,
           configurable: spreadResolution.defaultMayRun ? undefined : true,
+          writable: spreadResolution.defaultMayRun ? undefined : true,
         };
       }
       for (const operation of fallbackOperations) {
@@ -9041,7 +9136,13 @@ function runtimePropertyResolution(
       );
       resolutions.push(
         frame.binding.integrityLevel && !finalized.defaultMayRun
-          ? { ...finalized, configurable: false }
+          ? {
+            ...finalized,
+            configurable: false,
+            writable: frame.binding.integrityLevel === "frozen"
+              ? false
+              : finalized.writable,
+          }
           : finalized,
       );
       continue;
@@ -9134,6 +9235,9 @@ function applyRuntimeUnknownPropertyOperation(
     configurable: resolution.configurable === operation.configurable
       ? resolution.configurable
       : undefined,
+    writable: resolution.writable === operation.writable
+      ? resolution.writable
+      : undefined,
   };
 }
 
@@ -9184,6 +9288,9 @@ function directRuntimePropertyResolution(
         : undefined,
       configurable: binding.kind === "namespace-object" && propertyBinding
         ? binding.integrityLevel ? false : true
+        : undefined,
+      writable: binding.kind === "namespace-object" && propertyBinding
+        ? binding.integrityLevel === "frozen" ? false : true
         : undefined,
     },
     includeSetters,

@@ -2868,6 +2868,16 @@ const frozenRedefined = Object.freeze({ run: Deno.remove });
 Reflect.defineProperty(frozenRedefined, "run", { value: () => undefined });
 frozenRedefined.run("frozen-redefined.txt");
 
+const sealedRedefined = Object.seal({ run: Deno.remove });
+Reflect.defineProperty(sealedRedefined, "run", { value: () => undefined });
+sealedRedefined.run("sealed-redefined.txt");
+
+const sealedLocked = { run: Deno.remove };
+Object.defineProperty(sealedLocked, "run", { writable: false });
+Object.seal(sealedLocked);
+Reflect.defineProperty(sealedLocked, "run", { value: () => undefined });
+sealedLocked.run("sealed-locked.txt");
+
 const prevented = Object.preventExtensions({ run: Deno.remove });
 Reflect.defineProperty(prevented, "run", { value: () => undefined });
 prevented.run("prevented.txt");
@@ -2878,6 +2888,7 @@ prevented.run("prevented.txt");
         ["filesystem-write", "frozen.run"],
         ["filesystem-write", "sealed.run"],
         ["filesystem-write", "frozenRedefined.run"],
+        ["filesystem-write", "sealedLocked.run"],
       ],
     );
   });
@@ -2928,6 +2939,22 @@ lockedLength[0]("locked-length.txt");
         ["filesystem-write", "lockedShift.0"],
         ["filesystem-write", "lockedLength.0"],
       ],
+    );
+  });
+
+  it("retains outer array elements across unevaluated function mutations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const retained = [Deno.remove];
+function unused() {
+  retained.pop();
+}
+retained[0]("retained.txt");
+`,
+        "src/runtime-unevaluated-array-removal.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "retained.0"]],
     );
   });
 
