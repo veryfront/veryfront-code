@@ -7219,7 +7219,7 @@ function bindRuntimeAssignmentPattern(
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
       binding.kind !== "module" && binding.kind !== "module-instance" &&
       binding.kind !== "namespace-object" &&
-      binding.kind !== "one-of")
+      binding.kind !== "one-of" && binding.kind !== "partial")
   ) {
     return;
   }
@@ -9385,7 +9385,8 @@ function bindPatternToRuntime(
       binding.kind !== "module-instance" &&
       binding.kind !== "global-object" &&
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
-      binding.kind !== "namespace-object" && binding.kind !== "one-of")
+      binding.kind !== "namespace-object" && binding.kind !== "one-of" &&
+      binding.kind !== "partial")
   ) {
     return;
   }
