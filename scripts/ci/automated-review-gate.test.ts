@@ -1,9 +1,15 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
   findAutomatedReview,
   publishAutomatedReviewStatus,
+  requestAutomatedReview,
 } from "./automated-review-gate.mjs";
 
 const HEAD_SHA = "a".repeat(40);
@@ -563,14 +569,15 @@ describe("automated review gate", () => {
       headSha: STALE_SHA,
       pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
     });
-    assertEquals(missing.state, "failure");
-    assert(
-      missing.failure instanceof Error &&
-        missing.failure.message.includes(STALE_SHA.slice(0, 12)),
-      "the failure must name the unreviewed head commit",
-    );
+    assertEquals(missing.state, "pending");
+    assertEquals(missing.review, undefined);
+    assertEquals(missing.failure, undefined);
     assertEquals(statuses[1]?.sha, STALE_SHA);
-    assertEquals(statuses[1]?.state, "failure");
+    assertEquals(statuses[1]?.state, "pending");
+    assertEquals(
+      statuses[1]?.description,
+      `Waiting for an automated review of ${STALE_SHA.slice(0, 12)}`,
+    );
   });
 
   it("resolves a Codex comment to the exact commit before publishing success", async () => {
@@ -617,7 +624,7 @@ describe("automated review gate", () => {
     );
   });
 
-  it("publishes failure when a Codex commit cannot be resolved exactly", async () => {
+  it("holds the status pending when a Codex commit cannot be resolved exactly", async () => {
     const statuses: Array<Record<string, unknown>> = [];
     const listReviews = () => Promise.resolve();
     const listComments = () => Promise.resolve();
@@ -651,10 +658,18 @@ describe("automated review gate", () => {
       pullUrl: "https://github.com/veryfront/veryfront-code/pull/1",
     });
 
-    assertEquals(result.state, "failure");
+    // The unresolved commit means no review exists for the current head, and
+    // that reads as still waiting: the status self-heals when a resolvable
+    // review arrives, and a required pending status still blocks merging.
+    assertEquals(result.state, "pending");
     assertEquals(result.review, undefined);
-    assertEquals(statuses[0]?.state, "failure");
+    assertEquals(result.failure, undefined);
+    assertEquals(statuses[0]?.state, "pending");
     assertEquals(statuses[0]?.sha, HEAD_SHA);
+    assertStringIncludes(
+      String(statuses[0]?.description),
+      HEAD_SHA.slice(0, 12),
+    );
   });
 
   it("fails closed when the review lookup throws", async () => {
@@ -728,6 +743,93 @@ describe("automated review gate", () => {
     assertEquals(statuses[0]?.sha, HEAD_SHA);
   });
 
+  it("requests an automated review at most once per head commit", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    const existing: Array<Record<string, unknown>> = [];
+    const listComments = () => Promise.resolve();
+    const github = {
+      paginate: () => Promise.resolve(existing),
+      rest: {
+        issues: {
+          listComments,
+          createComment: (comment: Record<string, unknown>) => {
+            posted.push(comment);
+            return Promise.resolve();
+          },
+        },
+      },
+    };
+    const request = (headSha: string) =>
+      requestAutomatedReview({
+        github,
+        owner: "veryfront",
+        repo: "veryfront-code",
+        pullNumber: 1,
+        headSha,
+      });
+
+    const first = await request(HEAD_SHA);
+    assertEquals(first.requested, true);
+    assertEquals(posted, [{
+      owner: "veryfront",
+      repo: "veryfront-code",
+      issue_number: 1,
+      body: `<!-- automated-review-request: ${HEAD_SHA} -->\n@codex review`,
+    }]);
+
+    // A rerun for the same head finds the marker and does not post again,
+    // regardless of who posted the marker comment.
+    existing.push({
+      user: { login: "github-actions[bot]" },
+      body: posted[0]?.body,
+    });
+    const second = await request(HEAD_SHA);
+    assertEquals(second.requested, false);
+    assertEquals(posted.length, 1);
+
+    // A new head commit carries a new marker and gets its own request.
+    const third = await request(STALE_SHA);
+    assertEquals(third.requested, true);
+    assertEquals(
+      posted[1]?.body,
+      `<!-- automated-review-request: ${STALE_SHA} -->\n@codex review`,
+    );
+  });
+
+  it("refuses to request a review of a malformed head commit", async () => {
+    const github = {
+      paginate: () => Promise.resolve([]),
+      rest: {
+        issues: {
+          listComments: () => Promise.resolve(),
+          createComment: () => {
+            throw new Error("must not post for a malformed commit");
+          },
+        },
+      },
+    };
+    for (
+      const malformed of [
+        HEAD_SHA.slice(0, 39),
+        `${HEAD_SHA} --><script>`,
+        "@codex review",
+      ]
+    ) {
+      await assertRejects(
+        () =>
+          requestAutomatedReview({
+            github,
+            owner: "veryfront",
+            repo: "veryfront-code",
+            pullNumber: 1,
+            headSha: malformed,
+          }),
+        Error,
+        "malformed head commit",
+      );
+    }
+  });
+
   it("uses trusted base code and reruns when a real review is submitted", async () => {
     const workflow = record(
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
@@ -754,7 +856,7 @@ describe("automated review gate", () => {
     assertEquals(permissions, {
       contents: "read",
       issues: "read",
-      "pull-requests": "read",
+      "pull-requests": "write",
       statuses: "write",
     });
 
@@ -827,6 +929,44 @@ describe("automated review gate", () => {
       script.includes("Review gate is unavailable on the default branch") &&
         script.includes('state: "failure"'),
       "a gate that fails to load must publish a failure status, not no status",
+    );
+    assertEquals(
+      gate.id,
+      "publish",
+      "the request step reads the published state from this step's output",
+    );
+    assertEquals(
+      record(gate.with, "automated review gate inputs")["result-encoding"],
+      "string",
+      "the published state must land in the step output as a plain string",
+    );
+
+    const request = record(steps[2], "automated review request step");
+    assertEquals(
+      request.uses,
+      "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3",
+    );
+    const requestCondition = String(request.if);
+    for (
+      const guard of [
+        "github.event_name == 'pull_request_target'",
+        "github.event.pull_request.draft == false",
+        `'["opened", "synchronize", "reopened", "ready_for_review"]'`,
+        "steps.publish.outputs.result == 'pending'",
+      ]
+    ) {
+      assertStringIncludes(
+        requestCondition,
+        guard,
+        "a review request is posted only for a trusted non-draft push that left the status pending",
+      );
+    }
+    const requestScript = String(
+      record(request.with, "automated review request inputs").script,
+    );
+    assert(
+      requestScript.includes("requestAutomatedReview"),
+      "the workflow must post review requests through the tested gate helper",
     );
   });
 });

@@ -237,16 +237,22 @@ export async function publishAutomatedReviewStatus({
   // Review bots skip drafts, so a draft has no verdict yet. Publish pending so
   // "not reviewed yet" never renders as a pass and never as a missing status.
   if (isDraft) {
+    const description = "Draft pull request waits for ready for review";
     await github.rest.repos.createCommitStatus({
       owner,
       repo,
       sha: headSha,
       state: "pending",
       context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description: "Draft pull request waits for ready for review",
+      description,
       target_url: pullUrl,
     });
-    return { state: "pending", review: undefined, failure: undefined };
+    return {
+      state: "pending",
+      review: undefined,
+      failure: undefined,
+      description,
+    };
   }
 
   let review;
@@ -283,29 +289,77 @@ export async function publishAutomatedReviewStatus({
         }
       },
     }, headSha);
-    if (!review) {
-      failure = new Error(
-        `No automated review was submitted for current commit ${
-          headSha.slice(0, 12)
-        }. ` +
-          "CodeRabbit and Codex skip or rate-limit comments do not count as reviews.",
-      );
-    }
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
   }
 
-  const state = review ? "success" : "failure";
+  // No review for the current head is the normal state right after a push,
+  // while the review bots are still working. Publish pending, not failure: a
+  // required pending status blocks merging exactly like a failure does, and it
+  // resolves itself as soon as a review for this head arrives. Only an error
+  // while computing the decision stays a failure, because that red must be
+  // looked at instead of waited out.
+  const state = review ? "success" : failure ? "failure" : "pending";
+  const description = review
+    ? `Reviewed by ${review.reviewer}`
+    : failure
+    ? "Could not determine the automated review status"
+    : `Waiting for an automated review of ${headSha.slice(0, 12)}`;
   await github.rest.repos.createCommitStatus({
     owner,
     repo,
     sha: headSha,
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-    description: review
-      ? `Reviewed by ${review.reviewer}`
-      : "No CodeRabbit or Codex review for current commit",
+    description,
     target_url: review?.url ?? pullUrl,
   });
-  return { state, review, failure };
+  return { state, review, failure, description };
+}
+
+/**
+ * Ask Codex to review the current head commit, at most once per commit.
+ *
+ * The Codex connector reviews a pull request when it opens or leaves draft,
+ * but a push to an open pull request does not trigger a new review. Posting
+ * the literal "@codex review" comment is how a new review is requested. The
+ * marker comment keeps the request idempotent: a rerun for the same head
+ * finds the marker in an existing comment and does not post again, while a
+ * new head carries a new marker and gets its own request.
+ */
+export async function requestAutomatedReview({
+  github,
+  owner,
+  repo,
+  pullNumber,
+  headSha,
+}) {
+  // The comment body must stay a fixed instruction plus a verified commit
+  // SHA. Never interpolate pull request controlled content here: this runs
+  // with pull_request_target authority.
+  if (typeof headSha !== "string" || !FULL_COMMIT_PATTERN.test(headSha)) {
+    throw new Error(
+      "Refusing to request an automated review of a malformed head commit",
+    );
+  }
+  const marker = `<!-- automated-review-request: ${headSha.toLowerCase()} -->`;
+  const comments = await github.paginate(github.rest.issues.listComments, {
+    owner,
+    repo,
+    issue_number: pullNumber,
+    per_page: 100,
+  });
+  const alreadyRequested = comments.some((comment) =>
+    typeof comment?.body === "string" && comment.body.includes(marker)
+  );
+  if (alreadyRequested) {
+    return { requested: false, marker };
+  }
+  await github.rest.issues.createComment({
+    owner,
+    repo,
+    issue_number: pullNumber,
+    body: `${marker}\n@codex review`,
+  });
+  return { requested: true, marker };
 }
