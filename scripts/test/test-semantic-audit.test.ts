@@ -1726,6 +1726,28 @@ const reflected = [() => undefined];
 Reflect.set(reflected, "1", Deno.writeTextFile);
 const [, reflectedRun] = [...reflected, () => undefined];
 reflectedRun("reflected.txt", "x");
+
+const called = [() => undefined];
+Array.prototype.push.call(called, Deno.writeTextFile);
+const [, calledRun] = [...called, () => undefined];
+calledRun("called.txt", "x");
+
+const applied = [() => undefined];
+const push = Array.prototype.push;
+push.apply(applied, [Deno.writeTextFile]);
+const [, appliedRun] = [...applied, () => undefined];
+appliedRun("applied.txt", "x");
+
+const reflectApplied = [() => undefined];
+Reflect.apply(Array.prototype.push, reflectApplied, [Deno.writeTextFile]);
+const [, reflectAppliedRun] = [...reflectApplied, () => undefined];
+reflectAppliedRun("reflect-applied.txt", "x");
+
+const bound = [() => undefined];
+const boundPush = Array.prototype.push.bind(bound);
+boundPush(Deno.writeTextFile);
+const [, boundRun] = [...bound, () => undefined];
+boundRun("bound.txt", "x");
 `,
         "src/runtime-array-mutators.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1735,7 +1757,25 @@ reflectedRun("reflected.txt", "x");
         ["filesystem-write", "assignedRun"],
         ["filesystem-write", "definedRun"],
         ["filesystem-write", "reflectedRun"],
+        ["filesystem-write", "calledRun"],
+        ["filesystem-write", "appliedRun"],
+        ["filesystem-write", "reflectAppliedRun"],
+        ["filesystem-write", "boundRun"],
       ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function shadow(Array: { prototype: { push: { call(...args: unknown[]): void } } }) {
+  const values = [() => undefined];
+  Array.prototype.push.call(values, Deno.writeTextFile);
+  const [, run] = [...values, () => undefined];
+  run("shadowed.txt", "x");
+}
+`,
+        "src/shadowed-array-mutator.test.ts",
+      ),
+      [],
     );
   });
 

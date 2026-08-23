@@ -624,6 +624,11 @@ type RuntimeBinding =
     readonly method: string;
   }
   | {
+    readonly kind: "array-mutation-method";
+    readonly boundTarget?: unknown;
+    readonly boundValues?: readonly unknown[];
+  }
+  | {
     readonly kind: "reflect-method";
     readonly method: "apply" | "construct";
     readonly boundArguments?: readonly unknown[];
@@ -3999,17 +4004,18 @@ function bindRuntimeCallMutation(
   scopes: readonly Scope[],
 ): void {
   if (!isCallLikeExpression(node) || !isNode(node.callee)) return;
-  const callee = unwrapExpression(node.callee);
   const args = Array.isArray(node.arguments) ? node.arguments : [];
-  if (
-    callee &&
-    (callee.type === "MemberExpression" ||
-      callee.type === "OptionalMemberExpression") &&
-    ARRAY_SHAPE_MUTATORS.has(memberProperty(callee) ?? "")
+  for (
+    const invocation of arrayMutationInvocations(
+      node.callee,
+      args,
+      imports,
+      scopes,
+    )
   ) {
     bindRuntimeArrayMutationTarget(
-      callee.object,
-      args,
+      invocation.target,
+      invocation.values,
       imports,
       scopes,
     );
@@ -4029,6 +4035,104 @@ function bindRuntimeCallMutation(
       scopes,
     );
   }
+}
+
+function arrayMutationInvocations(
+  calleeExpression: unknown,
+  args: readonly unknown[],
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly {
+  readonly target: unknown;
+  readonly values: readonly unknown[];
+}[] {
+  const callee = unwrapExpression(calleeExpression);
+  if (!callee) return [];
+  const invocations: Array<{
+    readonly target: unknown;
+    readonly values: readonly unknown[];
+  }> = [];
+  if (
+    (callee.type === "MemberExpression" ||
+      callee.type === "OptionalMemberExpression") &&
+    ARRAY_SHAPE_MUTATORS.has(memberProperty(callee) ?? "")
+  ) {
+    invocations.push({ target: callee.object, values: args });
+  }
+  for (const mutation of arrayMutationMethodBindings(callee, imports, scopes)) {
+    if (mutation.boundTarget === undefined) continue;
+    invocations.push({
+      target: mutation.boundTarget,
+      values: [...mutation.boundValues ?? [], ...args],
+    });
+  }
+  for (
+    const invocation of reflectInvocationCalls(callee, args, imports, scopes)
+  ) {
+    if (invocation.method !== "apply") continue;
+    const mutationMethod = invocation.arguments[0];
+    for (
+      const mutation of arrayMutationMethodBindings(
+        mutationMethod,
+        imports,
+        scopes,
+      )
+    ) {
+      invocations.push({
+        target: mutation.boundTarget ?? invocation.arguments[1],
+        values: [
+          ...mutation.boundValues ?? [],
+          ...arrayExpressionArguments(invocation.arguments[2]),
+        ],
+      });
+    }
+  }
+  if (
+    callee.type !== "MemberExpression" &&
+    callee.type !== "OptionalMemberExpression"
+  ) {
+    return invocations;
+  }
+  const wrapper = memberProperty(callee);
+  if (wrapper !== "call" && wrapper !== "apply") {
+    return invocations;
+  }
+  for (
+    const mutation of arrayMutationMethodBindings(
+      callee.object,
+      imports,
+      scopes,
+    )
+  ) {
+    invocations.push({
+      target: mutation.boundTarget ?? args[0],
+      values: [
+        ...mutation.boundValues ?? [],
+        ...(wrapper === "apply"
+          ? arrayExpressionArguments(args[1])
+          : args.slice(1)),
+      ],
+    });
+  }
+  return invocations;
+}
+
+function arrayMutationMethodBindings(
+  expression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly Extract<
+  RuntimeBinding,
+  { readonly kind: "array-mutation-method" }
+>[] {
+  return flattenRuntimeBindings(
+    runtimeBindingForExpression(expression, imports, scopes),
+  ).filter((
+    candidate,
+  ): candidate is Extract<
+    RuntimeBinding,
+    { readonly kind: "array-mutation-method" }
+  > => candidate.kind === "array-mutation-method");
 }
 
 function bindRuntimeArrayMutationTarget(
@@ -5668,17 +5772,28 @@ function boundCallableRuntimeBinding(
   const binding = runtimeBindingForExpression(callee.object, imports, scopes);
   const args = Array.isArray(value.arguments) ? value.arguments : [];
   return unionRuntimeBindings(
-    flattenRuntimeBindings(binding)
-      .filter(isCallableRuntimeBinding)
-      .map((candidate) =>
+    flattenRuntimeBindings(binding).flatMap((candidate) => {
+      if (candidate.kind === "array-mutation-method") {
+        return [{
+          ...candidate,
+          boundTarget: candidate.boundTarget ?? args[0],
+          boundValues: [
+            ...candidate.boundValues ?? [],
+            ...args.slice(1),
+          ],
+        }];
+      }
+      if (!isCallableRuntimeBinding(candidate)) return [];
+      return [
         candidate.kind === "effect" ? candidate : {
           ...candidate,
           boundArguments: [
             ...candidate.boundArguments ?? [],
             ...args.slice(1),
           ],
-        }
-      ),
+        },
+      ];
+    }),
   );
 }
 
@@ -5851,6 +5966,14 @@ function sharedObjectPropertyBinding(
   intrinsic: string | undefined,
   property: string,
 ): RuntimeBinding {
+  if (intrinsic === "Array" && property === "prototype") {
+    return { kind: "shared-object", intrinsic: "Array.prototype" };
+  }
+  if (
+    intrinsic === "Array.prototype" && ARRAY_SHAPE_MUTATORS.has(property)
+  ) {
+    return { kind: "array-mutation-method" };
+  }
   if (
     intrinsic === "Reflect" &&
     (property === "apply" || property === "construct")
@@ -6257,6 +6380,11 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
   }
   if (binding.kind === "mutation-method") {
     return `mutation-method:${binding.receiver}.${binding.method}`;
+  }
+  if (binding.kind === "array-mutation-method") {
+    return `array-mutation-method:${
+      JSON.stringify(binding.boundTarget ?? null)
+    }:${JSON.stringify(binding.boundValues ?? [])}`;
   }
   if (binding.kind === "reflect-method") {
     return `reflect-method:${binding.method}:${
