@@ -2536,7 +2536,7 @@ function mutationCallMarker(
   line: number,
   scopes: readonly Scope[],
   imports: ImportBindings,
-): SemanticMarker | undefined {
+): SemanticMarker | readonly SemanticMarker[] | undefined {
   if (binding.receiver === "Array") {
     if (binding.method !== "sort") return undefined;
     const comparatorBinding = runtimeBindingForExpression(
@@ -2549,12 +2549,12 @@ function mutationCallMarker(
         candidate.kind === "effect" ? [candidate.effect] : []
       ),
     );
-    return effects.length === 1
-      ? {
-        effect: effects[0],
+    return effects.length > 0
+      ? effects.map((effect) => ({
+        effect,
         line,
         symbol: `${calleeName}(comparator)`,
-      }
+      }))
       : undefined;
   }
   const canonicalName = `${binding.receiver}.${binding.method}`;

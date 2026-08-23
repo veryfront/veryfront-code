@@ -2231,6 +2231,34 @@ definedSetter.path = "defined-setter.txt";
     );
   });
 
+  it("preserves every possible sort comparator effect", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const maybe: boolean;
+const conditionalComparator = maybe ? Deno.remove : fetch;
+const conditionalValues = [2, 1];
+conditionalValues.sort(conditionalComparator);
+
+const comparators = { remove: Deno.remove, request: fetch };
+declare const comparatorName: string;
+const computedValues = [2, 1];
+computedValues.sort(comparators[comparatorName]);
+
+const localValues = [2, 1];
+localValues.sort(() => 0);
+`,
+        "src/runtime-sort-comparator-effects.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "conditionalValues.sort(comparator)"],
+        ["network", "conditionalValues.sort(comparator)"],
+        ["filesystem-write", "computedValues.sort(comparator)"],
+        ["network", "computedValues.sort(comparator)"],
+      ],
+    );
+  });
+
   it("invokes descriptor setters on writes without exposing them to reads", () => {
     assertEquals(
       collectSemanticMarkers(
