@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/platform/compat/fs.ts";
+import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
 import { detectProjectInstallTarget } from "#veryfront/extensions/install-command.ts";
 import { LOCKFILE_CLIENTS } from "#veryfront/utils/package-client.ts";
 import {
@@ -47,15 +48,15 @@ describe("cli/utils/package-manager", () => {
   describe("detectPackageManager", () => {
     // Clear npm_config_user_agent so lockfile detection tests aren't
     // short-circuited when running under `deno task`.
-    const savedUserAgent = Deno.env.get("npm_config_user_agent");
+    const savedUserAgent = getEnv("npm_config_user_agent");
     function clearUserAgent() {
-      Deno.env.delete("npm_config_user_agent");
+      deleteEnv("npm_config_user_agent");
     }
     function restoreUserAgent() {
       if (savedUserAgent !== undefined) {
-        Deno.env.set("npm_config_user_agent", savedUserAgent);
+        setEnv("npm_config_user_agent", savedUserAgent);
       } else {
-        Deno.env.delete("npm_config_user_agent");
+        deleteEnv("npm_config_user_agent");
       }
     }
 
@@ -159,7 +160,7 @@ describe("cli/utils/package-manager", () => {
     it("should detect deno from user agent", async () => {
       clearUserAgent();
       try {
-        Deno.env.set("npm_config_user_agent", "deno/2.6.0 npm/? deno/2.6.0 macos aarch64");
+        setEnv("npm_config_user_agent", "deno/2.6.0 npm/? deno/2.6.0 macos aarch64");
         await withTempDir(async (tempDir) => {
           const result = await detectPackageManager(tempDir);
           assertEquals(result, "deno");

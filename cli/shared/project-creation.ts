@@ -90,6 +90,25 @@ export interface CreateProjectDependencies {
   ) => Promise<Pick<EnvPromptResult, "envContent" | "envExampleContent">>;
 }
 
+type ProjectCreationFileSystem =
+  & FileSystem
+  & Required<Pick<FileSystem, "lstat" | "rename">>;
+
+function assertProjectCreationFileSystemCapabilities(
+  fs: FileSystem,
+): asserts fs is ProjectCreationFileSystem {
+  if (!fs.lstat) {
+    throw NOT_SUPPORTED.create({
+      detail: "Filesystem does not support symlink-aware project preflight.",
+    });
+  }
+  if (!fs.rename) {
+    throw NOT_SUPPORTED.create({
+      detail: "Filesystem does not support atomic .gitignore replacement.",
+    });
+  }
+}
+
 const INTEGRATION_ICONS: Record<string, string> = {
   gmail: "mail",
   outlook: "mail",
@@ -384,12 +403,10 @@ async function writeEnvFiles(
   return [".env", ".env.example"];
 }
 
-async function writeGitignore(projectDir: string, fs: FileSystem): Promise<void> {
-  if (!fs.rename) {
-    throw NOT_SUPPORTED.create({
-      detail: "Filesystem does not support atomic .gitignore replacement.",
-    });
-  }
+async function writeGitignore(
+  projectDir: string,
+  fs: ProjectCreationFileSystem,
+): Promise<void> {
   const gitignorePath = join(projectDir, ".gitignore");
   const temporaryPath = join(projectDir, `.gitignore.veryfront-${crypto.randomUUID()}.tmp`);
   let existingGitignore: string | undefined;
@@ -573,11 +590,13 @@ async function findExistingPaths(
 
 /**
  * True when `path` is a symlink. `lstat` is what makes a link visible: `stat`
- * follows it and reports the target. Adapters without `lstat` have no links of
- * their own, so nothing can be one.
+ * follows it and reports the target. Project creation rejects filesystems that
+ * cannot make this distinction before it writes anything.
  */
-async function isSymlinkPath(path: string, fs: FileSystem): Promise<boolean> {
-  if (!fs.lstat) return false;
+async function isSymlinkPath(
+  path: string,
+  fs: ProjectCreationFileSystem,
+): Promise<boolean> {
   try {
     return (await fs.lstat(path)).isSymlink === true;
   } catch (error) {
@@ -605,13 +624,9 @@ async function findUnwritablePaths(
   dir: string,
   paths: string[],
   protectedLeafPaths: string[] = [],
-  fs: FileSystem,
+  fs: ProjectCreationFileSystem,
 ): Promise<string[]> {
-  // `lstat` is what makes a link visible: `stat` follows it and reports the
-  // target. It is optional only for virtual filesystems that have no links of
-  // their own; every runtime this CLI scaffolds on provides it, and `stat`
-  // still catches a plain file in the way if one ever does not.
-  const describe = fs.lstat?.bind(fs) ?? fs.stat.bind(fs);
+  const describe = fs.lstat.bind(fs);
   const blocked = new Set<string>();
 
   for (const path of [...paths, ...protectedLeafPaths]) {
@@ -664,6 +679,7 @@ export async function createProject(
   validateIntegrationsOrThrow(request.integrations);
 
   const assembly = await assembleScaffold(request);
+  assertProjectCreationFileSystemCapabilities(fs);
   const writePaths = conflictWritePaths(assembly, request);
   const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
 

@@ -279,6 +279,7 @@ describe("createProject error classification", () => {
 
   projectTest("classifies missing atomic rename support as not-supported", async (parentDir) => {
     const fileSystem = overrideFileSystem(createFileSystem(), { rename: undefined });
+    const projectDir = join(parentDir, "contract-project");
 
     const error = await assertRejects(() =>
       createProject(
@@ -290,7 +291,28 @@ describe("createProject error classification", () => {
     assertInstanceOf(error, VeryfrontError);
     assertEquals(error.slug, "not-supported");
     assertEquals(error.detail?.includes("atomic .gitignore replacement"), true);
+    assertEquals(await createFileSystem().exists(projectDir), false);
   });
+
+  projectTest(
+    "classifies missing symlink inspection support as not-supported",
+    async (parentDir) => {
+      const fileSystem = overrideFileSystem(createFileSystem(), { lstat: undefined });
+      const projectDir = join(parentDir, "contract-project");
+
+      const error = await assertRejects(() =>
+        createProject(
+          baseRequest(parentDir),
+          { fileSystem } satisfies CreateProjectDependencies,
+        )
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "not-supported");
+      assertEquals(error.detail?.includes("symlink-aware project preflight"), true);
+      assertEquals(await createFileSystem().exists(projectDir), false);
+    },
+  );
 });
 
 describe("createProject filesystem failure handling", () => {
@@ -322,8 +344,7 @@ describe("createProject filesystem failure handling", () => {
       const nativeLstat = nativeFileSystem.lstat.bind(nativeFileSystem);
       const failingPath = join(parentDir, ".gitignore");
       const fileSystem = overrideFileSystem(nativeFileSystem, {
-        lstat: (path) =>
-          path === failingPath ? Promise.reject(expected) : nativeLstat(path),
+        lstat: (path) => path === failingPath ? Promise.reject(expected) : nativeLstat(path),
       });
 
       const error = await assertRejects(() =>

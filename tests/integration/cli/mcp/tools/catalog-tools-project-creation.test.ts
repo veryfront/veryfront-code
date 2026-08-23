@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "veryfront/platform/path";
 import { vfCreateProject } from "#cli/mcp/catalog-tools";
@@ -91,6 +91,10 @@ describe("vfCreateProject filesystem conflicts", () => {
 
       assertEquals(result.success, true);
       assertEquals(result.projectDir, projectDir);
+      assertStringIncludes(
+        await Deno.readTextFile(join(parentDir, "fake-npm", "npm.log")),
+        `${projectDir} install`,
+      );
     });
   });
 
