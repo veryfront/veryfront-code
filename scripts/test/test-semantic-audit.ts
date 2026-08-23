@@ -238,6 +238,24 @@ const NETWORK_GLOBAL_PROPERTIES = new Set([
   "fetch",
 ]);
 
+const GLOBAL_SINGLE_PROPERTY_MUTATORS = new Set([
+  "Object.defineProperty",
+  "Reflect.defineProperty",
+  "Reflect.deleteProperty",
+  "Reflect.set",
+]);
+
+const GLOBAL_BULK_MUTATORS = new Set([
+  "Object.assign",
+  "Object.defineProperties",
+  "Object.freeze",
+  "Object.preventExtensions",
+  "Object.seal",
+  "Object.setPrototypeOf",
+  "Reflect.preventExtensions",
+  "Reflect.setPrototypeOf",
+]);
+
 const PROCESS_ENV_METHODS = new Set([
   "delete",
   "get",
@@ -1180,18 +1198,21 @@ function globalPropertyMutationMarker(
   }
   if (node.type !== "CallExpression" || !isNode(node.callee)) return undefined;
   const callee = memberChain(node.callee);
+  const calleeName = callee?.join(".");
+  const mutatesSingleProperty = calleeName !== undefined &&
+    GLOBAL_SINGLE_PROPERTY_MUTATORS.has(calleeName);
+  const mutatesBulkState = calleeName !== undefined &&
+    GLOBAL_BULK_MUTATORS.has(calleeName);
   if (
     callee?.length !== 2 ||
-    !(
-      (callee[0] === "Object" && callee[1] === "defineProperty") ||
-      (callee[0] === "Reflect" && callee[1] === "deleteProperty")
-    ) || isGlobalShadowed(callee[0], scopes, importedNames)
+    (!mutatesSingleProperty && !mutatesBulkState) ||
+    isGlobalShadowed(callee[0], scopes, importedNames)
   ) {
     return undefined;
   }
   const args = Array.isArray(node.arguments) ? node.arguments : [];
   const target = unwrapExpression(args[0]);
-  const property = literalValue(args[1]);
+  const property = mutatesSingleProperty ? literalValue(args[1]) : undefined;
   if (
     !target || target.type !== "Identifier" ||
     !isGlobalRuntimeReceiver(
@@ -1203,9 +1224,11 @@ function globalPropertyMutationMarker(
     return undefined;
   }
   return {
-    effect: globalRuntimeMutationEffect(property),
+    effect: mutatesSingleProperty
+      ? globalRuntimeMutationEffect(property)
+      : "process",
     line,
-    symbol: `${callee.join(".")}(${target.name}.${property ?? "*"})`,
+    symbol: `${calleeName}(${target.name}.${property ?? "*"})`,
   };
 }
 

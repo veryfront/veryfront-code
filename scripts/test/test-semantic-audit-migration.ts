@@ -1975,7 +1975,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/agent/project/agent-runtime.test.ts",
       "removalPr": "PR 4g",
     }),
-    entry("src/agent/react/use-chat/use-chat.csrf.test.tsx", ["network"], {
+    entry("src/agent/react/use-chat/use-chat.csrf.test.tsx", [
+      "network",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "agent-runtime",
       "rationale":
@@ -1984,7 +1987,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject a fetch implementation or use a scoped per-test transport fake instead of assigning globalThis.fetch.",
       "removalPr": "PR 4g",
     }),
-    entry("src/agent/react/use-chat/use-chat.status.test.tsx", ["network"], {
+    entry("src/agent/react/use-chat/use-chat.status.test.tsx", [
+      "network",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "agent-runtime",
       "rationale":
@@ -3940,6 +3946,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/react/compat/version-detector/version-detector.test.ts",
       "removalPr": "PR 4n",
     }),
+    entry("src/react/components/chat/agent-picker.test.tsx", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/react/components/chat/chat-actions.test.tsx", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -3949,7 +3964,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/react/components/chat/chat-agent-picker.test.tsx", ["network"], {
+    entry("src/react/components/chat/chat-agent-picker.test.tsx", [
+      "network",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":
@@ -3969,7 +3987,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry(
       "src/react/components/chat/chat/app-mode-chat.test.tsx",
-      ["network"],
+      ["network", "process"],
       {
         "disposition": "replaceable-fake",
         "owner": "core-runtime",
@@ -3977,6 +3995,124 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
           "Mutates the process-global fetch boundary and cannot run safely beside concurrent unit tests.",
         "replacement":
           "Inject a fetch implementation or use a scoped per-test transport fake instead of assigning globalThis.fetch.",
+        "removalPr": "PR 4n",
+      },
+    ),
+    entry("src/react/components/chat/chat/chat.controlled.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry(
+      "src/react/components/chat/chat/components/inline-citation.test.tsx",
+      ["process"],
+      {
+        "disposition": "replaceable-fake",
+        "owner": "core-runtime",
+        "rationale":
+          "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+        "replacement":
+          "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+        "removalPr": "PR 4n",
+      },
+    ),
+    entry(
+      "src/react/components/chat/chat/components/message-actions.test.tsx",
+      ["process"],
+      {
+        "disposition": "replaceable-fake",
+        "owner": "core-runtime",
+        "rationale":
+          "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+        "replacement":
+          "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+        "removalPr": "PR 4n",
+      },
+    ),
+    entry("src/react/components/chat/chat/components/sidebar.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/react/components/chat/chat/components/tool-ui.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry(
+      "src/react/components/chat/chat/composition/chat-composer.shared-context.test.tsx",
+      ["process"],
+      {
+        "disposition": "replaceable-fake",
+        "owner": "core-runtime",
+        "rationale":
+          "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+        "replacement":
+          "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+        "removalPr": "PR 4n",
+      },
+    ),
+    entry("src/react/components/chat/chat/composition/chat-composer.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/react/components/chat/chat/composition/chat-empty.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/react/components/chat/chat/composition/message.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry(
+      "src/react/components/chat/chat/contexts/conversations-context.test.tsx",
+      ["process"],
+      {
+        "disposition": "replaceable-fake",
+        "owner": "core-runtime",
+        "rationale":
+          "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+        "replacement":
+          "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
         "removalPr": "PR 4n",
       },
     ),
@@ -3994,7 +4130,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry(
       "src/react/components/chat/chat/hooks/use-conversation-chat.test.tsx",
-      ["network"],
+      ["network", "process"],
       {
         "disposition": "replaceable-fake",
         "owner": "core-runtime",
@@ -4029,6 +4165,17 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4n",
       },
     ),
+    entry("src/react/components/chat/chat/hooks/use-drop-zone.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/react/components/chat/chat/hooks/use-upload.test.tsx", [
       "process",
     ], {
@@ -4059,6 +4206,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
+    entry("src/react/components/chat/csp-nonce.test.tsx", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/react/components/chat/hooks-coverage.test.tsx", [
       "network",
       "process",
@@ -4079,6 +4235,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
+    entry("src/react/components/clipboard.test.tsx", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/react/components/optimized-image/helpers.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -4089,6 +4254,28 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4n",
     }),
     entry("src/react/components/ui/accordion.behaviour.test.tsx", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/react/components/ui/adapter/combobox.conformance.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/react/components/ui/adapter/dialog.conformance.test.tsx", [
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":
@@ -4108,7 +4295,29 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
+    entry("src/react/components/ui/adapter/popover.conformance.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/react/components/ui/adapter/tabs.conformance.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/react/components/ui/adapter/toast.conformance.test.tsx", [
       "process",
     ], {
       "disposition": "replaceable-fake",
@@ -4159,6 +4368,17 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
+    entry("src/react/components/ui/autocomplete.behaviour.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/react/components/ui/boundary.test.ts", ["filesystem-read"], {
       "disposition": "hermetic-unit",
       "owner": "core-runtime",
@@ -4192,6 +4412,17 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
+    entry("src/react/components/ui/context-menu.behaviour.test.tsx", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/react/components/ui/coverage.test.tsx", ["filesystem-read"], {
       "disposition": "hermetic-unit",
       "owner": "core-runtime",
@@ -4207,6 +4438,19 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
+    entry(
+      "src/react/components/ui/hover-card.behaviour.test.tsx",
+      ["process"],
+      {
+        "disposition": "replaceable-fake",
+        "owner": "core-runtime",
+        "rationale":
+          "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+        "replacement":
+          "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+        "removalPr": "PR 4n",
+      },
+    ),
     entry("src/react/components/ui/list.test.tsx", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -4223,6 +4467,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/react/components/ui/menubar.behaviour.test.tsx", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
     entry("src/react/components/ui/number-field.behaviour.test.tsx", [
@@ -5871,6 +6124,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/src/transforms/npm-import-rewrites.test.ts",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/transforms/pipeline/cache-identity.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
     entry("src/transforms/pipeline/index.test.ts", ["process"], {

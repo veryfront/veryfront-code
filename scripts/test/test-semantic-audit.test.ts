@@ -971,6 +971,10 @@ const key = "navigator";
 Object.defineProperty(globalThis, key, { value: {} });
 Object.defineProperty(globalThis, "XMLHttpRequest", { value: class {} });
 Reflect.deleteProperty(globalThis, key);
+Object.assign(globalThis, { document: {} });
+Reflect.set(globalThis, "WebSocket", class {});
+Object.defineProperties(window, { document: { value: {} } });
+Reflect.defineProperty(self, key, { value: {} });
 globalThis.window = {} as typeof globalThis;
 delete globalThis.navigator;
 `,
@@ -980,6 +984,10 @@ delete globalThis.navigator;
         ["process", "Object.defineProperty(globalThis.*)"],
         ["network", "Object.defineProperty(globalThis.XMLHttpRequest)"],
         ["process", "Reflect.deleteProperty(globalThis.*)"],
+        ["process", "Object.assign(globalThis.*)"],
+        ["network", "Reflect.set(globalThis.WebSocket)"],
+        ["process", "Object.defineProperties(window.*)"],
+        ["process", "Reflect.defineProperty(self.*)"],
         ["process", "globalThis.window"],
         ["process", "globalThis.navigator"],
       ],
@@ -989,8 +997,10 @@ delete globalThis.navigator;
         `
 const Object = { defineProperty: () => undefined };
 Object.defineProperty(globalThis, "navigator", { value: {} });
-const Reflect = { deleteProperty: () => false };
+Object.assign(globalThis, { navigator: {} });
+const Reflect = { deleteProperty: () => false, set: () => false };
 Reflect.deleteProperty(globalThis, "navigator");
+Reflect.set(globalThis, "navigator", {});
 function mutate(globalThis: { window: unknown; navigator?: unknown }) {
   globalThis.window = {};
   delete globalThis.navigator;
