@@ -930,3 +930,40 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 });
+
+describe("createProject error classification", () => {
+  it("rejects a bad project name as a usage error", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-name-class-" });
+
+    try {
+      const error = await assertRejects(() =>
+        createProject({ ...baseRequest(parentDir), name: "nested/name" })
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+      assertEquals(error.exitCode, 2);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("rejects files it would overwrite as already-exists", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-exists-class-" });
+
+    try {
+      await Deno.writeTextFile(join(parentDir, "README.md"), "mine\n");
+
+      const error = await assertRejects(() =>
+        createProject({ ...baseRequest(parentDir), name: undefined })
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "already-exists");
+      assertEquals(error.exitCode, 1);
+      assertEquals(error.detail?.includes("--force"), true);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+});

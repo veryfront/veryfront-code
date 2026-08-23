@@ -846,11 +846,19 @@ Requested resource not found.
 
 ### invalid-argument
 
-Invalid function argument.
+Invalid argument.
 
 - **HTTP status:** 400
 - **CLI exit code:** 2
 - **What to do:** Check argument types and values
+
+### already-exists
+
+Target already exists.
+
+- **HTTP status:** 409
+- **CLI exit code:** 1
+- **What to do:** Choose a different name, or remove the existing target first
 
 ### timeout-error
 

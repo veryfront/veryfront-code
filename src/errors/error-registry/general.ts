@@ -40,13 +40,28 @@ export const RESOURCE_NOT_FOUND = defineError({
   suggestion: "Verify the referenced resource ID or name exists",
 });
 
+/**
+ * A value the caller supplied is not acceptable: a CLI flag, a positional
+ * argument, a config field, or a function argument. Exit code 2 is the CLI's
+ * "invalid usage" code, so a script can tell a typo from a failed run.
+ */
 export const INVALID_ARGUMENT = defineError({
   slug: "invalid-argument",
   category: "GENERAL",
   status: 400,
-  title: "Invalid function argument",
+  title: "Invalid argument",
   suggestion: "Check argument types and values",
   exitCode: 2,
+});
+
+/** Writing would replace something that is already there. */
+export const ALREADY_EXISTS = defineError({
+  slug: "already-exists",
+  category: "GENERAL",
+  status: 409,
+  title: "Target already exists",
+  suggestion: "Choose a different name, or remove the existing target first",
+  exitCode: 1,
 });
 
 export const TIMEOUT_ERROR = defineError({
@@ -125,6 +140,7 @@ export const GENERAL_REGISTRY = {
   "file-not-found": FILE_NOT_FOUND,
   "resource-not-found": RESOURCE_NOT_FOUND,
   "invalid-argument": INVALID_ARGUMENT,
+  "already-exists": ALREADY_EXISTS,
   "timeout-error": TIMEOUT_ERROR,
   "initialization-error": INITIALIZATION_ERROR,
   "not-supported": NOT_SUPPORTED,

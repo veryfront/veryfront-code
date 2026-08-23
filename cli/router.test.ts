@@ -599,7 +599,7 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.command, "serve");
         assertEquals(parsed.error.code, "USAGE_ERROR");
         assertEquals(parsed.error.slug, "invalid-arguments");
-        assertEquals(parsed.error.registrySlug, "unknown-error");
+        assertEquals(parsed.error.registrySlug, "invalid-argument");
       } finally {
         restoreAll();
       }

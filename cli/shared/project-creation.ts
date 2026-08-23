@@ -1,4 +1,10 @@
-import { createError, TEMPLATE_NOT_FOUND, toError } from "veryfront/errors";
+import {
+  ALREADY_EXISTS,
+  createError,
+  INVALID_ARGUMENT,
+  TEMPLATE_NOT_FOUND,
+  toError,
+} from "veryfront/errors";
 import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
@@ -190,7 +196,10 @@ function validateIntegrationsOrThrow(integrations: IntegrationName[]): void {
 
   for (const error of validation.errors) logger.error(error);
 
-  throw createConfigError("Invalid integrations specified");
+  throw INVALID_ARGUMENT.create({
+    detail: "Invalid integrations specified",
+    context: { integrations },
+  });
 }
 
 function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
@@ -562,7 +571,7 @@ export async function createProject(
   const projectName = request.name;
   if (projectName !== undefined) {
     const nameError = validateProjectName(projectName);
-    if (nameError) throw createConfigError(nameError);
+    if (nameError) throw INVALID_ARGUMENT.create({ detail: nameError });
   }
 
   const projectDir = projectName === undefined
@@ -579,10 +588,11 @@ export async function createProject(
   // files being replaced, not the scaffold writing somewhere else entirely.
   const unwritable = await findUnwritablePaths(projectDir, writePaths);
   if (unwritable.length) {
-    throw createConfigError(
-      `${where} already contains ${unwritable.join(", ")} as a file or a link ` +
+    throw ALREADY_EXISTS.create({
+      detail: `${where} already contains ${unwritable.join(", ")} as a file or a link ` +
         `the scaffold cannot write through. Move it aside or use a different name.`,
-    );
+      context: { projectDir, unwritable },
+    });
   }
 
   // A conflict is a file the scaffold would write over - a `package.json` with
@@ -593,9 +603,10 @@ export async function createProject(
   if (request.conflictPolicy === "fail") {
     const conflicts = await findExistingPaths(projectDir, writePaths);
     if (conflicts.length) {
-      throw createConfigError(
-        `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
-      );
+      throw ALREADY_EXISTS.create({
+        detail: `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
+        context: { projectDir, conflicts },
+      });
     }
   }
 
@@ -724,7 +735,7 @@ export async function materializeScaffold(
 
   if (request.projectName !== undefined) {
     const nameError = validateProjectName(request.projectName);
-    if (nameError) throw createConfigError(nameError);
+    if (nameError) throw INVALID_ARGUMENT.create({ detail: nameError });
   }
 
   const integrations = request.integrations ?? [];
