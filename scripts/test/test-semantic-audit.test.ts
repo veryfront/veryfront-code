@@ -2382,6 +2382,11 @@ const nested = maybe
   ? (other ? { run: Deno.cwd } : loadSource())
   : { run: Deno.cwd };
 Object.assign({}, nested).run();
+const getterBox = {};
+Object.defineProperty(getterBox, "source", {
+  get: () => source,
+});
+Object.assign({}, getterBox.source).run();
 `,
       "src/runtime-object-assign-partial-source.test.ts",
     ).map((marker) => marker.effect);
@@ -2488,10 +2493,19 @@ try {
   });
 } catch {}
 caughtDefineTarget.run("caught-define.txt");
+
+const caughtDefineManyTarget = {};
+Object.defineProperty(caughtDefineManyTarget, "run", { value: Deno.remove });
+try {
+  Object.defineProperties(caughtDefineManyTarget, {
+    run: { value: () => undefined },
+  });
+} catch {}
+caughtDefineManyTarget.run("caught-define-many.txt");
 `,
         "src/runtime-reflect-failed-mutations.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 5 }, () => "filesystem-write"),
+      Array.from({ length: 6 }, () => "filesystem-write"),
     );
   });
 
@@ -2843,6 +2857,11 @@ const hiddenReturn = Object.defineProperty({}, "run", {
   get: () => Deno.remove,
 });
 Object.assign({}, hiddenReturn).run();
+
+const hiddenData = Object.defineProperty({}, "run", {
+  value: Deno.remove,
+});
+Object.assign({}, hiddenData).run();
 
 const hiddenPreserved = { run: Deno.remove };
 Object.assign(hiddenPreserved, hiddenReturn).run("preserved.txt");
