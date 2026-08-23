@@ -111,6 +111,11 @@ extension, esbuild remains the default and ignores `emitDecoratorMetadata`.
 Projects that use standard decorators or validation libraries without runtime
 type reflection do not need the extension.
 
+Isolated route preparation follows inherited configuration only inside the
+project boundary, including project-owned `node_modules`. Copy an external
+workspace configuration into the project before using it in an isolated
+runtime. Trusted host execution can follow configuration outside the project.
+
 Enabling `experimentalDecorators` routes local Deno API modules through
 per-route SWC bundles. Separate route bundles do not share module-level state
 from a common project import. The extension reads only the two decorator flags

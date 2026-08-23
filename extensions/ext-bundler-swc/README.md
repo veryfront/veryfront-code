@@ -47,6 +47,12 @@ Veryfront follows inherited TypeScript configuration. The extension embeds
 `reflect-metadata` before an opted-in decorated module runs, including prepared
 worker modules and compiled runtime routes.
 
+Trusted host execution can follow configuration outside the project directory.
+Isolated preparation accepts parent and package configuration only when it stays
+inside the project boundary, including project-owned `node_modules`. Copy an
+external shared configuration into the project before using it in an isolated
+runtime.
+
 If `experimentalDecorators` is false or absent, the extension delegates source
 unchanged to esbuild when Veryfront already needs a bundle or transform. Local
 Deno routes keep their normal direct-import path. If only

@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { SwcBundler } from "@veryfront/ext-bundler-swc";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
@@ -10,7 +15,7 @@ import { loadHandlerModule, prepareHandlerModule } from "./loader.ts";
 import type { AppRouteContext, AppRouteHandler } from "./types.ts";
 
 describe("API route decorator metadata", () => {
-  it("uses inherited SWC decorator flags outside the project source boundary", async () => {
+  it("allows trusted host config inheritance but rejects it during isolated preparation", async () => {
     const workspaceDir = await Deno.makeTempDir();
     const projectDir = join(workspaceDir, "app");
     await Deno.mkdir(projectDir);
@@ -78,18 +83,99 @@ describe("API route decorator metadata", () => {
         constructor: ["Dependency"],
       });
 
-      const preparedModule = await prepareHandlerModule({
-        projectDir,
-        modulePath,
-        adapter: denoAdapter,
-      });
-      assertEquals(preparedModule.source.includes("design:paramtypes"), true);
-      assertEquals(preparedModule.source.includes("getMetadata"), true);
+      for (
+        const inheritedConfig of [
+          "../tsconfig.base.json",
+          join(workspaceDir, "tsconfig.base.json"),
+        ]
+      ) {
+        await Deno.writeTextFile(
+          join(projectDir, "tsconfig.json"),
+          JSON.stringify({ extends: inheritedConfig }),
+        );
+        const error = await assertRejects(
+          () =>
+            prepareHandlerModule({
+              projectDir,
+              modulePath,
+              adapter: denoAdapter,
+            }),
+          Error,
+          "requires trusted host execution",
+        );
+        assertInstanceOf(error, Error);
+        assertEquals(error.message.includes(workspaceDir), false);
+      }
+
+      await Deno.writeTextFile(
+        join(projectDir, "tsconfig.json"),
+        `/*${"x".repeat(1024 * 1024)}*/{}`,
+      );
+      await assertRejects(
+        () =>
+          prepareHandlerModule({
+            projectDir,
+            modulePath,
+            adapter: denoAdapter,
+          }),
+        Error,
+        "exceeds 1048576 bytes",
+      );
     } finally {
       unregister("Bundler");
       if (previousBundler) register("Bundler", previousBundler);
       await swcBundler.stop();
       await Deno.remove(workspaceDir, { recursive: true });
+    }
+  });
+
+  it("uses package config inheritance inside an isolated project boundary", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const modulePath = join(projectDir, "handler.ts");
+    const packageDir = join(projectDir, "node_modules", "@fixture", "tsconfig");
+    const previousBundler = tryResolve<Bundler>("Bundler");
+    const swcBundler = new SwcBundler();
+
+    try {
+      await Deno.mkdir(packageDir, { recursive: true });
+      await Deno.writeTextFile(
+        join(packageDir, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: {
+            experimentalDecorators: true,
+            emitDecoratorMetadata: true,
+          },
+        }),
+      );
+      await Deno.writeTextFile(
+        join(projectDir, "tsconfig.json"),
+        JSON.stringify({ extends: "@fixture/tsconfig" }),
+      );
+      await Deno.writeTextFile(
+        modulePath,
+        `
+          function decorate(..._args: unknown[]): void {}
+          class Dependency {}
+          class Subject {
+            constructor(@decorate readonly dependency: Dependency) {}
+          }
+          export function GET() { return Response.json(Subject); }
+        `,
+      );
+
+      register("Bundler", swcBundler);
+      const preparedModule = await prepareHandlerModule({
+        projectDir,
+        modulePath,
+        adapter: denoAdapter,
+      });
+      assertStringIncludes(preparedModule.source, "design:paramtypes");
+      assertStringIncludes(preparedModule.source, "getMetadata");
+    } finally {
+      unregister("Bundler");
+      if (previousBundler) register("Bundler", previousBundler);
+      await swcBundler.stop();
+      await Deno.remove(projectDir, { recursive: true });
     }
   });
 
