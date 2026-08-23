@@ -154,6 +154,22 @@ describe("readTypeScriptDecoratorOptions", () => {
     assertEquals(depth.message.includes("/project/"), false);
   });
 
+  it("sanitizes malformed configuration diagnostics", async () => {
+    const error = await assertRejects(
+      () =>
+        readTypeScriptDecoratorOptions({
+          configPath: "/project/private/tsconfig.json",
+          readTextFile: () => Promise.resolve("{"),
+        }),
+      VeryfrontError,
+    );
+
+    assertInstanceOf(error, VeryfrontError);
+    assertEquals(error.slug, "extension-manifest-parse-failed");
+    assertEquals(error.message.includes("/project/private"), false);
+    assertEquals(JSON.stringify(error.context).includes("/project/private"), false);
+  });
+
   it("fails closed when the root config is absent", async () => {
     assertEquals(
       await readTypeScriptDecoratorOptions({

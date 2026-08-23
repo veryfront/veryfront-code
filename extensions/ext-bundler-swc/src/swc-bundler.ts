@@ -12,7 +12,6 @@ import type {
   BundleResult,
   BundlerPlugin,
   BundlerPluginBuild,
-  Loader,
   OnLoadResult,
   TransformOptions,
   TransformResult,
@@ -91,6 +90,13 @@ async function decoratorOptions(
 
 function isTypeScriptLoader(loader: unknown): loader is "ts" | "tsx" {
   return loader === "ts" || loader === "tsx";
+}
+
+function transformedLoader(
+  loader: "ts" | "tsx",
+  options: BundleOptions | TransformOptions,
+): "js" | "jsx" {
+  return loader === "tsx" && options.jsx === "preserve" ? "jsx" : "js";
 }
 
 function assertLegacyDecoratorSourceMapsDisabled(
@@ -244,7 +250,7 @@ function wrapPlugin(
                 flags,
                 options,
               ),
-              loader: "js",
+              loader: transformedLoader(loader, options),
             } satisfies OnLoadResult;
           });
         },
@@ -288,7 +294,7 @@ function createSwcFallbackPlugin(
           options,
         );
         options.signal?.throwIfAborted();
-        return { contents, loader: "js" };
+        return { contents, loader: transformedLoader(loader, options) };
       });
     },
   };
@@ -337,7 +343,7 @@ async function prepareLegacyDecoratorBundle(
         flags,
         options,
       ),
-      loader: "js" as Loader,
+      loader: transformedLoader(stdin.loader, options),
     }
     : stdin;
   const plugins = [
@@ -407,7 +413,7 @@ export class SwcBundler implements Bundler {
     return await this.#delegate.transform({
       ...delegateOptions,
       code,
-      loader: "js",
+      loader: transformedLoader(options.loader, options),
     });
   }
 

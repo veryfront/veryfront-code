@@ -5,6 +5,7 @@ import { defineError } from "#veryfront/errors/types.ts";
 import type { TypeScriptDecoratorOptions } from "./bundler.ts";
 
 const MAX_TSCONFIG_EXTENDS_DEPTH = 16;
+const TSCONFIG_DIAGNOSTIC_PATH = "tsconfig.json";
 
 const TSCONFIG_DEPTH_ERROR = defineError({
   slug: "tsconfig-inheritance-too-deep",
@@ -156,7 +157,11 @@ export async function readTypeScriptDecoratorOptions(
 
     active.add(path);
     try {
-      const config = parseExtensionManifest<ParsedTypeScriptConfig>(source, "jsonc", path);
+      const config = parseExtensionManifest<ParsedTypeScriptConfig>(
+        source,
+        "jsonc",
+        TSCONFIG_DIAGNOSTIC_PATH,
+      );
       let merged: PartialDecoratorOptions = {};
       for (const specifier of inheritedSpecifiers(config.extends)) {
         const parentPath = await resolveExtends(specifier, path);

@@ -215,6 +215,94 @@ describe("SwcBundler decorator metadata", () => {
     }
   });
 
+  it("keeps JSX loaders when SWC preserves TSX", async () => {
+    const delegate = new RecordingBundler();
+    const bundler = new SwcBundler({ delegate });
+    const typescriptDecoratorOptions = {
+      experimentalDecorators: true,
+      emitDecoratorMetadata: false,
+    };
+
+    await bundler.transform({
+      code: "export const view = <section />;",
+      loader: "tsx",
+      sourcefile: "view.tsx",
+      jsx: "preserve",
+      tsconfigRaw: { compilerOptions: typescriptDecoratorOptions },
+    });
+    assertEquals(delegate.transformed?.loader, "jsx");
+
+    await bundler.bundle({
+      bundle: false,
+      write: false,
+      jsx: "preserve",
+      stdin: {
+        contents: "export const view = <section />;",
+        loader: "tsx",
+        sourcefile: "view.tsx",
+      },
+      typescriptDecoratorOptions,
+    });
+    assertEquals(delegate.bundled?.stdin?.loader, "jsx");
+  });
+
+  it("keeps preserved TSX parseable through plugin and fallback loads", async () => {
+    const projectDir = await makeTempDir();
+    const bundler = new SwcBundler();
+    const virtualView: BundlerPlugin = {
+      name: "virtual-view",
+      setup(build) {
+        build.onResolve({ filter: /^virtual-view$/ }, () => ({
+          path: "virtual-view.tsx",
+          namespace: "virtual-view",
+        }));
+        build.onLoad(
+          { filter: /.*/, namespace: "virtual-view" },
+          () => ({
+            contents: "export const virtualView = <section />;",
+            loader: "tsx",
+          }),
+        );
+      },
+    };
+
+    try {
+      await writeTextFile(
+        `${projectDir}/entry.ts`,
+        `
+          export { virtualView } from "virtual-view";
+          export { fileView } from "./file-view.tsx";
+        `,
+      );
+      await writeTextFile(
+        `${projectDir}/file-view.tsx`,
+        "export const fileView = <article />;",
+      );
+
+      const result = await bundler.bundle({
+        absWorkingDir: projectDir,
+        entryPoints: [`${projectDir}/entry.ts`],
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "neutral",
+        jsx: "preserve",
+        plugins: [virtualView],
+        typescriptDecoratorOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: false,
+        },
+      });
+
+      assertEquals(result.errors, []);
+      assertStringIncludes(result.outputFiles[0]!.text, "<section");
+      assertStringIncludes(result.outputFiles[0]!.text, "<article");
+    } finally {
+      await bundler.stop();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
   it("honors decorator flags inherited through tsconfig", async () => {
     const projectDir = await makeTempDir();
     const bundler = new SwcBundler();
