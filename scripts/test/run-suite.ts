@@ -78,9 +78,23 @@ const UNIT_CWD_EXCLUSION_FILES = [
   "src/testing/cwd-exclusion-a.test.ts",
   "src/testing/cwd-exclusion-b.test.ts",
 ];
+/**
+ * Needs a real Chromium through tests/_helpers/playwright.ts. Only the browser
+ * e2e jobs run `playwright install`, so the unit shards fail it with "Playwright
+ * browser bridge exited before reporting an endpoint". It is the single test
+ * under a unit root that reaches for a browser -- every other Playwright test
+ * lives under tests/e2e/ -- and it went unnoticed because extensions/ was never
+ * planned. Excluded rather than silently dropped: it still needs a home in a
+ * browser-capable job.
+ */
+export const BROWSER_DEPENDENT_TESTS = new Set([
+  "extensions/ext-dev-ui-react/src/browser-bundle.test.ts",
+]);
+
 const UNIT_PARALLEL_EXCLUSIONS = new Set([
   ...UNIT_CWD_FILES,
   ...UNIT_CWD_EXCLUSION_FILES,
+  ...BROWSER_DEPENDENT_TESTS,
 ]);
 const RUNTIME_PATTERNS = {
   node: [
@@ -265,7 +279,8 @@ async function selectProfileFiles(
       return candidates.filter((path) =>
         startsWithAny(path, UNIT_ROOTS) && isTsTest(path) &&
         !isIntegrationTest(path) &&
-        !path.startsWith("src/workflow/__tests__/")
+        !path.startsWith("src/workflow/__tests__/") &&
+        !BROWSER_DEPENDENT_TESTS.has(path)
       );
     case "runtime:node":
       return await selectRuntimeFiles("node", candidates, root);

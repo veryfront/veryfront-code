@@ -18,6 +18,7 @@ import {
 } from "./run-deno-suite.ts";
 import { LEAF_TEST_SUITES } from "./suites.ts";
 import {
+  BROWSER_DEPENDENT_TESTS,
   formatSuitePlan,
   planSuiteFiles,
   selectOrdinalShard,
@@ -314,7 +315,11 @@ const LEGACY_UNIT_ROOTS = (LEAF_TEST_SUITES
 
 async function legacyUnitParallelFiles(): Promise<string[]> {
   const files = await collectLegacyTestFiles(LEGACY_UNIT_ROOTS);
-  const excluded = new Set([...UNIT_CWD_FILES, ...UNIT_CWD_EXCLUSION_FILES]);
+  const excluded = new Set([
+    ...UNIT_CWD_FILES,
+    ...UNIT_CWD_EXCLUSION_FILES,
+    ...BROWSER_DEPENDENT_TESTS,
+  ]);
   return sorted(
     files.filter((path) =>
       !path.includes(".integration.test.ts") &&
@@ -336,7 +341,10 @@ async function legacyUnitCoverageFiles(): Promise<string[]> {
   return sorted(
     (await collectLegacyTestFiles(LEGACY_UNIT_ROOTS))
       .filter((path) => !/\.integration\.test\.tsx?$/.test(path))
-      .filter((path) => !path.startsWith("src/workflow/__tests__/")),
+      .filter((path) => !path.startsWith("src/workflow/__tests__/"))
+      // Needs a browser the unit shards do not provision; see
+      // BROWSER_DEPENDENT_TESTS in run-suite.ts.
+      .filter((path) => !BROWSER_DEPENDENT_TESTS.has(path)),
   );
 }
 
