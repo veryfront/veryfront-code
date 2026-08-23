@@ -369,43 +369,115 @@ function codeRabbitRangeEvidenceStatements(content) {
 }
 
 function markdownExcludedRanges(content) {
-  const fenceRanges = markdownFenceRanges(content);
-  return mergeMarkdownRanges(
-    fenceRanges,
-    markdownHtmlCommentRanges(content, fenceRanges),
-  );
-}
-
-function markdownHtmlCommentRanges(content, fenceRanges) {
   const ranges = [];
-  let fenceIndex = 0;
-  let searchStart = 0;
-  while (searchStart < content.length) {
-    const commentStart = content.indexOf("<!--", searchStart);
-    if (commentStart < 0) break;
-    while (
-      fenceIndex < fenceRanges.length &&
-      fenceRanges[fenceIndex][1] <= commentStart
-    ) {
-      fenceIndex += 1;
+  let openFence;
+  let openHtmlCommentStart;
+  let lineStart = 0;
+  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
+    const line = lineMatch[0];
+    if (line.length === 0 && lineStart >= content.length) break;
+    const lineEnd = lineStart + line.length;
+    const lineWithoutEnding = line.replace(/\r?\n$/, "");
+
+    if (openHtmlCommentStart !== undefined) {
+      const relativeCloseStart = lineWithoutEnding.indexOf("-->");
+      if (relativeCloseStart < 0) {
+        lineStart = lineEnd;
+        continue;
+      }
+      const closeStart = lineStart + relativeCloseStart;
+      ranges.push([openHtmlCommentStart, closeStart + 3]);
+      openHtmlCommentStart = scanMarkdownHtmlComments(
+        content,
+        lineWithoutEnding,
+        lineStart,
+        relativeCloseStart + 3,
+        ranges,
+      );
+      lineStart = lineEnd;
+      continue;
     }
+
     if (
-      fenceIndex < fenceRanges.length &&
-      fenceRanges[fenceIndex][0] <= commentStart
+      openFence !== undefined &&
+      !continuesMarkdownFenceContainer(lineWithoutEnding, openFence.container)
     ) {
-      searchStart = fenceRanges[fenceIndex][1];
+      ranges.push([openFence.start, lineStart]);
+      openFence = undefined;
+    }
+
+    const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
+    if (openFence !== undefined) {
+      if (fenceMatch) {
+        const marker = fenceMatch[2];
+        const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
+        if (
+          marker[0] === openFence.char && marker.length >= openFence.length &&
+          /^[ \t]*$/.test(lineWithoutEnding.slice(markerEnd))
+        ) {
+          ranges.push([openFence.start, lineEnd]);
+          openFence = undefined;
+        }
+      }
+      lineStart = lineEnd;
       continue;
     }
-    if (isEscapedMarkdownToken(content, commentStart)) {
-      searchStart = commentStart + 4;
-      continue;
+
+    if (fenceMatch) {
+      const marker = fenceMatch[2];
+      const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
+      const hasValidInfoString = marker[0] === "~" ||
+        !lineWithoutEnding.slice(markerEnd).includes("`");
+      if (hasValidInfoString) {
+        openFence = {
+          char: marker[0],
+          length: marker.length,
+          start: lineStart,
+          container: markdownFenceContainer(fenceMatch[1]),
+        };
+        lineStart = lineEnd;
+        continue;
+      }
     }
-    const closeStart = content.indexOf("-->", commentStart + 4);
-    const commentEnd = closeStart < 0 ? content.length : closeStart + 3;
-    ranges.push([commentStart, commentEnd]);
-    searchStart = commentEnd;
+
+    openHtmlCommentStart = scanMarkdownHtmlComments(
+      content,
+      lineWithoutEnding,
+      lineStart,
+      0,
+      ranges,
+    );
+    lineStart = lineEnd;
+  }
+  if (openHtmlCommentStart !== undefined) {
+    ranges.push([openHtmlCommentStart, content.length]);
+  } else if (openFence !== undefined) {
+    ranges.push([openFence.start, content.length]);
   }
   return ranges;
+}
+
+function scanMarkdownHtmlComments(
+  content,
+  line,
+  lineStart,
+  searchStart,
+  ranges,
+) {
+  while (searchStart < line.length) {
+    const relativeCommentStart = line.indexOf("<!--", searchStart);
+    if (relativeCommentStart < 0) return undefined;
+    const commentStart = lineStart + relativeCommentStart;
+    if (isEscapedMarkdownToken(content, commentStart)) {
+      searchStart = relativeCommentStart + 4;
+      continue;
+    }
+    const relativeCloseStart = line.indexOf("-->", relativeCommentStart + 4);
+    if (relativeCloseStart < 0) return commentStart;
+    ranges.push([commentStart, lineStart + relativeCloseStart + 3]);
+    searchStart = relativeCloseStart + 3;
+  }
+  return undefined;
 }
 
 function isEscapedMarkdownToken(content, tokenStart) {
@@ -414,27 +486,6 @@ function isEscapedMarkdownToken(content, tokenStart) {
     slashStart -= 1;
   }
   return (tokenStart - slashStart) % 2 === 1;
-}
-
-function mergeMarkdownRanges(leftRanges, rightRanges) {
-  const ranges = [];
-  let leftIndex = 0;
-  let rightIndex = 0;
-  while (leftIndex < leftRanges.length || rightIndex < rightRanges.length) {
-    const takeLeft = rightIndex >= rightRanges.length ||
-      (leftIndex < leftRanges.length &&
-        leftRanges[leftIndex][0] <= rightRanges[rightIndex][0]);
-    const nextRange = takeLeft
-      ? leftRanges[leftIndex++]
-      : rightRanges[rightIndex++];
-    const previousRange = ranges.at(-1);
-    if (previousRange && nextRange[0] <= previousRange[1]) {
-      previousRange[1] = Math.max(previousRange[1], nextRange[1]);
-    } else {
-      ranges.push([...nextRange]);
-    }
-  }
-  return ranges;
 }
 
 function codeRabbitStatementIndex(match) {
@@ -555,56 +606,6 @@ function codeRabbitNextLine(content, lineEnd, continuationEnd) {
     lineEnd: nextLineEnd < 0 ? content.length : nextLineEnd,
     separator,
   };
-}
-
-function markdownFenceRanges(content) {
-  const ranges = [];
-  let openFence;
-  let lineStart = 0;
-  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
-    const line = lineMatch[0];
-    if (line.length === 0 && lineStart >= content.length) break;
-    const lineEnd = lineStart + line.length;
-    const lineWithoutEnding = line.replace(/\r?\n$/, "");
-    if (
-      openFence !== undefined &&
-      !continuesMarkdownFenceContainer(lineWithoutEnding, openFence.container)
-    ) {
-      ranges.push([openFence.start, lineStart]);
-      openFence = undefined;
-    }
-    const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
-    if (fenceMatch) {
-      const marker = fenceMatch[2];
-      const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
-      const hasOnlyClosingFenceWhitespace = /^[ \t]*$/.test(
-        lineWithoutEnding.slice(markerEnd),
-      );
-      if (openFence === undefined) {
-        const hasValidInfoString = marker[0] === "~" ||
-          !lineWithoutEnding.slice(markerEnd).includes("`");
-        if (!hasValidInfoString) {
-          lineStart = lineEnd;
-          continue;
-        }
-        openFence = {
-          char: marker[0],
-          length: marker.length,
-          start: lineStart,
-          container: markdownFenceContainer(fenceMatch[1]),
-        };
-      } else if (
-        marker[0] === openFence.char && marker.length >= openFence.length &&
-        hasOnlyClosingFenceWhitespace
-      ) {
-        ranges.push([openFence.start, lineEnd]);
-        openFence = undefined;
-      }
-    }
-    lineStart = lineEnd;
-  }
-  if (openFence !== undefined) ranges.push([openFence.start, content.length]);
-  return ranges;
 }
 
 function markdownFenceContainer(prefix) {

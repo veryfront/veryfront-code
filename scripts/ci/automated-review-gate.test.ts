@@ -1034,6 +1034,30 @@ describe("automated review gate", () => {
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
     );
 
+    const newerVisibleRangeAfterCommentedFence = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "<!--",
+        "```text",
+        "-->",
+        malformedCurrentRange,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerVisibleRangeAfterCommentedFence],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
     for (
       const visibleRangeAfterCommentLookalike of [
         ["\\<!--", malformedCurrentRange, "-->"],
