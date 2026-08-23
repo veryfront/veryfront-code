@@ -2032,19 +2032,22 @@ function conservativeRuntimeEffects(
 ): readonly SemanticEffect[] {
   const effects: SemanticEffect[] = [];
   const visited = new Set<RuntimeBinding>();
-  const visit = (candidate: RuntimeBinding): void => {
-    if (visited.has(candidate)) return;
+  const pending = [...flattenRuntimeBindings(binding)];
+  while (pending.length > 0) {
+    const candidate = pending.pop();
+    if (!candidate) continue;
+    if (visited.has(candidate)) continue;
     visited.add(candidate);
     if (
       candidate.kind === "effect" || candidate.kind === "effect-object" ||
       candidate.kind === "constructor-effect"
     ) {
       effects.push(candidate.effect);
-      return;
+      continue;
     }
     if (candidate.kind === "filesystem-open") {
       effects.push("filesystem-read", "filesystem-write");
-      return;
+      continue;
     }
     if (candidate.kind === "global-runtime") {
       effects.push(
@@ -2060,7 +2063,7 @@ function conservativeRuntimeEffects(
           ] as const
           : ["process", "shared-cwd"] as const,
       );
-      return;
+      continue;
     }
     if (candidate.kind === "global-object") {
       effects.push(
@@ -2073,27 +2076,22 @@ function conservativeRuntimeEffects(
         "browser",
         "shared-cwd",
       );
-      return;
+      continue;
     }
     if (
       candidate.kind === "module" || candidate.kind === "module-instance"
     ) {
       effects.push(...conservativeModuleEffects(candidate.source));
-      return;
+      continue;
     }
     if (candidate.kind === "namespace-object") {
-      for (
-        const propertyBinding of namespaceBindingsForUnknownProperty(candidate)
-      ) {
-        visit(propertyBinding);
-      }
-      return;
+      pending.push(...namespaceBindingsForUnknownProperty(candidate));
+      continue;
     }
     if (candidate.kind === "one-of") {
-      for (const alternative of candidate.bindings) visit(alternative);
+      pending.push(...candidate.bindings);
     }
-  };
-  for (const candidate of flattenRuntimeBindings(binding)) visit(candidate);
+  }
   return sortedUnique(effects);
 }
 

@@ -1381,6 +1381,25 @@ right[key]("mutual-cycle.txt", "x");
     );
   });
 
+  it("bounds conservative lookup across deep acyclic runtime aliases", () => {
+    const depth = 16_384;
+    const aliases = Array.from(
+      { length: depth },
+      (_, index) => `const alias${index + 1} = { peer: alias${index} };`,
+    ).join("\n");
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const alias0 = { run: Deno.writeTextFile };
+${aliases}
+alias${depth}[key]("deep-alias.txt", "x");
+`,
+        "src/deep-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", `alias${depth}.*`]],
+    );
+  });
+
   it("retains runtime provenance stored through unknown computed properties", () => {
     assertEquals(
       collectSemanticMarkers(
