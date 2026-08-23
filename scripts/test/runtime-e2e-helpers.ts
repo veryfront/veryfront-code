@@ -154,18 +154,30 @@ export async function inspectModuleExports(
   return JSON.parse(decoder.decode(result.stdout)) as string[];
 }
 
-export async function packNpmPackage(
-  rootDir: string,
-  workDir: string,
-): Promise<string> {
-  const packDir = `${workDir}/packed`;
-  await Deno.mkdir(packDir, { recursive: true });
+/**
+ * The locally built packages a scaffolded fixture installs.
+ *
+ * `veryfront` pins its co-published extensions to its own exact version, so a
+ * fixture given only the root tarball resolves those pins from the npm
+ * registry. On a release-cut branch that version is not published yet — it is
+ * what the release job publishes — and the install fails with ETARGET. Packing
+ * the extensions alongside the root keeps the whole matched set local, which is
+ * also the set a user receives.
+ */
+export interface PackedWorkspace {
+  /** Tarball for the root `veryfront` package. */
+  readonly root: string;
+  /** Tarballs for every co-published `@veryfront/*` package, in pack order. */
+  readonly extensions: readonly string[];
+}
+
+async function packOne(packageDir: string, packDir: string): Promise<string> {
   const result = await runChecked("npm", [
     "pack",
     "--pack-destination",
     packDir,
   ], {
-    cwd: `${rootDir}/npm`,
+    cwd: packageDir,
     timeoutMs: 120_000,
   });
   const tarball = result.stdout.split(/\r?\n/)
@@ -179,14 +191,77 @@ export async function packNpmPackage(
   return `${packDir}/${tarball}`;
 }
 
+/**
+ * The extensions the root pins to its own exact version — the only ones whose
+ * pin cannot be satisfied from the registry on a release-cut branch.
+ *
+ * Derived from the built root manifest rather than a directory listing: the
+ * build emits 29 extension packages but the root co-publishes 6, and installing
+ * the other 23 would change what the fixture exercises.
+ */
+async function listCoPublishedExtensionDirs(
+  rootDir: string,
+): Promise<string[]> {
+  const manifest = JSON.parse(
+    await Deno.readTextFile(`${rootDir}/npm/package.json`),
+  ) as { version?: string; dependencies?: Record<string, string> };
+  const version = manifest.version;
+  if (typeof version !== "string") {
+    throw new Error("built npm package.json has no version");
+  }
+  return Object.entries(manifest.dependencies ?? {})
+    .filter(([name, range]) =>
+      name.startsWith("@veryfront/") && range === version
+    )
+    .map(([name]) =>
+      `${rootDir}/npm/extensions/${name.slice("@veryfront/".length)}`
+    )
+    .sort();
+}
+
+export async function packNpmPackage(
+  rootDir: string,
+  workDir: string,
+): Promise<PackedWorkspace> {
+  const packDir = `${workDir}/packed`;
+  await Deno.mkdir(packDir, { recursive: true });
+  const root = await packOne(`${rootDir}/npm`, packDir);
+  const extensions: string[] = [];
+  for (const dir of await listCoPublishedExtensionDirs(rootDir)) {
+    extensions.push(await packOne(dir, packDir));
+  }
+  return { root, extensions };
+}
+
+/** Package name a packed tarball installs as, read from its own manifest. */
+async function readPackedName(tarballPath: string): Promise<string> {
+  const result = await runChecked("tar", [
+    "-xzOf",
+    tarballPath,
+    "package/package.json",
+  ], {
+    timeoutMs: 30_000,
+  });
+  const name = JSON.parse(result.stdout).name;
+  if (typeof name !== "string" || name.length === 0) {
+    throw new Error(`packed tarball has no name: ${tarballPath}`);
+  }
+  return name;
+}
+
 async function updateVeryfrontDependency(
   projectDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
 ): Promise<void> {
   const packagePath = `${projectDir}/package.json`;
   const pkg = JSON.parse(await Deno.readTextFile(packagePath));
   pkg.dependencies ??= {};
-  pkg.dependencies.veryfront = `file:${tarballPath}`;
+  pkg.dependencies.veryfront = `file:${packed.root}`;
+  // The root pins these to its own version. Naming them here keeps the install
+  // entirely local; without them the pins go to the registry.
+  for (const tarball of packed.extensions) {
+    pkg.dependencies[await readPackedName(tarball)] = `file:${tarball}`;
+  }
   await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
@@ -339,7 +414,7 @@ export async function stopDevServer(server: {
 
 export async function scaffoldProject(
   workDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
   template: string,
   runtime: RuntimeName,
 ): Promise<string> {
@@ -349,8 +424,12 @@ export async function scaffoldProject(
   await runChecked("npm", [
     "exec",
     "--yes",
-    "--package",
-    tarballPath,
+    // `npm exec` resolves the CLI package's dependencies into its own prefix,
+    // so the co-published extensions have to be named here too. Otherwise this
+    // reaches the registry for a version that is not published yet.
+    ...[packed.root, ...packed.extensions].flatMap((
+      tarball,
+    ) => ["--package", tarball]),
     "--",
     "veryfront",
     "init",
@@ -373,9 +452,9 @@ export async function scaffoldProject(
 
   const projectDir = `${caseDir}/${projectName}`;
   if (runtime === "deno") {
-    await usePackedVeryfrontDenoTasks(projectDir, tarballPath);
+    await usePackedVeryfrontDenoTasks(projectDir, packed.root);
   } else {
-    await updateVeryfrontDependency(projectDir, tarballPath);
+    await updateVeryfrontDependency(projectDir, packed);
   }
 
   return projectDir;
