@@ -3417,6 +3417,19 @@ target.run("cleared.txt");
     assertEquals(effects, []);
   });
 
+  it("models Object.assign literal copies as writable data properties", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = Object.assign({}, { run: Deno.remove });
+Object.seal(target);
+Object.defineProperty(target, "run", { value: () => undefined });
+target.run("cleared.txt");
+`,
+      "src/runtime-object-assign-literal-copy-writable.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
   it("clears accessors replaced by descriptor definitions", () => {
     assertEquals(
       collectSemanticMarkers(

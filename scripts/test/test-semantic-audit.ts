@@ -5131,6 +5131,10 @@ function mutationCallResultRuntimeBinding(
             const preservesSetter = entry.property !== undefined &&
               runtimePropertySetterBinding(result, entry.property) !==
                 undefined;
+            const createsOwnDataProperty = entry.property !== undefined &&
+              entry.definiteOverwrite === true &&
+              !preservesSetter &&
+              runtimeOwnPropertyDefinitelyAbsent(result, entry.property);
             result = appendRuntimeMutationResultProperty(
               result,
               entry.property,
@@ -5139,9 +5143,11 @@ function mutationCallResultRuntimeBinding(
                 preservesPrevious: preservesSetter,
                 allowClearing: entry.definiteOverwrite === true &&
                   !preservesSetter,
-                configurable: entry.configurable,
-                writable: entry.writable,
-                enumerable: entry.enumerable,
+                configurable: createsOwnDataProperty
+                  ? true
+                  : entry.configurable,
+                writable: createsOwnDataProperty ? true : entry.writable,
+                enumerable: createsOwnDataProperty ? true : entry.enumerable,
               },
             );
           }
