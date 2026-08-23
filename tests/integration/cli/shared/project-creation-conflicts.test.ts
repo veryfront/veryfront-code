@@ -11,7 +11,7 @@ import {
   createProject,
   type CreateProjectDependencies,
   type CreateProjectRequest,
-} from "#cli/shared/project-creation";
+} from "../../../../cli/shared/project-creation.ts";
 import { VeryfrontError } from "veryfront/errors";
 import { createFileSystem, type FileSystem } from "veryfront/platform";
 import { dirname, join } from "veryfront/platform/path";

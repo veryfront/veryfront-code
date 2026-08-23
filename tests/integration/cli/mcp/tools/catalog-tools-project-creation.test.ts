@@ -3,7 +3,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { dirname, fromFileUrl, join } from "veryfront/platform/path";
-import { vfCreateProject } from "#cli/mcp/catalog-tools";
+import { vfCreateProject } from "../../../../../cli/mcp/tools/catalog-tools.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { type TestContext, withTestContext } from "../../../../_helpers/context.ts";
 

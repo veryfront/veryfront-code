@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "veryfront/errors";
-import { generateCommand } from "#cli/commands/generate";
+import { generateCommand } from "../../../../../cli/commands/generate/index.ts";
 import { withTestContext } from "../../../../_helpers/context.ts";
 
 describe("generateCommand conflicts", () => {
