@@ -20,6 +20,7 @@ import {
 } from "./runtime-inference-critical-flow.ts";
 import {
   inspectModuleExports,
+  packedFileDependencies,
   parseCommaSeparatedFlag,
 } from "./runtime-e2e-helpers.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
@@ -98,6 +99,41 @@ function unresolvedCancellationFields(): {
 }
 
 describe("runtime inference critical-flow pure contract", () => {
+  it("maps only selected packed extensions to local file dependencies", () => {
+    const packed = {
+      root: "/packs/veryfront.tgz",
+      rootExtensionNames: ["@veryfront/ext-bundler-esbuild"],
+      extensions: [
+        {
+          name: "@veryfront/ext-bundler-esbuild",
+          tarball: "/packs/ext-bundler-esbuild.tgz",
+        },
+        {
+          name: "@veryfront/ext-content-mdx",
+          tarball: "/packs/ext-content-mdx.tgz",
+        },
+      ],
+    };
+
+    assertEquals(
+      packedFileDependencies(packed, packed.rootExtensionNames),
+      {
+        "@veryfront/ext-bundler-esbuild": "file:/packs/ext-bundler-esbuild.tgz",
+      },
+    );
+    assertEquals(
+      packedFileDependencies(packed, ["@veryfront/ext-content-mdx"]),
+      {
+        "@veryfront/ext-content-mdx": "file:/packs/ext-content-mdx.tgz",
+      },
+    );
+    assertThrows(
+      () => packedFileDependencies(packed, ["@veryfront/ext-missing"]),
+      Error,
+      "Packed extension is unavailable: @veryfront/ext-missing",
+    );
+  });
+
   it("selects all runtimes by default in stable order", () => {
     assertEquals(
       parseRuntimeSelection([]),
