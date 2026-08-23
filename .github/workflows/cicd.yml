@@ -188,6 +188,44 @@ jobs:
       - name: Run runtime critical flow
         run: deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}
 
+  tests-windows-localhost:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+    name: tests (Windows localhost routing)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Record wildcard localhost resolution
+        shell: pwsh
+        run: |
+          $nodeReport = node scripts/ci/probe-localhost-resolution.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $denoReport = deno run --allow-net scripts/ci/probe-localhost-resolution.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @(
+            "### Windows wildcard localhost resolution",
+            "",
+            '```json',
+            $nodeReport,
+            $denoReport,
+            '```'
+          ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - name: Install Chromium
+        timeout-minutes: 10
+        run: deno run -A npm:playwright@1.60.0 install chromium
+      - name: Exercise local virtual-host routing
+        run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
+
   coverage-shards:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
@@ -858,6 +896,7 @@ jobs:
       tests-binary-e2e,
       tests-npm-install-smoke,
       tests-sentry-runtime-packages,
+      tests-windows-localhost,
       build-binaries,
       version-check,
     ]
@@ -994,6 +1033,7 @@ jobs:
       tests-binary-e2e,
       tests-npm-install-smoke,
       tests-sentry-runtime-packages,
+      tests-windows-localhost,
       build-binaries,
       version-check,
     ]

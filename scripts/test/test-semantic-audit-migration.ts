@@ -1548,6 +1548,18 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/scripts/ci/setup-deno-workflow.test.ts",
       "removalPr": "PR 4f",
     }),
+    entry("scripts/ci/windows-localhost.test.ts", [
+      "filesystem-read",
+      "process",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "scripts-tooling",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/scripts/ci/windows-localhost.test.ts",
+      "removalPr": "PR 4f",
+    }),
     entry("scripts/codemods/migrate-esm-sh-imports.test.ts", [
       "filesystem-read",
       "filesystem-write",
