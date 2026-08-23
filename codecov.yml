@@ -26,7 +26,13 @@ coverage:
   status:
     project:
       default:
-        target: 80%
+        # `auto` compares against the base commit rather than a fixed number.
+        # The absolute 80% floor is already enforced by `deno task coverage:gate`,
+        # so duplicating it here would add nothing -- the signal this check adds
+        # is regression: a PR dropping 84% -> 82% clears the absolute gate but is
+        # still a real loss, and only a base comparison catches it.
+        target: auto
+        base: auto
         threshold: 1%
         informational: true
     patch:
@@ -40,6 +46,14 @@ comment:
   layout: "condensed_header, diff, condensed_files, condensed_footer"
   behavior: default
   require_changes: false
+  # Post even when the base commit has no report (the first PRs after this
+  # lands), but never render a comment without head data, which would show a
+  # misleading empty diff.
+  require_base: false
+  require_head: true
+  # Show the project-level coverage change alongside patch coverage; when hidden
+  # the comment reports only the diff and gives no sense of overall direction.
+  hide_project_coverage: false
   after_n_builds: 8
 
 # Mirrors the filters in `buildCoverageCommandArgs` (scripts/test/coverage-ci.ts):
