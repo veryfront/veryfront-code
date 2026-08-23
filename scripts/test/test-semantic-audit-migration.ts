@@ -1127,7 +1127,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry(
       "cli/utils/package-manager.test.ts",
-      ["filesystem-write", "process"],
+      ["filesystem-write"],
       {
         "disposition": "integration-relocation",
         "owner": "cli",
