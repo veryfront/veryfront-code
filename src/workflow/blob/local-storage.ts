@@ -5,7 +5,8 @@ import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { agentLogger } from "#veryfront/utils";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { INVALID_ARGUMENT, UNKNOWN_ERROR } from "#veryfront/errors";
-import { assertSafeBlobId } from "./blob-id.ts";
+import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
+import { isBlobRef } from "./guards.ts";
 
 const logger = agentLogger.component("local-blob-storage");
 
@@ -132,12 +133,18 @@ export class LocalBlobStorage implements BlobStorage {
   async delete(id: string): Promise<void> {
     const filePath = this.getPath(id);
     const metadataPath = this.getMetadataPath(id);
-    try {
-      await this.fs.remove(filePath);
-      await this.fs.remove(metadataPath);
-    } catch (_) {
-      /* expected: file may not exist during cleanup */
-    }
+    const removeIfPresent = async (path: string): Promise<void> => {
+      try {
+        await this.fs.remove(path);
+      } catch (error) {
+        if (isNotFoundError(error)) return;
+        logger.warn("Failed to delete blob from local storage", {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        throw UNKNOWN_ERROR.create({ detail: "Failed to delete blob from local storage" });
+      }
+    };
+    await Promise.all([removeIfPresent(filePath), removeIfPresent(metadataPath)]);
   }
 
   async exists(id: string): Promise<boolean> {
@@ -146,17 +153,72 @@ export class LocalBlobStorage implements BlobStorage {
 
   async stat(id: string): Promise<BlobRef | null> {
     const metadataPath = this.getMetadataPath(id);
+    let json: string;
     try {
-      const json = await this.fs.readTextFile(metadataPath);
+      json = await this.fs.readTextFile(metadataPath);
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      logger.warn("Failed to read blob metadata", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw UNKNOWN_ERROR.create({ detail: "Failed to read blob metadata from local storage" });
+    }
+
+    try {
       const data = JSON.parse(json);
-      return {
+      const ref = {
         ...data,
         createdAt: new Date(data.createdAt),
         expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
       };
+      return isBlobRef(ref) ? ref : null;
     } catch (_) {
-      /* expected: metadata file not found or invalid JSON */
+      /* expected: invalid or incomplete metadata sidecar */
       return null;
+    }
+  }
+
+  private async listPartitionPrefixes(): Promise<string[]> {
+    const prefixes: string[] = [];
+    try {
+      for await (const entry of this.fs.readDir(this.rootDir)) {
+        if (
+          entry.isDirectory && !entry.isSymlink && entry.name.length <= 2 &&
+          isSafeBlobId(entry.name)
+        ) {
+          prefixes.push(entry.name);
+        }
+      }
+      return prefixes;
+    } catch (error) {
+      if (isNotFoundError(error)) return prefixes;
+      logger.warn("Failed to list blob partitions", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw UNKNOWN_ERROR.create({ detail: "Failed to list blob partitions in local storage" });
+    }
+  }
+
+  private async listMetadataIds(
+    prefixDir: string,
+    operation: "list" | "cleanup",
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    try {
+      for await (const entry of this.fs.readDir(prefixDir)) {
+        if (!entry.isFile || !entry.name.endsWith(".meta.json")) continue;
+        ids.push(entry.name.slice(0, -".meta.json".length));
+      }
+      return ids;
+    } catch (error) {
+      if (isNotFoundError(error)) return ids;
+      const message = operation === "list"
+        ? "Failed to list blob partition"
+        : "Failed to inspect blob partition during cleanup";
+      logger.warn(message, {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw UNKNOWN_ERROR.create({ detail: `${message} in local storage` });
     }
   }
 
@@ -169,22 +231,13 @@ export class LocalBlobStorage implements BlobStorage {
     const now = this.now();
     const refs: BlobRef[] = [];
 
-    for (let i = 0; i < 256; i++) {
-      const prefix = i.toString(16).padStart(2, "0");
+    for (const prefix of await this.listPartitionPrefixes()) {
       const prefixDir = join(this.rootDir, prefix);
-
-      try {
-        for await (const entry of this.fs.readDir(prefixDir)) {
-          if (!entry.isFile || !entry.name.endsWith(".meta.json")) continue;
-
-          const id = entry.name.replace(".meta.json", "");
-          const ref = await this.stat(id);
-          if (!ref) continue;
-          if (ref.expiresAt && ref.expiresAt < now) continue;
-          refs.push(ref);
-        }
-      } catch (_) {
-        /* expected: partition directory may not exist yet */
+      for (const id of await this.listMetadataIds(prefixDir, "list")) {
+        const ref = await this.stat(id);
+        if (!ref) continue;
+        if (ref.expiresAt && ref.expiresAt < now) continue;
+        refs.push(ref);
       }
     }
 
@@ -198,24 +251,15 @@ export class LocalBlobStorage implements BlobStorage {
   async cleanupExpiredBlobs(): Promise<void> {
     const now = this.now();
 
-    for (let i = 0; i < 256; i++) {
-      const prefix = i.toString(16).padStart(2, "0");
+    for (const prefix of await this.listPartitionPrefixes()) {
       const prefixDir = join(this.rootDir, prefix);
+      for (const id of await this.listMetadataIds(prefixDir, "cleanup")) {
+        const blobRef = await this.stat(id);
 
-      try {
-        for await (const entry of this.fs.readDir(prefixDir)) {
-          if (!entry.isFile || !entry.name.endsWith(".meta.json")) continue;
+        if (!blobRef?.expiresAt || blobRef.expiresAt >= now) continue;
 
-          const id = entry.name.replace(".meta.json", "");
-          const blobRef = await this.stat(id);
-
-          if (!blobRef?.expiresAt || blobRef.expiresAt >= now) continue;
-
-          logger.debug(`Deleting expired blob: ${id}`);
-          await this.delete(id);
-        }
-      } catch (_) {
-        /* expected: directory may not exist yet */
+        logger.debug(`Deleting expired blob: ${id}`);
+        await this.delete(id);
       }
     }
   }
