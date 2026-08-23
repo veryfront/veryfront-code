@@ -1712,6 +1712,11 @@ spliced.splice(1, 0, Deno.writeTextFile);
 const [, splicedRun] = [...spliced, () => undefined];
 splicedRun("spliced.txt", "x");
 
+const filled = [() => undefined];
+filled.fill(Deno.writeTextFile, 0, 1);
+const [filledRun] = [...filled];
+filledRun("filled.txt", "x");
+
 const assigned = [() => undefined];
 Object.assign(assigned, { 1: Deno.writeTextFile });
 const [, assignedRun] = [...assigned, () => undefined];
@@ -1768,6 +1773,7 @@ reflectVariableAppliedRun("reflect-variable-applied.txt", "x");
       [
         ["filesystem-write", "pushedRun"],
         ["filesystem-write", "splicedRun"],
+        ["filesystem-write", "filledRun"],
         ["filesystem-write", "assignedRun"],
         ["filesystem-write", "definedRun"],
         ["filesystem-write", "reflectedRun"],
@@ -1794,6 +1800,16 @@ overridden.push = () => undefined;
 overridden.push(Deno.writeTextFile);
 const [, overriddenRun] = [...overridden, () => undefined];
 overriddenRun("overridden.txt", "x");
+
+const reversed = [() => undefined];
+reversed.reverse(Deno.writeTextFile);
+const [reversedRun] = [...reversed];
+reversedRun();
+
+const copied = [() => undefined];
+copied.copyWithin(Deno.writeTextFile, 0);
+const [copiedRun] = [...copied];
+copiedRun();
 `,
         "src/shadowed-array-mutator.test.ts",
       ),

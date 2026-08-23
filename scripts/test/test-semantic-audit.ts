@@ -625,6 +625,7 @@ type RuntimeBinding =
   }
   | {
     readonly kind: "array-mutation-method";
+    readonly method: string;
     readonly boundTarget?: unknown;
     readonly boundValues?: readonly unknown[];
   }
@@ -4052,24 +4053,35 @@ function arrayMutationInvocations(
     readonly target: unknown;
     readonly values: readonly unknown[];
   }> = [];
+  const directMethod = (callee.type === "MemberExpression" ||
+      callee.type === "OptionalMemberExpression")
+    ? memberProperty(callee)
+    : undefined;
   if (
+    directMethod &&
     (callee.type === "MemberExpression" ||
       callee.type === "OptionalMemberExpression") &&
-    ARRAY_SHAPE_MUTATORS.has(memberProperty(callee) ?? "") &&
+    ARRAY_SHAPE_MUTATORS.has(directMethod) &&
     mayInvokeNativeArrayMutator(
       callee.object,
-      memberProperty(callee) ?? "",
+      directMethod,
       imports,
       scopes,
     )
   ) {
-    invocations.push({ target: callee.object, values: args });
+    invocations.push({
+      target: callee.object,
+      values: arrayMutatorInsertedValues(directMethod, args),
+    });
   }
   for (const mutation of arrayMutationMethodBindings(callee, imports, scopes)) {
     if (mutation.boundTarget === undefined) continue;
     invocations.push({
       target: mutation.boundTarget,
-      values: [...mutation.boundValues ?? [], ...args],
+      values: arrayMutatorInsertedValues(mutation.method, [
+        ...mutation.boundValues ?? [],
+        ...args,
+      ]),
     });
   }
   for (
@@ -4086,10 +4098,10 @@ function arrayMutationInvocations(
     ) {
       invocations.push({
         target: mutation.boundTarget ?? invocation.arguments[1],
-        values: [
+        values: arrayMutatorInsertedValues(mutation.method, [
           ...mutation.boundValues ?? [],
           ...arrayMutationApplyValues(invocation.arguments[2]),
-        ],
+        ]),
       });
     }
   }
@@ -4112,12 +4124,12 @@ function arrayMutationInvocations(
   ) {
     invocations.push({
       target: mutation.boundTarget ?? args[0],
-      values: [
+      values: arrayMutatorInsertedValues(mutation.method, [
         ...mutation.boundValues ?? [],
         ...(wrapper === "apply"
           ? arrayMutationApplyValues(args[1])
           : args.slice(1)),
-      ],
+      ]),
     });
   }
   return invocations;
@@ -4141,7 +4153,22 @@ function arrayMutationApplyValues(expression: unknown): readonly unknown[] {
   const value = unwrapExpression(expression);
   return value?.type === "ArrayExpression" && Array.isArray(value.elements)
     ? value.elements
-    : [expression];
+    : [{ type: "SpreadElement", argument: expression }];
+}
+
+function arrayMutatorInsertedValues(
+  method: string,
+  args: readonly unknown[],
+): readonly unknown[] {
+  if (method === "push" || method === "unshift") return args;
+  if (method === "fill") return args.slice(0, 1);
+  if (method !== "splice") return [];
+  const spreadIndex = args.findIndex((argument) =>
+    unwrapExpression(argument)?.type === "SpreadElement"
+  );
+  return spreadIndex >= 0 && spreadIndex < 2
+    ? args.slice(spreadIndex)
+    : args.slice(2);
 }
 
 function arrayMutationMethodBindings(
@@ -5999,7 +6026,7 @@ function sharedObjectPropertyBinding(
   if (
     intrinsic === "Array.prototype" && ARRAY_SHAPE_MUTATORS.has(property)
   ) {
-    return { kind: "array-mutation-method" };
+    return { kind: "array-mutation-method", method: property };
   }
   if (
     intrinsic === "Reflect" &&
@@ -6409,7 +6436,7 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
     return `mutation-method:${binding.receiver}.${binding.method}`;
   }
   if (binding.kind === "array-mutation-method") {
-    return `array-mutation-method:${
+    return `array-mutation-method:${binding.method}:${
       JSON.stringify(binding.boundTarget ?? null)
     }:${JSON.stringify(binding.boundValues ?? [])}`;
   }
