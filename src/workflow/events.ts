@@ -41,11 +41,21 @@ import type { WorkflowRunObservation, WorkflowRunObservedState } from "./backend
 const objectDefineProperty = Object.defineProperty;
 const objectEntries = Object.entries;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectHasOwn = Object.hasOwn;
 const reflectApply = Reflect.apply;
 
 function defineRecordEntry<T>(record: Record<string, T>, key: string, value: T): void {
   objectDefineProperty(record, key, {
     value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function appendEvent(events: WorkflowRunEvent[], event: WorkflowRunEvent): void {
+  objectDefineProperty(events, events.length, {
+    value: event,
     enumerable: true,
     configurable: true,
     writable: true,
@@ -58,7 +68,7 @@ function readOwnNodeSnapshot(
 ): { status: NodeState["status"]; attempt: number } | undefined {
   try {
     const descriptor = objectGetOwnPropertyDescriptor(nodes, nodeId);
-    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+    return descriptor && objectHasOwn(descriptor, "value") ? descriptor.value : undefined;
   } catch {
     return undefined;
   }
@@ -71,7 +81,19 @@ function readOwnNodeError(
   if (nodeErrors === undefined) return undefined;
   try {
     const descriptor = objectGetOwnPropertyDescriptor(nodeErrors, nodeId);
-    if (!descriptor || !("value" in descriptor)) return undefined;
+    if (!descriptor || !objectHasOwn(descriptor, "value")) return undefined;
+    return typeof descriptor.value === "string" ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readOwnObservedNodeError(
+  node: WorkflowRunObservedState["nodes"][string],
+): string | undefined {
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(node, "error");
+    if (!descriptor || !objectHasOwn(descriptor, "value")) return undefined;
     return typeof descriptor.value === "string" ? descriptor.value : undefined;
   } catch {
     return undefined;
@@ -219,16 +241,16 @@ export function deriveRunEvents(
     const before = previous ? readOwnNodeSnapshot(previous.nodes, nodeId) : undefined;
     if (before && before.status === state.status && before.attempt === state.attempt) continue;
     const event = stepEventFor(runId, nodeId, state, readOwnNodeError(nodeErrors, nodeId));
-    if (event) events[events.length] = event;
+    if (event) appendEvent(events, event);
   }
 
   if (!previous || previous.status !== next.status) {
-    events[events.length] = {
+    appendEvent(events, {
       type: "run.status",
       runId,
       status: next.status,
       ...(next.status === "failed" && runError !== undefined ? { error: runError } : {}),
-    };
+    });
   }
 
   return events;
@@ -269,7 +291,8 @@ export function deriveWorkflowRunEventObservation(
           for (let index = 0; index < entries.length; index++) {
             const nodeId = entries[index]![0];
             const node = entries[index]![1];
-            if (node.error !== undefined) defineRecordEntry(nodeErrors, nodeId, node.error);
+            const error = readOwnObservedNodeError(node);
+            if (error !== undefined) defineRecordEntry(nodeErrors, nodeId, error);
           }
           const events = deriveRunEvents(
             observation.initial.id,

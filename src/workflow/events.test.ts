@@ -72,7 +72,7 @@ describe("workflow/events", () => {
         id: "reserved-run",
         status: "running",
         nodeStates: initialNodes,
-      } as WorkflowRun,
+      } as unknown as WorkflowRun,
       changes: {
         async *[Symbol.asyncIterator]() {
           yield {
@@ -110,6 +110,44 @@ describe("workflow/events", () => {
       },
     ]);
     expect(closeCalls).toBe(1);
+  });
+
+  it("does not invoke accessors on observed node errors", async () => {
+    let getterCalls = 0;
+    const failedNode = Object.defineProperty(
+      { status: "failed" as const, attempt: 1 },
+      "error",
+      {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "must not run";
+        },
+      },
+    );
+    const observation: WorkflowRunObservation = {
+      initial: {
+        id: "accessor-run",
+        status: "running",
+        nodeStates: { a: { nodeId: "a", status: "running", attempt: 1 } },
+      } as unknown as WorkflowRun,
+      changes: {
+        async *[Symbol.asyncIterator]() {
+          yield { revision: 1, status: "running", nodes: { a: failedNode } };
+        },
+      },
+      close: () => Promise.resolve(),
+    };
+
+    const events = [];
+    for await (const event of deriveWorkflowRunEventObservation(observation).events) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      { type: "step.failed", runId: "accessor-run", nodeId: "a", attempt: 1 },
+    ]);
+    expect(getterCalls).toBe(0);
   });
 
   describe("deriveRunEvents", () => {
