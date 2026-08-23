@@ -3112,6 +3112,10 @@ Object.defineProperty(visibleData, "run", {
 Object.defineProperty(visibleData, "run", { value: Deno.remove });
 Object.assign({}, visibleData).run("visible-data.txt");
 
+const ordinaryData = { run: () => undefined };
+Object.defineProperty(ordinaryData, "run", { value: Deno.remove });
+Object.assign({}, ordinaryData).run("ordinary-data.txt");
+
 const hiddenPreserved = { run: Deno.remove };
 Object.assign(hiddenPreserved, hiddenReturn).run("preserved.txt");
 
@@ -3155,6 +3159,7 @@ returned.path;
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "Object.assign(enumerableSource getter)"],
         ["shared-cwd", "enumerableSource.* getter"],
+        ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["filesystem-write", "run"],
@@ -3312,6 +3317,10 @@ definedMany.run("defined-many.txt");
 const own = { run: Deno.remove };
 Object.defineProperty(own, "run", { enumerable: true });
 own.run("own.txt");
+
+const hiddenOwn = Object.setPrototypeOf({}, prototype);
+Object.defineProperty(hiddenOwn, "run", { value: Deno.remove });
+Object.assign({}, hiddenOwn).run("hidden-own.txt");
 
 const blockedObject = Object.setPrototypeOf(
   Object.preventExtensions({}),
