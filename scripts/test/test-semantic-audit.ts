@@ -208,6 +208,7 @@ const PROCESS_METHODS = new Set([
   "execFile",
   "exit",
   "fork",
+  "kill",
   "removeSignalListener",
 ]);
 
@@ -777,7 +778,10 @@ function markerForNode(
   const line = node.loc?.start.line ?? 0;
   if (node.type === "ImportDeclaration") {
     const source = literalValue(node.source);
-    if (source && isPlaywrightSpecifier(source)) {
+    if (
+      source && isPlaywrightSpecifier(source) &&
+      importHasRuntimeValue(node)
+    ) {
       return {
         effect: "browser",
         line: node.loc?.start.line ?? 0,
@@ -1004,10 +1008,10 @@ function processGlobalMarker(
     }
     if (
       chain?.length === 2 && chain[0] === "process" &&
-      chain[1] === "exit" &&
+      isProcessEffectMethod(chain[1]) &&
       !isGlobalShadowed("process", scopes, importedNames)
     ) {
-      return { effect: "process", line, symbol: "process.exit" };
+      return { effect: "process", line, symbol: `process.${chain[1]}` };
     }
     if (
       chain?.length === 2 && chain[0] === "process" &&
@@ -1023,10 +1027,11 @@ function processGlobalMarker(
   }
   const callee = memberChain(node.callee);
   if (
-    callee?.[0] === "process" && callee[1] === "exit" &&
+    callee?.length === 2 && callee[0] === "process" &&
+    isProcessEffectMethod(callee[1]) &&
     !isGlobalShadowed("process", scopes, importedNames)
   ) {
-    return { effect: "process", line, symbol: "process.exit" };
+    return { effect: "process", line, symbol: `process.${callee[1]}` };
   }
   if (
     callee?.[0] === "process" && callee[1] === "chdir" &&
@@ -1098,6 +1103,7 @@ function collectImportBindings(program: Node): ImportBindings {
   const body = Array.isArray(program.body) ? program.body : [];
   for (const statement of body) {
     if (!isNode(statement) || statement.type !== "ImportDeclaration") continue;
+    if (statement.importKind === "type") continue;
     const source = literalValue(statement.source);
     if (!source) continue;
     const specifiers = Array.isArray(statement.specifiers)
@@ -1105,6 +1111,7 @@ function collectImportBindings(program: Node): ImportBindings {
       : [];
     for (const specifier of specifiers) {
       if (!isNode(specifier) || !isNode(specifier.local)) continue;
+      if (specifier.importKind === "type") continue;
       const local = specifier.local.name as string;
       bindings.importedNames.add(local);
       if (
@@ -1762,6 +1769,15 @@ function literalValue(value: unknown): string | undefined {
   return isNode(value) && value.type === "StringLiteral"
     ? value.value as string
     : undefined;
+}
+
+function importHasRuntimeValue(node: Node): boolean {
+  if (node.importKind === "type") return false;
+  const specifiers = Array.isArray(node.specifiers) ? node.specifiers : [];
+  return specifiers.length === 0 ||
+    specifiers.some((specifier) =>
+      isNode(specifier) && specifier.importKind !== "type"
+    );
 }
 
 function isNode(value: unknown): value is Node {

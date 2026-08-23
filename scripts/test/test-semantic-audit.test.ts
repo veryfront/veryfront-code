@@ -262,6 +262,30 @@ test("browser", async ({ page, browser }) => {
     );
   });
 
+  it("ignores erased Playwright imports while retaining mixed value imports", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import type { Page } from "@playwright/test";
+import { type Browser } from "playwright";
+`,
+        "src/playwright-types.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `import { test, type Page } from "@playwright/test";`,
+        "src/playwright-mixed.test.ts",
+      ),
+      [{
+        effect: "browser",
+        line: 1,
+        symbol: "@playwright/test",
+      }],
+    );
+  });
+
   it("ignores comments, strings, templates, local fakes, and shadowed globals", () => {
     const markers = collectSemanticMarkers(
       `
@@ -562,6 +586,22 @@ const runtimeProcess = (globalThis as { process?: unknown }).process;
     );
   });
 
+  it("classifies Deno and Node process termination", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+Deno.kill(123, "SIGTERM");
+process.kill(123, "SIGTERM");
+`,
+        "src/process-termination.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Deno.kill"],
+        ["process", "process.kill"],
+      ],
+    );
+  });
+
   it("classifies typed aliases of global runtime objects", () => {
     const markers = collectSemanticMarkers(
       `
@@ -819,7 +859,8 @@ describe("semantic disposition ratchet", () => {
         effects: ["filesystem-read", "process", "network"],
         disposition: "hermetic-unit",
         owner: "test-architecture",
-        rationale: "This rationale must not turn side effects into an exception.",
+        rationale:
+          "This rationale must not turn side effects into an exception.",
       }),
       [
         "hermetic-unit disposition only permits filesystem-read: src/not-hermetic.test.ts has network, process",
