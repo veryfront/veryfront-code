@@ -70,4 +70,4 @@ Create a typed resource definition.
 
 | Name               | Description                     | Source                                                                                       |
 | ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------- |
-| `resourceRegistry` | Shared resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L51) |
+| `resourceRegistry` | Shared resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L52) |
