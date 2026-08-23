@@ -4,7 +4,6 @@ import {
   assertEquals,
   assertExists,
   assertRejects,
-  assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
