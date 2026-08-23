@@ -6,6 +6,7 @@ import {
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
   isPayloadTooLargeConversationRunAppendError,
+  isTerminalRunConversationRunAppendError,
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 
@@ -51,6 +52,42 @@ describe("agent/durable-append-errors", () => {
     assertEquals(isIgnorableConversationRunAppendError(upstreamFailure), false);
     assertEquals(isCursorMismatchConversationRunAppendError(cursorMismatch), true);
     assertEquals(isCursorMismatchConversationRunAppendError(terminal), false);
+  });
+
+  // veryfront-issue-inbox#743: a terminal-run rejection means the run is already
+  // finished server-side, so the runtime must stop cleanly instead of completing a
+  // run that no longer accepts a terminal transition. Every other rejection --
+  // including the other `validation-failed` details -- must stay outside this branch.
+  it("classifies only the terminal-run rejection as an already-terminal run", () => {
+    const terminal = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "Cannot append external events to a terminal run",
+    });
+    const waitingForTool = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "Cannot append external events while the run is waiting for a tool result",
+    });
+    const missingRun = new AppendConversationRunEventsError({ status: 404 });
+    const cursorMismatch = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "External run event cursor mismatch",
+    });
+    const oversized = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "Agent run event payload must be less than 256 KB",
+    });
+    const otherValidationFailure = new AppendConversationRunEventsError({
+      status: 400,
+      detail: "Agent run event type is not supported",
+    });
+
+    assertEquals(isTerminalRunConversationRunAppendError(terminal), true);
+    assertEquals(isTerminalRunConversationRunAppendError(waitingForTool), false);
+    assertEquals(isTerminalRunConversationRunAppendError(missingRun), false);
+    assertEquals(isTerminalRunConversationRunAppendError(cursorMismatch), false);
+    assertEquals(isTerminalRunConversationRunAppendError(oversized), false);
+    assertEquals(isTerminalRunConversationRunAppendError(otherValidationFailure), false);
+    assertEquals(isTerminalRunConversationRunAppendError(new Error("terminal run")), false);
   });
 
   it("classifies oversized payload append failures as permanent", () => {

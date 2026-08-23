@@ -712,17 +712,35 @@ describe("init command integration", () => {
   });
 
   describe("existing directory", () => {
-    it("should show error when directory already exists", async () => {
+    it("should show error when the directory holds files the template writes", async () => {
       const dirName = `exists-${randomSuffix()}`;
       const dirPath = join(TEST_DIR, dirName);
       await Deno.mkdir(dirPath);
+      await Deno.writeTextFile(join(dirPath, "README.md"), "mine\n");
 
       try {
         const result = await runInitCommand([dirName, "-t", "minimal", "--skip-install"]);
         const output = (result.stdout ?? "") + (result.stderr ?? "");
 
-        assertEquals(output.includes("already exists"), true);
+        assertEquals(result.code === 0, false);
+        assertEquals(output.includes("already contains README.md"), true);
         assertEquals(output.includes("Stack trace"), false);
+        assertEquals(await Deno.readTextFile(join(dirPath, "README.md")), "mine\n");
+      } finally {
+        await remove(dirPath, { recursive: true }).catch(() => {});
+      }
+    });
+
+    it("should scaffold into an existing empty directory", async () => {
+      const dirName = `empty-${randomSuffix()}`;
+      const dirPath = join(TEST_DIR, dirName);
+      await Deno.mkdir(dirPath);
+
+      try {
+        const result = await runInitCommand([dirName, "-t", "minimal", "--skip-install"]);
+
+        assertEquals(result.code, 0);
+        assertEquals(await exists(join(dirPath, "app", "page.tsx")), true);
       } finally {
         await remove(dirPath, { recursive: true }).catch(() => {});
       }

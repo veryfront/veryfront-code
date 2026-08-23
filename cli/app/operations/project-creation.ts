@@ -5,7 +5,7 @@
  * including remote project registration and local scaffolding.
  */
 
-import { cwd } from "veryfront/platform";
+import { createFileSystem, cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import type { AppState } from "../state.ts";
 import { addLog, setProjects, setRemoteProjects } from "../state.ts";
@@ -48,6 +48,19 @@ export async function createProject(
     const normalizedSlug = normalizeProjectSlug(projectName);
     const reserved = await reserveProjectSlug(normalizedSlug, token);
     const slug = reserved.slug;
+
+    // `veryfront init` deliberately scaffolds into a directory that is already
+    // there. This caller must not: it has just reserved a brand new remote
+    // slug, and `resolveOrCreateProject` below writes the link for it. Adopting
+    // an existing `projects/<slug>` would point a directory that is already
+    // someone else's project at the project just reserved.
+    const projectDir = join(cwd(), "projects", slug);
+    if (await createFileSystem().exists(projectDir)) {
+      return addLog(
+        "error",
+        `projects/${slug} already exists. Remove it or choose a different name.`,
+      )(state);
+    }
 
     const creation = await createSharedProject({
       name: slug,

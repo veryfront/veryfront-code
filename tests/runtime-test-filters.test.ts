@@ -8,8 +8,10 @@
  *
  * The list is easy to break by accident: renaming those files, or moving them
  * out of `src/testing/`, leaves a pattern matching nothing and the runner fails
- * again the next time someone runs `deno task test:node`. Neither task runs in
- * CI, so this is the only thing standing between that and a surprised human.
+ * again in the next runtime job. An over-broad filter can still leave both CI
+ * jobs green, so the selected inventory itself is pinned by the parity test in
+ * `scripts/test/run-suite.test.ts`. This file guards the exclusion list and the
+ * plan envelope the runtime adapters accept.
  *
  * @module tests/runtime-test-filters
  */
@@ -17,7 +19,12 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { DENO_ONLY_TESTS } from "./deno-only-tests.mjs";
-import { filterTestFiles } from "./test-file-utils.mjs";
+import {
+  filterTestFiles,
+  hasRuntimeGuardedDenoHeader,
+  isDenoDependentTestSource,
+} from "./test-file-utils.mjs";
+import { validateSuitePlan } from "./load-suite-plan.mjs";
 
 /** The files the shared list exists to exclude. */
 const DENO_ONLY_FILES = [
@@ -35,6 +42,64 @@ const ELIGIBLE_FILES = [
 ];
 
 describe("runtime test filters", () => {
+  it("rejects malformed planner output before a runtime can silently pass", () => {
+    assertEquals(
+      validateSuitePlan({
+        version: 1,
+        suite: "runtime:node",
+        runner: "node",
+        files: ["src/a.test.ts"],
+      }, "runtime:node"),
+      ["src/a.test.ts"],
+    );
+
+    for (
+      const invalid of [
+        {},
+        { version: 1, suite: "runtime:bun", runner: "node", files: [] },
+        { version: 1, suite: "runtime:node", runner: "node", files: [1] },
+        {
+          version: 1,
+          suite: "runtime:node",
+          runner: "node",
+          files: ["../outside.test.ts"],
+        },
+        {
+          version: 1,
+          suite: "runtime:node",
+          runner: "node",
+          files: ["C:outside.test.ts"],
+        },
+        {
+          version: 1,
+          suite: "runtime:node",
+          runner: "node",
+          files: ["src/z.test.ts", "src/a.test.ts"],
+        },
+      ]
+    ) {
+      let rejected = false;
+      try {
+        validateSuitePlan(invalid, "runtime:node");
+      } catch {
+        rejected = true;
+      }
+      assert(rejected, "malformed planner output must be rejected");
+    }
+  });
+
+  it("accepts locale-independent ordinal planner ordering", () => {
+    assertEquals(
+      validateSuitePlan({
+        version: 1,
+        suite: "runtime:node",
+        runner: "node",
+        files: ["src/Z.test.ts", "src/a.test.ts"],
+      }, "runtime:node"),
+      ["src/Z.test.ts", "src/a.test.ts"],
+    );
+  });
+
   it("excludes the Deno-only tests from non-Deno runners", () => {
     const kept = filterTestFiles(DENO_ONLY_FILES, { exclude: DENO_ONLY_TESTS });
 
@@ -63,6 +128,26 @@ describe("runtime test filters", () => {
       /\bDeno\./.test(source),
       false,
       "naming the Deno namespace here silently removes this suite from Node and Bun",
+    );
+  });
+
+  it("keeps runtime-guarded API module-loader coverage eligible for Node", async () => {
+    const source = await Deno.readTextFile(
+      new URL(
+        "../src/routing/api/module-loader/loader.test.ts",
+        import.meta.url,
+      ),
+    );
+
+    assertEquals(
+      hasRuntimeGuardedDenoHeader(source),
+      true,
+      "the broad loader suite must declare that its Deno-only cases are guarded",
+    );
+    assertEquals(
+      isDenoDependentTestSource(source),
+      false,
+      "the Node runner must not silently discard portable module-loader coverage",
     );
   });
 
