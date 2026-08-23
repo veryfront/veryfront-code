@@ -8,6 +8,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { connectors, icons } from "./_data.ts";
 import {
@@ -28,8 +29,8 @@ import {
 
 describe("integrations/index", () => {
   afterEach(() => {
-    Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV);
-    Deno.env.delete(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+    deleteEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
   });
 
   it("exposes default-visible connector data through lookup helpers", () => {
@@ -51,7 +52,7 @@ describe("integrations/index", () => {
   });
 
   it("shows eligible experimental connectors when explicitly enabled", () => {
-    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "stripe");
+    setEnv(EXPERIMENTAL_INTEGRATIONS_ENV, "stripe");
 
     assertStrictEquals(
       getConnector("stripe"),
@@ -62,7 +63,7 @@ describe("integrations/index", () => {
   });
 
   it("keeps provider-adapter-only connectors unavailable when explicitly enabled", () => {
-    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+    setEnv(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
 
     assertEquals(getConnector("salesforce"), undefined);
     assertEquals(getIcon("salesforce"), undefined);
@@ -74,14 +75,14 @@ describe("integrations/index", () => {
     // client, so it needs the connector definitions to resolve tool names and
     // authorize calls. Without this the integration stays connectable but every
     // tool call fails to resolve.
-    Deno.env.set(HOST_ADAPTER_INTEGRATIONS_ENV, "salesforce");
+    setEnv(HOST_ADAPTER_INTEGRATIONS_ENV, "salesforce");
     try {
       assertEquals(getConnector("salesforce") !== undefined, true);
       assertEquals(getConnectorNames().includes("salesforce"), true);
       // Adapter-only and not declared by the host, so still absent.
       assertEquals(getConnector("pipedrive"), undefined);
     } finally {
-      Deno.env.delete(HOST_ADAPTER_INTEGRATIONS_ENV);
+      deleteEnv(HOST_ADAPTER_INTEGRATIONS_ENV);
     }
   });
 
@@ -91,7 +92,7 @@ describe("integrations/index", () => {
   });
 
   it("exports the explicit local Salesforce service-account source", async () => {
-    Deno.env.set(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, "1");
+    setEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, "1");
     assertEquals(SALESFORCE_SERVICE_ACCOUNT_ENV_VARS, [
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
@@ -115,7 +116,7 @@ describe("integrations/index", () => {
   });
 
   it("keeps every exported local credential source behind the host grant", async () => {
-    Deno.env.delete(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
     const sources = [
       createLocalIntegrationToolSource({
         tools: ["vercel__list_projects"],
