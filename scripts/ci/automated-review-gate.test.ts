@@ -958,6 +958,112 @@ describe("automated review gate", () => {
       );
     }
 
+    const newerHtmlCommentedCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "<!--",
+        codeRabbitReviewRange(),
+        "-->",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-hidden",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [newerHtmlCommentedCurrentRange] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerHtmlCommentedCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    );
+
+    for (
+      const visibleRangeAfterCommentLookalike of [
+        ["\\<!--", malformedCurrentRange, "-->"],
+        ["```", "<!--", "```", malformedCurrentRange, "-->"],
+      ]
+    ) {
+      const newerVisibleCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...visibleRangeAfterCommentLookalike,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerVisibleCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerInvalidBacktickFence = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "```js`oops",
+        malformedCurrentRange,
+        "```",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerInvalidBacktickFence],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerValidTildeFenceWithBacktickInfo = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "~~~js`allowed",
+        malformedCurrentRange,
+        "~~~",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerValidTildeFenceWithBacktickInfo],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
     for (
       const fencedContinuation of [
         [

@@ -334,28 +334,28 @@ function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
 }
 
 function codeRabbitRangeEvidenceStatements(content) {
-  const fenceRanges = markdownFenceRanges(content);
+  const excludedRanges = markdownExcludedRanges(content);
   const matches = [
     ...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN),
   ];
   const statementIndexes = matches.map(codeRabbitStatementIndex);
   const statements = [];
-  let fenceIndex = 0;
+  let excludedRangeIndex = 0;
   for (const [matchIndex, match] of matches.entries()) {
     const statementIndex = statementIndexes[matchIndex];
     while (
-      fenceIndex < fenceRanges.length &&
-      fenceRanges[fenceIndex][1] <= statementIndex
+      excludedRangeIndex < excludedRanges.length &&
+      excludedRanges[excludedRangeIndex][1] <= statementIndex
     ) {
-      fenceIndex += 1;
+      excludedRangeIndex += 1;
     }
-    const insideFence = fenceIndex < fenceRanges.length &&
-      fenceRanges[fenceIndex][0] <= statementIndex &&
-      statementIndex < fenceRanges[fenceIndex][1];
-    if (insideFence) continue;
+    const insideExcludedRange = excludedRangeIndex < excludedRanges.length &&
+      excludedRanges[excludedRangeIndex][0] <= statementIndex &&
+      statementIndex < excludedRanges[excludedRangeIndex][1];
+    if (insideExcludedRange) continue;
     const continuationEnd = Math.min(
       statementIndexes[matchIndex + 1] ?? content.length,
-      fenceRanges[fenceIndex]?.[0] ?? content.length,
+      excludedRanges[excludedRangeIndex]?.[0] ?? content.length,
     );
     const statement = parseCodeRabbitRangeStatement(
       content,
@@ -365,6 +365,75 @@ function codeRabbitRangeEvidenceStatements(content) {
     if (statement) statements.push(statement);
   }
   return statements;
+}
+
+function markdownExcludedRanges(content) {
+  const fenceRanges = markdownFenceRanges(content);
+  return mergeMarkdownRanges(
+    fenceRanges,
+    markdownHtmlCommentRanges(content, fenceRanges),
+  );
+}
+
+function markdownHtmlCommentRanges(content, fenceRanges) {
+  const ranges = [];
+  let fenceIndex = 0;
+  let searchStart = 0;
+  while (searchStart < content.length) {
+    const commentStart = content.indexOf("<!--", searchStart);
+    if (commentStart < 0) break;
+    while (
+      fenceIndex < fenceRanges.length &&
+      fenceRanges[fenceIndex][1] <= commentStart
+    ) {
+      fenceIndex += 1;
+    }
+    if (
+      fenceIndex < fenceRanges.length &&
+      fenceRanges[fenceIndex][0] <= commentStart
+    ) {
+      searchStart = fenceRanges[fenceIndex][1];
+      continue;
+    }
+    if (isEscapedMarkdownToken(content, commentStart)) {
+      searchStart = commentStart + 4;
+      continue;
+    }
+    const closeStart = content.indexOf("-->", commentStart + 4);
+    const commentEnd = closeStart < 0 ? content.length : closeStart + 3;
+    ranges.push([commentStart, commentEnd]);
+    searchStart = commentEnd;
+  }
+  return ranges;
+}
+
+function isEscapedMarkdownToken(content, tokenStart) {
+  let slashStart = tokenStart;
+  while (slashStart > 0 && content[slashStart - 1] === "\\") {
+    slashStart -= 1;
+  }
+  return (tokenStart - slashStart) % 2 === 1;
+}
+
+function mergeMarkdownRanges(leftRanges, rightRanges) {
+  const ranges = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < leftRanges.length || rightIndex < rightRanges.length) {
+    const takeLeft = rightIndex >= rightRanges.length ||
+      (leftIndex < leftRanges.length &&
+        leftRanges[leftIndex][0] <= rightRanges[rightIndex][0]);
+    const nextRange = takeLeft
+      ? leftRanges[leftIndex++]
+      : rightRanges[rightIndex++];
+    const previousRange = ranges.at(-1);
+    if (previousRange && nextRange[0] <= previousRange[1]) {
+      previousRange[1] = Math.max(previousRange[1], nextRange[1]);
+    } else {
+      ranges.push([...nextRange]);
+    }
+  }
+  return ranges;
 }
 
 function codeRabbitStatementIndex(match) {
@@ -511,6 +580,12 @@ function markdownFenceRanges(content) {
         lineWithoutEnding.slice(markerEnd),
       );
       if (openFence === undefined) {
+        const hasValidInfoString = marker[0] === "~" ||
+          !lineWithoutEnding.slice(markerEnd).includes("`");
+        if (!hasValidInfoString) {
+          lineStart = lineEnd;
+          continue;
+        }
         openFence = {
           char: marker[0],
           length: marker.length,
