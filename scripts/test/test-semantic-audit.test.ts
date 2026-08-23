@@ -2390,6 +2390,8 @@ Object.defineProperty(target, "write", { set: Deno.writeTextFile });
 [target.write] = ["array.txt"];
 ({ x: target.write = "object-default.txt" } = { x: undefined });
 [target.write = "array-default.txt"] = [undefined];
+for (target.write of ["loop-of.txt"]) {}
+for (target.write in { "loop-in.txt": true }) {}
 
 const getterOnly = {};
 Object.defineProperty(getterOnly, "write", {
@@ -2405,6 +2407,39 @@ void unusedGetter;
         "filesystem-write",
         "filesystem-write",
         "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+      ],
+    );
+  });
+
+  it("invokes descriptor getters on property reads and copies", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const direct = {};
+Object.defineProperty(direct, "path", { get: Deno.cwd });
+direct.path;
+
+const source = {};
+Object.defineProperty(source, "path", { get: Deno.cwd });
+Object.assign({}, source);
+const spread = { ...source };
+void spread;
+
+const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
+returned.path;
+`,
+        "src/runtime-descriptor-getters.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "direct.path getter"],
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "Object.assign(source getter)"],
+        ["shared-cwd", "source.* getter"],
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "returned.path getter"],
       ],
     );
   });
