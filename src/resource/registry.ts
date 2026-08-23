@@ -21,10 +21,11 @@ type RegisteredResource = Resource<any, any>;
 const resourceRegistryManager = new ProjectScopedRegistryManager<RegisteredResource>("resource");
 
 class ResourceRegistry extends ScopedRegistryFacade<RegisteredResource> {
-  findByPattern(uri: string): RegisteredResource | undefined {
-    const resources = Array.from(
-      this.getAll().values(),
-    ).filter((resource) => resource.mcp?.enabled !== false);
+  findByPattern(
+    uri: string,
+    include: (resource: RegisteredResource) => boolean = () => true,
+  ): RegisteredResource | undefined {
+    const resources = Array.from(this.getAll().values()).filter(include);
     for (const resource of resources) {
       if (resource.pattern === uri) return resource;
     }

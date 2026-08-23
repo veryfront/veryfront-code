@@ -561,7 +561,10 @@ export class MCPServer {
     return withSpan(
       "mcp.readResource",
       async () => {
-        const resource = resourceRegistry.findByPattern(resourceUri);
+        const resource = resourceRegistry.findByPattern(
+          resourceUri,
+          (candidate) => candidate.mcp?.enabled !== false,
+        );
 
         if (!resource || resource.mcp?.enabled === false) {
           throw toError(

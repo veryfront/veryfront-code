@@ -89,7 +89,7 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("urn:other"), undefined);
     });
 
-    it("should let enabled patterns match behind disabled exact resources", () => {
+    it("should support caller-scoped visibility without changing default lookup", () => {
       const userById = resource({
         pattern: "/users/:userId",
         description: "User by id",
@@ -107,7 +107,14 @@ describe("resource registry", () => {
       resourceRegistry.register(userById.id, userById);
       resourceRegistry.register(disabledCurrentUser.id, disabledCurrentUser);
 
-      assertEquals(resourceRegistry.findByPattern("/users/me"), userById);
+      assertEquals(resourceRegistry.findByPattern("/users/me"), disabledCurrentUser);
+      assertEquals(
+        resourceRegistry.findByPattern(
+          "/users/me",
+          (candidate) => candidate.mcp?.enabled !== false,
+        ),
+        userById,
+      );
     });
   });
 
