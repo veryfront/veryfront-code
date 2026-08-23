@@ -10,9 +10,9 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
-  /Requested commit:\s*([0-9a-f]{40})/i;
+  /Requested commit:\s*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
-  /Review skipped for current commit\s*([0-9a-f]{40})/i;
+  /Review skipped for current commit\s*([0-9a-f]{40})/gi;
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const CODEX_BOT_ID = 199175422;
 const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
@@ -198,12 +198,11 @@ async function classifyAutomatedReviewEvent(
     return { kind: "not-head" };
   }
   const recentReview = codeRabbitRecentReview(body);
-  const skippedTip = body.match(CODERABBIT_SKIPPED_COMMIT_PATTERN)?.[1];
-  const requestedTip = body.match(CODERABBIT_REQUESTED_COMMIT_PATTERN)?.[1];
-  if (
-    skippedTip?.toLowerCase() === headSha.toLowerCase() ||
-    requestedTip?.toLowerCase() === headSha.toLowerCase()
-  ) {
+  const currentHeadMarker = [
+    ...body.matchAll(CODERABBIT_SKIPPED_COMMIT_PATTERN),
+    ...body.matchAll(CODERABBIT_REQUESTED_COMMIT_PATTERN),
+  ].some((match) => match[1]?.toLowerCase() === headSha.toLowerCase());
+  if (currentHeadMarker) {
     return {
       kind: "failure",
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,

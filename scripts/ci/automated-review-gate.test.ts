@@ -184,6 +184,8 @@ describe("automated review gate", () => {
         `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
         codeRabbitReviewRange() + " but this is not the final review.",
         codeRabbitReviewRange().replace("Reviewing", "reviewing"),
+        codeRabbitReviewRange().replace("files that", "files  that"),
+        codeRabbitReviewRange().replace(HEAD_SHA, HEAD_SHA.toUpperCase()),
       ]
     ) {
       const invalidSummary = codeRabbitSummary({
@@ -430,6 +432,47 @@ describe("automated review gate", () => {
       ),
       undefined,
     );
+  });
+
+  it("rejects any current-head skip or request marker in a summary", async () => {
+    for (
+      const markers of [
+        [
+          `Review skipped for current commit ${STALE_SHA}.`,
+          `Review skipped for current commit ${HEAD_SHA}.`,
+        ],
+        [
+          `Review skipped for current commit ${HEAD_SHA}.`,
+          `Review skipped for current commit ${STALE_SHA}.`,
+        ],
+        [
+          `Requested commit: ${STALE_SHA}.`,
+          `Requested commit: ${HEAD_SHA}.`,
+        ],
+        [
+          `Requested commit: ${HEAD_SHA}.`,
+          `Requested commit: ${STALE_SHA}.`,
+        ],
+      ]
+    ) {
+      const summary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+          ...markers,
+        ].join("\n"),
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [summary] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
   });
 
   it("fails closed when exact-head event chronology is indeterminate", async () => {
