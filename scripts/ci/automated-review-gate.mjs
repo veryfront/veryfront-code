@@ -7,12 +7,11 @@ const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
 const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
 const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
-const CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN = /^\s*reviewing\s+files\b/i;
-const CODERABBIT_REVIEW_RANGE_EVIDENCE_PATTERN =
-  /(?:^|\r?\n)\s*(?:[-*+]\s+)?Reviewing\s+(?:files|changed files)\b[^\r\n]*\bbetween\s+[0-9a-f]{40}\s+and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})(?![0-9a-f])/gi;
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
-const FULL_COMMIT_TOKEN_PATTERN = /(?:^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
+const CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN =
+  /(?:^|\r?\n)\s*(?:[-*+]\s+)?(Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between\s+[0-9a-f]{40}\s+and(?:[ \t]*\r?\n)?[ \t]*[0-9a-f]{40}[^\r\n]*)/gi;
+const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
@@ -212,49 +211,24 @@ async function classifyAutomatedReviewEvent(
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,
     };
   }
-  const rangeCandidates = selectedRecentReview?.content.split(/\r?\n/).filter((
-    line,
-  ) => CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN.test(line));
-  const rangeCandidateHasCurrentTip = rangeCandidates?.some((line) =>
-    rangeCandidateReferencesTip(line, headSha)
+  const rangeEvidence = classifyCodeRabbitRangeEvidence(
+    selectedRecentReview,
+    headSha,
   );
-  const rangeEvidenceHasCurrentTip = [
-    ...(selectedRecentReview?.content.matchAll(
-      CODERABBIT_REVIEW_RANGE_EVIDENCE_PATTERN,
-    ) ?? []),
-  ].some((match) => match[1]?.toLowerCase() === headSha.toLowerCase());
-  const reviewedTips = rangeCandidates?.map((line) =>
-    line.match(CODERABBIT_REVIEW_RANGE_PATTERN)?.[2]
-  );
-  const hasCurrentRange = reviewedTips?.some((tip) =>
-    tip?.toLowerCase() === headSha.toLowerCase()
-  );
-  if (
-    selectedRecentReview && !selectedRecentReview.terminated &&
-    (hasCurrentRange || rangeCandidateHasCurrentTip ||
-      rangeEvidenceHasCurrentTip)
-  ) {
+  if (rangeEvidence === "current-invalid") {
     return {
       kind: "failure",
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,
     };
   }
-  if (rangeCandidates?.length !== 1) {
-    return hasCurrentRange || rangeCandidateHasCurrentTip ||
-        rangeEvidenceHasCurrentTip
-      ? {
-        kind: "failure",
-        url: typeof comment.html_url === "string"
-          ? comment.html_url
-          : undefined,
-      }
-      : { kind: "not-head" };
+  if (rangeEvidence !== "current-valid") {
+    return { kind: "not-head" };
   }
-  const reviewedTip = reviewedTips?.[0];
-  if (reviewedTip?.toLowerCase() !== headSha.toLowerCase()) {
-    return rangeCandidateHasCurrentTip || rangeEvidenceHasCurrentTip
-      ? { kind: "failure" }
-      : { kind: "not-head" };
+  if (!selectedRecentReview?.terminated) {
+    return {
+      kind: "failure",
+      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
+    };
   }
   return selectedRecentReview?.content.includes(
       CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER,
@@ -306,14 +280,48 @@ function codeRabbitSelectedRecentReview(body) {
   };
 }
 
-function rangeCandidateReferencesTip(value, headSha) {
-  const tokens = [...value.matchAll(FULL_COMMIT_TOKEN_PATTERN)].map((match) =>
-    match[1]?.toLowerCase()
+function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
+  if (!selectedRecentReview) return "not-head";
+  const evidenceBlocks = codeRabbitRangeEvidenceStatements(
+    selectedRecentReview.content,
+  ).map((block) => parseCodeRabbitRangeEvidence(block, headSha)).filter((
+    evidence,
+  ) => evidence !== undefined);
+  const currentEvidence = evidenceBlocks.filter((evidence) =>
+    evidence.tipIsHead || evidence.extraHasHead
   );
+  if (currentEvidence.length === 0) return "not-head";
+  if (
+    currentEvidence.length === 1 && evidenceBlocks.length === 1 &&
+    currentEvidence[0].isExactProduction && !currentEvidence[0].extraHasHead
+  ) {
+    return "current-valid";
+  }
+  return "current-invalid";
+}
+
+function codeRabbitRangeEvidenceStatements(content) {
+  return [...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN)].map((
+    match,
+  ) => match[0].trim());
+}
+
+function parseCodeRabbitRangeEvidence(block, headSha) {
+  const betweenIndex = block.search(/\bbetween\b/i);
+  if (betweenIndex < 0) return undefined;
+  const tokens = [
+    ...block.slice(betweenIndex).matchAll(FULL_COMMIT_TOKEN_PATTERN),
+  ].map((match) => match[2].toLowerCase());
+  if (tokens.length < 2) return undefined;
   const normalizedHeadSha = headSha.toLowerCase();
-  if (tokens.length === 1) return tokens[0] === normalizedHeadSha;
-  if (tokens[1] === normalizedHeadSha) return true;
-  return tokens.slice(2).includes(normalizedHeadSha);
+  const exactMatch = block.match(CODERABBIT_REVIEW_RANGE_PATTERN);
+  return {
+    tipIsHead: tokens[1] === normalizedHeadSha,
+    extraHasHead: tokens.slice(2).includes(normalizedHeadSha),
+    isExactProduction: exactMatch?.[1]?.toLowerCase() === tokens[0] &&
+      exactMatch?.[2]?.toLowerCase() === tokens[1] &&
+      tokens.length === 2,
+  };
 }
 
 /** Publish the current automated-review decision on the exact PR head SHA. */

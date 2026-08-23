@@ -602,6 +602,20 @@ describe("automated review gate", () => {
         [
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
+          "Reviewing files that changed from the base of the PR and between " +
+          `${STALE_SHA} and ${STALE_SHA}. Later requested ${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "Reviewing changed files from the base of the PR and between " +
+          `${STALE_SHA} and ${STALE_SHA}. Later requested ${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
           codeRabbitReviewRange(),
           "<!-- recent_review_end -->",
           "<!-- recent_review_start -->",
@@ -688,6 +702,74 @@ describe("automated review gate", () => {
         HEAD_SHA,
       ))?.source,
       "summary",
+    );
+
+    const newerStaleRangeThenDiagnostic = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        `Diagnostic commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:30Z",
+      updated_at: "2026-08-22T12:04:30Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerStaleRangeThenDiagnostic],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerUnrelatedBetweenText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between jobs for ${STALE_SHA}; diagnostic ${HEAD_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:45Z",
+      updated_at: "2026-08-22T12:04:45Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnrelatedBetweenText],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerExactCurrentWithDiagnostic = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        `Diagnostic commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:05:00Z",
+      updated_at: "2026-08-22T12:05:00Z",
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-5",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerExactCurrentWithDiagnostic],
+        },
+        HEAD_SHA,
+      ))?.url,
+      "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-5",
     );
   });
 
