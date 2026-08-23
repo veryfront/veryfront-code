@@ -4633,7 +4633,7 @@ function bindRuntimeCallMutation(
         invocation.args[1],
         imports,
         scopes,
-        canonicalName === "Object.setPrototypeOf",
+        canonicalName === "Object.setPrototypeOf" && allowClearing,
       );
       continue;
     }
@@ -4644,6 +4644,7 @@ function bindRuntimeCallMutation(
         invocation.args[1],
         imports,
         scopes,
+        allowClearing,
       )
     ) {
       continue;
@@ -5509,6 +5510,7 @@ function bindRuntimeLiteralDescriptorMutations(
   descriptors: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  allowClearing: boolean,
 ): boolean {
   const descriptorMap = unwrapExpression(descriptors);
   if (!descriptorMap || descriptorMap.type !== "ObjectExpression") return false;
@@ -5531,7 +5533,7 @@ function bindRuntimeLiteralDescriptorMutations(
       descriptor,
     );
     if (
-      targetBinding && propertyName &&
+      allowClearing && targetBinding && propertyName &&
       runtimeDescriptorDefinitionAllowsClearing(
         targetBinding,
         propertyName,
@@ -8148,12 +8150,13 @@ function alternativeRuntimeBinding(
 function partialAlternativeRuntimeBinding(
   alternatives: readonly (RuntimeBinding | undefined)[],
 ): RuntimeBinding | undefined {
+  const partial = alternatives.some((candidate) =>
+    candidate === undefined || runtimeBindingHasPartialAlternative(candidate)
+  );
   const binding = unionRuntimeBindings(
     alternatives.flatMap((candidate) => candidate ?? []),
   );
-  return binding && alternatives.some((candidate) => candidate === undefined)
-    ? { kind: "partial", binding }
-    : binding;
+  return binding && partial ? { kind: "partial", binding } : binding;
 }
 
 function boundCallableRuntimeBinding(
