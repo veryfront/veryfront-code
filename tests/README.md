@@ -32,13 +32,14 @@ tests/
 ### Canonical Leaf Suites
 
 The executable test tree is classified by `deno task test:layout` before quick
-verification and in the earliest CI job. The gate maps every executable test path
-to exactly one `level -> leaf suite -> runner` owner and reports timing without
-gating on duration.
+verification and in the earliest CI job. The gate maps every executable test
+path to exactly one `level -> leaf suite -> runner` owner and reports timing
+without gating on duration.
 
 Canonical leaves are:
 
-- `src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, `react/` -> `unit -> unit -> deno`
+- `src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, `react/` ->
+  `unit -> unit -> deno`
 - `tests/integration/` -> `integration -> integration -> deno`
 - `tests/e2e/**/*.test.*` -> `e2e -> e2e -> deno`
 - `tests/e2e/**/*.playwright.ts` -> `e2e -> e2e -> playwright`
@@ -50,6 +51,39 @@ temporary explicit-path migration inventory in
 `scripts/test/test-layout-migration.ts`; each entry carries an owner and removal
 PR. That inventory is a shrink-only migration aid, not a permanent all-test
 manifest.
+
+### Semantic Unit-Boundary Audit
+
+`deno task lint:test-semantic-dispositions` is the temporary semantic companion
+to `deno task test:layout`. Layout owns path classification; the semantic audit
+then parses every executable test currently owned by the colocated unit roots
+(`src/`, `cli/`, `extensions/`, `templates/`, `scripts/`, and `react/`) and
+flags executable filesystem, process, server, network, browser, or shared-cwd
+effects. Process effects include child-process execution and access to or
+mutation of process-global environment/runtime state. The suite planner remains
+path-only.
+
+Current semantic debt is listed in
+`scripts/test/test-semantic-audit-migration.ts`. That file is debt-only and
+shrink-only: adding a new effect-bearing unit test, or adding a new effect to an
+already-listed test, fails CI. Removing debt should delete the stale disposition
+entry in the same change.
+
+Disposition values:
+
+- `hermetic-unit`: the test reads checked-in repository fixtures or contract
+  files without mutating process, network, or external runtime state.
+- `replaceable-fake`: the test can stay colocated after the side effect is
+  replaced by an injected fake or pure fixture boundary.
+- `integration-relocation`: the test exercises filesystem mutation, process,
+  server, network, browser, or multi-component runtime behavior and should move
+  under `tests/integration/...`.
+
+Each disposition carries a domain owner and rationale. Replaceable fakes carry
+a removal lane; relocations also name their intended `tests/integration/...`
+destination. Hermetic repository-contract reads need no migration lane. The
+inventory is not a permanent all-test manifest; it exists only to make later
+migration slices finite and reviewable.
 
 Executable test filenames are limited to:
 
@@ -69,9 +103,10 @@ entry points.
 **Key Principles:**
 
 - **Unit tests** (pure functions, no I/O, no external dependencies) are
-  **colocated** with source code in `src/`, `cli/`, `extensions/`,
-  `templates/`, `scripts/`, or `react/`
-- **Integration tests** (servers, databases, file systems, multiple components) live in `tests/integration/`
+  **colocated** with source code in `src/`, `cli/`, `extensions/`, `templates/`,
+  `scripts/`, or `react/`
+- **Integration tests** (servers, databases, file systems, multiple components)
+  live in `tests/integration/`
 - **E2E tests** live in `tests/e2e/` when full user-flow coverage is needed
 
 ### File Naming
@@ -149,7 +184,8 @@ the new total to lock into the baseline.
 - `"works"` - no context
 - `"test1"` - meaningless
 
-**The test name should explain what's being tested. Additional documentation is rarely needed.**
+**The test name should explain what's being tested. Additional documentation is
+rarely needed.**
 
 ## Resource Management
 
@@ -549,10 +585,13 @@ it("should process data correctly", async () => {
 
 To migrate existing tests to the colocated structure:
 
-1. **Identify unit tests** - Look for tests with no I/O, no TestContext, no server
-2. **Move to source directory** - Place `function.test.ts` next to `function.ts` in `src/`
+1. **Identify unit tests** - Look for tests with no I/O, no TestContext, no
+   server
+2. **Move to source directory** - Place `function.test.ts` next to `function.ts`
+   in `src/`
 3. **Update imports** - Change relative paths (e.g., `../../../src/` → `./`)
-4. **Keep integration tests** - Tests using TestContext stay in `tests/integration/`
+4. **Keep integration tests** - Tests using TestContext stay in
+   `tests/integration/`
 
 ### Improving Test Quality
 
