@@ -978,6 +978,24 @@ describe("automated review gate", () => {
           `>   ${malformedCurrentRange}`,
           ">   ```",
         ],
+        [
+          "- ```md",
+          "  - ```",
+          `  ${malformedCurrentRange}`,
+          "  ```",
+        ],
+        [
+          "- ```md",
+          "",
+          `  ${malformedCurrentRange}`,
+          "  ```",
+        ],
+        [
+          "> - ```md",
+          ">",
+          `>   ${malformedCurrentRange}`,
+          ">   ```",
+        ],
       ]
     ) {
       const newerMarkdownLookingCodeInsideFence = codeRabbitSummary({
@@ -999,6 +1017,39 @@ describe("automated review gate", () => {
           HEAD_SHA,
         ))?.source,
         "summary",
+      );
+    }
+
+    for (
+      const closedContainerFence of [
+        ["- ```text", "  example", "  ```", malformedCurrentRange],
+        [
+          "> - ```text",
+          ">   example",
+          ">   ```",
+          malformedCurrentRange,
+        ],
+      ]
+    ) {
+      const newerCurrentRangeAfterClosedFence = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...closedContainerFence,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:41Z",
+        updated_at: "2026-08-22T12:03:41Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerCurrentRangeAfterClosedFence],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
       );
     }
 
@@ -1545,6 +1596,32 @@ describe("automated review gate", () => {
     assert(
       performance.now() - startedAt < 1_000,
       "dense malformed range parsing must stay linear",
+    );
+
+    const newerBareCarriageReturnLine = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `${"x".repeat(40_000)}\rplain`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:01Z",
+      updated_at: "2026-08-22T12:02:01Z",
+    });
+    const bareCarriageReturnStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerBareCarriageReturnLine],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - bareCarriageReturnStartedAt < 1_000,
+      "bare carriage-return line scanning must stay linear",
     );
   });
 

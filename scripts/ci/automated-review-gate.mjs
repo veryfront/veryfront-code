@@ -373,11 +373,11 @@ function markdownExcludedRanges(content) {
   let openFence;
   let openHtmlCommentStart;
   let lineStart = 0;
-  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
+  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
     const line = lineMatch[0];
     if (line.length === 0 && lineStart >= content.length) break;
     const lineEnd = lineStart + line.length;
-    const lineWithoutEnding = line.replace(/\r?\n$/, "");
+    const lineWithoutEnding = line.replace(/(?:\r\n|[\r\n])$/, "");
 
     if (openHtmlCommentStart !== undefined) {
       const relativeCloseStart = lineWithoutEnding.indexOf("-->");
@@ -406,23 +406,20 @@ function markdownExcludedRanges(content) {
       openFence = undefined;
     }
 
-    const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
     if (openFence !== undefined) {
-      if (fenceMatch) {
-        const marker = fenceMatch[2];
-        const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
-        if (
-          marker[0] === openFence.char && marker.length >= openFence.length &&
-          /^[ \t]*$/.test(lineWithoutEnding.slice(markerEnd))
-        ) {
-          ranges.push([openFence.start, lineEnd]);
-          openFence = undefined;
-        }
+      const closingMarker = markdownClosingFenceMarker(
+        lineWithoutEnding,
+        openFence,
+      );
+      if (closingMarker) {
+        ranges.push([openFence.start, lineEnd]);
+        openFence = undefined;
       }
       lineStart = lineEnd;
       continue;
     }
 
+    const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
     if (fenceMatch) {
       const marker = fenceMatch[2];
       const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
@@ -620,6 +617,27 @@ function markdownFenceContainer(prefix) {
   };
 }
 
+function markdownClosingFenceMarker(line, fence) {
+  const linePrefix = line.match(
+    MARKDOWN_FENCE_CONTAINER_CONTINUATION_PATTERN,
+  )?.[0] ?? "";
+  if (
+    codeRabbitMarkdownPrefixSignature(linePrefix) !==
+      fence.container.structuralPrefix
+  ) return undefined;
+  const indentation = linePrefix.match(/[ \t]*$/)?.[0].length ?? 0;
+  if (
+    indentation < fence.container.continuationIndent ||
+    indentation > fence.container.continuationIndent + 3
+  ) return undefined;
+  const marker = line.slice(linePrefix.length).match(
+    /^(`{3,}|~{3,})[ \t]*$/,
+  )?.[1];
+  return marker?.[0] === fence.char && marker.length >= fence.length
+    ? marker
+    : undefined;
+}
+
 function continuesMarkdownFenceContainer(line, container) {
   if (
     container.structuralPrefix.length === 0 &&
@@ -632,6 +650,7 @@ function continuesMarkdownFenceContainer(line, container) {
     codeRabbitMarkdownPrefixSignature(linePrefix) !==
       container.structuralPrefix
   ) return false;
+  if (linePrefix.length === line.length) return true;
   return (linePrefix.match(/[ \t]*$/)?.[0].length ?? 0) >=
     container.continuationIndent;
 }
