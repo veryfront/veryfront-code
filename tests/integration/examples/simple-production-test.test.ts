@@ -1,24 +1,18 @@
 /**
- * Simplified production server test to debug resource leaks
+ * Simplified production pipeline test to guard against resource leaks
  */
 
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { join } from "#veryfront/compat/path";
-import { writeTextFile } from "#veryfront/compat/fs.ts";
-import { withTestContext } from "../../_helpers/context.ts";
+import { withInProcessProject } from "../../_helpers/in-process-project.ts";
 
 describe("Simple Production Server", () => {
   it("should serve files without resource leaks", async () => {
-    await withTestContext("simple-prod", async (context) => {
-      await writeTextFile(
-        join(context.projectDir, "public", "test.txt"),
-        "Hello World",
-      );
-
-      const server = await context.createProductionServer();
-
-      const response = await fetch(`http://127.0.0.1:${server.port}/test.txt`);
+    await withInProcessProject("simple-prod", {
+      mode: "production",
+      files: { "public/test.txt": "Hello World" },
+    }, async (project) => {
+      const response = await project.handle("/test.txt");
       assertEquals(response.status, 200, "Should serve file");
 
       const content = await response.text();

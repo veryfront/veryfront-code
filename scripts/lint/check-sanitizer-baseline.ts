@@ -23,9 +23,10 @@ const SCAN_ROOTS = [
 
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
-// 404 after restoring both sanitizers for the up command integration suite, which
-// leaked nothing and never needed them.
-export const SANITIZER_OPT_OUT_BASELINE = 404;
+// 396 after moving the dev-server-handlers, api-handler, and RSC
+// hydration/isolation suites onto the in-process request harness, which closes
+// what the old socket servers leaked.
+export const SANITIZER_OPT_OUT_BASELINE = 396;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 
