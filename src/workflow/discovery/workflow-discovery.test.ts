@@ -354,5 +354,37 @@ describe(
         'Duplicate workflow id "duplicate"',
       );
     });
+
+    it("snapshots each registry id before checking and inserting it", () => {
+      let idReads = 0;
+      const shifting = Object.defineProperty(
+        {
+          filePath: "workflows/a.ts",
+          exportName: "default",
+          definition: { id: "duplicate", steps: [] },
+        },
+        "id",
+        {
+          enumerable: true,
+          get() {
+            idReads++;
+            return idReads === 1 ? "duplicate" : idReads === 2 ? "other" : "duplicate";
+          },
+        },
+      ) as DiscoveredWorkflow;
+      const duplicate: DiscoveredWorkflow = {
+        id: "duplicate",
+        filePath: "workflows/b.ts",
+        exportName: "default",
+        definition: { id: "duplicate", steps: [] },
+      };
+
+      assertThrows(
+        () => createWorkflowRegistry([shifting, duplicate]),
+        VeryfrontError,
+        'Duplicate workflow id "duplicate"',
+      );
+      assertEquals(idReads, 1);
+    });
   },
 );

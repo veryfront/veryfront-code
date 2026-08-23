@@ -331,12 +331,18 @@ export function createWorkflowRegistry(
   const registry = new MapConstructor<string, DiscoveredWorkflow>();
   for (let index = 0; index < workflows.length; index++) {
     const workflow = workflows[index]!;
-    if (reflectApply(mapHas, registry, [workflow.id])) {
+    const id = workflow.id;
+    if (typeof id !== "string" || id.length === 0) {
       throw INVALID_ARGUMENT.create({
-        detail: `Duplicate workflow id "${workflow.id}" cannot be added to the registry`,
+        detail: "Discovered workflow id must be a non-empty string",
       });
     }
-    reflectApply(mapSet, registry, [workflow.id, workflow]);
+    if (reflectApply(mapHas, registry, [id])) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Duplicate workflow id "${id}" cannot be added to the registry`,
+      });
+    }
+    reflectApply(mapSet, registry, [id, workflow]);
   }
   return registry;
 }
