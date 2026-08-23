@@ -3,7 +3,7 @@ import { EsbuildBundler } from "@veryfront/ext-bundler-esbuild";
 import { parseExtensionManifest } from "veryfront/extensions";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { extname, isAbsolute, join, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import process from "node:process";
 import type {
   BuildContext,
@@ -38,7 +38,12 @@ function rawDecoratorOptions(value: unknown): TypeScriptDecoratorOptions | undef
   if (value === null || typeof value !== "object") return undefined;
   const compilerOptionsDescriptor = Reflect.getOwnPropertyDescriptor(value, "compilerOptions");
   const compilerOptions = compilerOptionsDescriptor?.value;
-  if (compilerOptions === null || typeof compilerOptions !== "object") return undefined;
+  if (compilerOptions === null || typeof compilerOptions !== "object") {
+    return {
+      experimentalDecorators: false,
+      emitDecoratorMetadata: false,
+    };
+  }
   const experimentalDecorators = Reflect.getOwnPropertyDescriptor(
     compilerOptions,
     "experimentalDecorators",
@@ -115,6 +120,10 @@ function sourceText(contents: string | Uint8Array): string {
   return typeof contents === "string" ? contents : textDecoder.decode(contents);
 }
 
+function diagnosticFilename(filename: string): string {
+  return basename(filename.replaceAll("\\", "/")) || "source.ts";
+}
+
 type SupportedSwcTarget =
   | "es3"
   | "es5"
@@ -169,7 +178,7 @@ async function transformTypeScript(
   transform.decoratorMetadata = flags.emitDecoratorMetadata;
   const moduleType = extname(filename).toLowerCase() === ".cts" ? "commonjs" : "es6";
   const result = await transformWithSwc(code, {
-    filename,
+    filename: diagnosticFilename(filename),
     swcrc: false,
     configFile: false,
     sourceMaps: false,
@@ -324,23 +333,27 @@ async function prepareLegacyDecoratorBundle(
   flags: TypeScriptDecoratorOptions,
 ): Promise<BundleOptions> {
   const stdin = options.stdin;
-  const transformedStdin = stdin && isTypeScriptLoader(stdin.loader)
-    ? {
-      ...stdin,
-      contents: await withReflectionRuntime(
-        await transformTypeScript(
-          stdin.contents,
-          stdin.loader,
-          stdin.sourcefile ?? "stdin.ts",
-          flags,
-          options,
-        ),
+  let transformedStdin = stdin;
+  if (stdin && isTypeScriptLoader(stdin.loader)) {
+    options.signal?.throwIfAborted();
+    const contents = await withReflectionRuntime(
+      await transformTypeScript(
+        stdin.contents,
+        stdin.loader,
+        stdin.sourcefile ?? "stdin.ts",
         flags,
         options,
       ),
+      flags,
+      options,
+    );
+    options.signal?.throwIfAborted();
+    transformedStdin = {
+      ...stdin,
+      contents,
       loader: transformedLoader(stdin.loader, options),
-    }
-    : stdin;
+    };
+  }
   const plugins = [
     createReflectMetadataPlugin(),
     ...(options.plugins ?? []).map((plugin) => wrapPlugin(plugin, flags, options)),

@@ -1,5 +1,10 @@
 import type { ValidationError } from "npm:class-validator@0.15.1";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { cwd } from "#veryfront/compat/process.ts";
@@ -152,6 +157,86 @@ describe("SwcBundler decorator metadata", () => {
       });
 
       assertStringIncludes(result.code, "design:paramtypes");
+    } finally {
+      await bundler.stop();
+    }
+  });
+
+  it("treats empty tsconfigRaw as an explicit flags-off configuration", async () => {
+    const projectDir = await makeTempDir();
+    const bundler = new SwcBundler();
+    try {
+      await writeTextFile(`${projectDir}/tsconfig.json`, "{ invalid jsonc");
+      for (const tsconfigRaw of [{}, "{}"] as const) {
+        const result = await bundler.transform({
+          absWorkingDir: projectDir,
+          code: "export const value: number = 1;",
+          loader: "ts",
+          tsconfigRaw,
+        });
+        assertStringIncludes(result.code, "value");
+      }
+    } finally {
+      await bundler.stop();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("sanitizes SWC parse diagnostic filenames", async () => {
+    const projectDir = await makeTempDir();
+    const bundler = new SwcBundler();
+    try {
+      let diagnostic: unknown;
+      try {
+        await bundler.transform({
+          code: "export const = ;",
+          loader: "ts",
+          sourcefile: `${projectDir}/broken-route.ts`,
+          tsconfigRaw: {
+            compilerOptions: {
+              experimentalDecorators: true,
+              emitDecoratorMetadata: true,
+            },
+          },
+        });
+      } catch (error) {
+        diagnostic = error;
+      }
+      const text = diagnostic instanceof Error
+        ? `${diagnostic.message}\n${diagnostic.stack ?? ""}`
+        : JSON.stringify(diagnostic);
+      assertEquals(text.includes(projectDir), false);
+      assertStringIncludes(text, "broken-route.ts");
+    } finally {
+      await bundler.stop();
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("honors an aborted stdin bundle before SWC parses it", async () => {
+    const controller = new AbortController();
+    const reason = new Error("cancel before SWC transform");
+    controller.abort(reason);
+    const bundler = new SwcBundler();
+    try {
+      const error = await assertRejects(
+        () =>
+          bundler.bundle({
+            bundle: true,
+            signal: controller.signal,
+            stdin: {
+              contents: "export const = ;",
+              loader: "ts",
+              sourcefile: "cancelled.ts",
+            },
+            typescriptDecoratorOptions: {
+              experimentalDecorators: true,
+              emitDecoratorMetadata: true,
+            },
+          }),
+        Error,
+      );
+      assertStrictEquals(error, reason);
     } finally {
       await bundler.stop();
     }
