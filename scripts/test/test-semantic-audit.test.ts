@@ -1862,6 +1862,29 @@ Object.defineProperties(definedMany, {
 const [, definedManyWrite] = [...definedMany, () => undefined];
 definedManyWrite("defined-many.txt", "x");
 
+const definedNamedProperties = { safe: () => undefined };
+Object.defineProperties(definedNamedProperties, {
+  safe: { value: () => undefined },
+  write: { value: Deno.writeTextFile },
+});
+definedNamedProperties.safe();
+definedNamedProperties.write("defined-named-properties.txt", "x");
+
+const definedNamedAccessors = { safe: () => undefined };
+Object.defineProperties(definedNamedAccessors, {
+  safe: { get: () => () => undefined },
+  write: { get: () => Deno.writeTextFile },
+});
+definedNamedAccessors.safe();
+definedNamedAccessors.write("defined-named-accessors.txt", "x");
+
+const computedDefinedProperties = { safe: () => undefined };
+declare const computedDescriptorName: string;
+Object.defineProperties(computedDefinedProperties, {
+  [computedDescriptorName]: { value: Deno.writeTextFile },
+});
+computedDefinedProperties.safe("computed-defined-properties.txt", "x");
+
 const reflectDefined = [() => undefined];
 Reflect.defineProperty(reflectDefined, "1", {
   value: Deno.writeTextFile,
@@ -1991,6 +2014,9 @@ popArgument.pop(popArgument[0]("pop-argument.txt", "x"));
         ["filesystem-write", "boundReorderWrite"],
         ["filesystem-write", "filledWrite"],
         ["filesystem-write", "definedManyWrite"],
+        ["filesystem-write", "definedNamedProperties.write"],
+        ["filesystem-write", "definedNamedAccessors.write"],
+        ["filesystem-write", "computedDefinedProperties.safe"],
         ["filesystem-write", "reflectDefinedWrite"],
         ["filesystem-write", "prototypeCallWrite"],
         ["filesystem-write", "prototypeApplyWrite"],
