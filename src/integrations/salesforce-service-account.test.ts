@@ -84,7 +84,7 @@ async function assertHostGrantRefusal(call: () => Promise<unknown>): Promise<voi
   const error = await assertRejects(call, VeryfrontError);
   assertInstanceOf(error, VeryfrontError);
   assertEquals(error.slug, "local-integration-config-invalid");
-  assertStringIncludes(error.message, "local or self-hosted");
+  assertStringIncludes(error.message, HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
 }
 
 describe("Salesforce service-account integration source", () => {

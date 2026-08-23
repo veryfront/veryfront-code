@@ -341,10 +341,13 @@ describe("createLocalIntegrationToolSource", () => {
         },
       );
 
-      await assertConfigurationError(() => source.listTools(), "local or self-hosted");
+      await assertConfigurationError(
+        () => source.listTools(),
+        HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
+      );
       await assertConfigurationError(
         () => source.executeTool("vercel__list_projects", {}),
-        "local or self-hosted",
+        HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
       );
       assertEquals(transportCalls, 0);
       _resetEnvironmentConfig();
@@ -382,7 +385,8 @@ describe("createLocalIntegrationToolSource", () => {
 
     await runWithProjectEnv(
       { [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "1" },
-      () => assertConfigurationError(() => source.listTools(), "local or self-hosted"),
+      () =>
+        assertConfigurationError(() => source.listTools(), HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV),
     );
   });
 
@@ -400,10 +404,13 @@ describe("createLocalIntegrationToolSource", () => {
       },
     );
 
-    await assertConfigurationError(() => source.listTools(), "local or self-hosted");
+    await assertConfigurationError(
+      () => source.listTools(),
+      HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
+    );
     await assertConfigurationError(
       () => source.executeTool("vercel__list_projects", {}),
-      "local or self-hosted",
+      HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
     );
     assertEquals(transportCalls, 0);
   });
