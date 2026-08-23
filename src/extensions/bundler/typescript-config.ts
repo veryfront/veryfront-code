@@ -137,13 +137,12 @@ export async function readTypeScriptDecoratorOptions(
     if (cached) return cached;
     if (depth > MAX_TSCONFIG_EXTENDS_DEPTH) {
       throw TSCONFIG_DEPTH_ERROR.create({
-        detail:
-          `TypeScript configuration inheritance exceeds ${MAX_TSCONFIG_EXTENDS_DEPTH} levels at ${path}`,
+        detail: `TypeScript configuration inheritance exceeds ${MAX_TSCONFIG_EXTENDS_DEPTH} levels`,
       });
     }
     if (active.has(path)) {
       throw TSCONFIG_CYCLE_ERROR.create({
-        detail: `TypeScript configuration inheritance contains a cycle at ${path}`,
+        detail: "TypeScript configuration inheritance contains a cycle",
       });
     }
 

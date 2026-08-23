@@ -135,6 +135,7 @@ describe("readTypeScriptDecoratorOptions", () => {
     );
     assertInstanceOf(cycle, VeryfrontError);
     assertEquals(cycle.slug, "tsconfig-inheritance-cycle");
+    assertEquals(cycle.message.includes("/project/"), false);
 
     const depth = await assertRejects(
       () =>
@@ -150,6 +151,7 @@ describe("readTypeScriptDecoratorOptions", () => {
     );
     assertInstanceOf(depth, VeryfrontError);
     assertEquals(depth.slug, "tsconfig-inheritance-too-deep");
+    assertEquals(depth.message.includes("/project/"), false);
   });
 
   it("fails closed when the root config is absent", async () => {

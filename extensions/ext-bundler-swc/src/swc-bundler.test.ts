@@ -421,6 +421,34 @@ describe("SwcBundler decorator metadata", () => {
     }
   });
 
+  it("inlines reflection for nonbundled TypeScript output", async () => {
+    const bundler = new SwcBundler();
+    try {
+      const result = await bundler.bundle({
+        bundle: false,
+        write: false,
+        format: "esm",
+        stdin: {
+          sourcefile: "middleware.ts",
+          resolveDir: cwd(),
+          loader: "ts",
+          contents: METADATA_SOURCE,
+        },
+        typescriptDecoratorOptions: {
+          experimentalDecorators: true,
+          emitDecoratorMetadata: true,
+        },
+      });
+
+      assertEquals(result.errors, []);
+      assertStringIncludes(result.outputFiles[0]!.text, "design:paramtypes");
+      assertStringIncludes(result.outputFiles[0]!.text, REFLECTION_RUNTIME_MARKER);
+      assertEquals(result.outputFiles[0]!.text.includes("veryfront:swc-reflect-metadata"), false);
+    } finally {
+      await bundler.stop();
+    }
+  });
+
   it("keeps a plugin's explicit non-TypeScript loader", async () => {
     const bundler = new SwcBundler();
     const rawText: BundlerPlugin = {

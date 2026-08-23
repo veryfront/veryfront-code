@@ -196,10 +196,16 @@ async function reflectMetadataSource(): Promise<string> {
   return await reflectMetadataSourcePromise;
 }
 
-function withReflectionImport(source: string, flags: TypeScriptDecoratorOptions): string {
-  return flags.emitDecoratorMetadata
-    ? `import "${REFLECT_METADATA_SPECIFIER}";\n${source}`
-    : source;
+async function withReflectionRuntime(
+  source: string,
+  flags: TypeScriptDecoratorOptions,
+  options: BundleOptions,
+): Promise<string> {
+  if (!flags.emitDecoratorMetadata) return source;
+  if (options.bundle === true) {
+    return `import "${REFLECT_METADATA_SPECIFIER}";\n${source}`;
+  }
+  return `${await reflectMetadataSource()}\n${source}`;
 }
 
 function wrapPlugin(
@@ -227,7 +233,7 @@ function wrapPlugin(
             if (!loader) return result;
             return {
               ...result,
-              contents: withReflectionImport(
+              contents: await withReflectionRuntime(
                 await transformTypeScript(
                   sourceText(result.contents),
                   loader,
@@ -236,6 +242,7 @@ function wrapPlugin(
                   options,
                 ),
                 flags,
+                options,
               ),
               loader: "js",
             } satisfies OnLoadResult;
@@ -275,9 +282,10 @@ function createSwcFallbackPlugin(
         if (!loader) return undefined;
         options.signal?.throwIfAborted();
         const code = await readFile(args.path, "utf8");
-        const contents = withReflectionImport(
+        const contents = await withReflectionRuntime(
           await transformTypeScript(code, loader, args.path, flags, options),
           flags,
+          options,
         );
         options.signal?.throwIfAborted();
         return { contents, loader: "js" };
@@ -318,7 +326,7 @@ async function prepareLegacyDecoratorBundle(
   const transformedStdin = stdin && isTypeScriptLoader(stdin.loader)
     ? {
       ...stdin,
-      contents: withReflectionImport(
+      contents: await withReflectionRuntime(
         await transformTypeScript(
           stdin.contents,
           stdin.loader,
@@ -327,6 +335,7 @@ async function prepareLegacyDecoratorBundle(
           options,
         ),
         flags,
+        options,
       ),
       loader: "js" as Loader,
     }
