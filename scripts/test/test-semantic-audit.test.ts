@@ -2368,6 +2368,20 @@ conditionalTarget.write("conditional.txt");
     );
   });
 
+  it("fails closed when only part of an Object.assign source resolves", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+Object.assign({}, source).run();
+`,
+      "src/runtime-object-assign-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
   it("preserves every possible sort comparator effect", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2786,12 +2800,24 @@ const target = {};
 Object.defineProperty(target, "path", { set: Deno.remove });
 const returned = Object.assign(target, { path: "first.txt" });
 returned.path = "second.txt";
+
+const getterTarget = {};
+Object.defineProperty(getterTarget, "path", { set: Deno.remove });
+const getterSource = {};
+Object.defineProperty(getterSource, "path", {
+  enumerable: true,
+  get: () => "first.txt",
+});
+const getterReturned = Object.assign(getterTarget, getterSource);
+getterReturned.path = "second.txt";
 `,
         "src/runtime-object-assign-setter-preservation.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
         ["filesystem-write", "target.path setter"],
         ["filesystem-write", "returned.path setter"],
+        ["filesystem-write", "runtime effect setter"],
+        ["filesystem-write", "getterReturned.path setter"],
       ],
     );
   });
@@ -2973,6 +2999,14 @@ const hiddenReturn = Object.defineProperty({}, "run", {
 });
 Object.assign({}, hiddenReturn).run();
 
+const madeEnumerable = {};
+Object.defineProperty(madeEnumerable, "run", {
+  configurable: true,
+  get: () => Deno.remove,
+});
+Object.defineProperty(madeEnumerable, "run", { enumerable: true });
+Object.assign({}, madeEnumerable).run("enumerable.txt");
+
 const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
 returned.path;
 `,
@@ -2987,6 +3021,7 @@ returned.path;
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "Object.assign(enumerableSource getter)"],
         ["shared-cwd", "enumerableSource.* getter"],
+        ["filesystem-write", "run"],
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "returned.path getter"],
       ],
