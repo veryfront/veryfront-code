@@ -565,7 +565,10 @@ type NamespacePropertyOperation =
     readonly aliasTargets?: readonly RuntimeAliasTarget[];
     readonly defaultMayRun: boolean;
     readonly crossesFunctionBoundary?: boolean;
+    readonly minimumArrayIndex?: number;
   };
+
+const MAX_MATERIALIZED_ARRAY_SPREAD_ENTRIES = 256;
 
 interface RuntimePropertyResolution {
   readonly binding?: RuntimeBinding;
@@ -592,6 +595,7 @@ type RuntimeBinding =
   | {
     readonly kind: "namespace-object";
     readonly shape?: "array" | "object";
+    readonly exactArrayLength?: number;
     readonly properties: ReadonlyMap<string, RuntimeBinding>;
     readonly propertyOperations?: readonly NamespacePropertyOperation[];
   }
@@ -4197,7 +4201,38 @@ function runtimeNamespaceAliasTargetsForExpression(
   const value = unwrapExpression(expression);
   if (!value) return [];
   let targets: readonly RuntimeAliasTarget[] = [];
-  if (value.type === "ThisExpression") {
+  if (value.type === "ConditionalExpression") {
+    targets = uniqueRuntimeAliasTargets([
+      ...runtimeNamespaceAliasTargetsForExpression(
+        value.consequent,
+        imports,
+        scopes,
+      ),
+      ...runtimeNamespaceAliasTargetsForExpression(
+        value.alternate,
+        imports,
+        scopes,
+      ),
+    ]);
+  } else if (value.type === "LogicalExpression") {
+    targets = uniqueRuntimeAliasTargets([
+      ...runtimeNamespaceAliasTargetsForExpression(value.left, imports, scopes),
+      ...runtimeNamespaceAliasTargetsForExpression(
+        value.right,
+        imports,
+        scopes,
+      ),
+    ]);
+  } else if (value.type === "SequenceExpression") {
+    const expressions = Array.isArray(value.expressions)
+      ? value.expressions
+      : [];
+    targets = runtimeNamespaceAliasTargetsForExpression(
+      expressions.at(-1),
+      imports,
+      scopes,
+    );
+  } else if (value.type === "ThisExpression") {
     const receiver = assignmentTargetScope(THIS_RUNTIME_ROOT, scopes);
     if (receiver) {
       targets = [{ scope: receiver.scope, root: THIS_RUNTIME_ROOT }];
@@ -5070,43 +5105,113 @@ function arrayLiteralRuntimeBinding(
   const properties = new Map<string, RuntimeBinding>();
   const propertyOperations: NamespacePropertyOperation[] = [];
   const elements = Array.isArray(value.elements) ? value.elements : [];
-  for (const [index, element] of elements.entries()) {
-    if (!isNode(element)) continue;
+  let nextIndex: number | undefined = 0;
+  let minimumUnknownIndex: number | undefined;
+  for (const element of elements) {
+    if (!isNode(element)) {
+      if (nextIndex !== undefined) nextIndex++;
+      continue;
+    }
     if (element.type === "SpreadElement") {
       const spread = runtimeBindingForExpression(
         element.argument,
         imports,
         scopes,
       );
-      if (spread) propertyOperations.push({ kind: "spread", binding: spread });
+      const spreadLength = exactRuntimeArrayLength(spread);
+      if (
+        nextIndex !== undefined && spread && spreadLength !== undefined &&
+        nextIndex + spreadLength <= MAX_MATERIALIZED_ARRAY_SPREAD_ENTRIES
+      ) {
+        for (let spreadIndex = 0; spreadIndex < spreadLength; spreadIndex++) {
+          const resolution = runtimePropertyResolution(
+            spread,
+            String(spreadIndex),
+          );
+          const name = String(nextIndex + spreadIndex);
+          propertyOperations.push({
+            kind: "define",
+            name,
+            binding: resolution.binding,
+            aliasTargets: resolution.aliasTargets,
+            defaultMayRun: resolution.defaultMayRun,
+          });
+          if (resolution.binding) properties.set(name, resolution.binding);
+        }
+        nextIndex += spreadLength;
+        continue;
+      }
+      minimumUnknownIndex ??= nextIndex ?? 0;
+      const resolution = spread
+        ? runtimeUnknownPropertyResolution(spread)
+        : { defaultMayRun: true };
+      propertyOperations.push({
+        kind: "define-unknown",
+        binding: resolution.binding,
+        aliasTargets: resolution.aliasTargets,
+        defaultMayRun: true,
+        minimumArrayIndex: minimumUnknownIndex,
+      });
+      nextIndex = undefined;
       continue;
     }
     const binding = runtimeBindingForExpression(element, imports, scopes);
-    const name = String(index);
+    const aliasTargets = runtimeNamespaceAliasTargetsForExpression(
+      element,
+      imports,
+      scopes,
+    );
+    const defaultMayRun = expressionMayBeUndefined(
+      element,
+      binding,
+      imports,
+      scopes,
+    );
+    if (nextIndex === undefined) {
+      propertyOperations.push({
+        kind: "define-unknown",
+        binding,
+        aliasTargets,
+        defaultMayRun: true,
+        minimumArrayIndex: minimumUnknownIndex,
+      });
+      continue;
+    }
+    const name = String(nextIndex);
     propertyOperations.push({
       kind: "define",
       name,
       binding,
-      aliasTargets: runtimeNamespaceAliasTargetsForExpression(
-        element,
-        imports,
-        scopes,
-      ),
-      defaultMayRun: expressionMayBeUndefined(
-        element,
-        binding,
-        imports,
-        scopes,
-      ),
+      aliasTargets,
+      defaultMayRun,
     });
     if (binding) properties.set(name, binding);
+    nextIndex++;
   }
   return {
     kind: "namespace-object",
     shape: "array",
+    exactArrayLength: nextIndex,
     properties,
     propertyOperations,
   };
+}
+
+function exactRuntimeArrayLength(
+  binding: RuntimeBinding | undefined,
+): number | undefined {
+  const candidates = flattenRuntimeBindings(binding);
+  if (candidates.length === 0) return undefined;
+  const lengths = candidates.map((candidate) =>
+    candidate.kind === "namespace-object" && candidate.shape === "array"
+      ? candidate.exactArrayLength
+      : undefined
+  );
+  const length = lengths[0];
+  return length !== undefined &&
+      lengths.every((candidate) => candidate === length)
+    ? length
+    : undefined;
 }
 
 function objectLiteralRuntimeBinding(
@@ -5639,6 +5744,9 @@ function staticRuntimeArrayRestBinding(
   return {
     kind: "namespace-object",
     shape: "array",
+    exactArrayLength: binding.exactArrayLength === undefined
+      ? undefined
+      : Math.max(0, binding.exactArrayLength - startIndex),
     properties,
     propertyOperations,
   };
@@ -5759,6 +5867,14 @@ function runtimePropertyResolution(
           continue;
         }
         if (operation.kind === "define-unknown") {
+          const propertyIndex = runtimeArrayIndex(property);
+          if (
+            operation.minimumArrayIndex !== undefined &&
+            propertyIndex !== undefined &&
+            propertyIndex < operation.minimumArrayIndex
+          ) {
+            continue;
+          }
           resolution = {
             binding: unionRuntimeBindings(
               [
@@ -5863,6 +5979,14 @@ function runtimePropertyHasCrossFunctionMutation(
           );
         }
         if (operation.kind === "define-unknown") {
+          const propertyIndex = runtimeArrayIndex(property);
+          if (
+            operation.minimumArrayIndex !== undefined &&
+            propertyIndex !== undefined &&
+            propertyIndex < operation.minimumArrayIndex
+          ) {
+            return false;
+          }
           return operation.crossesFunctionBoundary === true ||
             (rest.length > 0 &&
               runtimePropertyHasCrossFunctionMutation(

@@ -1508,6 +1508,34 @@ const [conditionalDefault = fetch] = [
   maybe ? Deno.writeTextFile : undefined,
 ];
 await conditionalDefault("conditional-default.txt", "x");
+const [prefixBeforeSpread] = [
+  Deno.writeTextFile,
+  ...[() => undefined],
+];
+prefixBeforeSpread("prefix-before-spread.txt", "x");
+const postSpreadValues = [() => undefined, Deno.writeTextFile];
+const [, postSpreadSelected] = [
+  ...postSpreadValues,
+  () => undefined,
+];
+postSpreadSelected("post-spread-selected.txt", "x");
+const [, knownPostSpreadEffect] = [
+  ...[() => undefined],
+  Deno.writeTextFile,
+];
+knownPostSpreadEffect("known-post-spread-effect.txt", "x");
+const unknownSpreadValues = maybe ? [] : [() => undefined];
+const [unknownPostSpreadEffect] = [
+  ...unknownSpreadValues,
+  Deno.writeTextFile,
+];
+unknownPostSpreadEffect("unknown-post-spread-effect.txt", "x");
+const unknownEffectSpreadValues = maybe ? [] : [Deno.writeTextFile];
+const [, unknownSpreadEffect] = [
+  () => undefined,
+  ...unknownEffectSpreadValues,
+];
+unknownSpreadEffect("unknown-spread-effect.txt", "x");
 const [, ...rest] = [() => undefined, Deno.writeTextFile];
 rest[0]("rest.txt", "x");
 const knownArraySource = [() => undefined, Deno.writeTextFile];
@@ -1535,6 +1563,12 @@ const [, ...classes] = [class {}, ArrayRestClass];
 const RestClassAlias = classes[0];
 RestClassAlias.write = Deno.writeTextFile;
 ArrayRestClass.write("array-rest-class.txt", "x");
+
+class PostSpreadClass {}
+const postSpreadClasses = [class {}, PostSpreadClass];
+const [, PostSpreadAlias] = [...postSpreadClasses, class {}];
+PostSpreadAlias.write = Deno.writeTextFile;
+PostSpreadClass.write("post-spread-class.txt", "x");
 `,
         "src/runtime-array-destructuring.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1546,12 +1580,18 @@ ArrayRestClass.write("array-rest-class.txt", "x");
         ["filesystem-write", "exact"],
         ["filesystem-write", "conditionalDefault"],
         ["network", "conditionalDefault"],
+        ["filesystem-write", "prefixBeforeSpread"],
+        ["filesystem-write", "postSpreadSelected"],
+        ["filesystem-write", "knownPostSpreadEffect"],
+        ["filesystem-write", "unknownPostSpreadEffect"],
+        ["filesystem-write", "unknownSpreadEffect"],
         ["filesystem-write", "rest.0"],
         ["filesystem-write", "knownArrayRest.0"],
         ["filesystem-write", "dynamicRest.0"],
         ["filesystem-write", "ArrayClass.write"],
         ["filesystem-write", "ArrayExactClass.write"],
         ["filesystem-write", "ArrayRestClass.write"],
+        ["filesystem-write", "PostSpreadClass.write"],
       ],
     );
     assertEquals(
@@ -1567,6 +1607,22 @@ objectRest[0]("numeric-object-rest.txt", "x");
         "src/runtime-numeric-object-rest.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [["filesystem-write", "objectRest.0"]],
+    );
+    const nestedKnownSpreads = Array.from(
+      { length: 24 },
+      (_, index) =>
+        `const spread${index + 1} = [...spread${index}, ...spread${index}];`,
+    ).join("\n");
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const spread0 = [Deno.writeTextFile];
+${nestedKnownSpreads}
+spread24[0]("bounded-nested-spread.txt", "x");
+`,
+        "src/runtime-bounded-nested-array-spreads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "spread24.0"]],
     );
     assertEquals(
       collectSemanticMarkers(
@@ -1590,6 +1646,17 @@ localRest[0]();
 const knownLocalArraySource = [Deno.writeTextFile, () => undefined];
 const [, ...knownLocalArrayRest] = knownLocalArraySource;
 knownLocalArrayRest[0]();
+const [localPrefixBeforeSpread] = [
+  () => undefined,
+  ...[Deno.writeTextFile],
+];
+localPrefixBeforeSpread();
+const possibleEffectTail = maybe ? [] : [Deno.writeTextFile];
+const [localPrefixBeforeUnknownSpread] = [
+  () => undefined,
+  ...possibleEffectTail,
+];
+localPrefixBeforeUnknownSpread();
 class LocalArrayClass {}
 const [LocalArrayAlias] = [LocalArrayClass];
 LocalArrayAlias.write = () => undefined;
@@ -2403,6 +2470,54 @@ directPossibleHolder.Receiver.write = Deno.writeTextFile;
 DirectPossibleHolderClassA.write("direct-possible-holder-a.txt", "x");
 DirectPossibleHolderClassB.write("direct-possible-holder-b.txt", "x");
 
+class ConditionalReceiverClassA {}
+class ConditionalReceiverClassB {}
+const conditionalReceiverLeft = { Receiver: ConditionalReceiverClassA };
+const conditionalReceiverRight = { Receiver: ConditionalReceiverClassB };
+(maybe ? conditionalReceiverLeft.Receiver : conditionalReceiverRight.Receiver)
+  .write = Deno.writeTextFile;
+ConditionalReceiverClassA.write("conditional-receiver-a.txt", "x");
+ConditionalReceiverClassB.write("conditional-receiver-b.txt", "x");
+
+class LogicalReceiverClassA {}
+class LogicalReceiverClassB {}
+const logicalReceiverLeft = { Receiver: LogicalReceiverClassA };
+const logicalReceiverRight = { Receiver: LogicalReceiverClassB };
+const possibleLogicalReceiver = maybe
+  ? logicalReceiverLeft.Receiver
+  : undefined;
+(possibleLogicalReceiver || logicalReceiverRight.Receiver).write =
+  Deno.writeTextFile;
+LogicalReceiverClassA.write("logical-receiver-a.txt", "x");
+LogicalReceiverClassB.write("logical-receiver-b.txt", "x");
+
+class ConditionalPropertyClassA {}
+class ConditionalPropertyClassB {}
+const conditionalPropertyHolder = {
+  Receiver: maybe ? ConditionalPropertyClassA : ConditionalPropertyClassB,
+};
+conditionalPropertyHolder.Receiver.write = Deno.writeTextFile;
+ConditionalPropertyClassA.write("conditional-property-a.txt", "x");
+ConditionalPropertyClassB.write("conditional-property-b.txt", "x");
+
+class ConditionalVariableClassA {}
+class ConditionalVariableClassB {}
+const ConditionalVariableAlias = maybe
+  ? ConditionalVariableClassA
+  : ConditionalVariableClassB;
+ConditionalVariableAlias.write = Deno.writeTextFile;
+ConditionalVariableClassA.write("conditional-variable-a.txt", "x");
+ConditionalVariableClassB.write("conditional-variable-b.txt", "x");
+
+class IgnoredSequenceReceiverClass {}
+class SequenceReceiverClass {}
+const ignoredSequenceReceiver = { Receiver: IgnoredSequenceReceiverClass };
+const sequenceReceiver = { Receiver: SequenceReceiverClass };
+(ignoredSequenceReceiver.Receiver, sequenceReceiver.Receiver).write =
+  Deno.writeTextFile;
+IgnoredSequenceReceiverClass.write("ignored-sequence-receiver.txt", "x");
+SequenceReceiverClass.write("sequence-receiver.txt", "x");
+
 class ExactDefaultClass {}
 class UnusedDefaultClass {}
 const { Receiver: ExactDefaultAlias = UnusedDefaultClass } = {
@@ -2432,6 +2547,15 @@ UnusedDefaultClass.write("unused-default-class.txt", "x");
         ["filesystem-write", "PossibleHolderClassB.write"],
         ["filesystem-write", "DirectPossibleHolderClassA.write"],
         ["filesystem-write", "DirectPossibleHolderClassB.write"],
+        ["filesystem-write", "ConditionalReceiverClassA.write"],
+        ["filesystem-write", "ConditionalReceiverClassB.write"],
+        ["filesystem-write", "LogicalReceiverClassA.write"],
+        ["filesystem-write", "LogicalReceiverClassB.write"],
+        ["filesystem-write", "ConditionalPropertyClassA.write"],
+        ["filesystem-write", "ConditionalPropertyClassB.write"],
+        ["filesystem-write", "ConditionalVariableClassA.write"],
+        ["filesystem-write", "ConditionalVariableClassB.write"],
+        ["filesystem-write", "SequenceReceiverClass.write"],
         ["filesystem-write", "ExactDefaultClass.write"],
       ],
     );
