@@ -2429,7 +2429,7 @@ function runtimeUnknownPropertyResolution(
     }
   }
   return {
-    binding: unionRuntimeBindings(propertyBindings),
+    binding: unionRuntimeBindingsPreservingPartial(propertyBindings),
     aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
     defaultMayRun: true,
   };
@@ -6038,7 +6038,8 @@ function retainedRuntimeDescriptorBinding(
     : undefined;
   return {
     changed: true,
-    binding: unionRuntimeBindingsPreservingPartial(
+    binding: unionDerivedRuntimeBindingsPreservingPartial(
+      existing,
       flattenRuntimeBindings(existing).flatMap((candidate) => {
         const retained = candidate.kind === "property-setter"
           ? !fields.has("set")
@@ -8665,7 +8666,8 @@ function runtimeUnknownPropertySetterBinding(
 function runtimeReadablePropertyBinding(
   binding: RuntimeBinding | undefined,
 ): RuntimeBinding | undefined {
-  return unionRuntimeBindingsPreservingPartial(
+  return unionDerivedRuntimeBindingsPreservingPartial(
+    binding,
     flattenRuntimeBindings(binding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? [candidate.binding]
@@ -8684,7 +8686,8 @@ function runtimeEnumerablePropertyBinding(
   const resolution = runtimePropertyResolution(binding, property, true, true);
   if (resolution.enumerable === false) return undefined;
   const rawBinding = resolution.binding;
-  return unionRuntimeBindingsPreservingPartial(
+  return unionDerivedRuntimeBindingsPreservingPartial(
+    rawBinding,
     flattenRuntimeBindings(rawBinding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? candidate.enumerable === false ? [] : [candidate.binding]
@@ -9109,6 +9112,17 @@ function unionRuntimeBindingsPreservingPartial(
   const partial = bindings.some(runtimeBindingHasPartialAlternative);
   const binding = unionRuntimeBindings(bindings);
   return partial && binding ? { kind: "partial", binding } : binding;
+}
+
+function unionDerivedRuntimeBindingsPreservingPartial(
+  source: RuntimeBinding | undefined,
+  bindings: readonly RuntimeBinding[],
+): RuntimeBinding | undefined {
+  const binding = unionRuntimeBindingsPreservingPartial(bindings);
+  return binding && runtimeBindingHasPartialAlternative(source) &&
+      !runtimeBindingHasPartialAlternative(binding)
+    ? { kind: "partial", binding }
+    : binding;
 }
 
 function flattenRuntimeBindings(

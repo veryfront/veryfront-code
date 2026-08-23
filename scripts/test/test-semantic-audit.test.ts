@@ -2369,39 +2369,99 @@ conditionalTarget.write("conditional.txt");
   });
 
   it("fails closed when only part of an Object.assign source resolves", () => {
-    const effects = collectSemanticMarkers(
-      `
+    const expectedEffects = [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ];
+    const cases = [
+      {
+        name: "direct",
+        source: `
 declare const maybe: boolean;
 declare function loadSource(): object;
 const source = maybe ? { run: Deno.cwd } : loadSource();
 Object.assign({}, source).run();
+`,
+      },
+      {
+        name: "property",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
 const box = { source: maybe ? { run: Deno.cwd } : loadSource() };
 Object.assign({}, box.source).run();
+`,
+      },
+      {
+        name: "nested",
+        source: `
+declare const maybe: boolean;
 declare const other: boolean;
+declare function loadSource(): object;
 const nested = maybe
   ? (other ? { run: Deno.cwd } : loadSource())
   : { run: Deno.cwd };
 Object.assign({}, nested).run();
+`,
+      },
+      {
+        name: "descriptor-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
 const getterBox = {};
-Object.defineProperty(getterBox, "source", {
-  get: () => source,
-});
+Object.defineProperty(getterBox, "source", { get: () => source });
 Object.assign({}, getterBox.source).run();
+`,
+      },
+      {
+        name: "literal-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
 const literalGetterBox = {
   get source() {
     return source;
   },
 };
 Object.assign({}, literalGetterBox.source).run();
+`,
+      },
+      {
+        name: "copied-attributed-property",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
 const attributedBox = { source };
 Object.defineProperty(attributedBox, "source", { enumerable: true });
 const copiedBox = Object.assign({}, attributedBox);
 Object.assign({}, copiedBox.source).run();
 `,
-      "src/runtime-object-assign-partial-source.test.ts",
-    ).map((marker) => marker.effect);
-    assertEquals(effects.includes("shared-cwd"), true);
-    assertEquals(effects.includes("filesystem-write"), true);
+      },
+    ] as const;
+    for (const testCase of cases) {
+      assertEquals(
+        [
+          ...new Set(
+            collectSemanticMarkers(
+              testCase.source,
+              `src/runtime-object-assign-partial-source-${testCase.name}.test.ts`,
+            ).map((marker) => marker.effect),
+          ),
+        ].sort(),
+        expectedEffects,
+        testCase.name,
+      );
+    }
   });
 
   it("preserves every possible sort comparator effect", () => {
