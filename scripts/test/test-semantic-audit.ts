@@ -801,8 +801,6 @@ export function collectSemanticMarkers(
       nextScopes,
       allowAssignmentClearing,
     );
-    bindRuntimeCallMutation(node, bindings, nextScopes);
-
     for (const key of Object.keys(node)) {
       if (
         key === "loc" || COMMENT_KEYS.has(key) ||
@@ -841,6 +839,7 @@ export function collectSemanticMarkers(
         );
       }
     }
+    bindRuntimeCallMutation(node, bindings, nextScopes);
   };
   visit(program, []);
   return uniqueMarkers(markers).sort((a, b) =>
@@ -3570,7 +3569,6 @@ function visitRuntimeBindingSummary(
   }
   bindRuntimeClassDeclaration(node, nextScopes);
   bindRuntimeAssignment(node, imports, nextScopes, allowClearing);
-  bindRuntimeCallMutation(node, imports, nextScopes);
   for (const key of Object.keys(node)) {
     if (
       key === "loc" || COMMENT_KEYS.has(key) ||
@@ -3601,6 +3599,7 @@ function visitRuntimeBindingSummary(
       );
     }
   }
+  bindRuntimeCallMutation(node, imports, nextScopes);
 }
 
 function collectHoistedVarDeclaredNames(

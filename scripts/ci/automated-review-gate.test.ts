@@ -238,6 +238,26 @@ describe("automated review gate", () => {
     );
   });
 
+  it("makes the newest CodeRabbit summary authoritative", async () => {
+    const skipped = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "Review limit reached. This review was skipped.",
+        `Requested commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-3",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [codeRabbitSummary(), skipped] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
   it("publishes the automated review decision on the exact pull request head", async () => {
     const statuses: Array<Record<string, unknown>> = [];
     const listReviews = () => Promise.resolve();

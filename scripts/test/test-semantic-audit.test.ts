@@ -1949,6 +1949,9 @@ const [, reflectVariableApplyWrite] = [
   () => undefined,
 ];
 reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
+
+const popArgument = [Deno.writeTextFile];
+popArgument.pop(popArgument[0]("pop-argument.txt", "x"));
 `,
         "src/runtime-call-mutated-array-spreads.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1988,6 +1991,7 @@ reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
         ["filesystem-write", "boundWrite"],
         ["filesystem-write", "variableApplyWrite"],
         ["filesystem-write", "reflectVariableApplyWrite"],
+        ["filesystem-write", "popArgument.0"],
       ],
     );
     const repeatedReorders = "values.sort();\n".repeat(1_000);
