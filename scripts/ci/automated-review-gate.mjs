@@ -372,36 +372,53 @@ function parseCodeRabbitRangeStatement(content, match) {
     };
   }
 
-  const nextLine = codeRabbitNextLine(content, match.index + match[0].length);
-  if (!nextLine) return undefined;
-  const trailingAnd = firstLineTail.match(/(^|[ \t])and[ \t]*$/i);
-  if (trailingAnd) {
+  const baseLines = [firstLineTail];
+  const statementParts = [statementStart + firstLineTail];
+  let lineEnd = match.index + match[0].length;
+  while (true) {
+    const nextLine = codeRabbitNextLine(content, lineEnd);
+    if (!nextLine || nextLine.content.trim().length === 0) return undefined;
+    statementParts.push(nextLine.separator, nextLine.content);
+
+    const previousLine = baseLines.at(-1);
+    const trailingAnd = previousLine?.match(/(^|[ \t])and[ \t]*$/i);
     const wrappedTip = nextLine.content.match(
       CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN,
     );
-    if (wrappedTip) {
+    if (trailingAnd && wrappedTip) {
       return {
-        baseSegment: firstLineTail.slice(0, trailingAnd.index).trim()
-          .toLowerCase(),
-        statement: statementStart + firstLineTail + nextLine.separator +
-          nextLine.content,
+        baseSegment: codeRabbitBaseSegment(
+          baseLines.slice(0, -1),
+          previousLine.slice(0, trailingAnd.index),
+        ),
+        statement: statementParts.join(""),
         tipToken: wrappedTip[1].toLowerCase(),
         trailingStatement: nextLine.content.slice(wrappedTip[0].length),
       };
     }
-  }
 
-  const wrappedSeparator = nextLine.content.match(
-    CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN,
-  );
-  if (!wrappedSeparator) return undefined;
-  return {
-    baseSegment: firstLineTail.trim().toLowerCase(),
-    statement: statementStart + firstLineTail + nextLine.separator +
-      nextLine.content,
-    tipToken: wrappedSeparator[1].toLowerCase(),
-    trailingStatement: nextLine.content.slice(wrappedSeparator[0].length),
-  };
+    const wrappedSeparator = nextLine.content.match(
+      CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN,
+    );
+    if (wrappedSeparator) {
+      return {
+        baseSegment: codeRabbitBaseSegment(
+          baseLines,
+          nextLine.content.slice(0, wrappedSeparator.index),
+        ),
+        statement: statementParts.join(""),
+        tipToken: wrappedSeparator[1].toLowerCase(),
+        trailingStatement: nextLine.content.slice(wrappedSeparator[0].length),
+      };
+    }
+
+    baseLines.push(nextLine.content);
+    lineEnd = nextLine.lineEnd;
+  }
+}
+
+function codeRabbitBaseSegment(lines, finalLine) {
+  return [...lines, finalLine].join("\n").trim().toLowerCase();
 }
 
 function codeRabbitNextLine(content, lineEnd) {
@@ -417,6 +434,7 @@ function codeRabbitNextLine(content, lineEnd) {
     content: nextLineEnd < 0
       ? content.slice(contentStart)
       : content.slice(contentStart, contentStart + nextLineEnd),
+    lineEnd: nextLineEnd < 0 ? content.length : contentStart + nextLineEnd,
     separator,
   };
 }
