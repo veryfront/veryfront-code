@@ -4104,9 +4104,8 @@ function bindRuntimeCallMutation(
           invocation.binding.method !== "push" &&
           invocation.binding.method !== "unshift"
         ) {
-          bindRuntimeUnknownPropertyMutation(
+          bindRuntimeArrayShapeMutation(
             invocation.target,
-            undefined,
             imports,
             scopes,
           );
@@ -4165,6 +4164,24 @@ function bindRuntimeCallMutation(
       bindRuntimeAccessorMutation(target, descriptor, imports, scopes);
     }
   }
+}
+
+function bindRuntimeArrayShapeMutation(
+  target: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): void {
+  const targetBinding = runtimeBindingForExpression(target, imports, scopes);
+  const existingElements = targetBinding
+    ? runtimeUnknownPropertyResolution(targetBinding).binding
+    : undefined;
+  bindRuntimeUnknownPropertyMutationBinding(
+    target,
+    existingElements,
+    runtimeUnknownPropertyExpression(target),
+    imports,
+    scopes,
+  );
 }
 
 function arrayMutationInsertedExpressions(
@@ -5585,6 +5602,12 @@ function runtimeBindingForExpression(
   if (value.type === "ThisExpression") {
     return resolveLocalBinding(THIS_RUNTIME_ROOT, scopes).binding;
   }
+  const assignmentBinding = assignmentExpressionRuntimeBinding(
+    value,
+    imports,
+    scopes,
+  );
+  if (assignmentBinding) return assignmentBinding;
   const identifierBinding = identifierRuntimeBinding(value, imports, scopes);
   if (identifierBinding) return identifierBinding;
   const createRequireBinding = createRequireResultBinding(
@@ -5639,6 +5662,26 @@ function runtimeBindingForExpression(
     : undefined;
   return unionRuntimeBindings(
     [unknownProperty, unknownArrayMutation].flatMap((binding) => binding ?? []),
+  );
+}
+
+function assignmentExpressionRuntimeBinding(
+  value: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  if (value.type !== "AssignmentExpression") return undefined;
+  const right = runtimeBindingForExpression(value.right, imports, scopes);
+  if (value.operator === "=") return right;
+  if (
+    !["&&=", "||=", "??="].includes(String(value.operator)) ||
+    !isNode(value.left)
+  ) {
+    return undefined;
+  }
+  const left = runtimeBindingForExpression(value.left, imports, scopes);
+  return unionRuntimeBindings(
+    [left, right].flatMap((binding) => binding ?? []),
   );
 }
 

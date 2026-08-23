@@ -1760,6 +1760,11 @@ reordered.reverse();
 const [reorderedWrite] = [...reordered, () => undefined];
 reorderedWrite("reordered.txt", "x");
 
+const directReordered = [() => undefined, Deno.writeTextFile];
+directReordered.reverse();
+const [directReorderedWrite] = directReordered;
+directReorderedWrite("direct-reordered.txt", "x");
+
 const filled = [() => undefined];
 filled.fill(Deno.writeTextFile, 0, 1);
 const [filledWrite] = [...filled];
@@ -1885,6 +1890,7 @@ reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
         ["filesystem-write", "aliasedWrite"],
         ["filesystem-write", "nestedWrite"],
         ["filesystem-write", "reorderedWrite"],
+        ["filesystem-write", "directReorderedWrite"],
         ["filesystem-write", "filledWrite"],
         ["filesystem-write", "definedManyWrite"],
         ["filesystem-write", "reflectDefinedWrite"],
@@ -2022,6 +2028,18 @@ const conjoined = [() => undefined, () => undefined];
 conjoined[1] &&= Deno.writeTextFile;
 const [, conjoinedRun] = [...conjoined, () => undefined];
 conjoinedRun("conjoined.txt", "x");
+
+const disjoinedHolder = {};
+const disjoinedResult = (disjoinedHolder.write ||= Deno.writeTextFile);
+disjoinedResult("disjoined-result.txt", "x");
+
+const nullishHolder = {};
+const nullishResult = (nullishHolder.write ??= Deno.writeTextFile);
+nullishResult("nullish-result.txt", "x");
+
+const conjoinedHolder = { write: () => undefined };
+const conjoinedResult = (conjoinedHolder.write &&= Deno.writeTextFile);
+conjoinedResult("conjoined-result.txt", "x");
 `,
         "src/logical-property-assignments.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -2029,6 +2047,9 @@ conjoinedRun("conjoined.txt", "x");
         ["filesystem-write", "nullishRun"],
         ["filesystem-write", "disjoinedRun"],
         ["filesystem-write", "conjoinedRun"],
+        ["filesystem-write", "disjoinedResult"],
+        ["filesystem-write", "nullishResult"],
+        ["filesystem-write", "conjoinedResult"],
       ],
     );
   });
