@@ -90,6 +90,8 @@ function transformResourcePattern(
   const schemeDelimiter = findSchemeDelimiter(pattern);
   const firstSchemeComponentEnd = findFirstSchemeComponentEnd(pattern, schemeDelimiter);
   const urnScheme = isUrnScheme(pattern, schemeDelimiter);
+  const hierarchicalScheme = schemeDelimiter >= 0 &&
+    pattern[schemeDelimiter + 1] === "/" && pattern[schemeDelimiter + 2] === "/";
   let segmentParameterized = false;
   let inQueryOrFragment = false;
 
@@ -113,7 +115,7 @@ function transformResourcePattern(
       (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode));
     const parameterContext = urnScheme && !inQueryOrFragment
       ? false
-      : schemeDelimiter < 0 || inQueryOrFragment
+      : schemeDelimiter < 0 || inQueryOrFragment || hierarchicalScheme
       ? legacyParameterContext
       : inFirstSchemeComponent
       ? !urnScheme && legacyParameterContext

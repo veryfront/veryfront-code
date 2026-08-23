@@ -234,6 +234,26 @@ describe("resource registry", () => {
         ),
         { id: "42" },
       );
+
+      const hostedFile = resource({
+        pattern: "custom://host/files/file-:id",
+        description: "Hosted file",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(hostedFile.id, hostedFile);
+      assertEquals(
+        resourceRegistry.findByPattern("custom://host/files/file-42"),
+        hostedFile,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom://host/files/file-42",
+          hostedFile.pattern,
+        ),
+        { id: "42" },
+      );
     });
 
     it("should support caller-scoped visibility without changing default lookup", () => {
