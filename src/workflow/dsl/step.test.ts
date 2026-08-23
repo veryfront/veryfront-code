@@ -3,7 +3,8 @@ import "#veryfront/schemas/_test-setup.ts";
  * Step DSL Tests
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agentStep, step, toolStep } from "./step.ts";
 import type { StepNodeConfig } from "../types.ts";
@@ -74,6 +75,19 @@ describe("step()", () => {
     });
 
     assertEquals(typeof getConfig(node).input, "function");
+  });
+
+  it("rejects steps without exactly one executable target", () => {
+    assertThrows(
+      () => step("missing-target", {}),
+      VeryfrontError,
+      "must specify either 'agent' or 'tool'",
+    );
+    assertThrows(
+      () => step("ambiguous-target", { agent: "writer", tool: "publish" }),
+      VeryfrontError,
+      "cannot specify both 'agent' and 'tool'",
+    );
   });
 });
 

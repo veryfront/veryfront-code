@@ -1352,11 +1352,14 @@ describe("Guide: workflows-advanced.md", () => {
 
     for (
       const snippet of [
-        'import { delay, doWhile, loop, map, times } from "veryfront/workflow"',
-        'loop("refine"',
-        'doWhile("poll"',
+        'import { delay, doWhile, loop, map, step, times } from "veryfront/workflow"',
+        'loop("refine", {',
+        "while:",
+        'doWhile("poll", {',
+        "until:",
         'times("generate"',
-        'map("process"',
+        'map("process", {',
+        "processor:",
         "blobStorage",
         'import { useWorkflow, useWorkflowStart } from "veryfront/workflow"',
         "useWorkflowStart({",
