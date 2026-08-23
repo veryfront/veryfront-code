@@ -9,7 +9,7 @@ import { isNotFoundError } from "veryfront/fs";
 import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
-import { LOCKFILE_CLIENTS } from "veryfront/utils/package-client";
+import { LOCKFILE_CLIENTS, NPM_FAMILY_CLIENTS } from "veryfront/utils/package-client";
 import { ensureDir } from "#std/fs.ts";
 import { buildDenoConfig, createDenoConfig } from "../commands/init/deno-config-generator.ts";
 import {
@@ -385,7 +385,7 @@ async function writeEnvFiles(
 async function writeGitignore(projectDir: string): Promise<void> {
   const fs = createFileSystem();
   if (!fs.rename) {
-    throw new Error("Filesystem does not support atomic .gitignore replacement.");
+    throw createConfigError("Filesystem does not support atomic .gitignore replacement.");
   }
   const gitignorePath = join(projectDir, ".gitignore");
   const temporaryPath = join(projectDir, `.gitignore.veryfront-${crypto.randomUUID()}.tmp`);
@@ -532,7 +532,10 @@ function installerWritePaths(request: CreateProjectRequest): string[] {
 
 function installerConflictPaths(request: CreateProjectRequest): string[] {
   const paths = installerWritePaths(request);
-  if (request.installDependencies && packageManagerPreference(request.runtime) === "npm") {
+  if (
+    request.installDependencies &&
+    NPM_FAMILY_CLIENTS.includes(packageManagerPreference(request.runtime))
+  ) {
     paths.push("node_modules");
   }
   return paths;

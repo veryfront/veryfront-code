@@ -1143,6 +1143,33 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses existing node_modules before Bun dependency installation can prune it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-bun-node-modules-" });
+    const projectDir = join(parentDir, "contract-project");
+    const userFile = join(projectDir, "node_modules", "user-owned", "data.txt");
+
+    try {
+      await Deno.mkdir(dirname(userFile), { recursive: true });
+      await Deno.writeTextFile(userFile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            runtime: "bun",
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains node_modules. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(userFile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("still reports a real file at a scaffold path as an overwritable conflict", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-file-" });
     const projectDir = join(parentDir, "contract-project");
