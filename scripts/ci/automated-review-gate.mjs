@@ -604,10 +604,14 @@ function appendMarkdownInlineCodeRanges(content, start, end, ranges) {
       index += 1;
       continue;
     }
-    let end = index + 1;
-    while (content[end] === "`") end += 1;
-    delimiterRuns.push({ start: index, end, length: end - index });
-    index = end;
+    let runEnd = index + 1;
+    while (content[runEnd] === "`") runEnd += 1;
+    delimiterRuns.push({
+      start: index,
+      end: runEnd,
+      length: runEnd - index,
+    });
+    index = runEnd;
   }
 
   const nextRunWithLength = new Array(delimiterRuns.length);
