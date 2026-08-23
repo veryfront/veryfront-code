@@ -1,0 +1,64 @@
+# Codecov configuration
+# Docs: https://docs.codecov.com/docs/codecov-yaml
+#
+# Coverage is uploaded by the `codecov upload` job in
+# .github/workflows/cicd.yml, which sends all 8 shard lcov files in one call.
+#
+# Codecov is ADVISORY here. The blocking threshold is still enforced in CI by
+# `deno task coverage:gate` (scripts/lint/check-coverage.ts, 80% line coverage).
+# Both status checks below are `informational: true`, so they report but never
+# block a merge. Remove `informational` to make them required checks.
+
+codecov:
+  require_ci_to_pass: true
+  notify:
+    # The `codecov upload` job sends all 8 shard lcov files in one call, so
+    # there is exactly one upload per commit and reporting must not wait for
+    # more. Raise this if uploads are ever split back out per shard.
+    after_n_builds: 1
+    wait_for_ci: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...90"
+
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 1%
+        informational: true
+    patch:
+      default:
+        # Coverage of lines changed by the PR itself.
+        target: 80%
+        threshold: 0%
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, condensed_files, condensed_footer"
+  behavior: default
+  require_changes: false
+  # One upload per commit; see codecov.notify.after_n_builds above.
+  after_n_builds: 1
+
+# Belt and braces for paths `buildCoverageCommandArgs` (scripts/test/coverage-ci.ts)
+# already keeps out of the lcov, so an upload stays consistent if the coverage
+# command ever changes.
+#
+# Do not add `extensions/**` here. `deno coverage --include` matches on path
+# substring, so `--include=src/` also selects `extensions/*/src/**`. Those files
+# are in the lcov and the `coverage gate` job counts them (447 records, 23,654
+# lines, 35% covered as of this change). Ignoring them here would make Codecov
+# report a materially higher number than the gate for the same commit.
+ignore:
+  - "tests/**"
+  - "scripts/**"
+  - "templates/**"
+  - "docs/**"
+  - "npm/**"
+  - "src/**/*_test.ts"
+  - "src/**/*_test.tsx"
+  - "src/**/*.test.ts"
+  - "src/**/*.test.tsx"
