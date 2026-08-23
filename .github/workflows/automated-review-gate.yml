@@ -7,7 +7,6 @@ on:
     types: [submitted, dismissed]
   issue_comment:
     types: [created, edited, deleted]
-  status:
 
 permissions:
   contents: read
@@ -16,9 +15,7 @@ permissions:
   statuses: write
 
 concurrency:
-  # A status event has no PR number at expression time. Use one repository-wide
-  # FIFO group so every trigger observes and publishes evidence in event order.
-  group: automated-review-${{ github.repository }}
+  group: automated-review-${{ github.event.pull_request.number || github.event.issue.number }}
   queue: max
 
 jobs:
@@ -29,11 +26,9 @@ jobs:
     # write a commit status, so skip it there and let the trusted
     # pull_request_target and issue_comment runs publish the decision instead.
     if: >-
-      (github.event_name == 'status' && github.event.context == 'CodeRabbit') ||
-      (github.event_name != 'status' &&
-       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
-       (github.event_name != 'pull_request_review' ||
-        github.event.pull_request.head.repo.full_name == github.repository))
+      (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+      (github.event_name != 'pull_request_review' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -54,74 +49,60 @@ jobs:
             const gateUrl = pathToFileURL(
               `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
             ).href;
-            let pullNumbers;
-            if (context.eventName === "status") {
-              const pulls = await github.paginate(
-                github.rest.repos.listPullRequestsAssociatedWithCommit,
-                {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  commit_sha: context.payload.sha,
-                  per_page: 100,
-                },
-              );
-              pullNumbers = pulls
-                .filter((pull) =>
-                  pull.state === "open" && pull.head.sha === context.payload.sha
-                )
-                .map((pull) => pull.number);
-            } else {
-              pullNumbers = [
-                context.payload.pull_request?.number ??
-                  context.payload.issue.number,
-              ];
+            const pullNumber = context.payload.pull_request?.number ??
+              context.payload.issue.number;
+            const response = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pullNumber,
+            });
+            const pullRequest = response.data;
+            const sameRepository =
+              `${context.repo.owner}/${context.repo.repo}`;
+            const headSha = pullRequest.head.sha;
+            let publishAutomatedReviewStatus;
+            try {
+              ({ publishAutomatedReviewStatus } = await import(gateUrl));
+            } catch (error) {
+              // A missing or broken gate must show up as a red status, not as
+              // an absent one. Absent is what a skipped review already looks
+              // like, and telling those apart is the point of this workflow.
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: headSha,
+                state: "failure",
+                context: "Automated review",
+                description:
+                  "Review gate is unavailable on the default branch",
+                target_url: pullRequest.html_url,
+              });
+              core.setFailed(`Could not load the review gate: ${error}`);
+              return;
             }
-            for (const pullNumber of pullNumbers) {
-              const response = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pullNumber,
-              });
-              const pullRequest = response.data;
-              const headSha = pullRequest.head.sha;
-              let publishAutomatedReviewStatus;
-              try {
-                ({ publishAutomatedReviewStatus } = await import(gateUrl));
-              } catch (error) {
-                // A missing or broken gate must show up as a red status, not as
-                // an absent one. Absent is what a skipped review already looks
-                // like, and telling those apart is the point of this workflow.
-                await github.rest.repos.createCommitStatus({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  sha: headSha,
-                  state: "failure",
-                  context: "Automated review",
-                  description:
-                    "Review gate is unavailable on the default branch",
-                  target_url: pullRequest.html_url,
-                });
-                core.setFailed(`Could not load the review gate: ${error}`);
-                continue;
-              }
-              const result = await publishAutomatedReviewStatus({
-                github,
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pullNumber: pullRequest.number,
-                headSha,
-                pullUrl: pullRequest.html_url,
-                isDraft: pullRequest.draft === true,
-              });
-              if (result.state === "pending") {
-                core.notice(
-                  "Draft pull request: the automated review status stays pending.",
-                );
-              } else if (result.review) {
-                core.notice(
-                  `Automated review submitted by ${result.review.reviewer} for ${headSha.slice(0, 12)}.`,
-                );
-              } else {
-                core.warning(result.failure.message);
-              }
+            const result = await publishAutomatedReviewStatus({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pullNumber: pullRequest.number,
+              headSha,
+              pullUrl: pullRequest.html_url,
+              isDraft: pullRequest.draft === true,
+              // Fork review events cannot publish a status. Ignore review
+              // objects for forks and accept only proof a trusted pull or
+              // comment event can reconcile. This safely stays red until a
+              // trusted event observes status or comment proof.
+              allowPullRequestReviews:
+                pullRequest.head.repo.full_name === sameRepository,
+            });
+            if (result.state === "pending") {
+              core.notice(
+                "Draft pull request: the automated review status stays pending.",
+              );
+            } else if (result.review) {
+              core.notice(
+                `Automated review submitted by ${result.review.reviewer} for ${headSha.slice(0, 12)}.`,
+              );
+            } else {
+              core.warning(result.failure.message);
             }

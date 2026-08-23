@@ -25,44 +25,51 @@ export async function findAutomatedReview(
   { reviews, comments, statuses },
   headSha,
   resolveCommit = NO_COMMIT,
+  { allowPullRequestReviews = true } = {},
 ) {
   if (!FULL_SHA.test(headSha)) return undefined;
 
-  for (const review of reviews) {
-    const login = review?.user?.login;
-    const state = typeof review?.state === "string"
-      ? review.state.toUpperCase()
-      : "";
-    if (
-      BOTS.has(login) && isPinnedBot(review.user, login) &&
-      review?.commit_id?.toLowerCase() === headSha.toLowerCase() &&
-      SUBMITTED_REVIEW_STATES.has(state)
-    ) {
-      return {
-        reviewer: login,
-        source: "pull-request-review",
-        state,
-        url: typeof review.html_url === "string" ? review.html_url : undefined,
-      };
+  if (allowPullRequestReviews) {
+    for (const review of reviews) {
+      const login = review?.user?.login;
+      const state = typeof review?.state === "string"
+        ? review.state.toUpperCase()
+        : "";
+      if (
+        BOTS.has(login) && isPinnedBot(review.user, login) &&
+        review?.commit_id?.toLowerCase() === headSha.toLowerCase() &&
+        SUBMITTED_REVIEW_STATES.has(state)
+      ) {
+        return {
+          reviewer: login,
+          source: "pull-request-review",
+          state,
+          url: typeof review.html_url === "string"
+            ? review.html_url
+            : undefined,
+        };
+      }
     }
   }
 
-  for (const status of statuses) {
-    if (
-      status?.context === "CodeRabbit" &&
-      status?.state === "success" &&
-      status?.description === "Review completed" &&
-      isPinnedBot(status?.creator, CODERABBIT_LOGIN)
-    ) {
-      return {
-        reviewer: CODERABBIT_LOGIN,
-        source: "coderabbit-status",
-        state: "COMMENTED",
-        url: typeof status.target_url === "string"
-          ? status.target_url
-          : undefined,
-      };
-    }
+  // GitHub returns commit statuses newest first. Only the latest status for a
+  // context is authoritative; a later retry can revoke an older completion.
+  const status = statuses.find((candidate) =>
+    candidate?.context === "CodeRabbit"
+  );
+  if (
+    status?.state === "success" &&
+    status?.description === "Review completed" &&
+    isPinnedBot(status?.creator, CODERABBIT_LOGIN)
+  ) {
+    return {
+      reviewer: CODERABBIT_LOGIN,
+      source: "coderabbit-status",
+      state: "COMMENTED",
+      url: typeof status.target_url === "string"
+        ? status.target_url
+        : undefined,
+    };
   }
 
   for (const comment of comments) {
@@ -127,6 +134,7 @@ export async function publishAutomatedReviewStatus({
   headSha,
   pullUrl,
   isDraft = false,
+  allowPullRequestReviews = true,
 }) {
   let review;
   let failure;
@@ -169,6 +177,7 @@ export async function publishAutomatedReviewStatus({
             return undefined;
           }
         },
+        { allowPullRequestReviews },
       );
       if (!review) {
         throw new Error("No automated review proof for captured head");

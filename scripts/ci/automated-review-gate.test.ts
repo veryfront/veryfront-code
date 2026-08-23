@@ -181,6 +181,57 @@ describe("automated review evidence", () => {
     }
   });
 
+  it("uses only the latest CodeRabbit status for the captured head", async () => {
+    for (
+      const latest of [
+        status({ state: "pending", description: "Review in progress" }),
+        status({ state: "failure", description: "Review failed" }),
+        status({ description: "Review rate limited" }),
+        status({ description: "Review skipped" }),
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview({
+          reviews: [],
+          comments: [],
+          statuses: [latest, status()],
+        }, HEAD),
+        undefined,
+      );
+    }
+  });
+
+  it("ignores review objects for forks but accepts status and comment proof", async () => {
+    const forkOptions = { allowPullRequestReviews: false };
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [review()], comments: [], statuses: [] },
+        HEAD,
+        undefined,
+        forkOptions,
+      ),
+      undefined,
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [review()], comments: [], statuses: [status()] },
+        HEAD,
+        undefined,
+        forkOptions,
+      ))?.source,
+      "coderabbit-status",
+    );
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [review()], comments: [codexComment()], statuses: [] },
+        HEAD,
+        () => Promise.resolve(HEAD),
+        forkOptions,
+      ))?.source,
+      "codex-comment",
+    );
+  });
+
   it("accepts only the pinned Codex canonical no-findings comment", async () => {
     assertEquals(
       (await findAutomatedReview(
@@ -415,10 +466,11 @@ describe("automated review workflow", () => {
     assertEquals(
       record(workflow.concurrency, "concurrency"),
       {
-        group: "automated-review-${{ github.repository }}",
+        group:
+          "automated-review-${{ github.event.pull_request.number || github.event.issue.number }}",
         queue: "max",
       },
-      "every trigger must join one repository-wide FIFO group without cancellation",
+      "every remaining trigger must join the same per-PR FIFO group without cancellation",
     );
 
     const triggers = record(workflow.on, "triggers");
@@ -437,17 +489,23 @@ describe("automated review workflow", () => {
       ["created", "edited", "deleted"],
     );
     assert(
-      "status" in triggers,
-      "CodeRabbit status changes must rerun the gate",
+      !("status" in triggers),
+      "raw status events must not consume the queue",
     );
     const job = record(record(workflow.jobs, "jobs").review, "review job");
     assert(
-      String(job.if).includes("github.event.context == 'CodeRabbit'"),
-      "status events must be limited to CodeRabbit to prevent recursion",
+      !String(job.if).includes("github.event.context"),
+      "the job must not retain dead raw-status routing",
     );
     assert(
       String(job.if).includes("github.event.issue.pull_request"),
       "deleted issue comments must still be guarded by the issue PR marker",
+    );
+    assert(
+      String(job.if).includes(
+        "github.event.pull_request.head.repo.full_name == github.repository",
+      ),
+      "fork pull request review events must remain skipped",
     );
     const steps = job.steps;
     assert(Array.isArray(steps));
@@ -461,6 +519,12 @@ describe("automated review workflow", () => {
     );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("github.rest.pulls.get"));
+    assert(!script.includes("listPullRequestsAssociatedWithCommit"));
+    assert(
+      script.includes("allowPullRequestReviews") &&
+        script.includes("pullRequest.head.repo.full_name"),
+      "the trusted reconciler must ignore review objects for fork pull requests",
+    );
     assert(
       !script.includes("context.payload.comment"),
       "deleted comments must reconcile from current API evidence, not comment payload data",
