@@ -1,230 +1,124 @@
-const AUTOMATED_REVIEW_LOGINS = new Set([
-  "coderabbitai[bot]",
-  "chatgpt-codex-connector[bot]",
+const BOTS = new Map([
+  ["coderabbitai[bot]", 136622811],
+  ["chatgpt-codex-connector[bot]", 199175422],
 ]);
 const CODERABBIT_LOGIN = "coderabbitai[bot]";
-const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
-const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
-const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
-  "No actionable comments were generated in the recent review.";
-const CODERABBIT_REVIEW_RANGE_PATTERN =
-  /Reviewing files between\s+([0-9a-f]{40})\s+and\s+([0-9a-f]{40})(?:\.|\s|$)/i;
-const CODERABBIT_REQUESTED_COMMIT_PATTERN =
-  /Requested commit:\s*([0-9a-f]{40})/i;
-const CODERABBIT_SKIPPED_COMMIT_PATTERN =
-  /Review skipped for current commit\s*([0-9a-f]{40})/i;
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
-const CODEX_BOT_ID = 199175422;
-const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
-const CODEX_REVIEWED_COMMIT_PATTERN =
-  /\*\*Reviewed commit:\*\*\s*`([0-9a-f]{10})`/i;
-const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
+const CODEX_NO_FINDINGS = "Codex Review: Didn't find any major issues.";
+const CODEX_REVIEWED_COMMIT = /\*\*Reviewed commit:\*\* `([0-9a-f]{10})`/i;
+const FULL_SHA = /^[0-9a-f]{40}$/i;
+const SUBMITTED_REVIEW_STATES = new Set(["APPROVED", "COMMENTED"]);
+const MAX_ITEMS_PER_SOURCE = 500;
 /** @type {(ref: string) => Promise<string | undefined>} */
-const NO_COMMIT_RESOLVER = () => Promise.resolve(undefined);
+const NO_COMMIT = () => Promise.resolve(undefined);
+
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
-const SUBMITTED_REVIEW_STATES = new Set([
-  "APPROVED",
-  "COMMENTED",
-]);
 
-/** Find an actual automated review submitted against the current PR head. */
+function isPinnedBot(user, login) {
+  return user?.login === login &&
+    user?.id === BOTS.get(login) &&
+    user?.type === "Bot";
+}
+
+/** Find one authenticated automated-review proof for the captured head. */
 export async function findAutomatedReview(
-  {
-    reviews,
-    comments,
-    resolveCommit = NO_COMMIT_RESOLVER,
-  },
+  { reviews, comments, statuses },
   headSha,
+  resolveCommit = NO_COMMIT,
 ) {
-  const events = [
-    ...reviews.map((review, index) => ({
-      kind: "review",
-      value: review,
-      order: index,
-      time: automatedReviewEventTime(review),
-    })),
-    ...comments.map((comment, index) => ({
-      kind: "comment",
-      value: comment,
-      order: reviews.length + index,
-      time: automatedReviewEventTime(comment),
-    })),
-  ];
-  const outcomePromises = new Map();
-  const outcomeFor = (event) => {
-    let outcome = outcomePromises.get(event);
-    if (!outcome) {
-      outcome = classifyAutomatedReviewEvent(
-        event,
-        headSha,
-        resolveCommit,
-      );
-      outcomePromises.set(event, outcome);
-    }
-    return outcome;
-  };
-  for (const event of events) {
+  if (!FULL_SHA.test(headSha)) return undefined;
+
+  for (const review of reviews) {
+    const login = review?.user?.login;
+    const state = typeof review?.state === "string"
+      ? review.state.toUpperCase()
+      : "";
     if (
-      event.time === undefined &&
-      (await outcomeFor(event)).kind !== "not-head"
+      BOTS.has(login) && isPinnedBot(review.user, login) &&
+      review?.commit_id?.toLowerCase() === headSha.toLowerCase() &&
+      SUBMITTED_REVIEW_STATES.has(state)
     ) {
-      return undefined;
-    }
-  }
-  const timedEvents = Map.groupBy(
-    events.filter((event) => event.time !== undefined),
-    (event) => event.time,
-  );
-  for (const tiedEvents of timedEvents.values()) {
-    if (new Set(tiedEvents.map((event) => event.kind)).size < 2) continue;
-    const exactHeadOutcomes = (await Promise.all(
-      tiedEvents.map(outcomeFor),
-    )).filter(
-      (outcome) => outcome.kind !== "not-head",
-    );
-    if (
-      exactHeadOutcomes.length > 1 &&
-      exactHeadOutcomes.some((outcome) => outcome.kind !== "success")
-    ) return undefined;
-  }
-  events.sort((left, right) => {
-    if (left.time === undefined) {
-      return right.time === undefined ? right.order - left.order : 1;
-    }
-    if (right.time === undefined) return -1;
-    return right.time - left.time || right.order - left.order;
-  });
-
-  for (const event of events) {
-    const outcome = await outcomeFor(event);
-    if (outcome.kind === "not-head") continue;
-    return outcome.kind === "success" ? outcome.review : undefined;
-  }
-  return undefined;
-}
-
-function automatedReviewEventTime(value) {
-  for (
-    const timestamp of [
-      value?.updated_at,
-      value?.submitted_at,
-      value?.created_at,
-    ]
-  ) {
-    if (typeof timestamp !== "string") continue;
-    const parsed = Date.parse(timestamp);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return undefined;
-}
-
-async function classifyAutomatedReviewEvent(
-  event,
-  headSha,
-  resolveCommit,
-) {
-  if (event.kind === "review") {
-    const review = event.value;
-    const login = event.value?.user?.login;
-    if (
-      typeof login !== "string" ||
-      !AUTOMATED_REVIEW_LOGINS.has(login.toLowerCase()) ||
-      review?.commit_id !== headSha
-    ) return { kind: "not-head" };
-    const state = review?.state;
-    if (
-      typeof state !== "string" ||
-      typeof review?.submitted_at !== "string" ||
-      review.submitted_at.length === 0
-    ) return { kind: "invalid" };
-    if (!SUBMITTED_REVIEW_STATES.has(state.toUpperCase())) {
-      return { kind: "failure" };
-    }
-    return {
-      kind: "success",
-      review: {
+      return {
         reviewer: login,
-        source: "review",
-        state: state.toUpperCase(),
+        source: "pull-request-review",
+        state,
         url: typeof review.html_url === "string" ? review.html_url : undefined,
-      },
-    };
+      };
+    }
   }
 
-  const comment = event.value;
-  const login = comment?.user?.login;
-  const body = comment?.body;
-  if (typeof login !== "string" || typeof body !== "string") {
-    return { kind: "not-head" };
-  }
-  if (
-    login.toLowerCase() === CODEX_LOGIN &&
-    comment?.user?.type === "Bot" &&
-    comment?.user?.id === CODEX_BOT_ID
-  ) {
-    const reviewedCommit = body.match(CODEX_REVIEWED_COMMIT_PATTERN)?.[1];
-    if (typeof reviewedCommit !== "string") return { kind: "not-head" };
-    const resolvedCommit = await resolveCommit(reviewedCommit);
+  for (const status of statuses) {
     if (
-      typeof resolvedCommit !== "string" ||
-      !FULL_COMMIT_PATTERN.test(resolvedCommit) ||
-      resolvedCommit.toLowerCase() !== headSha.toLowerCase()
-    ) return { kind: "not-head" };
-    return body.startsWith(CODEX_NO_FINDING_PREFIX)
-      ? {
-        kind: "success",
-        review: {
-          reviewer: login,
-          source: "summary",
-          state: "COMMENTED",
-          url: typeof comment.html_url === "string"
-            ? comment.html_url
-            : undefined,
-        },
-      }
-      : { kind: "failure" };
+      status?.context === "CodeRabbit" &&
+      status?.state === "success" &&
+      status?.description === "Review completed" &&
+      isPinnedBot(status?.creator, CODERABBIT_LOGIN)
+    ) {
+      return {
+        reviewer: CODERABBIT_LOGIN,
+        source: "coderabbit-status",
+        state: "COMMENTED",
+        url: typeof status.target_url === "string"
+          ? status.target_url
+          : undefined,
+      };
+    }
   }
-  if (login.toLowerCase() !== CODERABBIT_LOGIN) {
-    return { kind: "not-head" };
-  }
-  const recentReview = codeRabbitRecentReview(body);
-  const skippedTip = body.match(CODERABBIT_SKIPPED_COMMIT_PATTERN)?.[1];
-  const requestedTip = body.match(CODERABBIT_REQUESTED_COMMIT_PATTERN)?.[1];
-  if (
-    skippedTip?.toLowerCase() === headSha.toLowerCase() ||
-    requestedTip?.toLowerCase() === headSha.toLowerCase()
-  ) return { kind: "failure" };
-  const reviewedTip = recentReview?.match(
-    CODERABBIT_REVIEW_RANGE_PATTERN,
-  )?.[2];
-  if (reviewedTip?.toLowerCase() !== headSha.toLowerCase()) {
-    return { kind: "not-head" };
-  }
-  return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER)
-    ? {
-      kind: "success",
-      review: {
-        reviewer: login,
-        source: "summary",
+
+  for (const comment of comments) {
+    if (
+      !isPinnedBot(comment?.user, CODEX_LOGIN) ||
+      typeof comment?.body !== "string" ||
+      !comment.body.startsWith(CODEX_NO_FINDINGS)
+    ) continue;
+    const reviewedCommits = [...comment.body.matchAll(
+      new RegExp(CODEX_REVIEWED_COMMIT, "gi"),
+    )];
+    const shortRef = reviewedCommits.length === 1
+      ? reviewedCommits[0][1]
+      : undefined;
+    if (
+      !shortRef ||
+      !headSha.toLowerCase().startsWith(shortRef.toLowerCase())
+    ) continue;
+    const resolved = await resolveCommit(shortRef);
+    if (
+      typeof resolved === "string" && FULL_SHA.test(resolved) &&
+      resolved.toLowerCase() === headSha.toLowerCase()
+    ) {
+      return {
+        reviewer: CODEX_LOGIN,
+        source: "codex-comment",
         state: "COMMENTED",
         url: typeof comment.html_url === "string"
           ? comment.html_url
           : undefined,
-      },
+      };
     }
-    : { kind: "failure" };
+  }
+  return undefined;
 }
 
-function codeRabbitRecentReview(body) {
-  if (typeof body !== "string") return undefined;
-  const start = body.lastIndexOf(CODERABBIT_RECENT_REVIEW_MARKER);
-  if (start < 0) return undefined;
-  const contentStart = start + CODERABBIT_RECENT_REVIEW_MARKER.length;
-  const end = body.indexOf(CODERABBIT_RECENT_REVIEW_END_MARKER, contentStart);
-  return end < 0 ? undefined : body.slice(contentStart, end);
+async function collectAll(github, endpoint, parameters, source) {
+  const items = [];
+  for await (
+    const response of github.paginate.iterator(endpoint, {
+      ...parameters,
+      per_page: 100,
+    })
+  ) {
+    if (!Array.isArray(response?.data)) {
+      throw new Error(`${source} pagination returned malformed data`);
+    }
+    items.push(...response.data);
+    if (items.length > MAX_ITEMS_PER_SOURCE) {
+      throw new Error(`${source} exceeded ${MAX_ITEMS_PER_SOURCE} items`);
+    }
+  }
+  return items;
 }
 
-/** Publish the current automated-review decision on the exact PR head SHA. */
+/** Publish the review decision on the captured head after checking for drift. */
 export async function publishAutomatedReviewStatus({
   github,
   owner,
@@ -234,77 +128,84 @@ export async function publishAutomatedReviewStatus({
   pullUrl,
   isDraft = false,
 }) {
-  // Review bots skip drafts, so a draft has no verdict yet. Publish pending so
-  // "not reviewed yet" never renders as a pass and never as a missing status.
-  if (isDraft) {
-    await github.rest.repos.createCommitStatus({
-      owner,
-      repo,
-      sha: headSha,
-      state: "pending",
-      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-      description: "Draft pull request waits for ready for review",
-      target_url: pullUrl,
-    });
-    return { state: "pending", review: undefined, failure: undefined };
-  }
-
   let review;
   let failure;
+  if (!FULL_SHA.test(headSha)) {
+    failure = new Error("Captured head is malformed");
+  } else if (!isDraft) {
+    try {
+      const common = { owner, repo };
+      const [reviews, comments, statuses] = await Promise.all([
+        collectAll(
+          github,
+          github.rest.pulls.listReviews,
+          { ...common, pull_number: pullNumber },
+          "reviews",
+        ),
+        collectAll(
+          github,
+          github.rest.issues.listComments,
+          { ...common, issue_number: pullNumber },
+          "comments",
+        ),
+        collectAll(
+          github,
+          github.rest.repos.listCommitStatusesForRef,
+          { ...common, ref: headSha },
+          "statuses",
+        ),
+      ]);
+      review = await findAutomatedReview(
+        { reviews, comments, statuses },
+        headSha,
+        async (ref) => {
+          try {
+            const response = await github.rest.repos.getCommit({
+              ...common,
+              ref,
+            });
+            return response?.data?.sha;
+          } catch {
+            return undefined;
+          }
+        },
+      );
+      if (!review) {
+        throw new Error("No automated review proof for captured head");
+      }
+    } catch (error) {
+      failure = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
   try {
-    const reviews = await github.paginate(github.rest.pulls.listReviews, {
+    const current = await github.rest.pulls.get({
       owner,
       repo,
       pull_number: pullNumber,
-      per_page: 100,
     });
-    const comments = await github.paginate(github.rest.issues.listComments, {
-      owner,
-      repo,
-      issue_number: pullNumber,
-      per_page: 100,
-    });
-    review = await findAutomatedReview({
-      reviews,
-      comments,
-      resolveCommit: async (ref) => {
-        try {
-          const response = await github.rest.repos.getCommit({
-            owner,
-            repo,
-            ref,
-          });
-          const sha = response?.data?.sha;
-          return typeof sha === "string" && FULL_COMMIT_PATTERN.test(sha)
-            ? sha
-            : undefined;
-        } catch {
-          return undefined;
-        }
-      },
-    }, headSha);
-    if (!review) {
-      failure = new Error(
-        `No automated review was submitted for current commit ${
-          headSha.slice(0, 12)
-        }. ` +
-          "CodeRabbit and Codex skip or rate-limit comments do not count as reviews.",
+    if (current?.data?.head?.sha !== headSha) {
+      review = undefined;
+      throw new Error(
+        "Pull request head changed while checking review evidence",
       );
     }
   } catch (error) {
     failure = error instanceof Error ? error : new Error(String(error));
   }
 
-  const state = review ? "success" : "failure";
+  const state = failure ? "failure" : isDraft ? "pending" : "success";
   await github.rest.repos.createCommitStatus({
     owner,
     repo,
     sha: headSha,
     state,
     context: AUTOMATED_REVIEW_STATUS_CONTEXT,
-    description: review
+    description: state === "success"
       ? `Reviewed by ${review.reviewer}`
-      : "No CodeRabbit or Codex review for current commit",
+      : state === "pending"
+      ? "Draft pull request waits for ready for review"
+      : "No authenticated review proof for current commit",
     target_url: review?.url ?? pullUrl,
   });
   return { state, review, failure };
