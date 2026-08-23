@@ -77,15 +77,21 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
     // then discarded at report time. Adding it puts 267 cli/ source files and
     // 29,263 lines into the report and into the 80% gate.
     "--include=cli/",
-    "--exclude=tests",
-    "--exclude=src/**/*_test.ts",
-    "--exclude=src/**/*_test.tsx",
-    "--exclude=src/**/*.test.ts",
-    "--exclude=src/**/*.test.tsx",
-    "--exclude=cli/**/*_test.ts",
-    "--exclude=cli/**/*_test.tsx",
-    "--exclude=cli/**/*.test.ts",
-    "--exclude=cli/**/*.test.tsx",
+    // `--exclude` takes a regex matched against the file URL, not a glob. Two
+    // consequences, both verified against deno 2.7.7:
+    //
+    // 1. Bare `tests` also matched `cli/mcp/tools/run-tests-tool.ts`, the
+    //    published module behind the `vf_run_tests` MCP tool. It would have
+    //    dropped out of the report the moment cli/ entered it. Anchoring on
+    //    slashes keeps the two test directories out and leaves production
+    //    filenames alone.
+    // 2. Glob-shaped patterns such as `src/**/*.test.ts` never compile to
+    //    anything that matches, so they were doing nothing. Test files stay out
+    //    because deno always applies its own `test\.(js|mjs|ts|jsx|tsx)$`
+    //    exclusion on top of these, which covers both `x.test.ts` and
+    //    `x_test.ts`. Do not add glob patterns back here.
+    "--exclude=/tests/",
+    "--exclude=/__tests__/",
     "--lcov",
   ];
 }

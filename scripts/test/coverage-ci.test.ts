@@ -6,6 +6,16 @@ import {
   buildDenoTestCommandArgs,
 } from "./coverage-ci.ts";
 
+/**
+ * The `--exclude` values as regexes, the way `deno coverage` reads them. Kept as
+ * literal substrings so JavaScript and Rust regex syntax cannot diverge here.
+ */
+function coverageExcludePatterns(): RegExp[] {
+  return buildCoverageCommandArgs(["coverage-shard-1"])
+    .filter((arg) => arg.startsWith("--exclude="))
+    .map((arg) => new RegExp(arg.slice("--exclude=".length)));
+}
+
 const providerDenyNet =
   "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
 
@@ -24,22 +34,39 @@ describe("coverage CI command", () => {
     );
   });
 
-  it("reports on cli/ as well as src/, without counting either suite's tests", () => {
+  it("reports on cli/ as well as src/", () => {
     const args = buildCoverageCommandArgs(["coverage-shard-1"]);
 
     // The unit suite runs cli/ tests on every shard; before cli/ was included
     // here that coverage was collected and then dropped at report time.
     assert(args.includes("--include=src/"));
     assert(args.includes("--include=cli/"));
+  });
 
-    for (const pattern of ["_test.ts", "_test.tsx", ".test.ts", ".test.tsx"]) {
+  it("keeps published modules whose name contains 'tests'", () => {
+    // `deno coverage --exclude` takes a regex over the file URL. A bare `tests`
+    // matched this path, so bringing cli/ into the report would otherwise have
+    // silently dropped the module behind the `vf_run_tests` MCP tool.
+    const published = "file:///repo/cli/mcp/tools/run-tests-tool.ts";
+
+    for (const pattern of coverageExcludePatterns()) {
       assert(
-        args.includes(`--exclude=src/**/*${pattern}`),
-        `src/ ${pattern} files must not count toward coverage`,
+        !pattern.test(published),
+        `${pattern.source} must not exclude ${published}`,
       );
+    }
+  });
+
+  it("keeps both test directories out of the report", () => {
+    const excluded = [
+      "file:///repo/tests/integration/thing.test.ts",
+      "file:///repo/src/html/styles-builder/__tests__/css-processor-setup.ts",
+    ];
+
+    for (const path of excluded) {
       assert(
-        args.includes(`--exclude=cli/**/*${pattern}`),
-        `cli/ ${pattern} files must not count toward coverage`,
+        coverageExcludePatterns().some((pattern) => pattern.test(path)),
+        `${path} must be excluded from coverage`,
       );
     }
   });
