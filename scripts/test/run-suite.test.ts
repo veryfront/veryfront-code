@@ -57,6 +57,21 @@ describe("suite planning parity", () => {
     }
   });
 
+  it("runs every root the unit suite claims to own", async () => {
+    // Regression guard. suites.ts, deno.json's test.include and
+    // suites.test.ts all place extensions/ and react/ in the unit suite, but
+    // UNIT_ROOTS omitted them, so 90 extension test files never executed while
+    // extensions/*/src/** still counted toward the 80% coverage gate.
+    const plan = await planSuiteFiles({ suite: "coverage:unit" });
+
+    for (const root of LEGACY_UNIT_ROOTS) {
+      assert(
+        plan.files.some((path) => path.startsWith(`${root}/`)),
+        `the unit suite owns ${root}/ but planned no test file from it`,
+      );
+    }
+  });
+
   it("keeps runtime-guarded Deno references eligible for Node", async () => {
     // `tests/test-file-utils.mjs` owns which sources count as Deno-dependent,
     // and a file opting out with the runtime-guarded header runs on Node. A
@@ -286,8 +301,15 @@ describe("migration command surface", () => {
   });
 });
 
+// These roots must match UNIT_ROOTS in run-suite.ts. They previously listed only
+// src/cli/templates, which pinned the planner to the legacy commands' own blind
+// spot: extensions/ and react/ are owned by the unit suite but no runner
+// selected them. Parity with a legacy command is only worth asserting where the
+// legacy command was right.
+const LEGACY_UNIT_ROOTS = ["src", "cli", "templates", "extensions", "react"];
+
 async function legacyUnitParallelFiles(): Promise<string[]> {
-  const files = await collectLegacyTestFiles(["src", "cli", "templates"]);
+  const files = await collectLegacyTestFiles(LEGACY_UNIT_ROOTS);
   const excluded = new Set([...UNIT_CWD_FILES, ...UNIT_CWD_EXCLUSION_FILES]);
   return sorted(
     files.filter((path) =>
@@ -308,7 +330,7 @@ async function legacyCliIntegrationFiles(): Promise<string[]> {
 
 async function legacyUnitCoverageFiles(): Promise<string[]> {
   return sorted(
-    (await collectLegacyTestFiles(["src", "cli", "templates"]))
+    (await collectLegacyTestFiles(LEGACY_UNIT_ROOTS))
       .filter((path) => !/\.integration\.test\.tsx?$/.test(path))
       .filter((path) => !path.startsWith("src/workflow/__tests__/")),
   );

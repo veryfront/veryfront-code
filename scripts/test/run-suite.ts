@@ -42,7 +42,22 @@ export interface SuiteFilePlan {
   readonly files: readonly string[];
 }
 
-const UNIT_ROOTS = ["src/", "cli/", "templates/"];
+// Must stay in step with the unit suite's `pathSelectors` in suites.ts and with
+// `test.include` in deno.json. When this drifted, extensions/ and react/ were
+// owned by the unit suite -- `resolveLeafSuiteOwners` says so and suites.test.ts
+// asserts it -- while no runner ever selected them, so 90 extension test files
+// never executed even though their sources counted toward the coverage gate.
+//
+// scripts/ is deliberately absent. deno.json's root `exclude` lists scripts/, so
+// those files are undiscoverable under the main config; they run through the
+// dedicated `test:scripts` task with scripts/test.deno.json instead.
+const UNIT_ROOTS = [
+  "src/",
+  "cli/",
+  "templates/",
+  "extensions/",
+  "react/",
+];
 const UNIT_CWD_FILES = [
   "cli/router.test.ts",
   "cli/app/operations/project-creation.test.ts",
