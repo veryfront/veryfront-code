@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { dirname, fromFileUrl, join } from "veryfront/platform/path";
 import { vfCreateProject } from "#cli/mcp/catalog-tools";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
@@ -40,15 +41,15 @@ async function withFakeNpm(
   const binDir = join(parentDir, "fake-npm");
   await createFakeNpm(binDir);
   const pathDelimiter = Deno.build.os === "windows" ? ";" : ":";
-  const originalDenoPath = Deno.env.get("PATH");
+  const originalDenoPath = getEnv("PATH");
   const nextPath = `${binDir}${pathDelimiter}${originalDenoPath ?? ""}`;
-  const originalSentinel = Deno.env.get(HOST_ONLY_SENTINEL);
-  Deno.env.set(HOST_ONLY_SENTINEL, "must-not-reach-child");
+  const originalSentinel = getEnv(HOST_ONLY_SENTINEL);
+  setEnv(HOST_ONLY_SENTINEL, "must-not-reach-child");
   try {
     await runWithProjectEnv({ PATH: nextPath }, action);
   } finally {
-    if (originalSentinel === undefined) Deno.env.delete(HOST_ONLY_SENTINEL);
-    else Deno.env.set(HOST_ONLY_SENTINEL, originalSentinel);
+    if (originalSentinel === undefined) deleteEnv(HOST_ONLY_SENTINEL);
+    else setEnv(HOST_ONLY_SENTINEL, originalSentinel);
   }
 }
 

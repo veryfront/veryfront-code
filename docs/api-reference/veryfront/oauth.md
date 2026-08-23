@@ -111,7 +111,7 @@ export const GET = createOAuthCallbackHandler(gmailConfig, { tokenStore });
 | `getOAuthTokensSchema`             |                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L177) |
 | `getTokenExchangeOptionsSchema`    |                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L281) |
 | `getTokenExchangeResultSchema`     |                                    | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L218) |
-| `githubConfig`                     | Configuration used by github.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L5)       |
+| `githubConfig`                     | Configuration used by GitHub.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L5)       |
 | `gitlabConfig`                     | Configuration used by gitlab.      | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L106)     |
 | `gmailConfig`                      | Configuration used by gmail.       | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L20)      |
 | `hubspotConfig`                    | Configuration used by hubspot.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L140)     |
