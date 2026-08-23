@@ -54,6 +54,61 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("/docs/v1/page.html"), docs);
       assertEquals(resourceRegistry.findByPattern("/docs/v1/pageXhtml"), undefined);
     });
+
+    it("should prefer an exact resource over an earlier parameterized match", () => {
+      const userById = resource({
+        pattern: "/users/:userId",
+        description: "User by id",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
+        load: async () => ({}),
+      });
+      const currentUser = resource({
+        pattern: "/users/me",
+        description: "Current user",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(userById.id, userById);
+      resourceRegistry.register(currentUser.id, currentUser);
+
+      assertEquals(resourceRegistry.findByPattern("/users/me"), currentUser);
+    });
+
+    it("should treat opaque URI scheme values as literals", () => {
+      const isbn = resource({
+        pattern: "urn:isbn",
+        description: "ISBN namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(isbn.id, isbn);
+
+      assertEquals(resourceRegistry.findByPattern("urn:isbn"), isbn);
+      assertEquals(resourceRegistry.findByPattern("urn:other"), undefined);
+    });
+
+    it("should let enabled patterns match behind disabled exact resources", () => {
+      const userById = resource({
+        pattern: "/users/:userId",
+        description: "User by id",
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
+        load: async () => ({}),
+      });
+      const disabledCurrentUser = resource({
+        pattern: "/users/me",
+        description: "Disabled current user",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+        mcp: { enabled: false },
+      });
+
+      resourceRegistry.register(userById.id, userById);
+      resourceRegistry.register(disabledCurrentUser.id, disabledCurrentUser);
+
+      assertEquals(resourceRegistry.findByPattern("/users/me"), userById);
+    });
   });
 
   describe("extractParams()", () => {

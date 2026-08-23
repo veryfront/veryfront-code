@@ -1,6 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
+import {
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
 
@@ -27,13 +33,22 @@ describe("resource factory", () => {
       assertEquals(r.id, "users_userId_profile");
     });
 
-    it("should auto-generate pattern when not provided", () => {
-      const r = resource({
-        description: "Auto pattern",
+    it("should generate distinct patterns with monotonic discriminators", () => {
+      const first = resource({
+        description: "First auto pattern",
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
-      assertStringIncludes(r.pattern, "/resource_");
+      const second = resource({
+        description: "Second auto pattern",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      assertMatch(first.pattern, /^\/resource_\d+_\d+$/);
+      assertMatch(second.pattern, /^\/resource_\d+_\d+$/);
+      assertNotEquals(first.pattern, second.pattern);
+      assertNotEquals(first.id, second.id);
     });
 
     it("should preserve paramsSchema", () => {
@@ -59,18 +74,41 @@ describe("resource factory", () => {
       assertEquals(r.mcp?.cachePolicy, "cache-first");
     });
 
-    it("should preserve subscribe function", () => {
-      const subscribeFn = async function* () {
-        yield { data: "test" };
+    it("should validate and transform params before subscribing", async () => {
+      let received: unknown;
+      const subscribeFn = async function* (params: { limit: number; tag: string }) {
+        received = params;
+        yield params;
       };
       const r = resource({
         pattern: "/stream",
         description: "Stream",
-        paramsSchema: defineSchema((v) => v.object({}))(),
+        paramsSchema: defineSchema((v) =>
+          v.object({
+            limit: v.number().default(10),
+            tag: v.string().transform((value) => `tag:${value}`),
+          })
+        )(),
         load: async () => ({}),
         subscribe: subscribeFn,
       });
-      assertEquals(r.subscribe, subscribeFn);
+
+      const update = await r.subscribe!({ tag: "news" } as unknown as {
+        limit: number;
+        tag: string;
+      })[Symbol.asyncIterator]().next();
+
+      assertEquals(received, { limit: 10, tag: "tag:news" });
+      assertEquals(update.value, { limit: 10, tag: "tag:news" });
+      assertThrows(
+        () =>
+          r.subscribe!({ limit: "many", tag: "news" } as unknown as {
+            limit: number;
+            tag: string;
+          }),
+        Error,
+        "params validation failed",
+      );
     });
   });
 
@@ -144,6 +182,49 @@ describe("resource factory", () => {
       });
       const result = await r.load({ key: "test" });
       assertEquals(result, { value: "test" });
+    });
+
+    it("should forward parsed defaults and transforms to load", async () => {
+      let received: unknown;
+      const r = resource({
+        pattern: "/parsed",
+        description: "Parsed params",
+        paramsSchema: defineSchema((v) =>
+          v.object({
+            limit: v.number().default(10),
+            tag: v.string().transform((value) => `tag:${value}`),
+          })
+        )(),
+        load: (params) => {
+          received = params;
+          return params;
+        },
+      });
+
+      const result = await r.load({ tag: "news" } as unknown as {
+        limit: number;
+        tag: string;
+      });
+
+      assertEquals(received, { limit: 10, tag: "tag:news" });
+      assertEquals(result, { limit: 10, tag: "tag:news" });
+    });
+
+    it("should use the parser and loader admitted at construction", async () => {
+      const config = {
+        pattern: "/stable",
+        description: "Stable resource",
+        paramsSchema: defineSchema((v) => v.object({ value: v.string() }))(),
+        load: ({ value }: { value: string }) => `original:${value}`,
+      };
+      const r = resource(config);
+
+      config.paramsSchema = defineSchema((v) =>
+        v.object({ value: v.string().transform((value) => `mutated:${value}`) })
+      )();
+      config.load = ({ value }) => `replacement:${value}`;
+
+      assertEquals(await r.load({ value: "input" }), "original:input");
     });
   });
 

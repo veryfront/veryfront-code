@@ -3,6 +3,7 @@ import { executeTool } from "#veryfront/tool";
 import type { ToolExecutionContext } from "#veryfront/tool";
 import { zodToJsonSchema } from "#veryfront/tool/schema/index.ts";
 import { resourceRegistry } from "#veryfront/resource";
+import { resourcePatternToUriTemplate } from "#veryfront/resource/pattern.ts";
 import { promptRegistry } from "#veryfront/prompt";
 import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
@@ -504,8 +505,9 @@ export class MCPServer {
     const templates: Array<Record<string, unknown>> = [];
 
     for (const [id, resource] of registry.resources.entries()) {
-      if (/:(\w+)/.test(resource.pattern)) {
-        const uriTemplate = resource.pattern.replace(/:(\w+)/g, "{$1}");
+      if (resource.mcp?.enabled === false) continue;
+      const uriTemplate = resourcePatternToUriTemplate(resource.pattern);
+      if (uriTemplate !== undefined) {
         const entry: Record<string, unknown> = {
           uriTemplate,
           name: id,
@@ -527,6 +529,8 @@ export class MCPServer {
     const resources: Array<Record<string, unknown>> = [];
 
     for (const [id, resource] of registry.resources.entries()) {
+      if (resource.mcp?.enabled === false) continue;
+      if (resourcePatternToUriTemplate(resource.pattern) !== undefined) continue;
       const entry: Record<string, unknown> = {
         uri: resource.pattern,
         name: id,
@@ -559,7 +563,7 @@ export class MCPServer {
       async () => {
         const resource = resourceRegistry.findByPattern(resourceUri);
 
-        if (!resource) {
+        if (!resource || resource.mcp?.enabled === false) {
           throw toError(
             createError({
               type: "agent",

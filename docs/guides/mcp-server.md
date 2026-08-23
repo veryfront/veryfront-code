@@ -128,12 +128,14 @@ Resources are data sources that MCP clients can read:
 ```ts
 // resources/docs.ts
 import { resource } from "veryfront/resource";
+import { defineSchema } from "veryfront/schemas";
 
 export default resource({
   description: "Project documentation",
   pattern: "docs://project",
+  paramsSchema: defineSchema((v) => v.object({}))(),
   load: async () => {
-    const docs = await loadDocs();
+    const docs = await Deno.readTextFile("README.md");
     return { contents: docs };
   },
 });

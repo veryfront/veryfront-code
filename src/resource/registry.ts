@@ -8,6 +8,7 @@
  */
 
 import type { Resource } from "./types.ts";
+import { resourcePatternToRegex } from "./pattern.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
@@ -19,28 +20,22 @@ type RegisteredResource = Resource<any, any>;
 
 const resourceRegistryManager = new ProjectScopedRegistryManager<RegisteredResource>("resource");
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 class ResourceRegistry extends ScopedRegistryFacade<RegisteredResource> {
   findByPattern(uri: string): RegisteredResource | undefined {
-    for (const resource of this.getAll().values()) {
+    const resources = Array.from(
+      this.getAll().values(),
+    ).filter((resource) => resource.mcp?.enabled !== false);
+    for (const resource of resources) {
+      if (resource.pattern === uri) return resource;
+    }
+    for (const resource of resources) {
       if (this.matchPattern(uri, resource.pattern)) return resource;
     }
     return undefined;
   }
 
-  private patternToRegex(pattern: string): RegExp {
-    const escapedPattern = escapeRegExp(pattern).replace(
-      /:([A-Za-z_][A-Za-z0-9_]*)/g,
-      "(?<$1>[^/]+)",
-    );
-    return new RegExp(`^${escapedPattern}$`);
-  }
-
   private matchPattern(uri: string, pattern: string): RegExpMatchArray | null {
-    return uri.match(this.patternToRegex(pattern));
+    return uri.match(resourcePatternToRegex(pattern));
   }
 
   extractParams(uri: string, pattern: string): Record<string, string> {

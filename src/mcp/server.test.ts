@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dynamicTool } from "#veryfront/tool";
+import { resource } from "#veryfront/resource";
 import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 
@@ -934,7 +935,7 @@ describe("mcp/server", () => {
     });
   });
 
-  describe("resources/templates/list", () => {
+  describe("resource endpoints", () => {
     it("returns array without error", async () => {
       const server = createMCPServer({
         enabled: true,
@@ -979,6 +980,16 @@ describe("mcp/server", () => {
       assertExists(tmpl);
       assertEquals(tmpl.uriTemplate, "/users/{id}");
       assertEquals(tmpl.description, "Get user by id");
+
+      const resourcesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/list",
+      });
+      const resources = (resourcesResponse.result as {
+        resources: Array<Record<string, unknown>>;
+      }).resources;
+      assertEquals(resources.some((entry) => entry.name === "test:users"), false);
     });
 
     it("excludes scheme-only colons like openapi://spec", async () => {
@@ -1005,6 +1016,40 @@ describe("mcp/server", () => {
       };
       const tmpl = result.resourceTemplates.find((t) => t.name === "test:openapi");
       assertEquals(tmpl, undefined);
+    });
+
+    it("treats opaque URI scheme values as fixed resources", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:isbn", {
+        id: "test:isbn",
+        pattern: "urn:isbn",
+        description: "ISBN namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+
+      const templatesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+      const templates = (templatesResponse.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+      assertEquals(templates.some((entry) => entry.name === "test:isbn"), false);
+
+      const resourcesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/list",
+      });
+      const resources = (resourcesResponse.result as {
+        resources: Array<Record<string, unknown>>;
+      }).resources;
+      assertEquals(resources.some((entry) => entry.name === "test:isbn"), true);
     });
 
     it("includes title when set on resource", async () => {
@@ -1034,6 +1079,95 @@ describe("mcp/server", () => {
       assertExists(tmpl);
       assertEquals(tmpl.title, "Blog Post");
       assertEquals(tmpl.uriTemplate, "/posts/{slug}");
+    });
+
+    it("hides disabled resources from lists and direct reads", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:private", {
+        id: "test:private",
+        pattern: "/private/:id",
+        description: "Private resource",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async ({ id }) => ({ id }),
+        mcp: { enabled: false },
+      });
+      registerResource("test:private-fixed", {
+        id: "test:private-fixed",
+        pattern: "private://config",
+        description: "Private fixed resource",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+        mcp: { enabled: false },
+      });
+
+      const resourcesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/list",
+      });
+      const resources = (resourcesResponse.result as {
+        resources: Array<Record<string, unknown>>;
+      }).resources;
+      assertEquals(
+        resources.some((entry) => entry.name === "test:private-fixed"),
+        false,
+      );
+
+      const templatesResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "resources/templates/list",
+      });
+      const templates = (templatesResponse.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+      assertEquals(templates.some((entry) => entry.name === "test:private"), false);
+
+      const readResponse = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "resources/read",
+        params: { uri: "/private/42" },
+      });
+      assertStringIncludes(readResponse.error?.message ?? "", "Resource not found");
+    });
+
+    it("reads parameterized resources with parsed schema values", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource(
+        "test:articles",
+        resource({
+          pattern: "/articles/:tag",
+          description: "Articles by tag",
+          paramsSchema: defineSchema((v) =>
+            v.object({
+              limit: v.number().default(10),
+              tag: v.string().transform((value) => `tag:${value}`),
+            })
+          )(),
+          load: (params) => params,
+        }),
+      );
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/read",
+        params: { uri: "/articles/news" },
+      });
+
+      assertEquals(response.error, undefined);
+      const result = response.result as { contents: Array<{ text: string }> };
+      assertEquals(JSON.parse(result.contents[0].text), {
+        limit: 10,
+        tag: "tag:news",
+      });
     });
   });
 
