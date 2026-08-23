@@ -404,6 +404,22 @@ const http = await import("node:http");
 http.get("http://127.0.0.1");
 const fs = require("node:fs/promises");
 await fs.readFile("deno.json");
+const directWrite = require("node:fs").promises.writeFile;
+await directWrite("tmp.txt", "x");
+const { default: defaultFs } = await import("node:fs");
+await defaultFs.promises.readFile("deno.json");
+const importedWrite = (await import("node:fs")).promises.writeFile;
+await importedWrite("tmp.txt", "x");
+import legacyFs = require("node:fs");
+await legacyFs.promises.readFile("deno.json");
+await (await import("node:fs")).writeFile("tmp.txt", "x");
+await (await import("node:fs")).promises.writeFile("tmp.txt", "x");
+(await import("node:http")).get("http://127.0.0.1");
+require("node:fs").writeFile("tmp.txt", "x", () => undefined);
+require("node:fs").promises.writeFile("tmp.txt", "x");
+require("node:http").get("http://127.0.0.1");
+await (await import("node:fs/promises")).open("deno.json", "r");
+await require("node:fs").promises.open("tmp.txt", "w");
 `,
       "src/runtime-loads.test.ts",
     );
@@ -416,6 +432,18 @@ await fs.readFile("deno.json");
         ["server", 8, "net.createServer"],
         ["network", 10, "http.get"],
         ["filesystem-read", 12, "fs.readFile"],
+        ["filesystem-write", 14, "directWrite"],
+        ["filesystem-read", 16, "defaultFs.promises.readFile"],
+        ["filesystem-write", 18, "importedWrite"],
+        ["filesystem-read", 20, "legacyFs.promises.readFile"],
+        ["filesystem-write", 21, "writeFile"],
+        ["filesystem-write", 22, "writeFile"],
+        ["network", 23, "get"],
+        ["filesystem-write", 24, "writeFile"],
+        ["filesystem-write", 25, "writeFile"],
+        ["network", 26, "get"],
+        ["filesystem-read", 27, "open"],
+        ["filesystem-write", 28, "open"],
       ],
     );
   });
@@ -510,6 +538,52 @@ function local(fs: { promises: { writeFile(): void } }) {
     );
   });
 
+  it("classifies extracted fs.promises methods from static namespace paths", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import fs from "node:fs";
+const readFromPromises = fs.promises.readFile;
+const writeFromPromises = fs.promises.writeFile;
+await readFromPromises("deno.json");
+await writeFromPromises("tmp.txt", "x");
+const {
+  promises: {
+    readFile: nestedReadFile,
+    rm: nestedRm,
+    writeFile: nestedWriteFile,
+  },
+} = fs;
+await nestedReadFile("deno.json");
+await nestedRm("tmp.txt");
+await nestedWriteFile("tmp.txt", "x");
+`,
+        "src/extracted-fs-promises-methods.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "readFromPromises"],
+        ["filesystem-write", "writeFromPromises"],
+        ["filesystem-read", "nestedReadFile"],
+        ["filesystem-write", "nestedRm"],
+        ["filesystem-write", "nestedWriteFile"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(fs: { promises: { readFile(): void } }) {
+  const readFromPromises = fs.promises.readFile;
+  readFromPromises();
+  const { promises: { rm } } = fs;
+  rm();
+}
+`,
+        "src/local-extracted-fs-promises-methods.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies statically known computed runtime properties", () => {
     const markers = collectSemanticMarkers(
       `
@@ -529,6 +603,26 @@ Deno[method]("tmp.txt", "x");
         ["filesystem-write", "Deno.writeTextFile"],
         ["filesystem-read", "Deno.readTextFile"],
         ["process", "process.exit"],
+        ["network", "globalThis.fetch"],
+      ],
+    );
+  });
+
+  it("classifies optional runtime calls", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+await Deno.open?.("read.txt", { read: true, write: false });
+await Deno.writeTextFile?.("tmp.txt", "x");
+await fetch?.("https://example.com/a");
+await globalThis.fetch?.("https://example.com/b");
+`,
+        "src/optional-runtime-calls.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "Deno.open"],
+        ["filesystem-write", "Deno.writeTextFile"],
+        ["network", "fetch"],
         ["network", "globalThis.fetch"],
       ],
     );
@@ -673,6 +767,168 @@ open("local.txt", { write: true });
     );
   });
 
+  it("classifies extracted Deno open aliases with option-aware modes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const denoOpen = Deno.open;
+const denoOpenAgain = denoOpen;
+await denoOpen("read.txt", { read: true, write: false });
+await denoOpenAgain("write.txt", { write: true, create: true });
+const { open: denoOpenFromPattern } = Deno;
+await denoOpenFromPattern("pattern-write.txt", { write: true });
+const globalThisDenoOpen = globalThis.Deno.open;
+await globalThisDenoOpen("global-read.txt", { read: true, write: false });
+const { openSync: denoOpenSync } = Deno;
+denoOpenSync("default.txt");
+await globalThis.Deno.open("global-write.txt", { write: true, create: true });
+await window.Deno.open("window-write.txt", { write: true });
+await self.Deno.open("self-write.txt", { write: true });
+`,
+        "src/extracted-deno-open.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "denoOpen"],
+        ["filesystem-write", "denoOpenAgain"],
+        ["filesystem-write", "denoOpenFromPattern"],
+        ["filesystem-read", "globalThisDenoOpen"],
+        ["filesystem-read", "denoOpenSync"],
+        ["filesystem-write", "globalThis.Deno.open"],
+        ["filesystem-write", "window.Deno.open"],
+        ["filesystem-write", "self.Deno.open"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(Deno: { open(): void; openSync(): void }) {
+  const denoOpen = Deno.open;
+  denoOpen("write.txt", { write: true });
+  const { openSync } = Deno;
+  openSync("write.txt", { write: true });
+}
+`,
+        "src/local-extracted-deno-open.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("fails closed for unknown computed open options while preserving static computed read options", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const optionKey = "write";
+await Deno.open("unknown-computed.txt", { [optionKey]: true });
+await Deno.open("static-computed.txt", { ["read"]: true, ["write"]: false });
+`,
+        "src/computed-open-options.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "Deno.open"],
+        ["filesystem-read", "Deno.open"],
+      ],
+    );
+  });
+
+  it("propagates runtime aliases from assignments and parameter defaults", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+let write;
+write = Deno.writeTextFile;
+await write("tmp.txt", "x");
+function run(defaultWrite = Deno.writeTextFile) {
+  defaultWrite("tmp.txt", "x");
+}
+const writeWithSatisfies = Deno.writeTextFile satisfies typeof Deno.writeTextFile;
+writeWithSatisfies("tmp.txt", "x");
+let nestedWrite = Deno.writeTextFile;
+function resetNestedWrite() {
+  nestedWrite = () => undefined;
+}
+nestedWrite("tmp.txt", "x");
+let conditionalWrite = Deno.writeTextFile;
+if (false) conditionalWrite = () => undefined;
+conditionalWrite("tmp.txt", "x");
+let assignedFs;
+assignedFs = await import("node:fs");
+const assignedWrite = assignedFs.promises.writeFile;
+await assignedWrite("tmp.txt", "x");
+`,
+        "src/assigned-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "write"],
+        ["filesystem-write", "defaultWrite"],
+        ["filesystem-write", "writeWithSatisfies"],
+        ["filesystem-write", "nestedWrite"],
+        ["filesystem-write", "conditionalWrite"],
+        ["filesystem-write", "assignedWrite"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(Deno: { writeTextFile(): void }) {
+  let write;
+  write = Deno.writeTextFile;
+  write("tmp.txt", "x");
+}
+let reassigned;
+reassigned = Deno.writeTextFile;
+reassigned = () => undefined;
+reassigned("tmp.txt", "x");
+function shadow(defaultWrite = (() => undefined)) {
+  defaultWrite("tmp.txt", "x");
+}
+`,
+        "src/shadowed-assigned-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "reassigned"]],
+    );
+  });
+
+  it("propagates runtime aliases through switch and static-block scopes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+switch (mode) {
+  case "write":
+    const writeFromSwitch = Deno.writeTextFile;
+    writeFromSwitch("tmp.txt", "x");
+    break;
+}
+class RuntimeWriter {
+  static {
+    const writeFromStatic = Deno.writeTextFile;
+    writeFromStatic("tmp.txt", "x");
+  }
+}
+`,
+        "src/scoped-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "writeFromSwitch"],
+        ["filesystem-write", "writeFromStatic"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+switch (mode) {
+  case "local":
+    const Deno = { writeTextFile: () => undefined };
+    const writeFromSwitch = Deno.writeTextFile;
+    writeFromSwitch("tmp.txt", "x");
+}
+`,
+        "src/shadowed-scoped-runtime-aliases.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("treats loop headers as lexical scopes for runtime names", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -763,6 +1019,9 @@ Deno.removeSignalListener("SIGINT", () => undefined);
 Object.defineProperty(globalThis, "process", { value: {} });
 Reflect.deleteProperty(globalThis, "Deno");
 const runtimeProcess = (globalThis as { process?: unknown }).process;
+globalThis.process.exit(1);
+window.process.chdir("/");
+self.process.kill(1);
 (Deno as unknown as { exit: (code: number) => never }).exit = () => {
   throw new Error("stub");
 };
@@ -785,7 +1044,10 @@ const runtimeProcess = (globalThis as { process?: unknown }).process;
         ["process", 11, "Object.defineProperty(globalThis.process)"],
         ["process", 12, "Reflect.deleteProperty(globalThis.Deno)"],
         ["process", 13, "globalThis.process"],
-        ["process", 14, "Deno.exit"],
+        ["process", 14, "globalThis.process.exit"],
+        ["shared-cwd", 15, "window.process.chdir"],
+        ["process", 16, "self.process.kill"],
+        ["process", 17, "Deno.exit"],
       ],
     );
   });
@@ -1125,6 +1387,73 @@ globalThis.fetch();`,
         `const Object = { defineProperty: () => undefined };
 Object.defineProperty(globalThis, "fetch", { value: () => undefined });`,
         "src/local-object.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("skips erased TypeScript nodes while preserving runtime declarations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+interface ErasedRuntimeShape {
+  [Deno.env]: string;
+}
+enum RuntimeEnum {
+  Value = Number(Deno.env.get("ENUM_VALUE")),
+}
+namespace RuntimeNamespace {
+  export const value = Deno.env.get("NAMESPACE_VALUE");
+}
+`,
+        "src/typescript-runtime-boundaries.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Deno.env"],
+        ["process", "Deno.env"],
+      ],
+    );
+  });
+
+  it("classifies bare global fetch aliases and wrapper expressions without type-only noise", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+type PhantomFetch = typeof fetch;
+interface PhantomRuntime {
+  [Deno.env]: string;
+  open: typeof Deno.open;
+}
+const aliasFetch = fetch;
+const aliasAgain = aliasFetch;
+await aliasFetch("https://example.com/a");
+await aliasAgain("https://example.com/b");
+(fetch as typeof globalThis.fetch)("https://example.com/c");
+(aliasAgain satisfies typeof fetch)("https://example.com/d");
+aliasAgain!("https://example.com/e");
+`,
+        "src/global-fetch-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "aliasFetch"],
+        ["network", "aliasAgain"],
+        ["network", "fetch"],
+        ["network", "aliasAgain"],
+        ["network", "aliasAgain"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { fetch } from "undici";
+const importedAlias = fetch;
+importedAlias("https://example.com/imported");
+function local(fetch: (input: string) => Promise<Response>) {
+  const localAlias = fetch;
+  localAlias("https://example.com/local");
+}
+`,
+        "src/shadowed-global-fetch-aliases.test.ts",
       ),
       [],
     );

@@ -404,6 +404,36 @@ const COMMENT_KEYS = new Set([
   "comments",
 ]);
 
+const TYPE_ONLY_CHILD_KEYS = new Set([
+  "abstract",
+  "accessibility",
+  "declare",
+  "implements",
+  "optional",
+  "override",
+  "returnType",
+  "typeAnnotation",
+  "typeArguments",
+  "typeParameters",
+  "typePredicate",
+]);
+
+const TYPESCRIPT_RUNTIME_NODES = new Set([
+  "TSAsExpression",
+  "TSEnumDeclaration",
+  "TSEnumMember",
+  "TSExportAssignment",
+  "TSExternalModuleReference",
+  "TSImportEqualsDeclaration",
+  "TSInstantiationExpression",
+  "TSModuleBlock",
+  "TSModuleDeclaration",
+  "TSNonNullExpression",
+  "TSParameterProperty",
+  "TSSatisfiesExpression",
+  "TSTypeAssertion",
+]);
+
 const SCOPE_NODES = new Set([
   "Program",
   "BlockStatement",
@@ -416,6 +446,8 @@ const SCOPE_NODES = new Set([
   "ClassPrivateMethod",
   "ClassDeclaration",
   "ClassExpression",
+  "StaticBlock",
+  "SwitchStatement",
   "ForStatement",
   "ForInStatement",
   "ForOfStatement",
@@ -544,20 +576,39 @@ export function collectSemanticMarkers(
   const bindings = collectImportBindings(program);
   const markers: SemanticMarker[] = [];
 
-  const visit = (node: Node, scopes: readonly Scope[]): void => {
+  const visit = (
+    node: Node,
+    scopes: readonly Scope[],
+    suppressMarker = false,
+  ): void => {
+    if (isErasedTypeScriptNode(node)) return;
     const nextScopes = SCOPE_NODES.has(node.type)
       ? [...scopes, createScope(node, bindings, scopes)]
       : scopes;
-    const marker = markerForNode(node, bindings, nextScopes);
+    if (node.type === "VariableDeclarator") {
+      const scope = nextScopes.at(-1);
+      if (scope) bindRuntimeDeclaration(node, bindings, nextScopes, scope);
+    }
+    bindRuntimeAssignment(node, bindings, nextScopes);
+    const marker = suppressMarker
+      ? undefined
+      : markerForNode(node, bindings, nextScopes);
     if (marker) markers.push(marker);
 
     for (const key of Object.keys(node)) {
-      if (key === "loc" || COMMENT_KEYS.has(key)) continue;
+      if (
+        key === "loc" || COMMENT_KEYS.has(key) ||
+        TYPE_ONLY_CHILD_KEYS.has(key)
+      ) continue;
       const value = node[key];
       if (Array.isArray(value)) {
         for (const item of value) if (isNode(item)) visit(item, nextScopes);
       } else if (isNode(value)) {
-        visit(value, nextScopes);
+        visit(
+          value,
+          nextScopes,
+          isGlobalRuntimePrefixObject(node, key, value),
+        );
       }
     }
   };
@@ -992,10 +1043,13 @@ function markerForNode(
     return memberRuntimeEffectMarker(node.left, line, bindings, scopes);
   }
 
-  if (node.type !== "CallExpression" && node.type !== "NewExpression") {
+  if (
+    node.type !== "CallExpression" && node.type !== "OptionalCallExpression" &&
+    node.type !== "NewExpression"
+  ) {
     return undefined;
   }
-  const callee = node.callee;
+  const callee = unwrapExpression(node.callee);
   if (!isNode(callee)) return undefined;
 
   const filesystemOpen = filesystemOpenMarker(
@@ -1059,7 +1113,10 @@ function markerForNode(
     return undefined;
   }
 
-  if (callee.type !== "MemberExpression") return undefined;
+  if (
+    callee.type !== "MemberExpression" &&
+    callee.type !== "OptionalMemberExpression"
+  ) return undefined;
   const runtimeMarker = memberRuntimeEffectMarker(
     callee,
     line,
@@ -1069,7 +1126,9 @@ function markerForNode(
   if (runtimeMarker) return runtimeMarker;
   const method = memberProperty(callee);
   const objectName = memberObjectName(callee);
-  if (!method || !objectName) return undefined;
+  if (!method || !objectName) {
+    return runtimeInvocationMarker(node, callee, line, bindings, scopes);
+  }
 
   const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(method);
   if (
@@ -1180,7 +1239,7 @@ function markerForNode(
       return { effect: "network", line, symbol: `${objectName}.${method}` };
     }
   }
-  return undefined;
+  return runtimeInvocationMarker(node, callee, line, bindings, scopes);
 }
 
 function memberRuntimeEffectMarker(
@@ -1189,7 +1248,10 @@ function memberRuntimeEffectMarker(
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): SemanticMarker | undefined {
-  if (member.type !== "MemberExpression") return undefined;
+  if (
+    member.type !== "MemberExpression" &&
+    member.type !== "OptionalMemberExpression"
+  ) return undefined;
   const chain = memberChain(member);
   if (chain?.length === 3 && chain[1] === "promises") {
     const source = moduleSourceForIdentifier(chain[0], imports, scopes);
@@ -1223,7 +1285,7 @@ function filesystemOpenMarker(
   bindings: ImportBindings,
   scopes: readonly Scope[],
 ): SemanticMarker | undefined {
-  if (node.type !== "CallExpression") return undefined;
+  if (!isCallLikeExpression(node)) return undefined;
   const binding = filesystemOpenBinding(callee, bindings, scopes);
   if (!binding) return undefined;
   const args = Array.isArray(node.arguments) ? node.arguments : [];
@@ -1241,48 +1303,49 @@ function filesystemOpenBinding(
   bindings: ImportBindings,
   scopes: readonly Scope[],
 ): { readonly source: string } | undefined {
-  if (callee.type === "Identifier") {
-    const name = callee.name as string;
-    const resolved = resolveLocalBinding(name, scopes);
-    if (resolved.binding?.kind === "filesystem-open") {
-      return resolved.binding;
-    }
-    if (resolved.declared) return undefined;
-    const source = bindings.filesystemOpen.get(name);
-    return source ? { source } : undefined;
-  }
-  if (callee.type !== "MemberExpression") return undefined;
+  const binding = runtimeBindingForExpression(callee, bindings, scopes);
+  return binding?.kind === "filesystem-open" ? binding : undefined;
+}
+
+function runtimeInvocationMarker(
+  node: Node,
+  callee: Node,
+  line: number,
+  bindings: ImportBindings,
+  scopes: readonly Scope[],
+): SemanticMarker | undefined {
   const chain = memberChain(callee);
-  const method = chain?.at(-1);
-  const receiver = chain?.[0];
   if (
-    !chain || !method || !FILESYSTEM_OPEN_METHODS.has(method) || !receiver
+    chain?.length === 3 && chain[0] === "Deno" && chain[1] === "env" &&
+    PROCESS_ENV_METHODS.has(chain[2])
   ) {
     return undefined;
   }
-  if (
-    chain.length === 2 && receiver === "Deno" &&
-    !isGlobalShadowed("Deno", scopes, bindings.importedNames)
-  ) {
-    return { source: "Deno" };
-  }
-  const supportedModuleChain = chain.length === 2 ||
-    (chain.length === 3 && chain[1] === "promises");
-  if (!supportedModuleChain) return undefined;
-  const resolved = resolveLocalBinding(receiver, scopes);
-  if (
-    resolved.binding?.kind === "module" &&
-    isFilesystemSpecifier(resolved.binding.source)
-  ) {
-    return { source: resolved.binding.source };
+  const binding = runtimeBindingForExpression(callee, bindings, scopes);
+  if (binding?.kind === "effect") {
+    return {
+      effect: binding.effect,
+      line,
+      symbol: invocationSymbol(callee),
+    };
   }
   if (
-    !resolved.declared && bindings.filesystemNamespaces.has(receiver) &&
-    !isShadowed(receiver, scopes)
+    node.type === "NewExpression" &&
+    binding?.kind === "constructor-effect"
   ) {
-    return { source: "node:fs" };
+    return {
+      effect: binding.effect,
+      line,
+      symbol: invocationSymbol(callee),
+    };
   }
   return undefined;
+}
+
+function invocationSymbol(callee: Node): string {
+  return memberChain(callee)?.join(".") ??
+    (callee.type === "Identifier" ? callee.name as string : undefined) ??
+    memberProperty(callee) ?? "runtime effect";
 }
 
 function filesystemOpenEffect(options: unknown): SemanticEffect {
@@ -1305,7 +1368,11 @@ function filesystemOpenEffect(options: unknown): SemanticEffect {
         ? property.key.name as string
         : literalValue(property.key)
       : undefined;
-    if (!key || !FILESYSTEM_MUTATING_OPEN_OPTIONS.has(key)) continue;
+    if (!key) {
+      if (property.computed === true) return "filesystem-write";
+      continue;
+    }
+    if (!FILESYSTEM_MUTATING_OPEN_OPTIONS.has(key)) continue;
     const option = unwrapExpression(property.value);
     if (!option || option.type !== "BooleanLiteral" || option.value !== false) {
       return "filesystem-write";
@@ -1331,8 +1398,8 @@ function globalPropertyMutationMarker(
       imports.importedNames,
     );
   }
-  if (node.type !== "CallExpression" || !isNode(node.callee)) return undefined;
-  const binding = globalRuntimeAliasBinding(node.callee, imports, scopes);
+  if (!isCallLikeExpression(node) || !isNode(node.callee)) return undefined;
+  const binding = runtimeBindingForExpression(node.callee, imports, scopes);
   if (binding?.kind !== "mutation-method") return undefined;
   const args = Array.isArray(node.arguments) ? node.arguments : [];
   const calleeName = node.callee.type === "Identifier"
@@ -1506,7 +1573,8 @@ function processGlobalMarker(
       return { effect: "process", line, symbol: "process.env" };
     }
     if (
-      chain?.[0] === "globalThis" &&
+      chain?.length === 2 &&
+      chain[0] === "globalThis" &&
       (chain[1] === "process" || chain[1] === "Deno") &&
       !isGlobalShadowed("globalThis", scopes, importedNames)
     ) {
@@ -1544,7 +1612,7 @@ function processGlobalMarker(
     }
   }
 
-  if (node.type !== "CallExpression" || !isNode(node.callee)) {
+  if (!isCallLikeExpression(node) || !isNode(node.callee)) {
     return undefined;
   }
   const callee = memberChain(node.callee);
@@ -1577,7 +1645,9 @@ function globalFetchMarker(
   importedNames: ReadonlySet<string>,
 ): SemanticMarker | undefined {
   if (
-    member.type !== "MemberExpression" || memberProperty(member) !== "fetch"
+    (member.type !== "MemberExpression" &&
+      member.type !== "OptionalMemberExpression") ||
+    memberProperty(member) !== "fetch"
   ) {
     return undefined;
   }
@@ -1611,7 +1681,27 @@ function collectImportBindings(program: Node): ImportBindings {
   };
   const body = Array.isArray(program.body) ? program.body : [];
   for (const statement of body) {
-    if (!isNode(statement) || statement.type !== "ImportDeclaration") continue;
+    if (!isNode(statement)) continue;
+    if (statement.type === "TSImportEqualsDeclaration") {
+      const reference = isNode(statement.moduleReference)
+        ? statement.moduleReference
+        : undefined;
+      const source = reference?.type === "TSExternalModuleReference"
+        ? literalValue(reference.expression)
+        : undefined;
+      if (
+        statement.importKind !== "type" && source && isNode(statement.id) &&
+        statement.id.type === "Identifier"
+      ) {
+        addRuntimeNamespaceImport(
+          bindings,
+          statement.id.name as string,
+          source,
+        );
+      }
+      continue;
+    }
+    if (statement.type !== "ImportDeclaration") continue;
     if (statement.importKind === "type") continue;
     const source = literalValue(statement.source);
     if (!source) continue;
@@ -1622,21 +1712,14 @@ function collectImportBindings(program: Node): ImportBindings {
       if (!isNode(specifier) || !isNode(specifier.local)) continue;
       if (specifier.importKind === "type") continue;
       const local = specifier.local.name as string;
-      bindings.importedNames.add(local);
       if (
         specifier.type === "ImportNamespaceSpecifier" ||
         specifier.type === "ImportDefaultSpecifier"
       ) {
-        if (isFilesystemSpecifier(source)) {
-          bindings.filesystemNamespaces.add(local);
-        }
-        if (isProcessSpecifier(source)) bindings.processNamespaces.add(local);
-        if (isServerSpecifier(source)) bindings.serverNamespaces.add(local);
-        if (isPlaywrightSpecifier(source)) {
-          bindings.playwrightNamespaces.add(local);
-        }
+        addRuntimeNamespaceImport(bindings, local, source);
         continue;
       }
+      bindings.importedNames.add(local);
       const importedName =
         isNode(specifier.imported) && specifier.imported.type === "Identifier"
           ? specifier.imported.name as string
@@ -1676,6 +1759,18 @@ function collectImportBindings(program: Node): ImportBindings {
   return bindings;
 }
 
+function addRuntimeNamespaceImport(
+  bindings: ImportBindings,
+  local: string,
+  source: string,
+): void {
+  bindings.importedNames.add(local);
+  if (isFilesystemSpecifier(source)) bindings.filesystemNamespaces.add(local);
+  if (isProcessSpecifier(source)) bindings.processNamespaces.add(local);
+  if (isServerSpecifier(source)) bindings.serverNamespaces.add(local);
+  if (isPlaywrightSpecifier(source)) bindings.playwrightNamespaces.add(local);
+}
+
 function createScope(
   node: Node,
   imports: ImportBindings,
@@ -1690,6 +1785,12 @@ function createScope(
     runtimeBindings: new Map(),
   };
   collectLocalRuntimeBindings(node, imports, [...outerScopes, scope]);
+  collectRuntimeParameterDefaults(
+    node,
+    imports,
+    [...outerScopes, scope],
+    scope,
+  );
   return scope;
 }
 
@@ -1698,8 +1799,9 @@ function collectLocalDeclaredNames(
   names: Set<string>,
   playwrightFixtures: Set<string>,
 ): void {
-  if (node.type === "Program" || node.type === "BlockStatement") {
-    for (const child of Array.isArray(node.body) ? node.body : []) {
+  const statements = lexicalScopeStatements(node);
+  if (statements) {
+    for (const child of statements) {
       if (!isNode(child)) continue;
       const statement = unwrapExportDeclaration(child);
       if (
@@ -1768,11 +1870,12 @@ function collectLocalRuntimeBindings(
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): void {
-  if (node.type !== "Program" && node.type !== "BlockStatement") return;
+  const statements = lexicalScopeStatements(node);
+  if (!statements) return;
   const scope = scopes.at(-1);
   if (!scope) return;
 
-  for (const statement of Array.isArray(node.body) ? node.body : []) {
+  for (const statement of statements) {
     if (!isNode(statement)) continue;
     const declaration = unwrapExportDeclaration(statement);
     if (declaration.type !== "VariableDeclaration") {
@@ -1787,6 +1890,100 @@ function collectLocalRuntimeBindings(
       bindRuntimeDeclaration(declarator, imports, scopes, scope);
     }
   }
+}
+
+function lexicalScopeStatements(node: Node): readonly Node[] | undefined {
+  if (
+    node.type === "Program" || node.type === "BlockStatement" ||
+    node.type === "StaticBlock"
+  ) {
+    return (Array.isArray(node.body) ? node.body : []).filter(isNode);
+  }
+  if (node.type !== "SwitchStatement") return undefined;
+  return (Array.isArray(node.cases) ? node.cases : []).flatMap((caseNode) =>
+    isNode(caseNode) && Array.isArray(caseNode.consequent)
+      ? caseNode.consequent.filter(isNode)
+      : []
+  );
+}
+
+function collectRuntimeParameterDefaults(
+  node: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  scope: Scope,
+): void {
+  if (
+    node.type !== "FunctionDeclaration" &&
+    node.type !== "FunctionExpression" &&
+    node.type !== "ArrowFunctionExpression" &&
+    node.type !== "ObjectMethod" &&
+    node.type !== "ClassMethod" &&
+    node.type !== "ClassPrivateMethod"
+  ) {
+    return;
+  }
+  for (const param of Array.isArray(node.params) ? node.params : []) {
+    bindRuntimeDefaultPattern(param, imports, scopes, scope);
+  }
+}
+
+function bindRuntimeDefaultPattern(
+  pattern: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  scope: Scope,
+): void {
+  if (!isNode(pattern)) return;
+  if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
+    const binding = runtimeBindingForExpression(pattern.right, imports, scopes);
+    if (binding) bindPatternToRuntime(pattern.left, binding, scope);
+    return;
+  }
+  if (pattern.type === "ObjectPattern" || pattern.type === "ArrayPattern") {
+    for (
+      const property of Array.isArray(pattern.properties)
+        ? pattern.properties
+        : Array.isArray(pattern.elements)
+        ? pattern.elements
+        : []
+    ) {
+      const value = isNode(property) && isNode(property.value)
+        ? property.value
+        : property;
+      bindRuntimeDefaultPattern(value, imports, scopes, scope);
+    }
+  }
+}
+
+function bindRuntimeAssignment(
+  node: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): void {
+  if (
+    node.type !== "AssignmentExpression" || node.operator !== "=" ||
+    !isNode(node.left) || node.left.type !== "Identifier"
+  ) {
+    return;
+  }
+  const scope = declaringScopeForName(node.left.name as string, scopes);
+  if (!scope) return;
+  const binding = runtimeBindingForExpression(node.right, imports, scopes);
+  if (binding) {
+    scope.runtimeBindings.set(node.left.name as string, binding);
+  }
+}
+
+function declaringScopeForName(
+  name: string,
+  scopes: readonly Scope[],
+): Scope | undefined {
+  for (let index = scopes.length - 1; index >= 0; index--) {
+    const scope = scopes[index];
+    if (scope?.names.has(name)) return scope;
+  }
+  return undefined;
 }
 
 function unwrapExportDeclaration(statement: Node): Node {
@@ -1806,60 +2003,46 @@ function bindRuntimeDeclaration(
   scopes: readonly Scope[],
   scope: Scope,
 ): void {
-  const init = unwrapExpression(declaration.init);
-  if (!init) return;
-
-  const identifierBinding = identifierRuntimeBinding(init, imports, scopes);
-  if (identifierBinding && isNode(declaration.id)) {
-    if (identifierBinding.kind === "module") {
-      bindPatternToModule(declaration.id, identifierBinding.source, scope);
-    } else {
-      bindPatternToRuntime(declaration.id, identifierBinding, scope);
-    }
-    return;
-  }
-
-  const globalRuntime = globalRuntimeAliasBinding(init, imports, scopes);
-  if (globalRuntime && isNode(declaration.id)) {
-    bindPatternToRuntime(declaration.id, globalRuntime, scope);
-    return;
-  }
-
-  const createRequireBinding = createRequireResultBinding(
-    init,
+  if (!isNode(declaration.id)) return;
+  const binding = runtimeBindingForExpression(
+    declaration.init,
     imports,
     scopes,
   );
-  if (createRequireBinding && isNode(declaration.id)) {
-    bindPatternToRuntime(declaration.id, createRequireBinding, scope);
-    return;
-  }
+  if (binding) bindPatternToRuntime(declaration.id, binding, scope);
+}
 
-  const moduleSource = runtimeModuleSource(init, imports, scopes);
-  if (moduleSource && isNode(declaration.id)) {
-    bindPatternToModule(declaration.id, moduleSource, scope);
-    return;
-  }
-
-  if (init.type === "MemberExpression" && isNode(declaration.id)) {
-    const chain = memberChain(init);
-    if (!chain || chain.length !== 2) return;
-    const source = moduleSourceForIdentifier(chain[0], imports, scopes);
-    if (!source) return;
-    const nestedSource = moduleSourceForProperty(source, chain[1]);
-    if (nestedSource) {
-      bindPatternToModule(declaration.id, nestedSource, scope);
-      return;
-    }
-    const effect = effectForModuleMethod(source, chain[1]);
-    if (effect) {
-      bindPatternToRuntime(
-        declaration.id,
-        { kind: "effect", effect },
-        scope,
-      );
-    }
-  }
+function runtimeBindingForExpression(
+  expression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  const value = unwrapExpression(expression);
+  if (!value) return undefined;
+  const identifierBinding = identifierRuntimeBinding(value, imports, scopes);
+  if (identifierBinding) return identifierBinding;
+  const createRequireBinding = createRequireResultBinding(
+    value,
+    imports,
+    scopes,
+  );
+  if (createRequireBinding) return createRequireBinding;
+  const moduleSource = runtimeModuleSource(value, imports, scopes);
+  if (moduleSource) return { kind: "module", source: moduleSource };
+  if (
+    value.type !== "MemberExpression" &&
+    value.type !== "OptionalMemberExpression"
+  ) return undefined;
+  const property = memberProperty(value);
+  if (!property) return undefined;
+  const objectBinding = runtimeBindingForExpression(
+    value.object,
+    imports,
+    scopes,
+  );
+  return objectBinding
+    ? runtimePropertyBinding(objectBinding, property)
+    : undefined;
 }
 
 function identifierRuntimeBinding(
@@ -1891,6 +2074,9 @@ function identifierRuntimeBinding(
   if (imports.process.has(name)) return { kind: "effect", effect: "process" };
   if (imports.server.has(name)) return { kind: "effect", effect: "server" };
   if (imports.network.has(name)) return { kind: "effect", effect: "network" };
+  if (name === "fetch" && !imports.importedNames.has("fetch")) {
+    return { kind: "effect", effect: "network" };
+  }
   if (imports.playwright.has(name)) {
     return { kind: "effect", effect: "browser" };
   }
@@ -1906,7 +2092,7 @@ function identifierRuntimeBinding(
   if (imports.playwrightNamespaces.has(name)) {
     return { kind: "module", source: "@playwright/test" };
   }
-  return undefined;
+  return globalIdentifierRuntimeBinding(name, imports, scopes);
 }
 
 function moduleSourceForIdentifier(
@@ -1928,36 +2114,21 @@ function moduleSourceForProperty(
   source: string,
   property: string,
 ): string | undefined {
+  if (property === "default" && isRuntimeEffectModule(source)) return source;
   return isFilesystemSpecifier(source) && property === "promises"
     ? "node:fs/promises"
     : undefined;
 }
 
-function globalRuntimeAliasBinding(
-  init: Node,
-  imports: ImportBindings,
-  scopes: readonly Scope[],
+function moduleRuntimeBindingForProperty(
+  source: string,
+  property: string,
 ): RuntimeBinding | undefined {
-  if (init.type === "Identifier") {
-    return globalIdentifierRuntimeBinding(
-      init.name as string,
-      imports,
-      scopes,
-    );
+  if (isFilesystemSpecifier(source) && FILESYSTEM_OPEN_METHODS.has(property)) {
+    return { kind: "filesystem-open", source };
   }
-
-  const chain = memberChain(init);
-  if (!chain || chain.length < 2) return undefined;
-  let binding = globalIdentifierRuntimeBinding(
-    chain[0],
-    imports,
-    scopes,
-  );
-  for (const property of chain.slice(1)) {
-    if (!binding) return undefined;
-    binding = runtimePropertyBinding(binding, property);
-  }
-  return binding;
+  const effect = effectForModuleMethod(source, property);
+  return effect ? { kind: "effect", effect } : undefined;
 }
 
 function globalIdentifierRuntimeBinding(
@@ -2026,6 +2197,12 @@ function runtimePropertyBinding(
   binding: RuntimeBinding,
   property: string,
 ): RuntimeBinding | undefined {
+  if (binding.kind === "module") {
+    const nestedSource = moduleSourceForProperty(binding.source, property);
+    return nestedSource
+      ? { kind: "module", source: nestedSource }
+      : moduleRuntimeBindingForProperty(binding.source, property);
+  }
   if (binding.kind === "global-object") {
     return globalObjectPropertyBinding(property);
   }
@@ -2033,6 +2210,11 @@ function runtimePropertyBinding(
     return sharedObjectPropertyBinding(binding.intrinsic, property);
   }
   if (binding.kind === "global-runtime") {
+    if (
+      binding.runtime === "Deno" && FILESYSTEM_OPEN_METHODS.has(property)
+    ) {
+      return { kind: "filesystem-open", source: "Deno" };
+    }
     const effect = effectForGlobalRuntimeMethod(binding.runtime, property);
     if (!effect) return undefined;
     return property === "env"
@@ -2054,13 +2236,18 @@ function bindPatternToRuntime(
     bindPatternToRuntime(pattern.left, binding, scope);
     return;
   }
+  if (pattern.type === "RestElement" && isNode(pattern.argument)) {
+    bindPatternToRuntime(pattern.argument, binding, scope);
+    return;
+  }
   if (pattern.type === "Identifier") {
     scope.runtimeBindings.set(pattern.name as string, binding);
     return;
   }
   if (
     pattern.type !== "ObjectPattern" ||
-    (binding.kind !== "global-runtime" && binding.kind !== "global-object" &&
+    (binding.kind !== "module" && binding.kind !== "global-runtime" &&
+      binding.kind !== "global-object" &&
       binding.kind !== "shared-object" && binding.kind !== "effect-object")
   ) {
     return;
@@ -2083,66 +2270,6 @@ function bindPatternToRuntime(
     const propertyBinding = runtimePropertyBinding(binding, method);
     if (propertyBinding) {
       bindPatternToRuntime(property.value, propertyBinding, scope);
-    }
-  }
-}
-
-function bindPatternToModule(
-  pattern: Node,
-  source: string,
-  scope: Scope,
-): void {
-  if (pattern.type === "Identifier") {
-    scope.runtimeBindings.set(pattern.name as string, {
-      kind: "module",
-      source,
-    });
-    return;
-  }
-  if (pattern.type !== "ObjectPattern") return;
-  for (
-    const property of Array.isArray(pattern.properties)
-      ? pattern.properties
-      : []
-  ) {
-    if (
-      !isNode(property) || property.type !== "ObjectProperty" ||
-      !isNode(property.key) || !isNode(property.value)
-    ) continue;
-    const importedName = property.key.type === "Identifier"
-      ? property.key.name as string
-      : property.key.type === "StringLiteral"
-      ? property.key.value as string
-      : undefined;
-    const localName = property.value.type === "Identifier"
-      ? property.value.name as string
-      : property.value.type === "AssignmentPattern" &&
-          isNode(property.value.left) &&
-          property.value.left.type === "Identifier"
-      ? property.value.left.name as string
-      : undefined;
-    if (!importedName || !localName) continue;
-    const nestedSource = moduleSourceForProperty(source, importedName);
-    if (nestedSource) {
-      scope.runtimeBindings.set(localName, {
-        kind: "module",
-        source: nestedSource,
-      });
-      continue;
-    }
-    if (
-      isFilesystemSpecifier(source) &&
-      FILESYSTEM_OPEN_METHODS.has(importedName)
-    ) {
-      scope.runtimeBindings.set(localName, {
-        kind: "filesystem-open",
-        source,
-      });
-      continue;
-    }
-    const effect = effectForModuleMethod(source, importedName);
-    if (effect) {
-      scope.runtimeBindings.set(localName, { kind: "effect", effect });
     }
   }
 }
@@ -2205,6 +2332,8 @@ function unwrapExpression(value: unknown): Node | undefined {
     current &&
     (current.type === "AwaitExpression" || current.type === "TSAsExpression" ||
       current.type === "TSTypeAssertion" ||
+      current.type === "TSSatisfiesExpression" ||
+      current.type === "TSInstantiationExpression" ||
       current.type === "TSNonNullExpression" ||
       current.type === "ParenthesizedExpression")
   ) {
@@ -2463,6 +2592,30 @@ function memberChain(node: Node): readonly string[] | undefined {
   return object && property ? [...object, property] : undefined;
 }
 
+function isGlobalRuntimePrefixObject(
+  parent: Node,
+  key: string,
+  child: Node,
+): boolean {
+  if (
+    key !== "object" ||
+    (parent.type !== "MemberExpression" &&
+      parent.type !== "OptionalMemberExpression") ||
+    (child.type !== "MemberExpression" &&
+      child.type !== "OptionalMemberExpression")
+  ) {
+    return false;
+  }
+  const parentChain = memberChain(parent);
+  const childChain = memberChain(child);
+  return parentChain !== undefined &&
+    parentChain.length > 2 &&
+    childChain !== undefined &&
+    childChain.length === 2 &&
+    childChain[0] === "globalThis" &&
+    (childChain[1] === "Deno" || childChain[1] === "process");
+}
+
 function literalValue(value: unknown): string | undefined {
   return isNode(value) && value.type === "StringLiteral"
     ? value.value as string
@@ -2476,6 +2629,17 @@ function importHasRuntimeValue(node: Node): boolean {
     specifiers.some((specifier) =>
       isNode(specifier) && specifier.importKind !== "type"
     );
+}
+
+function isCallLikeExpression(node: Node): boolean {
+  return node.type === "CallExpression" ||
+    node.type === "OptionalCallExpression";
+}
+
+function isErasedTypeScriptNode(node: Node): boolean {
+  if (node.declare === true) return true;
+  return node.type.startsWith("TS") &&
+    !TYPESCRIPT_RUNTIME_NODES.has(node.type);
 }
 
 function isNode(value: unknown): value is Node {
