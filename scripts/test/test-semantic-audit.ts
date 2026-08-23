@@ -695,6 +695,7 @@ type RuntimeBinding =
     readonly runtime: "Deno" | "process";
   }
   | { readonly kind: "create-require" }
+  | { readonly kind: "partial"; readonly binding: RuntimeBinding }
   | {
     readonly kind: "one-of";
     readonly bindings: readonly RuntimeBinding[];
@@ -4882,13 +4883,24 @@ function mutationCallResultRuntimeBinding(
             scopes,
           );
           const getterEnumerabilities = sourceBinding
-            ? runtimeUnknownGetterEnumerabilities(sourceBinding)
+            ? runtimeBindingHasPartialAlternative(sourceBinding)
+              ? []
+              : runtimeUnknownGetterEnumerabilities(sourceBinding)
             : [];
           if (sourceBinding && getterEnumerabilities.length > 0) {
-            result = appendRuntimePropertyOperation(result, {
-              kind: "spread",
-              binding: runtimeEnumerableNamespaceBinding(sourceBinding),
-            });
+            for (const property of namespacePropertyNames(sourceBinding)) {
+              const preservesSetter = runtimePropertySetterBinding(
+                result,
+                property,
+              ) !== undefined;
+              result = appendRuntimeMutationResultProperty(
+                result,
+                property,
+                runtimeEnumerablePropertyBinding(sourceBinding, property),
+                preservesSetter,
+                !preservesSetter,
+              );
+            }
             continue;
           }
           for (
@@ -5237,6 +5249,11 @@ function localMutationAssignedEntryBinding(
       imports,
       scopes,
     );
+    if (
+      sourceBinding && runtimeBindingHasPartialAlternative(sourceBinding)
+    ) {
+      return conservativeSemanticEffectBinding();
+    }
     if (
       sourceBinding !== undefined &&
       flattenRuntimeBindings(sourceBinding).every((candidate) =>
@@ -5613,22 +5630,36 @@ function retainedRuntimeDescriptorBinding(
   descriptor: unknown,
 ): { readonly changed: boolean; readonly binding?: RuntimeBinding } {
   const fields = runtimeDescriptorDefinedFields(descriptor);
-  if (!fields || !["value", "get", "set"].some((field) => fields.has(field))) {
+  if (!fields) return { changed: false };
+  const changesProperty = ["value", "get", "set"].some((field) =>
+    fields.has(field)
+  );
+  const changesEnumerable = fields.has("enumerable");
+  if (!changesProperty && !changesEnumerable) {
     return { changed: false };
   }
   const existing = runtimePropertyResolution(target, property, true).binding;
   if (fields.has("value")) return { changed: true };
+  const enumerable = changesEnumerable
+    ? runtimeDescriptorBooleanField(descriptor, "enumerable")
+    : undefined;
   return {
     changed: true,
     binding: unionRuntimeBindings(
-      flattenRuntimeBindings(existing).filter((candidate) =>
-        candidate.kind === "property-setter"
+      flattenRuntimeBindings(existing).flatMap((candidate) => {
+        const retained = candidate.kind === "property-setter"
           ? !fields.has("set")
           : candidate.kind === "property-getter-effect" ||
               candidate.kind === "property-getter-value"
           ? !fields.has("get")
-          : false
-      ),
+          : !changesProperty;
+        if (!retained) return [];
+        return changesEnumerable &&
+            (candidate.kind === "property-getter-effect" ||
+              candidate.kind === "property-getter-value")
+          ? [{ ...candidate, enumerable }]
+          : [candidate];
+      }),
     ),
   };
 }
@@ -5757,6 +5788,32 @@ function runtimeDescriptorDefinesField(
   field: string,
 ): boolean {
   return runtimeDescriptorDefinedFields(descriptor)?.has(field) === true;
+}
+
+function runtimeDescriptorBooleanField(
+  descriptor: unknown,
+  field: string,
+): boolean | undefined {
+  const value = unwrapExpression(descriptor);
+  if (!value || value.type !== "ObjectExpression") return undefined;
+  let result: boolean | undefined;
+  for (
+    const property of Array.isArray(value.properties) ? value.properties : []
+  ) {
+    if (
+      !isNode(property) || property.type === "SpreadElement" ||
+      staticObjectPropertyName(property) !== field
+    ) {
+      continue;
+    }
+    const fieldValue = property.type === "ObjectProperty"
+      ? unwrapExpression(property.value)
+      : undefined;
+    result = fieldValue?.type === "BooleanLiteral"
+      ? fieldValue.value as boolean
+      : undefined;
+  }
+  return result;
 }
 
 function runtimeDescriptorDefinedFields(
@@ -7634,18 +7691,29 @@ function alternativeRuntimeBinding(
   scopes: readonly Scope[],
 ): RuntimeBinding | undefined {
   if (value.type === "ConditionalExpression") {
-    return unionRuntimeBindings([
+    return partialAlternativeRuntimeBinding([
       runtimeBindingForExpression(value.consequent, imports, scopes),
       runtimeBindingForExpression(value.alternate, imports, scopes),
-    ].flatMap((binding) => binding ?? []));
+    ]);
   }
   if (value.type === "LogicalExpression") {
-    return unionRuntimeBindings([
+    return partialAlternativeRuntimeBinding([
       runtimeBindingForExpression(value.left, imports, scopes),
       runtimeBindingForExpression(value.right, imports, scopes),
-    ].flatMap((binding) => binding ?? []));
+    ]);
   }
   return undefined;
+}
+
+function partialAlternativeRuntimeBinding(
+  alternatives: readonly (RuntimeBinding | undefined)[],
+): RuntimeBinding | undefined {
+  const binding = unionRuntimeBindings(
+    alternatives.flatMap((candidate) => candidate ?? []),
+  );
+  return binding && alternatives.some((candidate) => candidate === undefined)
+    ? { kind: "partial", binding }
+    : binding;
 }
 
 function boundCallableRuntimeBinding(
@@ -8188,29 +8256,6 @@ function runtimeUnknownEnumerablePropertyBinding(
   );
 }
 
-function runtimeEnumerableNamespaceBinding(
-  binding: RuntimeBinding,
-): RuntimeBinding {
-  return unionRuntimeBindings(
-    flattenRuntimeBindings(binding).flatMap((candidate): RuntimeBinding[] => {
-      if (candidate.kind !== "namespace-object") return [];
-      return [{
-        kind: "namespace-object",
-        shape: "object",
-        properties: new Map(),
-        propertyOperations: [...namespacePropertyNames(candidate)].map(
-          (property) => ({
-            kind: "define" as const,
-            name: property,
-            binding: runtimeEnumerablePropertyBinding(candidate, property),
-            defaultMayRun: false,
-          }),
-        ),
-      }];
-    }),
-  ) ?? emptyRuntimeNamespaceBinding();
-}
-
 function runtimeUnknownGetterEnumerabilities(
   binding: RuntimeBinding,
 ): readonly (boolean | undefined)[] {
@@ -8531,11 +8576,21 @@ function unionRuntimeBindings(
 function flattenRuntimeBindings(
   binding: RuntimeBinding | undefined,
 ): readonly RuntimeBinding[] {
-  return binding?.kind === "one-of"
+  return binding?.kind === "partial"
+    ? flattenRuntimeBindings(binding.binding)
+    : binding?.kind === "one-of"
     ? binding.bindings.flatMap((candidate) => flattenRuntimeBindings(candidate))
     : binding
     ? [binding]
     : [];
+}
+
+function runtimeBindingHasPartialAlternative(
+  binding: RuntimeBinding | undefined,
+): boolean {
+  return binding?.kind === "partial" ||
+    (binding?.kind === "one-of" &&
+      binding.bindings.some(runtimeBindingHasPartialAlternative));
 }
 
 function runtimePropertyHasCrossFunctionMutation(
@@ -8654,6 +8709,9 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
   }
   if (binding.kind === "shared-object") {
     return `shared-object:${binding.intrinsic ?? "*"}`;
+  }
+  if (binding.kind === "partial") {
+    return `partial:${runtimeBindingKey(binding.binding)}`;
   }
   if (binding.kind === "namespace-object") return "namespace-object";
   if (binding.kind === "one-of") {
