@@ -9,7 +9,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { join } from "veryfront/platform/path";
+import { dirname, join } from "veryfront/platform/path";
 import { formatCLIError, VeryfrontError } from "veryfront/errors";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import {
@@ -1002,7 +1002,7 @@ describe("createProject when a path cannot be written through", () => {
             installDependencies: true,
           }),
         Error,
-        'Directory "contract-project" already contains node_modules/.package-lock.json. Use --force to overwrite.',
+        'Directory "contract-project" already contains node_modules/.package-lock.json, node_modules. Use --force to overwrite.',
       );
 
       assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
@@ -1032,6 +1032,32 @@ describe("createProject when a path cannot be written through", () => {
       );
 
       assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses existing node_modules before dependency installation can prune it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-node-modules-" });
+    const projectDir = join(parentDir, "contract-project");
+    const userFile = join(projectDir, "node_modules", "user-owned", "data.txt");
+
+    try {
+      await Deno.mkdir(dirname(userFile), { recursive: true });
+      await Deno.writeTextFile(userFile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains node_modules. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(userFile), "keep-me\n");
       assertEquals(await exists(join(projectDir, "README.md")), false);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});

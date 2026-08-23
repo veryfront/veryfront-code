@@ -5,7 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "veryfront/platform/path";
+import { dirname, join } from "veryfront/platform/path";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
 import {
   resolveCreateProjectPaths,
@@ -434,6 +434,30 @@ describe("mcp/tools/catalog-tools", () => {
       assertEquals(result.projectDir, undefined);
       assertEquals(result.message.includes("already contains npm-shrinkwrap.json"), true);
       assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses existing node_modules before dependency installation can prune it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const userFile = join(projectDir, "node_modules", "user-owned", "data.txt");
+      await Deno.mkdir(dirname(userFile), { recursive: true });
+      await Deno.writeTextFile(userFile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains node_modules"), true);
+      assertEquals(await Deno.readTextFile(userFile), "keep-me\n");
       assertEquals(
         await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
         "absent",

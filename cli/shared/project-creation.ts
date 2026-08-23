@@ -518,11 +518,19 @@ function installerWritePaths(request: CreateProjectRequest): string[] {
   return lockfiles;
 }
 
+function installerConflictPaths(request: CreateProjectRequest): string[] {
+  const paths = installerWritePaths(request);
+  if (request.installDependencies && packageManagerPreference(request.runtime) === "npm") {
+    paths.push("node_modules");
+  }
+  return paths;
+}
+
 function conflictWritePaths(
   assembly: ScaffoldAssembly,
   request: CreateProjectRequest,
 ): string[] {
-  return [...scaffoldWritePaths(assembly, request), ...installerWritePaths(request)];
+  return [...scaffoldWritePaths(assembly, request), ...installerConflictPaths(request)];
 }
 
 function protectedMergePaths(): string[] {
