@@ -500,6 +500,11 @@ proc.env.MODE = "test";
 const mode = proc.env.MODE;
 processDefault.env.MODE = "prod";
 const other = processDefault.env.MODE;
+let runtime = process;
+if (maybe) runtime = Deno;
+const conditionalEnv = runtime.env;
+const conditionalMode = runtime.env.MODE;
+runtime.env.MODE = "next";
 `,
         "src/process-namespace-env.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -508,6 +513,9 @@ const other = processDefault.env.MODE;
         ["process", "proc.env.MODE"],
         ["process", "processDefault.env.MODE"],
         ["process", "processDefault.env.MODE"],
+        ["process", "runtime.env"],
+        ["process", "runtime.env.MODE"],
+        ["process", "runtime.env.MODE"],
       ],
     );
     assertEquals(
@@ -1197,6 +1205,99 @@ class ShadowedParameterProperty {
     );
   });
 
+  it("retains possible runtime alias effects from conditional assignments", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+let conditionalTarget;
+if (maybe) {
+  conditionalTarget = Deno.writeTextFile;
+} else {
+  conditionalTarget = fetch;
+}
+await conditionalTarget("conditional.txt", "x");
+
+let sequentialTarget;
+sequentialTarget = Deno.writeTextFile;
+sequentialTarget = fetch;
+await sequentialTarget("https://example.com/sequential");
+
+var sequentialVarTarget = Deno.writeTextFile;
+sequentialVarTarget = fetch;
+await sequentialVarTarget("https://example.com/sequential-var");
+
+if (maybe) {
+  var conditionalVarTarget = Deno.writeTextFile;
+} else {
+  conditionalVarTarget = fetch;
+}
+await conditionalVarTarget("conditional-var.txt", "x");
+
+if (flag) var run = fetch;
+else var run = Deno.writeTextFile;
+await run("bare-if.txt", "x");
+
+switch (kind) {
+  case "network":
+    var switchTarget = fetch;
+    break;
+  default:
+    switchTarget = Deno.writeTextFile;
+}
+await switchTarget("switch.txt", "x");
+
+let loopTarget = fetch;
+while (maybe) {
+  loopTarget = Deno.writeTextFile;
+}
+await loopTarget("loop.txt", "x");
+
+let forTarget = fetch;
+for (; maybe; forTarget = Deno.writeTextFile) {
+  forTarget = Deno.writeTextFile;
+}
+await forTarget("for.txt", "x");
+
+let forInTarget = fetch;
+for (forInTarget in source) {}
+await forInTarget("for-in.txt", "x");
+
+let tryTarget = fetch;
+try {
+  tryTarget = Deno.writeTextFile;
+} catch {
+  tryTarget = Deno.writeTextFile;
+} finally {
+  tryTarget("try-finally.txt", "x");
+}
+await tryTarget("try.txt", "x");
+`,
+        "src/conditional-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "conditionalTarget"],
+        ["network", "conditionalTarget"],
+        ["network", "sequentialTarget"],
+        ["network", "sequentialVarTarget"],
+        ["filesystem-write", "conditionalVarTarget"],
+        ["network", "conditionalVarTarget"],
+        ["filesystem-write", "run"],
+        ["network", "run"],
+        ["filesystem-write", "switchTarget"],
+        ["network", "switchTarget"],
+        ["filesystem-write", "loopTarget"],
+        ["network", "loopTarget"],
+        ["filesystem-write", "forTarget"],
+        ["network", "forTarget"],
+        ["network", "forInTarget"],
+        ["filesystem-write", "tryTarget"],
+        ["network", "tryTarget"],
+        ["filesystem-write", "tryTarget"],
+        ["network", "tryTarget"],
+      ],
+    );
+  });
+
   it("propagates runtime aliases from destructuring assignments", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -1241,6 +1342,25 @@ write("tmp.txt", "x");
     );
   });
 
+  it("propagates conditional runtime object properties through destructuring", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+let runtimeObject = globalThis;
+if (maybe) runtimeObject = Deno;
+const { fetch: maybeFetch, writeTextFile: maybeWrite } = runtimeObject;
+await maybeFetch("https://example.com/maybe");
+await maybeWrite("maybe.txt", "x");
+`,
+        "src/conditional-runtime-object-destructuring.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "maybeFetch"],
+        ["filesystem-write", "maybeWrite"],
+      ],
+    );
+  });
+
   it("preserves effectful callables through call, apply, and bind", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -1280,6 +1400,24 @@ await Deno.open.bind(
 const unknownOpenArguments: unknown[] = [];
 await Deno.open.bind(Deno, ...unknownOpenArguments)();
 await Deno.open.call(Deno, ...unknownOpenArguments);
+
+let conditionalCallable = fetch;
+if (maybe) conditionalCallable = Deno.writeTextFile;
+await conditionalCallable.call(globalThis, "conditional-call.txt", "x");
+await conditionalCallable.apply(globalThis, ["conditional-apply.txt", "x"]);
+const conditionalBoundCallable = conditionalCallable.bind(globalThis);
+await conditionalBoundCallable("conditional-bound.txt", "x");
+
+let conditionalOpen = Deno.open.bind(Deno, "conditional-read.txt", {
+  read: true,
+  write: false,
+});
+if (maybe) {
+  conditionalOpen = Deno.open.bind(Deno, "conditional-write.txt", {
+    write: true,
+  });
+}
+await conditionalOpen();
 `,
         "src/runtime-call-apply-bind.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1302,6 +1440,14 @@ await Deno.open.call(Deno, ...unknownOpenArguments);
         ["filesystem-write", "Deno.open.bind"],
         ["filesystem-write", "Deno.open.bind"],
         ["filesystem-write", "Deno.open.call"],
+        ["filesystem-write", "conditionalCallable.call"],
+        ["network", "conditionalCallable.call"],
+        ["filesystem-write", "conditionalCallable.apply"],
+        ["network", "conditionalCallable.apply"],
+        ["filesystem-write", "conditionalBoundCallable"],
+        ["network", "conditionalBoundCallable"],
+        ["filesystem-read", "conditionalOpen"],
+        ["filesystem-write", "conditionalOpen"],
       ],
     );
     assertEquals(
@@ -1316,6 +1462,59 @@ const boundWrite = Deno.writeTextFile.bind(Deno);
 boundWrite("tmp.txt", "x");
 `,
         "src/shadowed-runtime-call-apply-bind.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("classifies Reflect invocation of effectful callables", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+Reflect.apply(fetch, globalThis, ["https://example.com/reflect"]);
+Reflect.apply(Deno.writeTextFile, Deno, ["tmp.txt", "x"]);
+Reflect.apply(Deno.open, Deno, ["read.txt", { read: true, write: false }]);
+Reflect.apply(Deno.open, Deno, ["write.txt", { write: true }]);
+Reflect.construct(Worker, ["worker.js"]);
+Reflect.construct(WebSocket, ["wss://example.com"]);
+globalThis.Reflect.apply(fetch, globalThis, ["https://example.com/global"]);
+window.Reflect.apply(Deno.open, Deno, ["global-read.txt", {
+  read: true,
+  write: false,
+}]);
+self.Reflect.construct(Worker, ["global-worker.js"]);
+`,
+        "src/reflect-runtime-invocation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "Reflect.apply(fetch)"],
+        ["filesystem-write", "Reflect.apply(Deno.writeTextFile)"],
+        ["filesystem-read", "Reflect.apply(Deno.open)"],
+        ["filesystem-write", "Reflect.apply(Deno.open)"],
+        ["process", "Reflect.construct(Worker)"],
+        ["network", "Reflect.construct(WebSocket)"],
+        ["network", "globalThis.Reflect.apply(fetch)"],
+        ["filesystem-read", "window.Reflect.apply(Deno.open)"],
+        ["process", "self.Reflect.construct(Worker)"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const Reflect = { apply() {}, construct() {} };
+Reflect.apply(fetch, globalThis, ["https://example.com/reflect"]);
+Reflect.construct(Worker, ["worker.js"]);
+function localGlobalThis(globalThis: { Reflect: typeof Reflect }) {
+  globalThis.Reflect.apply(fetch, globalThis, ["https://example.com/local"]);
+}
+function localWindow(window: { Reflect: typeof Reflect }) {
+  window.Reflect.apply(Deno.open, Deno, ["local.txt", { write: true }]);
+}
+function localSelf(self: { Reflect: typeof Reflect }) {
+  self.Reflect.construct(Worker, ["worker.js"]);
+}
+`,
+        "src/shadowed-reflect-runtime-invocation.test.ts",
       ),
       [],
     );
@@ -1751,7 +1950,7 @@ localDeno.exit = () => undefined;
         ["process", 9, "denoRuntime.addSignalListener"],
         ["process", 10, "denoRuntime.removeSignalListener"],
         ["process", 11, "denoRuntime.exit"],
-        ["process", 18, "processRuntime.env"],
+        ["process", 18, "processRuntime.env.MODE"],
         ["shared-cwd", 19, "processRuntime.chdir"],
         ["server", 21, "serveAlias"],
         ["process", 22, "exitAlias"],
@@ -1921,6 +2120,12 @@ namespace MixedMerged {
     export const write = Deno.writeTextFile;
   }
 }
+namespace ConditionalMerged {
+  export const run = fetch;
+}
+namespace ConditionalMerged {
+  export const run = Deno.writeTextFile;
+}
 await ExportedAliases.request("https://example.com");
 await ExportedAliases.write("namespace-merged.txt", "x");
 await ExportedAliases.Nested.read("namespace-nested.txt");
@@ -1929,6 +2134,16 @@ await BlockMerged.Nested.read("namespace-block-read.txt");
 await BlockMerged.Nested.write("namespace-block-write.txt", "x");
 await MixedMerged.Nested.read("namespace-mixed-read.txt");
 await MixedMerged.Nested.write("namespace-mixed-write.txt", "x");
+await ConditionalMerged.run("namespace-conditional.txt", "x");
+namespace A {
+  export const run = fetch;
+}
+namespace B {
+  export const run = Deno.writeTextFile;
+}
+let N = A;
+if (maybe) N = B;
+await N.run("namespace-alternative.txt", "x");
 `,
         "src/typescript-namespace-exports.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1941,6 +2156,10 @@ await MixedMerged.Nested.write("namespace-mixed-write.txt", "x");
         ["filesystem-write", "BlockMerged.Nested.write"],
         ["filesystem-read", "MixedMerged.Nested.read"],
         ["filesystem-write", "MixedMerged.Nested.write"],
+        ["filesystem-write", "ConditionalMerged.run"],
+        ["network", "ConditionalMerged.run"],
+        ["filesystem-write", "N.run"],
+        ["network", "N.run"],
       ],
     );
     assertEquals(
@@ -2026,6 +2245,27 @@ Reflect.defineProperty(self, key, { value: {} });
 Reflect.set(Array.prototype, Symbol.iterator, () => undefined);
 Object.defineProperty(Object.prototype, key, { value: {} });
 Object.defineProperty(Promise, "resolve", { value: () => undefined });
+let assignedTarget = globalThis;
+if (maybe) assignedTarget = Deno;
+Object.assign(assignedTarget, { fetch() {} });
+Reflect.apply(Object.defineProperty, Object, [
+  globalThis,
+  "fetch",
+  { value() {} },
+]);
+Object.defineProperty.call(Object, globalThis, "fetch", { value() {} });
+const def = Object.defineProperty;
+def.apply(Object, [globalThis, "fetch", { value() {} }]);
+let conditionalDef = Object.defineProperty;
+if (maybe) conditionalDef = Reflect.defineProperty;
+conditionalDef.call(Object, globalThis, "fetch", { value() {} });
+const mutationArgs = [globalThis, "fetch", { value() {} }] as const;
+Reflect.apply(Object.defineProperty, Object, mutationArgs);
+Object.defineProperty.apply(Object, mutationArgs);
+conditionalDef.apply(Object, mutationArgs);
+Reflect.apply(conditionalDef, Object, mutationArgs);
+Object.defineProperty(...mutationArgs);
+Object.defineProperty.call(Object, ...mutationArgs);
 String.prototype.trim = () => "";
 delete RegExp.prototype.test;
 globalThis.window = {} as typeof globalThis;
@@ -2044,6 +2284,17 @@ delete globalThis.navigator;
         ["process", "Reflect.set(Array.prototype.*)"],
         ["process", "Object.defineProperty(Object.prototype.*)"],
         ["process", "Object.defineProperty(Promise.resolve)"],
+        ["process", "Object.assign(assignedTarget.*)"],
+        ["network", "Reflect.apply(Object.defineProperty)(globalThis.fetch)"],
+        ["network", "Object.defineProperty.call(globalThis.fetch)"],
+        ["network", "def.apply(globalThis.fetch)"],
+        ["network", "conditionalDef.call(globalThis.fetch)"],
+        ["process", "Reflect.apply(Object.defineProperty)(*)"],
+        ["process", "Object.defineProperty.apply(*)"],
+        ["process", "conditionalDef.apply(*)"],
+        ["process", "Reflect.apply(conditionalDef)(*)"],
+        ["process", "Object.defineProperty(*)"],
+        ["process", "Object.defineProperty.call(*)"],
         ["process", "String.prototype.trim"],
         ["process", "RegExp.prototype.test"],
         ["process", "globalThis.window"],
@@ -2059,6 +2310,14 @@ Object.assign(globalThis, { navigator: {} });
 const Reflect = { deleteProperty: () => false, set: () => false };
 Reflect.deleteProperty(globalThis, "navigator");
 Reflect.set(globalThis, "navigator", {});
+Reflect.apply(Object.defineProperty, Object, [
+  globalThis,
+  "fetch",
+  { value() {} },
+]);
+Object.defineProperty.call(Object, globalThis, "fetch", { value() {} });
+const def = Object.defineProperty;
+def.apply(Object, [globalThis, "fetch", { value() {} }]);
 function mutate(globalThis: { window: unknown; navigator?: unknown }) {
   globalThis.window = {};
   delete globalThis.navigator;
@@ -2124,6 +2383,10 @@ const defineViaObjectAlias = ObjectAlias.defineProperty;
 const defineFromGlobalObject = globalThis.Object.defineProperty;
 const { set: reflectSet, deleteProperty: reflectDeleteProperty } = Reflect;
 const deleteViaReflect = Reflect.deleteProperty;
+let defineRuntimeProperty = Object.defineProperty;
+if (maybe) {
+  defineRuntimeProperty = Reflect.defineProperty;
+}
 defineGlobalProperty(globalThis, "fetch", { value: () => undefined });
 defineAgain(Map.prototype, "size", { value: 0 });
 defineViaObjectAlias(Promise, "resolve", { value: () => undefined });
@@ -2132,6 +2395,7 @@ reflectSet(Array.prototype, Symbol.iterator, () => undefined);
 reflectDeleteProperty(globalThis, "navigator");
 deleteViaReflect(Object.prototype, "polluted");
 globalThis.Reflect.deleteProperty(Object.prototype, "tainted");
+defineRuntimeProperty(globalThis, "fetch", { value: () => undefined });
 `,
         "src/aliased-global-mutators.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -2147,6 +2411,7 @@ globalThis.Reflect.deleteProperty(Object.prototype, "tainted");
           "process",
           "globalThis.Reflect.deleteProperty(Object.prototype.tainted)",
         ],
+        ["network", "defineRuntimeProperty(globalThis.fetch)"],
       ],
     );
     assertEquals(

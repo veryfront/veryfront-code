@@ -511,7 +511,11 @@ type RuntimeBinding =
     readonly kind: "global-runtime";
     readonly runtime: "Deno" | "process";
   }
-  | { readonly kind: "create-require" };
+  | { readonly kind: "create-require" }
+  | {
+    readonly kind: "one-of";
+    readonly bindings: readonly RuntimeBinding[];
+  };
 
 interface Scope {
   readonly names: Set<string>;
@@ -603,7 +607,13 @@ export function collectSemanticMarkers(
     if (node.type === "VariableDeclarator") {
       const scope = nextScopes.at(-1);
       if (scope && declarationBelongsToScope(node, scope)) {
-        bindRuntimeDeclaration(node, bindings, nextScopes, scope);
+        bindRuntimeDeclaration(
+          node,
+          bindings,
+          nextScopes,
+          scope,
+          !allowAssignmentClearing,
+        );
       }
     }
     bindRuntimeAssignment(
@@ -612,10 +622,10 @@ export function collectSemanticMarkers(
       nextScopes,
       allowAssignmentClearing,
     );
-    const marker = suppressMarker
+    const nodeMarkers = suppressMarker
       ? undefined
       : markerForNode(node, bindings, nextScopes);
-    if (marker) markers.push(marker);
+    if (nodeMarkers) markers.push(...semanticMarkers(nodeMarkers));
 
     for (const key of Object.keys(node)) {
       if (
@@ -635,10 +645,21 @@ export function collectSemanticMarkers(
           }
         }
       } else if (isNode(value)) {
+        const suppressChildMarker = isGlobalRuntimePrefixObject(
+          node,
+          key,
+          value,
+        ) || isRuntimeEnvDetailObjectChild(
+          node,
+          key,
+          value,
+          bindings,
+          nextScopes,
+        );
         visit(
           value,
           nextScopes,
-          isGlobalRuntimePrefixObject(node, key, value),
+          suppressChildMarker,
           allowAssignmentClearing && !isConditionalBranch(node, key),
         );
       }
@@ -1015,7 +1036,7 @@ function markerForNode(
   node: Node,
   bindings: ImportBindings,
   scopes: readonly Scope[],
-): SemanticMarker | undefined {
+): SemanticMarker | readonly SemanticMarker[] | undefined {
   const line = node.loc?.start.line ?? 0;
   if (node.type === "ImportDeclaration") {
     const source = literalValue(node.source);
@@ -1039,6 +1060,14 @@ function markerForNode(
   );
   if (globalPropertyMutation) return globalPropertyMutation;
 
+  const reflectInvocation = reflectInvocationMarkers(
+    node,
+    line,
+    bindings,
+    scopes,
+  );
+  if (reflectInvocation.length > 0) return reflectInvocation;
+
   const processGlobal = processGlobalMarker(
     node,
     line,
@@ -1058,6 +1087,7 @@ function markerForNode(
       scopes,
     );
     const objectName = memberObjectName(node);
+    const chain = memberChain(node);
     const effectObject = objectName
       ? resolveLocalBinding(objectName, scopes).binding?.kind ===
         "effect-object"
@@ -1065,6 +1095,7 @@ function markerForNode(
     if (
       runtimeMarker &&
       (memberProperty(node) === "env" || effectObject ||
+        isRuntimeEnvDetailChain(chain, bindings, scopes) ||
         isProcessModuleEnvDetail(node, bindings, scopes))
     ) {
       return runtimeMarker;
@@ -1117,15 +1148,13 @@ function markerForNode(
     const name = callee.name as string;
     const local = resolveLocalBinding(name, scopes);
     if (local.declared) {
-      if (local.binding?.kind === "effect") {
-        return { effect: local.binding.effect, line, symbol: name };
-      }
-      if (
-        node.type === "NewExpression" &&
-        local.binding?.kind === "constructor-effect"
-      ) {
-        return { effect: local.binding.effect, line, symbol: name };
-      }
+      const localMarkers = markersForRuntimeBinding(
+        local.binding,
+        name,
+        line,
+        node.type === "NewExpression",
+      );
+      if (localMarkers.length > 0) return localMarkers;
       return undefined;
     }
     if (bindings.filesystemRead.has(name) && !isShadowed(name, scopes)) {
@@ -1211,9 +1240,7 @@ function markerForNode(
   }
 
   if (resolveLocalBinding(objectName, scopes).declared) {
-    return node.type === "NewExpression"
-      ? runtimeInvocationMarker(node, callee, line, bindings, scopes)
-      : undefined;
+    return runtimeInvocationMarker(node, callee, line, bindings, scopes);
   }
 
   if (
@@ -1298,6 +1325,29 @@ function markerForNode(
   return runtimeInvocationMarker(node, callee, line, bindings, scopes);
 }
 
+function semanticMarkers(
+  markers: SemanticMarker | readonly SemanticMarker[],
+): readonly SemanticMarker[] {
+  return Array.isArray(markers) ? markers : [markers as SemanticMarker];
+}
+
+function markersForRuntimeBinding(
+  binding: RuntimeBinding | undefined,
+  symbol: string,
+  line: number,
+  allowConstructor: boolean,
+): readonly SemanticMarker[] {
+  return flattenRuntimeBindings(binding).flatMap((candidate) => {
+    if (candidate.kind === "effect") {
+      return [{ effect: candidate.effect, line, symbol }];
+    }
+    if (allowConstructor && candidate.kind === "constructor-effect") {
+      return [{ effect: candidate.effect, line, symbol }];
+    }
+    return [];
+  });
+}
+
 function memberRuntimeEffectMarker(
   member: Node,
   line: number,
@@ -1309,11 +1359,28 @@ function memberRuntimeEffectMarker(
     member.type !== "OptionalMemberExpression"
   ) return undefined;
   const chain = memberChain(member);
-  if (isGlobalProcessEnvDetailChain(chain, imports, scopes)) return undefined;
+  if (isGlobalProcessEnvDetailChain(chain)) return undefined;
   const binding = runtimeBindingForExpression(member, imports, scopes);
-  if (binding?.kind === "effect") {
+  const effectBindings = flattenRuntimeBindings(binding).filter((candidate) =>
+    candidate.kind === "effect"
+  );
+  if (effectBindings.length === 1 && effectBindings[0].kind === "effect") {
     return {
-      effect: binding.effect,
+      effect: effectBindings[0].effect,
+      line,
+      symbol: chain?.join(".") ?? invocationSymbol(member),
+    };
+  }
+  const effectObjectBindings = flattenRuntimeBindings(binding).filter((
+    candidate,
+  ) => candidate.kind === "effect-object");
+  if (
+    effectObjectBindings.length === 1 &&
+    effectObjectBindings[0].kind === "effect-object" &&
+    isRuntimeEnvRootChain(chain, imports, scopes)
+  ) {
+    return {
+      effect: effectObjectBindings[0].effect,
       line,
       symbol: chain?.join(".") ?? invocationSymbol(member),
     };
@@ -1353,53 +1420,129 @@ function filesystemOpenMarker(
   line: number,
   bindings: ImportBindings,
   scopes: readonly Scope[],
-): SemanticMarker | undefined {
+): SemanticMarker | readonly SemanticMarker[] | undefined {
   if (!isCallLikeExpression(node)) return undefined;
   const args = Array.isArray(node.arguments) ? node.arguments : [];
-  const invocation = filesystemOpenInvocation(callee, args, bindings, scopes);
-  if (!invocation) return undefined;
-  return {
+  const invocations = filesystemOpenInvocations(callee, args, bindings, scopes);
+  if (invocations.length === 0) return undefined;
+  return invocations.map((invocation) => ({
     effect: filesystemOpenEffect(invocation.options),
     line,
     symbol: invocationSymbol(callee),
-  };
+  }));
 }
 
-function filesystemOpenInvocation(
+function reflectInvocationMarkers(
+  node: Node,
+  line: number,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly SemanticMarker[] {
+  if (!isCallLikeExpression(node) || !isNode(node.callee)) return [];
+  const callee = unwrapExpression(node.callee);
+  const reflectInvocation = reflectInvocationCall(callee, imports, scopes);
+  if (!reflectInvocation) return [];
+  const { method, symbolPrefix } = reflectInvocation;
+  if (method !== "apply" && method !== "construct") return [];
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  const target = unwrapExpression(args[0]);
+  if (!target) return [];
+  const targetSymbol = invocationSymbol(target);
+  const binding = runtimeBindingForExpression(target, imports, scopes);
+  const symbol = `${symbolPrefix}(${targetSymbol})`;
+
+  if (method === "construct") {
+    return markersForRuntimeBinding(binding, symbol, line, true);
+  }
+
+  return flattenRuntimeBindings(binding).flatMap((candidate) => {
+    if (candidate.kind === "effect") {
+      return [{ effect: candidate.effect, line, symbol }];
+    }
+    if (candidate.kind === "filesystem-open") {
+      return [{
+        effect: filesystemOpenEffect(
+          filesystemOpenOptions(
+            candidate,
+            filesystemOpenApplyArguments(args[2]),
+          ),
+        ),
+        line,
+        symbol,
+      }];
+    }
+    return [];
+  });
+}
+
+function reflectInvocationCall(
+  callee: Node | undefined,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): { readonly method: string; readonly symbolPrefix: string } | undefined {
+  if (
+    !callee ||
+    (callee.type !== "MemberExpression" &&
+      callee.type !== "OptionalMemberExpression")
+  ) {
+    return undefined;
+  }
+  const chain = memberChain(callee);
+  const method = memberProperty(callee);
+  if (!chain || !method) return undefined;
+  if (
+    chain.length === 2 && chain[0] === "Reflect" &&
+    !isGlobalShadowed("Reflect", scopes, imports.importedNames)
+  ) {
+    return { method, symbolPrefix: `Reflect.${method}` };
+  }
+  if (
+    chain.length === 3 && chain[1] === "Reflect" &&
+    isGlobalRuntimeReceiver(chain[0], scopes, imports.importedNames)
+  ) {
+    return { method, symbolPrefix: chain.join(".") };
+  }
+  return undefined;
+}
+
+function filesystemOpenInvocations(
   callee: Node,
   args: readonly unknown[],
   bindings: ImportBindings,
   scopes: readonly Scope[],
-):
-  | {
-    readonly binding: Extract<
-      RuntimeBinding,
-      { readonly kind: "filesystem-open" }
-    >;
-    readonly options: unknown;
-  }
-  | undefined {
-  const binding = filesystemOpenBinding(callee, bindings, scopes);
-  if (binding) {
-    return {
+): readonly {
+  readonly binding: Extract<
+    RuntimeBinding,
+    { readonly kind: "filesystem-open" }
+  >;
+  readonly options: unknown;
+}[] {
+  const directBindings = filesystemOpenBindings(callee, bindings, scopes);
+  if (directBindings.length > 0) {
+    return directBindings.map((binding) => ({
       binding,
       options: filesystemOpenOptions(binding, args),
-    };
+    }));
   }
-  const callableBinding = callableMethodInvocationBinding(
+  const callableBindings = callableMethodInvocationBindings(
     callee,
     bindings,
     scopes,
-  );
-  if (callableBinding?.kind !== "filesystem-open") return undefined;
+  ).filter((
+    candidate,
+  ): candidate is Extract<
+    RuntimeBinding,
+    { readonly kind: "filesystem-open" }
+  > => candidate.kind === "filesystem-open");
+  if (callableBindings.length === 0) return [];
   const method = memberProperty(callee);
   const invocationArguments = method === "apply"
     ? filesystemOpenApplyArguments(args[1])
     : args.slice(1);
-  return {
-    binding: callableBinding,
-    options: filesystemOpenOptions(callableBinding, invocationArguments),
-  };
+  return callableBindings.map((binding) => ({
+    binding,
+    options: filesystemOpenOptions(binding, invocationArguments),
+  }));
 }
 
 function filesystemOpenOptions(
@@ -1414,13 +1557,18 @@ function filesystemOpenOptions(
     : args[1];
 }
 
-function filesystemOpenBinding(
+function filesystemOpenBindings(
   callee: Node,
   bindings: ImportBindings,
   scopes: readonly Scope[],
-): Extract<RuntimeBinding, { readonly kind: "filesystem-open" }> | undefined {
+): readonly Extract<RuntimeBinding, { readonly kind: "filesystem-open" }>[] {
   const binding = runtimeBindingForExpression(callee, bindings, scopes);
-  return binding?.kind === "filesystem-open" ? binding : undefined;
+  return flattenRuntimeBindings(binding).filter((
+    candidate,
+  ): candidate is Extract<
+    RuntimeBinding,
+    { readonly kind: "filesystem-open" }
+  > => candidate.kind === "filesystem-open");
 }
 
 function runtimeInvocationMarker(
@@ -1429,7 +1577,7 @@ function runtimeInvocationMarker(
   line: number,
   bindings: ImportBindings,
   scopes: readonly Scope[],
-): SemanticMarker | undefined {
+): SemanticMarker | readonly SemanticMarker[] | undefined {
   const chain = memberChain(callee);
   if (
     chain?.length === 3 && chain[0] === "Deno" && chain[1] === "env" &&
@@ -1438,51 +1586,42 @@ function runtimeInvocationMarker(
     return undefined;
   }
   const binding = runtimeBindingForExpression(callee, bindings, scopes);
-  if (binding?.kind === "effect") {
-    return {
-      effect: binding.effect,
-      line,
-      symbol: invocationSymbol(callee),
-    };
-  }
-  const callableBinding = callableMethodInvocationBinding(
+  const directMarkers = markersForRuntimeBinding(
+    binding,
+    invocationSymbol(callee),
+    line,
+    node.type === "NewExpression",
+  );
+  if (directMarkers.length > 0) return directMarkers;
+  const callableMarkers = callableMethodInvocationBindings(
     callee,
     bindings,
     scopes,
+  ).flatMap((candidate) =>
+    candidate.kind === "effect"
+      ? [{ effect: candidate.effect, line, symbol: invocationSymbol(callee) }]
+      : []
   );
-  if (callableBinding?.kind === "effect") {
-    return {
-      effect: callableBinding.effect,
-      line,
-      symbol: invocationSymbol(callee),
-    };
-  }
-  if (
-    node.type === "NewExpression" &&
-    binding?.kind === "constructor-effect"
-  ) {
-    return {
-      effect: binding.effect,
-      line,
-      symbol: invocationSymbol(callee),
-    };
-  }
+  if (callableMarkers.length > 0) return callableMarkers;
   return undefined;
 }
 
-function callableMethodInvocationBinding(
+function callableMethodInvocationBindings(
   callee: Node,
   imports: ImportBindings,
   scopes: readonly Scope[],
-): RuntimeBinding | undefined {
+): readonly Extract<
+  RuntimeBinding,
+  { readonly kind: "effect" | "filesystem-open" }
+>[] {
   if (
     callee.type !== "MemberExpression" &&
     callee.type !== "OptionalMemberExpression"
-  ) return undefined;
+  ) return [];
   const method = memberProperty(callee);
-  if (method !== "call" && method !== "apply") return undefined;
+  if (method !== "call" && method !== "apply") return [];
   const binding = runtimeBindingForExpression(callee.object, imports, scopes);
-  return isCallableRuntimeBinding(binding) ? binding : undefined;
+  return flattenRuntimeBindings(binding).filter(isCallableRuntimeBinding);
 }
 
 function isCallableRuntimeBinding(
@@ -1547,12 +1686,19 @@ function filesystemOpenApplyArguments(args: unknown): readonly unknown[] {
   return Array.isArray(value.elements) ? value.elements : [];
 }
 
+function arrayExpressionArguments(args: unknown): readonly unknown[] {
+  const value = unwrapExpression(args);
+  return value?.type === "ArrayExpression" && Array.isArray(value.elements)
+    ? value.elements
+    : [{ type: "Identifier", name: "unknownMutationTarget" }];
+}
+
 function globalPropertyMutationMarker(
   node: Node,
   line: number,
   scopes: readonly Scope[],
   imports: ImportBindings,
-): SemanticMarker | undefined {
+): SemanticMarker | readonly SemanticMarker[] | undefined {
   if (
     node.type === "UnaryExpression" && node.operator === "delete" &&
     isNode(node.argument)
@@ -1565,20 +1711,99 @@ function globalPropertyMutationMarker(
     );
   }
   if (!isCallLikeExpression(node) || !isNode(node.callee)) return undefined;
-  const binding = runtimeBindingForExpression(node.callee, imports, scopes);
-  if (binding?.kind !== "mutation-method") return undefined;
   const args = Array.isArray(node.arguments) ? node.arguments : [];
-  const calleeName = node.callee.type === "Identifier"
-    ? node.callee.name as string
-    : memberChain(node.callee)?.join(".") ?? binding.method;
-  return mutationCallMarker(
-    binding,
-    calleeName,
+  const invocations = mutationMethodInvocations(
+    node.callee,
     args,
-    line,
+    imports,
     scopes,
-    imports.importedNames,
   );
+  if (invocations.length === 0) return undefined;
+  const markers = invocations.flatMap(({ binding, calleeName, args }) =>
+    mutationCallMarker(
+      binding,
+      calleeName,
+      args,
+      line,
+      scopes,
+      imports.importedNames,
+    ) ?? []
+  );
+  return markers.length > 0 ? markers : undefined;
+}
+
+function mutationMethodInvocations(
+  callee: Node,
+  args: readonly unknown[],
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly {
+  readonly binding: Extract<
+    RuntimeBinding,
+    { readonly kind: "mutation-method" }
+  >;
+  readonly calleeName: string;
+  readonly args: readonly unknown[];
+}[] {
+  const directBindings = mutationMethodBindings(callee, imports, scopes);
+  if (directBindings.length > 0) {
+    const calleeName = callee.type === "Identifier"
+      ? callee.name as string
+      : memberChain(callee)?.join(".") ?? "mutation";
+    return directBindings.map((binding) => ({ binding, calleeName, args }));
+  }
+
+  const reflectInvocation = reflectInvocationCall(
+    unwrapExpression(callee),
+    imports,
+    scopes,
+  );
+  if (reflectInvocation?.method === "apply") {
+    const target = unwrapExpression(args[0]);
+    if (!target) return [];
+    const invocationArgs = arrayExpressionArguments(args[2]);
+    return mutationMethodBindings(target, imports, scopes).map((binding) => ({
+      binding,
+      calleeName: `${reflectInvocation.symbolPrefix}(${
+        invocationSymbol(target)
+      })`,
+      args: invocationArgs,
+    }));
+  }
+
+  if (
+    callee.type !== "MemberExpression" &&
+    callee.type !== "OptionalMemberExpression"
+  ) {
+    return [];
+  }
+  const method = memberProperty(callee);
+  if (method !== "call" && method !== "apply") return [];
+  const invocationArgs = method === "apply"
+    ? arrayExpressionArguments(args[1])
+    : args.slice(1);
+  return mutationMethodBindings(callee.object, imports, scopes).map(
+    (binding) => ({
+      binding,
+      calleeName: invocationSymbol(callee),
+      args: invocationArgs,
+    }),
+  );
+}
+
+function mutationMethodBindings(
+  expression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly Extract<RuntimeBinding, { readonly kind: "mutation-method" }>[] {
+  return flattenRuntimeBindings(
+    runtimeBindingForExpression(expression, imports, scopes),
+  ).filter((
+    candidate,
+  ): candidate is Extract<
+    RuntimeBinding,
+    { readonly kind: "mutation-method" }
+  > => candidate.kind === "mutation-method");
 }
 
 function mutationMethodBinding(
@@ -1605,13 +1830,21 @@ function mutationCallMarker(
   const mutatesSingleProperty = GLOBAL_SINGLE_PROPERTY_MUTATORS.has(
     canonicalName,
   );
+  const targetArgument = args[0];
   const target = sharedGlobalMutationTarget(
-    args[0],
+    targetArgument,
     scopes,
     importedNames,
   );
   const property = mutatesSingleProperty ? literalValue(args[1]) : undefined;
-  if (!target) return undefined;
+  if (!target) {
+    if (!isUnknownMutationTarget(targetArgument)) return undefined;
+    return {
+      effect: "process",
+      line,
+      symbol: `${calleeName}(*)`,
+    };
+  }
   return {
     effect: mutatesSingleProperty && target.kind === "runtime-root"
       ? globalRuntimeMutationEffect(property)
@@ -1633,10 +1866,13 @@ function sharedGlobalMutationTarget(
   if (value.type === "Identifier") {
     const name = value.name as string;
     const resolved = resolveLocalBinding(name, scopes);
-    if (isGlobalRuntimeReceiver(name, scopes, importedNames)) {
+    if (
+      bindingHasGlobalRuntime(resolved.binding) ||
+      isGlobalRuntimeReceiver(name, scopes, importedNames)
+    ) {
       return { kind: "runtime-root", symbol: name };
     }
-    const isSharedObject = resolved.binding?.kind === "shared-object" ||
+    const isSharedObject = bindingHasSharedObject(resolved.binding) ||
       isGlobalRuntimeObject(name, scopes, importedNames) ||
       isGlobalIntrinsic(name, scopes, importedNames);
     return isSharedObject ? { kind: "shared-object", symbol: name } : undefined;
@@ -1651,7 +1887,8 @@ function sharedGlobalMutationTarget(
   if (!chain || chain.length < 2) return undefined;
   const root = resolveLocalBinding(chain[0], scopes);
   if (
-    root.binding?.kind === "shared-object" ||
+    bindingHasSharedObject(root.binding) ||
+    bindingHasGlobalRuntime(root.binding) ||
     isGlobalRuntimeReceiver(chain[0], scopes, importedNames) ||
     isGlobalIntrinsic(chain[0], scopes, importedNames)
   ) {
@@ -1666,9 +1903,21 @@ function isGlobalRuntimeObject(
   importedNames: ReadonlySet<string>,
 ): boolean {
   const resolved = resolveLocalBinding(name, scopes);
-  if (resolved.binding?.kind === "global-runtime") return true;
+  if (bindingHasGlobalRuntime(resolved.binding)) return true;
   return (name === "Deno" || name === "process") &&
     !resolved.declared && !importedNames.has(name);
+}
+
+function bindingHasGlobalRuntime(binding: RuntimeBinding | undefined): boolean {
+  return flattenRuntimeBindings(binding).some((candidate) =>
+    candidate.kind === "global-runtime"
+  );
+}
+
+function bindingHasSharedObject(binding: RuntimeBinding | undefined): boolean {
+  return flattenRuntimeBindings(binding).some((candidate) =>
+    candidate.kind === "shared-object"
+  );
 }
 
 function isGlobalIntrinsic(
@@ -1695,6 +1944,7 @@ function globalRuntimeMemberMutationMarker(
     return undefined;
   }
   const chain = memberChain(value);
+  if (isGlobalRuntimeEnvDetailChain(chain, scopes)) return undefined;
   const target = isNode(value.object)
     ? sharedGlobalMutationTarget(value.object, scopes, importedNames)
     : undefined;
@@ -1709,6 +1959,16 @@ function globalRuntimeMemberMutationMarker(
   };
 }
 
+function isGlobalRuntimeEnvDetailChain(
+  chain: readonly string[] | undefined,
+  scopes: readonly Scope[],
+): boolean {
+  return chain !== undefined &&
+    chain.length > 2 &&
+    chain[1] === "env" &&
+    bindingHasGlobalRuntime(resolveLocalBinding(chain[0], scopes).binding);
+}
+
 function globalRuntimeMutationEffect(
   property: string | undefined,
 ): SemanticEffect {
@@ -1719,19 +1979,68 @@ function globalRuntimeMutationEffect(
 
 function isGlobalProcessEnvDetailChain(
   chain: readonly string[] | undefined,
+): boolean {
+  if (chain === undefined || chain.length <= 2 || chain[1] !== "env") {
+    return false;
+  }
+  if (chain[0] === "Deno" || chain[0] === "process") return true;
+  return false;
+}
+
+function isRuntimeEnvDetailChain(
+  chain: readonly string[] | undefined,
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): boolean {
   if (chain === undefined || chain.length <= 2 || chain[1] !== "env") {
     return false;
   }
-  if (chain[0] === "Deno" || chain[0] === "process") return true;
   const root = runtimeBindingForExpression(
     { type: "Identifier", name: chain[0] },
     imports,
     scopes,
   );
-  return root?.kind === "global-runtime";
+  return bindingHasGlobalRuntime(root);
+}
+
+function isRuntimeEnvRootChain(
+  chain: readonly string[] | undefined,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): boolean {
+  if (chain === undefined || chain.length !== 2 || chain[1] !== "env") {
+    return false;
+  }
+  const root = runtimeBindingForExpression(
+    { type: "Identifier", name: chain[0] },
+    imports,
+    scopes,
+  );
+  return bindingHasGlobalRuntime(root);
+}
+
+function isRuntimeEnvDetailObjectChild(
+  parent: Node,
+  key: string,
+  child: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): boolean {
+  return (
+    parent.type === "MemberExpression" ||
+    parent.type === "OptionalMemberExpression"
+  ) &&
+    key === "object" &&
+    isRuntimeEnvDetailChain(memberChain(parent), imports, scopes) &&
+    isRuntimeEnvRootChain(memberChain(child), imports, scopes);
+}
+
+function isUnknownMutationTarget(target: unknown): boolean {
+  const value = unwrapExpression(target);
+  return !value ||
+    value.type === "SpreadElement" ||
+    (value.type === "Identifier" &&
+      (value.name as string) === "unknownMutationTarget");
 }
 
 function processGlobalMarker(
@@ -2187,14 +2496,20 @@ function collectHoistedVarRuntimeBindings(
   scopes: readonly Scope[],
   scope: Scope,
 ): void {
-  visitVarHoistDeclarations(node, (declaration) => {
+  visitVarHoistDeclarations(node, (declaration, isConditional) => {
     for (
       const declarator of Array.isArray(declaration.declarations)
         ? declaration.declarations
         : []
     ) {
       if (isNode(declarator)) {
-        bindRuntimeDeclaration(declarator, imports, scopes, scope);
+        bindRuntimeDeclaration(
+          declarator,
+          imports,
+          scopes,
+          scope,
+          isConditional,
+        );
       }
     }
   });
@@ -2202,13 +2517,17 @@ function collectHoistedVarRuntimeBindings(
 
 function visitVarHoistDeclarations(
   node: Node,
-  visitor: (declaration: Node) => void,
+  visitor: (declaration: Node, isConditional: boolean) => void,
 ): void {
-  const visit = (current: unknown, isRoot = false): void => {
+  const visit = (
+    current: unknown,
+    isRoot = false,
+    isConditional = false,
+  ): void => {
     if (!isNode(current)) return;
     if (!isRoot && isVarHoistBoundary(current)) return;
     if (current.type === "VariableDeclaration" && current.kind === "var") {
-      visitor(current);
+      visitor(current, isConditional);
       return;
     }
     for (const key of Object.keys(current)) {
@@ -2217,10 +2536,12 @@ function visitVarHoistDeclarations(
         TYPE_ONLY_CHILD_KEYS.has(key)
       ) continue;
       const value = current[key];
+      const childIsConditional = isConditional ||
+        isConditionalBranch(current, key);
       if (Array.isArray(value)) {
-        for (const item of value) visit(item);
+        for (const item of value) visit(item, false, childIsConditional);
       } else {
-        visit(value);
+        visit(value, false, childIsConditional);
       }
     }
   };
@@ -2365,13 +2686,25 @@ function mergeRuntimeNamespaceBindings(
     const existingProperty = properties.get(name);
     properties.set(
       name,
-      existingProperty?.kind === "namespace-object" &&
-        binding.kind === "namespace-object"
-        ? mergeRuntimeNamespaceBindings(existingProperty, binding)
-        : binding,
+      mergeNamespacePropertyBinding(existingProperty, binding),
     );
   }
   return { kind: "namespace-object", properties };
+}
+
+function mergeNamespacePropertyBinding(
+  existing: RuntimeBinding | undefined,
+  incoming: RuntimeBinding,
+): RuntimeBinding {
+  if (
+    existing?.kind === "namespace-object" &&
+    incoming.kind === "namespace-object"
+  ) {
+    return mergeRuntimeNamespaceBindings(existing, incoming);
+  }
+  return existing
+    ? unionRuntimeBindings([existing, incoming]) ?? incoming
+    : incoming;
 }
 
 function runtimeNamespaceBinding(
@@ -2506,8 +2839,9 @@ function bindRuntimeAssignment(
     return;
   }
   const binding = runtimeBindingForExpression(node.right, imports, scopes);
-  if (binding) bindRuntimeAssignmentPattern(node.left, binding, scopes);
-  else if (allowClearing) {
+  if (binding) {
+    bindRuntimeAssignmentPattern(node.left, binding, scopes, !allowClearing);
+  } else if (allowClearing) {
     clearCurrentScopeRuntimeAssignmentPattern(node.left, scopes);
   }
 }
@@ -2516,25 +2850,33 @@ function bindRuntimeAssignmentPattern(
   pattern: Node,
   binding: RuntimeBinding,
   scopes: readonly Scope[],
+  merge = false,
 ): void {
   if (pattern.type === "Identifier") {
     const scope = declaringScopeForName(pattern.name as string, scopes);
-    if (scope) scope.runtimeBindings.set(pattern.name as string, binding);
+    if (scope) {
+      const name = pattern.name as string;
+      scope.runtimeBindings.set(
+        name,
+        mergeRuntimeBinding(scope.runtimeBindings.get(name), binding, merge),
+      );
+    }
     return;
   }
   if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
-    bindRuntimeAssignmentPattern(pattern.left, binding, scopes);
+    bindRuntimeAssignmentPattern(pattern.left, binding, scopes, merge);
     return;
   }
   if (pattern.type === "RestElement" && isNode(pattern.argument)) {
-    bindRuntimeAssignmentPattern(pattern.argument, binding, scopes);
+    bindRuntimeAssignmentPattern(pattern.argument, binding, scopes, merge);
     return;
   }
   if (
     pattern.type !== "ObjectPattern" ||
     (binding.kind !== "global-runtime" && binding.kind !== "global-object" &&
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
-      binding.kind !== "module" && binding.kind !== "namespace-object")
+      binding.kind !== "module" && binding.kind !== "namespace-object" &&
+      binding.kind !== "one-of")
   ) {
     return;
   }
@@ -2547,7 +2889,7 @@ function bindRuntimeAssignmentPattern(
       isNode(property) && property.type === "RestElement" &&
       isNode(property.argument)
     ) {
-      bindRuntimeAssignmentPattern(property.argument, binding, scopes);
+      bindRuntimeAssignmentPattern(property.argument, binding, scopes, merge);
       continue;
     }
     if (
@@ -2562,7 +2904,12 @@ function bindRuntimeAssignmentPattern(
     if (!key) continue;
     const propertyBinding = runtimePropertyBinding(binding, key);
     if (propertyBinding) {
-      bindRuntimeAssignmentPattern(property.value, propertyBinding, scopes);
+      bindRuntimeAssignmentPattern(
+        property.value,
+        propertyBinding,
+        scopes,
+        merge,
+      );
     }
   }
 }
@@ -2634,6 +2981,24 @@ function isConditionalBranch(parent: Node, key: string): boolean {
     return true;
   }
   if (parent.type === "LogicalExpression" && key === "right") return true;
+  if (parent.type === "SwitchCase" && key === "consequent") return true;
+  if (
+    (parent.type === "WhileStatement" ||
+      parent.type === "DoWhileStatement" ||
+      parent.type === "ForStatement" ||
+      parent.type === "ForInStatement" ||
+      parent.type === "ForOfStatement") &&
+    (key === "body" || key === "update" || key === "left")
+  ) {
+    return true;
+  }
+  if (
+    (parent.type === "TryStatement" &&
+      (key === "block" || key === "handler")) ||
+    (parent.type === "CatchClause" && key === "body")
+  ) {
+    return true;
+  }
   if (
     parent.type === "OptionalCallExpression" && parent.optional === true &&
     key === "arguments"
@@ -2649,6 +3014,7 @@ function bindRuntimeDeclaration(
   imports: ImportBindings,
   scopes: readonly Scope[],
   scope: Scope,
+  merge = false,
 ): void {
   if (!isNode(declaration.id)) return;
   const binding = runtimeBindingForExpression(
@@ -2656,7 +3022,7 @@ function bindRuntimeDeclaration(
     imports,
     scopes,
   );
-  if (binding) bindPatternToRuntime(declaration.id, binding, scope);
+  if (binding) bindPatternToRuntime(declaration.id, binding, scope, merge);
 }
 
 function runtimeBindingForExpression(
@@ -2714,16 +3080,20 @@ function boundCallableRuntimeBinding(
     return undefined;
   }
   const binding = runtimeBindingForExpression(callee.object, imports, scopes);
-  if (!isCallableRuntimeBinding(binding)) return undefined;
-  if (binding.kind === "effect") return binding;
   const args = Array.isArray(value.arguments) ? value.arguments : [];
-  return {
-    ...binding,
-    boundArguments: [
-      ...binding.boundArguments ?? [],
-      ...args.slice(1),
-    ],
-  };
+  return unionRuntimeBindings(
+    flattenRuntimeBindings(binding)
+      .filter(isCallableRuntimeBinding)
+      .map((candidate) =>
+        candidate.kind === "effect" ? candidate : {
+          ...candidate,
+          boundArguments: [
+            ...candidate.boundArguments ?? [],
+            ...args.slice(1),
+          ],
+        }
+      ),
+  );
 }
 
 function identifierRuntimeBinding(
@@ -2881,6 +3251,13 @@ function runtimePropertyBinding(
   binding: RuntimeBinding,
   property: string,
 ): RuntimeBinding | undefined {
+  if (binding.kind === "one-of") {
+    return unionRuntimeBindings(
+      binding.bindings.flatMap((candidate) =>
+        runtimePropertyBinding(candidate, property) ?? []
+      ),
+    );
+  }
   if (binding.kind === "module") {
     const nestedSource = moduleSourceForProperty(binding.source, property);
     return nestedSource
@@ -2914,21 +3291,105 @@ function runtimePropertyBinding(
   return undefined;
 }
 
+function mergeRuntimeBinding(
+  existing: RuntimeBinding | undefined,
+  incoming: RuntimeBinding,
+  merge: boolean,
+): RuntimeBinding {
+  return merge && existing
+    ? unionRuntimeBindings([existing, incoming]) ?? incoming
+    : incoming;
+}
+
+function unionRuntimeBindings(
+  bindings: readonly RuntimeBinding[],
+): RuntimeBinding | undefined {
+  const flattened = bindings.flatMap((binding) =>
+    flattenRuntimeBindings(binding)
+  );
+  const unique = new Map<string, RuntimeBinding>();
+  for (const binding of flattened) {
+    unique.set(runtimeBindingKey(binding), binding);
+  }
+  const values = [...unique.values()];
+  if (values.length === 0) return undefined;
+  return values.length === 1 ? values[0] : { kind: "one-of", bindings: values };
+}
+
+function flattenRuntimeBindings(
+  binding: RuntimeBinding | undefined,
+): readonly RuntimeBinding[] {
+  return binding?.kind === "one-of"
+    ? binding.bindings.flatMap((candidate) => flattenRuntimeBindings(candidate))
+    : binding
+    ? [binding]
+    : [];
+}
+
+function runtimeBindingKey(binding: RuntimeBinding): string {
+  if (binding.kind === "effect") return `effect:${binding.effect}`;
+  if (binding.kind === "filesystem-open") {
+    return `filesystem-open:${binding.source}:${
+      JSON.stringify(binding.boundArguments ?? [])
+    }`;
+  }
+  if (binding.kind === "constructor-effect") {
+    return `constructor-effect:${binding.effect}`;
+  }
+  if (binding.kind === "global-runtime") {
+    return `global-runtime:${binding.runtime}`;
+  }
+  if (binding.kind === "module") return `module:${binding.source}`;
+  if (binding.kind === "effect-object") {
+    return `effect-object:${binding.effect}`;
+  }
+  if (binding.kind === "mutation-method") {
+    return `mutation-method:${binding.receiver}.${binding.method}`;
+  }
+  if (binding.kind === "shared-object") {
+    return `shared-object:${binding.intrinsic ?? "*"}`;
+  }
+  if (binding.kind === "namespace-object") {
+    return `namespace-object:${
+      [...binding.properties.entries()]
+        .sort(([left], [right]) => compareOrdinal(left, right))
+        .map(([name, propertyBinding]) =>
+          `${JSON.stringify(name)}:${runtimeBindingKey(propertyBinding)}`
+        )
+        .join(",")
+    }`;
+  }
+  if (binding.kind === "one-of") {
+    return `one-of:${
+      flattenRuntimeBindings(binding).map(runtimeBindingKey).sort(
+        compareOrdinal,
+      )
+        .join("|")
+    }`;
+  }
+  return binding.kind;
+}
+
 function bindPatternToRuntime(
   pattern: Node,
   binding: RuntimeBinding,
   scope: Scope,
+  merge = false,
 ): void {
   if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
-    bindPatternToRuntime(pattern.left, binding, scope);
+    bindPatternToRuntime(pattern.left, binding, scope, merge);
     return;
   }
   if (pattern.type === "RestElement" && isNode(pattern.argument)) {
-    bindPatternToRuntime(pattern.argument, binding, scope);
+    bindPatternToRuntime(pattern.argument, binding, scope, merge);
     return;
   }
   if (pattern.type === "Identifier") {
-    scope.runtimeBindings.set(pattern.name as string, binding);
+    const name = pattern.name as string;
+    scope.runtimeBindings.set(
+      name,
+      mergeRuntimeBinding(scope.runtimeBindings.get(name), binding, merge),
+    );
     return;
   }
   if (
@@ -2936,7 +3397,7 @@ function bindPatternToRuntime(
     (binding.kind !== "module" && binding.kind !== "global-runtime" &&
       binding.kind !== "global-object" &&
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
-      binding.kind !== "namespace-object")
+      binding.kind !== "namespace-object" && binding.kind !== "one-of")
   ) {
     return;
   }
@@ -2949,7 +3410,7 @@ function bindPatternToRuntime(
       isNode(property) && property.type === "RestElement" &&
       isNode(property.argument)
     ) {
-      bindPatternToRuntime(property.argument, binding, scope);
+      bindPatternToRuntime(property.argument, binding, scope, merge);
       continue;
     }
     if (
@@ -2964,7 +3425,7 @@ function bindPatternToRuntime(
     if (!method) continue;
     const propertyBinding = runtimePropertyBinding(binding, method);
     if (propertyBinding) {
-      bindPatternToRuntime(property.value, propertyBinding, scope);
+      bindPatternToRuntime(property.value, propertyBinding, scope, merge);
     }
   }
 }
