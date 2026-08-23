@@ -633,6 +633,38 @@ process.kill(123, "SIGTERM");
     );
   });
 
+  it("classifies unshadowed global Worker construction as process debt", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+`,
+        "src/global-worker.test.ts",
+      ).map((marker) => [marker.effect, marker.line, marker.symbol]),
+      [["process", 2, "Worker"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class Worker {
+  constructor(_url: URL, _options: { type: string }) {}
+}
+new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+`,
+        "src/local-worker.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `import { Worker } from "./worker.ts";
+new Worker();`,
+        "src/imported-worker.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies typed aliases of global runtime objects", () => {
     const markers = collectSemanticMarkers(
       `
@@ -716,26 +748,36 @@ getHostEnv();
       collectSemanticMarkers(
         `
 const originalFetch = globalThis.fetch;
-globalThis.fetch = () => Promise.resolve(new Response("ok"));
+Object.defineProperty(globalThis, "fetch", {
+  value: () => Promise.resolve(new Response("ok")),
+});
 await globalThis.fetch("https://example.com");
-globalThis.fetch = originalFetch;
+Object.defineProperty(globalThis, "fetch", { value: originalFetch });
 const local = { fetch: () => undefined };
 local.fetch = () => undefined;
 `,
         "src/global-fetch.test.ts",
       ).map((marker) => [marker.effect, marker.line, marker.symbol]),
       [
-        ["network", 3, "globalThis.fetch"],
-        ["network", 4, "globalThis.fetch"],
-        ["network", 5, "globalThis.fetch"],
+        ["network", 3, "Object.defineProperty(globalThis.fetch)"],
+        ["network", 6, "globalThis.fetch"],
+        ["network", 7, "Object.defineProperty(globalThis.fetch)"],
       ],
     );
     assertEquals(
       collectSemanticMarkers(
         `const globalThis = { fetch: () => undefined };
-globalThis.fetch = () => undefined;
+Object.defineProperty(globalThis, "fetch", { value: () => undefined });
 globalThis.fetch();`,
         "src/local-global-this.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `const Object = { defineProperty: () => undefined };
+Object.defineProperty(globalThis, "fetch", { value: () => undefined });`,
+        "src/local-object.test.ts",
       ),
       [],
     );

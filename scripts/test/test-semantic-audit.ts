@@ -795,6 +795,14 @@ function markerForNode(
     }
   }
 
+  const globalPropertyMutation = globalPropertyMutationMarker(
+    node,
+    line,
+    scopes,
+    bindings.importedNames,
+  );
+  if (globalPropertyMutation) return globalPropertyMutation;
+
   const processGlobal = processGlobalMarker(
     node,
     line,
@@ -860,6 +868,12 @@ function markerForNode(
       !isShadowed("fetch", scopes)
     ) {
       return { effect: "network", line, symbol: "fetch" };
+    }
+    if (
+      node.type === "NewExpression" && name === "Worker" &&
+      !isGlobalShadowed("Worker", scopes, bindings.importedNames)
+    ) {
+      return { effect: "process", line, symbol: "Worker" };
     }
     return undefined;
   }
@@ -972,6 +986,49 @@ function memberRuntimeEffectMarker(
     : undefined;
 }
 
+function globalPropertyMutationMarker(
+  node: Node,
+  line: number,
+  scopes: readonly Scope[],
+  importedNames: ReadonlySet<string>,
+): SemanticMarker | undefined {
+  if (node.type !== "CallExpression" || !isNode(node.callee)) {
+    return undefined;
+  }
+  const callee = memberChain(node.callee);
+  if (
+    callee?.length !== 2 ||
+    !(
+      (callee[0] === "Object" && callee[1] === "defineProperty") ||
+      (callee[0] === "Reflect" && callee[1] === "deleteProperty")
+    ) || isGlobalShadowed(callee[0], scopes, importedNames)
+  ) {
+    return undefined;
+  }
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  const target = args[0];
+  const property = literalValue(args[1]);
+  if (
+    !isNode(target) || target.type !== "Identifier" ||
+    target.name !== "globalThis" ||
+    isGlobalShadowed("globalThis", scopes, importedNames)
+  ) {
+    return undefined;
+  }
+  const effect = property === "fetch"
+    ? "network"
+    : property === "process" || property === "Deno"
+    ? "process"
+    : undefined;
+  return effect
+    ? {
+      effect,
+      line,
+      symbol: `${callee.join(".")}(globalThis.${property})`,
+    }
+    : undefined;
+}
+
 function processGlobalMarker(
   node: Node,
   line: number,
@@ -1043,28 +1100,6 @@ function processGlobalMarker(
     !isGlobalShadowed("process", scopes, importedNames)
   ) {
     return { effect: "shared-cwd", line, symbol: "process.chdir" };
-  }
-  if (
-    callee?.length === 2 &&
-    ((callee[0] === "Object" && callee[1] === "defineProperty") ||
-      (callee[0] === "Reflect" && callee[1] === "deleteProperty")) &&
-    !isGlobalShadowed(callee[0], scopes, importedNames)
-  ) {
-    const args = Array.isArray(node.arguments) ? node.arguments : [];
-    const target = args[0];
-    const property = literalValue(args[1]);
-    if (
-      isNode(target) && target.type === "Identifier" &&
-      target.name === "globalThis" &&
-      (property === "process" || property === "Deno") &&
-      !isGlobalShadowed("globalThis", scopes, importedNames)
-    ) {
-      return {
-        effect: "process",
-        line,
-        symbol: `${callee.join(".")}(globalThis.${property})`,
-      };
-    }
   }
   return undefined;
 }

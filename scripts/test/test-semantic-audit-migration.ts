@@ -1142,6 +1142,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4e",
       },
     ),
+    entry("extensions/ext-document-kreuzberg/src/index.test.ts", ["process"], {
+      "disposition": "integration-relocation",
+      "owner": "extensions-templates",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/extensions/ext-document-kreuzberg/src/index.test.ts",
+      "removalPr": "PR 4e",
+    }),
     entry("extensions/ext-eval-report-mlflow/src/index.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "extensions-templates",
@@ -4120,6 +4129,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
+    entry("src/security/http/outbound-fetch.test.ts", ["network"], {
+      "disposition": "integration-relocation",
+      "owner": "security-filesystem",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/security/http/outbound-fetch.test.ts",
+      "removalPr": "PR 4d",
+    }),
     entry("src/security/index.test.ts", ["filesystem-read"], {
       "disposition": "hermetic-unit",
       "owner": "security-filesystem",
@@ -4227,6 +4245,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("src/security/sandbox/worker-script.test.ts", [
       "filesystem-read",
       "filesystem-write",
+      "process",
     ], {
       "disposition": "integration-relocation",
       "owner": "security-filesystem",
