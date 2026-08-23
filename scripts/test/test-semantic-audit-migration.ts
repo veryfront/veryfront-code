@@ -1483,6 +1483,12 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
+    entry("scripts/build/runtime-support.test.ts", ["filesystem-read"], {
+      "disposition": "hermetic-unit",
+      "owner": "scripts-tooling",
+      "rationale":
+        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
+    }),
     entry("scripts/build/sentry-runtime-packages.test.ts", [
       "filesystem-read",
       "filesystem-write",
