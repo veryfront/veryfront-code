@@ -986,16 +986,45 @@ function local(fetch: () => Promise<Response>) {
 import { lookup, resolve4 as resolveIpv4 } from "node:dns";
 import dns from "node:dns/promises";
 import * as legacyDns from "dns";
+import dnsCallback from "node:dns";
+import {
+  promises as dnsPromises,
+  Resolver as CallbackResolver,
+} from "node:dns";
+import { Resolver as PromiseResolver } from "node:dns/promises";
 const loadedDns = await import("dns/promises");
+const requiredDns = require("node:dns");
 const lookupAlias = lookup;
 lookupAlias("example.com", () => {});
 resolveIpv4("example.com", () => {});
 await dns.resolve("example.com");
 legacyDns.reverse("127.0.0.1", () => {});
 await loadedDns.resolveTxt("example.com");
-function local(lookup: () => void, dns: { resolve(): void }) {
+await dnsCallback.promises.resolve4("example.com");
+await legacyDns.promises.resolve6("example.com");
+await dnsPromises.resolveCname("example.com");
+await requiredDns.promises.resolveMx("example.com");
+const callbackResolver = new CallbackResolver();
+callbackResolver.resolve4("example.com", () => {});
+callbackResolver.cancel();
+const promiseResolver = new PromiseResolver();
+await promiseResolver.resolveTxt("example.com");
+promiseResolver.setServers(["1.1.1.1"]);
+const defaultResolver = new dnsCallback.Resolver();
+defaultResolver.resolveNs("example.com", () => {});
+const namespaceResolver = new legacyDns.Resolver();
+namespaceResolver.resolveSoa("example.com", () => {});
+const requiredResolver = new requiredDns.Resolver();
+await requiredResolver.reverse("127.0.0.1");
+function local(
+  lookup: () => void,
+  dns: { resolve(): void },
+  Resolver: new () => { resolve(): void },
+) {
   lookup();
   dns.resolve();
+  const resolver = new Resolver();
+  resolver.resolve();
 }
 `,
         "src/node-dns-effects.test.ts",
@@ -1006,6 +1035,15 @@ function local(lookup: () => void, dns: { resolve(): void }) {
         ["network", "dns.resolve"],
         ["network", "legacyDns.reverse"],
         ["network", "loadedDns.resolveTxt"],
+        ["network", "dnsCallback.promises.resolve4"],
+        ["network", "legacyDns.promises.resolve6"],
+        ["network", "dnsPromises.resolveCname"],
+        ["network", "requiredDns.promises.resolveMx"],
+        ["network", "callbackResolver.resolve4"],
+        ["network", "promiseResolver.resolveTxt"],
+        ["network", "defaultResolver.resolveNs"],
+        ["network", "namespaceResolver.resolveSoa"],
+        ["network", "requiredResolver.reverse"],
       ],
     );
   });

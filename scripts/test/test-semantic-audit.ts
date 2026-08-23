@@ -383,6 +383,8 @@ const DNS_NETWORK_METHODS = new Set([
   "reverse",
 ]);
 
+const DNS_RESOLVER_CONSTRUCTORS = new Set(["Resolver"]);
+
 const GLOBAL_RUNTIME_RECEIVERS = new Set(["globalThis", "window", "self"]);
 
 const CANONICAL_COMPAT_FS_SOURCE = "src/platform/compat/fs.ts";
@@ -537,12 +539,15 @@ interface ImportBindings {
   readonly playwright: Set<string>;
   readonly playwrightNamespaces: Set<string>;
   readonly runtimeNamespaces: Map<string, string>;
+  readonly runtimeConstructors: Map<string, string>;
   readonly createRequire: Set<string>;
   readonly importedNames: Set<string>;
 }
 
 type RuntimeBinding =
   | { readonly kind: "module"; readonly source: string }
+  | { readonly kind: "module-constructor"; readonly source: string }
+  | { readonly kind: "module-instance"; readonly source: string }
   | { readonly kind: "effect"; readonly effect: SemanticEffect }
   | { readonly kind: "effect-object"; readonly effect: SemanticEffect }
   | {
@@ -2406,6 +2411,7 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
     playwright: new Set(),
     playwrightNamespaces: new Set(),
     runtimeNamespaces: new Map(),
+    runtimeConstructors: new Map(),
     createRequire: new Set(),
     importedNames: new Set(),
   };
@@ -2494,6 +2500,14 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
       }
       if (isDnsSpecifier(source) && DNS_NETWORK_METHODS.has(importedName)) {
         bindings.network.add(local);
+      }
+      if (isDnsSpecifier(source) && importedName === "promises") {
+        addRuntimeNamespaceImport(bindings, local, "node:dns/promises");
+      }
+      if (
+        isDnsSpecifier(source) && DNS_RESOLVER_CONSTRUCTORS.has(importedName)
+      ) {
+        bindings.runtimeConstructors.set(local, source);
       }
       if (isPlaywrightSpecifier(source)) bindings.playwright.add(local);
       if (
@@ -3151,7 +3165,8 @@ function bindRuntimeAssignmentPattern(
     pattern.type !== "ObjectPattern" ||
     (binding.kind !== "global-runtime" && binding.kind !== "global-object" &&
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
-      binding.kind !== "module" && binding.kind !== "namespace-object" &&
+      binding.kind !== "module" && binding.kind !== "module-instance" &&
+      binding.kind !== "namespace-object" &&
       binding.kind !== "one-of")
   ) {
     return;
@@ -3316,6 +3331,8 @@ function runtimeBindingForExpression(
     scopes,
   );
   if (createRequireBinding) return createRequireBinding;
+  const constructedBinding = constructedRuntimeBinding(value, imports, scopes);
+  if (constructedBinding) return constructedBinding;
   const moduleSource = runtimeModuleSource(value, imports, scopes);
   if (moduleSource) return { kind: "module", source: moduleSource };
   const boundCallableBinding = boundCallableRuntimeBinding(
@@ -3390,6 +3407,25 @@ function objectLiteralRuntimeBinding(
   return properties.size > 0
     ? { kind: "namespace-object", properties }
     : undefined;
+}
+
+function constructedRuntimeBinding(
+  value: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  if (value.type !== "NewExpression" || !isNode(value.callee)) {
+    return undefined;
+  }
+  return unionRuntimeBindings(
+    flattenRuntimeBindings(
+      runtimeBindingForExpression(value.callee, imports, scopes),
+    ).flatMap((binding) =>
+      binding.kind === "module-constructor"
+        ? [{ kind: "module-instance", source: binding.source } as const]
+        : []
+    ),
+  );
 }
 
 function alternativeRuntimeBinding(
@@ -3481,6 +3517,10 @@ function identifierRuntimeBinding(
   }
   const runtimeNamespace = imports.runtimeNamespaces.get(name);
   if (runtimeNamespace) return { kind: "module", source: runtimeNamespace };
+  const runtimeConstructor = imports.runtimeConstructors.get(name);
+  if (runtimeConstructor) {
+    return { kind: "module-constructor", source: runtimeConstructor };
+  }
   if (imports.filesystemNamespaces.has(name)) {
     return { kind: "module", source: "node:fs" };
   }
@@ -3518,15 +3558,18 @@ function moduleSourceForProperty(
   property: string,
 ): string | undefined {
   if (property === "default" && isRuntimeEffectModule(source)) return source;
-  return isFilesystemSpecifier(source) && property === "promises"
-    ? "node:fs/promises"
-    : undefined;
+  if (property !== "promises") return undefined;
+  if (isFilesystemSpecifier(source)) return "node:fs/promises";
+  return isDnsSpecifier(source) ? "node:dns/promises" : undefined;
 }
 
 function moduleRuntimeBindingForProperty(
   source: string,
   property: string,
 ): RuntimeBinding | undefined {
+  if (isDnsSpecifier(source) && DNS_RESOLVER_CONSTRUCTORS.has(property)) {
+    return { kind: "module-constructor", source };
+  }
   if (isFilesystemSpecifier(source) && FILESYSTEM_OPEN_METHODS.has(property)) {
     return { kind: "filesystem-open", source };
   }
@@ -3625,6 +3668,9 @@ function runtimePropertyBinding(
       ? { kind: "module", source: nestedSource }
       : moduleRuntimeBindingForProperty(binding.source, property);
   }
+  if (binding.kind === "module-instance") {
+    return moduleRuntimeBindingForProperty(binding.source, property);
+  }
   if (binding.kind === "global-object") {
     return globalObjectPropertyBinding(property);
   }
@@ -3703,6 +3749,12 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
     return `global-runtime:${binding.runtime}`;
   }
   if (binding.kind === "module") return `module:${binding.source}`;
+  if (binding.kind === "module-constructor") {
+    return `module-constructor:${binding.source}`;
+  }
+  if (binding.kind === "module-instance") {
+    return `module-instance:${binding.source}`;
+  }
   if (binding.kind === "effect-object") {
     return `effect-object:${binding.effect}`;
   }
@@ -3763,6 +3815,7 @@ function bindPatternToRuntime(
   if (
     pattern.type !== "ObjectPattern" ||
     (binding.kind !== "module" && binding.kind !== "global-runtime" &&
+      binding.kind !== "module-instance" &&
       binding.kind !== "global-object" &&
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
       binding.kind !== "namespace-object" && binding.kind !== "one-of")
