@@ -166,18 +166,13 @@ export async function findAutomatedReview(
       const reviewedTip = recentReview?.match(
         CODERABBIT_REVIEW_RANGE_PATTERN,
       )?.[2];
-      const outcomeTip = skippedTip?.toLowerCase() === headSha.toLowerCase()
-        ? skippedTip
-        : reviewedTip ?? requestedTip;
       if (
-        typeof outcomeTip !== "string" ||
-        outcomeTip.toLowerCase() !== headSha.toLowerCase()
+        typeof reviewedTip !== "string" ||
+        reviewedTip.toLowerCase() !== headSha.toLowerCase()
       ) {
         continue;
       }
-      return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) &&
-          skippedTip?.toLowerCase() !== headSha.toLowerCase() &&
-          reviewedTip?.toLowerCase() === headSha.toLowerCase()
+      return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER)
         ? {
           reviewer: login,
           source: "summary",
