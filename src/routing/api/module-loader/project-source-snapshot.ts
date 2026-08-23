@@ -2,6 +2,8 @@ import * as pathHelper from "#veryfront/compat/path";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { realPath } from "#veryfront/platform/compat/fs.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
 interface ProjectBoundaryRoots {
   readonly configuredProject: string;
@@ -22,6 +24,7 @@ export interface ProjectSourceFile {
 export interface ProjectSourceSnapshot {
   read(path: string): Promise<ProjectSourceFile>;
   readTextFile(path: string): Promise<string>;
+  readTextFileWithinLimit(path: string, maximumBytes: number, label: string): Promise<string>;
 }
 
 export class ProjectBoundaryViolationError extends TypeError {
@@ -137,6 +140,39 @@ export async function createProjectSourceSnapshot(
     read,
     async readTextFile(path: string): Promise<string> {
       return (await read(path)).contents;
+    },
+    async readTextFileWithinLimit(
+      path: string,
+      maximumBytes: number,
+      label: string,
+    ): Promise<string> {
+      const logicalPath = pathHelper.resolve(path);
+      const readPath = await resolveAuthorizedReadPath(logicalPath, roots);
+      const existing = snapshots.get(readPath);
+      if (existing) {
+        const contents = await existing;
+        if (utf8ByteLength(contents, maximumBytes) > maximumBytes) {
+          throw new TypeError(`${label} exceeds ${maximumBytes} bytes`);
+        }
+        return contents;
+      }
+
+      const boundedReader = captureBoundedTextReader(
+        adapter.fs,
+        "Project source snapshot",
+      );
+      const contents = boundedReader.readUtf8(
+        readPath,
+        maximumBytes,
+        label,
+      ).then((result) => result.content);
+      snapshots.set(readPath, contents);
+      try {
+        return await contents;
+      } catch (error) {
+        if (snapshots.get(readPath) === contents) snapshots.delete(readPath);
+        throw error;
+      }
     },
   });
 }

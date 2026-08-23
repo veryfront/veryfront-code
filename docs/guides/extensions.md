@@ -72,6 +72,59 @@ veryfront dev
 
 If the extension factory throws during setup, the dev server reports the setup error. For local extensions, edit the extension source and save `veryfront.config.ts` to force reload during development.
 
+## Enable legacy decorator metadata
+
+The default esbuild transform supports decorator syntax but does not emit
+TypeScript runtime type metadata. Install the explicit SWC bundler extension
+when class-validator, TypeORM, or a dependency-injection library needs
+`design:type`, `design:paramtypes`, or `design:returntype`:
+
+```bash
+npm install @veryfront/ext-bundler-swc
+```
+
+Select it in executable local or standalone configuration:
+
+```ts
+import { defineConfig } from "veryfront";
+import extSwc from "@veryfront/ext-bundler-swc";
+
+export default defineConfig({
+  extensions: [extSwc()],
+});
+```
+
+Enable legacy decorators and metadata in `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}
+```
+
+The extension follows inherited TypeScript configuration and initializes the
+reflection runtime before decorated modules are evaluated. Without the
+extension, esbuild remains the default and ignores `emitDecoratorMetadata`.
+Projects that use standard decorators or validation libraries without runtime
+type reflection do not need the extension.
+
+Isolated route preparation follows inherited configuration only inside the
+project boundary, including project-owned `node_modules`. Copy an external
+workspace configuration into the project before using it in an isolated
+runtime. Trusted host execution can follow configuration outside the project.
+
+Enabling `experimentalDecorators` routes local Deno API modules through
+per-route SWC bundles. Separate route bundles do not share module-level state
+from a common project import. The extension reads only the two decorator flags
+from TypeScript configuration; other TypeScript emit settings are not forwarded
+to SWC. The active legacy transform rejects source-map requests because it does
+not compose SWC and esbuild maps yet. Review the extension package README before
+treating module singletons or compiler-specific output as part of your route
+contract.
+
 ## Authorize React Server Actions
 
 Server Actions require an application-owned authorization provider. Create a
@@ -200,6 +253,7 @@ upgrades fail closed with an error that names the required package.
 | Area          | Example package                              | Contract family   |
 | ------------- | -------------------------------------------- | ----------------- |
 | Auth          | `@veryfront/ext-auth-jwt`                    | `AuthProvider`    |
+| Build         | `@veryfront/ext-bundler-swc`                 | `Bundler`         |
 | Cache         | `@veryfront/ext-cache-redis`                 | `TokenCacheStore` |
 | Content       | `@veryfront/ext-content-mdx`                 | content parsing   |
 | CSS           | `@veryfront/ext-css-tailwind`                | CSS processing    |

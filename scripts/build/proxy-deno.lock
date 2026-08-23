@@ -1536,6 +1536,12 @@
           "npm:esbuild@0.28.1"
         ]
       },
+      "extensions/ext-bundler-swc": {
+        "dependencies": [
+          "npm:@swc/wasm@1.16.1",
+          "npm:reflect-metadata@0.2.2"
+        ]
+      },
       "extensions/ext-cache-redis": {
         "dependencies": [
           "npm:redis@5.11.0"

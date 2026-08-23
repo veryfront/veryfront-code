@@ -47,6 +47,7 @@
     "./extensions/ext-blob-gcs",
     "./extensions/ext-blob-s3",
     "./extensions/ext-bundler-esbuild",
+    "./extensions/ext-bundler-swc",
     "./extensions/ext-dev-ui-react",
     "./extensions/ext-cache-redis",
     "./extensions/ext-redis",

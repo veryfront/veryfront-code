@@ -104,6 +104,8 @@ export interface BundleOptions {
    * background.
    */
   signal?: AbortSignal;
+  /** Resolved legacy TypeScript decorator flags for this project boundary. */
+  typescriptDecoratorOptions?: TypeScriptDecoratorOptions;
 
   /** Extra implementation-specific options. */
   [key: string]: unknown;
@@ -286,6 +288,8 @@ export interface BuildFailure extends Error {
  * optimized output suitable for deployment or development.
  */
 export interface Bundler {
+  /** Decide whether resolved project flags require bundled local TypeScript execution. */
+  shouldBundleTypeScript?(options: TypeScriptDecoratorOptions): boolean;
   /** Bundle one or more entry points into output files. */
   bundle(options: BundleOptions): Promise<BundleResult>;
   /** Transform a single source string without writing to disk. */
@@ -294,4 +298,10 @@ export interface Bundler {
   context?(options: BundleOptions): Promise<BuildContext>;
   /** Release bundler resources (child processes, watchers, etc.). */
   stop?(): Promise<void>;
+}
+
+/** Compiler flags that control legacy TypeScript decorator transformation. */
+export interface TypeScriptDecoratorOptions {
+  readonly experimentalDecorators: boolean;
+  readonly emitDecoratorMetadata: boolean;
 }

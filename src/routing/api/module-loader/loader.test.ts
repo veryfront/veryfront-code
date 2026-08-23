@@ -4,6 +4,7 @@ import { assertEquals, assertMatch, assertRejects } from "#veryfront/testing/ass
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
+  bundlerForcesTypeScript,
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   getUserDependencies,
@@ -17,6 +18,7 @@ import {
   rewriteDenoNpmDependencyImports,
   rewriteNodeExternalImports,
   toCjsDestructureBindings,
+  typeScriptBuildOptions,
 } from "./loader.ts";
 import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolation-capability.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -109,6 +111,42 @@ const adapter: RuntimeAdapter = {
     throw new Error("not implemented");
   },
 };
+
+describe("TypeScript source execution selection", () => {
+  it("routes local source only when the selected bundler accepts the project flags", () => {
+    const off = { experimentalDecorators: false, emitDecoratorMetadata: false };
+    const on = { experimentalDecorators: true, emitDecoratorMetadata: false };
+    assertEquals(bundlerForcesTypeScript(undefined, off), false);
+    assertEquals(bundlerForcesTypeScript({}, off), false);
+    assertEquals(
+      bundlerForcesTypeScript({ shouldBundleTypeScript: () => false }, on),
+      false,
+    );
+    assertEquals(
+      bundlerForcesTypeScript({
+        shouldBundleTypeScript: (options) => options.experimentalDecorators,
+      }, off),
+      false,
+    );
+    assertEquals(
+      bundlerForcesTypeScript({
+        shouldBundleTypeScript: (options) => options.experimentalDecorators,
+      }, on),
+      true,
+    );
+  });
+
+  it("adds a working directory only when the selected bundler handles TypeScript", () => {
+    const off = { experimentalDecorators: false, emitDecoratorMetadata: false };
+    assertEquals(typeScriptBuildOptions("/project", off, false), {
+      typescriptDecoratorOptions: off,
+    });
+    assertEquals(typeScriptBuildOptions("/project", off, true), {
+      typescriptDecoratorOptions: off,
+      absWorkingDir: "/project",
+    });
+  });
+});
 
 describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterAll(async () => {

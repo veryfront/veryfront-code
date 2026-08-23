@@ -702,8 +702,13 @@ function toOutput(f: any): BundleOutput {
 }
 
 function mapOptions(options: BundleOptions, scope: OperationScope): MappedBundleOptions {
-  // `signal` belongs to the framework contract, not esbuild's BuildOptions.
-  const { plugins, signal: _signal, ...rest } = options;
+  // These fields belong to the framework contract, not esbuild's BuildOptions.
+  const {
+    plugins,
+    signal: _signal,
+    typescriptDecoratorOptions: _typescriptDecoratorOptions,
+    ...rest
+  } = options;
   const mapped: Record<string, unknown> = { ...rest };
   const pluginDisposals = createPluginDisposalBarrier(scope);
   if (plugins && plugins.length > 0) {
