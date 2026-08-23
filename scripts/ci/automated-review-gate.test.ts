@@ -34,6 +34,14 @@ function review(
   };
 }
 
+function codeRabbitReviewRange(
+  baseSha = STALE_SHA,
+  headSha = HEAD_SHA,
+): string {
+  return "Reviewing files that changed from the base of the PR and between " +
+    `${baseSha} and ${headSha}.`;
+}
+
 function codeRabbitSummary(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
@@ -42,7 +50,7 @@ function codeRabbitSummary(
     body: [
       "<!-- recent_review_start -->",
       "No actionable comments were generated in the recent review.",
-      `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+      codeRabbitReviewRange(),
       "<!-- recent_review_end -->",
     ].join("\n"),
     html_url:
@@ -146,13 +154,12 @@ describe("automated review gate", () => {
     );
   });
 
-  it("accepts CodeRabbit's current base-change review wording", async () => {
+  it("requires CodeRabbit's exact current base-change review sentence", async () => {
     const currentSummary = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        "Reviewing files that changed from the base of the PR and between " +
-        `${STALE_SHA} and ${HEAD_SHA}.`,
+        codeRabbitReviewRange(),
         "<!-- recent_review_end -->",
       ].join("\n"),
     });
@@ -171,6 +178,30 @@ describe("automated review gate", () => {
       ),
       undefined,
     );
+
+    for (
+      const invalidRange of [
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        codeRabbitReviewRange() + " but this is not the final review.",
+        codeRabbitReviewRange().replace("Reviewing", "reviewing"),
+      ]
+    ) {
+      const invalidSummary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          invalidRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+      });
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [invalidSummary] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
   });
 
   it("accepts an authenticated Codex no-finding comment for the current head", async () => {
@@ -302,7 +333,7 @@ describe("automated review gate", () => {
             body: [
               "<!-- recent_review_start -->",
               "No actionable comments were generated in the recent review.",
-              `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+              codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
               "<!-- recent_review_end -->",
             ].join("\n"),
           }),
@@ -380,7 +411,7 @@ describe("automated review gate", () => {
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        codeRabbitReviewRange(),
         "<!-- recent_review_end -->",
         `Review skipped for current commit ${HEAD_SHA}.`,
       ].join("\n"),
@@ -480,7 +511,7 @@ describe("automated review gate", () => {
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
         "<!-- recent_review_end -->",
       ].join("\n"),
       created_at: "2026-08-22T12:04:00Z",
@@ -502,7 +533,7 @@ describe("automated review gate", () => {
       body: [
         "<!-- recent_review_start -->",
         "No actionable comments were generated in the recent review.",
-        `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
         "<!-- recent_review_end -->",
         `Review skipped for current commit ${HEAD_SHA}.`,
       ].join("\n"),
@@ -561,7 +592,7 @@ describe("automated review gate", () => {
           body: [
             "<!-- recent_review_start -->",
             "No actionable comments were generated in the recent review.",
-            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            codeRabbitReviewRange(),
             "<!-- recent_review_end -->",
             `Review skipped for current commit ${HEAD_SHA}.`,
           ].join("\n"),
@@ -571,7 +602,7 @@ describe("automated review gate", () => {
         codeRabbitSummary({
           body: [
             "<!-- recent_review_start -->",
-            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            codeRabbitReviewRange(),
             "<!-- recent_review_end -->",
           ].join("\n"),
           created_at: timestamp,
