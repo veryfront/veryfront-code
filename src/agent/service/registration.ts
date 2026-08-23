@@ -445,8 +445,13 @@ async function sendHeartbeatRequest(
       signal: abortSignal,
     });
   } catch (cause) {
-    // No response, so the request never reached a handler and applied nothing.
-    // It carries no httpStatus, which is what marks it transport-level below.
+    // A caller-supplied fetch may reject with an error that is already ours,
+    // and that error already carries its own slug and httpStatus. Reclassifying
+    // it would drop the status that keeps a 4xx from being retried.
+    if (isVeryfrontError(cause)) throw cause;
+    // Anything else means no response, so the request never reached a handler
+    // and applied nothing. It carries no httpStatus, which is what marks it
+    // transport-level below.
     throw NETWORK_ERROR.create({
       detail: getErrorMessage(cause),
       cause,

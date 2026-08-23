@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing";
+import { NETWORK_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceRegistrationLogger,
   createAgentServiceRegistrationLifecycle,
@@ -669,6 +670,52 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       log.warnings.length,
       0,
       `a permanent schema mismatch must not log a retry notice, saw ` +
+        `${log.warnings.map((entry) => entry.message).join(", ")}`,
+    );
+  });
+
+  it("keeps a fetch rejection that already carries an HTTP status out of the retry loop", async () => {
+    // `fetch` is a public option, so a caller can supply a transport that
+    // rejects with an error of ours that is already classified. Its httpStatus
+    // is what keeps a 4xx from being retried, and rewrapping the rejection as a
+    // bare transport failure would throw that status away and retry it.
+    let heartbeatRequests = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      return Promise.reject(
+        NETWORK_ERROR.create({
+          detail: "upstream rejected the heartbeat",
+          context: { httpStatus: 404 },
+        }),
+      );
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { logger: log.logger }),
+    );
+
+    const error = await assertRejects(() => lifecycle.heartbeat(), Error);
+    lifecycle.stop();
+
+    assertEquals(
+      (error as { context?: { httpStatus?: unknown } }).context?.httpStatus,
+      404,
+      "the classification the caller's fetch supplied must survive",
+    );
+    assertEquals(
+      heartbeatRequests,
+      1,
+      "a rejection that already carries a 4xx must not be retried",
+    );
+    assertEquals(
+      log.warnings.length,
+      0,
+      `a classified client error must not log a retry notice, saw ` +
         `${log.warnings.map((entry) => entry.message).join(", ")}`,
     );
   });
