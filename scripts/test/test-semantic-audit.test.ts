@@ -441,6 +441,35 @@ await aliasedFs.readFile("deno.json");
     );
   });
 
+  it("classifies fs.promises namespaces and aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import fs from "node:fs";
+import * as nodeFs from "fs";
+await fs.promises.readFile("deno.json");
+await fs.promises.writeFile("tmp.txt", "x");
+await nodeFs.promises.rm("tmp.txt");
+const promised = fs.promises;
+await promised.stat("deno.json");
+const { promises: destructured } = nodeFs;
+await destructured.appendFile("tmp.txt", "x");
+function local(fs: { promises: { writeFile(): void } }) {
+  fs.promises.writeFile();
+}
+`,
+        "src/fs-promises-namespaces.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "fs.promises.readFile"],
+        ["filesystem-write", "fs.promises.writeFile"],
+        ["filesystem-write", "nodeFs.promises.rm"],
+        ["filesystem-read", "promised.stat"],
+        ["filesystem-write", "destructured.appendFile"],
+      ],
+    );
+  });
+
   it("classifies statically known computed runtime properties", () => {
     const markers = collectSemanticMarkers(
       `

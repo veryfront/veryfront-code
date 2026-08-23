@@ -863,7 +863,12 @@ function markerForNode(
   if (processGlobal) return processGlobal;
 
   if (node.type === "MemberExpression") {
-    const runtimeMarker = memberRuntimeEffectMarker(node, line, scopes);
+    const runtimeMarker = memberRuntimeEffectMarker(
+      node,
+      line,
+      bindings,
+      scopes,
+    );
     const objectName = memberObjectName(node);
     const effectObject = objectName
       ? resolveLocalBinding(objectName, scopes).binding?.kind ===
@@ -882,7 +887,7 @@ function markerForNode(
       bindings.importedNames,
     );
     if (globalMarker) return globalMarker;
-    return memberRuntimeEffectMarker(node.left, line, scopes);
+    return memberRuntimeEffectMarker(node.left, line, bindings, scopes);
   }
 
   if (node.type !== "CallExpression" && node.type !== "NewExpression") {
@@ -950,6 +955,13 @@ function markerForNode(
   }
 
   if (callee.type !== "MemberExpression") return undefined;
+  const runtimeMarker = memberRuntimeEffectMarker(
+    callee,
+    line,
+    bindings,
+    scopes,
+  );
+  if (runtimeMarker) return runtimeMarker;
   const method = memberProperty(callee);
   const objectName = memberObjectName(callee);
   if (!method || !objectName) return undefined;
@@ -977,9 +989,6 @@ function markerForNode(
     bindings.importedNames,
   );
   if (fetchMarker) return fetchMarker;
-
-  const runtimeMarker = memberRuntimeEffectMarker(callee, line, scopes);
-  if (runtimeMarker) return runtimeMarker;
 
   if (isPlaywrightFixture(objectName, scopes) && BROWSER_METHODS.has(method)) {
     return { effect: "browser", line, symbol: `${objectName}.${method}` };
@@ -1062,9 +1071,20 @@ function markerForNode(
 function memberRuntimeEffectMarker(
   member: Node,
   line: number,
+  imports: ImportBindings,
   scopes: readonly Scope[],
 ): SemanticMarker | undefined {
   if (member.type !== "MemberExpression") return undefined;
+  const chain = memberChain(member);
+  if (chain?.length === 3 && chain[1] === "promises") {
+    const source = moduleSourceForIdentifier(chain[0], imports, scopes);
+    const effect = source && isFilesystemSpecifier(source)
+      ? effectForModuleMethod(source, chain[2])
+      : undefined;
+    if (effect) {
+      return { effect, line, symbol: chain.join(".") };
+    }
+  }
   const method = memberProperty(member);
   const objectName = memberObjectName(member);
   if (!method || !objectName) return undefined;
@@ -1607,12 +1627,16 @@ function bindRuntimeDeclaration(
   }
 
   if (init.type === "MemberExpression" && isNode(declaration.id)) {
-    const objectName = memberObjectName(init);
-    const method = memberProperty(init);
-    if (!objectName || !method) return;
-    const resolved = resolveLocalBinding(objectName, scopes);
-    if (resolved.binding?.kind !== "module") return;
-    const effect = effectForModuleMethod(resolved.binding.source, method);
+    const chain = memberChain(init);
+    if (!chain || chain.length !== 2) return;
+    const source = moduleSourceForIdentifier(chain[0], imports, scopes);
+    if (!source) return;
+    const nestedSource = moduleSourceForProperty(source, chain[1]);
+    if (nestedSource) {
+      bindPatternToModule(declaration.id, nestedSource, scope);
+      return;
+    }
+    const effect = effectForModuleMethod(source, chain[1]);
     if (effect) {
       bindPatternToRuntime(
         declaration.id,
@@ -1665,6 +1689,30 @@ function identifierRuntimeBinding(
     return { kind: "module", source: "@playwright/test" };
   }
   return undefined;
+}
+
+function moduleSourceForIdentifier(
+  name: string,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): string | undefined {
+  const resolved = resolveLocalBinding(name, scopes);
+  if (resolved.binding?.kind === "module") return resolved.binding.source;
+  if (resolved.declared) return undefined;
+  if (imports.filesystemNamespaces.has(name)) return "node:fs";
+  if (imports.processNamespaces.has(name)) return "node:process";
+  if (imports.serverNamespaces.has(name)) return "node:http";
+  if (imports.playwrightNamespaces.has(name)) return "@playwright/test";
+  return undefined;
+}
+
+function moduleSourceForProperty(
+  source: string,
+  property: string,
+): string | undefined {
+  return isFilesystemSpecifier(source) && property === "promises"
+    ? "node:fs/promises"
+    : undefined;
 }
 
 function globalRuntimeAliasBinding(
@@ -1822,6 +1870,14 @@ function bindPatternToModule(
       ? property.value.left.name as string
       : undefined;
     if (!importedName || !localName) continue;
+    const nestedSource = moduleSourceForProperty(source, importedName);
+    if (nestedSource) {
+      scope.runtimeBindings.set(localName, {
+        kind: "module",
+        source: nestedSource,
+      });
+      continue;
+    }
     if (
       isFilesystemSpecifier(source) &&
       FILESYSTEM_OPEN_METHODS.has(importedName)
