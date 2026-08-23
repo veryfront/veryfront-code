@@ -12,6 +12,8 @@ const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
   /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
+  /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
   /(^|[ \t])and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN =
@@ -377,12 +379,17 @@ function parseCodeRabbitRangeStatement(content, match) {
   let lineEnd = match.index + match[0].length;
   while (true) {
     const nextLine = codeRabbitNextLine(content, lineEnd);
-    if (!nextLine || nextLine.content.trim().length === 0) return undefined;
+    if (!nextLine) return undefined;
+    const continuationContent = nextLine.content.replace(
+      CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
+      "",
+    );
+    if (continuationContent.trim().length === 0) return undefined;
     statementParts.push(nextLine.separator, nextLine.content);
 
     const previousLine = baseLines.at(-1);
     const trailingAnd = previousLine?.match(/(^|[ \t])and[ \t]*$/i);
-    const wrappedTip = nextLine.content.match(
+    const wrappedTip = continuationContent.match(
       CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN,
     );
     if (trailingAnd && wrappedTip) {
@@ -393,26 +400,28 @@ function parseCodeRabbitRangeStatement(content, match) {
         ),
         statement: statementParts.join(""),
         tipToken: wrappedTip[1].toLowerCase(),
-        trailingStatement: nextLine.content.slice(wrappedTip[0].length),
+        trailingStatement: continuationContent.slice(wrappedTip[0].length),
       };
     }
 
-    const wrappedSeparator = nextLine.content.match(
+    const wrappedSeparator = continuationContent.match(
       CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN,
     );
     if (wrappedSeparator) {
       return {
         baseSegment: codeRabbitBaseSegment(
           baseLines,
-          nextLine.content.slice(0, wrappedSeparator.index),
+          continuationContent.slice(0, wrappedSeparator.index),
         ),
         statement: statementParts.join(""),
         tipToken: wrappedSeparator[1].toLowerCase(),
-        trailingStatement: nextLine.content.slice(wrappedSeparator[0].length),
+        trailingStatement: continuationContent.slice(
+          wrappedSeparator[0].length,
+        ),
       };
     }
 
-    baseLines.push(nextLine.content);
+    baseLines.push(continuationContent);
     lineEnd = nextLine.lineEnd;
   }
 }

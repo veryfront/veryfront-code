@@ -509,6 +509,12 @@ describe("automated review gate", () => {
         `${STALE_SHA}\nand ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between\n" +
         `${STALE_SHA}\nand\n${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and\n> ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA}\n> and ${HEAD_SHA}.`,
+        "> Reviewing files that changed from the base of the PR and between\n" +
+        `> ${STALE_SHA}\n> and\n> ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between\n" +
         `${STALE_SHA}\nmalformed continuation\nanother continuation\nand\n` +
         `${HEAD_SHA}.`,
@@ -565,6 +571,12 @@ describe("automated review gate", () => {
           `${HEAD_SHA}\nand ${STALE_SHA}.`,
           "Reviewing files that changed from the base of the PR and between\n" +
           `${HEAD_SHA}\nand\n${STALE_SHA}.`,
+          "> Reviewing files that changed from the base of the PR and between " +
+          `${HEAD_SHA} and\n> ${STALE_SHA}.`,
+          "> Reviewing files that changed from the base of the PR and between " +
+          `${HEAD_SHA}\n> and ${STALE_SHA}.`,
+          "> Reviewing files that changed from the base of the PR and between\n" +
+          `> ${HEAD_SHA}\n> and\n> ${STALE_SHA}.`,
           "Reviewing files that changed from the base of the PR and between\n" +
           `${HEAD_SHA}\nmalformed continuation\nanother continuation\nand\n` +
           `${STALE_SHA}.`,
