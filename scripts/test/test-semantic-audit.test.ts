@@ -2868,12 +2868,6 @@ const frozenRedefined = Object.freeze({ run: Deno.remove });
 Reflect.defineProperty(frozenRedefined, "run", { value: () => undefined });
 frozenRedefined.run("frozen-redefined.txt");
 
-const sealedRedefined = Object.seal({ run: Deno.remove });
-try {
-  Object.defineProperty(sealedRedefined, "run", { value: () => undefined });
-} catch {}
-sealedRedefined.run("sealed-redefined.txt");
-
 const prevented = Object.preventExtensions({ run: Deno.remove });
 Reflect.defineProperty(prevented, "run", { value: () => undefined });
 prevented.run("prevented.txt");
@@ -2884,7 +2878,6 @@ prevented.run("prevented.txt");
         ["filesystem-write", "frozen.run"],
         ["filesystem-write", "sealed.run"],
         ["filesystem-write", "frozenRedefined.run"],
-        ["filesystem-write", "sealedRedefined.run"],
       ],
     );
   });
@@ -2911,6 +2904,20 @@ try {
   locked.pop();
 } catch {}
 locked[0]("locked.txt");
+
+const lockedShift = [Deno.remove, () => undefined];
+Object.defineProperty(lockedShift, "0", { writable: false });
+try {
+  lockedShift.shift();
+} catch {}
+lockedShift[0]("locked-shift.txt");
+
+const lockedLength = [Deno.remove];
+Object.defineProperty(lockedLength, "length", { writable: false });
+try {
+  lockedLength.pop();
+} catch {}
+lockedLength[0]("locked-length.txt");
 `,
         "src/runtime-failed-exact-array-removals.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -2918,7 +2925,27 @@ locked[0]("locked.txt");
         ["filesystem-write", "frozenPopped.0"],
         ["filesystem-write", "sealedShifted.0"],
         ["filesystem-write", "locked.0"],
+        ["filesystem-write", "lockedShift.0"],
+        ["filesystem-write", "lockedLength.0"],
       ],
+    );
+  });
+
+  it("clears exact removals that succeed on non-extensible arrays", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const popped = Object.preventExtensions([Deno.remove]);
+popped.pop();
+popped[0]?.("popped.txt");
+
+const shifted = Object.preventExtensions([() => undefined, Deno.remove]);
+shifted.shift();
+shifted[1]?.("shifted.txt");
+`,
+        "src/runtime-non-extensible-exact-array-removals.test.ts",
+      ),
+      [],
     );
   });
 

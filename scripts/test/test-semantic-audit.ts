@@ -4872,8 +4872,9 @@ function bindRuntimeArrayRemovalMutation(
     String(exactLength - 1),
     true,
   );
+  // Conditional and caught mutations cannot clear prior state. When clearing
+  // is allowed, a failed indexed write makes subsequent source unreachable.
   const removalAllowsClearing = allowClearing &&
-    runtimeBindingExtensibility(targetBinding) === true &&
     removedProperty.configurable === true;
   if (method === "shift") {
     const shifted = Array.from({ length: exactLength - 1 }, (_, index) => {
