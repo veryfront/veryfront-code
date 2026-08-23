@@ -1020,6 +1020,34 @@ describe("mcp/server", () => {
       );
     });
 
+    it("preserves parameters in rootless hierarchical URI paths", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:collection", {
+        id: "test:collection",
+        pattern: "custom:collection/:id",
+        description: "Collection item",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+      const templates = (response.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+
+      assertEquals(
+        templates.find((entry) => entry.name === "test:collection")?.uriTemplate,
+        "custom:collection/{id}",
+      );
+    });
+
     it("excludes scheme-only colons like openapi://spec", async () => {
       const server = createMCPServer({
         enabled: true,

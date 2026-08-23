@@ -126,6 +126,22 @@ describe("resource registry", () => {
       );
     });
 
+    it("should match parameters in rootless hierarchical URI paths", () => {
+      const item = resource({
+        pattern: "custom:collection/:id",
+        description: "Collection item",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(item.id, item);
+
+      assertEquals(resourceRegistry.findByPattern("custom:collection/42"), item);
+      assertEquals(
+        resourceRegistry.extractParams("custom:collection/42", item.pattern),
+        { id: "42" },
+      );
+    });
+
     it("should support caller-scoped visibility without changing default lookup", () => {
       const userById = resource({
         pattern: "/users/:userId",

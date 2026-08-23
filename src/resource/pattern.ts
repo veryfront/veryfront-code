@@ -1,8 +1,35 @@
-const RESOURCE_PARAMETER = /:([A-Za-z_][A-Za-z0-9_]*)/g;
-const RESOURCE_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+function isAsciiLetter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+function isParameterNameStart(code: number): boolean {
+  return isAsciiLetter(code) || code === 95;
+}
+
+function isParameterNamePart(code: number): boolean {
+  return isParameterNameStart(code) || isAsciiDigit(code);
+}
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let escaped = "";
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index]!;
+    if (
+      character === "." || character === "*" || character === "+" ||
+      character === "?" || character === "^" || character === "$" ||
+      character === "{" || character === "}" || character === "(" ||
+      character === ")" || character === "|" || character === "[" ||
+      character === "]" || character === "\\"
+    ) {
+      escaped += "\\";
+    }
+    escaped += character;
+  }
+  return escaped;
 }
 
 export function resourcePatternToRegex(pattern: string): RegExp {
@@ -25,24 +52,27 @@ function transformResourcePattern(
   transformLiteral: (literal: string) => string,
   transformParameter: (name: string) => string,
 ): { value: string; parameterized: boolean } {
-  const schemeMatch = RESOURCE_SCHEME.exec(pattern);
-  const parameterStart = schemeMatch && pattern[schemeMatch[0].length] !== "/"
-    ? pattern.length
-    : schemeMatch?.[0].length ?? 0;
   let value = "";
   let literalStart = 0;
   let parameterized = false;
-  RESOURCE_PARAMETER.lastIndex = 0;
 
-  for (
-    let match = RESOURCE_PARAMETER.exec(pattern);
-    match;
-    match = RESOURCE_PARAMETER.exec(pattern)
-  ) {
-    if (match.index < parameterStart) continue;
-    value += transformLiteral(pattern.slice(literalStart, match.index));
-    value += transformParameter(match[1]!);
-    literalStart = match.index + match[0].length;
+  for (let index = 0; index < pattern.length; index++) {
+    if (pattern[index] !== ":") continue;
+    const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
+    const firstNameCode = pattern.charCodeAt(index + 1);
+    if (
+      isAsciiLetter(previousCode) || isAsciiDigit(previousCode) ||
+      !isParameterNameStart(firstNameCode)
+    ) {
+      continue;
+    }
+
+    let end = index + 2;
+    while (end < pattern.length && isParameterNamePart(pattern.charCodeAt(end))) end++;
+    value += transformLiteral(pattern.slice(literalStart, index));
+    value += transformParameter(pattern.slice(index + 1, end));
+    literalStart = end;
+    index = end - 1;
     parameterized = true;
   }
   value += transformLiteral(pattern.slice(literalStart));
