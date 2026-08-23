@@ -394,6 +394,15 @@ describe("automated review workflow", () => {
     assertEquals(permissions["pull-requests"], "read");
     assertEquals(permissions.statuses, "write");
 
+    assertEquals(
+      record(workflow.concurrency, "concurrency"),
+      {
+        group: "automated-review-${{ github.repository }}",
+        queue: "max",
+      },
+      "every trigger must join one repository-wide FIFO group without cancellation",
+    );
+
     const triggers = record(workflow.on, "triggers");
     assert(
       "status" in triggers,

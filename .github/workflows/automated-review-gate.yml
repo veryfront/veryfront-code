@@ -16,10 +16,9 @@ permissions:
   statuses: write
 
 concurrency:
-  group: automated-review-${{ github.event.pull_request.number || github.event.issue.number || github.event.sha }}
-  # This workflow reconciles one mutable commit status. Canceling an older run
-  # leaves a canceled Actions check on the pull request SHA even when a later
-  # run publishes a successful status, so process every event in order.
+  # A status event has no PR number at expression time. Use one repository-wide
+  # FIFO group so every trigger observes and publishes evidence in event order.
+  group: automated-review-${{ github.repository }}
   queue: max
 
 jobs:
