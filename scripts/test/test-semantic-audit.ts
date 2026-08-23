@@ -8644,7 +8644,8 @@ function runtimeArrayRestBinding(
   binding: RuntimeBinding,
   startIndex: number,
 ): RuntimeBinding {
-  return unionRuntimeBindings(
+  return unionDerivedRuntimeBindingsPreservingPartial(
+    binding,
     flattenRuntimeBindings(binding).map((candidate) =>
       staticRuntimeArrayRestBinding(candidate, startIndex) ??
         conservativeRuntimeArrayRestBinding(candidate)
