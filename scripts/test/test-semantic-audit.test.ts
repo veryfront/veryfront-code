@@ -2863,6 +2863,15 @@ const hiddenData = Object.defineProperty({}, "run", {
 });
 Object.assign({}, hiddenData).run();
 
+const visibleData = {};
+Object.defineProperty(visibleData, "run", {
+  configurable: true,
+  enumerable: true,
+  value: () => undefined,
+});
+Object.defineProperty(visibleData, "run", { value: Deno.remove });
+Object.assign({}, visibleData).run("visible-data.txt");
+
 const hiddenPreserved = { run: Deno.remove };
 Object.assign(hiddenPreserved, hiddenReturn).run("preserved.txt");
 
@@ -2903,6 +2912,7 @@ returned.path;
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "Object.assign(source getter)"],
         ["shared-cwd", "source.* getter"],
+        ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["filesystem-write", "run"],

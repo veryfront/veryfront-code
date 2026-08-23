@@ -4650,11 +4650,19 @@ function bindRuntimeCallMutation(
       continue;
     }
     for (const entry of assigned) {
-      const binding = localMutationAssignedEntryBinding(
+      let binding = localMutationAssignedEntryBinding(
         entry,
         imports,
         scopes,
       );
+      if (entry.property !== undefined && entry.descriptor !== undefined) {
+        binding = runtimeEffectiveDataValueBinding(
+          binding,
+          runtimeBindingForExpression(target, imports, scopes),
+          entry.property,
+          entry.descriptor,
+        );
+      }
       if (entry.property !== undefined) {
         bindRuntimeNamedPropertyMutationBinding(
           target,
@@ -4951,10 +4959,23 @@ function mutationCallResultRuntimeBinding(
             invocation.args,
           )
         ) {
+          let entryBinding = localMutationAssignedEntryBinding(
+            entry,
+            imports,
+            scopes,
+          );
+          if (entry.property !== undefined && entry.descriptor !== undefined) {
+            entryBinding = runtimeEffectiveDataValueBinding(
+              entryBinding,
+              result,
+              entry.property,
+              entry.descriptor,
+            );
+          }
           result = appendRuntimeMutationResultProperty(
             result,
             entry.property,
-            localMutationAssignedEntryBinding(entry, imports, scopes),
+            entryBinding,
             false,
             entry.definiteOverwrite === true,
           );
@@ -5406,15 +5427,20 @@ function bindRuntimeLiteralDescriptorMutations(
         scopes,
       );
     }
-    const dataBinding: RuntimeBinding = {
-      kind: "property-data-value",
-      binding: runtimeBindingForExpression(
-        assignedExpression,
-        imports,
-        scopes,
-      ),
-      enumerable: runtimeDescriptorEnumerableForMutation(descriptor),
-    };
+    const dataBinding = runtimeEffectiveDataValueBinding(
+      {
+        kind: "property-data-value",
+        binding: runtimeBindingForExpression(
+          assignedExpression,
+          imports,
+          scopes,
+        ),
+        enumerable: runtimeDescriptorEnumerableForMutation(descriptor),
+      },
+      runtimeBindingForExpression(target, imports, scopes),
+      propertyName,
+      descriptor,
+    );
     if (propertyName) {
       bindRuntimeNamedPropertyMutationBinding(
         target,
@@ -5738,7 +5764,20 @@ function retainedRuntimeDescriptorBinding(
     return { changed: false };
   }
   const existing = runtimePropertyResolution(target, property, true).binding;
-  if (fields.has("value")) return { changed: true };
+  if (fields.has("value")) {
+    const enumerableValues = fields.has("enumerable")
+      ? new Set<boolean | undefined>()
+      : runtimeAccessorEnumerabilityValues(existing);
+    return {
+      changed: true,
+      binding: unionRuntimeBindings(
+        [...enumerableValues].map((enumerable) => ({
+          kind: "property-metadata" as const,
+          enumerable,
+        })),
+      ),
+    };
+  }
   const enumerable = changesEnumerable
     ? runtimeDescriptorBooleanField(descriptor, "enumerable")
     : undefined;
@@ -5800,6 +5839,24 @@ function runtimeDescriptorEffectiveEnumerable(
     : undefined;
 }
 
+function runtimeEffectiveDataValueBinding(
+  binding: RuntimeBinding | undefined,
+  target: RuntimeBinding | undefined,
+  property: string | undefined,
+  descriptor: unknown,
+): RuntimeBinding | undefined {
+  if (binding?.kind !== "property-data-value") return binding;
+  return {
+    ...binding,
+    enumerable: runtimeDescriptorEffectiveEnumerable(
+      target,
+      property,
+      descriptor,
+      binding.enumerable,
+    ),
+  };
+}
+
 function runtimeAccessorEnumerability(
   binding: RuntimeBinding | undefined,
 ): boolean | undefined {
@@ -5814,6 +5871,7 @@ function runtimeAccessorEnumerabilityValues(
     flattenRuntimeBindings(binding).flatMap((candidate) =>
       candidate.kind === "property-getter-effect" ||
         candidate.kind === "property-getter-value" ||
+        candidate.kind === "property-data-value" ||
         candidate.kind === "property-metadata"
         ? [candidate.enumerable]
         : []
