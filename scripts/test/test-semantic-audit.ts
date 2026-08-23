@@ -329,6 +329,7 @@ const GLOBAL_RUNTIME_RECEIVERS = new Set(["globalThis", "window", "self"]);
 const GLOBAL_INTRINSIC_OBJECTS = new Set([
   "AbortController",
   "AbortSignal",
+  "AggregateError",
   "Array",
   "ArrayBuffer",
   "Atomics",
@@ -445,6 +446,7 @@ type RuntimeBinding =
   | { readonly kind: "effect-object"; readonly effect: SemanticEffect }
   | { readonly kind: "filesystem-open"; readonly source: string }
   | { readonly kind: "global-object" }
+  | { readonly kind: "shared-object" }
   | {
     readonly kind: "constructor-effect";
     readonly effect: SemanticEffect;
@@ -1348,12 +1350,13 @@ function sharedGlobalMutationTarget(
   if (!value) return undefined;
   if (value.type === "Identifier") {
     const name = value.name as string;
+    const resolved = resolveLocalBinding(name, scopes);
     if (isGlobalRuntimeReceiver(name, scopes, importedNames)) {
       return { kind: "runtime-root", symbol: name };
     }
-    return isGlobalIntrinsic(name, scopes, importedNames)
-      ? { kind: "shared-object", symbol: name }
-      : undefined;
+    const isSharedObject = resolved.binding?.kind === "shared-object" ||
+      isGlobalIntrinsic(name, scopes, importedNames);
+    return isSharedObject ? { kind: "shared-object", symbol: name } : undefined;
   }
   if (
     value.type !== "MemberExpression" &&
@@ -1363,7 +1366,9 @@ function sharedGlobalMutationTarget(
   }
   const chain = memberChain(value);
   if (!chain || chain.length < 2) return undefined;
+  const root = resolveLocalBinding(chain[0], scopes);
   if (
+    root.binding?.kind === "shared-object" ||
     isGlobalRuntimeReceiver(chain[0], scopes, importedNames) ||
     isGlobalIntrinsic(chain[0], scopes, importedNames)
   ) {
@@ -1858,6 +1863,7 @@ function globalRuntimeAliasBinding(
     if (
       resolved.binding?.kind === "global-runtime" ||
       resolved.binding?.kind === "global-object" ||
+      resolved.binding?.kind === "shared-object" ||
       resolved.binding?.kind === "constructor-effect"
     ) {
       return resolved.binding;
@@ -1881,6 +1887,9 @@ function globalRuntimeAliasBinding(
     ) {
       return { kind: "global-runtime", runtime: name };
     }
+    if (isGlobalIntrinsic(name, scopes, imports.importedNames)) {
+      return { kind: "shared-object" };
+    }
     return undefined;
   }
 
@@ -1891,7 +1900,14 @@ function globalRuntimeAliasBinding(
   ) {
     return globalObjectPropertyBinding(chain[1]);
   }
-  return undefined;
+  const target = sharedGlobalMutationTarget(
+    init,
+    scopes,
+    imports.importedNames,
+  );
+  return target?.kind === "shared-object"
+    ? { kind: "shared-object" }
+    : undefined;
 }
 
 function globalObjectPropertyBinding(
@@ -1906,6 +1922,9 @@ function globalObjectPropertyBinding(
   const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(property);
   if (constructorEffect) {
     return { kind: "constructor-effect", effect: constructorEffect };
+  }
+  if (GLOBAL_INTRINSIC_OBJECTS.has(property)) {
+    return { kind: "shared-object" };
   }
   return property === "fetch"
     ? { kind: "effect", effect: "network" }
@@ -1923,7 +1942,8 @@ function bindPatternToRuntime(
   }
   if (
     pattern.type !== "ObjectPattern" ||
-    (binding.kind !== "global-runtime" && binding.kind !== "global-object")
+    (binding.kind !== "global-runtime" && binding.kind !== "global-object" &&
+      binding.kind !== "shared-object")
   ) {
     return;
   }
@@ -1954,6 +1974,10 @@ function bindPatternToRuntime(
       if (propertyBinding) {
         scope.runtimeBindings.set(localName, propertyBinding);
       }
+      continue;
+    }
+    if (binding.kind === "shared-object") {
+      scope.runtimeBindings.set(localName, binding);
       continue;
     }
     const effect = effectForGlobalRuntimeMethod(binding.runtime, method);

@@ -1113,6 +1113,72 @@ function mutateIntrinsics(
     );
   });
 
+  it("preserves shared intrinsic identity through aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const NativeUint8Array = globalThis.Uint8Array;
+Object.defineProperty(NativeUint8Array.prototype, "constructor", {
+  value: NativeUint8Array,
+});
+const NativeArray = Array;
+const NativeArrayPrototype = NativeArray.prototype;
+Reflect.set(NativeArrayPrototype, Symbol.iterator, () => undefined);
+const { Uint8Array: DestructuredUint8Array } = globalThis;
+const { prototype: DestructuredArrayPrototype } = Array;
+Object.defineProperty(DestructuredUint8Array.prototype, "constructor", {});
+Reflect.deleteProperty(DestructuredArrayPrototype, Symbol.iterator);
+const { AggregateError: NativeAggregateError } = globalThis;
+Object.defineProperty(NativeAggregateError, Symbol.hasInstance, {
+  value: () => true,
+});
+Object.defineProperty(AggregateError, Symbol.hasInstance, {
+  value: () => true,
+});
+delete AggregateError[Symbol.hasInstance];
+`,
+        "src/intrinsic-alias-mutation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        [
+          "process",
+          "Object.defineProperty(NativeUint8Array.prototype.constructor)",
+        ],
+        ["process", "Reflect.set(NativeArrayPrototype.*)"],
+        [
+          "process",
+          "Object.defineProperty(DestructuredUint8Array.prototype.constructor)",
+        ],
+        ["process", "Reflect.deleteProperty(DestructuredArrayPrototype.*)"],
+        [
+          "process",
+          "Object.defineProperty(NativeAggregateError.*)",
+        ],
+        ["process", "Object.defineProperty(AggregateError.*)"],
+        ["process", "AggregateError.*"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function mutate(
+  globalThis: { Uint8Array: { prototype: object } },
+  Array: { prototype: object },
+  AggregateError: object,
+) {
+  const NativeUint8Array = globalThis.Uint8Array;
+  const NativeArrayPrototype = Array.prototype;
+  Object.defineProperty(NativeUint8Array.prototype, "constructor", {});
+  Reflect.set(NativeArrayPrototype, Symbol.iterator, () => undefined);
+  Object.defineProperty(AggregateError, Symbol.hasInstance, {});
+}
+`,
+        "src/local-intrinsic-alias-mutation.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies shared working-directory reads through globals and aliases", () => {
     assertEquals(
       collectSemanticMarkers(
