@@ -52,16 +52,17 @@ export async function findAutomatedReview(
     }
   }
 
-  // GitHub returns commit statuses newest first. Only the latest status for a
-  // context is authoritative; a later retry can revoke an older completion.
+  // Commit status history is attached to the captured SHA. An authenticated
+  // exact completion is immutable occurrence proof; later retries do not erase
+  // it. Review and comment objects differ because GitHub can dismiss or delete
+  // them, and their event paths reconcile the resulting current evidence.
   const status = statuses.find((candidate) =>
-    candidate?.context === "CodeRabbit"
+    candidate?.context === "CodeRabbit" &&
+    candidate?.state === "success" &&
+    candidate?.description === "Review completed" &&
+    isPinnedBot(candidate?.creator, CODERABBIT_LOGIN)
   );
-  if (
-    status?.state === "success" &&
-    status?.description === "Review completed" &&
-    isPinnedBot(status?.creator, CODERABBIT_LOGIN)
-  ) {
+  if (status) {
     return {
       reviewer: CODERABBIT_LOGIN,
       source: "coderabbit-status",

@@ -181,20 +181,29 @@ describe("automated review evidence", () => {
     }
   });
 
-  it("uses only the latest CodeRabbit status for the captured head", async () => {
-    for (
-      const latest of [
-        status({ state: "pending", description: "Review in progress" }),
-        status({ state: "failure", description: "Review failed" }),
-        status({ description: "Review rate limited" }),
-        status({ description: "Review skipped" }),
-      ]
-    ) {
+  it("keeps exact-head CodeRabbit completion as monotonic occurrence proof", async () => {
+    const retries = [
+      status({ description: "Review rate limited" }),
+      status({ state: "pending", description: "Review in progress" }),
+      status({ state: "failure", description: "Review failed" }),
+    ];
+    for (const retry of retries) {
+      for (const statuses of [[retry, status()], [status(), retry]]) {
+        assertEquals(
+          (await findAutomatedReview(
+            { reviews: [], comments: [], statuses },
+            HEAD,
+          ))?.source,
+          "coderabbit-status",
+        );
+      }
+    }
+    for (const statuses of [[], ...retries.map((retry) => [retry])]) {
       assertEquals(
         await findAutomatedReview({
           reviews: [],
           comments: [],
-          statuses: [latest, status()],
+          statuses,
         }, HEAD),
         undefined,
       );
@@ -387,6 +396,25 @@ describe("automated review publication", () => {
     });
     assertEquals(result.state, "success");
     assertEquals(fixture.published[0]?.sha, HEAD);
+  });
+
+  it("keeps completion proof when a later retry appears during pagination", async () => {
+    const fixture = githubFixture({
+      pages: {
+        statuses: [[status({ description: "Review rate limited" })], [
+          status(),
+        ]],
+      },
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "success");
   });
 
   it("fails closed on partial pagination and the 500-item cap", async () => {
