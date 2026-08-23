@@ -687,16 +687,14 @@ describe("init command integration", () => {
         "--skip-install",
         "--skip-env-prompt",
       ]);
-      // Non-zero exit; the project directory must not exist.
-      assertEquals(result.code !== 0, true);
+      // Usage exit code; the project directory must not exist.
+      assertEquals(result.code, 2);
       assertEquals(await exists(projectDir), false);
-      // The error message should surface the validator.
-      assertEquals(
-        ((result.stdout ?? "") + (result.stderr ?? "")).includes(
-          "Invalid runtime value",
-        ),
-        true,
-      );
+      // A classified usage error that surfaces the validator, not unknown-error.
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
+      assertEquals(output.includes("[invalid-argument]"), true);
+      assertEquals(output.includes("Invalid runtime value"), true);
+      assertEquals(output.includes("unknown-error"), false);
     });
   });
 
@@ -722,8 +720,10 @@ describe("init command integration", () => {
         const result = await runInitCommand([dirName, "-t", "minimal", "--skip-install"]);
         const output = (result.stdout ?? "") + (result.stderr ?? "");
 
-        assertEquals(result.code === 0, false);
+        assertEquals(result.code, 1);
+        assertEquals(output.includes("[already-exists]"), true);
         assertEquals(output.includes("already contains README.md"), true);
+        assertEquals(output.includes("unknown-error"), false);
         assertEquals(output.includes("Stack trace"), false);
         assertEquals(await Deno.readTextFile(join(dirPath, "README.md")), "mine\n");
       } finally {

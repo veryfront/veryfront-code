@@ -1,6 +1,6 @@
 import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
-import { createError, toError } from "veryfront/errors";
+import { ALREADY_EXISTS, createError, toError } from "veryfront/errors";
 import { parseExtensionManifest } from "veryfront/extensions";
 import { exists, join, readTextFile } from "veryfront/fs";
 import { generateIntegration } from "./integration-generator.ts";
@@ -123,12 +123,10 @@ export async function generateCommand(
   });
 
   if (!result.success) {
-    throw toError(
-      createError({
-        type: "config",
-        message: result.message,
-      }),
-    );
+    throw ALREADY_EXISTS.create({
+      detail: result.message,
+      context: { paths: result.files.map((file) => file.path) },
+    });
   }
 
   for (const file of result.files) cliLogger.info(`Created ${file.path}`);

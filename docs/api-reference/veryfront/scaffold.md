@@ -38,20 +38,20 @@ for (const file of files) {
 
 | Name                        | Description                                                                 | Source                                                                                              |
 | --------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `SCAFFOLD_TEMPLATE_ALIASES` | Slugs other product surfaces use for a template this CLI names differently. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L659) |
+| `SCAFFOLD_TEMPLATE_ALIASES` | Slugs other product surfaces use for a template this CLI names differently. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L758) |
 
 ### Functions
 
 | Name                      | Description                                                             | Source                                                                                              |
 | ------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `listScaffoldTemplates`   | Every template slug a caller may ask for, canonical names and aliases.  | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L674) |
-| `materializeScaffold`     | Produce the complete contents of a new project without touching a disk. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L713) |
-| `resolveScaffoldTemplate` | Canonical starter template for a slug, or `null` when nothing matches.  | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L666) |
+| `listScaffoldTemplates`   | Every template slug a caller may ask for, canonical names and aliases.  | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L773) |
+| `materializeScaffold`     | Produce the complete contents of a new project without touching a disk. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L812) |
+| `resolveScaffoldTemplate` | Canonical starter template for a slug, or `null` when nothing matches.  | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L765) |
 
 ### Types
 
 | Name                         | Description                                                                       | Source                                                                                              |
 | ---------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `MaterializedScaffold`       | A new project: every file it starts with, plus anything worth telling the author. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L695) |
-| `MaterializeScaffoldRequest` | What to build: which starter, under what name, for which runtime.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L679) |
+| `MaterializedScaffold`       | A new project: every file it starts with, plus anything worth telling the author. | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L794) |
+| `MaterializeScaffoldRequest` | What to build: which starter, under what name, for which runtime.                 | [source](https://github.com/veryfront/veryfront-code/blob/main/cli/shared/project-creation.ts#L778) |
 | `TemplateFile`               |                                                                                   | [source](https://github.com/veryfront/veryfront-code/blob/main/templates/types.ts#L17)              |

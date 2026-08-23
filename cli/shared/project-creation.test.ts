@@ -9,7 +9,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { exists, makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
-import { join } from "veryfront/platform/path";
+import { dirname, join } from "veryfront/platform/path";
 import { formatCLIError, VeryfrontError } from "veryfront/errors";
 import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 import {
@@ -892,6 +892,284 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses a linked .gitignore before merging it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-link-" });
+    const projectDir = join(parentDir, "contract-project");
+    const outside = join(parentDir, "outside-gitignore");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outside, "keep-me\n");
+      await Deno.symlink(outside, join(projectDir, ".gitignore"));
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains .gitignore as a file or a link',
+      );
+
+      assertEquals(await Deno.readTextFile(outside), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses a .gitignore directory before writing scaffold files", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-dir-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(join(projectDir, ".gitignore"), { recursive: true });
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains .gitignore as a file or a link',
+      );
+
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses a non-file .gitignore before writing scaffold files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-fifo-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      const command = new Deno.Command("mkfifo", {
+        args: [join(projectDir, ".gitignore")],
+      });
+      const output = await command.output();
+      if (!output.success) return;
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains .gitignore as a file or a link',
+      );
+
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("replaces a hard-linked .gitignore without modifying the other link", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-hardlink-" });
+    const projectDir = join(parentDir, "contract-project");
+    const outside = join(parentDir, "outside-gitignore");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outside, "keep-me\n");
+      try {
+        await Deno.link(outside, join(projectDir, ".gitignore"));
+      } catch {
+        return;
+      }
+
+      await createProject(baseRequest(parentDir));
+
+      assertEquals(await Deno.readTextFile(outside), "keep-me\n");
+      assertStringIncludes(await Deno.readTextFile(join(projectDir, ".gitignore")), "keep-me");
+      assertEquals(await exists(join(projectDir, "README.md")), true);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses an unreplacable .gitignore before writing scaffold files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-readonly-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(join(projectDir, ".gitignore"), "keep-me\n");
+      await Deno.chmod(projectDir, 0o500);
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+      );
+
+      assertEquals(await Deno.readTextFile(join(projectDir, ".gitignore")), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await Deno.chmod(projectDir, 0o700).catch(() => {});
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses an unreadable .gitignore before writing scaffold files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-unreadable-" });
+    const projectDir = join(parentDir, "contract-project");
+    const gitignorePath = join(projectDir, ".gitignore");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(gitignorePath, "keep-me\n");
+      const before = await Deno.lstat(gitignorePath);
+      await Deno.chmod(gitignorePath, 0o000);
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+      );
+
+      const after = await Deno.lstat(gitignorePath);
+      assertEquals(after.ino, before.ino);
+      await Deno.chmod(gitignorePath, 0o600);
+      assertEquals(await Deno.readTextFile(gitignorePath), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await Deno.chmod(gitignorePath, 0o600).catch(() => {});
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses installer lockfiles before dependency installation can replace them", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-lockfile-conflict-" });
+    const projectDir = join(parentDir, "contract-project");
+    const lockfile = join(projectDir, "package-lock.json");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains package-lock.json. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses npm's hidden lockfile before dependency installation can replace it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-hidden-lockfile-" });
+    const projectDir = join(parentDir, "contract-project");
+    const lockfile = join(projectDir, "node_modules", ".package-lock.json");
+
+    try {
+      await Deno.mkdir(join(projectDir, "node_modules"), { recursive: true });
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains node_modules/.package-lock.json, node_modules. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses npm shrinkwrap before dependency installation can replace it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-shrinkwrap-" });
+    const projectDir = join(parentDir, "contract-project");
+    const lockfile = join(projectDir, "npm-shrinkwrap.json");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains npm-shrinkwrap.json. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses existing node_modules before dependency installation can prune it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-node-modules-" });
+    const projectDir = join(parentDir, "contract-project");
+    const userFile = join(projectDir, "node_modules", "user-owned", "data.txt");
+
+    try {
+      await Deno.mkdir(dirname(userFile), { recursive: true });
+      await Deno.writeTextFile(userFile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains node_modules. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(userFile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses existing node_modules before Bun dependency installation can prune it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-bun-node-modules-" });
+    const projectDir = join(parentDir, "contract-project");
+    const userFile = join(projectDir, "node_modules", "user-owned", "data.txt");
+
+    try {
+      await Deno.mkdir(dirname(userFile), { recursive: true });
+      await Deno.writeTextFile(userFile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            runtime: "bun",
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains node_modules. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(userFile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("still reports a real file at a scaffold path as an overwritable conflict", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-file-" });
     const projectDir = join(parentDir, "contract-project");
@@ -912,6 +1190,28 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses a linked project root instead of scaffolding through it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-linked-root-" });
+    const outside = await makeTempDir({ prefix: "veryfront-create-outside-" });
+
+    try {
+      await Deno.symlink(outside, join(parentDir, "contract-project"));
+
+      await assertRejects(
+        () => createProject({ ...baseRequest(parentDir), conflictPolicy: "overwrite" }),
+        Error,
+        'Directory "contract-project" is a link the scaffold cannot write through',
+      );
+
+      // Nothing reached the link target, which is outside the parent entirely.
+      assertEquals(await exists(join(outside, "README.md")), false);
+      assertEquals(await exists(join(outside, "package.json")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+      await remove(outside, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("scaffolds normally when the directories it needs are absent or already directories", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-blocked-clear-" });
     const projectDir = join(parentDir, "contract-project");
@@ -925,6 +1225,43 @@ describe("createProject when a path cannot be written through", () => {
 
       assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
       assertEquals(await exists(join(projectDir, "README.md")), true);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+});
+
+describe("createProject error classification", () => {
+  it("rejects a bad project name as a usage error", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-name-class-" });
+
+    try {
+      const error = await assertRejects(() =>
+        createProject({ ...baseRequest(parentDir), name: "nested/name" })
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "invalid-argument");
+      assertEquals(error.exitCode, 2);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("rejects files it would overwrite as already-exists", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-exists-class-" });
+
+    try {
+      await Deno.writeTextFile(join(parentDir, "README.md"), "mine\n");
+
+      const error = await assertRejects(() =>
+        createProject({ ...baseRequest(parentDir), name: undefined })
+      );
+
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "already-exists");
+      assertEquals(error.exitCode, 1);
+      assertEquals(error.detail?.includes("--force"), true);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }

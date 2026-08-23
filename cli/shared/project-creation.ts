@@ -1,7 +1,15 @@
-import { createError, TEMPLATE_NOT_FOUND, toError } from "veryfront/errors";
+import {
+  ALREADY_EXISTS,
+  createError,
+  INVALID_ARGUMENT,
+  TEMPLATE_NOT_FOUND,
+  toError,
+} from "veryfront/errors";
+import { isNotFoundError } from "veryfront/fs";
 import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
+import { LOCKFILE_CLIENTS, NPM_FAMILY_CLIENTS } from "veryfront/utils/package-client";
 import { ensureDir } from "#std/fs.ts";
 import { buildDenoConfig, createDenoConfig } from "../commands/init/deno-config-generator.ts";
 import {
@@ -190,7 +198,10 @@ function validateIntegrationsOrThrow(integrations: IntegrationName[]): void {
 
   for (const error of validation.errors) logger.error(error);
 
-  throw createConfigError("Invalid integrations specified");
+  throw INVALID_ARGUMENT.create({
+    detail: "Invalid integrations specified",
+    context: { integrations },
+  });
 }
 
 function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
@@ -373,15 +384,26 @@ async function writeEnvFiles(
 
 async function writeGitignore(projectDir: string): Promise<void> {
   const fs = createFileSystem();
+  if (!fs.rename) {
+    throw createConfigError("Filesystem does not support atomic .gitignore replacement.");
+  }
   const gitignorePath = join(projectDir, ".gitignore");
+  const temporaryPath = join(projectDir, `.gitignore.veryfront-${crypto.randomUUID()}.tmp`);
   let existingGitignore: string | undefined;
   try {
     existingGitignore = await fs.readTextFile(gitignorePath);
-  } catch {
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     existingGitignore = undefined;
   }
 
-  await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+  await fs.writeTextFile(temporaryPath, generateGitignoreContent(existingGitignore));
+  try {
+    await fs.rename(temporaryPath, gitignorePath);
+  } catch (error) {
+    await fs.remove(temporaryPath).catch(() => {});
+    throw error;
+  }
   logger.debug("Updated file: .gitignore");
 }
 
@@ -495,6 +517,45 @@ function scaffoldWritePaths(assembly: ScaffoldAssembly, request: CreateProjectRe
   return paths;
 }
 
+function installerWritePaths(request: CreateProjectRequest): string[] {
+  if (!request.installDependencies) return [];
+
+  const packageManager = packageManagerPreference(request.runtime);
+  const lockfiles = LOCKFILE_CLIENTS
+    .filter(([, client]) => client === packageManager)
+    .map(([path]) => path);
+  if (packageManager === "npm") {
+    lockfiles.push("npm-shrinkwrap.json", "node_modules/.package-lock.json");
+  }
+  return lockfiles;
+}
+
+function installerConflictPaths(request: CreateProjectRequest): string[] {
+  const paths = installerWritePaths(request);
+  if (
+    request.installDependencies &&
+    NPM_FAMILY_CLIENTS.includes(packageManagerPreference(request.runtime))
+  ) {
+    paths.push("node_modules");
+  }
+  return paths;
+}
+
+function conflictWritePaths(
+  assembly: ScaffoldAssembly,
+  request: CreateProjectRequest,
+): string[] {
+  return [...scaffoldWritePaths(assembly, request), ...installerConflictPaths(request)];
+}
+
+function protectedMergePaths(): string[] {
+  return [".gitignore"];
+}
+
+function protectedLeafPaths(request: CreateProjectRequest): string[] {
+  return [...protectedMergePaths(), ...installerWritePaths(request)];
+}
+
 async function findExistingPaths(dir: string, paths: string[]): Promise<string[]> {
   const fs = createFileSystem();
   const existing: string[] = [];
@@ -502,6 +563,21 @@ async function findExistingPaths(dir: string, paths: string[]): Promise<string[]
     if (await fs.exists(join(dir, path))) existing.push(path);
   }
   return existing;
+}
+
+/**
+ * True when `path` is a symlink. `lstat` is what makes a link visible: `stat`
+ * follows it and reports the target. Adapters without `lstat` have no links of
+ * their own, so nothing can be one.
+ */
+async function isSymlinkPath(path: string): Promise<boolean> {
+  const fs = createFileSystem();
+  if (!fs.lstat) return false;
+  try {
+    return (await fs.lstat(path)).isSymlink === true;
+  } catch {
+    return false; // Nothing there, so nothing to write through.
+  }
 }
 
 /**
@@ -519,7 +595,11 @@ async function findExistingPaths(dir: string, paths: string[]): Promise<string[]
  * A real file sitting at a scaffold path is not listed here. That one resolves
  * fine and is the conflict `findExistingPaths` reports.
  */
-async function findUnwritablePaths(dir: string, paths: string[]): Promise<string[]> {
+async function findUnwritablePaths(
+  dir: string,
+  paths: string[],
+  protectedLeafPaths: string[] = [],
+): Promise<string[]> {
   const fs = createFileSystem();
   // `lstat` is what makes a link visible: `stat` follows it and reports the
   // target. It is optional only for virtual filesystems that have no links of
@@ -528,7 +608,7 @@ async function findUnwritablePaths(dir: string, paths: string[]): Promise<string
   const describe = fs.lstat?.bind(fs) ?? fs.stat.bind(fs);
   const blocked = new Set<string>();
 
-  for (const path of paths) {
+  for (const path of [...paths, ...protectedLeafPaths]) {
     const segments = path.split("/");
     for (let depth = 1; depth <= segments.length; depth++) {
       const prefix = segments.slice(0, depth).join("/");
@@ -540,6 +620,10 @@ async function findUnwritablePaths(dir: string, paths: string[]): Promise<string
         break; // Nothing there yet, so nothing below it either.
       }
       if (info.isSymlink) {
+        blocked.add(prefix);
+        break;
+      }
+      if (protectedLeafPaths.includes(prefix) && depth === segments.length && !info.isFile) {
         blocked.add(prefix);
         break;
       }
@@ -562,7 +646,7 @@ export async function createProject(
   const projectName = request.name;
   if (projectName !== undefined) {
     const nameError = validateProjectName(projectName);
-    if (nameError) throw createConfigError(nameError);
+    if (nameError) throw INVALID_ARGUMENT.create({ detail: nameError });
   }
 
   const projectDir = projectName === undefined
@@ -572,17 +656,31 @@ export async function createProject(
   validateIntegrationsOrThrow(request.integrations);
 
   const assembly = await assembleScaffold(request);
-  const writePaths = scaffoldWritePaths(assembly, request);
+  const writePaths = conflictWritePaths(assembly, request);
   const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
+
+  // The scaffold picks this path itself by joining the name onto the parent, so
+  // a link sitting there sends every write to a directory the caller never
+  // named, possibly outside the parent entirely. Refuse it for the same reason
+  // a link at any other scaffold path is refused. A parent directory the caller
+  // passed in is their own choice, so only the derived path is checked.
+  if (projectName !== undefined && await isSymlinkPath(projectDir)) {
+    throw ALREADY_EXISTS.create({
+      detail: `${where} is a link the scaffold cannot write through. ` +
+        `Move it aside or use a different name.`,
+      context: { projectDir },
+    });
+  }
 
   // Checked whatever the conflict policy is: `--force` says you accept your
   // files being replaced, not the scaffold writing somewhere else entirely.
-  const unwritable = await findUnwritablePaths(projectDir, writePaths);
+  const unwritable = await findUnwritablePaths(projectDir, writePaths, protectedLeafPaths(request));
   if (unwritable.length) {
-    throw createConfigError(
-      `${where} already contains ${unwritable.join(", ")} as a file or a link ` +
+    throw ALREADY_EXISTS.create({
+      detail: `${where} already contains ${unwritable.join(", ")} as a file or a link ` +
         `the scaffold cannot write through. Move it aside or use a different name.`,
-    );
+      context: { projectDir, unwritable },
+    });
   }
 
   // A conflict is a file the scaffold would write over - a `package.json` with
@@ -593,15 +691,19 @@ export async function createProject(
   if (request.conflictPolicy === "fail") {
     const conflicts = await findExistingPaths(projectDir, writePaths);
     if (conflicts.length) {
-      throw createConfigError(
-        `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
-      );
+      throw ALREADY_EXISTS.create({
+        detail: `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
+        context: { projectDir, conflicts },
+      });
     }
   }
 
   if (projectName !== undefined) await ensureDir(projectDir);
 
-  const createdPaths = await writeScaffoldFiles(projectDir, assembly.files);
+  await writeGitignore(projectDir);
+  const createdPaths = [".gitignore"];
+
+  createdPaths.push(...await writeScaffoldFiles(projectDir, assembly.files));
   const setupTips = assembly.tips;
   const allEnvVars = assembly.envVars;
 
@@ -618,9 +720,6 @@ export async function createProject(
   createdPaths.push(
     ...await writeEnvFiles(projectDir, allEnvVars, request, dependencies),
   );
-
-  await writeGitignore(projectDir);
-  createdPaths.push(".gitignore");
 
   const packageManager = await detectPackageManager(
     projectDir,
@@ -724,7 +823,7 @@ export async function materializeScaffold(
 
   if (request.projectName !== undefined) {
     const nameError = validateProjectName(request.projectName);
-    if (nameError) throw createConfigError(nameError);
+    if (nameError) throw INVALID_ARGUMENT.create({ detail: nameError });
   }
 
   const integrations = request.integrations ?? [];

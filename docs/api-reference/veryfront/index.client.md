@@ -31,10 +31,10 @@ export function GET() {
 
 ### Components
 
-| Name                      | Description                                                                                                                                                                                                               | Source                                                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `CommonSchemas`           | Lazy-getter object that preserves the `CommonSchemas.email` call shape. Each access returns the cached `Schema<T>` (memoized inside `defineSchema`), so chained calls like `CommonSchemas.email.parse(x)` work as before. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L91)                |
-| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError)                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L86) |
+| Name                      | Description                                                                                                                                                                                                               | Source                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `CommonSchemas`           | Lazy-getter object that preserves the `CommonSchemas.email` call shape. Each access returns the cached `Schema<T>` (memoized inside `defineSchema`), so chained calls like `CommonSchemas.email.parse(x)` work as before. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L91)                 |
+| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError)                                                                                                                                                         | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry/general.ts#L101) |
 
 ### Functions
 
