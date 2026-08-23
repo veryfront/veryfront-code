@@ -1,4 +1,4 @@
-import type { ValidationError } from "class-validator";
+import type { ValidationError } from "npm:class-validator@0.15.1";
 import {
   assertEquals,
   assertRejects,

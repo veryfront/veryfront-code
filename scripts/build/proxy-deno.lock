@@ -1539,7 +1539,6 @@
       "extensions/ext-bundler-swc": {
         "dependencies": [
           "npm:@swc/wasm@1.16.1",
-          "npm:class-validator@0.15.1",
           "npm:reflect-metadata@0.2.2"
         ]
       },

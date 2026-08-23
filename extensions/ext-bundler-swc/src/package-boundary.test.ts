@@ -13,6 +13,7 @@ describe("ext-bundler-swc package boundary", () => {
     assertEquals(manifest.veryfront.contracts.provides, ["Bundler"]);
     assertEquals(manifest.imports["@swc/wasm"], "npm:@swc/wasm@1.16.1");
     assertEquals(manifest.imports["reflect-metadata"], "npm:reflect-metadata@0.2.2");
+    assertEquals(manifest.imports["class-validator"], undefined);
     assertEquals(
       manifest.imports["@veryfront/ext-bundler-esbuild"],
       "../ext-bundler-esbuild/src/index.ts",
