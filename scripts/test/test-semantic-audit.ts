@@ -323,6 +323,8 @@ const PROCESS_STATE_METHODS = new Set([
   "setEnv",
 ]);
 
+const PUBLIC_PLATFORM_PROCESS_METHODS = new Set(["env", "getArgs"]);
+
 const PROCESS_ARGUMENT_PROPERTIES = new Set(["args", "argv"]);
 
 const TESTING_RUNTIME_WRITE_METHODS = new Set([
@@ -2544,7 +2546,10 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
       if (isProcessEffectSpecifier(source)) {
         if (SHARED_CWD_METHODS.has(importedName)) {
           bindings.sharedCwd.add(local);
-        } else if (isProcessEffectMethod(importedName)) {
+        } else if (
+          isProcessEffectMethod(importedName) ||
+          isPublicPlatformProcessMethod(source, importedName)
+        ) {
           bindings.process.add(local);
         }
       }
@@ -3738,6 +3743,9 @@ function moduleRuntimeBindingForProperty(
   if (isFilesystemSpecifier(source) && FILESYSTEM_OPEN_METHODS.has(property)) {
     return { kind: "filesystem-open", source };
   }
+  if (isPublicPlatformProcessMethod(source, property)) {
+    return { kind: "effect", effect: "process" };
+  }
   if (isProcessEffectSpecifier(source) && property === "env") {
     return { kind: "effect-object", effect: "process" };
   }
@@ -4263,6 +4271,14 @@ function isProcessEffectMethod(method: string): boolean {
     PROCESS_STATE_METHODS.has(method);
 }
 
+function isPublicPlatformProcessMethod(
+  source: string,
+  method: string,
+): boolean {
+  return isPublicPlatformSpecifier(source) &&
+    PUBLIC_PLATFORM_PROCESS_METHODS.has(method);
+}
+
 function isServerSpecifier(source: string): boolean {
   return source === "node:http" || source === "node:https" ||
     source === "node:net" || source === "node:tls" ||
@@ -4315,6 +4331,9 @@ function effectForModuleMethod(
     return "shared-cwd";
   }
   if (isProcessEffectSpecifier(source) && isProcessEffectMethod(method)) {
+    return "process";
+  }
+  if (isPublicPlatformProcessMethod(source, method)) {
     return "process";
   }
   if (isProcessEffectSpecifier(source) && method === "argv") return "process";

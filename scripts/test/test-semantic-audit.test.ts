@@ -488,9 +488,11 @@ cwd();
     assertEquals(
       collectSemanticMarkers(
         `
-import { chdir, cwd, deleteEnv, exit, getEnv, runCommand, setEnv } from "veryfront/platform";
+import { chdir, cwd, deleteEnv, env, exit, getArgs, getEnv, runCommand, setEnv } from "veryfront/platform";
 cwd();
 chdir("fixtures");
+env();
+getArgs();
 getEnv("TEST_KEY");
 setEnv("TEST_KEY", "value");
 deleteEnv("TEST_KEY");
@@ -502,6 +504,8 @@ exit(0);
       [
         ["shared-cwd", "cwd"],
         ["shared-cwd", "chdir"],
+        ["process", "env"],
+        ["process", "getArgs"],
         ["process", "getEnv"],
         ["process", "setEnv"],
         ["process", "deleteEnv"],
@@ -518,6 +522,11 @@ exit(0);
 import * as platform from "veryfront/platform";
 platform.cwd();
 platform.chdir("fixtures");
+platform.getArgs();
+platform.env();
+const { env: platformEnv, getArgs: platformGetArgs } = platform;
+platformGetArgs();
+platformEnv();
 platform.getEnv("TEST_KEY");
 platform.setEnv("TEST_KEY", "value");
 platform.deleteEnv("TEST_KEY");
@@ -529,6 +538,10 @@ platform.exit(0);
       [
         ["shared-cwd", "platform.cwd"],
         ["shared-cwd", "platform.chdir"],
+        ["process", "platform.getArgs"],
+        ["process", "platform.env"],
+        ["process", "platformGetArgs"],
+        ["process", "platformEnv"],
         ["process", "platform.getEnv"],
         ["process", "platform.setEnv"],
         ["process", "platform.deleteEnv"],
