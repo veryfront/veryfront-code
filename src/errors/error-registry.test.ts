@@ -29,9 +29,9 @@ describe("error-registry", () => {
       assertEquals(slugs.length, uniqueSlugs.size, "Duplicate slugs detected");
     });
 
-    it("should have 120 registered errors", () => {
+    it("should have 121 registered errors", () => {
       const slugs = getAllSlugs();
-      assertEquals(slugs.length, 120);
+      assertEquals(slugs.length, 121);
     });
 
     it("registers every local integration boundary error", () => {
@@ -342,7 +342,7 @@ describe("error-registry", () => {
       RUNTIME: 14,
       ROUTE: 6,
       MODULE: 8,
-      SERVER: 18,
+      SERVER: 19,
       BOUNDARY: 8,
       DEV: 5,
       DEPLOY: 16,
