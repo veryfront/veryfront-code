@@ -456,6 +456,15 @@ describe("automated review gate", () => {
       statuses: "write",
     });
 
+    assertEquals(
+      record(workflow.concurrency, "automated review concurrency"),
+      {
+        group:
+          "automated-review-${{ github.event.pull_request.number || github.event.issue.number }}",
+        queue: "max",
+      },
+    );
+
     const job = record(
       record(workflow.jobs, "automated review jobs").review,
       "automated review job",
