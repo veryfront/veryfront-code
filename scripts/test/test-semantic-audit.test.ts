@@ -364,29 +364,198 @@ childProcess.spawn("git");
       collectSemanticMarkers(
         `
 import { remove, stat } from "#veryfront/compat/fs.ts";
+import { writeTextFile } from "#veryfront/platform/compat/fs.ts";
 import {
   deleteEnv,
   getEnvNumber,
   runCommand,
   setEnv,
 } from "#veryfront/compat/process.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 await stat("fixture.txt");
 await remove("fixture.txt");
+await writeTextFile("fixture.txt", "value");
 getEnvNumber("TEST_KEY");
 setEnv("TEST_KEY", "value");
 deleteEnv("TEST_KEY");
 await runCommand({ command: "deno", args: ["--version"] });
+cwd();
 `,
         "src/canonical-compat-imports.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
         ["filesystem-read", "stat"],
         ["filesystem-write", "remove"],
+        ["filesystem-write", "writeTextFile"],
         ["process", "getEnvNumber"],
         ["process", "setEnv"],
         ["process", "deleteEnv"],
         ["process", "runCommand"],
+        ["shared-cwd", "cwd"],
       ],
+    );
+  });
+
+  it("classifies repo-relative compat filesystem and process imports from importer path", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { runCommand } from "../process.ts";
+import { remove } from "../fs.ts";
+runCommand({ command: "deno" });
+await remove("tmp.txt");
+`,
+        "src/platform/compat/nested/parent-relative.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "runCommand"],
+        ["filesystem-write", "remove"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { setEnv } from "./process.ts";
+import { stat } from "./fs.ts";
+setEnv("TEST_KEY", "value");
+await stat("fixture.txt");
+`,
+        "src/platform/compat/sibling-relative.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "setEnv"],
+        ["filesystem-read", "stat"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { deleteEnv } from "./compat/process.ts";
+import { remove } from "./compat/fs.ts";
+deleteEnv("TEST_KEY");
+await remove("tmp.txt");
+`,
+        "src/platform/compat-child-relative.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "deleteEnv"],
+        ["filesystem-write", "remove"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { runCommand } from "../process.ts";
+import { remove } from "../fs.ts";
+function local(runCommand: () => void, remove: () => void) {
+  runCommand();
+  remove();
+}
+`,
+        "src/platform/compat/nested/shadowed-relative.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { runCommand } from "../process.ts";
+import { remove } from "../fs.ts";
+runCommand({ command: "deno" });
+await remove("tmp.txt");
+`,
+        "src/not-platform/compat/nested/unrelated-relative.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { runCommand } from "./process/index.ts";
+runCommand({ command: "deno" });
+`,
+        "src/platform/compat/unrelated-index.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { runCommand } from "../../src/platform/compat/process.ts";
+runCommand({ command: "deno" });
+`,
+        "src/escaped-relative.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("classifies process namespace and default env access", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import processDefault from "node:process";
+import * as proc from "node:process";
+proc.env.MODE = "test";
+const mode = proc.env.MODE;
+processDefault.env.MODE = "prod";
+const other = processDefault.env.MODE;
+`,
+        "src/process-namespace-env.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "proc.env.MODE"],
+        ["process", "proc.env.MODE"],
+        ["process", "processDefault.env.MODE"],
+        ["process", "processDefault.env.MODE"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const proc = { env: { MODE: "test" } };
+proc.env.MODE = "local";
+const mode = proc.env.MODE;
+`,
+        "src/local-process-namespace-env.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("classifies repo-relative compat loader expressions from importer path", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { createRequire } from "node:module";
+const compatProcess = require("../process.ts");
+compatProcess.runCommand({ command: "deno" });
+const compatFs = await import("../fs.ts");
+await compatFs.remove("tmp.txt");
+const compatRequire = createRequire(import.meta.url);
+const requiredProcess = compatRequire("../process.ts");
+requiredProcess.setEnv("TEST_KEY", "value");
+`,
+        "src/platform/compat/nested/relative-loader.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "compatProcess.runCommand"],
+        ["filesystem-write", "compatFs.remove"],
+        ["process", "requiredProcess.setEnv"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function require(_specifier: string) {
+  return { runCommand: () => undefined };
+}
+const compatProcess = require("../process.ts");
+compatProcess.runCommand({ command: "deno" });
+`,
+        "src/platform/compat/nested/shadowed-relative-loader.test.ts",
+      ),
+      [],
     );
   });
 
@@ -851,10 +1020,65 @@ nestedWrite("tmp.txt", "x");
 let conditionalWrite = Deno.writeTextFile;
 if (false) conditionalWrite = () => undefined;
 conditionalWrite("tmp.txt", "x");
+let logicalAndWrite = Deno.writeTextFile;
+maybe && (logicalAndWrite = () => undefined);
+logicalAndWrite("logical-and.txt", "x");
+let logicalOrWrite = Deno.writeTextFile;
+maybe || (logicalOrWrite = () => undefined);
+logicalOrWrite("logical-or.txt", "x");
+let nullishWrite = Deno.writeTextFile;
+maybe ?? (nullishWrite = () => undefined);
+nullishWrite("nullish.txt", "x");
+let ternaryWrite = Deno.writeTextFile;
+maybe ? (ternaryWrite = () => undefined) : undefined;
+ternaryWrite("ternary.txt", "x");
+let conditionalAssignedWrite;
+if (maybe) conditionalAssignedWrite = Deno.writeTextFile;
+conditionalAssignedWrite("conditional-assigned.txt", "x");
+let logicalAndAssignedWrite;
+maybe && (logicalAndAssignedWrite = Deno.writeTextFile);
+logicalAndAssignedWrite("logical-and-assigned.txt", "x");
+let logicalOrAssignedWrite;
+maybe || (logicalOrAssignedWrite = Deno.writeTextFile);
+logicalOrAssignedWrite("logical-or-assigned.txt", "x");
+let nullishAssignedWrite;
+maybe ?? (nullishAssignedWrite = Deno.writeTextFile);
+nullishAssignedWrite("nullish-assigned.txt", "x");
+let ternaryAssignedWrite;
+maybe ? (ternaryAssignedWrite = Deno.writeTextFile) : undefined;
+ternaryAssignedWrite("ternary-assigned.txt", "x");
 let assignedFs;
 assignedFs = await import("node:fs");
 const assignedWrite = assignedFs.promises.writeFile;
 await assignedWrite("tmp.txt", "x");
+let blockWrite;
+{
+  blockWrite = Deno.writeTextFile;
+}
+blockWrite("block.txt", "x");
+let destructuredBlockWrite;
+{
+  ({ writeTextFile: destructuredBlockWrite } = Deno);
+}
+destructuredBlockWrite("destructured-block.txt", "x");
+let functionWrite;
+function assignOuterWrite() {
+  functionWrite = Deno.writeTextFile;
+  functionWrite("function.txt", "x");
+}
+assignOuterWrite();
+let switchWrite;
+switch (mode) {
+  case "write":
+    switchWrite = Deno.writeTextFile;
+    break;
+}
+switchWrite("switch.txt", "x");
+let loopWrite;
+for (const _ of [1]) {
+  loopWrite = Deno.writeTextFile;
+}
+loopWrite("loop.txt", "x");
 `,
         "src/assigned-runtime-aliases.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -864,7 +1088,21 @@ await assignedWrite("tmp.txt", "x");
         ["filesystem-write", "writeWithSatisfies"],
         ["filesystem-write", "nestedWrite"],
         ["filesystem-write", "conditionalWrite"],
+        ["filesystem-write", "logicalAndWrite"],
+        ["filesystem-write", "logicalOrWrite"],
+        ["filesystem-write", "nullishWrite"],
+        ["filesystem-write", "ternaryWrite"],
+        ["filesystem-write", "conditionalAssignedWrite"],
+        ["filesystem-write", "logicalAndAssignedWrite"],
+        ["filesystem-write", "logicalOrAssignedWrite"],
+        ["filesystem-write", "nullishAssignedWrite"],
+        ["filesystem-write", "ternaryAssignedWrite"],
         ["filesystem-write", "assignedWrite"],
+        ["filesystem-write", "blockWrite"],
+        ["filesystem-write", "destructuredBlockWrite"],
+        ["filesystem-write", "functionWrite"],
+        ["filesystem-write", "switchWrite"],
+        ["filesystem-write", "loopWrite"],
       ],
     );
     assertEquals(
@@ -884,8 +1122,161 @@ function shadow(defaultWrite = (() => undefined)) {
 }
 `,
         "src/shadowed-assigned-runtime-aliases.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class RuntimeParameterProperty {
+  constructor(public write = Deno.writeTextFile) {
+    write("parameter-property.txt", "x");
+  }
+}
+`,
+        "src/runtime-parameter-property.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
-      [["filesystem-write", "reassigned"]],
+      [["filesystem-write", "write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class ShadowedParameterProperty {
+  constructor(
+    Deno: { writeTextFile: () => void },
+    public write = Deno.writeTextFile,
+  ) {
+    write("parameter-property.txt", "x");
+  }
+}
+`,
+        "src/shadowed-parameter-property.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("propagates runtime aliases from destructuring assignments", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+let request;
+({ fetch: request } = globalThis);
+await request("https://example.com");
+let write;
+({ writeTextFile: write } = Deno);
+await write("tmp.txt", "x");
+let runtimeRest;
+({ ...runtimeRest } = globalThis);
+await runtimeRest.fetch("https://example.com/rest");
+let denoRest;
+({ ...denoRest } = Deno);
+await denoRest.writeTextFile("rest.txt", "x");
+`,
+        "src/destructured-assigned-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "request"],
+        ["filesystem-write", "write"],
+        ["network", "runtimeRest.fetch"],
+        ["filesystem-write", "denoRest.writeTextFile"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const globalThis = { fetch: () => undefined };
+let request;
+({ fetch: request } = globalThis);
+request("https://example.com");
+const Deno = { writeTextFile: () => undefined };
+let write;
+({ writeTextFile: write } = Deno);
+write("tmp.txt", "x");
+`,
+        "src/shadowed-destructured-assigned-runtime-aliases.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("preserves effectful callables through call, apply, and bind", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+await fetch.call(globalThis, "https://example.com/call");
+await fetch.apply(globalThis, ["https://example.com/apply"]);
+const boundFetch = fetch.bind(globalThis);
+await boundFetch("https://example.com/bound");
+await fetch.bind(globalThis)("https://example.com/direct-bound");
+await Deno.writeTextFile.call(Deno, "tmp.txt", "x");
+const boundWrite = Deno.writeTextFile.bind(Deno);
+await boundWrite("tmp.txt", "x");
+await Deno.writeTextFile.bind(Deno)("direct-bound.txt", "x");
+await writeFile.bind(null)("imported-bound.txt", "x");
+spawn.bind(null)("deno", ["--version"]);
+await Deno.open.call(Deno, "read.txt", { read: true, write: false });
+await Deno.open.apply(Deno, ["write.txt", { write: true }]);
+const boundOpen = Deno.open.bind(Deno);
+await boundOpen("bound-read.txt", { read: true, write: false });
+const boundOpenWrite = Deno.open.bind(Deno);
+await boundOpenWrite("bound-write.txt", { write: true });
+const preboundOpenRead = Deno.open.bind(Deno, "prebound-read.txt");
+await preboundOpenRead({ read: true, write: false });
+const preboundOpenWrite = Deno.open.bind(
+  Deno,
+  "prebound-write.txt",
+  { write: true, create: true },
+);
+await preboundOpenWrite();
+await Deno.open.bind(
+  Deno,
+  "direct-prebound-write.txt",
+  { write: true, create: true },
+)();
+const unknownOpenArguments: unknown[] = [];
+await Deno.open.bind(Deno, ...unknownOpenArguments)();
+await Deno.open.call(Deno, ...unknownOpenArguments);
+`,
+        "src/runtime-call-apply-bind.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "fetch.call"],
+        ["network", "fetch.apply"],
+        ["network", "boundFetch"],
+        ["network", "fetch.bind"],
+        ["filesystem-write", "Deno.writeTextFile.call"],
+        ["filesystem-write", "boundWrite"],
+        ["filesystem-write", "Deno.writeTextFile.bind"],
+        ["filesystem-write", "writeFile.bind"],
+        ["process", "spawn.bind"],
+        ["filesystem-read", "Deno.open.call"],
+        ["filesystem-write", "Deno.open.apply"],
+        ["filesystem-read", "boundOpen"],
+        ["filesystem-write", "boundOpenWrite"],
+        ["filesystem-read", "preboundOpenRead"],
+        ["filesystem-write", "preboundOpenWrite"],
+        ["filesystem-write", "Deno.open.bind"],
+        ["filesystem-write", "Deno.open.bind"],
+        ["filesystem-write", "Deno.open.call"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function fetch() {}
+fetch.call(null, "https://example.com");
+const boundFetch = fetch.bind(null);
+boundFetch("https://example.com");
+const Deno = { writeTextFile: () => ({ bind: () => () => undefined }) };
+const boundWrite = Deno.writeTextFile.bind(Deno);
+boundWrite("tmp.txt", "x");
+`,
+        "src/shadowed-runtime-call-apply-bind.test.ts",
+      ),
+      [],
     );
   });
 
@@ -1413,6 +1804,116 @@ namespace RuntimeNamespace {
         ["process", "Deno.env"],
       ],
     );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+namespace RuntimeAliases {
+  export const write = Deno.writeTextFile;
+  export const WorkerAlias = Worker;
+  export import ImportedWorker = Worker;
+  write("namespace-local.txt", "x");
+}
+RuntimeAliases.write("namespace-exported.txt", "x");
+new RuntimeAliases.WorkerAlias("worker.js");
+new RuntimeAliases.ImportedWorker("worker.js");
+namespace ImportEqualsAliases {
+  import localWrite = Deno.writeTextFile;
+  localWrite("namespace-import-local.txt", "x");
+  export import exportedWrite = Deno.writeTextFile;
+}
+ImportEqualsAliases.exportedWrite("namespace-import-exported.txt", "x");
+import topLevelWrite = ImportEqualsAliases.exportedWrite;
+topLevelWrite("namespace-import-top-level.txt", "x");
+`,
+        "src/typescript-namespace-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "write"],
+        ["filesystem-write", "RuntimeAliases.write"],
+        ["process", "RuntimeAliases.WorkerAlias"],
+        ["process", "RuntimeAliases.ImportedWorker"],
+        ["filesystem-write", "localWrite"],
+        ["filesystem-write", "ImportEqualsAliases.exportedWrite"],
+        ["filesystem-write", "topLevelWrite"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+namespace ExportedAliases {
+  export const request = fetch;
+}
+namespace ExportedAliases {
+  export const write = Deno.writeTextFile;
+}
+namespace ExportedAliases.Nested {
+  export const read = Deno.readTextFile;
+}
+namespace ExportedAliases.Nested {
+  export const nestedWrite = Deno.writeTextFile;
+}
+namespace BlockMerged {
+  export namespace Nested {
+    export const read = Deno.readTextFile;
+  }
+}
+namespace BlockMerged {
+  export namespace Nested {
+    export const write = Deno.writeTextFile;
+  }
+}
+namespace MixedMerged.Nested {
+  export const read = Deno.readTextFile;
+}
+namespace MixedMerged {
+  export namespace Nested {
+    export const write = Deno.writeTextFile;
+  }
+}
+await ExportedAliases.request("https://example.com");
+await ExportedAliases.write("namespace-merged.txt", "x");
+await ExportedAliases.Nested.read("namespace-nested.txt");
+await ExportedAliases.Nested.nestedWrite("namespace-nested.txt", "x");
+await BlockMerged.Nested.read("namespace-block-read.txt");
+await BlockMerged.Nested.write("namespace-block-write.txt", "x");
+await MixedMerged.Nested.read("namespace-mixed-read.txt");
+await MixedMerged.Nested.write("namespace-mixed-write.txt", "x");
+`,
+        "src/typescript-namespace-exports.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "ExportedAliases.request"],
+        ["filesystem-write", "ExportedAliases.write"],
+        ["filesystem-read", "ExportedAliases.Nested.read"],
+        ["filesystem-write", "ExportedAliases.Nested.nestedWrite"],
+        ["filesystem-read", "BlockMerged.Nested.read"],
+        ["filesystem-write", "BlockMerged.Nested.write"],
+        ["filesystem-read", "MixedMerged.Nested.read"],
+        ["filesystem-write", "MixedMerged.Nested.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+namespace ShadowedNamespace {
+  const Deno = { writeTextFile: () => undefined };
+  export const write = Deno.writeTextFile;
+  const Worker = class {};
+  export const WorkerAlias = Worker;
+  export import ImportedWorker = Worker;
+  import importedWrite = Deno.writeTextFile;
+  importedWrite("namespace-local.txt", "x");
+  export import exportedWrite = Deno.writeTextFile;
+}
+ShadowedNamespace.write("local.txt", "x");
+ShadowedNamespace.exportedWrite("exported-local.txt", "x");
+new ShadowedNamespace.WorkerAlias("worker.js");
+new ShadowedNamespace.ImportedWorker("worker.js");
+`,
+        "src/typescript-namespace-shadowing.test.ts",
+      ),
+      [],
+    );
   });
 
   it("classifies bare global fetch aliases and wrapper expressions without type-only noise", () => {
@@ -1522,6 +2023,40 @@ function mutateIntrinsics(
 }
 `,
         "src/local-global-runtime-mutation.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("classifies update mutations on shared and global runtime members", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+Array.prototype.counter++;
+++Promise.state;
+globalThis.sequence++;
+window.count--;
+`,
+        "src/global-update-mutations.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Array.prototype.counter"],
+        ["process", "Promise.state"],
+        ["process", "globalThis.sequence"],
+        ["process", "window.count"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(Array: { prototype: { counter: number } }, globalThis: { sequence: number }) {
+  Array.prototype.counter++;
+  globalThis.sequence++;
+}
+const window = { count: 0 };
+window.count++;
+`,
+        "src/local-global-update-mutations.test.ts",
       ),
       [],
     );
