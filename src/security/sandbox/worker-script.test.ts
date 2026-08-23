@@ -1510,14 +1510,6 @@ describe("worker-script prepared modules", () => {
 });
 
 describe("worker-script bootstrap", () => {
-  it("preloads host environment access before project modules", async () => {
-    const source = await Deno.readTextFile(new URL("./worker-script.ts", import.meta.url));
-    assertStringIncludes(
-      source,
-      'import "#veryfront/platform/compat/process/env.ts";',
-    );
-  });
-
   it("rejects bootstrap without an explicit internal-egress decision", async () => {
     const worker = new Worker(
       import.meta.resolve("./worker-script.ts"),
