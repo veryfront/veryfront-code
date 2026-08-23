@@ -2,11 +2,10 @@
 
 import { spawn } from "node:child_process";
 import os from "node:os";
-import { readFileSync } from "node:fs";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { filterTestFiles, isDenoDependentTestSource, listTestFiles } from "../test-file-utils.mjs";
 import { ensureNpmNodeModulesLinks } from "../ensure-npm-links.mjs";
-import { DENO_ONLY_TESTS } from "../deno-only-tests.mjs";
+import { loadSuitePlan } from "../load-suite-plan.mjs";
 import { buildIsolatedBunTestRuns, registerBunWorkspaceCleanup } from "./runner-args.mjs";
 import { prepareBunWorkspacePackages } from "./workspace-packages.mjs";
 
@@ -37,7 +36,13 @@ function resolveShardCount(envKeys) {
   return null;
 }
 
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const suiteArg = rawArgs.find((arg) => arg.startsWith("--suite="));
+const suite = suiteArg?.slice("--suite=".length);
+if (suite && suite !== "runtime:bun") {
+  throw new Error(`Unsupported Bun suite profile: ${suite}`);
+}
+const args = rawArgs.filter((arg) => arg !== suiteArg);
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const concurrency = resolveConcurrency([
   "VF_TEST_CONCURRENCY",
@@ -45,7 +50,6 @@ const concurrency = resolveConcurrency([
 ]);
 const shardOverride = resolveShardCount(["VF_TEST_SHARDS", "BUN_TEST_SHARDS"]);
 const processCount = shardOverride ?? Math.max(1, Math.min(4, concurrency));
-const defaultRoots = ["src", "tests", "proxy"];
 const includePatterns = (
   process.env.BUN_TEST_INCLUDE ||
   process.env.VF_TEST_INCLUDE ||
@@ -54,16 +58,6 @@ const includePatterns = (
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const runtimeIncompatibleTests = [
-  // Files the `Deno.`-in-source heuristic below cannot see; see the shared list.
-  ...DENO_ONLY_TESTS,
-  "src/config/env.test.ts",
-  "src/proxy/handler.test.ts",
-  "src/proxy/oauth-client.test.ts",
-  "src/proxy/token-priority.test.ts",
-  "src/server/project-env/fetcher.test.ts",
-  "src/routing/api/module-loader/loader.test.ts",
-];
 const envExcludePatterns = (
   process.env.BUN_TEST_EXCLUDE ||
   process.env.VF_TEST_EXCLUDE ||
@@ -72,31 +66,13 @@ const envExcludePatterns = (
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean);
-const excludePatterns = [...runtimeIncompatibleTests, ...envExcludePatterns];
-const hasFilters = includePatterns.length > 0 || excludePatterns.length > 0;
-function isDenoDependentTest(file) {
-  try {
-    const source = readFileSync(file, "utf-8");
-    return isDenoDependentTestSource(source);
-  } catch {
-    return false;
-  }
-}
-
-function removeDenoDependentTests(files) {
-  return files.filter((file) => !isDenoDependentTest(file));
-}
-
 function selectedTestFiles() {
-  const patterns = args.length > 0 ? args : defaultRoots;
-  let files = listTestFiles(patterns);
-  if (hasFilters) {
-    files = filterTestFiles(files, {
-      include: includePatterns,
-      exclude: excludePatterns,
-    });
-  }
-  return removeDenoDependentTests(files);
+  return loadSuitePlan({
+    suite: suite ?? "runtime:bun",
+    patterns: args,
+    include: includePatterns,
+    exclude: envExcludePatterns,
+  });
 }
 
 function runBunProcess(file, bunArgs) {
@@ -180,15 +156,15 @@ for (
   delete env[key];
 }
 
-const files = selectedTestFiles();
-if (files.length > 0) ensureNpmNodeModulesLinks();
-const bunWorkspacePackages = files.length === 0
-  ? undefined
-  : prepareBunWorkspacePackages(projectRoot);
-if (bunWorkspacePackages) {
+async function main() {
+  const files = selectedTestFiles();
+  ensureNpmNodeModulesLinks();
+  const bunWorkspacePackages = prepareBunWorkspacePackages(projectRoot);
   registerBunWorkspaceCleanup(() => bunWorkspacePackages.cleanup());
+  return await runIsolatedTests(files);
 }
-runIsolatedTests(files)
+
+main()
   .then((ok) => {
     process.exitCode = ok ? 0 : 1;
   })
