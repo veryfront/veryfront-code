@@ -118,7 +118,7 @@ observability all key on it.
 The single owner of how framework code sees the process it runs in:
 `src/platform/compat/process/host-runtime.ts` (`HostRuntime`). It covers
 environment variables, the working directory, command-line arguments, process
-exit, and termination signals — nothing else. CLI command handlers and shared
+exit, and termination signals, nothing else. CLI command handlers and shared
 CLI helpers consult it through an optional `host` parameter that defaults to
 the live adapter (`options.host ?? liveHostRuntime()`), the same shape as
 `projectDir ?? cwd()`. There are exactly two adapters: `liveHostRuntime()`

@@ -96,6 +96,25 @@ describe("platform/compat/process/host-runtime", () => {
       assertEquals(seen, ["int", "term", "term"], "unsubscribe is idempotent and local");
     });
 
+    it("keeps two subscriptions of the same handler independent", () => {
+      const host = createInMemoryHostRuntime();
+      let calls = 0;
+      const handler = () => {
+        calls += 1;
+      };
+      const stopFirst = host.onSignal("SIGINT", handler);
+      host.onSignal("SIGINT", handler);
+
+      assertEquals(host.emitSignal("SIGINT"), 2, "both subscriptions deliver");
+      assertEquals(calls, 2, "the handler ran once per subscription");
+
+      stopFirst();
+      stopFirst();
+
+      assertEquals(host.emitSignal("SIGINT"), 1, "the second subscription stays live");
+      assertEquals(calls, 3, "only one delivery remains after disposing the first");
+    });
+
     it("runs subscribers in subscription order and tolerates unsubscribe during emit", () => {
       const host = createInMemoryHostRuntime();
       const order: number[] = [];

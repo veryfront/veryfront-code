@@ -1,7 +1,7 @@
 /**
- * Host Runtime — the one seam between framework code and the process it runs
- * in: environment variables, the working directory, command-line arguments,
- * process exit, and termination signals.
+ * Host Runtime: the one seam between framework code and the process it runs
+ * in. It covers environment variables, the working directory, command-line
+ * arguments, process exit, and termination signals.
  *
  * Code that takes a `HostRuntime` never touches `Deno.env`, `process.env`,
  * `Deno.args`, `Deno.exit`, or signal listeners directly, so it runs against
@@ -130,7 +130,7 @@ export function createInMemoryHostRuntime(
   const workingDirectory = init.cwd ?? IN_MEMORY_HOST_CWD;
   const args = Object.freeze([...(init.args ?? [])]);
   const exits: number[] = [];
-  const subscribers = new Map<HostSignal, Set<() => void>>();
+  const subscribers = new Map<HostSignal, Array<{ readonly handler: () => void }>>();
 
   return {
     env: {
@@ -151,21 +151,25 @@ export function createInMemoryHostRuntime(
       throw new HostExit(code);
     },
     onSignal: (signal, handler) => {
-      let handlers = subscribers.get(signal);
-      if (!handlers) {
-        handlers = new Set();
-        subscribers.set(signal, handlers);
+      let entries = subscribers.get(signal);
+      if (!entries) {
+        entries = [];
+        subscribers.set(signal, entries);
       }
-      handlers.add(handler);
+      // One entry per subscription, so subscribing the same handler twice
+      // yields two deliveries and two independent disposers.
+      const entry = { handler };
+      entries.push(entry);
       return () => {
-        handlers.delete(handler);
+        const index = entries.indexOf(entry);
+        if (index !== -1) entries.splice(index, 1);
       };
     },
     exits,
     emitSignal: (signal) => {
-      const handlers = [...(subscribers.get(signal) ?? [])];
-      for (const handler of handlers) handler();
-      return handlers.length;
+      const entries = [...(subscribers.get(signal) ?? [])];
+      for (const entry of entries) entry.handler();
+      return entries.length;
     },
   };
 }
