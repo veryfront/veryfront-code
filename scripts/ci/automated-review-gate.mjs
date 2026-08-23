@@ -5,6 +5,8 @@ const AUTOMATED_REVIEW_LOGINS = new Set([
 const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
 const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
+const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
+  "No actionable comments were generated in the recent review.";
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const CODEX_BOT_ID = 199175422;
 const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
@@ -87,7 +89,8 @@ export async function findAutomatedReview(
     if (
       typeof login !== "string" ||
       login.toLowerCase() !== CODERABBIT_LOGIN ||
-      !recentReview?.includes(headSha)
+      !recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) ||
+      !recentReview.includes(headSha)
     ) {
       continue;
     }

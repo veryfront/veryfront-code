@@ -224,6 +224,14 @@ describe("automated review gate", () => {
               `Review skipped for current commit ${HEAD_SHA}.`,
             ].join("\n"),
           }),
+          codeRabbitSummary({
+            body: [
+              "<!-- recent_review_start -->",
+              "Review limit reached. This review was skipped.",
+              `Requested commit: ${HEAD_SHA}.`,
+              "<!-- recent_review_end -->",
+            ].join("\n"),
+          }),
         ],
       }, HEAD_SHA),
       undefined,
