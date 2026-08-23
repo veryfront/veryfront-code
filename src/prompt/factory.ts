@@ -42,7 +42,9 @@ export function prompt(config: PromptConfig): Prompt {
 
       if (content !== undefined) {
         assertPromptRenderActive(context);
-        return interpolateVariables(content, resolvedVariables);
+        const rendered = interpolateVariables(content, resolvedVariables);
+        assertPromptRenderActive(context);
+        return rendered;
       }
 
       if (generate) {
@@ -55,6 +57,7 @@ export function prompt(config: PromptConfig): Prompt {
           const generated = cancellation
             ? await Promise.race([generatedPromise, cancellation.cancellation])
             : await generatedPromise;
+          assertPromptRenderActive(cancellation?.context);
           if (typeof generated !== "string") {
             throw toError(
               createError({

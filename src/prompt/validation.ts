@@ -3,6 +3,7 @@ import type { Prompt, PromptConfig, PromptMCPConfig } from "./types.ts";
 const ArrayIsArray = Array.isArray;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ReflectApply = Reflect.apply;
 
 interface OwnDataProperty {
   readonly present: boolean;
@@ -231,6 +232,9 @@ export function normalizePromptDefinition(id: string, value: Prompt): Prompt {
   if (typeof getContent.value !== "function") {
     throw new TypeError("Prompt getContent must be a function");
   }
+  const getContentFunction = getContent.value as Prompt["getContent"];
+  const getContentWithReceiver: Prompt["getContent"] = (...args) =>
+    ReflectApply(getContentFunction, value, args) as Promise<string>;
 
   return ObjectFreeze({
     id: definitionId.value,
@@ -238,6 +242,6 @@ export function normalizePromptDefinition(id: string, value: Prompt): Prompt {
     description: description.value,
     suggestion: suggestion.value as string | undefined,
     mcp: snapshotPromptMCPConfig(mcp.value as PromptMCPConfig | undefined),
-    getContent: getContent.value as Prompt["getContent"],
+    getContent: getContentWithReceiver,
   });
 }

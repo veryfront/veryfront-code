@@ -65,6 +65,25 @@ describe("prompt registry", () => {
       assertEquals(Object.isFrozen(stored), true);
     });
 
+    it("should preserve the receiver of a stateful prompt definition", async () => {
+      const state = new WeakMap<object, string>();
+      const definition: Prompt = {
+        id: "stateful-definition",
+        description: "desc",
+        async getContent() {
+          return state.get(this) ?? "receiver-lost";
+        },
+      };
+      state.set(definition, "receiver-kept");
+
+      promptRegistry.register(definition.id, definition);
+
+      assertEquals(
+        await promptRegistry.getContent(definition.id),
+        "receiver-kept",
+      );
+    });
+
     it("should snapshot MCP metadata for project and shared registrations", () => {
       for (const shared of [false, true]) {
         const id = shared ? "shared-mcp" : "project-mcp";

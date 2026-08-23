@@ -44,7 +44,9 @@ export const getPromptConfigSchema = defineSchema((v) => {
     "Expected a prompt generator function",
   );
   const common = {
-    id: v.string().optional(),
+    id: v.string().refine((value) => value.trim().length > 0, {
+      message: "Prompt id must not be empty",
+    }).optional(),
     description: v.string(),
     /** Example message text to use as a chat suggestion */
     suggestion: v.string().optional(),

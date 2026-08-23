@@ -48,10 +48,10 @@ Create a typed prompt definition.
 | Name                  | Description                                               | Source                                                                                                  |
 | --------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `Prompt`              | Public API contract for prompt.                           | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L12)                 |
-| `PromptArgument`      | Public MCP argument metadata for a prompt.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L74) |
-| `PromptConfig`        | Configuration used by prompt.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L72) |
+| `PromptArgument`      | Public MCP argument metadata for a prompt.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L76) |
+| `PromptConfig`        | Configuration used by prompt.                             | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L74) |
 | `PromptGenerateFn`    | Generate prompt content from interpolation variables.     | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L13) |
-| `PromptMCPConfig`     | Public MCP exposure metadata for a prompt.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L76) |
+| `PromptMCPConfig`     | Public MCP exposure metadata for a prompt.                | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L78) |
 | `PromptRenderContext` | Cancellation and deadline controls for one prompt render. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L5)  |
 
 ### Constants
