@@ -89,6 +89,23 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("urn:other"), undefined);
     });
 
+    it("should match multiple parameters within one path segment", () => {
+      const file = resource({
+        pattern: "/files/:base.:ext",
+        description: "File by name",
+        paramsSchema: defineSchema((v) => v.object({ base: v.string(), ext: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(file.id, file);
+
+      assertEquals(resourceRegistry.findByPattern("/files/report.pdf"), file);
+      assertEquals(
+        resourceRegistry.extractParams("/files/report.pdf", file.pattern),
+        { base: "report", ext: "pdf" },
+      );
+    });
+
     it("should support caller-scoped visibility without changing default lookup", () => {
       const userById = resource({
         pattern: "/users/:userId",

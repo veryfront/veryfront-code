@@ -1,22 +1,48 @@
-const RESOURCE_PARAMETER = /(^|\/):([A-Za-z_][A-Za-z0-9_]*)/g;
+const RESOURCE_PARAMETER = /:([A-Za-z_][A-Za-z0-9_]*)/g;
+const RESOURCE_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function resourcePatternToRegex(pattern: string): RegExp {
-  const escapedPattern = escapeRegExp(pattern).replace(
-    RESOURCE_PARAMETER,
-    "$1(?<$2>[^/]+)",
+  return new RegExp(
+    `^${transformResourcePattern(pattern, escapeRegExp, (name) => `(?<${name}>[^/]+)`).value}$`,
   );
-  return new RegExp(`^${escapedPattern}$`);
 }
 
 export function resourcePatternToUriTemplate(pattern: string): string | undefined {
+  const transformed = transformResourcePattern(
+    pattern,
+    (literal) => literal,
+    (name) => `{${name}}`,
+  );
+  return transformed.parameterized ? transformed.value : undefined;
+}
+
+function transformResourcePattern(
+  pattern: string,
+  transformLiteral: (literal: string) => string,
+  transformParameter: (name: string) => string,
+): { value: string; parameterized: boolean } {
+  const schemeMatch = RESOURCE_SCHEME.exec(pattern);
+  const schemeColonIndex = schemeMatch ? schemeMatch[0].length - 1 : -1;
+  let value = "";
+  let literalStart = 0;
   let parameterized = false;
-  const template = pattern.replace(RESOURCE_PARAMETER, (_match, prefix: string, name: string) => {
+  RESOURCE_PARAMETER.lastIndex = 0;
+
+  for (
+    let match = RESOURCE_PARAMETER.exec(pattern);
+    match;
+    match = RESOURCE_PARAMETER.exec(pattern)
+  ) {
+    if (match.index === schemeColonIndex) continue;
+    value += transformLiteral(pattern.slice(literalStart, match.index));
+    value += transformParameter(match[1]!);
+    literalStart = match.index + match[0].length;
     parameterized = true;
-    return `${prefix}{${name}}`;
-  });
-  return parameterized ? template : undefined;
+  }
+  value += transformLiteral(pattern.slice(literalStart));
+  return { value, parameterized };
 }

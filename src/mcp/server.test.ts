@@ -992,6 +992,34 @@ describe("mcp/server", () => {
       assertEquals(resources.some((entry) => entry.name === "test:users"), false);
     });
 
+    it("preserves parameters embedded within template path segments", async () => {
+      const server = createMCPServer({
+        enabled: true,
+        auth: { type: "none", allowUnauthenticated: true },
+      });
+      registerResource("test:files", {
+        id: "test:files",
+        pattern: "/files/:base.:ext",
+        description: "File by name",
+        paramsSchema: defineSchema((v) => v.object({ base: v.string(), ext: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      const response = await server.handleRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "resources/templates/list",
+      });
+      const templates = (response.result as {
+        resourceTemplates: Array<Record<string, unknown>>;
+      }).resourceTemplates;
+
+      assertEquals(
+        templates.find((entry) => entry.name === "test:files")?.uriTemplate,
+        "/files/{base}.{ext}",
+      );
+    });
+
     it("excludes scheme-only colons like openapi://spec", async () => {
       const server = createMCPServer({
         enabled: true,
