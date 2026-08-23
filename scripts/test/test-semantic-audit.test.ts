@@ -663,6 +663,55 @@ new Worker();`,
       ),
       [],
     );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+new globalThis.Worker(new URL("./worker.ts", import.meta.url), {
+  type: "module",
+});
+new window.Worker(new URL("./worker.ts", import.meta.url));
+new self.Worker(new URL("./worker.ts", import.meta.url));
+`,
+        "src/member-global-worker.test.ts",
+      ).map((marker) => [marker.effect, marker.line, marker.symbol]),
+      [
+        ["process", 2, "globalThis.Worker"],
+        ["process", 5, "window.Worker"],
+        ["process", 6, "self.Worker"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function createWorker(globalThis: { Worker: new () => unknown }) {
+  return new globalThis.Worker();
+}
+`,
+        "src/shadowed-member-global-worker.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("classifies Node worker_threads constructors as process debt", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { Worker as ImportedWorker } from "node:worker_threads";
+import * as workerThreads from "node:worker_threads";
+new ImportedWorker("./worker.js");
+new workerThreads.Worker("./worker.js");
+const { Worker: DynamicWorker } = await import("node:worker_threads");
+new DynamicWorker("./worker.js");
+`,
+        "src/node-worker-threads.test.ts",
+      ).map((marker) => [marker.effect, marker.line, marker.symbol]),
+      [
+        ["process", 4, "ImportedWorker"],
+        ["process", 5, "workerThreads.Worker"],
+        ["process", 7, "DynamicWorker"],
+      ],
+    );
   });
 
   it("classifies typed aliases of global runtime objects", () => {

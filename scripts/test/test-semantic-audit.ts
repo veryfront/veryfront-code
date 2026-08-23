@@ -213,6 +213,8 @@ const PROCESS_METHODS = new Set([
   "runCommand",
 ]);
 
+const PROCESS_CONSTRUCTORS = new Set(["Worker"]);
+
 const PROCESS_ENV_METHODS = new Set([
   "delete",
   "get",
@@ -259,7 +261,7 @@ const NETWORK_METHODS = new Set([
   "request",
 ]);
 
-const GLOBAL_FETCH_RECEIVERS = new Set(["globalThis", "window", "self"]);
+const GLOBAL_RUNTIME_RECEIVERS = new Set(["globalThis", "window", "self"]);
 
 const COMMENT_KEYS = new Set([
   "leadingComments",
@@ -883,6 +885,14 @@ function markerForNode(
   const objectName = memberObjectName(callee);
   if (!method || !objectName) return undefined;
 
+  if (
+    node.type === "NewExpression" && method === "Worker" &&
+    GLOBAL_RUNTIME_RECEIVERS.has(objectName) &&
+    !isGlobalShadowed(objectName, scopes, bindings.importedNames)
+  ) {
+    return { effect: "process", line, symbol: `${objectName}.Worker` };
+  }
+
   const fetchMarker = globalFetchMarker(
     callee,
     line,
@@ -1117,7 +1127,7 @@ function globalFetchMarker(
   }
   const receiver = memberObjectName(member);
   if (
-    !receiver || !GLOBAL_FETCH_RECEIVERS.has(receiver) ||
+    !receiver || !GLOBAL_RUNTIME_RECEIVERS.has(receiver) ||
     isGlobalShadowed(receiver, scopes, importedNames)
   ) {
     return undefined;
@@ -1672,6 +1682,7 @@ function isFilesystemSpecifier(source: string): boolean {
 
 function isProcessSpecifier(source: string): boolean {
   return source === "node:child_process" || source === "child_process" ||
+    source === "node:worker_threads" || source === "worker_threads" ||
     source === "node:process" || source === "process" ||
     source === "#veryfront/compat/process.ts" ||
     source.endsWith("platform/compat/process.ts") ||
@@ -1679,7 +1690,8 @@ function isProcessSpecifier(source: string): boolean {
 }
 
 function isProcessEffectMethod(method: string): boolean {
-  return PROCESS_METHODS.has(method) || PROCESS_STATE_METHODS.has(method);
+  return PROCESS_METHODS.has(method) || PROCESS_CONSTRUCTORS.has(method) ||
+    PROCESS_STATE_METHODS.has(method);
 }
 
 function isServerSpecifier(source: string): boolean {

@@ -2881,6 +2881,24 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
+    entry("src/modules/import-map/loader.test.ts", ["process"], {
+      "disposition": "integration-relocation",
+      "owner": "build-rendering",
+      "rationale":
+        "Exercises a real browser or Node worker runtime and belongs in integration coverage.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/modules/import-map/loader.test.ts",
+      "removalPr": "PR 4h",
+    }),
+    entry("src/modules/import-map/preloader.test.ts", ["process"], {
+      "disposition": "integration-relocation",
+      "owner": "build-rendering",
+      "rationale":
+        "Exercises a real browser or Node worker runtime and belongs in integration coverage.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/modules/import-map/preloader.test.ts",
+      "removalPr": "PR 4h",
+    }),
     entry("src/modules/react-loader/ssr-module-loader.stress.test.ts", [
       "filesystem-write",
     ], {
