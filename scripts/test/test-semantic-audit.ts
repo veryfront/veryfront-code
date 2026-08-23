@@ -544,6 +544,14 @@ interface ImportBindings {
   readonly importedNames: Set<string>;
 }
 
+type NamespacePropertyOperation =
+  | { readonly kind: "spread"; readonly binding: RuntimeBinding }
+  | {
+    readonly kind: "define";
+    readonly name: string;
+    readonly binding?: RuntimeBinding;
+  };
+
 type RuntimeBinding =
   | { readonly kind: "module"; readonly source: string }
   | { readonly kind: "module-constructor"; readonly source: string }
@@ -553,6 +561,7 @@ type RuntimeBinding =
   | {
     readonly kind: "namespace-object";
     readonly properties: ReadonlyMap<string, RuntimeBinding>;
+    readonly propertyOperations?: readonly NamespacePropertyOperation[];
   }
   | {
     readonly kind: "filesystem-open";
@@ -1506,7 +1515,7 @@ function isRepositoryLocalFilesystemOperand(
   const args = Array.isArray(value.arguments) ? value.arguments : [];
   const relative = unwrapExpression(args[0]);
   return relative?.type === "StringLiteral" &&
-    isSafeRepositoryFilesystemLiteral(relative.value as string) &&
+    isSafeRepositoryUrlLiteral(relative.value as string) &&
     isImportMetaUrl(args[1]);
 }
 
@@ -1515,6 +1524,26 @@ function isSafeRepositoryFilesystemLiteral(value: string): boolean {
   return value !== "" && !value.includes("\\") &&
     !/^[A-Za-z][A-Za-z\d+.-]*:/.test(value) &&
     isSafeRepoRelativePath(normalized);
+}
+
+function isSafeRepositoryUrlLiteral(value: string): boolean {
+  if (
+    value === "" || value.includes("\\") || value.startsWith("/") ||
+    /^[A-Za-z][A-Za-z\d+.-]*:/.test(value)
+  ) {
+    return false;
+  }
+  const repositoryPath = "/__veryfront_semantic_audit_repository__/";
+  try {
+    const resolved = new URL(
+      value,
+      `file://${repositoryPath}source.test.ts`,
+    );
+    return resolved.protocol === "file:" && resolved.host === "" &&
+      resolved.pathname.startsWith(repositoryPath);
+  } catch {
+    return false;
+  }
 }
 
 function isImportMetaUrl(value: unknown): boolean {
@@ -3372,6 +3401,7 @@ function objectLiteralRuntimeBinding(
 ): RuntimeBinding | undefined {
   if (value.type !== "ObjectExpression") return undefined;
   const properties = new Map<string, RuntimeBinding>();
+  const propertyOperations: NamespacePropertyOperation[] = [];
   for (
     const property of Array.isArray(value.properties) ? value.properties : []
   ) {
@@ -3382,6 +3412,7 @@ function objectLiteralRuntimeBinding(
         imports,
         scopes,
       );
+      if (spread) propertyOperations.push({ kind: "spread", binding: spread });
       for (const candidate of flattenRuntimeBindings(spread)) {
         if (candidate.kind !== "namespace-object") continue;
         for (const [name, binding] of candidate.properties) {
@@ -3394,6 +3425,7 @@ function objectLiteralRuntimeBinding(
     if (!name) continue;
     if (property.type !== "ObjectProperty") {
       properties.delete(name);
+      propertyOperations.push({ kind: "define", name });
       continue;
     }
     const binding = runtimeBindingForExpression(
@@ -3401,11 +3433,18 @@ function objectLiteralRuntimeBinding(
       imports,
       scopes,
     );
-    if (binding) properties.set(name, binding);
-    else properties.delete(name);
+    propertyOperations.push({ kind: "define", name, binding });
+    if (binding) {
+      properties.set(name, binding);
+    } else {
+      properties.delete(name);
+    }
   }
-  return properties.size > 0
-    ? { kind: "namespace-object", properties }
+  return properties.size > 0 ||
+      propertyOperations.some((operation) =>
+        operation.kind === "spread" || operation.binding !== undefined
+      )
+    ? { kind: "namespace-object", properties, propertyOperations }
     : undefined;
 }
 
@@ -3695,6 +3734,20 @@ function runtimePropertyBinding(
     return { kind: "effect", effect: binding.effect };
   }
   if (binding.kind === "namespace-object") {
+    if (binding.propertyOperations) {
+      for (const operation of binding.propertyOperations.toReversed()) {
+        if (operation.kind === "define") {
+          if (operation.name === property) return operation.binding;
+          continue;
+        }
+        const spreadProperty = runtimePropertyBinding(
+          operation.binding,
+          property,
+        );
+        if (spreadProperty) return spreadProperty;
+      }
+      return undefined;
+    }
     return binding.properties.get(property);
   }
   return undefined;
@@ -3770,6 +3823,17 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
     return `shared-object:${binding.intrinsic ?? "*"}`;
   }
   if (binding.kind === "namespace-object") {
+    if (binding.propertyOperations) {
+      return `namespace-object-operations:${
+        binding.propertyOperations.map((operation) =>
+          operation.kind === "spread"
+            ? `spread:${runtimeBindingKey(operation.binding)}`
+            : `define:${JSON.stringify(operation.name)}:${
+              operation.binding ? runtimeBindingKey(operation.binding) : "local"
+            }`
+        ).join(",")
+      }`;
+    }
     return `namespace-object:${
       [...binding.properties.entries()]
         .sort(([left], [right]) => compareOrdinal(left, right))

@@ -161,11 +161,17 @@ await Deno.readTextFile(new URL("./fixture.json", import.meta.url));
         "src/unresolved-read.test.ts",
         `async function read(path: string) { await Deno.readTextFile(path); }`,
       );
+      await writeFixture(
+        root,
+        "src/encoded-traversal-read.test.ts",
+        `await Deno.readTextFile(new URL("%2e%2e/%2e%2e/etc/hosts", import.meta.url));`,
+      );
 
       const dispositions: SemanticDispositionEntry[] = [
         "src/repository-read.test.ts",
         "src/external-read.test.ts",
         "src/unresolved-read.test.ts",
+        "src/encoded-traversal-read.test.ts",
       ].map((path) => ({
         path,
         effects: ["filesystem-read"],
@@ -182,6 +188,7 @@ await Deno.readTextFile(new URL("./fixture.json", import.meta.url));
       assertEquals(result.errors, [
         "hermetic-unit filesystem read is not proven repository-local: src/external-read.test.ts:1 Deno.readTextFile",
         "hermetic-unit filesystem read is not proven repository-local: src/unresolved-read.test.ts:1 Deno.readTextFile",
+        "hermetic-unit filesystem read is not proven repository-local: src/encoded-traversal-read.test.ts:1 Deno.readTextFile",
       ]);
     } finally {
       await Deno.remove(root, { recursive: true });
@@ -956,6 +963,8 @@ function local(
       collectSemanticMarkers(
         `
 import { readFile } from "node:fs/promises";
+import * as fs from "node:fs";
+import dns from "node:dns";
 const ops = { request: fetch, read: readFile };
 await ops.request("https://example.com");
 await ops.read("fixtures/data.json");
@@ -963,6 +972,16 @@ const nested = { io: { request: fetch } };
 await nested.io.request("https://example.com");
 const spread = { ...ops };
 await spread.request("https://example.com");
+const spreadFs = { ...fs };
+spreadFs.writeFileSync("tmp.txt", "x");
+const spreadDns = { ...dns };
+spreadDns.lookup("example.com", () => {});
+const { writeFileSync: spreadWrite } = { ...fs };
+spreadWrite("tmp.txt", "x");
+const overridden = { ...fs, writeFileSync: () => undefined };
+overridden.writeFileSync("tmp.txt", "x");
+const restored = { writeFileSync: () => undefined, ...fs };
+restored.writeFileSync("tmp.txt", "x");
 function local(fetch: () => Promise<Response>) {
   const helpers = { request: fetch };
   return helpers.request();
@@ -975,6 +994,10 @@ function local(fetch: () => Promise<Response>) {
         ["filesystem-read", "ops.read"],
         ["network", "nested.io.request"],
         ["network", "spread.request"],
+        ["filesystem-write", "spreadFs.writeFileSync"],
+        ["network", "spreadDns.lookup"],
+        ["filesystem-write", "spreadWrite"],
+        ["filesystem-write", "restored.writeFileSync"],
       ],
     );
   });
