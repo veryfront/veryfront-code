@@ -160,10 +160,12 @@ export function setProjects(
 
 /**
  * Remote projects are the same concept as local ones and navigate through the
- * same list module. A remote project's path is where a pull would put it.
+ * same list module. A remote project's path is where a pull would put it,
+ * under `baseDir/projects/` (the working directory by default).
  */
 export function setRemoteProjects(
   projects: Array<{ slug: string }>,
+  baseDir: string = cwd(),
 ): StateUpdater {
   return (state) =>
     withSelectableActiveList({
@@ -172,15 +174,15 @@ export function setRemoteProjects(
         projects.map((p) => ({
           id: p.slug,
           label: p.slug,
-          data: { slug: p.slug, path: remoteProjectPath(p.slug), type: "remote" as const },
+          data: { slug: p.slug, path: remoteProjectPath(p.slug, baseDir), type: "remote" as const },
         })),
       ),
     });
 }
 
 /** Where `pull` places a remote project, and what the IDE opens. */
-export function remoteProjectPath(slug: string): string {
-  return join(cwd(), "projects", slug);
+export function remoteProjectPath(slug: string, baseDir: string = cwd()): string {
+  return join(baseDir, "projects", slug);
 }
 
 export function setTemplates(

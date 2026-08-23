@@ -10,7 +10,6 @@ import { clearProjectAgentRuntimeRegistries } from "#veryfront/agent/project/age
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { VeryfrontError } from "veryfront/errors";
-import { withCwd } from "#veryfront/testing/cwd.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import type { ParsedArgs } from "../../shared/types.ts";
 import { handleWebhookCommand, toWebhookAgentOptions } from "./handler.ts";
@@ -46,20 +45,18 @@ async function runCommand(args: ParsedArgs): Promise<{
   return { exitCode, output };
 }
 
-function runCommandInProjectCwd(
+function runCommandInProject(
   projectDir: string,
   args: ParsedArgs,
 ): Promise<{
   exitCode: number | undefined;
   output: string[];
 }> {
-  return withCwd(projectDir, () => runCommand(args));
+  return runCommand({ ...args, "project-dir": projectDir });
 }
 
 describe("webhook command", () => {
   afterEach(() => {
-    // No chdir here: withCwd already handed the directory back, and reaching
-    // for it outside a turn would yank it from whichever test file holds it now.
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
     console.log = originalConsoleLog;
@@ -104,9 +101,9 @@ describe("webhook command", () => {
         JSON.stringify({ action: "closed" }),
       );
 
-      const result = await runCommandInProjectCwd(projectDir, {
+      const result = await runCommandInProject(projectDir, {
         _: ["webhook", "run", "pull-request"],
-        payload: "closed.json",
+        payload: `${projectDir}/closed.json`,
         json: true,
       } as ParsedArgs);
 
@@ -181,9 +178,9 @@ describe("webhook command", () => {
         }),
       );
 
-      const result = await runCommandInProjectCwd(projectDir, {
+      const result = await runCommandInProject(projectDir, {
         _: ["webhook", "run", "pull-request"],
-        payload: "opened.json",
+        payload: `${projectDir}/opened.json`,
         json: true,
       } as ParsedArgs);
 
