@@ -13,6 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { describe, it } from "node:test";
+import {
+  hasRuntimeGuardedDenoHeader,
+  isDenoDependentTestSource,
+  RUNTIME_GUARDED_DENO_HEADER,
+} from "./test-file-utils.mjs";
 
 const utilsUrl = new URL("./test-file-utils.mjs", import.meta.url).href;
 
@@ -47,6 +52,39 @@ const GITIGNORED_TREE = [
 
 /** The single path the stub `rg` prints; it exists in no fixture. */
 const STUB_RIPGREP_MATCH = "fabricated-by-stub-ripgrep.test.ts";
+
+describe("non-Deno runtime source filtering", () => {
+  it("preserves the existing Deno source heuristics", () => {
+    deepStrictEqual(isDenoDependentTestSource("Deno.test('x', () => {});"), true);
+    deepStrictEqual(isDenoDependentTestSource("await Deno.readTextFile('x');"), true);
+    deepStrictEqual(isDenoDependentTestSource("createMockServer();"), true);
+    deepStrictEqual(isDenoDependentTestSource("import './tests/_helpers/utils.ts';"), true);
+    deepStrictEqual(isDenoDependentTestSource("describe('portable', () => {});"), false);
+  });
+
+  it("accepts only an exact first-line runtime-guarded header", () => {
+    const guarded = `${RUNTIME_GUARDED_DENO_HEADER}\nawait Deno.readTextFile('x');`;
+    deepStrictEqual(isDenoDependentTestSource(guarded), false);
+    deepStrictEqual(isDenoDependentTestSource(`\n${guarded}`), true);
+    deepStrictEqual(
+      isDenoDependentTestSource(`// explanation\n${RUNTIME_GUARDED_DENO_HEADER}\nDeno.test('x')`),
+      true,
+    );
+    deepStrictEqual(isDenoDependentTestSource(RUNTIME_GUARDED_DENO_HEADER), false);
+    deepStrictEqual(
+      isDenoDependentTestSource(`${RUNTIME_GUARDED_DENO_HEADER} extra\nDeno.test('x')`),
+      true,
+    );
+  });
+
+  it("keeps the header guard working on a CRLF checkout", () => {
+    // A Windows clone with core.autocrlf=true rewrites the header line ending.
+    // Reading that as unguarded drops the whole file from the Node suite.
+    const crlf = `${RUNTIME_GUARDED_DENO_HEADER}\r\nawait Deno.readTextFile('x');\r\n`;
+    deepStrictEqual(hasRuntimeGuardedDenoHeader(crlf), true);
+    deepStrictEqual(isDenoDependentTestSource(crlf), false);
+  });
+});
 
 /**
  * Build a throwaway tree, hand it to `run`, then remove it.

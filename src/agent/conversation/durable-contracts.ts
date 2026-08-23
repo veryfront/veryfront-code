@@ -250,6 +250,7 @@ export interface ConversationRunEventQueueController {
         | "cursor_mismatch_ambiguous"
         | "non_appendable"
         | "ignorable_append_rejection"
+        | "run_terminal"
         | "payload_too_large"
         | "auth_rejected";
     }
@@ -276,6 +277,7 @@ export interface ConversationRunEventQueueController {
       | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
+      | "run_terminal"
       | "payload_too_large"
       | "auth_rejected";
   };

@@ -4,6 +4,7 @@ import { FakeTime } from "#std/testing/time";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import type { ConversationRunMirrorDisableReason } from "../conversation/run-mirror.ts";
 import type {
   HostedChatRuntimeAgent,
   HostedChatRuntimeStreamInput,
@@ -125,6 +126,30 @@ function createLifecycleAdapter(input?: {
       },
       onTerminalState: async () => {},
     },
+  };
+}
+
+function createDisabledDurableRunMirror(
+  disableReason: ConversationRunMirrorDisableReason,
+): ConversationRunChunkMirror {
+  const snapshot = () => ({
+    latestEventId: 0,
+    latestExternalEventSequence: 0,
+    pendingEventCount: 0,
+    consecutiveFailures: 0,
+    disabled: true,
+    disableReason,
+    hasFlushTimer: false,
+    hasRetryTimer: false,
+    inFlight: false,
+  });
+
+  return {
+    handleChunk: async () => {},
+    appendEvents: async () => {},
+    flush: async () => snapshot(),
+    getSnapshot: snapshot,
+    dispose: () => {},
   };
 }
 
@@ -309,6 +334,67 @@ describe("agent/hosted-chat-execution-runtime", () => {
       terminalErrorCode: "ABORTED",
       terminalErrorMessage: "Chat stream aborted",
     });
+  });
+
+  it("skips durable run finalization in the exported hooks when the run is already terminal", async () => {
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const hooks = createHostedChatStreamFinalizationHooks({
+      lifecycleAdapter: createLifecycleAdapter({
+        durableRunMirror: createDisabledDurableRunMirror("run_terminal"),
+        terminalStates,
+      }),
+      cleanup: async () => {},
+      streamError: null,
+    });
+
+    await hooks.dispatchTerminalState({
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "durable mirror stopped",
+    });
+
+    assertEquals(terminalStates, []);
+  });
+
+  it("still finalizes through the exported hooks for every other mirror state", async () => {
+    const otherReasons: ConversationRunMirrorDisableReason[] = [
+      "cursor_resyncs_exhausted",
+      "cursor_mismatch_ambiguous",
+      "non_appendable",
+      "ignorable_append_rejection",
+      "payload_too_large",
+      "auth_rejected",
+    ];
+
+    for (const disableReason of otherReasons) {
+      const terminalStates: HostedLifecycleTerminalState[] = [];
+      const hooks = createHostedChatStreamFinalizationHooks({
+        lifecycleAdapter: createLifecycleAdapter({
+          durableRunMirror: createDisabledDurableRunMirror(disableReason),
+          terminalStates,
+        }),
+        cleanup: async () => {},
+        streamError: null,
+      });
+
+      await hooks.dispatchTerminalState({ status: "completed" });
+
+      assertEquals(terminalStates.length, 1, `expected finalization for ${disableReason}`);
+    }
+
+    const undisabledTerminalStates: HostedLifecycleTerminalState[] = [];
+    const undisabledHooks = createHostedChatStreamFinalizationHooks({
+      lifecycleAdapter: createLifecycleAdapter({
+        durableRunMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
+        terminalStates: undisabledTerminalStates,
+      }),
+      cleanup: async () => {},
+      streamError: null,
+    });
+
+    await undisabledHooks.dispatchTerminalState({ status: "completed" });
+
+    assertEquals(undisabledTerminalStates.length, 1);
   });
 
   it("creates a traced runtime bootstrap with merged abort signal and idempotent cleanup", async () => {
@@ -914,6 +1000,102 @@ describe("agent/hosted-chat-execution-runtime", () => {
     );
 
     assertEquals(terminalStates, [
+      {
+        status: "failed",
+        metadata: { modelId: "openai/gpt-5.4" },
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "stream startup failed",
+      },
+    ]);
+    assertEquals(tracer.finishCount, 1);
+  });
+
+  it("skips durable root run finalization on bootstrap failure when the run is already terminal", async () => {
+    const tracer = createTracer();
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const observedTerminalStates: HostedLifecycleTerminalState[] = [];
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        throw new Error("stream startup failed");
+      },
+    };
+    const durableRunMirror = createDisabledDurableRunMirror("run_terminal");
+
+    await assertRejects(
+      async () => {
+        await createBootstrappedHostedChatExecutionRuntime({
+          authToken: "token",
+          apiUrl: "https://api.example.test",
+          agent,
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          cleanup: async () => {},
+          messages: [],
+          finalMessages: [],
+          conversationId: "conversation-1",
+          projectId: "project-1",
+          userId: "user-1",
+          rootRunContext: {
+            durableRootRun: {
+              runId: "root-run-1",
+              conversationId: "conversation-1",
+              messageId: "stream-message-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            durableRunMirror,
+            privateDurableRunMirror: durableRunMirror,
+          },
+          abortSignal: new AbortController().signal,
+          tracer: tracer.tracer,
+          resolveProvider: () => "openai",
+          createTerminalAdapter: (input) => ({
+            toTerminalState: (state) => ({
+              status: state.status,
+              metadata: state.metadata ?? { modelId: input.fallbackModelId },
+              ...(state.terminalErrorCode !== undefined
+                ? { terminalErrorCode: state.terminalErrorCode }
+                : {}),
+              ...(state.terminalErrorMessage !== undefined
+                ? { terminalErrorMessage: state.terminalErrorMessage }
+                : {}),
+            }),
+            finalizeRun: async (state) => {
+              terminalStates.push(state);
+            },
+            cancelRun: async (state) => {
+              terminalStates.push(state);
+            },
+            onTerminalState: async (state) => {
+              observedTerminalStates.push(state);
+              await input.onTerminalState?.(state);
+            },
+            dispatch: async (state) => {
+              const terminalState = {
+                status: state.status,
+                metadata: state.metadata ?? { modelId: input.fallbackModelId },
+                ...(state.terminalErrorCode !== undefined
+                  ? { terminalErrorCode: state.terminalErrorCode }
+                  : {}),
+                ...(state.terminalErrorMessage !== undefined
+                  ? { terminalErrorMessage: state.terminalErrorMessage }
+                  : {}),
+              };
+              terminalStates.push(terminalState);
+              await input.onTerminalState?.(terminalState);
+              return terminalState;
+            },
+          }),
+        });
+      },
+      Error,
+      "stream startup failed",
+    );
+
+    // The durable completion call is skipped, but the local terminal-state
+    // callback still runs so the stream is not left hanging.
+    assertEquals(terminalStates, []);
+    assertEquals(observedTerminalStates, [
       {
         status: "failed",
         metadata: { modelId: "openai/gpt-5.4" },

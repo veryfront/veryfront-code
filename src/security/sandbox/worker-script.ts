@@ -91,6 +91,7 @@ import {
   serializeRouteResponse,
 } from "#veryfront/routing/api/response-normalization.ts";
 import { createWorkerExitControls } from "./worker-exit-controls.ts";
+import { encodeSandboxBytesAsBase64, encodeSandboxBytesAsHex } from "./worker-byte-encoding.ts";
 
 type InitializeEgressMessage = {
   type: "initialize-egress";
@@ -156,8 +157,6 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const encodeText = TextEncoder.prototype.encode;
 const decodeText = TextDecoder.prototype.decode;
-const bytesToBase64 = NativeUint8Array.prototype.toBase64;
-const bytesToHex = NativeUint8Array.prototype.toHex;
 const setBytes = NativeUint8Array.prototype.set;
 const digestBytes = crypto.subtle.digest.bind(crypto.subtle);
 const messagePortPostMessage = MessagePort.prototype.postMessage;
@@ -2325,7 +2324,7 @@ function preparedModuleFailureCause(error: unknown): {
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await digestBytes("SHA-256", bytes as BufferSource);
-  return apply(bytesToHex, new NativeUint8Array(digest), []) as string;
+  return encodeSandboxBytesAsHex(new NativeUint8Array(digest));
 }
 
 export async function loadModule(modulePath: string): Promise<Record<string, unknown>> {
@@ -2511,7 +2510,7 @@ export async function loadPreparedModule(
   if (cached) return await cached;
 
   reservePreparedModuleIdentity(cacheKey, sourceByteLength);
-  const encodedSource = apply(bytesToBase64, sourceBytes, []) as string;
+  const encodedSource = encodeSandboxBytesAsBase64(sourceBytes);
   const moduleUrl = `data:text/javascript;base64,${encodedSource}#vf-route=${logicalModuleHash}` +
     `&vf-context=${semanticContextHash}&sha256=${prepared.sha256}`;
   const pending = (async () => {
