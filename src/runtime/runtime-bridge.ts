@@ -172,11 +172,15 @@ type DirectModelOptions = Record<string, unknown> & {
 } & ModelCallRequestSource;
 
 function readSystemProviderOptions(
-  system: object,
+  system: unknown,
 ): Record<string, unknown> | undefined {
+  if (!system || typeof system !== "object") return undefined;
   let descriptor: PropertyDescriptor | undefined;
   try {
-    descriptor = Object.getOwnPropertyDescriptor(system, "providerOptions");
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      system,
+      "providerOptions",
+    ]) as PropertyDescriptor | undefined;
   } catch {
     throw new TypeError(
       "System message providerOptions must be an own enumerable data property",
@@ -184,7 +188,7 @@ function readSystemProviderOptions(
   }
 
   if (descriptor === undefined) return undefined;
-  if (!Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+  if (!ObjectHasOwn(descriptor, "value") || descriptor.enumerable !== true) {
     throw new TypeError(
       "System message providerOptions must be an own enumerable data property",
     );
@@ -197,6 +201,29 @@ function readSystemProviderOptions(
     : undefined;
 }
 
+function readSystemContent(system: unknown): string | undefined {
+  if (!system || typeof system !== "object") return undefined;
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      system,
+      "content",
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw new TypeError(
+      "System message content must be an own enumerable data property",
+    );
+  }
+
+  if (descriptor === undefined) return undefined;
+  if (!ObjectHasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+    throw new TypeError(
+      "System message content must be an own enumerable data property",
+    );
+  }
+  return typeof descriptor.value === "string" ? descriptor.value : undefined;
+}
+
 function normalizeSystemMessages(system: GenerateTextOptions["system"]): ChatSystemMessage[] {
   if (typeof system === "string") {
     return system.length > 0 ? [{ role: "system", content: system }] : [];
@@ -206,30 +233,30 @@ function normalizeSystemMessages(system: GenerateTextOptions["system"]): ChatSys
     return [];
   }
 
-  if ("content" in system && typeof system.content === "string") {
+  const content = readSystemContent(system);
+  if (content !== undefined) {
     const providerOptions = readSystemProviderOptions(system);
     return [{
       role: "system",
-      content: system.content,
+      content,
       ...(providerOptions ? { providerOptions } : {}),
     }];
   }
 
   if (Array.isArray(system)) {
-    return system.flatMap((entry): ChatSystemMessage[] => {
-      if (
-        !entry || typeof entry !== "object" || !("content" in entry) ||
-        typeof entry.content !== "string"
-      ) {
-        return [];
-      }
+    const messages: ChatSystemMessage[] = [];
+    for (const entry of system) {
+      if (!entry || typeof entry !== "object") continue;
+      const entryContent = readSystemContent(entry);
+      if (entryContent === undefined) continue;
       const providerOptions = readSystemProviderOptions(entry);
-      return [{
+      messages.push({
         role: "system",
-        content: entry.content,
+        content: entryContent,
         ...(providerOptions ? { providerOptions } : {}),
-      }];
-    });
+      });
+    }
+    return messages;
   }
 
   return [];
@@ -1289,26 +1316,57 @@ export function embed(options: EmbedOptions) {
   return options.model.doEmbed({
     values: [options.value],
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embedding: result.embeddings[0] ?? [],
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertValidEmbeddingVectors(result.embeddings, 1);
+    return {
+      embedding: result.embeddings[0]!,
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
 
 export function embedMany(options: EmbedManyOptions) {
   return options.model.doEmbed({
     values: options.values,
     abortSignal: options.abortSignal,
-  }).then((result) => ({
-    embeddings: result.embeddings,
-    usage: result.usage,
-    rawResponse: result.rawResponse,
-    warnings: result.warnings ?? [],
-  }));
+  }).then((result) => {
+    assertValidEmbeddingVectors(result.embeddings, options.values.length);
+    return {
+      embeddings: result.embeddings,
+      usage: result.usage,
+      rawResponse: result.rawResponse,
+      warnings: result.warnings ?? [],
+    };
+  });
 }
+
+function assertValidEmbeddingVectors(
+  value: unknown,
+  expectedCount: number,
+): asserts value is number[][] {
+  if (!Array.isArray(value) || value.length !== expectedCount) {
+    throw new TypeError("Embedding runtime returned invalid vectors");
+  }
+  let dimension: number | undefined;
+  for (const vector of value) {
+    if (!Array.isArray(vector) || vector.length === 0) {
+      throw new TypeError("Embedding runtime returned invalid vectors");
+    }
+    if (dimension === undefined) dimension = vector.length;
+    else if (vector.length !== dimension) {
+      throw new TypeError("Embedding runtime returned invalid vectors");
+    }
+    for (const component of vector) {
+      if (typeof component !== "number" || !Number.isFinite(component)) {
+        throw new TypeError("Embedding runtime returned invalid vectors");
+      }
+    }
+  }
+}
+
 /** Compute cosine similarity between two numeric vectors. */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length === 0 || b.length === 0 || a.length !== b.length) {
@@ -1322,6 +1380,7 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   for (let i = 0; i < a.length; i++) {
     const av = a[i] ?? 0;
     const bv = b[i] ?? 0;
+    if (!Number.isFinite(av) || !Number.isFinite(bv)) return 0;
     dot += av * bv;
     normA += av * av;
     normB += bv * bv;
@@ -1331,5 +1390,6 @@ export function cosineSimilarity(a: number[], b: number[]): number {
     return 0;
   }
 
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  const similarity = dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  return Number.isFinite(similarity) ? Math.max(-1, Math.min(1, similarity)) : 0;
 }
