@@ -4458,7 +4458,7 @@ function bindRuntimeAssignment(
       node.right,
       imports,
       scopes,
-      canClearPrevious,
+      { allowClearing: canClearPrevious },
     )
   ) {
     return;
@@ -4511,11 +4511,7 @@ function bindRuntimeDeleteMutation(
     undefined,
     imports,
     scopes,
-    true,
-    undefined,
-    false,
-    undefined,
-    true,
+    { allowClearing: true, clearAccessors: true },
   );
 }
 
@@ -4660,9 +4656,11 @@ function bindRuntimeCallMutation(
           entry.expression,
           imports,
           scopes,
-          entry.definiteOverwrite === true && allowClearing,
-          entry.enumerable,
-          entry.clearsAccessors === true,
+          {
+            allowClearing: entry.definiteOverwrite === true && allowClearing,
+            enumerable: entry.enumerable,
+            clearAccessors: entry.clearsAccessors === true,
+          },
         );
       } else {
         bindRuntimeUnknownPropertyMutationBinding(
@@ -4706,7 +4704,7 @@ function bindRuntimeArrayShapeMutation(
     runtimeUnknownPropertyExpression(target),
     imports,
     scopes,
-    0,
+    { minimumArrayIndex: 0 },
   );
 }
 
@@ -4745,7 +4743,7 @@ function bindRuntimeArrayRemovalMutation(
         entry.expression,
         imports,
         scopes,
-        true,
+        { allowClearing: true },
       );
     }
   }
@@ -4756,7 +4754,7 @@ function bindRuntimeArrayRemovalMutation(
     undefined,
     imports,
     scopes,
-    true,
+    { allowClearing: true },
   );
   bindRuntimeNamedPropertyMutationBinding(
     target,
@@ -5393,8 +5391,7 @@ function bindRuntimePrototypeMutation(
     propertyExpression,
     imports,
     scopes,
-    undefined,
-    true,
+    { fallbackOnly: true },
   );
 }
 
@@ -5503,10 +5500,7 @@ function bindRuntimeAccessorMutation(
       accessors.getterInvocationExpressions[0],
       imports,
       scopes,
-      false,
-      undefined,
-      false,
-      accessors.enumerable,
+      { enumerable: accessors.enumerable },
     );
   }
   for (const expression of accessors.getterExpressions) {
@@ -5532,8 +5526,7 @@ function bindRuntimeAccessorMutation(
         expression,
         imports,
         scopes,
-        false,
-        accessors.enumerable,
+        { enumerable: accessors.enumerable },
       );
     } else {
       bindRuntimeUnknownPropertyMutationBinding(
@@ -5542,9 +5535,7 @@ function bindRuntimeAccessorMutation(
         expression,
         imports,
         scopes,
-        undefined,
-        false,
-        accessors.enumerable,
+        { enumerable: accessors.enumerable },
       );
     }
   }
@@ -5561,8 +5552,7 @@ function bindRuntimeAccessorMutation(
         undefined,
         imports,
         scopes,
-        false,
-        accessors.enumerable,
+        { enumerable: accessors.enumerable },
       );
     } else {
       bindRuntimeUnknownPropertyMutationBinding(
@@ -5575,9 +5565,7 @@ function bindRuntimeAccessorMutation(
         undefined,
         imports,
         scopes,
-        undefined,
-        false,
-        accessors.enumerable,
+        { enumerable: accessors.enumerable },
       );
     }
   }
@@ -5596,10 +5584,7 @@ function bindRuntimeAccessorMutation(
     accessors.setterExpressions[0],
     imports,
     scopes,
-    false,
-    undefined,
-    false,
-    accessors.enumerable,
+    { enumerable: accessors.enumerable },
   );
 }
 
@@ -5618,9 +5603,7 @@ function clearRuntimeDescriptorProperty(
     descriptor,
     imports,
     scopes,
-    true,
-    undefined,
-    true,
+    { allowClearing: true, clearAccessors: true },
   );
 }
 
@@ -5846,9 +5829,7 @@ function bindRuntimeUnknownPropertyMutation(
     assignedExpression,
     imports,
     scopes,
-    minimumArrayIndex,
-    false,
-    enumerable,
+    { minimumArrayIndex, enumerable },
   );
 }
 
@@ -5867,9 +5848,16 @@ function bindRuntimeNamedPropertyMutation(
     assignedExpression,
     imports,
     scopes,
-    false,
-    enumerable,
+    { enumerable },
   );
+}
+
+interface RuntimeMemberMutationOptions {
+  readonly allowClearing?: boolean;
+  readonly clearAccessors?: boolean;
+  readonly enumerable?: boolean;
+  readonly fallbackOnly?: boolean;
+  readonly minimumArrayIndex?: number;
 }
 
 function bindRuntimeNamedPropertyMutationBinding(
@@ -5879,9 +5867,7 @@ function bindRuntimeNamedPropertyMutationBinding(
   assignedExpression: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
-  allowClearing = false,
-  enumerable?: boolean,
-  clearAccessors = false,
+  options: RuntimeMemberMutationOptions = {},
 ): void {
   const receiver = unwrapExpression(target);
   if (!receiver) return;
@@ -5891,11 +5877,7 @@ function bindRuntimeNamedPropertyMutationBinding(
     assignedExpression,
     imports,
     scopes,
-    allowClearing,
-    undefined,
-    false,
-    enumerable,
-    clearAccessors,
+    options,
   );
 }
 
@@ -5905,9 +5887,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
   assignedExpression: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
-  minimumArrayIndex?: number,
-  fallbackOnly = false,
-  enumerable?: boolean,
+  options: RuntimeMemberMutationOptions = {},
 ): void {
   const receiver = unwrapExpression(target);
   if (!receiver) return;
@@ -5918,10 +5898,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
     assignedExpression,
     imports,
     scopes,
-    false,
-    minimumArrayIndex,
-    fallbackOnly,
-    enumerable,
+    options,
   );
 }
 
@@ -5931,11 +5908,7 @@ function bindRuntimeMemberAssignment(
   assignedExpression: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
-  allowClearing: boolean,
-  minimumArrayIndex?: number,
-  fallbackOnly = false,
-  enumerable?: boolean,
-  clearAccessors = false,
+  options: RuntimeMemberMutationOptions = {},
 ): boolean {
   if (
     member.type !== "MemberExpression" &&
@@ -6036,11 +6009,7 @@ function bindRuntimeMemberAssignment(
       imports,
       scopes,
       mutation.hasUnknownComputedProperty,
-      allowClearing,
-      minimumArrayIndex,
-      fallbackOnly,
-      enumerable,
-      clearAccessors,
+      options,
     );
   }
   return true;
@@ -6055,11 +6024,7 @@ function bindRuntimeMemberAssignmentTarget(
   imports: ImportBindings,
   scopes: readonly Scope[],
   hasUnknownComputedProperty: boolean,
-  allowClearing: boolean,
-  minimumArrayIndex?: number,
-  fallbackOnly = false,
-  enumerable?: boolean,
-  clearAccessors = false,
+  options: RuntimeMemberMutationOptions,
 ): void {
   const { scope, root } = target;
   const existing = scope.runtimeBindings.get(root);
@@ -6071,10 +6036,10 @@ function bindRuntimeMemberAssignmentTarget(
   ) {
     return;
   }
-  const canClear = !hasUnknownComputedProperty && allowClearing &&
+  const canClear = !hasUnknownComputedProperty && options.allowClearing &&
     !crossesFunctionBoundary &&
     !runtimePropertyHasCrossFunctionMutation(existing, propertyPath) &&
-    (clearAccessors ||
+    (options.clearAccessors ||
       runtimePropertySetterBindingAtPath(existing, propertyPath) ===
         undefined);
   const defaultMayRun = expressionMayBeUndefined(
@@ -6096,9 +6061,9 @@ function bindRuntimeMemberAssignmentTarget(
       defaultMayRun,
       crossesFunctionBoundary,
       aliasTargets,
-      minimumArrayIndex,
-      fallbackOnly,
-      enumerable,
+      options.minimumArrayIndex,
+      options.fallbackOnly === true,
+      options.enumerable,
     )
     : assignRuntimeProperty(
       existing,
@@ -6108,7 +6073,7 @@ function bindRuntimeMemberAssignmentTarget(
       crossesFunctionBoundary,
       aliasTargets,
       !canClear,
-      enumerable,
+      options.enumerable,
     );
   scope.runtimeBindings.set(root, assigned);
   if (
