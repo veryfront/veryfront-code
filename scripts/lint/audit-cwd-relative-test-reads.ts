@@ -41,7 +41,8 @@
  *    failing test. The repo already has a pile of these, so they are frozen in
  *    `cwd-relative-test-reads-baseline.json` as a per-file count that may only
  *    shrink. Per-file counts, not just the file set: adding a second racy read
- *    to an already-listed file must fail, or the ratchet leaks.
+ *    to an already-listed file must fail, or the ratchet leaks. Regenerate it
+ *    after paying debt down with `deno task lint:cwd-relative-test-reads:update`.
  *
  * ## Why a real parser
  *
@@ -57,7 +58,13 @@
  */
 
 import { parse } from "npm:@babel/parser@7.29.2";
-import { fromFileUrl } from "#std/path";
+import {
+  type Finding,
+  isTestFile,
+  ParseFailure,
+  type RatchetSpec,
+  runRatchet,
+} from "./ratchet.ts";
 
 /** Filesystem reads whose first argument resolves against the process cwd. */
 const READ_METHODS = new Set([
@@ -246,9 +253,6 @@ function staticPathArgument(node: Node): string | undefined {
   return undefined;
 }
 
-/** Raised when a test file cannot be parsed, so the audit fails closed. */
-export class ParseFailure extends Error {}
-
 /**
  * Report every cwd-relative filesystem read in `source`, tagged with its scope.
  *
@@ -277,9 +281,7 @@ export function findCwdRelativeReads(
       plugins: ["typescript", "jsx", "decorators-legacy", "importAttributes"],
     });
   } catch (error) {
-    throw new ParseFailure(
-      `${file}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new ParseFailure(file, error);
   }
 
   const program = ast.program as unknown as Node;
@@ -330,189 +332,41 @@ export function findCwdRelativeReads(
   return reads.sort((a, b) => a.line - b.line);
 }
 
-/** Per-file counts of callback-scope reads, the shape stored in the baseline. */
-export type CallbackBaseline = Record<string, number>;
-
-export function callbackCountsByFile(
-  reads: readonly CwdRelativeRead[],
-): CallbackBaseline {
-  const counts: CallbackBaseline = {};
-  for (const read of reads) {
-    if (read.scope !== "callback") continue;
-    counts[read.file] = (counts[read.file] ?? 0) + 1;
-  }
-  return Object.fromEntries(
-    Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)),
-  );
-}
-
-export interface BaselineComparison {
-  /** Files whose count grew (or appeared). The ratchet slipping backwards. */
-  regressions: string[];
-  /** Files whose count shrank (or vanished). The ratchet earning a new floor. */
-  improvements: string[];
-}
-
 /**
- * Compare current callback-scope counts with the frozen baseline.
- *
- * Counts are compared per file, not just membership: a file already carrying
- * two racy reads must not quietly grow a third.
+ * Module-scope reads are `blocking` — never baselined — because an uncaught
+ * module error fails the whole shard. Callback-scope reads are the per-file
+ * ratchet tier.
  */
-export function compareCallbackBaseline(
-  current: CallbackBaseline,
-  baseline: CallbackBaseline,
-): BaselineComparison {
-  const regressions: string[] = [];
-  const improvements: string[] = [];
-
-  for (
-    const file of new Set([...Object.keys(current), ...Object.keys(baseline)])
-  ) {
-    const now = current[file] ?? 0;
-    const then = baseline[file] ?? 0;
-    if (now > then) regressions.push(`${file}: ${then} -> ${now}`);
-    else if (now < then) improvements.push(`${file}: ${then} -> ${now}`);
-  }
-
-  return { regressions: regressions.sort(), improvements: improvements.sort() };
+export function findCwdRelativeReadFindings(
+  source: string,
+  file: string,
+): Finding[] {
+  return findCwdRelativeReads(source, file).map((read) => ({
+    file,
+    line: read.line,
+    message: `${read.call}("${read.path}")`,
+    blocking: read.scope === "module",
+  }));
 }
 
-export function parseBaseline(value: unknown, path: string): CallbackBaseline {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Invalid cwd-relative read baseline: ${path}`);
-  }
-  const entries = Object.entries(value as Record<string, unknown>);
-  for (const [file, count] of entries) {
-    if (typeof count !== "number" || !Number.isInteger(count) || count < 1) {
-      throw new Error(
-        `Invalid cwd-relative read baseline entry for ${file}: ${count}`,
-      );
-    }
-  }
-  return Object.fromEntries(entries) as CallbackBaseline;
-}
-
-/**
- * Baseline key for a scanned file: repo-relative, always posix separators.
- *
- * The baseline is committed and compared by key, so a Windows checkout has to
- * produce the same keys a Linux one does.
- */
-export function toRepoRelative(file: string, repoRoot: string): string {
-  return file.slice(repoRoot.length).replaceAll("\\", "/");
-}
-
-const BASELINE_PATH = "scripts/lint/cwd-relative-test-reads-baseline.json";
-const SCAN_ROOTS = ["src", "cli", "templates", "tests", "scripts"] as const;
-
-async function collectTestFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  let entries: AsyncIterable<Deno.DirEntry>;
-  try {
-    entries = Deno.readDir(root);
-  } catch {
-    return files; // expected: a scan root may not exist in every checkout
-  }
-  for await (const entry of entries) {
-    const path = `${root}/${entry.name}`;
-    if (entry.isDirectory) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      files.push(...await collectTestFiles(path));
-    } else if (
-      entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")
-    ) {
-      files.push(path);
-    }
-  }
-  return files;
-}
-
-function printFindings(title: string, findings: readonly string[]): void {
-  if (findings.length === 0) return;
-  console.error(`\n${title}`);
-  for (const finding of findings) console.error(`  ${finding}`);
-}
-
-async function main(): Promise<void> {
-  // `fromFileUrl`, not `URL.pathname`: pathname keeps the URL's leading slash
-  // and percent encoding, so a Windows checkout would scan `/C:/...` and find
-  // nothing.
-  const repoRoot = fromFileUrl(new URL("../../", import.meta.url));
-  const reads: CwdRelativeRead[] = [];
-  const parseFailures: string[] = [];
-
-  for (const root of SCAN_ROOTS) {
-    for (const file of await collectTestFiles(`${repoRoot}${root}`)) {
-      const relative = toRepoRelative(file, repoRoot);
-      const source = await Deno.readTextFile(file);
-      try {
-        reads.push(...findCwdRelativeReads(source, relative));
-      } catch (error) {
-        parseFailures.push(
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-  }
-
-  const current = callbackCountsByFile(reads);
-  if (Deno.args.includes("--print-baseline")) {
-    console.log(JSON.stringify(current, null, 2));
-    return;
-  }
-
-  const baseline = parseBaseline(
-    JSON.parse(await Deno.readTextFile(`${repoRoot}${BASELINE_PATH}`)),
-    BASELINE_PATH,
-  );
-  const moduleScope = reads.filter((read) => read.scope === "module");
-  const { regressions, improvements } = compareCallbackBaseline(
-    current,
-    baseline,
-  );
-
-  printFindings("Test files that could not be parsed:", parseFailures);
-  printFindings(
-    "Cwd-relative repo reads at test MODULE scope (never allowed — an uncaught " +
-      "module error fails the whole shard):",
-    moduleScope.map((read) =>
-      `${read.file}:${read.line}  ${read.call}("${read.path}")`
-    ),
-  );
-  printFindings(
-    "Test files with MORE cwd-relative reads inside test callbacks than the baseline:",
-    regressions,
-  );
-
-  if (
-    parseFailures.length > 0 || moduleScope.length > 0 || regressions.length > 0
-  ) {
-    console.error(
-      `\nResolve the path from import.meta.url instead of the process cwd — see the ` +
-        `header of this script for why. Do not raise ${BASELINE_PATH} for new violations.`,
-    );
-    Deno.exit(1);
-  }
-
-  if (improvements.length > 0) {
-    printFindings("Cwd-relative read debt decreased:", improvements);
-    console.log(
-      `\nRegenerate ${BASELINE_PATH} with ` +
-        `\`deno task lint:cwd-relative-test-reads -- --print-baseline\` to lock in the improvement.`,
-    );
-    return;
-  }
-
-  const total = Object.values(current).reduce((sum, count) => sum + count, 0);
-  console.log(
-    `Cwd-relative test reads ok: 0 at module scope, ` +
-      `${total} baselined inside test callbacks across ${
-        Object.keys(current).length
-      } file(s).`,
-  );
-}
+export const spec: RatchetSpec = {
+  label: "Cwd-relative test reads",
+  task: "lint:cwd-relative-test-reads",
+  scope: "test",
+  select: isTestFile,
+  scan: findCwdRelativeReadFindings,
+  baseline: {
+    kind: "per-file",
+    path: "scripts/lint/cwd-relative-test-reads-baseline.json",
+  },
+  blockingTitle:
+    "Cwd-relative repo reads at test MODULE scope (never allowed: an uncaught " +
+    "module error fails the whole shard):",
+  advice:
+    "Resolve the path from import.meta.url instead of the process cwd. See the " +
+    "header of scripts/lint/audit-cwd-relative-test-reads.ts for why.",
+};
 
 if (import.meta.main) {
-  await main();
+  Deno.exit(await runRatchet(spec));
 }

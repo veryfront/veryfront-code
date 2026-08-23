@@ -1,13 +1,10 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  callbackCountsByFile,
-  compareCallbackBaseline,
+  findCwdRelativeReadFindings,
   findCwdRelativeReads,
-  parseBaseline,
-  ParseFailure,
-  toRepoRelative,
 } from "./audit-cwd-relative-test-reads.ts";
+import { ParseFailure } from "./ratchet.ts";
 
 const scopesOf = (source: string) =>
   findCwdRelativeReads(source, "a.test.ts").map((read) => read.scope);
@@ -214,93 +211,31 @@ const value = readTextFile("deno.json");
   });
 });
 
-describe("callbackCountsByFile", () => {
-  it("counts callback reads per file and ignores module-scope ones", () => {
-    const reads = findCwdRelativeReads(
+describe("findCwdRelativeReadFindings", () => {
+  it("marks module-scope reads blocking and callback reads baselined", () => {
+    const findings = findCwdRelativeReadFindings(
       `
 const early = await Deno.readTextFile("deno.json");
 Deno.test("x", async () => {
   await Deno.readTextFile("deno.lock");
-  await Deno.readTextFile("import_map.json");
 });
 `,
       "a.test.ts",
     );
 
-    assertEquals(callbackCountsByFile(reads), { "a.test.ts": 2 });
-  });
-});
-
-describe("compareCallbackBaseline", () => {
-  it("passes when every file matches its recorded count", () => {
-    assertEquals(
-      compareCallbackBaseline({ "a.test.ts": 2 }, { "a.test.ts": 2 }),
-      { regressions: [], improvements: [] },
-    );
-  });
-
-  it("fails when an already-baselined file grows a new racy read", () => {
-    // Gating only the set of files would let existing offenders accumulate
-    // freely — the ratchet has to hold the count.
-    assertEquals(
-      compareCallbackBaseline({ "a.test.ts": 3 }, { "a.test.ts": 2 })
-        .regressions,
-      ["a.test.ts: 2 -> 3"],
-    );
-  });
-
-  it("fails when a file not in the baseline gains a racy read", () => {
-    assertEquals(
-      compareCallbackBaseline({ "b.test.ts": 1 }, {}).regressions,
-      ["b.test.ts: 0 -> 1"],
-    );
-  });
-
-  it("reports a shrinking count as an improvement, not a failure", () => {
-    const comparison = compareCallbackBaseline({ "a.test.ts": 1 }, {
-      "a.test.ts": 2,
-    });
-
-    assertEquals(comparison.regressions, []);
-    assertEquals(comparison.improvements, ["a.test.ts: 2 -> 1"]);
-  });
-
-  it("reports a fully fixed file as an improvement", () => {
-    assertEquals(
-      compareCallbackBaseline({}, { "a.test.ts": 2 }).improvements,
-      ["a.test.ts: 2 -> 0"],
-    );
-  });
-});
-
-describe("toRepoRelative", () => {
-  it("strips the repo root", () => {
-    assertEquals(
-      toRepoRelative("/repo/src/a.test.ts", "/repo/"),
-      "src/a.test.ts",
-    );
-  });
-
-  it("reports posix separators so the baseline is portable", () => {
-    // The baseline is committed and compared by key, so a Windows checkout must
-    // produce the same keys a Linux one does.
-    assertEquals(
-      toRepoRelative("C:\\repo\\src\\a.test.ts", "C:\\repo\\"),
-      "src/a.test.ts",
-    );
-  });
-});
-
-describe("parseBaseline", () => {
-  it("accepts a file-to-count record", () => {
-    assertEquals(parseBaseline({ "a.test.ts": 2 }, "b.json"), {
-      "a.test.ts": 2,
-    });
-  });
-
-  it("rejects a shape that is not a file-to-count record", () => {
-    assertThrows(() => parseBaseline(["a.test.ts"], "b.json"), Error);
-    assertThrows(() => parseBaseline({ "a.test.ts": 0 }, "b.json"), Error);
-    assertThrows(() => parseBaseline({ "a.test.ts": "2" }, "b.json"), Error);
+    assertEquals(findings, [
+      {
+        file: "a.test.ts",
+        line: 2,
+        message: 'Deno.readTextFile("deno.json")',
+        blocking: true,
+      },
+      {
+        file: "a.test.ts",
+        line: 4,
+        message: 'Deno.readTextFile("deno.lock")',
+        blocking: false,
+      },
+    ]);
   });
 });

@@ -39,11 +39,17 @@
  * Counts are frozen per rule per file in `anti-slop-baseline.json` and may
  * only shrink. Regenerate after paying debt down with:
  *
- *   deno task lint:anti-slop -- --print-baseline > scripts/lint/anti-slop-baseline.json
+ *   deno task lint:anti-slop:update
  */
 
 import { parse } from "npm:@babel/parser@7.29.2";
-import { fromFileUrl } from "#std/path";
+import {
+  type Finding,
+  isSourceFile,
+  ParseFailure,
+  type RatchetSpec,
+  runRatchet,
+} from "./ratchet.ts";
 
 export type AntiSlopRule =
   | "no-chained-type-assertions"
@@ -171,7 +177,9 @@ function parameterName(parameter: Node): string {
 function isBroadObjectType(type: Node): boolean {
   if (type.type === "TSObjectKeyword") return true;
   if (type.type === "TSUnionType" && Array.isArray(type.types)) {
-    return type.types.some((member) => isNode(member) && isBroadObjectType(member));
+    return type.types.some((member) =>
+      isNode(member) && isBroadObjectType(member)
+    );
   }
   return false;
 }
@@ -223,9 +231,6 @@ function resolvesToUnknown(
   );
 }
 
-/** Raised when a scanned file cannot be parsed, so the audit fails closed. */
-export class ParseFailure extends Error {}
-
 /**
  * Report every anti-slop violation in `source`.
  *
@@ -245,9 +250,7 @@ export function findAntiSlop(source: string, file: string): AntiSlopFinding[] {
         : ["typescript", "decorators-legacy", "importAttributes"],
     });
   } catch (error) {
-    throw new ParseFailure(
-      `${file}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    throw new ParseFailure(file, error);
   }
 
   const program = ast.program as unknown as Node;
@@ -317,203 +320,32 @@ export function findAntiSlop(source: string, file: string): AntiSlopFinding[] {
   return findings.sort((a, b) => a.line - b.line);
 }
 
-/** Per-rule, per-file counts — the shape stored in the baseline. */
-export type AntiSlopBaseline = Record<string, Record<string, number>>;
-
-export function countsByRuleAndFile(
-  findings: readonly AntiSlopFinding[],
-): AntiSlopBaseline {
-  const counts: Record<string, Record<string, number>> = {};
-  for (const finding of findings) {
-    const perFile = counts[finding.rule] ?? (counts[finding.rule] = {});
-    perFile[finding.file] = (perFile[finding.file] ?? 0) + 1;
-  }
-  const sorted: AntiSlopBaseline = {};
-  for (const rule of Object.keys(counts).sort()) {
-    sorted[rule] = Object.fromEntries(
-      Object.entries(counts[rule]).sort(([a], [b]) => a.localeCompare(b)),
-    );
-  }
-  return sorted;
+/** Findings keyed by rule, the group the per-rule-per-file baseline uses. */
+export function findAntiSlopFindings(source: string, file: string): Finding[] {
+  return findAntiSlop(source, file).map((finding) => ({
+    file,
+    line: finding.line,
+    message: `${finding.rule} (${finding.detail})`,
+    group: finding.rule,
+  }));
 }
 
-export interface BaselineComparison {
-  /** `rule file: then -> now` where a count grew. The ratchet slipping. */
-  regressions: string[];
-  /** Where a count shrank. The ratchet earning a new floor. */
-  improvements: string[];
-}
-
-/**
- * Compare current counts with the frozen baseline, per rule per file: a file
- * already carrying two chained assertions must not quietly grow a third.
- */
-export function compareBaseline(
-  current: AntiSlopBaseline,
-  baseline: AntiSlopBaseline,
-): BaselineComparison {
-  const regressions: string[] = [];
-  const improvements: string[] = [];
-  const rules = new Set([...Object.keys(current), ...Object.keys(baseline)]);
-  for (const rule of rules) {
-    const now = current[rule] ?? {};
-    const then = baseline[rule] ?? {};
-    for (const file of new Set([...Object.keys(now), ...Object.keys(then)])) {
-      const a = now[file] ?? 0;
-      const b = then[file] ?? 0;
-      if (a > b) regressions.push(`${rule} ${file}: ${b} -> ${a}`);
-      else if (a < b) improvements.push(`${rule} ${file}: ${b} -> ${a}`);
-    }
-  }
-  return { regressions: regressions.sort(), improvements: improvements.sort() };
-}
-
-export function parseBaseline(value: unknown, path: string): AntiSlopBaseline {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`Invalid anti-slop baseline: ${path}`);
-  }
-  for (const [rule, files] of Object.entries(value)) {
-    if (typeof files !== "object" || files === null || Array.isArray(files)) {
-      throw new Error(`Invalid anti-slop baseline entry for ${rule}: ${path}`);
-    }
-    for (const [file, count] of Object.entries(files)) {
-      if (typeof count !== "number" || !Number.isInteger(count) || count < 1) {
-        throw new Error(
-          `Invalid anti-slop baseline count for ${rule} ${file}: ${count}`,
-        );
-      }
-    }
-  }
-  return value as AntiSlopBaseline;
-}
-
-/**
- * Baseline key for a scanned file: repo-relative, always posix separators,
- * so a Windows checkout produces the same keys a Linux one does.
- */
-export function toRepoRelative(file: string, repoRoot: string): string {
-  return file.slice(repoRoot.length).replaceAll("\\", "/");
-}
-
-const BASELINE_PATH = "scripts/lint/anti-slop-baseline.json";
-/** Mirrors the production surface of `lint.include` in deno.json. */
-const SCAN_ROOTS = ["src", "cli", "templates", "extensions", "react"] as const;
-/** Mirrors `lint.exclude` in deno.json. */
-const EXCLUDED_PREFIXES = ["src/studio/bridge/"] as const;
-
-function isProdSource(name: string): boolean {
-  if (!name.endsWith(".ts") && !name.endsWith(".tsx")) return false;
-  if (name.endsWith(".test.ts") || name.endsWith(".test.tsx")) return false;
-  return !name.endsWith(".d.ts");
-}
-
-async function collectProdFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  let entries: AsyncIterable<Deno.DirEntry>;
-  try {
-    entries = Deno.readDir(root);
-  } catch {
-    return files; // expected: a scan root may not exist in every checkout
-  }
-  for await (const entry of entries) {
-    const path = `${root}/${entry.name}`;
-    if (entry.isDirectory) {
-      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
-      // Mirrors lint.exclude: emitted output inside a scan root is not source.
-      if (entry.name === "dist" || entry.name === "coverage") continue;
-      files.push(...await collectProdFiles(path));
-    } else if (entry.isFile && isProdSource(entry.name)) {
-      files.push(path);
-    }
-  }
-  return files;
-}
-
-function printFindings(title: string, findings: readonly string[]): void {
-  if (findings.length === 0) return;
-  console.error(`\n${title}`);
-  for (const finding of findings) console.error(`  ${finding}`);
-}
-
-async function main(): Promise<void> {
-  // `fromFileUrl`, not `URL.pathname`: pathname keeps the URL's leading slash
-  // and percent encoding, so a Windows checkout would scan `/C:/...`.
-  const repoRoot = fromFileUrl(new URL("../../", import.meta.url));
-  const findings: AntiSlopFinding[] = [];
-  const parseFailures: string[] = [];
-
-  for (const root of SCAN_ROOTS) {
-    for (const file of await collectProdFiles(`${repoRoot}${root}`)) {
-      const relative = toRepoRelative(file, repoRoot);
-      if (EXCLUDED_PREFIXES.some((prefix) => relative.startsWith(prefix))) {
-        continue;
-      }
-      try {
-        findings.push(...findAntiSlop(await Deno.readTextFile(file), relative));
-      } catch (error) {
-        parseFailures.push(
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
-  }
-
-  const current = countsByRuleAndFile(findings);
-  if (Deno.args.includes("--print-baseline")) {
-    console.log(JSON.stringify(current, null, 2));
-    return;
-  }
-
-  const baseline = parseBaseline(
-    JSON.parse(await Deno.readTextFile(`${repoRoot}${BASELINE_PATH}`)),
-    BASELINE_PATH,
-  );
-  const { regressions, improvements } = compareBaseline(current, baseline);
-
-  printFindings("Files that could not be parsed:", parseFailures);
-  if (regressions.length > 0) {
-    const regressedFiles = new Set(
-      regressions.map((entry) => entry.split(" ")[1]?.replace(/:$/, "")),
-    );
-    printFindings(
-      "Anti-slop counts above the baseline (new low-evidence type patterns):",
-      regressions,
-    );
-    printFindings(
-      "Current findings in the regressed files:",
-      findings
-        .filter((finding) => regressedFiles.has(finding.file))
-        .map((finding) =>
-          `${finding.file}:${finding.line}  ${finding.rule} (${finding.detail})`
-        ),
-    );
-  }
-
-  if (parseFailures.length > 0 || regressions.length > 0) {
-    console.error(
-      `\nKeep the precise type or parse at the boundary instead of asserting ` +
-        `through it — see the header of scripts/lint/audit-anti-slop.ts. ` +
-        `Do not raise ${BASELINE_PATH} for new violations.`,
-    );
-    Deno.exit(1);
-  }
-
-  if (improvements.length > 0) {
-    printFindings("Anti-slop debt decreased:", improvements);
-    console.log(
-      `\nRegenerate ${BASELINE_PATH} with ` +
-        `\`deno task lint:anti-slop -- --print-baseline > ${BASELINE_PATH}\` to lock in the improvement.`,
-    );
-    return;
-  }
-
-  const total = findings.length;
-  const fileCount = new Set(findings.map((finding) => finding.file)).size;
-  console.log(
-    `Anti-slop baseline ok: ${total} baselined finding(s) across ${fileCount} file(s).`,
-  );
-}
+export const spec: RatchetSpec = {
+  label: "Anti-slop findings",
+  task: "lint:anti-slop",
+  // The production surface `deno lint` checks: `lint.include` minus `lint.exclude`.
+  scope: "lint",
+  select: isSourceFile,
+  scan: findAntiSlopFindings,
+  baseline: {
+    kind: "per-group-file",
+    path: "scripts/lint/anti-slop-baseline.json",
+  },
+  advice:
+    "Keep the precise type or parse at the boundary instead of asserting through " +
+    "it. See the header of scripts/lint/audit-anti-slop.ts.",
+};
 
 if (import.meta.main) {
-  await main();
+  Deno.exit(await runRatchet(spec));
 }
