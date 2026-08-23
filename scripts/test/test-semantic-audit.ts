@@ -1327,11 +1327,18 @@ function markerForNode(
   }
 
   if (node.type === "UpdateExpression" && isNode(node.argument)) {
-    return globalRuntimeMemberMutationMarker(
+    const globalMarker = globalRuntimeMemberMutationMarker(
       node.argument,
       line,
       scopes,
       bindings.importedNames,
+    );
+    if (globalMarker) return globalMarker;
+    return memberAssignmentRuntimeEffectMarker(
+      node.argument,
+      line,
+      bindings,
+      scopes,
     );
   }
 
@@ -4693,6 +4700,18 @@ function localMutationResultAssignedEntries(
   canonicalName: string,
   args: readonly unknown[],
 ): readonly { readonly property?: string; readonly expression: unknown }[] {
+  if (canonicalName === "Object.assign") {
+    return args.slice(1).flatMap((source) =>
+      literalObjectResultAssignedEntries(source) ?? [{
+        expression: runtimeUnknownPropertyExpression(source),
+      }]
+    );
+  }
+  if (canonicalName === "Object.setPrototypeOf") {
+    return literalObjectResultAssignedEntries(args[1]) ?? [{
+      expression: runtimeUnknownPropertyExpression(args[1]),
+    }];
+  }
   if (canonicalName === "Object.defineProperty") {
     return [{
       property: literalPropertyName(args[1]),
@@ -4720,6 +4739,44 @@ function localMutationResultAssignedEntries(
   }
   return localMutationAssignedExpressions(canonicalName, args).map(
     (expression) => ({ expression }),
+  );
+}
+
+function literalObjectResultAssignedEntries(
+  expression: unknown,
+):
+  | readonly { readonly property?: string; readonly expression: unknown }[]
+  | undefined {
+  const object = unwrapExpression(expression);
+  if (!object || object.type !== "ObjectExpression") return undefined;
+  return (Array.isArray(object.properties) ? object.properties : []).flatMap(
+    (property): {
+      readonly property?: string;
+      readonly expression: unknown;
+    }[] => {
+      if (!isNode(property)) return [];
+      if (property.type === "SpreadElement") {
+        return [{
+          expression: runtimeUnknownPropertyExpression(property.argument),
+        }];
+      }
+      const name = staticObjectPropertyName(property);
+      if (property.type === "ObjectMethod" && property.kind === "get") {
+        const returned = runtimeFunctionReturnExpressions(property);
+        return returned.known
+          ? returned.expressions.map((returnedExpression) => ({
+            property: name,
+            expression: returnedExpression,
+          }))
+          : [{ expression: runtimeUnknownPropertyExpression(expression) }];
+      }
+      return [{
+        property: name,
+        expression: property.type === "ObjectProperty"
+          ? property.value
+          : property,
+      }];
+    },
   );
 }
 

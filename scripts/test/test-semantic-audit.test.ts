@@ -2231,10 +2231,23 @@ const definedManyNamedReturn = Object.defineProperties(
   },
 );
 definedManyNamedReturn.safe();
+
+const assignedNamedReturn = Object.assign(
+  { safe: () => undefined },
+  { write: Deno.remove },
+);
+assignedNamedReturn.safe();
+
+const prototyped = Object.setPrototypeOf({}, { run: Deno.exit });
+prototyped.run(1);
 `,
         "src/runtime-mutation-return-values.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 15 }, () => "filesystem-write"),
+      [
+        ...Array.from({ length: 15 }, () => "filesystem-write"),
+        "process",
+        "process",
+      ],
     );
   });
 
@@ -2275,6 +2288,13 @@ multiple.path = "multiple.txt";
 const assigned = {};
 Object.defineProperty(assigned, "path", { set: Deno.remove });
 Object.assign(assigned, { path: "assigned.txt" });
+
+const updated = {};
+Object.defineProperty(updated, "code", {
+  get: () => 0,
+  set: Deno.exit,
+});
+updated.code++;
 `,
         "src/runtime-descriptor-setters.test.ts",
       ).map((marker) => marker.effect),
@@ -2287,6 +2307,8 @@ Object.assign(assigned, { path: "assigned.txt" });
         "filesystem-write",
         "network",
         "filesystem-write",
+        "process",
+        "process",
       ],
     );
   });
