@@ -2212,6 +2212,19 @@ sortedWithEffect.sort(Deno.remove);
 const assigned = Object.assign({}, { run: Deno.remove });
 assigned.run("assigned.txt");
 
+const assignedNamedReturn = Object.assign(
+  { safe: () => undefined },
+  { write: Deno.remove },
+);
+assignedNamedReturn.safe();
+
+const assignedNamedTarget = { safe: () => undefined };
+Object.assign(assignedNamedTarget, { write: Deno.remove });
+assignedNamedTarget.safe();
+
+const prototypeReturn = Object.setPrototypeOf({}, { run: Deno.remove });
+prototypeReturn.run("prototype.txt");
+
 const defined = Object.defineProperty({}, "run", { value: Deno.remove });
 defined.run("defined.txt");
 
@@ -2260,7 +2273,7 @@ definedManyNamedReturn.safe();
 `,
         "src/runtime-mutation-return-values.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 15 }, () => "filesystem-write"),
+      Array.from({ length: 16 }, () => "filesystem-write"),
     );
   });
 
