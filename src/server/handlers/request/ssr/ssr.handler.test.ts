@@ -1,7 +1,12 @@
-import { RENDER_ERROR } from "#veryfront/errors";
+import { RENDER_ERROR, VeryfrontError } from "#veryfront/errors";
 import "#veryfront/schemas/_test-setup.ts";
 import * as React from "react";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSRHandler } from "./ssr.handler.ts";
 import { __setComponentSourceLoaderForTests } from "./error-page-fallback.ts";
@@ -270,6 +275,120 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
 
       assertEquals(result.response?.status, 200);
       assertEquals(refreshCalls, 0);
+    });
+
+    it("fails the request when a snapshot source cannot establish freshness", async () => {
+      let renderCalls = 0;
+      const adapter = createMockAdapter();
+      // Declares a source snapshot, but offers no way to bring it up to date.
+      adapter.fs.getSourceSnapshotVersion = () => 1;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>stale</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "preview",
+          });
+        },
+      }));
+
+      const rejection = await assertRejects(
+        () =>
+          handler.handle(
+            new Request("http://localhost/preview"),
+            makeCtx({
+              adapter,
+              projectSlug: "preview-project",
+              requestContext: {
+                token: "",
+                slug: "preview-project",
+                branch: "main",
+                mode: "preview",
+              },
+            }),
+          ),
+      );
+      assertInstanceOf(rejection, VeryfrontError);
+      assertEquals(rejection.slug, "source-snapshot-freshness-unavailable");
+      assertEquals(rejection.status, 503);
+      assertEquals(renderCalls, 0);
+    });
+
+    it("renders a snapshot source that only implements refreshSourceSnapshot", async () => {
+      const reasons: Array<string | undefined> = [];
+      const adapter = createMockAdapter();
+      adapter.fs.refreshSourceSnapshot = (reason?: string) => {
+        reasons.push(reason);
+        return Promise.resolve();
+      };
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/preview"),
+        makeCtx({
+          adapter,
+          projectSlug: "preview-project",
+          requestContext: {
+            token: "",
+            slug: "preview-project",
+            branch: "main",
+            mode: "preview",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(reasons, ["preview-ssr-render"]);
+    });
+
+    it("renders a live source that declares no snapshot at all", async () => {
+      // Local filesystem adapters (deno, node, bun) implement none of the
+      // source snapshot methods. Their reads are already current, so the
+      // freshness boundary must let them through rather than fail the request.
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/preview"),
+        makeCtx({
+          isLocalProject: true,
+          projectSlug: "preview-project",
+          requestContext: {
+            token: "",
+            slug: "preview-project",
+            branch: "main",
+            mode: "preview",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
+    });
+
+    it("renders immutable production source that cannot establish freshness", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.getSourceSnapshotVersion = () => 1;
+      const handler = new SSRHandler(createMockSSRService());
+
+      const result = await handler.handle(
+        new Request("http://localhost/production"),
+        makeCtx({
+          adapter,
+          projectSlug: "production-project",
+          releaseId: "release-1",
+          resolvedEnvironment: "production",
+          requestContext: {
+            token: "",
+            slug: "production-project",
+            branch: null,
+            mode: "production",
+          },
+        }),
+      );
+
+      assertEquals(result.response?.status, 200);
     });
 
     it("passes only application headers into project rendering", async () => {
