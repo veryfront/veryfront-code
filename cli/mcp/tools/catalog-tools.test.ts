@@ -218,11 +218,12 @@ describe("mcp/tools/catalog-tools", () => {
       });
     });
 
-    it("keeps the existing-directory failure response", async () => {
+    it("refuses a directory holding files the scaffold would overwrite", async () => {
       const parentDir = await Deno.makeTempDir();
       createdDirs.push(parentDir);
       const projectDir = join(parentDir, "example-app");
       await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(join(projectDir, "README.md"), "mine\n");
 
       const result = await vfCreateProject.execute({
         name: "Example App",
@@ -230,8 +231,30 @@ describe("mcp/tools/catalog-tools", () => {
         directory: parentDir,
       });
 
+      // Same rule and same words as `veryfront init`: the conflict is the file,
+      // and it is named.
       assertEquals(result.success, false);
-      assertEquals(result.message, `Directory already exists: ${projectDir}`);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains README.md"), true);
+      assertEquals(await Deno.readTextFile(join(projectDir, "README.md")), "mine\n");
+    });
+
+    it("scaffolds into an existing empty directory", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      await Deno.mkdir(projectDir);
+
+      await withFakeNpm(async () => {
+        const result = await vfCreateProject.execute({
+          name: "Example App",
+          template: "minimal",
+          directory: parentDir,
+        });
+
+        assertEquals(result.success, true);
+        assertEquals(result.projectDir, projectDir);
+      });
     });
 
     it("reports project-name validation failures", async () => {
