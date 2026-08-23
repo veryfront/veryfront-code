@@ -305,6 +305,7 @@ const GLOBAL_SINGLE_PROPERTY_MUTATORS = new Set([
 
 const GLOBAL_BULK_MUTATORS = new Set([
   "Object.assign",
+  "Object.create",
   "Object.defineProperties",
   "Object.freeze",
   "Object.preventExtensions",
@@ -2811,6 +2812,7 @@ function mutationCallMarker(
     return markers.length > 0 ? markers : undefined;
   }
   const canonicalName = `${binding.receiver}.${binding.method}`;
+  if (canonicalName === "Object.create") return undefined;
   let setterMarkers: readonly SemanticMarker[] = [];
   let getterMarkers: readonly SemanticMarker[] = [];
   if (canonicalName === "Reflect.set") {
@@ -4973,10 +4975,31 @@ function mutationCallResultRuntimeBinding(
       });
       continue;
     }
-    if (!mutationReturnsTarget(invocation.binding)) continue;
-    let result = targetBinding ?? emptyRuntimeNamespaceBinding();
     const canonicalName =
       `${invocation.binding.receiver}.${invocation.binding.method}`;
+    if (
+      canonicalName !== "Object.create" &&
+      !mutationReturnsTarget(invocation.binding)
+    ) continue;
+    let result = canonicalName === "Object.create"
+      ? emptyRuntimeNamespaceBinding()
+      : targetBinding ?? emptyRuntimeNamespaceBinding();
+    if (canonicalName === "Object.create") {
+      result = appendRuntimeMutationResultProperty(
+        result,
+        undefined,
+        runtimePrototypeMutationBinding(
+          invocation.args[0],
+          imports,
+          scopes,
+        ),
+        {
+          preservesPrevious: false,
+          fallbackOnly: true,
+          replacesFallback: true,
+        },
+      );
+    }
     if (
       canonicalName === "Object.freeze" ||
       canonicalName === "Object.preventExtensions" ||
@@ -5489,7 +5512,10 @@ function localMutationResultAssignedEntries(
   canonicalName: string,
   args: readonly unknown[],
 ): readonly LocalMutationAssignedEntry[] {
-  if (canonicalName === "Object.defineProperties") {
+  if (
+    canonicalName === "Object.create" ||
+    canonicalName === "Object.defineProperties"
+  ) {
     const descriptors = unwrapExpression(args[1]);
     if (descriptors?.type === "ObjectExpression") {
       const properties = Array.isArray(descriptors.properties)
@@ -5682,7 +5708,11 @@ function localMutationAccessorDescriptors(
       descriptor: args[2],
     }];
   }
-  if (canonicalName !== "Object.defineProperties") return [];
+  if (
+    canonicalName !== "Object.create" &&
+    canonicalName !== "Object.defineProperties"
+  ) return [];
+  if (canonicalName === "Object.create" && args.length < 2) return [];
   const descriptors = unwrapExpression(args[1]);
   if (!descriptors || descriptors.type !== "ObjectExpression") {
     return [{}];

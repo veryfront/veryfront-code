@@ -2470,6 +2470,21 @@ Object.assign({}, copiedBox.source).run();
 `,
       },
       {
+        name: "copied-descriptor-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const getterBox = {};
+Object.defineProperty(getterBox, "source", {
+  enumerable: true,
+  get: () => source,
+});
+const copiedBox = Object.assign({}, getterBox);
+Object.assign({}, copiedBox.source).run();
+`,
+      },
+      {
         name: "object-spread",
         source: `
 declare const maybe: boolean;
@@ -2950,6 +2965,75 @@ own.path = "still-safe";
         ["filesystem-write", "direct.path setter"],
         ["filesystem-write", "assigned.path setter"],
         ["filesystem-write", "opened.options setter"],
+      ],
+    );
+  });
+
+  it("preserves Object.create prototype provenance without inventing a null prototype", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const created = Object.create({ run: Deno.remove });
+created.run("created.txt");
+`,
+        "src/runtime-object-create-property.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "created.run"]],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "path", { set: Deno.remove });
+const created = Object.create(prototype);
+created.path = "created.txt";
+`,
+        "src/runtime-object-create-setter.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "created.path setter"]],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const nullPrototype = Object.create(null);
+nullPrototype.run = () => undefined;
+nullPrototype.run();
+
+const ownDescriptor = Object.create(
+  { run: () => undefined },
+  { run: { value: Deno.remove } },
+);
+ownDescriptor.run("descriptor.txt");
+`,
+        "src/runtime-object-create-descriptors.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "ownDescriptor.run"]],
+    );
+
+    assertEquals(
+      [
+        ...new Set(
+          collectSemanticMarkers(
+            `
+declare function loadPrototype(): object;
+const created = Object.create(loadPrototype());
+created.run();
+`,
+            "src/runtime-object-create-unknown-prototype.test.ts",
+          ).map((marker) => marker.effect),
+        ),
+      ].sort(),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
       ],
     );
   });
