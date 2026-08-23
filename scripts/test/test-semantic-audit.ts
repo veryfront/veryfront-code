@@ -5116,6 +5116,7 @@ function mutationCallResultRuntimeBinding(
                   allowClearing: !preservesSetter && definitelyCopies,
                   configurable: definitelyCopies ? true : undefined,
                   enumerable: definitelyCopies ? true : undefined,
+                  writable: definitelyCopies ? true : undefined,
                 },
               );
             }

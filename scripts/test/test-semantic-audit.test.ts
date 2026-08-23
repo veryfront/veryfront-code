@@ -3377,6 +3377,24 @@ source.run("cleared.txt");
     assertEquals(effects, ["filesystem-write"]);
   });
 
+  it("models Object.assign getter copies as writable data properties", () => {
+    const effects = collectSemanticMarkers(
+      `
+const source = {};
+Object.defineProperty(source, "run", {
+  enumerable: true,
+  get: () => Deno.remove,
+});
+const target = Object.assign({}, source);
+Object.seal(target);
+Object.defineProperty(target, "run", { value: () => undefined });
+target.run("cleared.txt");
+`,
+      "src/runtime-object-assign-getter-copy-writable.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
   it("clears accessors replaced by descriptor definitions", () => {
     assertEquals(
       collectSemanticMarkers(
