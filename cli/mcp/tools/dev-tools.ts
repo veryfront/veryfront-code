@@ -98,6 +98,33 @@ interface DebugContextResult {
   error?: string;
 }
 
+function isNameResolutionError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  if (!(error instanceof Error)) return false;
+  const cause = error.cause instanceof Error ? error.cause.message : "";
+  const message = `${error.message} ${cause}`.toLowerCase();
+  return message.includes("dns error") ||
+    message.includes("failed to lookup address") ||
+    message.includes("enotfound") ||
+    message.includes("eai_again") ||
+    message.includes("name or service not known");
+}
+
+async function fetchDebugContext(input: GetDebugContextInput): Promise<Response> {
+  const host = input.project ? `${input.project}.localhost` : "localhost";
+  const url = `http://${host}:${input.port}/_vf_debug/context`;
+  try {
+    return await fetch(url);
+  } catch (error) {
+    if (!input.project || !isNameResolutionError(error)) throw error;
+    // This tool has no preview input. x-project-slug preserves project identity
+    // only; future preview support must retain the virtual-host environment.
+    return await fetch(`http://127.0.0.1:${input.port}/_vf_debug/context`, {
+      headers: { "x-project-slug": input.project },
+    });
+  }
+}
+
 export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult> = {
   name: "vf_get_debug_context",
   title: "Debug Context",
@@ -109,11 +136,8 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
     withSpan(
       "cli.mcp.tool.vf_get_debug_context",
       async () => {
-        const host = input.project ? `${input.project}.localhost` : "localhost";
-        const url = `http://${host}:${input.port}/_vf_debug/context`;
-
         try {
-          const response = await fetch(url);
+          const response = await fetchDebugContext(input);
           if (!response.ok) {
             return {
               success: false,
