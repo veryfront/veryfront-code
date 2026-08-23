@@ -785,6 +785,7 @@ await Deno.open?.("read.txt", { read: true, write: false });
 await Deno.writeTextFile?.("tmp.txt", "x");
 await fetch?.("https://example.com/a");
 await globalThis.fetch?.("https://example.com/b");
+await Deno.resolveDns?.("example.com", "A");
 `,
         "src/optional-runtime-calls.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -793,7 +794,36 @@ await globalThis.fetch?.("https://example.com/b");
         ["filesystem-write", "Deno.writeTextFile"],
         ["network", "fetch"],
         ["network", "globalThis.fetch"],
+        ["network", "Deno.resolveDns"],
       ],
+    );
+  });
+
+  it("classifies optional runtime environment reads", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+Deno?.env.get("MODE");
+process?.env.MODE;
+`,
+        "src/optional-runtime-env.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Deno.env"],
+        ["process", "process.env"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const Deno = { env: { get() {} } };
+Deno?.env.get("MODE");
+const process = { env: { MODE: "test" } };
+process?.env.MODE;
+`,
+        "src/shadowed-optional-runtime-env.test.ts",
+      ),
+      [],
     );
   });
 
@@ -1079,6 +1109,15 @@ for (const _ of [1]) {
   loopWrite = Deno.writeTextFile;
 }
 loopWrite("loop.txt", "x");
+{
+  var varBlockWrite = Deno.writeTextFile;
+}
+varBlockWrite("var-block.txt", "x");
+{
+  var varBlockAssignedWrite;
+  varBlockAssignedWrite = Deno.writeTextFile;
+}
+varBlockAssignedWrite("var-block-assigned.txt", "x");
 `,
         "src/assigned-runtime-aliases.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1103,6 +1142,8 @@ loopWrite("loop.txt", "x");
         ["filesystem-write", "functionWrite"],
         ["filesystem-write", "switchWrite"],
         ["filesystem-write", "loopWrite"],
+        ["filesystem-write", "varBlockWrite"],
+        ["filesystem-write", "varBlockAssignedWrite"],
       ],
     );
     assertEquals(
@@ -1294,14 +1335,19 @@ class RuntimeWriter {
   static {
     const writeFromStatic = Deno.writeTextFile;
     writeFromStatic("tmp.txt", "x");
+    var staticBlockWrite;
+    staticBlockWrite = Deno.writeTextFile;
+    staticBlockWrite("static-block.txt", "x");
   }
 }
+staticBlockWrite("outside-static-block.txt", "x");
 `,
         "src/scoped-runtime-aliases.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
         ["filesystem-write", "writeFromSwitch"],
         ["filesystem-write", "writeFromStatic"],
+        ["filesystem-write", "staticBlockWrite"],
       ],
     );
     assertEquals(
@@ -1812,8 +1858,12 @@ namespace RuntimeAliases {
   export const WorkerAlias = Worker;
   export import ImportedWorker = Worker;
   write("namespace-local.txt", "x");
+  var namespaceVarWrite;
+  namespaceVarWrite = Deno.writeTextFile;
+  namespaceVarWrite("namespace-var-local.txt", "x");
 }
 RuntimeAliases.write("namespace-exported.txt", "x");
+namespaceVarWrite("namespace-var-outside.txt", "x");
 new RuntimeAliases.WorkerAlias("worker.js");
 new RuntimeAliases.ImportedWorker("worker.js");
 namespace ImportEqualsAliases {
@@ -1829,6 +1879,7 @@ topLevelWrite("namespace-import-top-level.txt", "x");
       ).map((marker) => [marker.effect, marker.symbol]),
       [
         ["filesystem-write", "write"],
+        ["filesystem-write", "namespaceVarWrite"],
         ["filesystem-write", "RuntimeAliases.write"],
         ["process", "RuntimeAliases.WorkerAlias"],
         ["process", "RuntimeAliases.ImportedWorker"],

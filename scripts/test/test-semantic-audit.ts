@@ -326,6 +326,7 @@ const NETWORK_METHODS = new Set([
   "createConnection",
   "get",
   "request",
+  "resolveDns",
 ]);
 
 const GLOBAL_RUNTIME_RECEIVERS = new Set(["globalThis", "window", "self"]);
@@ -601,7 +602,9 @@ export function collectSemanticMarkers(
       : scopes;
     if (node.type === "VariableDeclarator") {
       const scope = nextScopes.at(-1);
-      if (scope) bindRuntimeDeclaration(node, bindings, nextScopes, scope);
+      if (scope && declarationBelongsToScope(node, scope)) {
+        bindRuntimeDeclaration(node, bindings, nextScopes, scope);
+      }
     }
     bindRuntimeAssignment(
       node,
@@ -1737,7 +1740,10 @@ function processGlobalMarker(
   scopes: readonly Scope[],
   importedNames: ReadonlySet<string>,
 ): SemanticMarker | undefined {
-  if (node.type === "MemberExpression") {
+  if (
+    node.type === "MemberExpression" ||
+    node.type === "OptionalMemberExpression"
+  ) {
     const chain = memberChain(node);
     if (
       chain?.[0] === "Deno" && chain[1] === "env" &&
@@ -2002,12 +2008,21 @@ function createScope(
   const names = new Set<string>();
   const playwrightFixtures = new Set<string>();
   collectLocalDeclaredNames(node, names, playwrightFixtures);
+  if (isVarHoistScope(node)) collectHoistedVarDeclaredNames(node, names);
   const scope: Scope = {
     names,
     playwrightFixtures,
     runtimeBindings: new Map(),
   };
   collectLocalRuntimeBindings(node, imports, [...outerScopes, scope]);
+  if (isVarHoistScope(node)) {
+    collectHoistedVarRuntimeBindings(
+      node,
+      imports,
+      [...outerScopes, scope],
+      scope,
+    );
+  }
   collectRuntimeParameterDefaults(
     node,
     imports,
@@ -2047,6 +2062,7 @@ function collectLocalDeclaredNames(
         names.add(statement.id.name as string);
       }
       if (statement.type === "VariableDeclaration") {
+        if (statement.kind === "var") continue;
         for (
           const declaration of Array.isArray(statement.declarations)
             ? statement.declarations
@@ -2088,6 +2104,7 @@ function collectLocalDeclaredNames(
   ) {
     const declaration = node.type === "ForStatement" ? node.init : node.left;
     if (isNode(declaration) && declaration.type === "VariableDeclaration") {
+      if (declaration.kind === "var") return;
       for (
         const declarator of Array.isArray(declaration.declarations)
           ? declaration.declarations
@@ -2125,6 +2142,7 @@ function collectLocalRuntimeBindings(
     if (declaration.type !== "VariableDeclaration") {
       continue;
     }
+    if (declaration.kind === "var") continue;
     for (
       const declarator of Array.isArray(declaration.declarations)
         ? declaration.declarations
@@ -2134,6 +2152,105 @@ function collectLocalRuntimeBindings(
       bindRuntimeDeclaration(declarator, imports, scopes, scope);
     }
   }
+}
+
+function isVarHoistScope(node: Node): boolean {
+  return node.type === "Program" ||
+    node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "ObjectMethod" ||
+    node.type === "ClassMethod" ||
+    node.type === "ClassPrivateMethod" ||
+    node.type === "StaticBlock" ||
+    node.type === "TSModuleBlock";
+}
+
+function collectHoistedVarDeclaredNames(
+  node: Node,
+  names: Set<string>,
+): void {
+  visitVarHoistDeclarations(node, (declaration) => {
+    for (
+      const declarator of Array.isArray(declaration.declarations)
+        ? declaration.declarations
+        : []
+    ) {
+      if (isNode(declarator)) collectPatternNames(declarator.id, names);
+    }
+  });
+}
+
+function collectHoistedVarRuntimeBindings(
+  node: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  scope: Scope,
+): void {
+  visitVarHoistDeclarations(node, (declaration) => {
+    for (
+      const declarator of Array.isArray(declaration.declarations)
+        ? declaration.declarations
+        : []
+    ) {
+      if (isNode(declarator)) {
+        bindRuntimeDeclaration(declarator, imports, scopes, scope);
+      }
+    }
+  });
+}
+
+function visitVarHoistDeclarations(
+  node: Node,
+  visitor: (declaration: Node) => void,
+): void {
+  const visit = (current: unknown, isRoot = false): void => {
+    if (!isNode(current)) return;
+    if (!isRoot && isVarHoistBoundary(current)) return;
+    if (current.type === "VariableDeclaration" && current.kind === "var") {
+      visitor(current);
+      return;
+    }
+    for (const key of Object.keys(current)) {
+      if (
+        key === "loc" || COMMENT_KEYS.has(key) ||
+        TYPE_ONLY_CHILD_KEYS.has(key)
+      ) continue;
+      const value = current[key];
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+      } else {
+        visit(value);
+      }
+    }
+  };
+  visit(node, true);
+}
+
+function isVarHoistBoundary(node: Node): boolean {
+  return node.type === "FunctionDeclaration" ||
+    node.type === "FunctionExpression" ||
+    node.type === "ArrowFunctionExpression" ||
+    node.type === "ObjectMethod" ||
+    node.type === "ClassMethod" ||
+    node.type === "ClassPrivateMethod" ||
+    node.type === "ClassDeclaration" ||
+    node.type === "ClassExpression" ||
+    node.type === "StaticBlock" ||
+    node.type === "TSModuleBlock" ||
+    node.type === "TSModuleDeclaration";
+}
+
+function declarationBelongsToScope(
+  declaration: Node,
+  scope: Scope,
+): boolean {
+  const names = new Set<string>();
+  collectPatternNames(declaration.id, names);
+  for (const name of names) {
+    if (scope.names.has(name)) return true;
+  }
+  return names.size === 0;
 }
 
 function lexicalScopeStatements(node: Node): readonly Node[] | undefined {
