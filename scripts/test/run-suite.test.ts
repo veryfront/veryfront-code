@@ -17,8 +17,8 @@ import {
   parseDenoSuiteArgs,
 } from "./run-deno-suite.ts";
 import { LEAF_TEST_SUITES } from "./suites.ts";
+import { classifyTestPath } from "./test-layout.ts";
 import {
-  BROWSER_DEPENDENT_TESTS,
   formatSuitePlan,
   planSuiteFiles,
   selectOrdinalShard,
@@ -301,6 +301,28 @@ describe("migration command surface", () => {
     assert(match, "pre-push must invoke a named E2E task");
     assert(config.tasks[match[1]], `${match[1]} must exist in deno.json`);
   });
+
+  it("routes the Dev UI browser bundle test through the browser E2E lane", async () => {
+    const config = JSON.parse(
+      await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+    );
+    const task = config.tasks["test:e2e:rsc-browser"] as string | undefined;
+    const browserBundleTest =
+      "tests/e2e/regressions/dev-ui-browser-bundle.test.ts";
+
+    assert(task, "browser E2E task must remain defined");
+    assert(
+      task.includes(browserBundleTest),
+      "the Chromium-backed Dev UI bundle test needs an explicit browser-capable runner",
+    );
+    assertEquals(classifyTestPath(browserBundleTest), {
+      kind: "canonical",
+      path: browserBundleTest,
+      level: "e2e",
+      suite: "e2e",
+      runner: "deno",
+    });
+  });
 });
 
 // Read from the suite registry rather than restated here. A second hand-kept
@@ -318,7 +340,6 @@ async function legacyUnitParallelFiles(): Promise<string[]> {
   const excluded = new Set([
     ...UNIT_CWD_FILES,
     ...UNIT_CWD_EXCLUSION_FILES,
-    ...BROWSER_DEPENDENT_TESTS,
   ]);
   return sorted(
     files.filter((path) =>
@@ -341,10 +362,7 @@ async function legacyUnitCoverageFiles(): Promise<string[]> {
   return sorted(
     (await collectLegacyTestFiles(LEGACY_UNIT_ROOTS))
       .filter((path) => !/\.integration\.test\.tsx?$/.test(path))
-      .filter((path) => !path.startsWith("src/workflow/__tests__/"))
-      // Needs a browser the unit shards do not provision; see
-      // BROWSER_DEPENDENT_TESTS in run-suite.ts.
-      .filter((path) => !BROWSER_DEPENDENT_TESTS.has(path)),
+      .filter((path) => !path.startsWith("src/workflow/__tests__/")),
   );
 }
 
