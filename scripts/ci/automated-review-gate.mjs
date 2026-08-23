@@ -8,6 +8,8 @@ const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
 const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN = /^\s*reviewing\s+files\b/i;
+const CODERABBIT_REVIEW_RANGE_EVIDENCE_PATTERN =
+  /(?:^|\r?\n)\s*(?:[-*+]\s+)?Reviewing\s+(?:files|changed files)\b[^\r\n]*\bbetween\s+[0-9a-f]{40}\s+and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})(?![0-9a-f])/gi;
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const FULL_COMMIT_TOKEN_PATTERN = /(?:^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
@@ -216,6 +218,11 @@ async function classifyAutomatedReviewEvent(
   const rangeCandidateHasCurrentTip = rangeCandidates?.some((line) =>
     rangeCandidateReferencesTip(line, headSha)
   );
+  const rangeEvidenceHasCurrentTip = [
+    ...(selectedRecentReview?.content.matchAll(
+      CODERABBIT_REVIEW_RANGE_EVIDENCE_PATTERN,
+    ) ?? []),
+  ].some((match) => match[1]?.toLowerCase() === headSha.toLowerCase());
   const reviewedTips = rangeCandidates?.map((line) =>
     line.match(CODERABBIT_REVIEW_RANGE_PATTERN)?.[2]
   );
@@ -224,7 +231,8 @@ async function classifyAutomatedReviewEvent(
   );
   if (
     selectedRecentReview && !selectedRecentReview.terminated &&
-    (hasCurrentRange || rangeCandidateHasCurrentTip)
+    (hasCurrentRange || rangeCandidateHasCurrentTip ||
+      rangeEvidenceHasCurrentTip)
   ) {
     return {
       kind: "failure",
@@ -232,7 +240,8 @@ async function classifyAutomatedReviewEvent(
     };
   }
   if (rangeCandidates?.length !== 1) {
-    return hasCurrentRange || rangeCandidateHasCurrentTip
+    return hasCurrentRange || rangeCandidateHasCurrentTip ||
+        rangeEvidenceHasCurrentTip
       ? {
         kind: "failure",
         url: typeof comment.html_url === "string"
@@ -243,7 +252,7 @@ async function classifyAutomatedReviewEvent(
   }
   const reviewedTip = reviewedTips?.[0];
   if (reviewedTip?.toLowerCase() !== headSha.toLowerCase()) {
-    return rangeCandidateHasCurrentTip
+    return rangeCandidateHasCurrentTip || rangeEvidenceHasCurrentTip
       ? { kind: "failure" }
       : { kind: "not-head" };
   }
@@ -273,9 +282,27 @@ function codeRabbitSelectedRecentReview(body) {
   if (start < 0) return undefined;
   const contentStart = start + CODERABBIT_RECENT_REVIEW_MARKER.length;
   const end = body.indexOf(CODERABBIT_RECENT_REVIEW_END_MARKER, contentStart);
+  if (end < 0) {
+    const previousStart = body.lastIndexOf(
+      CODERABBIT_RECENT_REVIEW_MARKER,
+      start - 1,
+    );
+    const previousContentStart = previousStart +
+      CODERABBIT_RECENT_REVIEW_MARKER.length;
+    const previousEnd = previousStart < 0 ? -1 : body.indexOf(
+      CODERABBIT_RECENT_REVIEW_END_MARKER,
+      previousContentStart,
+    );
+    return {
+      content: body.slice(
+        previousEnd < 0 ? contentStart : previousContentStart,
+      ),
+      terminated: false,
+    };
+  }
   return {
-    content: end < 0 ? body.slice(contentStart) : body.slice(contentStart, end),
-    terminated: end >= 0,
+    content: body.slice(contentStart, end),
+    terminated: true,
   };
 }
 

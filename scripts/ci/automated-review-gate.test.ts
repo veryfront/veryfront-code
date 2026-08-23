@@ -576,6 +576,56 @@ describe("automated review gate", () => {
       );
     }
 
+    for (
+      const newerMalformedBody of [
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `- ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "Reviewing changed files from the base of the PR and between " +
+          `${STALE_SHA} and ${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          "Reviewing files that changed from the base of the PR and between " +
+          `${STALE_SHA} and`,
+          `${HEAD_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+          "<!-- recent_review_start -->",
+        ].join("\n"),
+      ]
+    ) {
+      const newerMalformedCurrentRange = codeRabbitSummary({
+        body: newerMalformedBody,
+        created_at: "2026-08-22T12:03:40Z",
+        updated_at: "2026-08-22T12:03:40Z",
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerMalformedCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
     const newerUnterminatedStaleRange = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",
@@ -612,6 +662,28 @@ describe("automated review gate", () => {
         {
           reviews: [],
           comments: [olderSuccess, newerOutOfScopeCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    const newerUnrelatedCurrentText = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Diagnostic commit: ${HEAD_SHA}.`,
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:15Z",
+      updated_at: "2026-08-22T12:04:15Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnrelatedCurrentText],
         },
         HEAD_SHA,
       ))?.source,
