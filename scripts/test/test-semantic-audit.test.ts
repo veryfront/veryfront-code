@@ -3662,6 +3662,31 @@ target.safe("retained-after-argument-getter.txt");
       "shared-cwd",
     ]);
 
+    const nullableArgumentReceiver = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = maybe ? { source: {} } : null;
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+  }, holder!.source);
+} catch {}
+target.safe("retained-after-nullable-argument-receiver.txt");
+`,
+      "src/runtime-object-assign-nullable-argument-receiver.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(nullableArgumentReceiver, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
+
     const outerConditionalTry = collectSemanticMarkers(
       `
 const target = { safe: Deno.remove };

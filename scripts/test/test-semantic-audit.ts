@@ -7896,12 +7896,23 @@ function runtimeTryEntryArgumentEvaluationIsNonThrowing(
 ): boolean {
   if (!isNode(value)) return false;
   if (
-    value.type.endsWith("Literal") || value.type === "Identifier" ||
+    value.type.endsWith("Literal") ||
     value.type === "ThisExpression" || value.type === "MetaProperty" ||
     value.type === "ArrowFunctionExpression" ||
     value.type === "FunctionExpression"
   ) {
     return true;
+  }
+  if (value.type === "Identifier") {
+    const resolved = resolveLocalBinding(value.name as string, scopes);
+    const binding = resolved.declared
+      ? resolved.binding
+      : runtimeBindingForExpression(value, imports, scopes);
+    // A partial binding can hide a nullish alternative. TypeScript's `!`
+    // changes no runtime evaluation, so it cannot make a member read safe.
+    return binding !== undefined &&
+      (!resolved.declared || resolved.definitelyNonUndefined === true) &&
+      !runtimeBindingHasPartialAlternative(binding);
   }
   if (
     value.type === "TSAsExpression" || value.type === "TSTypeAssertion" ||
