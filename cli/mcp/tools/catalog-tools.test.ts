@@ -416,6 +416,30 @@ describe("mcp/tools/catalog-tools", () => {
       );
     });
 
+    it("refuses npm shrinkwrap before dependency installation can replace it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const lockfile = join(projectDir, "npm-shrinkwrap.json");
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("already contains npm-shrinkwrap.json"), true);
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
     it("reports project-name validation failures", async () => {
       const result = await vfCreateProject.execute({
         name: "invalid/name",

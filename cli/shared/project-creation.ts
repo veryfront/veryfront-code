@@ -512,7 +512,9 @@ function installerWritePaths(request: CreateProjectRequest): string[] {
   const lockfiles = LOCKFILE_CLIENTS
     .filter(([, client]) => client === packageManager)
     .map(([path]) => path);
-  if (packageManager === "npm") lockfiles.push("node_modules/.package-lock.json");
+  if (packageManager === "npm") {
+    lockfiles.push("npm-shrinkwrap.json", "node_modules/.package-lock.json");
+  }
   return lockfiles;
 }
 

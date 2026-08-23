@@ -1012,6 +1012,32 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses npm shrinkwrap before dependency installation can replace it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-shrinkwrap-" });
+    const projectDir = join(parentDir, "contract-project");
+    const lockfile = join(projectDir, "npm-shrinkwrap.json");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains npm-shrinkwrap.json. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("still reports a real file at a scaffold path as an overwritable conflict", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-file-" });
     const projectDir = join(parentDir, "contract-project");
