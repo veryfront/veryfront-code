@@ -387,15 +387,18 @@ async function updateVeryfrontDependency(
   projectDir: string,
   packed: PackedWorkspace,
   extensionNames: readonly string[],
+  runtime: "node" | "bun",
 ): Promise<void> {
   const packagePath = `${projectDir}/package.json`;
   const pkg = JSON.parse(await Deno.readTextFile(packagePath));
   pkg.dependencies ??= {};
   pkg.dependencies.veryfront = `file:${packed.root}`;
-  Object.assign(
-    pkg.dependencies,
-    packedFileDependencies(packed, extensionNames),
-  );
+  const localExtensions = packedFileDependencies(packed, extensionNames);
+  Object.assign(pkg.dependencies, localExtensions);
+  if (runtime === "bun") {
+    pkg.overrides ??= {};
+    Object.assign(pkg.overrides, localExtensions);
+  }
   await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
@@ -641,6 +644,7 @@ export async function scaffoldProject(
       projectDir,
       packed,
       [...packed.rootExtensionNames, ...templateExtensionNames],
+      runtime,
     );
   }
 
