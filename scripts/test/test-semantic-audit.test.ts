@@ -484,6 +484,25 @@ cwd();
     );
   });
 
+  it("classifies process wrappers imported from the public platform barrel", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
+getEnv("TEST_KEY");
+setEnv("TEST_KEY", "value");
+deleteEnv("TEST_KEY");
+`,
+        "src/public-platform-process-imports.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "getEnv"],
+        ["process", "setEnv"],
+        ["process", "deleteEnv"],
+      ],
+    );
+  });
+
   it("classifies repo-relative compat filesystem and process imports from importer path", () => {
     assertEquals(
       collectSemanticMarkers(
