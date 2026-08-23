@@ -201,6 +201,7 @@ export async function publishAutomatedReviewStatus({
       );
     }
   } catch (error) {
+    review = undefined;
     failure = error instanceof Error ? error : new Error(String(error));
   }
 

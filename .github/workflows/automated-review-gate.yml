@@ -93,7 +93,7 @@ jobs:
               // comment event can reconcile. This safely stays red until a
               // trusted event observes status or comment proof.
               allowPullRequestReviews:
-                pullRequest.head.repo.full_name === sameRepository,
+                pullRequest.head.repo?.full_name === sameRepository,
             });
             if (result.state === "pending") {
               core.notice(

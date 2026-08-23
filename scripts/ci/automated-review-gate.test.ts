@@ -329,6 +329,7 @@ function githubFixture(options: {
   headResponses?: string[];
   commit?: string | undefined;
   failAfterFirstPage?: string;
+  pullError?: Error;
 } = {}) {
   const endpoints = {
     reviews: () => undefined,
@@ -357,6 +358,7 @@ function githubFixture(options: {
       pulls: {
         listReviews: endpoints.reviews,
         get: () => {
+          if (options.pullError) return Promise.reject(options.pullError);
           const heads = options.headResponses ?? [HEAD];
           const head = heads[Math.min(pullRead++, heads.length - 1)];
           return Promise.resolve({ data: { head: { sha: head } } });
@@ -463,6 +465,28 @@ describe("automated review publication", () => {
     assertEquals(fixture.published[0]?.sha, HEAD);
   });
 
+  it("clears accepted proof when the final head refetch rejects", async () => {
+    const fixture = githubFixture({
+      pages: { statuses: [[status()]] },
+      pullError: new Error("pull unavailable"),
+    });
+    const result = await publishAutomatedReviewStatus({
+      github: fixture.github,
+      owner: "veryfront",
+      repo: "veryfront-code",
+      pullNumber: 1,
+      headSha: HEAD,
+      pullUrl: "https://example.test/pr/1",
+    });
+    assertEquals(result.state, "failure");
+    assertEquals(result.review, undefined);
+    assertEquals(fixture.published[0]?.state, "failure");
+    assertEquals(
+      fixture.published[0]?.target_url,
+      "https://example.test/pr/1",
+    );
+  });
+
   it("keeps drafts pending after confirming the captured head", async () => {
     const fixture = githubFixture();
     const result = await publishAutomatedReviewStatus({
@@ -550,7 +574,7 @@ describe("automated review workflow", () => {
     assert(!script.includes("listPullRequestsAssociatedWithCommit"));
     assert(
       script.includes("allowPullRequestReviews") &&
-        script.includes("pullRequest.head.repo.full_name"),
+        script.includes("pullRequest.head.repo?.full_name"),
       "the trusted reconciler must ignore review objects for fork pull requests",
     );
     assert(
