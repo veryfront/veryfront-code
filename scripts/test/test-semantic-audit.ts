@@ -499,6 +499,8 @@ const TYPESCRIPT_RUNTIME_NODES = new Set([
   "TSTypeAssertion",
 ]);
 
+const THIS_RUNTIME_ROOT = "this";
+
 const SCOPE_NODES = new Set([
   "Program",
   "BlockStatement",
@@ -552,7 +554,29 @@ type NamespacePropertyOperation =
     readonly kind: "define";
     readonly name: string;
     readonly binding?: RuntimeBinding;
+    readonly aliasTargets?: readonly RuntimeAliasTarget[];
+    readonly defaultMayRun: boolean;
+    readonly preservesPrevious?: boolean;
+    readonly crossesFunctionBoundary?: boolean;
+  }
+  | {
+    readonly kind: "define-unknown";
+    readonly binding?: RuntimeBinding;
+    readonly aliasTargets?: readonly RuntimeAliasTarget[];
+    readonly defaultMayRun: boolean;
+    readonly crossesFunctionBoundary?: boolean;
   };
+
+interface RuntimePropertyResolution {
+  readonly binding?: RuntimeBinding;
+  readonly aliasTargets?: readonly RuntimeAliasTarget[];
+  readonly defaultMayRun: boolean;
+}
+
+interface RuntimeAliasTarget {
+  readonly scope: Scope;
+  readonly root: string;
+}
 
 type RuntimeBinding =
   | { readonly kind: "module"; readonly source: string }
@@ -598,8 +622,21 @@ type RuntimeBinding =
 
 interface Scope {
   readonly names: Set<string>;
+  readonly definitelyNonUndefinedNames: Set<string>;
+  readonly functionBoundary: boolean;
   readonly playwrightFixtures: Set<string>;
   readonly runtimeBindings: Map<string, RuntimeBinding>;
+  readonly runtimeAliases: Map<string, readonly RuntimeAliasTarget[]>;
+  readonly classRuntimeBindings?: {
+    readonly name?: string;
+    instance?: RuntimeBinding;
+    static?: RuntimeBinding;
+    readonly memberEntries: Map<Node, RuntimeBinding | undefined>;
+  };
+  readonly classReceiver?: {
+    readonly classScope: Scope;
+    readonly kind: "instance" | "static";
+  };
 }
 
 export async function collectSemanticAuditCandidates(
@@ -692,9 +729,11 @@ export function collectSemanticMarkers(
           nextScopes,
           scope,
           !allowAssignmentClearing,
+          allowAssignmentClearing,
         );
       }
     }
+    bindRuntimeClassDeclaration(node, nextScopes);
     const nodeMarkers = suppressMarker
       ? undefined
       : markerForNode(node, bindings, nextScopes);
@@ -730,6 +769,7 @@ export function collectSemanticMarkers(
           }
         }
       } else if (isNode(value)) {
+        const childScopes = classFieldValueScopes(node, key, nextScopes);
         const suppressChildMarker = isGlobalRuntimePrefixObject(
           node,
           key,
@@ -739,11 +779,11 @@ export function collectSemanticMarkers(
           key,
           value,
           bindings,
-          nextScopes,
+          childScopes,
         );
         visit(
           value,
-          nextScopes,
+          childScopes,
           suppressChildMarker,
           allowAssignmentClearing && !isConditionalBranch(node, key),
         );
@@ -1302,6 +1342,9 @@ function markerForNode(
     callee.type !== "MemberExpression" &&
     callee.type !== "OptionalMemberExpression"
   ) return undefined;
+  if (callee.computed === true && memberProperty(callee) === undefined) {
+    return runtimeInvocationMarker(node, callee, line, bindings, scopes);
+  }
   const runtimeMarker = memberRuntimeEffectMarker(
     callee,
     line,
@@ -1881,6 +1924,13 @@ function runtimeInvocationMarker(
   ) {
     return undefined;
   }
+  const unknownComputedMarkers = unknownComputedRuntimeInvocationMarkers(
+    callee,
+    line,
+    bindings,
+    scopes,
+  );
+  if (unknownComputedMarkers.length > 0) return unknownComputedMarkers;
   const binding = runtimeBindingForExpression(callee, bindings, scopes);
   const directMarkers = markersForRuntimeBinding(
     binding,
@@ -1900,6 +1950,202 @@ function runtimeInvocationMarker(
   );
   if (callableMarkers.length > 0) return callableMarkers;
   return undefined;
+}
+
+function unknownComputedRuntimeInvocationMarkers(
+  callee: Node,
+  line: number,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly SemanticMarker[] {
+  if (
+    (callee.type !== "MemberExpression" &&
+      callee.type !== "OptionalMemberExpression") ||
+    callee.computed !== true || memberProperty(callee) !== undefined
+  ) {
+    return [];
+  }
+  const object = unwrapExpression(callee.object);
+  if (!object) return [];
+  const effects = conservativeRuntimeEffects(
+    runtimeBindingForExpression(object, imports, scopes),
+  );
+  if (effects.length === 0) return [];
+  const symbol = `${invocationSymbol(object)}.*`;
+  return effects.map((effect) => ({ effect, line, symbol }));
+}
+
+function conservativeRuntimeEffects(
+  binding: RuntimeBinding | undefined,
+): readonly SemanticEffect[] {
+  const effects: SemanticEffect[] = [];
+  const visit = (candidate: RuntimeBinding): void => {
+    if (
+      candidate.kind === "effect" || candidate.kind === "effect-object" ||
+      candidate.kind === "constructor-effect"
+    ) {
+      effects.push(candidate.effect);
+      return;
+    }
+    if (candidate.kind === "filesystem-open") {
+      effects.push("filesystem-read", "filesystem-write");
+      return;
+    }
+    if (candidate.kind === "global-runtime") {
+      effects.push(
+        ...candidate.runtime === "Deno"
+          ? [
+            "filesystem-read",
+            "filesystem-watch",
+            "filesystem-write",
+            "process",
+            "server",
+            "network",
+            "shared-cwd",
+          ] as const
+          : ["process", "shared-cwd"] as const,
+      );
+      return;
+    }
+    if (candidate.kind === "global-object") {
+      effects.push(
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "process",
+        "server",
+        "network",
+        "browser",
+        "shared-cwd",
+      );
+      return;
+    }
+    if (
+      candidate.kind === "module" || candidate.kind === "module-instance"
+    ) {
+      effects.push(...conservativeModuleEffects(candidate.source));
+      return;
+    }
+    if (candidate.kind === "namespace-object") {
+      for (
+        const propertyBinding of namespaceBindingsForUnknownProperty(candidate)
+      ) {
+        visit(propertyBinding);
+      }
+      return;
+    }
+    if (candidate.kind === "one-of") {
+      for (const alternative of candidate.bindings) visit(alternative);
+    }
+  };
+  for (const candidate of flattenRuntimeBindings(binding)) visit(candidate);
+  return sortedUnique(effects);
+}
+
+function namespaceBindingsForUnknownProperty(
+  binding: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
+): readonly RuntimeBinding[] {
+  return namespaceUnknownPropertyResolutions(binding).flatMap((resolution) =>
+    resolution.binding ?? []
+  );
+}
+
+function runtimeUnknownPropertyResolution(
+  binding: RuntimeBinding,
+): RuntimePropertyResolution {
+  const propertyBindings: RuntimeBinding[] = [];
+  const aliasTargets: RuntimeAliasTarget[] = [];
+  for (const candidate of flattenRuntimeBindings(binding)) {
+    if (candidate.kind !== "namespace-object") {
+      if (
+        candidate.kind === "global-runtime" || candidate.kind === "module" ||
+        candidate.kind === "module-instance" ||
+        candidate.kind === "effect-object"
+      ) {
+        propertyBindings.push(
+          ...conservativeRuntimeEffects(candidate).map((effect) => ({
+            kind: "effect" as const,
+            effect,
+          })),
+        );
+      }
+      continue;
+    }
+    for (const resolution of namespaceUnknownPropertyResolutions(candidate)) {
+      if (resolution.binding) propertyBindings.push(resolution.binding);
+      aliasTargets.push(...resolution.aliasTargets ?? []);
+    }
+  }
+  return {
+    binding: unionRuntimeBindings(propertyBindings),
+    aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
+    defaultMayRun: true,
+  };
+}
+
+function namespaceUnknownPropertyResolutions(
+  binding: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
+): readonly RuntimePropertyResolution[] {
+  return [...namespaceUnknownPropertyNames(binding)].map((propertyName) =>
+    runtimePropertyResolution(binding, propertyName)
+  );
+}
+
+function namespaceUnknownPropertyNames(
+  binding: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
+): Set<string> {
+  const propertyNames = namespacePropertyNames(binding);
+  let unknownPropertyName = "__veryfront_unknown_computed_property__";
+  while (propertyNames.has(unknownPropertyName)) {
+    unknownPropertyName += "_";
+  }
+  propertyNames.add(unknownPropertyName);
+  return propertyNames;
+}
+
+function namespacePropertyNames(
+  binding: RuntimeBinding | undefined,
+): Set<string> {
+  const propertyNames = new Set<string>();
+  for (const candidate of flattenRuntimeBindings(binding)) {
+    if (candidate.kind !== "namespace-object") continue;
+    for (const propertyName of candidate.properties.keys()) {
+      propertyNames.add(propertyName);
+    }
+    for (const operation of candidate.propertyOperations ?? []) {
+      if (operation.kind === "define") {
+        propertyNames.add(operation.name);
+      } else if (operation.kind === "spread") {
+        for (const propertyName of namespacePropertyNames(operation.binding)) {
+          propertyNames.add(propertyName);
+        }
+      }
+    }
+  }
+  return propertyNames;
+}
+
+function conservativeModuleEffects(
+  source: string,
+): readonly SemanticEffect[] {
+  const effects: SemanticEffect[] = [];
+  if (isFilesystemSpecifier(source)) {
+    effects.push("filesystem-read", "filesystem-watch", "filesystem-write");
+  }
+  if (isProcessSpecifier(source)) effects.push("process", "shared-cwd");
+  if (isServerSpecifier(source)) effects.push("server", "network");
+  if (isDnsSpecifier(source)) effects.push("network");
+  if (isPlaywrightSpecifier(source)) effects.push("browser");
+  if (isTestingRuntimeSpecifier(source)) {
+    effects.push(
+      "filesystem-read",
+      "filesystem-write",
+      "process",
+      "network",
+      "shared-cwd",
+    );
+  }
+  return sortedUnique(effects);
 }
 
 function callableMethodInvocationBindings(
@@ -2665,14 +2911,45 @@ function createScope(
   outerScopes: readonly Scope[],
 ): Scope {
   const names = new Set<string>();
+  const definitelyNonUndefinedNames = new Set<string>();
   const playwrightFixtures = new Set<string>();
-  collectLocalDeclaredNames(node, names, playwrightFixtures);
+  collectLocalDeclaredNames(
+    node,
+    names,
+    definitelyNonUndefinedNames,
+    playwrightFixtures,
+  );
+  if (hasOwnThisRuntimeBinding(node)) names.add(THIS_RUNTIME_ROOT);
   if (isVarHoistScope(node)) collectHoistedVarDeclaredNames(node, names);
+  const className = classRuntimeName(node);
+  const classReceiver = classRuntimeReceiverForScope(node, outerScopes);
   const scope: Scope = {
     names,
+    definitelyNonUndefinedNames,
+    functionBoundary: isFunctionScopeNode(node),
     playwrightFixtures,
     runtimeBindings: new Map(),
+    runtimeAliases: new Map(),
+    classRuntimeBindings: isClassScopeNode(node)
+      ? { name: className, memberEntries: new Map() }
+      : undefined,
+    classReceiver: classReceiver
+      ? {
+        classScope: classReceiver.classScope,
+        kind: classReceiver.kind,
+      }
+      : undefined,
   };
+  if (className) {
+    scope.runtimeBindings.set(className, emptyRuntimeNamespaceBinding());
+  }
+  if (hasOwnThisRuntimeBinding(node)) {
+    scope.runtimeBindings.set(
+      THIS_RUNTIME_ROOT,
+      classReceiver?.binding ??
+        emptyRuntimeNamespaceBinding(),
+    );
+  }
   collectLocalRuntimeBindings(node, imports, [...outerScopes, scope]);
   if (isVarHoistScope(node)) {
     collectHoistedVarRuntimeBindings(
@@ -2688,12 +2965,19 @@ function createScope(
     [...outerScopes, scope],
     scope,
   );
+  collectClassRuntimeBindings(
+    node,
+    imports,
+    [...outerScopes, scope],
+    scope,
+  );
   return scope;
 }
 
 function collectLocalDeclaredNames(
   node: Node,
   names: Set<string>,
+  definitelyNonUndefinedNames: Set<string>,
   playwrightFixtures: Set<string>,
 ): void {
   const statements = lexicalScopeStatements(node);
@@ -2705,7 +2989,9 @@ function collectLocalDeclaredNames(
         (statement.type === "FunctionDeclaration" ||
           statement.type === "ClassDeclaration") && isNode(statement.id)
       ) {
-        names.add(statement.id.name as string);
+        const name = statement.id.name as string;
+        names.add(name);
+        definitelyNonUndefinedNames.add(name);
       }
       if (
         statement.type === "TSModuleDeclaration" &&
@@ -2742,7 +3028,9 @@ function collectLocalDeclaredNames(
     node.type === "ClassPrivateMethod"
   ) {
     if (node.type === "FunctionExpression" && isNode(node.id)) {
-      names.add(node.id.name as string);
+      const name = node.id.name as string;
+      names.add(name);
+      definitelyNonUndefinedNames.add(name);
     }
     for (const param of Array.isArray(node.params) ? node.params : []) {
       collectPatternNames(param, names);
@@ -2754,7 +3042,9 @@ function collectLocalDeclaredNames(
     (node.type === "ClassDeclaration" || node.type === "ClassExpression") &&
     isNode(node.id)
   ) {
-    names.add(node.id.name as string);
+    const name = node.id.name as string;
+    names.add(name);
+    definitelyNonUndefinedNames.add(name);
     return;
   }
   if (
@@ -2814,15 +3104,395 @@ function collectLocalRuntimeBindings(
 }
 
 function isVarHoistScope(node: Node): boolean {
-  return node.type === "Program" ||
-    node.type === "FunctionDeclaration" ||
+  return node.type === "Program" || isFunctionScopeNode(node) ||
+    node.type === "StaticBlock" ||
+    node.type === "TSModuleBlock";
+}
+
+function isFunctionScopeNode(node: Node): boolean {
+  return node.type === "FunctionDeclaration" ||
     node.type === "FunctionExpression" ||
     node.type === "ArrowFunctionExpression" ||
     node.type === "ObjectMethod" ||
     node.type === "ClassMethod" ||
-    node.type === "ClassPrivateMethod" ||
-    node.type === "StaticBlock" ||
-    node.type === "TSModuleBlock";
+    node.type === "ClassPrivateMethod";
+}
+
+function isClassScopeNode(node: Node): boolean {
+  return node.type === "ClassDeclaration" || node.type === "ClassExpression";
+}
+
+function classRuntimeName(node: Node): string | undefined {
+  return isClassScopeNode(node) && isNode(node.id) &&
+      node.id.type === "Identifier"
+    ? node.id.name as string
+    : undefined;
+}
+
+function hasOwnThisRuntimeBinding(node: Node): boolean {
+  return node.type === "StaticBlock" ||
+    (isFunctionScopeNode(node) && node.type !== "ArrowFunctionExpression");
+}
+
+function emptyRuntimeNamespaceBinding(): Extract<
+  RuntimeBinding,
+  { readonly kind: "namespace-object" }
+> {
+  return {
+    kind: "namespace-object",
+    properties: new Map(),
+    propertyOperations: [],
+  };
+}
+
+function runtimeReceiverScope(
+  binding?: RuntimeBinding,
+  classScope?: Scope,
+  kind?: "instance" | "static",
+): Scope {
+  return {
+    names: new Set([THIS_RUNTIME_ROOT]),
+    definitelyNonUndefinedNames: new Set([THIS_RUNTIME_ROOT]),
+    functionBoundary: false,
+    playwrightFixtures: new Set(),
+    runtimeBindings: new Map([
+      [THIS_RUNTIME_ROOT, binding ?? emptyRuntimeNamespaceBinding()],
+    ]),
+    runtimeAliases: new Map(),
+    classReceiver: classScope && kind ? { classScope, kind } : undefined,
+  };
+}
+
+function classFieldValueScopes(
+  parent: Node,
+  key: string,
+  scopes: readonly Scope[],
+): readonly Scope[] {
+  if (
+    key !== "value" ||
+    (parent.type !== "ClassProperty" &&
+      parent.type !== "ClassPrivateProperty")
+  ) {
+    return scopes;
+  }
+  for (let index = scopes.length - 1; index >= 0; index--) {
+    const classScope = scopes[index];
+    const classBindings = classScope.classRuntimeBindings;
+    if (!classBindings) continue;
+    const receiverKind = parent.static === true ? "static" : "instance";
+    const value = unwrapExpression(parent.value);
+    const binding = value?.type === "ArrowFunctionExpression"
+      ? classBindings[receiverKind]
+      : classBindings.memberEntries.get(parent);
+    return [
+      ...scopes,
+      runtimeReceiverScope(binding, classScope, receiverKind),
+    ];
+  }
+  return scopes;
+}
+
+function classRuntimeReceiverForScope(
+  node: Node,
+  scopes: readonly Scope[],
+): {
+  readonly binding?: RuntimeBinding;
+  readonly classScope: Scope;
+  readonly kind: "instance" | "static";
+} | undefined {
+  if (
+    node.type !== "ClassMethod" && node.type !== "ClassPrivateMethod" &&
+    node.type !== "StaticBlock"
+  ) {
+    return undefined;
+  }
+  for (let index = scopes.length - 1; index >= 0; index--) {
+    const classScope = scopes[index];
+    const classBindings = classScope.classRuntimeBindings;
+    if (classBindings) {
+      if (node.type === "StaticBlock") {
+        return {
+          binding: classBindings.memberEntries.get(node),
+          classScope,
+          kind: "static",
+        };
+      }
+      const kind = node.static === true ? "static" : "instance";
+      return { binding: classBindings[kind], classScope, kind };
+    }
+  }
+  return undefined;
+}
+
+function collectClassRuntimeBindings(
+  node: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  scope: Scope,
+): void {
+  if (!isClassScopeNode(node) || !scope.classRuntimeBindings) return;
+  const body = isNode(node.body) && Array.isArray(node.body.body)
+    ? node.body.body
+    : [];
+  for (const member of body) {
+    if (!isNode(member)) continue;
+    if (member.type === "StaticBlock") {
+      scope.classRuntimeBindings.memberEntries.set(
+        member,
+        scope.classRuntimeBindings.static,
+      );
+      const blockBinding = summarizeClassStaticBlockRuntimeBinding(
+        member,
+        imports,
+        scopes,
+      );
+      if (blockBinding) setClassRuntimeBinding(scope, "static", blockBinding);
+      continue;
+    }
+    if (
+      (member.type !== "ClassProperty" &&
+        member.type !== "ClassPrivateProperty") ||
+      member.declare === true || member.abstract === true
+    ) {
+      continue;
+    }
+    const name = staticObjectPropertyName(member);
+    const hasUnknownComputedName = member.computed === true && !name;
+    if (!name && !hasUnknownComputedName) continue;
+    const receiverKind = member.static === true ? "static" : "instance";
+    const existing = scope.classRuntimeBindings[receiverKind];
+    scope.classRuntimeBindings.memberEntries.set(member, existing);
+    const receiverScope = runtimeReceiverScope(existing, scope, receiverKind);
+    const fieldScopes = [...scopes, receiverScope];
+    const binding = runtimeBindingForExpression(
+      member.value,
+      imports,
+      fieldScopes,
+    );
+    const aliasTargets = runtimeNamespaceAliasTargetsForExpression(
+      member.value,
+      imports,
+      fieldScopes,
+    );
+    const defaultMayRun = expressionMayBeUndefined(
+      member.value,
+      binding,
+      fieldScopes,
+    );
+    const fieldBinding = name
+      ? assignRuntimeProperty(
+        existing,
+        [name],
+        binding,
+        defaultMayRun,
+        false,
+        aliasTargets,
+      )
+      : assignUnknownRuntimeProperty(
+        existing,
+        [],
+        binding,
+        defaultMayRun,
+        false,
+        aliasTargets,
+      );
+    const arrowBinding = summarizeClassFieldArrowRuntimeBinding(
+      member,
+      fieldBinding,
+      imports,
+      scopes,
+    );
+    const nextBinding = arrowBinding
+      ? unionRuntimeBindings([fieldBinding, arrowBinding]) ?? arrowBinding
+      : fieldBinding;
+    setClassRuntimeBinding(scope, receiverKind, nextBinding);
+    syncClassStaticRuntimeBinding(scope);
+  }
+  for (const method of body) {
+    if (
+      !isNode(method) ||
+      (method.type !== "ClassMethod" && method.type !== "ClassPrivateMethod")
+    ) {
+      continue;
+    }
+    const receiverKind = method.static === true ? "static" : "instance";
+    const existing = scope.classRuntimeBindings[receiverKind];
+    const methodBinding = summarizeClassMethodRuntimeBinding(
+      method,
+      imports,
+      scopes,
+    );
+    if (!methodBinding) continue;
+    const nextBinding = existing
+      ? unionRuntimeBindings([existing, methodBinding]) ?? methodBinding
+      : methodBinding;
+    setClassRuntimeBinding(scope, receiverKind, nextBinding);
+    syncClassStaticRuntimeBinding(scope);
+  }
+}
+
+function setClassRuntimeBinding(
+  scope: Scope,
+  kind: "instance" | "static",
+  binding: RuntimeBinding,
+): void {
+  const classBindings = scope.classRuntimeBindings;
+  if (!classBindings) return;
+  classBindings[kind] = binding;
+  if (kind === "static" && classBindings.name) {
+    scope.runtimeBindings.set(classBindings.name, binding);
+  }
+}
+
+function syncClassStaticRuntimeBinding(scope: Scope): void {
+  const classBindings = scope.classRuntimeBindings;
+  if (!classBindings?.name) return;
+  const binding = scope.runtimeBindings.get(classBindings.name);
+  if (binding) classBindings.static = binding;
+}
+
+function bindRuntimeClassDeclaration(
+  node: Node,
+  scopes: readonly Scope[],
+): void {
+  if (
+    node.type !== "ClassDeclaration" || !isNode(node.id) ||
+    node.id.type !== "Identifier"
+  ) {
+    return;
+  }
+  const classScope = scopes.at(-1);
+  const outerScope = scopes.at(-2);
+  const name = node.id.name as string;
+  if (
+    !classScope?.classRuntimeBindings ||
+    classScope.classRuntimeBindings.name !== name || !outerScope
+  ) {
+    return;
+  }
+  const binding = classScope.runtimeBindings.get(name);
+  if (binding) outerScope.runtimeBindings.set(name, binding);
+}
+
+function summarizeClassStaticBlockRuntimeBinding(
+  block: Node,
+  imports: ImportBindings,
+  classScopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  const blockScope = createScope(block, imports, classScopes);
+  const blockScopes = [...classScopes, blockScope];
+  for (const statement of Array.isArray(block.body) ? block.body : []) {
+    if (isNode(statement)) {
+      visitRuntimeBindingSummary(statement, imports, blockScopes, true);
+    }
+  }
+  return blockScope.runtimeBindings.get(THIS_RUNTIME_ROOT);
+}
+
+function summarizeClassMethodRuntimeBinding(
+  method: Node,
+  imports: ImportBindings,
+  classScopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  const methodScope = createScope(method, imports, classScopes);
+  const methodScopes = [...classScopes, methodScope];
+  for (const parameter of Array.isArray(method.params) ? method.params : []) {
+    if (isNode(parameter)) {
+      visitRuntimeBindingSummary(parameter, imports, methodScopes, true);
+    }
+  }
+  if (isNode(method.body)) {
+    visitRuntimeBindingSummary(method.body, imports, methodScopes, true);
+  }
+  return methodScope.runtimeBindings.get(THIS_RUNTIME_ROOT);
+}
+
+function summarizeClassFieldArrowRuntimeBinding(
+  field: Node,
+  receiverBinding: RuntimeBinding,
+  imports: ImportBindings,
+  classScopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  const value = unwrapExpression(field.value);
+  if (!value || value.type !== "ArrowFunctionExpression") return undefined;
+  const classScope = classScopes.at(-1);
+  const receiverScope = runtimeReceiverScope(
+    receiverBinding,
+    classScope?.classRuntimeBindings ? classScope : undefined,
+    field.static === true ? "static" : "instance",
+  );
+  const arrowScope = createScope(
+    value,
+    imports,
+    [...classScopes, receiverScope],
+  );
+  const arrowScopes = [...classScopes, receiverScope, arrowScope];
+  for (const parameter of Array.isArray(value.params) ? value.params : []) {
+    if (isNode(parameter)) {
+      visitRuntimeBindingSummary(parameter, imports, arrowScopes, true);
+    }
+  }
+  if (isNode(value.body)) {
+    visitRuntimeBindingSummary(value.body, imports, arrowScopes, true);
+  }
+  return receiverScope.runtimeBindings.get(THIS_RUNTIME_ROOT);
+}
+
+function visitRuntimeBindingSummary(
+  node: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  allowClearing: boolean,
+): void {
+  if (isErasedTypeScriptNode(node)) return;
+  const nextScopes = SCOPE_NODES.has(node.type)
+    ? [...scopes, createScope(node, imports, scopes)]
+    : scopes;
+  if (node.type === "VariableDeclarator") {
+    const scope = nextScopes.at(-1);
+    if (scope && declarationBelongsToScope(node, scope)) {
+      bindRuntimeDeclaration(
+        node,
+        imports,
+        nextScopes,
+        scope,
+        !allowClearing,
+        allowClearing,
+      );
+    }
+  }
+  bindRuntimeClassDeclaration(node, nextScopes);
+  bindRuntimeAssignment(node, imports, nextScopes, allowClearing);
+  for (const key of Object.keys(node)) {
+    if (
+      key === "loc" || COMMENT_KEYS.has(key) ||
+      TYPE_ONLY_CHILD_KEYS.has(key)
+    ) {
+      continue;
+    }
+    const value = node[key];
+    const childAllowsClearing = allowClearing &&
+      !isConditionalBranch(node, key);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isNode(item)) {
+          visitRuntimeBindingSummary(
+            item,
+            imports,
+            nextScopes,
+            childAllowsClearing,
+          );
+        }
+      }
+    } else if (isNode(value)) {
+      visitRuntimeBindingSummary(
+        value,
+        imports,
+        nextScopes,
+        childAllowsClearing,
+      );
+    }
+  }
 }
 
 function collectHoistedVarDeclaredNames(
@@ -3153,11 +3823,20 @@ function bindRuntimeDefaultPattern(
   if (!isNode(pattern)) return;
   if (pattern.type === "TSParameterProperty") {
     bindRuntimeDefaultPattern(pattern.parameter, imports, scopes, scope);
+    bindRuntimeParameterProperty(pattern.parameter, imports, scopes, scope);
     return;
   }
   if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
     const binding = runtimeBindingForExpression(pattern.right, imports, scopes);
-    if (binding) bindPatternToRuntime(pattern.left, binding, scope);
+    if (binding) {
+      bindPatternToRuntime(
+        pattern.left,
+        binding,
+        imports,
+        scopes,
+        scope,
+      );
+    }
     return;
   }
   if (pattern.type === "ObjectPattern" || pattern.type === "ArrayPattern") {
@@ -3176,6 +3855,38 @@ function bindRuntimeDefaultPattern(
   }
 }
 
+function bindRuntimeParameterProperty(
+  parameter: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  scope: Scope,
+): void {
+  if (
+    !isNode(parameter) || parameter.type !== "AssignmentPattern" ||
+    !isNode(parameter.left) || parameter.left.type !== "Identifier"
+  ) {
+    return;
+  }
+  const binding = runtimeBindingForExpression(parameter.right, imports, scopes);
+  const existing = scope.runtimeBindings.get(THIS_RUNTIME_ROOT);
+  if (!existing) return;
+  scope.runtimeBindings.set(
+    THIS_RUNTIME_ROOT,
+    assignRuntimeProperty(
+      existing,
+      [parameter.left.name as string],
+      binding,
+      expressionMayBeUndefined(parameter.right, binding, scopes),
+      false,
+      runtimeNamespaceAliasTargetsForExpression(
+        parameter.right,
+        imports,
+        scopes,
+      ),
+    ),
+  );
+}
+
 function bindRuntimeAssignment(
   node: Node,
   imports: ImportBindings,
@@ -3189,10 +3900,34 @@ function bindRuntimeAssignment(
     return;
   }
   const binding = runtimeBindingForExpression(node.right, imports, scopes);
+  const assignedMayBeUndefined = expressionMayBeUndefined(
+    node.right,
+    binding,
+    scopes,
+  );
+  bindRuntimeAlias(
+    node.left,
+    node.right,
+    imports,
+    scopes,
+    allowClearing,
+    (name) => declaringScopeForName(name, scopes),
+  );
+  bindDefinitelyNonUndefinedPattern(
+    node.left,
+    binding,
+    assignedMayBeUndefined,
+    imports,
+    scopes,
+    allowClearing,
+    (name) => declaringScopeForName(name, scopes),
+  );
   if (
     bindRuntimeMemberAssignment(
       node.left,
       binding,
+      node.right,
+      imports,
       scopes,
       allowClearing,
     )
@@ -3200,27 +3935,94 @@ function bindRuntimeAssignment(
     return;
   }
   if (binding) {
-    bindRuntimeAssignmentPattern(node.left, binding, scopes, !allowClearing);
-  } else if (allowClearing) {
-    clearCurrentScopeRuntimeAssignmentPattern(node.left, scopes);
+    bindRuntimeAssignmentPattern(
+      node.left,
+      binding,
+      imports,
+      scopes,
+      !allowClearing,
+      allowClearing,
+    );
+  } else {
+    if (allowClearing) {
+      clearCurrentScopeRuntimeAssignmentPattern(node.left, scopes);
+    }
+    bindRuntimePatternDefaults(
+      node.left,
+      imports,
+      scopes,
+      (pattern, defaultBinding) =>
+        bindRuntimeAssignmentPattern(
+          pattern,
+          defaultBinding,
+          imports,
+          scopes,
+          !allowClearing,
+          allowClearing,
+        ),
+    );
   }
 }
 
 function bindRuntimeMemberAssignment(
   member: Node,
   binding: RuntimeBinding | undefined,
+  assignedExpression: unknown,
+  imports: ImportBindings,
   scopes: readonly Scope[],
   allowClearing: boolean,
 ): boolean {
   const chain = memberChain(member);
-  if (!chain || chain.length < 2) return false;
-  const root = chain[0];
-  const scope = binding
-    ? declaringScopeForName(root, scopes)
-    : scopes.at(-1)?.names.has(root)
-    ? scopes.at(-1)
+  const hasUnknownComputedProperty = (member.type === "MemberExpression" ||
+    member.type === "OptionalMemberExpression") &&
+    member.computed === true && memberProperty(member) === undefined;
+  const objectChain = hasUnknownComputedProperty && isNode(member.object)
+    ? memberChain(member.object)
     : undefined;
-  if (!scope || (!binding && !allowClearing)) return true;
+  const targetChain = chain ?? objectChain;
+  if (!targetChain || targetChain.length < (chain ? 2 : 1)) return false;
+  const classAlias = classStaticAliasResolution(targetChain[0], scopes);
+  const aliasTargets = classAlias?.receiverScope
+    ? [{ scope: classAlias.receiverScope, root: THIS_RUNTIME_ROOT }]
+    : runtimeAliasTargetsForName(targetChain[0], scopes);
+  const directTarget = assignmentTargetScope(targetChain[0], scopes);
+  const targets = uniqueRuntimeAliasTargets([
+    ...aliasTargets,
+    ...(classAlias?.receiverScope || !directTarget
+      ? []
+      : [{ scope: directTarget.scope, root: targetChain[0] }]),
+  ]);
+  if (targets.length === 0) return true;
+  for (const alias of targets) {
+    const target = assignmentTargetForAlias(alias, scopes);
+    if (!target) continue;
+    bindRuntimeMemberAssignmentTarget(
+      alias,
+      target.crossesFunctionBoundary,
+      targetChain.slice(1),
+      binding,
+      assignedExpression,
+      imports,
+      scopes,
+      hasUnknownComputedProperty,
+      allowClearing,
+    );
+  }
+  return true;
+}
+
+function bindRuntimeMemberAssignmentTarget(
+  target: RuntimeAliasTarget,
+  crossesFunctionBoundary: boolean,
+  propertyPath: readonly string[],
+  binding: RuntimeBinding | undefined,
+  assignedExpression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  hasUnknownComputedProperty: boolean,
+  allowClearing: boolean,
+): void {
+  const { scope, root } = target;
   const existing = scope.runtimeBindings.get(root);
   if (
     existing &&
@@ -3228,36 +4030,395 @@ function bindRuntimeMemberAssignment(
       candidate.kind === "namespace-object"
     )
   ) {
-    return true;
+    return;
   }
-  const assigned = assignRuntimeProperty(
-    existing,
-    chain.slice(1),
+  const canClear = !hasUnknownComputedProperty && allowClearing &&
+    !crossesFunctionBoundary &&
+    !runtimePropertyHasCrossFunctionMutation(existing, propertyPath);
+  const defaultMayRun = expressionMayBeUndefined(
+    assignedExpression,
     binding,
+    scopes,
   );
-  scope.runtimeBindings.set(
-    root,
-    mergeRuntimeBinding(existing, assigned, !allowClearing),
+  const aliasTargets = runtimeNamespaceAliasTargetsForExpression(
+    assignedExpression,
+    imports,
+    scopes,
   );
-  return true;
+  const assigned = hasUnknownComputedProperty
+    ? assignUnknownRuntimeProperty(
+      existing,
+      propertyPath,
+      binding,
+      defaultMayRun,
+      crossesFunctionBoundary,
+      aliasTargets,
+    )
+    : assignRuntimeProperty(
+      existing,
+      propertyPath,
+      binding,
+      defaultMayRun,
+      crossesFunctionBoundary,
+      aliasTargets,
+      !canClear,
+    );
+  scope.runtimeBindings.set(root, assigned);
+  if (
+    root !== THIS_RUNTIME_ROOT &&
+    scope.classRuntimeBindings?.name === root
+  ) {
+    syncClassStaticRuntimeBinding(scope);
+  }
+}
+
+function classStaticAliasResolution(
+  name: string,
+  scopes: readonly Scope[],
+): {
+  readonly binding?: RuntimeBinding;
+  readonly receiverScope?: Scope;
+} | undefined {
+  const classScope = declaringScopeForName(name, scopes);
+  if (classScope?.classRuntimeBindings?.name !== name) return undefined;
+  const classScopeIndex = scopes.lastIndexOf(classScope);
+  for (let index = scopes.length - 1; index > classScopeIndex; index--) {
+    const scope = scopes[index];
+    if (!scope.names.has(THIS_RUNTIME_ROOT)) continue;
+    if (
+      scope.classReceiver?.classScope === classScope &&
+      scope.classReceiver.kind === "static"
+    ) {
+      return {
+        binding: scope.runtimeBindings.get(THIS_RUNTIME_ROOT),
+        receiverScope: scope,
+      };
+    }
+    break;
+  }
+  return {
+    binding: classScope.runtimeBindings.get(name) ??
+      classScope.classRuntimeBindings.static,
+  };
+}
+
+function runtimeAliasTargetsForName(
+  name: string,
+  scopes: readonly Scope[],
+): readonly RuntimeAliasTarget[] {
+  const scope = declaringScopeForName(name, scopes);
+  return resolveRuntimeAliasTargets(scope?.runtimeAliases.get(name) ?? []);
+}
+
+function runtimeNamespaceAliasTargetsForExpression(
+  expression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly RuntimeAliasTarget[] {
+  const value = unwrapExpression(expression);
+  if (!value) return [];
+  let targets: readonly RuntimeAliasTarget[] = [];
+  if (value.type === "ThisExpression") {
+    const receiver = assignmentTargetScope(THIS_RUNTIME_ROOT, scopes);
+    if (receiver) {
+      targets = [{ scope: receiver.scope, root: THIS_RUNTIME_ROOT }];
+    }
+  } else if (value.type === "Identifier") {
+    const name = value.name as string;
+    const classAlias = classStaticAliasResolution(name, scopes);
+    if (classAlias?.receiverScope) {
+      targets = [{
+        scope: classAlias.receiverScope,
+        root: THIS_RUNTIME_ROOT,
+      }];
+    } else {
+      targets = runtimeAliasTargetsForName(name, scopes);
+      if (targets.length === 0) {
+        const scope = declaringScopeForName(name, scopes);
+        if (scope) targets = [{ scope, root: name }];
+      }
+    }
+  } else if (
+    value.type === "MemberExpression" ||
+    value.type === "OptionalMemberExpression"
+  ) {
+    const property = memberProperty(value);
+    const objectBinding = runtimeBindingForExpression(
+      value.object,
+      imports,
+      scopes,
+    );
+    if (objectBinding) {
+      targets = (property
+        ? runtimePropertyResolution(objectBinding, property)
+        : runtimeUnknownPropertyResolution(objectBinding))
+        .aliasTargets ?? [];
+    }
+  }
+  return resolveRuntimeAliasTargets(targets).filter((target) => {
+    const binding = target.scope.runtimeBindings.get(target.root);
+    return binding &&
+      flattenRuntimeBindings(binding).every((candidate) =>
+        candidate.kind === "namespace-object"
+      );
+  });
+}
+
+function resolveRuntimeAliasTargets(
+  initial: readonly RuntimeAliasTarget[],
+): readonly RuntimeAliasTarget[] {
+  const pending = [...initial];
+  const resolved: RuntimeAliasTarget[] = [];
+  const seen = new Map<Scope, Set<string>>();
+  while (pending.length > 0) {
+    const target = pending.shift();
+    if (!target) continue;
+    const roots = seen.get(target.scope) ?? new Set<string>();
+    if (roots.has(target.root)) continue;
+    roots.add(target.root);
+    seen.set(target.scope, roots);
+    const next = target.scope.runtimeAliases.get(target.root) ?? [];
+    if (next.length > 0) {
+      pending.push(...next);
+    } else {
+      resolved.push(target);
+    }
+  }
+  return resolved;
+}
+
+function uniqueRuntimeAliasTargets(
+  targets: readonly RuntimeAliasTarget[],
+): readonly RuntimeAliasTarget[] {
+  const seen = new Map<Scope, Set<string>>();
+  return targets.filter((target) => {
+    const roots = seen.get(target.scope) ?? new Set<string>();
+    if (roots.has(target.root)) return false;
+    roots.add(target.root);
+    seen.set(target.scope, roots);
+    return true;
+  });
+}
+
+function currentRuntimeAliasBinding(
+  targets: readonly RuntimeAliasTarget[] | undefined,
+): RuntimeBinding | undefined {
+  return unionRuntimeBindings(
+    resolveRuntimeAliasTargets(targets ?? []).flatMap((target) =>
+      target.scope.runtimeBindings.get(target.root) ?? []
+    ),
+  );
+}
+
+function assignmentTargetForAlias(
+  alias: RuntimeAliasTarget,
+  scopes: readonly Scope[],
+): {
+  readonly scope: Scope;
+  readonly crossesFunctionBoundary: boolean;
+} | undefined {
+  let crossesFunctionBoundary = false;
+  for (let index = scopes.length - 1; index >= 0; index--) {
+    const scope = scopes[index];
+    if (scope === alias.scope) return { scope, crossesFunctionBoundary };
+    if (scope.functionBoundary) crossesFunctionBoundary = true;
+  }
+  return undefined;
+}
+
+function assignmentTargetScope(
+  name: string,
+  scopes: readonly Scope[],
+): {
+  readonly scope: Scope;
+  readonly crossesFunctionBoundary: boolean;
+} | undefined {
+  let crossesFunctionBoundary = false;
+  for (let index = scopes.length - 1; index >= 0; index--) {
+    const scope = scopes[index];
+    if (scope.names.has(name)) return { scope, crossesFunctionBoundary };
+    if (scope.functionBoundary) crossesFunctionBoundary = true;
+  }
+  return undefined;
+}
+
+function bindDefinitelyNonUndefinedPattern(
+  pattern: Node,
+  binding: RuntimeBinding | undefined,
+  mayBeUndefined: boolean,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  unconditional: boolean,
+  scopeForName: (name: string) => Scope | undefined,
+): void {
+  if (pattern.type === "Identifier") {
+    const name = pattern.name as string;
+    const scope = scopeForName(name);
+    if (!scope) return;
+    if (mayBeUndefined) {
+      scope.definitelyNonUndefinedNames.delete(name);
+    } else if (unconditional) {
+      scope.definitelyNonUndefinedNames.add(name);
+    }
+    return;
+  }
+  if (
+    pattern.type === "AssignmentPattern" && isNode(pattern.left) &&
+    isNode(pattern.right)
+  ) {
+    const defaultBinding = runtimeBindingForExpression(
+      pattern.right,
+      imports,
+      scopes,
+    );
+    bindDefinitelyNonUndefinedPattern(
+      pattern.left,
+      mayBeUndefined
+        ? unionRuntimeBindings(
+          [binding, defaultBinding].flatMap((candidate) => candidate ?? []),
+        )
+        : binding,
+      mayBeUndefined &&
+        expressionMayBeUndefined(pattern.right, defaultBinding, scopes),
+      imports,
+      scopes,
+      unconditional,
+      scopeForName,
+    );
+    return;
+  }
+  if (pattern.type === "RestElement" && isNode(pattern.argument)) {
+    bindDefinitelyNonUndefinedPattern(
+      pattern.argument,
+      undefined,
+      false,
+      imports,
+      scopes,
+      unconditional,
+      scopeForName,
+    );
+    return;
+  }
+  if (pattern.type === "ObjectPattern") {
+    for (
+      const property of Array.isArray(pattern.properties)
+        ? pattern.properties
+        : []
+    ) {
+      if (!isNode(property)) continue;
+      if (property.type === "RestElement" && isNode(property.argument)) {
+        bindDefinitelyNonUndefinedPattern(
+          property.argument,
+          undefined,
+          false,
+          imports,
+          scopes,
+          unconditional,
+          scopeForName,
+        );
+        continue;
+      }
+      if (property.type !== "ObjectProperty" || !isNode(property.value)) {
+        continue;
+      }
+      const resolution = binding
+        ? runtimePatternPropertyResolution(binding, property)
+        : { defaultMayRun: true };
+      bindDefinitelyNonUndefinedPattern(
+        property.value,
+        resolution.binding,
+        mayBeUndefined || resolution.defaultMayRun,
+        imports,
+        scopes,
+        unconditional,
+        scopeForName,
+      );
+    }
+    return;
+  }
+  if (pattern.type !== "ArrayPattern") return;
+  for (
+    const element of Array.isArray(pattern.elements) ? pattern.elements : []
+  ) {
+    if (!isNode(element)) continue;
+    bindDefinitelyNonUndefinedPattern(
+      element,
+      undefined,
+      element.type !== "RestElement",
+      imports,
+      scopes,
+      unconditional,
+      scopeForName,
+    );
+  }
 }
 
 function assignRuntimeProperty(
   existing: RuntimeBinding | undefined,
   path: readonly string[],
   binding: RuntimeBinding | undefined,
+  defaultMayRun: boolean,
+  crossesFunctionBoundary: boolean,
+  aliasTargets: readonly RuntimeAliasTarget[] = [],
+  preservesPrevious = false,
 ): RuntimeBinding {
   const [property, ...rest] = path;
   const assigned = rest.length === 0 ? binding : assignRuntimeProperty(
     existing ? runtimePropertyBinding(existing, property) : undefined,
     rest,
     binding,
+    defaultMayRun,
+    crossesFunctionBoundary,
+    aliasTargets,
+    preservesPrevious,
   );
   const operation: NamespacePropertyOperation = {
     kind: "define",
     name: property,
     binding: assigned,
+    aliasTargets: rest.length === 0 ? aliasTargets : undefined,
+    defaultMayRun: rest.length === 0 ? defaultMayRun : false,
+    preservesPrevious: rest.length === 0 ? preservesPrevious : false,
+    crossesFunctionBoundary: rest.length === 0
+      ? crossesFunctionBoundary
+      : false,
   };
+  return appendRuntimePropertyOperation(existing, operation);
+}
+
+function assignUnknownRuntimeProperty(
+  existing: RuntimeBinding | undefined,
+  objectPath: readonly string[],
+  binding: RuntimeBinding | undefined,
+  defaultMayRun: boolean,
+  crossesFunctionBoundary: boolean,
+  aliasTargets: readonly RuntimeAliasTarget[] = [],
+): RuntimeBinding {
+  const [property, ...rest] = objectPath;
+  if (property) {
+    const nested = assignUnknownRuntimeProperty(
+      existing ? runtimePropertyBinding(existing, property) : undefined,
+      rest,
+      binding,
+      defaultMayRun,
+      crossesFunctionBoundary,
+      aliasTargets,
+    );
+    return assignRuntimeProperty(existing, [property], nested, false, false);
+  }
+  return appendRuntimePropertyOperation(existing, {
+    kind: "define-unknown",
+    binding,
+    aliasTargets,
+    defaultMayRun,
+    crossesFunctionBoundary,
+  });
+}
+
+function appendRuntimePropertyOperation(
+  existing: RuntimeBinding | undefined,
+  operation: NamespacePropertyOperation,
+): RuntimeBinding {
   if (existing?.kind === "namespace-object" && existing.propertyOperations) {
     return {
       kind: "namespace-object",
@@ -3277,8 +4438,10 @@ function assignRuntimeProperty(
 function bindRuntimeAssignmentPattern(
   pattern: Node,
   binding: RuntimeBinding,
+  imports: ImportBindings,
   scopes: readonly Scope[],
   merge = false,
+  clear = false,
 ): void {
   if (pattern.type === "Identifier") {
     const scope = declaringScopeForName(pattern.name as string, scopes);
@@ -3292,11 +4455,25 @@ function bindRuntimeAssignmentPattern(
     return;
   }
   if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
-    bindRuntimeAssignmentPattern(pattern.left, binding, scopes, merge);
+    bindRuntimeAssignmentPattern(
+      pattern.left,
+      binding,
+      imports,
+      scopes,
+      merge,
+      clear,
+    );
     return;
   }
   if (pattern.type === "RestElement" && isNode(pattern.argument)) {
-    bindRuntimeAssignmentPattern(pattern.argument, binding, scopes, merge);
+    bindRuntimeAssignmentPattern(
+      pattern.argument,
+      binding,
+      imports,
+      scopes,
+      merge,
+      clear,
+    );
     return;
   }
   if (
@@ -3318,27 +4495,87 @@ function bindRuntimeAssignmentPattern(
       isNode(property) && property.type === "RestElement" &&
       isNode(property.argument)
     ) {
-      bindRuntimeAssignmentPattern(property.argument, binding, scopes, merge);
+      bindRuntimeAssignmentPattern(
+        property.argument,
+        binding,
+        imports,
+        scopes,
+        merge,
+        clear,
+      );
       continue;
     }
     if (
       !isNode(property) || property.type !== "ObjectProperty" ||
       !isNode(property.key) || !isNode(property.value)
     ) continue;
-    const key = property.key.type === "Identifier"
-      ? property.key.name as string
-      : property.key.type === "StringLiteral"
-      ? property.key.value as string
-      : undefined;
-    if (!key) continue;
-    const propertyBinding = runtimePropertyBinding(binding, key);
+    const propertyResolution = runtimePatternPropertyResolution(
+      binding,
+      property,
+    );
+    const propertyBinding = propertyResolution.binding;
     if (propertyBinding) {
       bindRuntimeAssignmentPattern(
         property.value,
         propertyBinding,
+        imports,
         scopes,
         merge,
+        clear,
       );
+    } else if (clear) {
+      clearCurrentScopeRuntimeAssignmentPattern(property.value, scopes);
+    }
+    if (propertyResolution.defaultMayRun) {
+      bindRuntimePatternDefaults(
+        property.value,
+        imports,
+        scopes,
+        (pattern, defaultBinding) =>
+          bindRuntimeAssignmentPattern(
+            pattern,
+            defaultBinding,
+            imports,
+            scopes,
+            merge || propertyBinding !== undefined,
+            clear,
+          ),
+      );
+    }
+  }
+}
+
+function bindRuntimePatternDefaults(
+  pattern: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  bind: (pattern: Node, binding: RuntimeBinding) => void,
+): void {
+  if (
+    pattern.type === "AssignmentPattern" && isNode(pattern.left) &&
+    isNode(pattern.right)
+  ) {
+    const binding = runtimeBindingForExpression(pattern.right, imports, scopes);
+    if (binding) {
+      bind(pattern.left, binding);
+    } else {
+      bindRuntimePatternDefaults(pattern.left, imports, scopes, bind);
+    }
+    return;
+  }
+  if (pattern.type === "RestElement" && isNode(pattern.argument)) {
+    bindRuntimePatternDefaults(pattern.argument, imports, scopes, bind);
+    return;
+  }
+  const children = pattern.type === "ObjectPattern"
+    ? pattern.properties
+    : pattern.type === "ArrayPattern"
+    ? pattern.elements
+    : undefined;
+  for (const child of Array.isArray(children) ? children : []) {
+    const value = isNode(child) && isNode(child.value) ? child.value : child;
+    if (isNode(value)) {
+      bindRuntimePatternDefaults(value, imports, scopes, bind);
     }
   }
 }
@@ -3444,6 +4681,7 @@ function bindRuntimeDeclaration(
   scopes: readonly Scope[],
   scope: Scope,
   merge = false,
+  clear = false,
 ): void {
   if (!isNode(declaration.id)) return;
   const binding = runtimeBindingForExpression(
@@ -3451,7 +4689,171 @@ function bindRuntimeDeclaration(
     imports,
     scopes,
   );
-  if (binding) bindPatternToRuntime(declaration.id, binding, scope, merge);
+  bindDefinitelyNonUndefinedPattern(
+    declaration.id,
+    binding,
+    expressionMayBeUndefined(declaration.init, binding, scopes),
+    imports,
+    scopes,
+    !merge,
+    (name) => scope.names.has(name) ? scope : undefined,
+  );
+  bindRuntimeAlias(
+    declaration.id,
+    declaration.init,
+    imports,
+    scopes,
+    !merge,
+    (name) => scope.names.has(name) ? scope : undefined,
+  );
+  if (binding) {
+    bindPatternToRuntime(
+      declaration.id,
+      binding,
+      imports,
+      scopes,
+      scope,
+      merge,
+      clear,
+    );
+  } else {
+    if (clear) {
+      clearCurrentScopeRuntimeAssignmentPattern(declaration.id, [scope]);
+    }
+    bindRuntimePatternDefaults(
+      declaration.id,
+      imports,
+      scopes,
+      (pattern, defaultBinding) =>
+        bindPatternToRuntime(
+          pattern,
+          defaultBinding,
+          imports,
+          scopes,
+          scope,
+          merge,
+          clear,
+        ),
+    );
+  }
+}
+
+function bindRuntimeAlias(
+  pattern: Node,
+  expression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  unconditional: boolean,
+  scopeForName: (name: string) => Scope | undefined,
+): void {
+  const binding = runtimeBindingForExpression(expression, imports, scopes);
+  const targets = runtimeNamespaceAliasTargetsForExpression(
+    expression,
+    imports,
+    scopes,
+  );
+  bindRuntimeAliasPattern(
+    pattern,
+    binding,
+    targets,
+    expressionMayBeUndefined(expression, binding, scopes),
+    imports,
+    scopes,
+    unconditional,
+    scopeForName,
+  );
+}
+
+function bindRuntimeAliasPattern(
+  pattern: Node,
+  binding: RuntimeBinding | undefined,
+  targets: readonly RuntimeAliasTarget[],
+  mayUseDefault: boolean,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  unconditional: boolean,
+  scopeForName: (name: string) => Scope | undefined,
+): void {
+  if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
+    const defaultBinding = runtimeBindingForExpression(
+      pattern.right,
+      imports,
+      scopes,
+    );
+    const defaultTargets = runtimeNamespaceAliasTargetsForExpression(
+      pattern.right,
+      imports,
+      scopes,
+    );
+    bindRuntimeAliasPattern(
+      pattern.left,
+      mayUseDefault
+        ? unionRuntimeBindings(
+          [binding, defaultBinding].flatMap((candidate) => candidate ?? []),
+        )
+        : binding,
+      mayUseDefault
+        ? uniqueRuntimeAliasTargets([...targets, ...defaultTargets])
+        : targets,
+      mayUseDefault &&
+        expressionMayBeUndefined(pattern.right, defaultBinding, scopes),
+      imports,
+      scopes,
+      unconditional,
+      scopeForName,
+    );
+    return;
+  }
+  if (pattern.type === "ObjectPattern") {
+    for (
+      const property of Array.isArray(pattern.properties)
+        ? pattern.properties
+        : []
+    ) {
+      if (
+        !isNode(property) || property.type !== "ObjectProperty" ||
+        !isNode(property.value)
+      ) {
+        continue;
+      }
+      const resolution = binding
+        ? runtimePatternPropertyResolution(binding, property)
+        : { defaultMayRun: true };
+      bindRuntimeAliasPattern(
+        property.value,
+        resolution.binding,
+        resolution.aliasTargets ?? [],
+        resolution.defaultMayRun,
+        imports,
+        scopes,
+        unconditional,
+        scopeForName,
+      );
+    }
+    return;
+  }
+  if (pattern.type !== "Identifier") return;
+  const name = pattern.name as string;
+  const scope = scopeForName(name);
+  if (!scope) return;
+  const externalTargets = targets.filter((target) =>
+    target.scope !== scope || target.root !== name
+  );
+  if (!unconditional) {
+    const possibleTargets = uniqueRuntimeAliasTargets([
+      ...(scope.runtimeAliases.get(name) ?? []),
+      ...externalTargets,
+    ]);
+    if (possibleTargets.length > 0) {
+      scope.runtimeAliases.set(name, possibleTargets);
+    }
+    return;
+  }
+  if (externalTargets.length > 0) {
+    scope.runtimeAliases.set(name, externalTargets);
+  } else {
+    scope.runtimeAliases.delete(name);
+  }
 }
 
 function runtimeBindingForExpression(
@@ -3461,6 +4863,17 @@ function runtimeBindingForExpression(
 ): RuntimeBinding | undefined {
   const value = unwrapExpression(expression);
   if (!value) return undefined;
+  if (value.type === "ClassExpression") {
+    const classScope = createScope(value, imports, scopes);
+    const name = classScope.classRuntimeBindings?.name;
+    return name
+      ? classScope.runtimeBindings.get(name) ?? emptyRuntimeNamespaceBinding()
+      : classScope.classRuntimeBindings?.static ??
+        emptyRuntimeNamespaceBinding();
+  }
+  if (value.type === "ThisExpression") {
+    return resolveLocalBinding(THIS_RUNTIME_ROOT, scopes).binding;
+  }
   const identifierBinding = identifierRuntimeBinding(value, imports, scopes);
   if (identifierBinding) return identifierBinding;
   const createRequireBinding = createRequireResultBinding(
@@ -3481,6 +4894,12 @@ function runtimeBindingForExpression(
   if (boundCallableBinding) return boundCallableBinding;
   const alternativeBinding = alternativeRuntimeBinding(value, imports, scopes);
   if (alternativeBinding) return alternativeBinding;
+  const literalArrayBinding = arrayLiteralRuntimeBinding(
+    value,
+    imports,
+    scopes,
+  );
+  if (literalArrayBinding) return literalArrayBinding;
   const literalObjectBinding = objectLiteralRuntimeBinding(
     value,
     imports,
@@ -3492,15 +4911,53 @@ function runtimeBindingForExpression(
     value.type !== "OptionalMemberExpression"
   ) return undefined;
   const property = memberProperty(value);
-  if (!property) return undefined;
   const objectBinding = runtimeBindingForExpression(
     value.object,
     imports,
     scopes,
   );
-  return objectBinding
+  if (!objectBinding) return undefined;
+  return property
     ? runtimePropertyBinding(objectBinding, property)
-    : undefined;
+    : runtimeUnknownPropertyResolution(objectBinding).binding;
+}
+
+function arrayLiteralRuntimeBinding(
+  value: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  if (value.type !== "ArrayExpression") return undefined;
+  const properties = new Map<string, RuntimeBinding>();
+  const propertyOperations: NamespacePropertyOperation[] = [];
+  const elements = Array.isArray(value.elements) ? value.elements : [];
+  for (const [index, element] of elements.entries()) {
+    if (!isNode(element)) continue;
+    if (element.type === "SpreadElement") {
+      const spread = runtimeBindingForExpression(
+        element.argument,
+        imports,
+        scopes,
+      );
+      if (spread) propertyOperations.push({ kind: "spread", binding: spread });
+      continue;
+    }
+    const binding = runtimeBindingForExpression(element, imports, scopes);
+    const name = String(index);
+    propertyOperations.push({
+      kind: "define",
+      name,
+      binding,
+      aliasTargets: runtimeNamespaceAliasTargetsForExpression(
+        element,
+        imports,
+        scopes,
+      ),
+      defaultMayRun: expressionMayBeUndefined(element, binding, scopes),
+    });
+    if (binding) properties.set(name, binding);
+  }
+  return { kind: "namespace-object", properties, propertyOperations };
 }
 
 function objectLiteralRuntimeBinding(
@@ -3531,10 +4988,39 @@ function objectLiteralRuntimeBinding(
       continue;
     }
     const name = staticObjectPropertyName(property);
-    if (!name) continue;
+    if (!name) {
+      if (
+        property.type === "ObjectProperty" && property.computed === true
+      ) {
+        const binding = runtimeBindingForExpression(
+          property.value,
+          imports,
+          scopes,
+        );
+        propertyOperations.push({
+          kind: "define-unknown",
+          binding,
+          aliasTargets: runtimeNamespaceAliasTargetsForExpression(
+            property.value,
+            imports,
+            scopes,
+          ),
+          defaultMayRun: expressionMayBeUndefined(
+            property.value,
+            binding,
+            scopes,
+          ),
+        });
+      }
+      continue;
+    }
     if (property.type !== "ObjectProperty") {
       properties.delete(name);
-      propertyOperations.push({ kind: "define", name });
+      propertyOperations.push({
+        kind: "define",
+        name,
+        defaultMayRun: false,
+      });
       continue;
     }
     const binding = runtimeBindingForExpression(
@@ -3542,19 +5028,62 @@ function objectLiteralRuntimeBinding(
       imports,
       scopes,
     );
-    propertyOperations.push({ kind: "define", name, binding });
+    propertyOperations.push({
+      kind: "define",
+      name,
+      binding,
+      aliasTargets: runtimeNamespaceAliasTargetsForExpression(
+        property.value,
+        imports,
+        scopes,
+      ),
+      defaultMayRun: expressionMayBeUndefined(
+        property.value,
+        binding,
+        scopes,
+      ),
+    });
     if (binding) {
       properties.set(name, binding);
     } else {
       properties.delete(name);
     }
   }
-  return properties.size > 0 ||
-      propertyOperations.some((operation) =>
-        operation.kind === "spread" || operation.binding !== undefined
-      )
-    ? { kind: "namespace-object", properties, propertyOperations }
-    : undefined;
+  return { kind: "namespace-object", properties, propertyOperations };
+}
+
+function expressionMayBeUndefined(
+  expression: unknown,
+  binding: RuntimeBinding | undefined,
+  scopes: readonly Scope[],
+): boolean {
+  if (binding) return false;
+  const value = unwrapExpression(expression);
+  if (!value) return true;
+  if (value.type === "Identifier") {
+    const resolved = resolveLocalBinding(value.name as string, scopes);
+    return !resolved.declared || !resolved.definitelyNonUndefined;
+  }
+  if (value.type === "UnaryExpression") return value.operator === "void";
+  return !(
+    value.type === "ArrayExpression" ||
+    value.type === "ArrowFunctionExpression" ||
+    value.type === "BigIntLiteral" ||
+    value.type === "BinaryExpression" ||
+    value.type === "BooleanLiteral" ||
+    value.type === "ClassExpression" ||
+    value.type === "DecimalLiteral" ||
+    value.type === "FunctionExpression" ||
+    value.type === "JSXElement" ||
+    value.type === "JSXFragment" ||
+    value.type === "NewExpression" ||
+    value.type === "NullLiteral" ||
+    value.type === "NumericLiteral" ||
+    value.type === "ObjectExpression" ||
+    value.type === "RegExpLiteral" ||
+    value.type === "StringLiteral" ||
+    value.type === "TemplateLiteral"
+  );
 }
 
 function constructedRuntimeBinding(
@@ -3650,7 +5179,18 @@ function identifierRuntimeBinding(
 ): RuntimeBinding | undefined {
   if (init.type !== "Identifier") return undefined;
   const name = init.name as string;
+  const classAlias = classStaticAliasResolution(name, scopes);
+  if (classAlias) return classAlias.binding;
   const resolved = resolveLocalBinding(name, scopes);
+  const aliasTargets = runtimeAliasTargetsForName(name, scopes);
+  if (aliasTargets.length > 0) {
+    return unionRuntimeBindings([
+      resolved.binding,
+      ...aliasTargets.map((target) =>
+        target.scope.runtimeBindings.get(target.root)
+      ),
+    ].flatMap((binding) => binding ?? []));
+  }
   if (resolved.binding) return resolved.binding;
   if (resolved.declared) return undefined;
   const filesystemOpenSource = imports.filesystemOpen.get(name);
@@ -3814,67 +5354,150 @@ function sharedObjectPropertyBinding(
   return { kind: "shared-object" };
 }
 
+function runtimePatternPropertyResolution(
+  binding: RuntimeBinding,
+  property: Node,
+): RuntimePropertyResolution {
+  const propertyName = staticObjectPropertyName(property);
+  if (propertyName) return runtimePropertyResolution(binding, propertyName);
+  return property.computed === true
+    ? runtimeUnknownPropertyResolution(binding)
+    : { defaultMayRun: true };
+}
+
 function runtimePropertyBinding(
   binding: RuntimeBinding,
   property: string,
 ): RuntimeBinding | undefined {
+  return runtimePropertyResolution(binding, property).binding;
+}
+
+function runtimePropertyResolution(
+  binding: RuntimeBinding,
+  property: string,
+): RuntimePropertyResolution {
   if (binding.kind === "one-of") {
-    return unionRuntimeBindings(
-      binding.bindings.flatMap((candidate) =>
-        runtimePropertyBinding(candidate, property) ?? []
-      ),
+    const resolutions = binding.bindings.map((candidate) =>
+      runtimePropertyResolution(candidate, property)
     );
+    return {
+      binding: unionRuntimeBindings(
+        resolutions.flatMap((resolution) => resolution.binding ?? []),
+      ),
+      aliasTargets: uniqueRuntimeAliasTargets(
+        resolutions.flatMap((resolution) => resolution.aliasTargets ?? []),
+      ),
+      defaultMayRun: resolutions.some((resolution) => resolution.defaultMayRun),
+    };
   }
+  let propertyBinding: RuntimeBinding | undefined;
   if (binding.kind === "module") {
     const nestedSource = moduleSourceForProperty(binding.source, property);
-    return nestedSource
+    propertyBinding = nestedSource
       ? { kind: "module", source: nestedSource }
       : moduleRuntimeBindingForProperty(binding.source, property);
-  }
-  if (binding.kind === "module-instance") {
-    return moduleRuntimeBindingForProperty(binding.source, property);
-  }
-  if (binding.kind === "global-object") {
-    return globalObjectPropertyBinding(property);
-  }
-  if (binding.kind === "shared-object") {
-    return sharedObjectPropertyBinding(binding.intrinsic, property);
-  }
-  if (binding.kind === "global-runtime") {
+  } else if (binding.kind === "module-instance") {
+    propertyBinding = moduleRuntimeBindingForProperty(binding.source, property);
+  } else if (binding.kind === "global-object") {
+    propertyBinding = globalObjectPropertyBinding(property);
+  } else if (binding.kind === "shared-object") {
+    propertyBinding = sharedObjectPropertyBinding(binding.intrinsic, property);
+  } else if (binding.kind === "global-runtime") {
     if (
       binding.runtime === "Deno" && FILESYSTEM_OPEN_METHODS.has(property)
     ) {
-      return { kind: "filesystem-open", source: "Deno" };
+      propertyBinding = { kind: "filesystem-open", source: "Deno" };
+    } else {
+      const effect = effectForGlobalRuntimeMethod(binding.runtime, property);
+      propertyBinding = !effect ? undefined : property === "env" ||
+          (binding.runtime === "Deno" && property === "args") ||
+          (binding.runtime === "process" && property === "argv")
+        ? { kind: "effect-object", effect }
+        : { kind: "effect", effect };
     }
-    const effect = effectForGlobalRuntimeMethod(binding.runtime, property);
-    if (!effect) return undefined;
-    return property === "env" ||
-        (binding.runtime === "Deno" && property === "args") ||
-        (binding.runtime === "process" && property === "argv")
-      ? { kind: "effect-object", effect }
-      : { kind: "effect", effect };
-  }
-  if (binding.kind === "effect-object") {
-    return { kind: "effect", effect: binding.effect };
-  }
-  if (binding.kind === "namespace-object") {
+  } else if (binding.kind === "effect-object") {
+    propertyBinding = { kind: "effect", effect: binding.effect };
+  } else if (binding.kind === "namespace-object") {
     if (binding.propertyOperations) {
-      for (const operation of binding.propertyOperations.toReversed()) {
+      let resolution: RuntimePropertyResolution = { defaultMayRun: true };
+      for (const operation of binding.propertyOperations) {
         if (operation.kind === "define") {
-          if (operation.name === property) return operation.binding;
+          if (operation.name === property) {
+            const operationBinding = unionRuntimeBindings(
+              [
+                operation.binding,
+                currentRuntimeAliasBinding(operation.aliasTargets),
+              ].flatMap((candidate) => candidate ?? []),
+            );
+            resolution = operation.preservesPrevious
+              ? {
+                binding: unionRuntimeBindings(
+                  [resolution.binding, operationBinding].flatMap(
+                    (candidate) => candidate ?? [],
+                  ),
+                ),
+                aliasTargets: uniqueRuntimeAliasTargets([
+                  ...(resolution.aliasTargets ?? []),
+                  ...(operation.aliasTargets ?? []),
+                ]),
+                defaultMayRun: resolution.defaultMayRun ||
+                  operation.defaultMayRun,
+              }
+              : {
+                binding: operationBinding,
+                aliasTargets: operation.aliasTargets,
+                defaultMayRun: operation.defaultMayRun,
+              };
+          }
           continue;
         }
-        const spreadProperty = runtimePropertyBinding(
+        if (operation.kind === "define-unknown") {
+          resolution = {
+            binding: unionRuntimeBindings(
+              [
+                resolution.binding,
+                operation.binding,
+                currentRuntimeAliasBinding(operation.aliasTargets),
+              ].flatMap((candidate) => candidate ?? []),
+            ),
+            aliasTargets: uniqueRuntimeAliasTargets([
+              ...(resolution.aliasTargets ?? []),
+              ...(operation.aliasTargets ?? []),
+            ]),
+            defaultMayRun: resolution.defaultMayRun ||
+              operation.defaultMayRun,
+          };
+          continue;
+        }
+        const spreadResolution = runtimePropertyResolution(
           operation.binding,
           property,
         );
-        if (spreadProperty) return spreadProperty;
+        resolution = {
+          binding: unionRuntimeBindings(
+            [
+              spreadResolution.binding,
+              spreadResolution.defaultMayRun ? resolution.binding : undefined,
+            ].flatMap((candidate) => candidate ?? []),
+          ),
+          aliasTargets: uniqueRuntimeAliasTargets([
+            ...(spreadResolution.aliasTargets ?? []),
+            ...(spreadResolution.defaultMayRun
+              ? resolution.aliasTargets ?? []
+              : []),
+          ]),
+          defaultMayRun: spreadResolution.defaultMayRun &&
+            resolution.defaultMayRun,
+        };
       }
-      return undefined;
+      return resolution;
     }
-    return binding.properties.get(property);
+    propertyBinding = binding.properties.get(property);
   }
-  return undefined;
+  return {
+    binding: propertyBinding,
+    defaultMayRun: propertyBinding === undefined,
+  };
 }
 
 function mergeRuntimeBinding(
@@ -3894,10 +5517,15 @@ function unionRuntimeBindings(
     flattenRuntimeBindings(binding)
   );
   const unique = new Map<string, RuntimeBinding>();
+  const identitySensitive = new Set<RuntimeBinding>();
   for (const binding of flattened) {
-    unique.set(runtimeBindingKey(binding), binding);
+    if (binding.kind === "namespace-object") {
+      identitySensitive.add(binding);
+    } else {
+      unique.set(runtimeBindingKey(binding), binding);
+    }
   }
-  const values = [...unique.values()];
+  const values = [...unique.values(), ...identitySensitive];
   if (values.length === 0) return undefined;
   return values.length === 1 ? values[0] : { kind: "one-of", bindings: values };
 }
@@ -3910,6 +5538,42 @@ function flattenRuntimeBindings(
     : binding
     ? [binding]
     : [];
+}
+
+function runtimePropertyHasCrossFunctionMutation(
+  binding: RuntimeBinding | undefined,
+  path: readonly string[],
+): boolean {
+  const [property, ...rest] = path;
+  return flattenRuntimeBindings(binding).some((candidate) => {
+    if (candidate.kind !== "namespace-object") return false;
+    if (candidate.propertyOperations) {
+      return candidate.propertyOperations.some((operation) => {
+        if (operation.kind === "spread") {
+          return runtimePropertyHasCrossFunctionMutation(
+            operation.binding,
+            path,
+          );
+        }
+        if (operation.kind === "define-unknown") {
+          return operation.crossesFunctionBoundary === true ||
+            (rest.length > 0 &&
+              runtimePropertyHasCrossFunctionMutation(
+                operation.binding,
+                rest,
+              ));
+        }
+        if (operation.name !== property) return false;
+        return operation.crossesFunctionBoundary === true ||
+          (rest.length > 0 &&
+            runtimePropertyHasCrossFunctionMutation(operation.binding, rest));
+      });
+    }
+    return rest.length > 0 && runtimePropertyHasCrossFunctionMutation(
+      candidate.properties.get(property),
+      rest,
+    );
+  });
 }
 
 function runtimeBindingKey(binding: RuntimeBinding): string {
@@ -3946,27 +5610,7 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
   if (binding.kind === "shared-object") {
     return `shared-object:${binding.intrinsic ?? "*"}`;
   }
-  if (binding.kind === "namespace-object") {
-    if (binding.propertyOperations) {
-      return `namespace-object-operations:${
-        binding.propertyOperations.map((operation) =>
-          operation.kind === "spread"
-            ? `spread:${runtimeBindingKey(operation.binding)}`
-            : `define:${JSON.stringify(operation.name)}:${
-              operation.binding ? runtimeBindingKey(operation.binding) : "local"
-            }`
-        ).join(",")
-      }`;
-    }
-    return `namespace-object:${
-      [...binding.properties.entries()]
-        .sort(([left], [right]) => compareOrdinal(left, right))
-        .map(([name, propertyBinding]) =>
-          `${JSON.stringify(name)}:${runtimeBindingKey(propertyBinding)}`
-        )
-        .join(",")
-    }`;
-  }
+  if (binding.kind === "namespace-object") return "namespace-object";
   if (binding.kind === "one-of") {
     return `one-of:${
       flattenRuntimeBindings(binding).map(runtimeBindingKey).sort(
@@ -3981,15 +5625,34 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
 function bindPatternToRuntime(
   pattern: Node,
   binding: RuntimeBinding,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
   scope: Scope,
   merge = false,
+  clear = false,
 ): void {
   if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
-    bindPatternToRuntime(pattern.left, binding, scope, merge);
+    bindPatternToRuntime(
+      pattern.left,
+      binding,
+      imports,
+      scopes,
+      scope,
+      merge,
+      clear,
+    );
     return;
   }
   if (pattern.type === "RestElement" && isNode(pattern.argument)) {
-    bindPatternToRuntime(pattern.argument, binding, scope, merge);
+    bindPatternToRuntime(
+      pattern.argument,
+      binding,
+      imports,
+      scopes,
+      scope,
+      merge,
+      clear,
+    );
     return;
   }
   if (pattern.type === "Identifier") {
@@ -4019,22 +5682,55 @@ function bindPatternToRuntime(
       isNode(property) && property.type === "RestElement" &&
       isNode(property.argument)
     ) {
-      bindPatternToRuntime(property.argument, binding, scope, merge);
+      bindPatternToRuntime(
+        property.argument,
+        binding,
+        imports,
+        scopes,
+        scope,
+        merge,
+        clear,
+      );
       continue;
     }
     if (
       !isNode(property) || property.type !== "ObjectProperty" ||
       !isNode(property.key) || !isNode(property.value)
     ) continue;
-    const method = property.key.type === "Identifier"
-      ? property.key.name as string
-      : property.key.type === "StringLiteral"
-      ? property.key.value as string
-      : undefined;
-    if (!method) continue;
-    const propertyBinding = runtimePropertyBinding(binding, method);
+    const propertyResolution = runtimePatternPropertyResolution(
+      binding,
+      property,
+    );
+    const propertyBinding = propertyResolution.binding;
     if (propertyBinding) {
-      bindPatternToRuntime(property.value, propertyBinding, scope, merge);
+      bindPatternToRuntime(
+        property.value,
+        propertyBinding,
+        imports,
+        scopes,
+        scope,
+        merge,
+        clear,
+      );
+    } else if (clear) {
+      clearCurrentScopeRuntimeAssignmentPattern(property.value, [scope]);
+    }
+    if (propertyResolution.defaultMayRun) {
+      bindRuntimePatternDefaults(
+        property.value,
+        imports,
+        scopes,
+        (pattern, defaultBinding) =>
+          bindPatternToRuntime(
+            pattern,
+            defaultBinding,
+            imports,
+            scopes,
+            scope,
+            merge || propertyBinding !== undefined,
+            clear,
+          ),
+      );
     }
   }
 }
@@ -4192,12 +5888,17 @@ function isGlobalRuntimeReceiver(
 function resolveLocalBinding(
   name: string,
   scopes: readonly Scope[],
-): { readonly declared: boolean; readonly binding?: RuntimeBinding } {
+): {
+  readonly declared: boolean;
+  readonly definitelyNonUndefined?: boolean;
+  readonly binding?: RuntimeBinding;
+} {
   for (let index = scopes.length - 1; index >= 0; index--) {
     const scope = scopes[index];
     if (!scope.names.has(name)) continue;
     return {
       declared: true,
+      definitelyNonUndefined: scope.definitelyNonUndefinedNames.has(name),
       binding: scope.runtimeBindings.get(name),
     };
   }
@@ -4383,19 +6084,31 @@ function memberProperty(node: Node): string | undefined {
   const property = node.property;
   if (!isNode(property)) return undefined;
   if (node.computed === true) {
-    return property.type === "StringLiteral"
-      ? property.value as string
-      : undefined;
+    return propertyKeyValue(property);
   }
-  return property.type === "Identifier" ? property.name as string : undefined;
+  if (property.type === "Identifier") return property.name as string;
+  return property.type === "PrivateName" && isNode(property.id) &&
+      property.id.type === "Identifier"
+    ? `#${property.id.name as string}`
+    : undefined;
 }
 
 function staticObjectPropertyName(property: Node): string | undefined {
   if (!isNode(property.key)) return undefined;
-  if (property.computed === true) return literalValue(property.key);
-  return property.key.type === "Identifier"
-    ? property.key.name as string
-    : literalValue(property.key);
+  if (property.computed === true) return propertyKeyValue(property.key);
+  if (property.key.type === "Identifier") return property.key.name as string;
+  return property.key.type === "PrivateName" && isNode(property.key.id) &&
+      property.key.id.type === "Identifier"
+    ? `#${property.key.id.name as string}`
+    : propertyKeyValue(property.key);
+}
+
+function propertyKeyValue(value: Node): string | undefined {
+  if (value.type === "StringLiteral") return value.value as string;
+  if (value.type === "NumericLiteral" || value.type === "BigIntLiteral") {
+    return String(value.value);
+  }
+  return undefined;
 }
 
 function memberObjectName(node: Node): string | undefined {
@@ -4409,6 +6122,7 @@ function memberChain(node: Node): readonly string[] | undefined {
   const unwrapped = unwrapExpression(node);
   if (unwrapped && unwrapped !== node) return memberChain(unwrapped);
   if (node.type === "Identifier") return [node.name as string];
+  if (node.type === "ThisExpression") return [THIS_RUNTIME_ROOT];
   if (
     (node.type !== "MemberExpression" &&
       node.type !== "OptionalMemberExpression")
