@@ -960,6 +960,56 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("replaces a hard-linked .gitignore without modifying the other link", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-hardlink-" });
+    const projectDir = join(parentDir, "contract-project");
+    const outside = join(parentDir, "outside-gitignore");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outside, "keep-me\n");
+      try {
+        await Deno.link(outside, join(projectDir, ".gitignore"));
+      } catch {
+        return;
+      }
+
+      await createProject(baseRequest(parentDir));
+
+      assertEquals(await Deno.readTextFile(outside), "keep-me\n");
+      assertStringIncludes(await Deno.readTextFile(join(projectDir, ".gitignore")), "keep-me");
+      assertEquals(await exists(join(projectDir, "README.md")), true);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses an unreplacable .gitignore before writing scaffold files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-readonly-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(join(projectDir, ".gitignore"), "keep-me\n");
+      await Deno.chmod(projectDir, 0o500);
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+      );
+
+      assertEquals(await Deno.readTextFile(join(projectDir, ".gitignore")), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await Deno.chmod(projectDir, 0o700).catch(() => {});
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("refuses installer lockfiles before dependency installation can replace them", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-lockfile-conflict-" });
     const projectDir = join(parentDir, "contract-project");

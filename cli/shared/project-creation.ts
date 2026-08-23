@@ -383,7 +383,11 @@ async function writeEnvFiles(
 
 async function writeGitignore(projectDir: string): Promise<void> {
   const fs = createFileSystem();
+  if (!fs.rename) {
+    throw new Error("Filesystem does not support atomic .gitignore replacement.");
+  }
   const gitignorePath = join(projectDir, ".gitignore");
+  const temporaryPath = join(projectDir, `.gitignore.veryfront-${crypto.randomUUID()}.tmp`);
   let existingGitignore: string | undefined;
   try {
     existingGitignore = await fs.readTextFile(gitignorePath);
@@ -391,7 +395,13 @@ async function writeGitignore(projectDir: string): Promise<void> {
     existingGitignore = undefined;
   }
 
-  await fs.writeTextFile(gitignorePath, generateGitignoreContent(existingGitignore));
+  await fs.writeTextFile(temporaryPath, generateGitignoreContent(existingGitignore));
+  try {
+    await fs.rename(temporaryPath, gitignorePath);
+  } catch (error) {
+    await fs.remove(temporaryPath).catch(() => {});
+    throw error;
+  }
   logger.debug("Updated file: .gitignore");
 }
 
@@ -685,7 +695,10 @@ export async function createProject(
 
   if (projectName !== undefined) await ensureDir(projectDir);
 
-  const createdPaths = await writeScaffoldFiles(projectDir, assembly.files);
+  await writeGitignore(projectDir);
+  const createdPaths = [".gitignore"];
+
+  createdPaths.push(...await writeScaffoldFiles(projectDir, assembly.files));
   const setupTips = assembly.tips;
   const allEnvVars = assembly.envVars;
 
@@ -702,9 +715,6 @@ export async function createProject(
   createdPaths.push(
     ...await writeEnvFiles(projectDir, allEnvVars, request, dependencies),
   );
-
-  await writeGitignore(projectDir);
-  createdPaths.push(".gitignore");
 
   const packageManager = await detectPackageManager(
     projectDir,
