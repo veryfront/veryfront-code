@@ -11,7 +11,7 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN =
-  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between[ \t]+([^ \t\r\n]+)(?:[ \t]+|[ \t]*\r?\n[ \t]*)and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})[^\r\n]*))/gi;
+  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between((?:[ \t]+[^\r\n]*?)?)(?:[ \t]+|[ \t]*\r?\n[ \t]*)and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})[^\r\n]*))/gi;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
@@ -341,7 +341,7 @@ function codeRabbitRangeEvidenceStatements(content) {
       statementIndex < fenceRanges[fenceIndex][1];
     if (insideFence) continue;
     statements.push({
-      baseToken: match[2].toLowerCase(),
+      baseToken: match[2].trim().toLowerCase(),
       statement: match[1],
       tipToken: match[3].toLowerCase(),
     });

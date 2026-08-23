@@ -502,7 +502,15 @@ describe("automated review gate", () => {
         "Reviewing files that changed from the base of the PR and between " +
         `not-a-sha and ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between " +
+        `not a sha and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
         `not-a-sha\nand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `\nand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `${"not and ".repeat(1_000)}base and ${HEAD_SHA}.`,
         codeRabbitReviewRange() + " but this is not the final review.",
         codeRabbitReviewRange() + ` Later requested ${STALE_SHA}.`,
         codeRabbitReviewRange().replace("Reviewing", "reviewing"),
@@ -543,7 +551,11 @@ describe("automated review gate", () => {
           "Reviewing files that changed from the base of the PR and between " +
           `not-a-sha and ${STALE_SHA}.`,
           "Reviewing files that changed from the base of the PR and between " +
+          `not a sha and ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between " +
           `not-a-sha\nand ${STALE_SHA}.`,
+          "Reviewing files that changed from the base of the PR and between " +
+          `and ${STALE_SHA}.`,
         ].join("\n"),
         "<!-- recent_review_end -->",
       ].join("\n"),
@@ -706,6 +718,34 @@ describe("automated review gate", () => {
         undefined,
       );
     }
+
+    const newerExactCurrentWithMalformedBaseDuplicates = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "Reviewing files that changed from the base of the PR and between " +
+        `and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not a sha and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:41Z",
+      updated_at: "2026-08-22T12:03:41Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            olderSuccess,
+            newerExactCurrentWithMalformedBaseDuplicates,
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
 
     const newerFencedCurrentRangeExample = codeRabbitSummary({
       body: [
