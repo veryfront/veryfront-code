@@ -33,6 +33,16 @@ const MAX_PROVIDER_STREAM_RETRIES = 2;
  * going to answer, for a replay that may never fire.
  */
 const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
+
+/**
+ * Elapsed-time source for the header budget. `Date.now` can step backwards
+ * under an NTP or VM clock correction, which would inflate the remaining
+ * budget and let replays run past the ceiling the budget exists to hold. Read
+ * the seam once so a correction mid-request cannot move it.
+ */
+function monotonicMilliseconds(): number {
+  return Math.floor(performance.now());
+}
 const DEFAULT_PROVIDER_STREAM_RETRY_DELAY_MS = 1_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
@@ -856,14 +866,14 @@ export async function requestStream(options: {
   const totalHeadersBudgetMs = options.totalHeadersBudgetMs ??
     DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS;
   const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
-  const requestStartedAt = Date.now();
+  const requestStartedAt = monotonicMilliseconds();
   let retryCount = 0;
   // The first attempt is never shortened to reserve room for a replay that may
   // not happen: a provider that would have answered at 29s still wins.
   let attemptTimeoutMs = headersTimeoutMs;
 
   while (true) {
-    const startedAt = Date.now();
+    const startedAt = monotonicMilliseconds();
     const deadline = createRequestDeadline(options.init, attemptTimeoutMs, "headersTimeoutMs");
     let streamOwnsDeadline = false;
 
@@ -915,10 +925,13 @@ export async function requestStream(options: {
           // clamp instead reintroduces the undiagnosable error that
           // veryfront-issue-inbox#710 was filed to remove.
           timeoutMs: headersTimeoutMs,
-          elapsedMs: retryCount === 0 ? Date.now() - startedAt : Date.now() - requestStartedAt,
+          elapsedMs: retryCount === 0
+            ? monotonicMilliseconds() - startedAt
+            : monotonicMilliseconds() - requestStartedAt,
         })
         : error;
-      const remainingBudgetMs = totalHeadersBudgetMs - (Date.now() - requestStartedAt);
+      const remainingBudgetMs = totalHeadersBudgetMs -
+        (monotonicMilliseconds() - requestStartedAt);
       if (
         !(failure instanceof ProviderError) ||
         !failure.retryable ||
@@ -935,7 +948,9 @@ export async function requestStream(options: {
       // remaining deadline cannot be honored. Report the provider failure we
       // actually received instead of rewriting it as a false timeout.
       if (retryDelayMs > 0) {
-        if (retryDelayMs >= attemptTimeoutMs - (Date.now() - startedAt)) throw failure;
+        if (retryDelayMs >= attemptTimeoutMs - (monotonicMilliseconds() - startedAt)) {
+          throw failure;
+        }
         try {
           await waitForProviderStreamRetry(retryDelayMs, deadline.deadlineSignal);
         } catch (waitError) {
@@ -948,7 +963,7 @@ export async function requestStream(options: {
       // than issuing an attempt with no time to succeed in.
       attemptTimeoutMs = Math.min(
         headersTimeoutMs,
-        totalHeadersBudgetMs - (Date.now() - requestStartedAt),
+        totalHeadersBudgetMs - (monotonicMilliseconds() - requestStartedAt),
       );
       if (attemptTimeoutMs <= 0) throw failure;
     } finally {

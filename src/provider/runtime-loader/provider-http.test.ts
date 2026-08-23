@@ -799,6 +799,51 @@ describe("provider-http", () => {
       );
     });
 
+    it("holds the budget when the wall clock steps backwards mid-request", async () => {
+      // An NTP or VM correction can move Date.now() backwards. Measuring the
+      // budget on that clock would make the remaining budget grow, handing every
+      // replay a full deadline and running past the ceiling the budget exists to
+      // hold. Deadline arithmetic reads a monotonic source instead.
+      let attempts = 0;
+      const realDateNow = Date.now;
+      const startedAt = performance.now();
+      let elapsedMs = 0;
+      try {
+        Date.now = () => realDateNow() - 10_000 * attempts;
+        await assertRejects(
+          () =>
+            requestStream({
+              url: "https://provider.test/stream",
+              fetchImpl: () => {
+                attempts++;
+                return new Promise<Response>(() => {});
+              },
+              init: { method: "POST" },
+              providerLabel: "veryfront-cloud",
+              providerKind: "openai",
+              headersTimeoutMs: 200,
+              totalHeadersBudgetMs: 250,
+            }),
+          ProviderRequestError,
+          "request timed out",
+        );
+        elapsedMs = performance.now() - startedAt;
+      } finally {
+        Date.now = realDateNow;
+      }
+
+      assertEquals(
+        attempts,
+        2,
+        `a backwards clock step must not buy an extra replay, took ${attempts} attempts`,
+      );
+      assertEquals(
+        elapsedMs < 500,
+        true,
+        `total header wait must stay inside the budget, spent ${elapsedMs}ms`,
+      );
+    });
+
     it("never shortens the first attempt to reserve budget for a replay", async () => {
       // Budget deliberately below the per-attempt deadline. A provider that
       // answers at 120ms must still win: clamping attempt 1 to the budget would
