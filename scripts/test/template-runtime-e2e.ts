@@ -1,9 +1,11 @@
 import { TEMPLATES } from "../../cli/commands/init/catalog.ts";
+import { getTemplateConfig } from "../../templates/index.ts";
 import {
   allocatePort,
   assertCondition,
   ensureCommand,
   installDependencies,
+  type PackedWorkspace,
   packNpmPackage,
   parseCommaSeparatedFlag,
   runChecked,
@@ -62,6 +64,18 @@ const TEMPLATE_ROUTE_EXPECTATIONS: Partial<
     { route: "/workflows/test-run" },
   ],
 };
+
+export function getTemplateExtensionNames(
+  templates: readonly TemplateName[],
+): string[] {
+  return [
+    ...new Set(
+      templates.flatMap((template) =>
+        getTemplateConfig(template)?.firstPartyExtensions ?? []
+      ),
+    ),
+  ].sort();
+}
 
 function hasFlag(name: string): boolean {
   return Deno.args.includes(`--${name}`);
@@ -259,7 +273,7 @@ async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
 
 async function testCase(
   workDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
   template: TemplateName,
   runtime: RuntimeName,
 ): Promise<void> {
@@ -267,9 +281,10 @@ async function testCase(
   console.log(`test ${label}: scaffold`);
   const projectDir = await scaffoldProject(
     workDir,
-    tarballPath,
+    packed,
     template,
     runtime,
+    getTemplateExtensionNames([template]),
   );
 
   console.log(`test ${label}: install`);
@@ -351,11 +366,15 @@ async function main(): Promise<void> {
     }
 
     console.log("pack npm package");
-    const tarballPath = await packNpmPackage(rootDir, workDir);
+    const packed = await packNpmPackage(
+      rootDir,
+      workDir,
+      getTemplateExtensionNames(templates),
+    );
 
     for (const template of templates) {
       for (const runtime of runtimes) {
-        await testCase(workDir, tarballPath, template, runtime);
+        await testCase(workDir, packed, template, runtime);
       }
     }
 
