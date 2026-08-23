@@ -2854,17 +2854,37 @@ retainedPrototype.run("retained-prototype.txt");
 const frozen = Object.freeze({ run: Deno.remove });
 Reflect.set(frozen, "run", () => undefined);
 Reflect.deleteProperty(frozen, "run");
+Reflect.defineProperty(frozen, "run", { value: () => undefined });
 frozen.run("frozen.txt");
 
 const sealed = Object.seal({ run: Deno.remove });
 Reflect.deleteProperty(sealed, "run");
+try {
+  Object.defineProperty(sealed, "run", { value: () => undefined });
+} catch {}
 sealed.run("sealed.txt");
+
+const frozenRedefined = Object.freeze({ run: Deno.remove });
+Reflect.defineProperty(frozenRedefined, "run", { value: () => undefined });
+frozenRedefined.run("frozen-redefined.txt");
+
+const sealedRedefined = Object.seal({ run: Deno.remove });
+try {
+  Object.defineProperty(sealedRedefined, "run", { value: () => undefined });
+} catch {}
+sealedRedefined.run("sealed-redefined.txt");
+
+const prevented = Object.preventExtensions({ run: Deno.remove });
+Reflect.defineProperty(prevented, "run", { value: () => undefined });
+prevented.run("prevented.txt");
 `,
         "src/runtime-property-integrity-levels.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
         ["filesystem-write", "frozen.run"],
         ["filesystem-write", "sealed.run"],
+        ["filesystem-write", "frozenRedefined.run"],
+        ["filesystem-write", "sealedRedefined.run"],
       ],
     );
   });

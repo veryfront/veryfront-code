@@ -657,6 +657,8 @@ interface RuntimeAliasTarget {
   readonly root: string;
 }
 
+type RuntimeIntegrityLevel = "sealed" | "frozen";
+
 type RuntimeBinding =
   | { readonly kind: "module"; readonly source: string }
   | { readonly kind: "module-constructor"; readonly source: string }
@@ -679,6 +681,7 @@ type RuntimeBinding =
     readonly shape?: "array" | "object";
     readonly exactArrayLength?: number;
     readonly extensible?: boolean;
+    readonly integrityLevel?: RuntimeIntegrityLevel;
     readonly properties: ReadonlyMap<string, RuntimeBinding>;
     readonly propertyOperations?: readonly NamespacePropertyOperation[];
   }
@@ -4263,6 +4266,9 @@ function mergeRuntimeNamespaceBindings(
     extensible: existing.extensible === incoming.extensible
       ? existing.extensible
       : undefined,
+    integrityLevel: existing.integrityLevel === incoming.integrityLevel
+      ? existing.integrityLevel
+      : undefined,
     properties,
   };
 }
@@ -4642,7 +4648,12 @@ function bindRuntimeCallMutation(
     }
     const target = invocation.args[0];
     if (OBJECT_EXTENSIBILITY_MUTATORS.has(canonicalName)) {
-      bindRuntimeExtensibilityMutation(target, imports, scopes);
+      bindRuntimeExtensibilityMutation(
+        target,
+        runtimeIntegrityLevelForMutation(canonicalName),
+        imports,
+        scopes,
+      );
       continue;
     }
     if (!LOCAL_PROPERTY_MUTATORS.has(canonicalName)) continue;
@@ -4770,6 +4781,7 @@ function bindRuntimeCallMutation(
 
 function bindRuntimeExtensibilityMutation(
   target: unknown,
+  integrityLevel: RuntimeIntegrityLevel | undefined,
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): void {
@@ -4784,7 +4796,7 @@ function bindRuntimeExtensibilityMutation(
     if (!existing) continue;
     alias.scope.runtimeBindings.set(
       alias.root,
-      withRuntimeExtensibility(existing, false),
+      withRuntimeExtensibility(existing, false, integrityLevel),
     );
     if (
       alias.root !== THIS_RUNTIME_ROOT &&
@@ -5021,7 +5033,11 @@ function mutationCallResultRuntimeBinding(
       canonicalName === "Object.preventExtensions" ||
       canonicalName === "Object.seal"
     ) {
-      result = withRuntimeExtensibility(result, false);
+      result = withRuntimeExtensibility(
+        result,
+        false,
+        runtimeIntegrityLevelForMutation(canonicalName),
+      );
     }
     const descriptorMutations = invocation.binding.receiver === "Object"
       ? localMutationAccessorDescriptors(canonicalName, invocation.args).map(
@@ -5811,24 +5827,43 @@ function runtimeBindingExtensibility(
 function withRuntimeExtensibility(
   binding: RuntimeBinding,
   extensible: boolean,
+  integrityLevel?: RuntimeIntegrityLevel,
 ): RuntimeBinding {
   if (binding.kind === "partial") {
     return {
       kind: "partial",
-      binding: withRuntimeExtensibility(binding.binding, extensible),
+      binding: withRuntimeExtensibility(
+        binding.binding,
+        extensible,
+        integrityLevel,
+      ),
     };
   }
   if (binding.kind === "one-of") {
     return {
       kind: "one-of",
       bindings: binding.bindings.map((candidate) =>
-        withRuntimeExtensibility(candidate, extensible)
+        withRuntimeExtensibility(candidate, extensible, integrityLevel)
       ),
     };
   }
   return binding.kind === "namespace-object"
-    ? { ...binding, extensible }
+    ? {
+      ...binding,
+      extensible,
+      integrityLevel: binding.integrityLevel === "frozen"
+        ? "frozen"
+        : integrityLevel ?? binding.integrityLevel,
+    }
     : binding;
+}
+
+function runtimeIntegrityLevelForMutation(
+  canonicalName: string,
+): RuntimeIntegrityLevel | undefined {
+  if (canonicalName === "Object.freeze") return "frozen";
+  if (canonicalName === "Object.seal") return "sealed";
+  return undefined;
 }
 
 function runtimeOwnPropertyDefinitelyAbsent(
@@ -7114,6 +7149,7 @@ function appendRuntimePropertyOperation(
         shape: existing.shape,
         exactArrayLength: updatedRuntimeArrayLength(existing, operation),
         extensible: existing.extensible,
+        integrityLevel: existing.integrityLevel,
         properties: existing.properties,
         propertyOperations: [
           ...existing.propertyOperations.slice(0, -1),
@@ -7146,6 +7182,7 @@ function appendRuntimePropertyOperation(
       shape: existing.shape,
       exactArrayLength: updatedRuntimeArrayLength(existing, operation),
       extensible: existing.extensible,
+      integrityLevel: existing.integrityLevel,
       properties: existing.properties,
       propertyOperations: [...existing.propertyOperations, operation],
     };
@@ -7158,6 +7195,9 @@ function appendRuntimePropertyOperation(
       : undefined,
     extensible: existing?.kind === "namespace-object"
       ? existing.extensible
+      : undefined,
+    integrityLevel: existing?.kind === "namespace-object"
+      ? existing.integrityLevel
       : undefined,
     properties: new Map(),
     propertyOperations: existing
@@ -8985,7 +9025,7 @@ function runtimePropertyResolution(
           resolution.defaultMayRun
         ? mutationMethodBinding("Array", property)
         : undefined;
-      resolutions.push(finalizeRuntimePropertyResolution(
+      const finalized = finalizeRuntimePropertyResolution(
         mutation
           ? {
             ...resolution,
@@ -8997,7 +9037,12 @@ function runtimePropertyResolution(
           }
           : resolution,
         includeSetters,
-      ));
+      );
+      resolutions.push(
+        frame.binding.integrityLevel && !finalized.defaultMayRun
+          ? { ...finalized, configurable: false }
+          : finalized,
+      );
       continue;
     }
     if (frame.binding.kind === "partial") {
@@ -9137,7 +9182,7 @@ function directRuntimePropertyResolution(
         ? true
         : undefined,
       configurable: binding.kind === "namespace-object" && propertyBinding
-        ? true
+        ? binding.integrityLevel ? false : true
         : undefined,
     },
     includeSetters,
