@@ -19,6 +19,7 @@ const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
 const CODEX_REVIEWED_COMMIT_PATTERN =
   /\*\*Reviewed commit:\*\*\s*`([0-9a-f]{10})`/i;
 const FULL_COMMIT_PATTERN = /^[0-9a-f]{40}$/i;
+const WORKFLOW_COMMENT_LOGIN = "github-actions[bot]";
 /** @type {(ref: string) => Promise<string | undefined>} */
 const NO_COMMIT_RESOLVER = () => Promise.resolve(undefined);
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
@@ -326,6 +327,11 @@ export async function publishAutomatedReviewStatus({
  * marker comment keeps the request idempotent: a rerun for the same head
  * finds the marker in an existing comment and does not post again, while a
  * new head carries a new marker and gets its own request.
+ *
+ * Only marker comments authored by the workflow itself count. A pull request
+ * participant can paste the marker text into their own comment, and letting
+ * that suppress the request would let anyone silence the review nudge for a
+ * head commit.
  */
 export async function requestAutomatedReview({
   github,
@@ -350,7 +356,10 @@ export async function requestAutomatedReview({
     per_page: 100,
   });
   const alreadyRequested = comments.some((comment) =>
-    typeof comment?.body === "string" && comment.body.includes(marker)
+    comment?.user?.login === WORKFLOW_COMMENT_LOGIN &&
+    comment?.user?.type === "Bot" &&
+    typeof comment?.body === "string" &&
+    comment.body.includes(marker)
   );
   if (alreadyRequested) {
     return { requested: false, marker };

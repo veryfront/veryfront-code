@@ -777,21 +777,36 @@ describe("automated review gate", () => {
       body: `<!-- automated-review-request: ${HEAD_SHA} -->\n@codex review`,
     }]);
 
-    // A rerun for the same head finds the marker and does not post again,
-    // regardless of who posted the marker comment.
+    // A participant pasting the marker text must not suppress the request:
+    // only a workflow-authored marker comment counts, pinned by login and
+    // account type the way the gate pins the Codex bot.
+    existing.push(
+      { user: { login: "maintainer", type: "User" }, body: posted[0]?.body },
+      {
+        user: { login: "github-actions[bot]", type: "User" },
+        body: posted[0]?.body,
+      },
+      { body: posted[0]?.body },
+    );
+    const impersonated = await request(HEAD_SHA);
+    assertEquals(impersonated.requested, true);
+    assertEquals(posted.length, 2);
+
+    // A rerun for the same head finds the workflow-authored marker and does
+    // not post again.
     existing.push({
-      user: { login: "github-actions[bot]" },
+      user: { login: "github-actions[bot]", type: "Bot" },
       body: posted[0]?.body,
     });
     const second = await request(HEAD_SHA);
     assertEquals(second.requested, false);
-    assertEquals(posted.length, 1);
+    assertEquals(posted.length, 2);
 
     // A new head commit carries a new marker and gets its own request.
     const third = await request(STALE_SHA);
     assertEquals(third.requested, true);
     assertEquals(
-      posted[1]?.body,
+      posted[2]?.body,
       `<!-- automated-review-request: ${STALE_SHA} -->\n@codex review`,
     );
   });
