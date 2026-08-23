@@ -488,17 +488,25 @@ cwd();
     assertEquals(
       collectSemanticMarkers(
         `
-import { deleteEnv, getEnv, setEnv } from "veryfront/platform";
+import { chdir, cwd, deleteEnv, exit, getEnv, runCommand, setEnv } from "veryfront/platform";
+cwd();
+chdir("fixtures");
 getEnv("TEST_KEY");
 setEnv("TEST_KEY", "value");
 deleteEnv("TEST_KEY");
+await runCommand({ command: "deno", args: ["--version"] });
+exit(0);
 `,
         "src/public-platform-process-imports.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
+        ["shared-cwd", "cwd"],
+        ["shared-cwd", "chdir"],
         ["process", "getEnv"],
         ["process", "setEnv"],
         ["process", "deleteEnv"],
+        ["process", "runCommand"],
+        ["process", "exit"],
       ],
     );
   });

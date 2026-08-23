@@ -2549,7 +2549,12 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
         }
       } else if (
         isPublicPlatformSpecifier(source) &&
-        PROCESS_STATE_METHODS.has(importedName)
+        SHARED_CWD_METHODS.has(importedName)
+      ) {
+        bindings.sharedCwd.add(local);
+      } else if (
+        isPublicPlatformSpecifier(source) &&
+        isProcessEffectMethod(importedName)
       ) {
         bindings.process.add(local);
       }
