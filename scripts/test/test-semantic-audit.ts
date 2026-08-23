@@ -573,6 +573,11 @@ interface RuntimePropertyResolution {
   readonly defaultMayRun: boolean;
 }
 
+interface RuntimePatternEntry {
+  readonly pattern: Node;
+  readonly resolution: RuntimePropertyResolution;
+}
+
 interface RuntimeAliasTarget {
   readonly scope: Scope;
   readonly root: string;
@@ -4337,14 +4342,11 @@ function bindDefinitelyNonUndefinedPattern(
     return;
   }
   if (pattern.type !== "ArrayPattern") return;
-  for (
-    const element of Array.isArray(pattern.elements) ? pattern.elements : []
-  ) {
-    if (!isNode(element)) continue;
+  for (const entry of runtimeArrayPatternEntries(pattern, binding)) {
     bindDefinitelyNonUndefinedPattern(
-      element,
-      undefined,
-      element.type !== "RestElement",
+      entry.pattern,
+      entry.resolution.binding,
+      mayBeUndefined || entry.resolution.defaultMayRun,
       imports,
       scopes,
       unconditional,
@@ -4476,6 +4478,40 @@ function bindRuntimeAssignmentPattern(
     );
     return;
   }
+  if (pattern.type === "ArrayPattern") {
+    for (const entry of runtimeArrayPatternEntries(pattern, binding)) {
+      const propertyBinding = entry.resolution.binding;
+      if (propertyBinding) {
+        bindRuntimeAssignmentPattern(
+          entry.pattern,
+          propertyBinding,
+          imports,
+          scopes,
+          merge,
+          clear,
+        );
+      } else if (clear) {
+        clearCurrentScopeRuntimeAssignmentPattern(entry.pattern, scopes);
+      }
+      if (entry.resolution.defaultMayRun) {
+        bindRuntimePatternDefaults(
+          entry.pattern,
+          imports,
+          scopes,
+          (pattern, defaultBinding) =>
+            bindRuntimeAssignmentPattern(
+              pattern,
+              defaultBinding,
+              imports,
+              scopes,
+              merge || propertyBinding !== undefined,
+              clear,
+            ),
+        );
+      }
+    }
+    return;
+  }
   if (
     pattern.type !== "ObjectPattern" ||
     (binding.kind !== "global-runtime" && binding.kind !== "global-object" &&
@@ -4599,12 +4635,12 @@ function clearCurrentScopeRuntimeAssignmentPattern(
     clearCurrentScopeRuntimeAssignmentPattern(pattern.argument, scopes);
     return;
   }
-  if (pattern.type !== "ObjectPattern") return;
-  for (
-    const property of Array.isArray(pattern.properties)
-      ? pattern.properties
-      : []
-  ) {
+  const children = pattern.type === "ObjectPattern"
+    ? pattern.properties
+    : pattern.type === "ArrayPattern"
+    ? pattern.elements
+    : undefined;
+  for (const property of Array.isArray(children) ? children : []) {
     if (
       isNode(property) && property.type === "RestElement" &&
       isNode(property.argument)
@@ -4612,6 +4648,8 @@ function clearCurrentScopeRuntimeAssignmentPattern(
       clearCurrentScopeRuntimeAssignmentPattern(property.argument, scopes);
     } else if (isNode(property) && isNode(property.value)) {
       clearCurrentScopeRuntimeAssignmentPattern(property.value, scopes);
+    } else if (pattern.type === "ArrayPattern" && isNode(property)) {
+      clearCurrentScopeRuntimeAssignmentPattern(property, scopes);
     }
   }
 }
@@ -4824,6 +4862,21 @@ function bindRuntimeAliasPattern(
         resolution.binding,
         resolution.aliasTargets ?? [],
         resolution.defaultMayRun,
+        imports,
+        scopes,
+        unconditional,
+        scopeForName,
+      );
+    }
+    return;
+  }
+  if (pattern.type === "ArrayPattern") {
+    for (const entry of runtimeArrayPatternEntries(pattern, binding)) {
+      bindRuntimeAliasPattern(
+        entry.pattern,
+        entry.resolution.binding,
+        entry.resolution.aliasTargets ?? [],
+        entry.resolution.defaultMayRun,
         imports,
         scopes,
         unconditional,
@@ -5365,6 +5418,119 @@ function runtimePatternPropertyResolution(
     : { defaultMayRun: true };
 }
 
+function runtimeArrayPatternEntries(
+  pattern: Node,
+  binding: RuntimeBinding | undefined,
+): readonly RuntimePatternEntry[] {
+  if (pattern.type !== "ArrayPattern") return [];
+  const entries: RuntimePatternEntry[] = [];
+  const elements = Array.isArray(pattern.elements) ? pattern.elements : [];
+  for (let index = 0; index < elements.length; index++) {
+    const element = elements[index];
+    if (!isNode(element)) continue;
+    if (element.type === "RestElement") {
+      if (!isNode(element.argument)) continue;
+      entries.push({
+        pattern: element.argument,
+        resolution: {
+          binding: binding
+            ? runtimeArrayRestBinding(binding, index)
+            : undefined,
+          defaultMayRun: false,
+        },
+      });
+      continue;
+    }
+    entries.push({
+      pattern: element,
+      resolution: binding
+        ? runtimePropertyResolution(binding, String(index))
+        : { defaultMayRun: true },
+    });
+  }
+  return entries;
+}
+
+function runtimeArrayRestBinding(
+  binding: RuntimeBinding,
+  startIndex: number,
+): RuntimeBinding {
+  return unionRuntimeBindings(
+    flattenRuntimeBindings(binding).map((candidate) =>
+      staticRuntimeArrayRestBinding(candidate, startIndex) ??
+        conservativeRuntimeArrayRestBinding(candidate)
+    ),
+  ) ?? { kind: "namespace-object", properties: new Map() };
+}
+
+function staticRuntimeArrayRestBinding(
+  binding: RuntimeBinding,
+  startIndex: number,
+): RuntimeBinding | undefined {
+  if (
+    binding.kind !== "namespace-object" ||
+    binding.propertyOperations?.some((operation) => operation.kind !== "define")
+  ) {
+    return undefined;
+  }
+  const indexedProperties: Array<{
+    readonly property: string;
+    readonly index: number;
+  }> = [];
+  for (const property of namespacePropertyNames(binding)) {
+    const index = runtimeArrayIndex(property);
+    if (index === undefined) return undefined;
+    indexedProperties.push({ property, index });
+  }
+  const properties = new Map<string, RuntimeBinding>();
+  const propertyOperations: NamespacePropertyOperation[] = [];
+  for (
+    const { property, index } of indexedProperties.sort((left, right) =>
+      left.index - right.index
+    )
+  ) {
+    if (index < startIndex) continue;
+    const name = String(index - startIndex);
+    const resolution = runtimePropertyResolution(binding, property);
+    propertyOperations.push({
+      kind: "define",
+      name,
+      binding: resolution.binding,
+      aliasTargets: resolution.aliasTargets,
+      defaultMayRun: resolution.defaultMayRun,
+    });
+    if (resolution.binding) properties.set(name, resolution.binding);
+  }
+  return { kind: "namespace-object", properties, propertyOperations };
+}
+
+function runtimeArrayIndex(property: string): number | undefined {
+  const index = Number(property);
+  return Number.isSafeInteger(index) && index >= 0 && String(index) === property
+    ? index
+    : undefined;
+}
+
+function conservativeRuntimeArrayRestBinding(
+  binding: RuntimeBinding,
+): RuntimeBinding {
+  const resolution = runtimeUnknownPropertyResolution(binding);
+  const aliasTargets = resolution.aliasTargets ?? [];
+  return resolution.binding || aliasTargets.length > 0
+    ? {
+      kind: "namespace-object",
+      properties: new Map(),
+      propertyOperations: [{
+        kind: "define-unknown",
+        binding: resolution.binding,
+        aliasTargets,
+        defaultMayRun: true,
+        crossesFunctionBoundary: false,
+      }],
+    }
+    : { kind: "namespace-object", properties: new Map() };
+}
+
 function runtimePropertyBinding(
   binding: RuntimeBinding,
   property: string,
@@ -5661,6 +5827,42 @@ function bindPatternToRuntime(
       name,
       mergeRuntimeBinding(scope.runtimeBindings.get(name), binding, merge),
     );
+    return;
+  }
+  if (pattern.type === "ArrayPattern") {
+    for (const entry of runtimeArrayPatternEntries(pattern, binding)) {
+      const propertyBinding = entry.resolution.binding;
+      if (propertyBinding) {
+        bindPatternToRuntime(
+          entry.pattern,
+          propertyBinding,
+          imports,
+          scopes,
+          scope,
+          merge,
+          clear,
+        );
+      } else if (clear) {
+        clearCurrentScopeRuntimeAssignmentPattern(entry.pattern, [scope]);
+      }
+      if (entry.resolution.defaultMayRun) {
+        bindRuntimePatternDefaults(
+          entry.pattern,
+          imports,
+          scopes,
+          (pattern, defaultBinding) =>
+            bindPatternToRuntime(
+              pattern,
+              defaultBinding,
+              imports,
+              scopes,
+              scope,
+              merge || propertyBinding !== undefined,
+              clear,
+            ),
+        );
+      }
+    }
     return;
   }
   if (

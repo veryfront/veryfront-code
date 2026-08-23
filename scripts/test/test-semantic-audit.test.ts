@@ -1489,6 +1489,96 @@ conditionalHolder.write("conditional-bounded.txt", "x");
     );
   });
 
+  it("propagates runtime provenance through array destructuring", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const [declared] = [Deno.writeTextFile];
+declared("declared.txt", "x");
+let assigned;
+[assigned] = [Deno.writeTextFile];
+assigned("assigned.txt", "x");
+const { fns: [nested] } = { fns: [Deno.writeTextFile] };
+nested("nested.txt", "x");
+const [defaulted = Deno.writeTextFile] = [];
+defaulted("defaulted.txt", "x");
+const [exact = Deno.readTextFile] = [Deno.writeTextFile];
+exact("exact.txt", "x");
+const [, ...rest] = [() => undefined, Deno.writeTextFile];
+rest[0]("rest.txt", "x");
+const dynamic = [() => undefined];
+dynamic[Math.random()] = Deno.writeTextFile;
+const [...dynamicRest] = dynamic;
+dynamicRest[0]("dynamic-rest.txt", "x");
+
+class ArrayClass {}
+const [ArrayAlias] = [ArrayClass];
+ArrayAlias.write = Deno.writeTextFile;
+ArrayClass.write("array-class.txt", "x");
+
+class ArrayExactClass {}
+class ArrayUnusedDefaultClass {}
+const [ArrayExactAlias = ArrayUnusedDefaultClass] = [ArrayExactClass];
+ArrayExactAlias.write = Deno.writeTextFile;
+ArrayExactClass.write("array-exact-class.txt", "x");
+ArrayUnusedDefaultClass.write("array-unused-default-class.txt", "x");
+
+class ArrayRestClass {}
+const [, ...classes] = [class {}, ArrayRestClass];
+const RestClassAlias = classes[0];
+RestClassAlias.write = Deno.writeTextFile;
+ArrayRestClass.write("array-rest-class.txt", "x");
+`,
+        "src/runtime-array-destructuring.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "declared"],
+        ["filesystem-write", "assigned"],
+        ["filesystem-write", "nested"],
+        ["filesystem-write", "defaulted"],
+        ["filesystem-write", "exact"],
+        ["filesystem-write", "rest.0"],
+        ["filesystem-write", "dynamicRest.0"],
+        ["filesystem-write", "ArrayClass.write"],
+        ["filesystem-write", "ArrayExactClass.write"],
+        ["filesystem-write", "ArrayRestClass.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const [declared] = [() => undefined];
+declared();
+let assigned;
+[assigned] = [() => undefined];
+assigned();
+const { fns: [nested] } = { fns: [() => undefined] };
+nested();
+const [defaulted = () => undefined] = [];
+defaulted();
+const [, ...rest] = [() => undefined, () => undefined];
+rest[0]();
+const [discardedEffect, ...localRest] = [
+  Deno.writeTextFile,
+  () => undefined,
+];
+localRest[0]();
+class LocalArrayClass {}
+const [LocalArrayAlias] = [LocalArrayClass];
+LocalArrayAlias.write = () => undefined;
+LocalArrayClass.write();
+class BeforeRestClass {}
+const [BeforeRestAlias, ...localClasses] = [BeforeRestClass, {}];
+const LocalClassAlias = localClasses[0];
+LocalClassAlias.write = Deno.writeTextFile;
+BeforeRestClass.write("before-rest-class.txt", "x");
+`,
+        "src/local-array-destructuring.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies optional runtime calls", () => {
     assertEquals(
       collectSemanticMarkers(

@@ -6,7 +6,10 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createProxyShutdownAggregateError, createProxyShutdownHooks } from "./shutdown-hooks.ts";
+import {
+  createProxyShutdownAggregateError,
+  createProxyShutdownHooks,
+} from "veryfront/proxy/shutdown-hooks";
 
 describe("proxy shutdown hooks", () => {
   it("awaits every hook once and rejects late registration", async () => {
@@ -43,7 +46,9 @@ describe("proxy shutdown hooks", () => {
     hooks.register(() => {
       throw new Error("synchronous teardown failed");
     });
-    hooks.register(() => Promise.reject(new Error("asynchronous teardown failed")));
+    hooks.register(() =>
+      Promise.reject(new Error("asynchronous teardown failed"))
+    );
     hooks.register(() => {
       completed.push("peer completed");
     });
@@ -52,7 +57,9 @@ describe("proxy shutdown hooks", () => {
 
     assertEquals(completed, ["peer completed"]);
     assertEquals(
-      failures.map((failure) => failure instanceof Error ? failure.message : String(failure)),
+      failures.map((failure) =>
+        failure instanceof Error ? failure.message : String(failure)
+      ),
       ["synchronous teardown failed", "asynchronous teardown failed"],
     );
   });
@@ -79,7 +86,10 @@ describe("proxy shutdown hooks", () => {
 
   it("aggregates without consulting the mutable Array iterator prototype", () => {
     const iteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
-    const nextDescriptor = Object.getOwnPropertyDescriptor(iteratorPrototype, "next")!;
+    const nextDescriptor = Object.getOwnPropertyDescriptor(
+      iteratorPrototype,
+      "next",
+    )!;
     let aggregate: AggregateError | undefined;
 
     try {
