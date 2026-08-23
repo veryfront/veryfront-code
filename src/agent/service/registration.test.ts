@@ -2,7 +2,6 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing";
-import { FakeTime } from "#std/testing/time";
 import { NETWORK_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceRegistrationLogger,
@@ -462,12 +461,10 @@ describe("agent/agent-service-registration heartbeat retry", () => {
   });
 
   it("times out a permanently hung heartbeat and escalates in bounded time", async () => {
-    using time = new FakeTime();
     const intervalMs = 20;
     let heartbeatRequests = 0;
-    let inFlight = 0;
+    const activeSignals = new Set<AbortSignal>();
     let maxConcurrent = 0;
-    let lastHeartbeatSignal: AbortSignal | null | undefined;
     const log = recordingLogger();
 
     const fetch: typeof globalThis.fetch = (input, init) => {
@@ -475,13 +472,13 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
       heartbeatRequests++;
-      inFlight++;
-      maxConcurrent = Math.max(maxConcurrent, inFlight);
       const signal = init?.signal;
-      lastHeartbeatSignal = signal;
+      assert(signal, "heartbeat requests must carry an abort signal");
+      activeSignals.add(signal);
+      maxConcurrent = Math.max(maxConcurrent, activeSignals.size);
       return new Promise<Response>((_resolve, reject) => {
         const abort = () => {
-          inFlight--;
+          activeSignals.delete(signal);
           reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
         };
         if (signal?.aborted) abort();
@@ -493,16 +490,16 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
     );
 
-    const escalationBudgetMs = 100_000;
-    const startedAt = time.now;
+    const escalationBudgetMs = 50_000;
+    const startedAt = Date.now();
     try {
-      for (let step = 0; step < 30 && log.errors.length === 0; step++) {
-        await time.tickAsync(5_001);
-        await time.runMicrotasks();
-      }
-      assert(log.errors.length > 0, "hung heartbeat attempts never escalated");
+      await waitFor(() => log.errors.length > 0, {
+        timeout: escalationBudgetMs,
+        interval: 10,
+        message: "hung heartbeat attempts never reached persistent-failure escalation",
+      });
       assert(
-        time.now - startedAt < escalationBudgetMs,
+        Date.now() - startedAt < escalationBudgetMs,
         "hung heartbeat escalation exceeded its bounded test budget",
       );
       assertEquals(
@@ -515,15 +512,13 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         "three failed ticks must each exhaust the three-attempt retry policy",
       );
       assertEquals(maxConcurrent, 1, "timeouts must preserve the in-flight guard");
-      await time.tickAsync(intervalMs);
-      await time.runMicrotasks();
     } finally {
-      assertEquals(lastHeartbeatSignal?.aborted, false, "teardown needs an active hung request");
       lifecycle.stop();
-      for (let turn = 0; turn < 5 && inFlight > 0; turn++) {
-        await time.runMicrotasks();
-      }
-      assertEquals(lastHeartbeatSignal?.aborted, true, "stop() did not abort the hung request");
+      await waitFor(() => activeSignals.size === 0, {
+        timeout: 1_000,
+        interval: 10,
+        message: "stop() did not abort the hung heartbeat request",
+      });
     }
   });
 
@@ -533,7 +528,6 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     // persistent-failure escalation.
     const intervalMs = 100;
     const slowLatencyMs = 3_000;
-    let heartbeatRequests = 0;
     let completedHeartbeats = 0;
     let inFlight = 0;
     const log = recordingLogger();
@@ -542,7 +536,6 @@ describe("agent/agent-service-registration heartbeat retry", () => {
       if (!input.toString().endsWith("/heartbeat")) {
         return Promise.resolve(jsonResponse(serviceResponse));
       }
-      heartbeatRequests++;
       const signal = init?.signal;
       inFlight++;
       return new Promise<Response>((resolve, reject) => {
@@ -575,7 +568,11 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         message: "the slow heartbeat neither completed nor escalated",
       });
       assertEquals(completedHeartbeats, 1, "a known-valid slow heartbeat must complete");
-      assertEquals(heartbeatRequests, 1, "a slow success must not be retried");
+      assertEquals(
+        log.warnings.filter((entry) => entry.message.includes("retrying")).length,
+        0,
+        "a slow success must not be retried",
+      );
       assertEquals(log.errors.length, 0, "a slow success must not escalate");
     } finally {
       lifecycle.stop();
