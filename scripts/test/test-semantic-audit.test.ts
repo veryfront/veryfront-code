@@ -2391,6 +2391,30 @@ const spreadReturned = Object.assign(
 );
 spreadReturned.safe();
 
+const mixedSource = { known: Deno.remove, ...source };
+const mixedReturned = Object.assign(
+  { safe: () => undefined },
+  mixedSource,
+);
+mixedReturned.safe();
+
+const mixedWrapper = { ...mixedSource };
+const wrappedReturned = Object.assign(
+  { safe: () => undefined },
+  mixedWrapper,
+);
+wrappedReturned.safe();
+
+const reorderedTarget = { 0: () => undefined };
+Object.preventExtensions(reorderedTarget);
+try {
+  Object.assign(reorderedTarget, {
+    blocked: () => undefined,
+    ...source,
+  });
+} catch {}
+reorderedTarget[0]();
+
 function assignDefaultedSource(defaultedSource = {}) {
   const defaultedTarget = { safe: () => undefined };
   Object.assign(defaultedTarget, defaultedSource);
@@ -2420,7 +2444,7 @@ conditionalTarget.write("conditional.txt");
         "src/runtime-object-assign-unknown-source.test.ts",
       ).map((marker) => marker.effect),
       Array.from(
-        { length: 4 },
+        { length: 7 },
         () => [
           "browser",
           "filesystem-read",
@@ -3493,6 +3517,665 @@ Object.defineProperty(target, "run", { value: () => undefined });
 target.run("cleared.txt");
 `,
       "src/runtime-object-assign-literal-copy-writable.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("does not create Object.assign properties on non-extensible targets", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = {};
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { run: Deno.remove });
+} catch {}
+target.run?.("not-created.txt");
+`,
+      "src/runtime-object-assign-non-extensible-target.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("stops Object.assign after a definitely blocked property", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = { retained: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    blocked: () => undefined,
+    retained: () => undefined,
+  });
+} catch {}
+target.retained("still-retained.txt");
+`,
+      "src/runtime-object-assign-blocked-order.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, ["filesystem-write"]);
+  });
+
+  it("keeps successful Object.assign prefix writes inside try blocks", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("cleared.txt");
+`,
+      "src/runtime-object-assign-try-prefix.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("does not clear Object.assign writes when a try entry may be skipped", () => {
+    const laterCall = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  maybeThrow();
+  Object.assign(target, {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-earlier-call.txt");
+`,
+      "src/runtime-object-assign-later-try-call.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(laterCall, ["filesystem-write"]);
+
+    const conditionalCall = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  if (maybe) {
+    Object.assign(target, {
+      safe: () => undefined,
+      effectful: Deno.remove,
+    });
+  }
+} catch {}
+target.safe("retained-after-conditional-call.txt");
+`,
+      "src/runtime-object-assign-conditional-try-call.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(conditionalCall, ["filesystem-write"]);
+
+    const argumentCall = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, makeSource(), {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-argument-call.txt");
+`,
+      "src/runtime-object-assign-throwing-argument.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(argumentCall, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
+
+    const argumentGetter = collectSemanticMarkers(
+      `
+const source = {};
+Object.defineProperty(source, "value", {
+  get() { throw new Error("before call"); },
+});
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, source.value, {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-argument-getter.txt");
+`,
+      "src/runtime-object-assign-throwing-argument-getter.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(argumentGetter, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
+
+    const nullableArgumentReceiver = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = maybe ? { source: {} } : null;
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+  }, holder!.source);
+} catch {}
+target.safe("retained-after-nullable-argument-receiver.txt");
+`,
+      "src/runtime-object-assign-nullable-argument-receiver.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(nullableArgumentReceiver, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
+
+    const temporalDeadZoneSource = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+  }, source);
+} catch {}
+const source = {};
+target.safe("retained-before-source-initialization.txt");
+`,
+      "src/runtime-object-assign-tdz-argument.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(temporalDeadZoneSource, ["filesystem-write"]);
+
+    const temporalDeadZoneCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  assign(target, { safe: () => undefined });
+} catch {}
+const assign = Object.assign;
+target.safe("retained-before-callee-initialization.txt");
+`,
+      "src/runtime-object-assign-tdz-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(temporalDeadZoneCallee, ["filesystem-write"]);
+
+    const temporalDeadZoneCalleeReceiver = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+const holder = { assign: Object.assign };
+target.safe("retained-before-callee-receiver-initialization.txt");
+`,
+      "src/runtime-object-assign-tdz-callee-receiver.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(temporalDeadZoneCalleeReceiver, ["filesystem-write"]);
+
+    const capturedCallee = collectSemanticMarkers(
+      `
+run();
+const assign = Object.assign;
+function run() {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  try {
+    assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-captured-callee.txt");
+}
+`,
+      "src/runtime-object-assign-captured-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(capturedCallee, ["filesystem-write"]);
+
+    const getterBackedCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = Object.defineProperty({}, "assign", {
+  get: () => {
+    throw new Error("callee getter failed");
+  },
+});
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-after-callee-getter.txt");
+`,
+      "src/runtime-object-assign-getter-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(getterBackedCallee, ["filesystem-write"]);
+
+    const initializedCallee = collectSemanticMarkers(
+      `
+const assign = Object.assign;
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  assign(target, { safe: () => undefined });
+} catch {}
+target.safe("cleared-after-callee-initialization.txt");
+`,
+      "src/runtime-object-assign-initialized-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(initializedCallee, []);
+
+    const initializedCalleeReceiver = collectSemanticMarkers(
+      `
+const holder = { assign: Object.assign };
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("cleared-after-callee-receiver-initialization.txt");
+`,
+      "src/runtime-object-assign-initialized-callee-receiver.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(initializedCalleeReceiver, []);
+
+    const alternativeCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const assign = Math.random() > 0.5 ? Object.assign : Object.freeze;
+try {
+  assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-alternative-callee.txt");
+`,
+      "src/runtime-object-assign-alternative-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(alternativeCallee, ["filesystem-write"]);
+
+    const partialMemberCallee = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = Math.random() > 0.5
+  ? { assign: Object.assign }
+  : { assign: undefined };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-partial-member-callee.txt");
+`,
+      "src/runtime-object-assign-partial-member-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(partialMemberCallee, ["filesystem-write"]);
+
+    const opaqueTrailingSpreadCallee = collectSemanticMarkers(
+      `
+function run(maybeHolder) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { assign: Object.assign, ...maybeHolder };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-opaque-trailing-spread-callee.txt");
+}
+run({});
+`,
+      "src/runtime-object-assign-opaque-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(opaqueTrailingSpreadCallee, ["filesystem-write"]);
+
+    const exactTrailingPropertyCallee = collectSemanticMarkers(
+      `
+function run(maybeHolder) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { ...maybeHolder, assign: Object.assign };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("cleared-for-exact-trailing-property-callee.txt");
+}
+run({});
+`,
+      "src/runtime-object-assign-exact-trailing-property-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(exactTrailingPropertyCallee, []);
+
+    const emptyTrailingSpreadCallee = collectSemanticMarkers(
+      `
+const source = {};
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = { assign: Object.assign, ...source };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("cleared-for-empty-trailing-spread-callee.txt");
+`,
+      "src/runtime-object-assign-empty-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(emptyTrailingSpreadCallee, []);
+
+    const undefinedTrailingSpreadCallee = collectSemanticMarkers(
+      `
+const source = { assign: undefined };
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = { assign: Object.assign, ...source };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-undefined-trailing-spread-callee.txt");
+`,
+      "src/runtime-object-assign-undefined-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(undefinedTrailingSpreadCallee, ["filesystem-write"]);
+
+    const maybeUndefinedTrailingSpreadCallee = collectSemanticMarkers(
+      `
+const source = Math.random() > 0.5
+  ? { assign: Object.assign }
+  : { assign: undefined };
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+const holder = { assign: Object.assign, ...source };
+try {
+  holder.assign(target, { safe: () => undefined });
+} catch {}
+target.safe("retained-for-maybe-undefined-trailing-spread-callee.txt");
+`,
+      "src/runtime-object-assign-maybe-undefined-trailing-spread-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(maybeUndefinedTrailingSpreadCallee, ["filesystem-write"]);
+
+    const computedCallableOverrideCallee = collectSemanticMarkers(
+      `
+function run(key) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { assign: Object.assign, [key]: () => undefined };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-computed-callable-override-callee.txt");
+}
+run("assign");
+`,
+      "src/runtime-object-assign-computed-callable-override-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(computedCallableOverrideCallee, ["filesystem-write"]);
+
+    const computedPrimitiveOverrideCallee = collectSemanticMarkers(
+      `
+function run(key) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { assign: Object.assign, [key]: "not callable" };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("retained-for-computed-primitive-override-callee.txt");
+}
+run("assign");
+`,
+      "src/runtime-object-assign-computed-primitive-override-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(computedPrimitiveOverrideCallee, ["filesystem-write"]);
+
+    const exactPropertyAfterComputedCallee = collectSemanticMarkers(
+      `
+function run(key) {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  const holder = { [key]: "not callable", assign: Object.assign };
+  try {
+    holder.assign(target, { safe: () => undefined });
+  } catch {}
+  target.safe("cleared-for-exact-property-after-computed-callee.txt");
+}
+run("other");
+`,
+      "src/runtime-object-assign-exact-property-after-computed-callee.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(exactPropertyAfterComputedCallee, []);
+
+    for (
+      const [kind, declaration, expected] of [
+        ["let", "let source = {};", ["filesystem-write"]],
+        [
+          "class",
+          "class source {}",
+          [
+            "browser",
+            "filesystem-read",
+            "filesystem-watch",
+            "filesystem-write",
+            "network",
+            "process",
+            "server",
+            "shared-cwd",
+          ],
+        ],
+      ] as const
+    ) {
+      const laterLexicalSource = collectSemanticMarkers(
+        `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { safe: () => undefined }, source);
+} catch {}
+${declaration}
+target.safe("retained-before-${kind}-initialization.txt");
+`,
+        `src/runtime-object-assign-${kind}-tdz-argument.test.ts`,
+      ).map((marker) => marker.effect);
+      assertEquals(laterLexicalSource, [...expected]);
+    }
+
+    const laterInnerShadow = collectSemanticMarkers(
+      `
+const source = {};
+{
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  try {
+    Object.assign(target, { safe: () => undefined }, source);
+  } catch {}
+  const source = {};
+  target.safe("retained-before-inner-source-initialization.txt");
+}
+`,
+      "src/runtime-object-assign-inner-tdz-argument.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(laterInnerShadow, ["filesystem-write"]);
+
+    const initializedSource = collectSemanticMarkers(
+      `
+const source = {};
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { safe: () => undefined }, source);
+} catch {}
+target.safe("cleared-after-source-initialization.txt");
+`,
+      "src/runtime-object-assign-initialized-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(initializedSource, []);
+
+    const capturedSource = collectSemanticMarkers(
+      `
+const source = {};
+function run() {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  try {
+    Object.assign(target, { safe: () => undefined }, source);
+  } catch {}
+  target.safe("retained-for-captured-source.txt");
+}
+run();
+`,
+      "src/runtime-object-assign-captured-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(capturedSource, ["filesystem-write"]);
+
+    const outerConditionalTry = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+if (maybe) {
+  try {
+    Object.assign(target, {
+      safe: () => undefined,
+      effectful: Deno.remove,
+    });
+  } catch {}
+}
+target.safe("retained-after-outer-conditional-try.txt");
+`,
+      "src/runtime-object-assign-conditional-try.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(outerConditionalTry, ["filesystem-write"]);
+  });
+
+  it("tracks Object.assign getter throws within try prefixes", () => {
+    const getterBeforeWrite = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    get safe() { throw new Error("before write"); },
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-getter.txt");
+`,
+      "src/runtime-object-assign-throwing-getter.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(getterBeforeWrite, ["filesystem-write"]);
+
+    const getterAfterWrite = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+    get effectful() { throw new Error("after write"); },
+  });
+} catch {}
+target.safe("cleared-before-getter.txt");
+`,
+      "src/runtime-object-assign-later-throwing-getter.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(getterAfterWrite, []);
+  });
+
+  it("does not invoke Object.assign getters after a blocked write", () => {
+    const markers = collectSemanticMarkers(
+      `
+const later = {};
+Object.defineProperty(later, "observed", {
+  enumerable: true,
+  get: Deno.cwd,
+});
+
+const target = {};
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { blocked: () => undefined }, later);
+} catch {}
+`,
+      "src/runtime-object-assign-blocked-getter-order.test.ts",
+    ).map((marker) => [marker.effect, marker.symbol]);
+    assertEquals(markers, [["shared-cwd", "Deno.cwd"]]);
+  });
+
+  it("does not invoke Object.assign setters after a blocked write", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = {};
+Object.defineProperty(target, "observed", { set: Deno.remove });
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    blocked: () => undefined,
+    observed: "not-written.txt",
+  });
+} catch {}
+`,
+      "src/runtime-object-assign-blocked-setter-order.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("uses JavaScript property order for Object.assign accessors", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = {};
+Object.defineProperty(target, "0", { set: Deno.remove });
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    1: "blocked.txt",
+    0: "setter-runs-first.txt",
+  });
+} catch {}
+`,
+      "src/runtime-object-assign-property-order.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, ["filesystem-write"]);
+  });
+
+  it("masks inherited data when Object.assign creates an own property", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = Object.create({ run: Deno.remove });
+Object.assign(target, { run: () => undefined });
+Object.seal(target);
+Object.defineProperty(target, "run", { value: () => undefined });
+target.run("cleared.txt");
+
+const returned = Object.assign(
+  Object.create({ run: Deno.remove }),
+  { run: () => undefined },
+);
+returned.run("returned.txt");
+
+const getterReturned = Object.assign(
+  Object.create({ run: Deno.remove }),
+  { get run() { return () => undefined; } },
+);
+getterReturned.run("getter-returned.txt");
+
+const getterSource = { get run() { return () => undefined; } };
+const getterSourceReturned = Object.assign(
+  Object.create({ run: Deno.remove }),
+  getterSource,
+);
+getterSourceReturned.run("getter-source-returned.txt");
+`,
+      "src/runtime-object-assign-inherited-data-shadow.test.ts",
     ).map((marker) => marker.effect);
     assertEquals(effects, []);
   });
