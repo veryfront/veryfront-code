@@ -369,7 +369,23 @@ async function readAgentPushRuntimeServiceResponse(
     });
   }
 
-  const parsed = agentPushRuntimeServiceResponseSchema.parse(await response.json());
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (cause) {
+    // The headers landed but the body did not: the deadline fired while the
+    // JSON was still arriving, or the connection reset mid-body. No complete
+    // response came back and nothing upstream was applied, so this is as
+    // transport-level as a failed connect and gets the same retries. It
+    // carries no httpStatus, which is what marks it retryable.
+    throw NETWORK_ERROR.create({ detail: getErrorMessage(cause), cause });
+  }
+
+  // Outside that wrapper on purpose. A body that arrived intact but does not
+  // match the schema is a permanent protocol mismatch, not a transient one.
+  // Wrapping it as a transport error would make every tick spend all three
+  // attempts on a response that will never parse.
+  const parsed = agentPushRuntimeServiceResponseSchema.parse(payload);
   return parsed.service;
 }
 
@@ -421,27 +437,30 @@ async function sendHeartbeatRequest(
   fetchImpl: typeof globalThis.fetch,
   abortSignal: AbortSignal | undefined,
 ): Promise<AgentPushRuntimeServiceRest> {
+  let response: Response;
   try {
-    const response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
+    response = await fetchImpl(getHeartbeatEndpoint(input.apiUrl, input.serviceId), {
       method: "POST",
       headers: createHeaders(input.authToken),
       signal: abortSignal,
     });
-    return await readAgentPushRuntimeServiceResponse(response);
   } catch (cause) {
-    // An error that is already ours is already classified: a non-ok response
-    // carries its httpStatus, and that status is what keeps a 4xx from being
-    // retried. Rethrow it untouched.
+    // A caller-supplied fetch may reject with an error that is already ours,
+    // and that error already carries its own slug and httpStatus. Reclassifying
+    // it would drop the status that keeps a 4xx from being retried.
     if (isVeryfrontError(cause)) throw cause;
-    // Anything else is transport-level: the connect failed, or the deadline
-    // fired while the body was still arriving after the headers landed. Either
-    // way no complete response came back and nothing upstream was applied. It
-    // carries no httpStatus, which is what marks it retryable below.
+    // Anything else means no response, so the request never reached a handler
+    // and applied nothing. It carries no httpStatus, which is what marks it
+    // transport-level below.
     throw NETWORK_ERROR.create({
       detail: getErrorMessage(cause),
       cause,
     });
   }
+  // Deliberately outside the wrapper above. The read does its own transport
+  // mapping, so a failed body read is still retried, while a non-ok status
+  // keeps its httpStatus and a schema mismatch stays permanent.
+  return await readAgentPushRuntimeServiceResponse(response);
 }
 
 /** Upstream response status recorded on a heartbeat failure, if it got one. */
