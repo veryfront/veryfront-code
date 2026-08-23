@@ -546,6 +546,28 @@ describe("automated review gate", () => {
       ))?.source,
       "summary",
     );
+
+    const newerOutOfScopeCurrentRange = codeRabbitSummary({
+      body: [
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:00Z",
+      updated_at: "2026-08-22T12:04:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerOutOfScopeCurrentRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
   });
 
   it("rejects any current-head skip or request marker in a summary", async () => {
