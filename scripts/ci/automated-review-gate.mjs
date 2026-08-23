@@ -10,6 +10,7 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN = /^\s*reviewing\s+files\b/i;
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
+const FULL_COMMIT_TOKEN_PATTERN = /(?:^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
@@ -212,6 +213,9 @@ async function classifyAutomatedReviewEvent(
   const rangeCandidates = recentReview?.split(/\r?\n/).filter((line) =>
     CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN.test(line)
   );
+  const rangeCandidateHasCurrentTip = rangeCandidates?.some((line) =>
+    lastFullCommitToken(line)?.toLowerCase() === headSha.toLowerCase()
+  );
   const reviewedTips = rangeCandidates?.map((line) =>
     line.match(CODERABBIT_REVIEW_RANGE_PATTERN)?.[2]
   );
@@ -219,7 +223,7 @@ async function classifyAutomatedReviewEvent(
     tip?.toLowerCase() === headSha.toLowerCase()
   );
   if (rangeCandidates?.length !== 1) {
-    return hasCurrentRange
+    return hasCurrentRange || rangeCandidateHasCurrentTip
       ? {
         kind: "failure",
         url: typeof comment.html_url === "string"
@@ -230,7 +234,9 @@ async function classifyAutomatedReviewEvent(
   }
   const reviewedTip = reviewedTips?.[0];
   if (reviewedTip?.toLowerCase() !== headSha.toLowerCase()) {
-    return { kind: "not-head" };
+    return rangeCandidateHasCurrentTip
+      ? { kind: "failure" }
+      : { kind: "not-head" };
   }
   return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER)
     ? {
@@ -257,6 +263,14 @@ function codeRabbitRecentReview(body) {
   const contentStart = start + CODERABBIT_RECENT_REVIEW_MARKER.length;
   const end = body.indexOf(CODERABBIT_RECENT_REVIEW_END_MARKER, contentStart);
   return end < 0 ? undefined : body.slice(contentStart, end);
+}
+
+function lastFullCommitToken(value) {
+  let lastToken;
+  for (const match of value.matchAll(FULL_COMMIT_TOKEN_PATTERN)) {
+    lastToken = match[1];
+  }
+  return lastToken;
 }
 
 /** Publish the current automated-review decision on the exact PR head SHA. */

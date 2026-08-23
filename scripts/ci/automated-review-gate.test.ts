@@ -487,6 +487,67 @@ describe("automated review gate", () => {
     );
   });
 
+  it("lets a malformed current-head range override an older valid review", async () => {
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+
+    for (
+      const malformedCurrentRange of [
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        codeRabbitReviewRange() + " but this is not the final review.",
+        codeRabbitReviewRange().replace("Reviewing", "reviewing"),
+        codeRabbitReviewRange().replace("files that", "files  that"),
+        codeRabbitReviewRange().replace(HEAD_SHA, HEAD_SHA.toUpperCase()),
+      ]
+    ) {
+      const newerMalformedCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          malformedCurrentRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerMalformedCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerMalformedStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA) +
+        " but this is not the final review.",
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:00Z",
+      updated_at: "2026-08-22T12:03:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerMalformedStaleRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
   it("rejects any current-head skip or request marker in a summary", async () => {
     for (
       const markers of [
