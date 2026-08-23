@@ -735,6 +735,7 @@ const RUNTIME_GETTER_EFFECT_PRESENCE = new WeakMap<RuntimeBinding, boolean>();
 
 interface Scope {
   readonly names: Set<string>;
+  readonly definitelyInitializedNames: Set<string>;
   readonly definitelyNonUndefinedNames: Set<string>;
   readonly functionBoundary: boolean;
   readonly playwrightFixtures: Set<string>;
@@ -881,6 +882,13 @@ export function collectSemanticMarkers(
         key === "loc" || COMMENT_KEYS.has(key) ||
         TYPE_ONLY_CHILD_KEYS.has(key)
       ) continue;
+      if (key === "body" && isFunctionScopeNode(node)) {
+        markRuntimeFunctionParametersInitialized(
+          node,
+          nextScopes,
+          allowAssignmentClearing,
+        );
+      }
       const value = node[key];
       if (Array.isArray(value)) {
         for (const item of value) {
@@ -914,6 +922,11 @@ export function collectSemanticMarkers(
         );
       }
     }
+    markRuntimeDeclarationInitialized(
+      node,
+      nextScopes,
+      allowAssignmentClearing,
+    );
     bindRuntimeCallMutation(
       node,
       bindings,
@@ -3521,20 +3534,26 @@ function createScope(
   outerScopes: readonly Scope[],
 ): Scope {
   const names = new Set<string>();
+  const definitelyInitializedNames = new Set<string>();
   const definitelyNonUndefinedNames = new Set<string>();
   const playwrightFixtures = new Set<string>();
   collectLocalDeclaredNames(
     node,
     names,
+    definitelyInitializedNames,
     definitelyNonUndefinedNames,
     playwrightFixtures,
   );
-  if (hasOwnThisRuntimeBinding(node)) names.add(THIS_RUNTIME_ROOT);
+  if (hasOwnThisRuntimeBinding(node)) {
+    names.add(THIS_RUNTIME_ROOT);
+    definitelyInitializedNames.add(THIS_RUNTIME_ROOT);
+  }
   if (isVarHoistScope(node)) collectHoistedVarDeclaredNames(node, names);
   const className = classRuntimeName(node);
   const classReceiver = classRuntimeReceiverForScope(node, outerScopes);
   const scope: Scope = {
     names,
+    definitelyInitializedNames,
     definitelyNonUndefinedNames,
     functionBoundary: isFunctionScopeNode(node),
     playwrightFixtures,
@@ -3587,6 +3606,7 @@ function createScope(
 function collectLocalDeclaredNames(
   node: Node,
   names: Set<string>,
+  definitelyInitializedNames: Set<string>,
   definitelyNonUndefinedNames: Set<string>,
   playwrightFixtures: Set<string>,
 ): void {
@@ -3602,6 +3622,9 @@ function collectLocalDeclaredNames(
         const name = statement.id.name as string;
         names.add(name);
         definitelyNonUndefinedNames.add(name);
+        if (statement.type === "FunctionDeclaration") {
+          definitelyInitializedNames.add(name);
+        }
       }
       if (
         statement.type === "TSModuleDeclaration" &&
@@ -3640,6 +3663,7 @@ function collectLocalDeclaredNames(
     if (node.type === "FunctionExpression" && isNode(node.id)) {
       const name = node.id.name as string;
       names.add(name);
+      definitelyInitializedNames.add(name);
       definitelyNonUndefinedNames.add(name);
     }
     for (const param of Array.isArray(node.params) ? node.params : []) {
@@ -3654,6 +3678,7 @@ function collectLocalDeclaredNames(
   ) {
     const name = node.id.name as string;
     names.add(name);
+    definitelyInitializedNames.add(name);
     definitelyNonUndefinedNames.add(name);
     return;
   }
@@ -3674,7 +3699,10 @@ function collectLocalDeclaredNames(
     }
     return;
   }
-  if (node.type === "CatchClause") collectPatternNames(node.param, names);
+  if (node.type === "CatchClause") {
+    collectPatternNames(node.param, names);
+    collectPatternNames(node.param, definitelyInitializedNames);
+  }
 }
 
 function collectLocalRuntimeBindings(
@@ -3763,6 +3791,7 @@ function runtimeReceiverScope(
 ): Scope {
   return {
     names: new Set([THIS_RUNTIME_ROOT]),
+    definitelyInitializedNames: new Set([THIS_RUNTIME_ROOT]),
     definitelyNonUndefinedNames: new Set([THIS_RUNTIME_ROOT]),
     functionBoundary: false,
     playwrightFixtures: new Set(),
@@ -4090,6 +4119,13 @@ function visitRuntimeBindingSummary(
     ) {
       continue;
     }
+    if (key === "body" && isFunctionScopeNode(node)) {
+      markRuntimeFunctionParametersInitialized(
+        node,
+        nextScopes,
+        allowClearing,
+      );
+    }
     const value = node[key];
     const childAllowsClearing = allowClearing &&
       !isConditionalBranch(node, key);
@@ -4115,6 +4151,7 @@ function visitRuntimeBindingSummary(
       );
     }
   }
+  markRuntimeDeclarationInitialized(node, nextScopes, allowClearing);
   bindRuntimeCallMutation(
     node,
     imports,
@@ -4221,6 +4258,43 @@ function declarationBelongsToScope(
     if (scope.names.has(name)) return true;
   }
   return names.size === 0;
+}
+
+function markRuntimeFunctionParametersInitialized(
+  node: Node,
+  scopes: readonly Scope[],
+  definitelyReached: boolean,
+): void {
+  if (!definitelyReached || !isFunctionScopeNode(node)) return;
+  const scope = scopes.at(-1);
+  if (!scope?.functionBoundary) return;
+  for (const parameter of Array.isArray(node.params) ? node.params : []) {
+    collectPatternNames(parameter, scope.definitelyInitializedNames);
+  }
+}
+
+function markRuntimeDeclarationInitialized(
+  node: Node,
+  scopes: readonly Scope[],
+  definitelyReached: boolean,
+): void {
+  if (!definitelyReached) return;
+  if (node.type === "VariableDeclarator" && isNode(node.id)) {
+    const scope = scopes.at(-1);
+    if (!scope || !declarationBelongsToScope(node, scope)) return;
+    collectPatternNames(node.id, scope.definitelyInitializedNames);
+    return;
+  }
+  if (
+    node.type === "ClassDeclaration" && isNode(node.id) &&
+    node.id.type === "Identifier"
+  ) {
+    const outerScope = scopes.at(-2);
+    const name = node.id.name as string;
+    if (outerScope?.names.has(name)) {
+      outerScope.definitelyInitializedNames.add(name);
+    }
+  }
 }
 
 function lexicalScopeStatements(node: Node): readonly Node[] | undefined {
@@ -7911,7 +7985,10 @@ function runtimeTryEntryArgumentEvaluationIsNonThrowing(
     // A partial binding can hide a nullish alternative. TypeScript's `!`
     // changes no runtime evaluation, so it cannot make a member read safe.
     return binding !== undefined &&
-      (!resolved.declared || resolved.definitelyNonUndefined === true) &&
+      (!resolved.declared ||
+        (resolved.definitelyInitialized === true &&
+          resolved.definitelyNonUndefined === true &&
+          resolved.crossesFunctionBoundary !== true)) &&
       !runtimeBindingHasPartialAlternative(binding);
   }
   if (
@@ -10350,17 +10427,24 @@ function resolveLocalBinding(
   scopes: readonly Scope[],
 ): {
   readonly declared: boolean;
+  readonly definitelyInitialized?: boolean;
   readonly definitelyNonUndefined?: boolean;
+  readonly crossesFunctionBoundary?: boolean;
   readonly binding?: RuntimeBinding;
 } {
+  let crossesFunctionBoundary = false;
   for (let index = scopes.length - 1; index >= 0; index--) {
     const scope = scopes[index];
-    if (!scope.names.has(name)) continue;
-    return {
-      declared: true,
-      definitelyNonUndefined: scope.definitelyNonUndefinedNames.has(name),
-      binding: scope.runtimeBindings.get(name),
-    };
+    if (scope.names.has(name)) {
+      return {
+        declared: true,
+        definitelyInitialized: scope.definitelyInitializedNames.has(name),
+        definitelyNonUndefined: scope.definitelyNonUndefinedNames.has(name),
+        crossesFunctionBoundary,
+        binding: scope.runtimeBindings.get(name),
+      };
+    }
+    if (scope.functionBoundary) crossesFunctionBoundary = true;
   }
   return { declared: false };
 }

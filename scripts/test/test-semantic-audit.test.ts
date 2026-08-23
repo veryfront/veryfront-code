@@ -3687,6 +3687,104 @@ target.safe("retained-after-nullable-argument-receiver.txt");
       "shared-cwd",
     ]);
 
+    const temporalDeadZoneSource = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+  }, source);
+} catch {}
+const source = {};
+target.safe("retained-before-source-initialization.txt");
+`,
+      "src/runtime-object-assign-tdz-argument.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(temporalDeadZoneSource, ["filesystem-write"]);
+
+    for (
+      const [kind, declaration, expected] of [
+        ["let", "let source = {};", ["filesystem-write"]],
+        [
+          "class",
+          "class source {}",
+          [
+            "browser",
+            "filesystem-read",
+            "filesystem-watch",
+            "filesystem-write",
+            "network",
+            "process",
+            "server",
+            "shared-cwd",
+          ],
+        ],
+      ] as const
+    ) {
+      const laterLexicalSource = collectSemanticMarkers(
+        `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { safe: () => undefined }, source);
+} catch {}
+${declaration}
+target.safe("retained-before-${kind}-initialization.txt");
+`,
+        `src/runtime-object-assign-${kind}-tdz-argument.test.ts`,
+      ).map((marker) => marker.effect);
+      assertEquals(laterLexicalSource, [...expected]);
+    }
+
+    const laterInnerShadow = collectSemanticMarkers(
+      `
+const source = {};
+{
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  try {
+    Object.assign(target, { safe: () => undefined }, source);
+  } catch {}
+  const source = {};
+  target.safe("retained-before-inner-source-initialization.txt");
+}
+`,
+      "src/runtime-object-assign-inner-tdz-argument.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(laterInnerShadow, ["filesystem-write"]);
+
+    const initializedSource = collectSemanticMarkers(
+      `
+const source = {};
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { safe: () => undefined }, source);
+} catch {}
+target.safe("cleared-after-source-initialization.txt");
+`,
+      "src/runtime-object-assign-initialized-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(initializedSource, []);
+
+    const capturedSource = collectSemanticMarkers(
+      `
+const source = {};
+function run() {
+  const target = { safe: Deno.remove };
+  Object.preventExtensions(target);
+  try {
+    Object.assign(target, { safe: () => undefined }, source);
+  } catch {}
+  target.safe("retained-for-captured-source.txt");
+}
+run();
+`,
+      "src/runtime-object-assign-captured-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(capturedSource, ["filesystem-write"]);
+
     const outerConditionalTry = collectSemanticMarkers(
       `
 const target = { safe: Deno.remove };
