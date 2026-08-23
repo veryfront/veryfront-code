@@ -1504,6 +1504,10 @@ const [defaulted = Deno.writeTextFile] = [];
 defaulted("defaulted.txt", "x");
 const [exact = Deno.readTextFile] = [Deno.writeTextFile];
 exact("exact.txt", "x");
+const [conditionalDefault = fetch] = [
+  maybe ? Deno.writeTextFile : undefined,
+];
+await conditionalDefault("conditional-default.txt", "x");
 const [, ...rest] = [() => undefined, Deno.writeTextFile];
 rest[0]("rest.txt", "x");
 const knownArraySource = [() => undefined, Deno.writeTextFile];
@@ -1540,6 +1544,8 @@ ArrayRestClass.write("array-rest-class.txt", "x");
         ["filesystem-write", "nested"],
         ["filesystem-write", "defaulted"],
         ["filesystem-write", "exact"],
+        ["filesystem-write", "conditionalDefault"],
+        ["network", "conditionalDefault"],
         ["filesystem-write", "rest.0"],
         ["filesystem-write", "knownArrayRest.0"],
         ["filesystem-write", "dynamicRest.0"],
@@ -2342,12 +2348,29 @@ const reverseHolder = { Receiver: ReverseHolderClass };
 ReverseHolderClass.write = Deno.writeTextFile;
 reverseHolder.Receiver.write("reverse-holder-class.txt", "x");
 
+class DirectHolderClass {}
+const directHolder = { Receiver: DirectHolderClass };
+directHolder.Receiver.write = Deno.writeTextFile;
+DirectHolderClass.write("direct-holder-class.txt", "x");
+
+class DirectNestedHolderClass {}
+const directNestedHolder = {
+  nested: { Receiver: DirectNestedHolderClass },
+};
+directNestedHolder.nested.Receiver.write = Deno.writeTextFile;
+DirectNestedHolderClass.write("direct-nested-holder-class.txt", "x");
+
 class ComputedHolderClass {}
 const computedHolder = { Receiver: ComputedHolderClass };
 const computedKey = "Receiver";
 const ComputedHolderAlias = computedHolder[computedKey];
 ComputedHolderAlias.write = Deno.writeTextFile;
 ComputedHolderClass.write("computed-holder-class.txt", "x");
+
+class DirectComputedHolderClass {}
+const directComputedHolder = { Receiver: DirectComputedHolderClass };
+directComputedHolder[computedKey].write = Deno.writeTextFile;
+DirectComputedHolderClass.write("direct-computed-holder-class.txt", "x");
 
 class ComputedDestructuredClass {}
 const computedDestructuredHolder = { Receiver: ComputedDestructuredClass };
@@ -2371,6 +2394,15 @@ PossibleHolderAlias.write = Deno.writeTextFile;
 PossibleHolderClassA.write("possible-holder-a.txt", "x");
 PossibleHolderClassB.write("possible-holder-b.txt", "x");
 
+class DirectPossibleHolderClassA {}
+class DirectPossibleHolderClassB {}
+const directPossibleHolder = maybe
+  ? { Receiver: DirectPossibleHolderClassA }
+  : { Receiver: DirectPossibleHolderClassB };
+directPossibleHolder.Receiver.write = Deno.writeTextFile;
+DirectPossibleHolderClassA.write("direct-possible-holder-a.txt", "x");
+DirectPossibleHolderClassB.write("direct-possible-holder-b.txt", "x");
+
 class ExactDefaultClass {}
 class UnusedDefaultClass {}
 const { Receiver: ExactDefaultAlias = UnusedDefaultClass } = {
@@ -2390,11 +2422,16 @@ UnusedDefaultClass.write("unused-default-class.txt", "x");
         ["filesystem-write", "SpreadHolderClass.write"],
         ["filesystem-write", "NestedHolderClass.write"],
         ["filesystem-write", "reverseHolder.Receiver.write"],
+        ["filesystem-write", "DirectHolderClass.write"],
+        ["filesystem-write", "DirectNestedHolderClass.write"],
         ["filesystem-write", "ComputedHolderClass.write"],
+        ["filesystem-write", "DirectComputedHolderClass.write"],
         ["filesystem-write", "ComputedDestructuredClass.write"],
         ["filesystem-write", "ClassExpression.write"],
         ["filesystem-write", "PossibleHolderClassA.write"],
         ["filesystem-write", "PossibleHolderClassB.write"],
+        ["filesystem-write", "DirectPossibleHolderClassA.write"],
+        ["filesystem-write", "DirectPossibleHolderClassB.write"],
         ["filesystem-write", "ExactDefaultClass.write"],
       ],
     );
@@ -2406,6 +2443,11 @@ const holder = { Receiver: {} };
 const HolderAlias = holder.Receiver;
 HolderAlias.write = Deno.writeTextFile;
 LocalHolderClass.write("local-holder.txt", "x");
+
+class LocalDirectHolderClass {}
+const directHolder = { Receiver: {} };
+directHolder.Receiver.write = Deno.writeTextFile;
+LocalDirectHolderClass.write("local-direct-holder.txt", "x");
 
 class LocalDestructuredClass {}
 const { Receiver: DestructuredAlias } = { Receiver: {} };
@@ -2612,6 +2654,19 @@ const undefinedOps = { run: () => undefined };
 undefinedOps.run = undefined;
 const { run: undefinedRun = fetch } = undefinedOps;
 await undefinedRun("https://example.com/undefined-default");
+const conditionalExpressionOps = {
+  run: maybe ? Deno.writeTextFile : undefined,
+};
+const { run: conditionalExpressionRun = fetch } = conditionalExpressionOps;
+await conditionalExpressionRun("conditional-expression-default.txt", "x");
+const conditionalLocalExpressionOps = {
+  run: maybe ? (() => undefined) : undefined,
+};
+const { run: conditionalLocalExpressionRun = fetch } =
+  conditionalLocalExpressionOps;
+await conditionalLocalExpressionRun(
+  "https://example.com/conditional-local-expression-default",
+);
 let mutableRun = () => undefined;
 mutableRun = undefined;
 const mutableOps = { run: mutableRun };
@@ -2647,6 +2702,9 @@ await arrayDestructuredDefaultRun("https://example.com/array-destructured-undefi
         ["network", "assignmentRun"],
         ["network", "nestedRun"],
         ["network", "undefinedRun"],
+        ["filesystem-write", "conditionalExpressionRun"],
+        ["network", "conditionalExpressionRun"],
+        ["network", "conditionalLocalExpressionRun"],
         ["network", "mutableDefaultRun"],
         ["network", "conditionalDefaultRun"],
         ["network", "destructuredDefaultRun"],

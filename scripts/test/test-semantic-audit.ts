@@ -3283,6 +3283,7 @@ function collectClassRuntimeBindings(
     const defaultMayRun = expressionMayBeUndefined(
       member.value,
       binding,
+      imports,
       fieldScopes,
     );
     const fieldBinding = name
@@ -3886,7 +3887,7 @@ function bindRuntimeParameterProperty(
       existing,
       [parameter.left.name as string],
       binding,
-      expressionMayBeUndefined(parameter.right, binding, scopes),
+      expressionMayBeUndefined(parameter.right, binding, imports, scopes),
       false,
       runtimeNamespaceAliasTargetsForExpression(
         parameter.right,
@@ -3913,6 +3914,7 @@ function bindRuntimeAssignment(
   const assignedMayBeUndefined = expressionMayBeUndefined(
     node.right,
     binding,
+    imports,
     scopes,
   );
   bindRuntimeAlias(
@@ -3982,39 +3984,105 @@ function bindRuntimeMemberAssignment(
   scopes: readonly Scope[],
   allowClearing: boolean,
 ): boolean {
+  if (
+    member.type !== "MemberExpression" &&
+    member.type !== "OptionalMemberExpression"
+  ) {
+    return false;
+  }
   const chain = memberChain(member);
-  const hasUnknownComputedProperty = (member.type === "MemberExpression" ||
-    member.type === "OptionalMemberExpression") &&
-    member.computed === true && memberProperty(member) === undefined;
+  const property = memberProperty(member);
+  const hasUnknownComputedProperty = member.computed === true &&
+    property === undefined;
   const objectChain = hasUnknownComputedProperty && isNode(member.object)
     ? memberChain(member.object)
     : undefined;
   const targetChain = chain ?? objectChain;
-  if (!targetChain || targetChain.length < (chain ? 2 : 1)) return false;
-  const classAlias = classStaticAliasResolution(targetChain[0], scopes);
-  const aliasTargets = classAlias?.receiverScope
-    ? [{ scope: classAlias.receiverScope, root: THIS_RUNTIME_ROOT }]
-    : runtimeAliasTargetsForName(targetChain[0], scopes);
-  const directTarget = assignmentTargetScope(targetChain[0], scopes);
-  const targets = uniqueRuntimeAliasTargets([
-    ...aliasTargets,
-    ...(classAlias?.receiverScope || !directTarget
-      ? []
-      : [{ scope: directTarget.scope, root: targetChain[0] }]),
-  ]);
-  if (targets.length === 0) return true;
-  for (const alias of targets) {
-    const target = assignmentTargetForAlias(alias, scopes);
+  const mutations: Array<{
+    readonly target: RuntimeAliasTarget;
+    readonly propertyPath: readonly string[];
+    readonly hasUnknownComputedProperty: boolean;
+  }> = [];
+  if (targetChain && targetChain.length >= (chain ? 2 : 1)) {
+    const classAlias = classStaticAliasResolution(targetChain[0], scopes);
+    const aliasTargets = classAlias?.receiverScope
+      ? [{ scope: classAlias.receiverScope, root: THIS_RUNTIME_ROOT }]
+      : runtimeAliasTargetsForName(targetChain[0], scopes);
+    const directTarget = assignmentTargetScope(targetChain[0], scopes);
+    for (
+      const target of uniqueRuntimeAliasTargets([
+        ...aliasTargets,
+        ...(classAlias?.receiverScope || !directTarget
+          ? []
+          : [{ scope: directTarget.scope, root: targetChain[0] }]),
+      ])
+    ) {
+      mutations.push({
+        target,
+        propertyPath: targetChain.slice(1),
+        hasUnknownComputedProperty,
+      });
+    }
+  }
+
+  let receiver = unwrapExpression(member.object);
+  let remainingPath = property ? [property] : [];
+  let unknownAtEnd = hasUnknownComputedProperty;
+  let representable = true;
+  while (receiver) {
+    if (representable) {
+      for (
+        const target of runtimeNamespaceAliasTargetsForExpression(
+          receiver,
+          imports,
+          scopes,
+        )
+      ) {
+        mutations.push({
+          target,
+          propertyPath: remainingPath,
+          hasUnknownComputedProperty: unknownAtEnd,
+        });
+      }
+    }
+    if (
+      receiver.type !== "MemberExpression" &&
+      receiver.type !== "OptionalMemberExpression"
+    ) {
+      break;
+    }
+    const receiverProperty = memberProperty(receiver);
+    if (receiverProperty) {
+      remainingPath = [receiverProperty, ...remainingPath];
+    } else if (remainingPath.length === 0 && !unknownAtEnd) {
+      unknownAtEnd = true;
+    } else {
+      representable = false;
+    }
+    receiver = unwrapExpression(receiver.object);
+  }
+
+  if (mutations.length === 0) return targetChain !== undefined;
+  const seen = new Map<Scope, Set<string>>();
+  for (const mutation of mutations) {
+    const key = `${mutation.target.root}\u0000${
+      mutation.hasUnknownComputedProperty ? "*" : "="
+    }\u0000${mutation.propertyPath.join("\u0000")}`;
+    const scopeKeys = seen.get(mutation.target.scope) ?? new Set<string>();
+    if (scopeKeys.has(key)) continue;
+    scopeKeys.add(key);
+    seen.set(mutation.target.scope, scopeKeys);
+    const target = assignmentTargetForAlias(mutation.target, scopes);
     if (!target) continue;
     bindRuntimeMemberAssignmentTarget(
-      alias,
+      mutation.target,
       target.crossesFunctionBoundary,
-      targetChain.slice(1),
+      mutation.propertyPath,
       binding,
       assignedExpression,
       imports,
       scopes,
-      hasUnknownComputedProperty,
+      mutation.hasUnknownComputedProperty,
       allowClearing,
     );
   }
@@ -4048,6 +4116,7 @@ function bindRuntimeMemberAssignmentTarget(
   const defaultMayRun = expressionMayBeUndefined(
     assignedExpression,
     binding,
+    imports,
     scopes,
   );
   const aliasTargets = runtimeNamespaceAliasTargetsForExpression(
@@ -4289,7 +4358,12 @@ function bindDefinitelyNonUndefinedPattern(
         )
         : binding,
       mayBeUndefined &&
-        expressionMayBeUndefined(pattern.right, defaultBinding, scopes),
+        expressionMayBeUndefined(
+          pattern.right,
+          defaultBinding,
+          imports,
+          scopes,
+        ),
       imports,
       scopes,
       unconditional,
@@ -4737,7 +4811,7 @@ function bindRuntimeDeclaration(
   bindDefinitelyNonUndefinedPattern(
     declaration.id,
     binding,
-    expressionMayBeUndefined(declaration.init, binding, scopes),
+    expressionMayBeUndefined(declaration.init, binding, imports, scopes),
     imports,
     scopes,
     !merge,
@@ -4801,7 +4875,7 @@ function bindRuntimeAlias(
     pattern,
     binding,
     targets,
-    expressionMayBeUndefined(expression, binding, scopes),
+    expressionMayBeUndefined(expression, binding, imports, scopes),
     imports,
     scopes,
     unconditional,
@@ -4841,7 +4915,12 @@ function bindRuntimeAliasPattern(
         ? uniqueRuntimeAliasTargets([...targets, ...defaultTargets])
         : targets,
       mayUseDefault &&
-        expressionMayBeUndefined(pattern.right, defaultBinding, scopes),
+        expressionMayBeUndefined(
+          pattern.right,
+          defaultBinding,
+          imports,
+          scopes,
+        ),
       imports,
       scopes,
       unconditional,
@@ -5013,7 +5092,12 @@ function arrayLiteralRuntimeBinding(
         imports,
         scopes,
       ),
-      defaultMayRun: expressionMayBeUndefined(element, binding, scopes),
+      defaultMayRun: expressionMayBeUndefined(
+        element,
+        binding,
+        imports,
+        scopes,
+      ),
     });
     if (binding) properties.set(name, binding);
   }
@@ -5073,6 +5157,7 @@ function objectLiteralRuntimeBinding(
           defaultMayRun: expressionMayBeUndefined(
             property.value,
             binding,
+            imports,
             scopes,
           ),
         });
@@ -5105,6 +5190,7 @@ function objectLiteralRuntimeBinding(
       defaultMayRun: expressionMayBeUndefined(
         property.value,
         binding,
+        imports,
         scopes,
       ),
     });
@@ -5125,16 +5211,47 @@ function objectLiteralRuntimeBinding(
 function expressionMayBeUndefined(
   expression: unknown,
   binding: RuntimeBinding | undefined,
+  imports: ImportBindings,
   scopes: readonly Scope[],
 ): boolean {
-  if (binding) return false;
   const value = unwrapExpression(expression);
   if (!value) return true;
+  const nestedMayBeUndefined = (candidate: unknown): boolean =>
+    expressionMayBeUndefined(
+      candidate,
+      runtimeBindingForExpression(candidate, imports, scopes),
+      imports,
+      scopes,
+    );
+  if (value.type === "ConditionalExpression") {
+    return nestedMayBeUndefined(value.consequent) ||
+      nestedMayBeUndefined(value.alternate);
+  }
+  if (value.type === "LogicalExpression") {
+    return value.operator === "&&"
+      ? nestedMayBeUndefined(value.left) || nestedMayBeUndefined(value.right)
+      : nestedMayBeUndefined(value.right);
+  }
+  if (value.type === "SequenceExpression") {
+    const expressions = Array.isArray(value.expressions)
+      ? value.expressions
+      : [];
+    return nestedMayBeUndefined(expressions.at(-1));
+  }
   if (value.type === "Identifier") {
     const resolved = resolveLocalBinding(value.name as string, scopes);
-    return !resolved.declared || !resolved.definitelyNonUndefined;
+    return resolved.declared
+      ? !resolved.definitelyNonUndefined
+      : binding === undefined;
   }
   if (value.type === "UnaryExpression") return value.operator === "void";
+  if (
+    (value.type === "OptionalCallExpression" ||
+      value.type === "OptionalMemberExpression") && value.optional === true
+  ) {
+    return true;
+  }
+  if (binding) return false;
   return !(
     value.type === "ArrayExpression" ||
     value.type === "ArrowFunctionExpression" ||
