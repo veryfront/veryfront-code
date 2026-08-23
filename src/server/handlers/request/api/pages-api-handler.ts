@@ -15,6 +15,7 @@ import {
   tryGetCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
 
 const logger = serverLogger.component("reset-api-handler");
 
@@ -142,30 +143,6 @@ function shouldCacheApiHandler(ctx: HandlerContext): boolean {
 
   // Cannot confirm a production context → do not cache.
   return getApiHandlerCacheContext(ctx)?.mode === "production";
-}
-
-function hasMutablePreviewSource(ctx: HandlerContext): boolean {
-  if (!ctx.projectSlug) return false;
-  const cacheContext = getApiHandlerCacheContext(ctx);
-  // Skip when production, or when the context is indeterminate.
-  return !!cacheContext && cacheContext.mode !== "production";
-}
-
-export async function ensurePreviewSourceSnapshotFresh(ctx: HandlerContext): Promise<void> {
-  if (!hasMutablePreviewSource(ctx)) return;
-  if (ctx.adapter.fs.ensureSourceSnapshotFresh) {
-    await ctx.adapter.fs.ensureSourceSnapshotFresh("preview-request-routing");
-    return;
-  }
-
-  // Backward compatibility for custom remote adapters that only implement the
-  // original unconditional refresh contract.
-  await refreshPreviewSourceSnapshot(ctx);
-}
-
-export async function refreshPreviewSourceSnapshot(ctx: HandlerContext): Promise<void> {
-  if (!hasMutablePreviewSource(ctx)) return;
-  await ctx.adapter.fs.refreshSourceSnapshot?.("preview-api-route-discovery");
 }
 
 interface ApiHandlerOptions {

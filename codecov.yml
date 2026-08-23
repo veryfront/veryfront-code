@@ -46,9 +46,8 @@ comment:
   layout: "condensed_header, diff, condensed_files, condensed_footer"
   behavior: default
   require_changes: false
-  # Post even when the base commit has no report (the first PRs after this
-  # lands), but never render a comment without head data, which would show a
-  # misleading empty diff.
+  # Post even when the base commit has no report, but never render a comment
+  # without head data, which would show a misleading empty diff.
   require_base: false
   require_head: true
   # Show the project-level coverage change alongside patch coverage; when hidden

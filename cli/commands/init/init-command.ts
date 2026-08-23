@@ -6,11 +6,9 @@
 import { cliLogger as logger, isVerbose } from "#cli/utils";
 import { brand, dim } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
-import { join } from "veryfront/platform/path";
 import { createError, toError } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
 import { cwd } from "veryfront/platform";
-import { createFileSystem } from "veryfront/platform";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
 import { createProject, type ProjectCreationObserver } from "../../shared/project-creation.ts";
 import { validateProjectName } from "../../shared/project-name.ts";
@@ -141,22 +139,6 @@ export async function initCommand(
     }
   }
 
-  // Refuse an existing directory before entering the wizard. This has to be an
-  // error rather than a printed message: `veryfront init x && cd x` must stop
-  // here, not carry on into a directory that was never scaffolded.
-  if (name && !options.force) {
-    const fs = createFileSystem();
-    if (await fs.exists(join(parentDir, name))) {
-      throw toError(
-        createError({
-          type: "config",
-          message:
-            `Directory "${name}" already exists. Choose a different name or use --force to overwrite.`,
-        }),
-      );
-    }
-  }
-
   let wizardRuntime: InitRuntime = "node";
   if (shouldRunWizard(options)) {
     const wizardResult = await runInteractiveWizard(name, options.runtime);
@@ -174,19 +156,9 @@ export async function initCommand(
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;
-  const projectDir = projectName ? join(parentDir, projectName) : parentDir;
-  if (projectName && !options.force) {
-    const fs = createFileSystem();
-    if (await fs.exists(projectDir)) {
-      throw toError(
-        createError({
-          type: "config",
-          message:
-            `Directory "${projectName}" already exists. Choose a different name or use --force to overwrite.`,
-        }),
-      );
-    }
-  }
+  // Whether the target can be written to is `createProject`'s call: it knows
+  // which files the template ships, so it refuses exactly the files it would
+  // overwrite rather than any directory that happens to exist.
 
   let installSpinner: ReturnType<typeof createTransientSpinner> | null = null;
   const installObserver: ProjectCreationObserver = {

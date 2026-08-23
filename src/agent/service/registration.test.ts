@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { waitFor } from "#veryfront/testing";
+import { NETWORK_ERROR } from "#veryfront/errors";
 import {
   type AgentServiceRegistrationLogger,
   createAgentServiceRegistrationLifecycle,
@@ -589,6 +590,60 @@ describe("agent/agent-service-registration heartbeat retry", () => {
     );
   });
 
+  it("lets a slow-but-successful heartbeat finish at the production interval", async () => {
+    // A heartbeat has been seen answering in about 2.7s while the control plane
+    // was degraded. That is slow, not dead, and the deadline must not convert it
+    // into a failure. The test above guards the same property against a deadline
+    // set as a fraction of the interval; this one guards it against a deadline
+    // pinned to a fixed number of milliseconds, which a short test interval
+    // would never catch. Pinning the production interval is the point: 30s is
+    // the default in src/agent/service/config.ts.
+    const intervalMs = 30_000;
+    const slowLatencyMs = 3_000;
+    let heartbeatRequests = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      const signal = init?.signal;
+      return new Promise<Response>((resolve, reject) => {
+        // Raw timer on purpose: this is the double's simulated latency, on the
+        // same unscaled clock as the deadline it is being measured against.
+        const timer = setTimeout(() => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(jsonResponse(serviceResponse));
+        }, slowLatencyMs);
+        function onAbort() {
+          clearTimeout(timer);
+          reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        }
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener("abort", onAbort, { once: true });
+      });
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { heartbeatIntervalMs: intervalMs, logger: log.logger }),
+    );
+
+    // Driven directly rather than through the interval: this is about the
+    // deadline on one attempt, not about scheduling. Nothing here asserts on
+    // escalation, because escalation is counted in the interval tick and a 30s
+    // interval never fires inside this test. The 500ms test above covers that.
+    await lifecycle.heartbeat();
+    lifecycle.stop();
+
+    assertEquals(
+      heartbeatRequests,
+      1,
+      "a slow success must be answered on the first attempt, with no retry",
+    );
+    assertEquals(log.warnings.length, 0, "a slow success must not log a retry notice");
+  });
+
   it("retries a heartbeat whose response body read fails after the headers arrive", async () => {
     // A body read can fail after the headers land: the deadline fires while
     // the JSON is still arriving, or the connection resets mid-body. That
@@ -631,6 +686,91 @@ describe("agent/agent-service-registration heartbeat retry", () => {
         "Agent service heartbeat retrying after transient failure",
       ],
       "each retry of a failed body read must log its retry notice",
+    );
+  });
+
+  it("fails a heartbeat whose body does not match the schema, without retrying", async () => {
+    // A body that arrived intact but does not parse is a permanent protocol
+    // mismatch. Retrying it spends all three attempts of every tick on a
+    // response that will never parse, and buys nothing: escalation still waits
+    // for three failed ticks either way. This is the counterpart to the test
+    // above, which pins that a body read that *fails* is retried. The two
+    // together are what keep the transport wrapper off the schema parse.
+    let heartbeatRequests = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      // HTTP 200, valid JSON, wrong shape.
+      return Promise.resolve(jsonResponse({ nope: true } as never));
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { logger: log.logger }),
+    );
+
+    await assertRejects(() => lifecycle.heartbeat(), Error);
+    lifecycle.stop();
+
+    assertEquals(
+      heartbeatRequests,
+      1,
+      "a body that fails the schema must fail on the first attempt, with no retry",
+    );
+    assertEquals(
+      log.warnings.length,
+      0,
+      `a permanent schema mismatch must not log a retry notice, saw ` +
+        `${log.warnings.map((entry) => entry.message).join(", ")}`,
+    );
+  });
+
+  it("keeps a fetch rejection that already carries an HTTP status out of the retry loop", async () => {
+    // `fetch` is a public option, so a caller can supply a transport that
+    // rejects with an error of ours that is already classified. Its httpStatus
+    // is what keeps a 4xx from being retried, and rewrapping the rejection as a
+    // bare transport failure would throw that status away and retry it.
+    let heartbeatRequests = 0;
+    const log = recordingLogger();
+
+    const fetch: typeof globalThis.fetch = (input) => {
+      if (!input.toString().endsWith("/heartbeat")) {
+        return Promise.resolve(jsonResponse(serviceResponse));
+      }
+      heartbeatRequests++;
+      return Promise.reject(
+        NETWORK_ERROR.create({
+          detail: "upstream rejected the heartbeat",
+          context: { httpStatus: 404 },
+        }),
+      );
+    };
+
+    const lifecycle = await createAgentServiceRegistrationLifecycle(
+      lifecycleOptions(fetch, { logger: log.logger }),
+    );
+
+    const error = await assertRejects(() => lifecycle.heartbeat(), Error);
+    lifecycle.stop();
+
+    assertEquals(
+      (error as { context?: { httpStatus?: unknown } }).context?.httpStatus,
+      404,
+      "the classification the caller's fetch supplied must survive",
+    );
+    assertEquals(
+      heartbeatRequests,
+      1,
+      "a rejection that already carries a 4xx must not be retried",
+    );
+    assertEquals(
+      log.warnings.length,
+      0,
+      `a classified client error must not log a retry notice, saw ` +
+        `${log.warnings.map((entry) => entry.message).join(", ")}`,
     );
   });
 

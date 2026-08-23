@@ -49,6 +49,7 @@ import {
 } from "#veryfront/errors";
 import { requiresIsolatedProjectRuntime } from "#veryfront/security/project-locality.ts";
 import { appendDataResponseMetadata } from "#veryfront/data/response-metadata.ts";
+import { ensurePreviewSourceSnapshotFresh } from "../source-snapshot-freshness.ts";
 
 const logger = serverLogger.component("ssr");
 
@@ -223,6 +224,22 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
+        // Establish one current draft generation before route resolution and
+        // rendering. If freshness cannot be established, fail the request
+        // rather than serving an older SSR snapshot that hydration replaces.
+        try {
+          await ensurePreviewSourceSnapshotFresh(
+            ctx,
+            {
+              ensure: "preview-ssr-render",
+              refreshFallback: "preview-ssr-render",
+            },
+          );
+        } catch (error) {
+          endRequest(requestId);
+          throw error;
+        }
+
         const dependencySource = createHandlerDependencyPinningSource(ctx);
         // The document request is where the client learns the current snapshot
         // key, so an unpinned request adopts it instead of conflicting.
