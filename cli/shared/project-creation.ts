@@ -721,11 +721,11 @@ export async function createProject(
   const allEnvVars = assembly.envVars;
 
   if (request.includePackageMetadata) {
-    await createPackageJson(projectDir, projectName, assembly.packageJsonOptions);
+    await createPackageJson(projectDir, projectName, assembly.packageJsonOptions, fs);
     createdPaths.push("package.json");
 
     if (request.runtime === "deno") {
-      await createDenoConfig(projectDir);
+      await createDenoConfig(projectDir, fs);
       createdPaths.push("deno.json");
     }
   }

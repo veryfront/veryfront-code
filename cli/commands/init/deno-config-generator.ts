@@ -1,6 +1,6 @@
 import { VERSION } from "#cli/utils";
 import { join } from "veryfront/platform/path";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, type FileSystem } from "veryfront/platform";
 
 const VERYFRONT_DENO_SPEC = `npm:veryfront@${VERSION}`;
 
@@ -30,8 +30,10 @@ export function buildDenoConfig(): string {
  * Throws if `deno.json` already exists at the destination — no template
  * ships one today, so an existing file means something unexpected.
  */
-export async function createDenoConfig(projectDir: string): Promise<void> {
-  const fs = createFileSystem();
+export async function createDenoConfig(
+  projectDir: string,
+  fs: FileSystem = createFileSystem(),
+): Promise<void> {
   const target = join(projectDir, "deno.json");
   if (await fs.exists(target)) {
     throw new Error(`Refusing to overwrite existing deno.json at ${target}`);

@@ -313,6 +313,70 @@ describe("createProject filesystem failure handling", () => {
     },
   );
 
+  projectTest(
+    "propagates nested preflight failures when scaffolding the current directory",
+    async (parentDir) => {
+      const expected = new Error("nested lstat capability failed");
+      const nativeFileSystem = createFileSystem();
+      if (!nativeFileSystem.lstat) throw new Error("runtime filesystem must provide lstat");
+      const nativeLstat = nativeFileSystem.lstat.bind(nativeFileSystem);
+      const failingPath = join(parentDir, ".gitignore");
+      const fileSystem = overrideFileSystem(nativeFileSystem, {
+        lstat: (path) =>
+          path === failingPath ? Promise.reject(expected) : nativeLstat(path),
+      });
+
+      const error = await assertRejects(() =>
+        createProject(
+          baseRequest(parentDir, { name: undefined }),
+          { fileSystem } satisfies CreateProjectDependencies,
+        )
+      );
+
+      assertEquals(error, expected);
+    },
+  );
+
+  projectTest("routes package metadata through the injected filesystem", async (parentDir) => {
+    const expected = new Error("package metadata write failed");
+    const nativeFileSystem = createFileSystem();
+    const fileSystem = overrideFileSystem(nativeFileSystem, {
+      writeTextFile: (path, data) =>
+        path.endsWith("package.json")
+          ? Promise.reject(expected)
+          : nativeFileSystem.writeTextFile(path, data),
+    });
+
+    const error = await assertRejects(() =>
+      createProject(
+        baseRequest(parentDir),
+        { fileSystem } satisfies CreateProjectDependencies,
+      )
+    );
+
+    assertEquals(error, expected);
+  });
+
+  projectTest("routes Deno metadata through the injected filesystem", async (parentDir) => {
+    const expected = new Error("Deno metadata write failed");
+    const nativeFileSystem = createFileSystem();
+    const fileSystem = overrideFileSystem(nativeFileSystem, {
+      writeTextFile: (path, data) =>
+        path.endsWith("deno.json")
+          ? Promise.reject(expected)
+          : nativeFileSystem.writeTextFile(path, data),
+    });
+
+    const error = await assertRejects(() =>
+      createProject(
+        baseRequest(parentDir, { runtime: "deno" }),
+        { fileSystem } satisfies CreateProjectDependencies,
+      )
+    );
+
+    assertEquals(error, expected);
+  });
+
   projectTest("removes a partial temporary .gitignore after a write failure", async (parentDir) => {
     const nativeFileSystem = createFileSystem();
     const expected = new Error("partial temporary write");
