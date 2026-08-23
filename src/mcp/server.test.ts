@@ -1093,6 +1093,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
+      registerResource("test:punctuated-opaque", {
+        id: "test:punctuated-opaque",
+        pattern: "urn:ietf_:xml",
+        description: "Punctuated opaque namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
       registerResource("test:custom-opaque", {
         id: "test:custom-opaque",
         pattern: "custom:namespace/path:literal",
@@ -1111,6 +1118,10 @@ describe("mcp/server", () => {
       }).resourceTemplates;
       assertEquals(templates.some((entry) => entry.name === "test:isbn"), false);
       assertEquals(templates.some((entry) => entry.name === "test:ietf"), false);
+      assertEquals(
+        templates.some((entry) => entry.name === "test:punctuated-opaque"),
+        false,
+      );
       assertEquals(templates.some((entry) => entry.name === "test:custom-opaque"), false);
 
       const resourcesResponse = await server.handleRequest({
@@ -1123,6 +1134,7 @@ describe("mcp/server", () => {
       }).resources;
       assertEquals(resources.some((entry) => entry.name === "test:isbn"), true);
       assertEquals(resources.some((entry) => entry.name === "test:ietf"), true);
+      assertEquals(resources.some((entry) => entry.name === "test:punctuated-opaque"), true);
       assertEquals(resources.some((entry) => entry.name === "test:custom-opaque"), true);
     });
 

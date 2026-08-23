@@ -14,6 +14,11 @@ function isParameterNamePart(code: number): boolean {
   return isParameterNameStart(code) || isAsciiDigit(code);
 }
 
+function isParameterBoundary(character: string | undefined): boolean {
+  return character === "/" || character === "?" || character === "&" ||
+    character === "=" || character === "#";
+}
+
 function escapeRegExp(value: string): string {
   let escaped = "";
   for (let index = 0; index < value.length; index++) {
@@ -55,13 +60,16 @@ function transformResourcePattern(
   let value = "";
   let literalStart = 0;
   let parameterized = false;
+  let segmentParameterized = false;
 
   for (let index = 0; index < pattern.length; index++) {
+    if (isParameterBoundary(pattern[index])) {
+      segmentParameterized = false;
+    }
     if (pattern[index] !== ":") continue;
-    const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
     const firstNameCode = pattern.charCodeAt(index + 1);
     if (
-      isAsciiLetter(previousCode) || isAsciiDigit(previousCode) ||
+      (index !== 0 && !isParameterBoundary(pattern[index - 1]) && !segmentParameterized) ||
       !isParameterNameStart(firstNameCode)
     ) {
       continue;
@@ -74,6 +82,7 @@ function transformResourcePattern(
     literalStart = end;
     index = end - 1;
     parameterized = true;
+    segmentParameterized = true;
   }
   value += transformLiteral(pattern.slice(literalStart));
   return { value, parameterized };

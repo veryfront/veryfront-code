@@ -98,6 +98,16 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("urn:ietf:params"), ietf);
       assertEquals(resourceRegistry.findByPattern("urn:ietf:anything"), undefined);
 
+      const punctuated = resource({
+        pattern: "urn:ietf_:xml",
+        description: "Punctuated IETF namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(punctuated.id, punctuated);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf_:xml"), punctuated);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf_anything"), undefined);
+
       const custom = resource({
         pattern: "custom:namespace/path:literal",
         description: "Opaque custom namespace",
