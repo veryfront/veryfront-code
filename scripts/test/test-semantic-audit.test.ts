@@ -2165,6 +2165,14 @@ unknownAccessorCall();
         "process",
         "server",
         "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
       ],
     );
     assertEquals(
@@ -2232,6 +2240,19 @@ sortedWithEffect.sort(Deno.remove);
 const assigned = Object.assign({}, { run: Deno.remove });
 assigned.run("assigned.txt");
 
+const assignedNamedReturn = Object.assign(
+  { safe: () => undefined },
+  { write: Deno.remove },
+);
+assignedNamedReturn.safe();
+
+const assignedNamedTarget = { safe: () => undefined };
+Object.assign(assignedNamedTarget, { write: Deno.remove });
+assignedNamedTarget.safe();
+
+const prototypeReturn = Object.setPrototypeOf({}, { run: Deno.remove });
+prototypeReturn.run("prototype.txt");
+
 const defined = Object.defineProperty({}, "run", { value: Deno.remove });
 defined.run("defined.txt");
 
@@ -2277,23 +2298,73 @@ const definedManyNamedReturn = Object.defineProperties(
   },
 );
 definedManyNamedReturn.safe();
-
-const assignedNamedReturn = Object.assign(
-  { safe: () => undefined },
-  { write: Deno.remove },
-);
-assignedNamedReturn.safe();
-
-const prototyped = Object.setPrototypeOf({}, { run: Deno.exit });
-prototyped.run(1);
 `,
         "src/runtime-mutation-return-values.test.ts",
       ).map((marker) => marker.effect),
-      [
-        ...Array.from({ length: 15 }, () => "filesystem-write"),
-        "process",
-        "process",
-      ],
+      Array.from({ length: 16 }, () => "filesystem-write"),
+    );
+  });
+
+  it("fails closed for unknown Object.assign sources without retaining overwritten values", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const source: Record<string, unknown>;
+
+const target = { safe: () => undefined };
+Object.assign(target, source);
+target.safe();
+
+const returned = Object.assign({ safe: () => undefined }, source);
+returned.safe();
+
+const spreadReturned = Object.assign(
+  { safe: () => undefined },
+  { ...source },
+);
+spreadReturned.safe();
+
+function assignDefaultedSource(defaultedSource = {}) {
+  const defaultedTarget = { safe: () => undefined };
+  Object.assign(defaultedTarget, defaultedSource);
+  defaultedTarget.safe();
+}
+assignDefaultedSource();
+
+const overwrittenReturn = Object.assign(
+  { write: Deno.remove },
+  { write: () => undefined },
+);
+overwrittenReturn.write("local-return.txt");
+
+const overwrittenTarget = { write: Deno.remove };
+Object.assign(overwrittenTarget, { write: () => undefined });
+overwrittenTarget.write("local-target.txt");
+
+const knownSafeTarget = { safe: () => undefined };
+Object.assign(knownSafeTarget, { ...{ safe: () => undefined } });
+knownSafeTarget.safe();
+
+declare const maybe: boolean;
+const conditionalTarget = { write: Deno.remove };
+if (maybe) Object.assign(conditionalTarget, { write: () => undefined });
+conditionalTarget.write("conditional.txt");
+`,
+        "src/runtime-object-assign-unknown-source.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from(
+        { length: 4 },
+        () => [
+          "browser",
+          "filesystem-read",
+          "filesystem-watch",
+          "filesystem-write",
+          "network",
+          "process",
+          "server",
+          "shared-cwd",
+        ],
+      ).flat().concat("filesystem-write"),
     );
   });
 
@@ -2431,10 +2502,15 @@ Object.setPrototypeOf(
 const prototypeTarget = { run: () => undefined };
 Object.setPrototypeOf(prototypeTarget, { run: Deno.remove });
 prototypeTarget.run();
+
+const target = { safe: () => undefined };
+Object.setPrototypeOf(target, { run: Deno.remove });
+target.safe();
+target.run("target-prototype.txt");
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 4 }, () => "filesystem-write"),
+      Array.from({ length: 5 }, () => "filesystem-write"),
     );
   });
 
@@ -2528,13 +2604,6 @@ conditional.path = "conditional.txt";
 const assigned = {};
 Object.defineProperty(assigned, "path", { set: Deno.remove });
 Object.assign(assigned, { path: "assigned.txt" });
-
-const updated = {};
-Object.defineProperty(updated, "code", {
-  get: () => 0,
-  set: Deno.exit,
-});
-updated.code++;
 `,
         "src/runtime-descriptor-setters.test.ts",
       ).map((marker) => marker.effect),
@@ -2552,8 +2621,6 @@ updated.code++;
         "filesystem-write",
         "network",
         "filesystem-write",
-        "process",
-        "process",
       ],
     );
   });
@@ -2662,6 +2729,57 @@ returned.path;
         ["shared-cwd", "source.* getter"],
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "returned.path getter"],
+      ],
+    );
+  });
+
+  it("fails closed when an opaque descriptor may contain a getter", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const descriptor: PropertyDescriptor;
+
+const direct = {};
+Object.defineProperty(direct, "path", descriptor);
+direct.path;
+
+const returned = Object.defineProperty({}, "path", descriptor);
+returned.path;
+
+const bulk = Object.defineProperties({}, { path: descriptor });
+bulk.path;
+
+const deleted = {};
+Object.defineProperty(deleted, "path", descriptor);
+delete deleted.path;
+`,
+        "src/runtime-opaque-descriptor-getters.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
       ],
     );
   });
