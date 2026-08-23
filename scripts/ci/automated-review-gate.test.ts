@@ -212,6 +212,7 @@ describe("automated review gate", () => {
         reviews: [
           review({ commit_id: STALE_SHA }),
           review({ state: "PENDING" }),
+          review({ state: "CHANGES_REQUESTED" }),
           review({ state: "DISMISSED" }),
           review({ user: { login: "maintainer" } }),
         ],

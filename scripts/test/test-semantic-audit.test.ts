@@ -2377,6 +2377,11 @@ const source = maybe ? { run: Deno.cwd } : loadSource();
 Object.assign({}, source).run();
 const box = { source: maybe ? { run: Deno.cwd } : loadSource() };
 Object.assign({}, box.source).run();
+declare const other: boolean;
+const nested = maybe
+  ? (other ? { run: Deno.cwd } : loadSource())
+  : { run: Deno.cwd };
+Object.assign({}, nested).run();
 `,
       "src/runtime-object-assign-partial-source.test.ts",
     ).map((marker) => marker.effect);
@@ -2474,10 +2479,19 @@ try {
   Object.assign(assignTarget, { run: () => undefined });
 } catch {}
 assignTarget.run("assign.txt");
+
+const caughtDefineTarget = {};
+Object.defineProperty(caughtDefineTarget, "run", { value: Deno.remove });
+try {
+  Object.defineProperty(caughtDefineTarget, "run", {
+    value: () => undefined,
+  });
+} catch {}
+caughtDefineTarget.run("caught-define.txt");
 `,
         "src/runtime-reflect-failed-mutations.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 4 }, () => "filesystem-write"),
+      Array.from({ length: 5 }, () => "filesystem-write"),
     );
   });
 
@@ -2570,10 +2584,18 @@ const replacedPrototype = {};
 Object.setPrototypeOf(replacedPrototype, { run: Deno.remove });
 Object.setPrototypeOf(replacedPrototype, null);
 replacedPrototype.run();
+
+const retainedPrototype = {};
+Object.setPrototypeOf(retainedPrototype, { run: Deno.remove });
+Object.preventExtensions(retainedPrototype);
+try {
+  Object.setPrototypeOf(retainedPrototype, null);
+} catch {}
+retainedPrototype.run("retained-prototype.txt");
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 7 }, () => "filesystem-write"),
+      Array.from({ length: 8 }, () => "filesystem-write"),
     );
   });
 
@@ -2833,6 +2855,24 @@ Object.defineProperty(madeEnumerable, "run", {
 Object.defineProperty(madeEnumerable, "run", { enumerable: true });
 Object.assign({}, madeEnumerable).run("enumerable.txt");
 
+declare const chooseEnumerable: boolean;
+const hiddenAlternative = {};
+Object.defineProperty(hiddenAlternative, "run", {
+  configurable: true,
+  get: () => undefined,
+});
+const visibleAlternative = {};
+Object.defineProperty(visibleAlternative, "run", {
+  configurable: true,
+  enumerable: true,
+  get: () => undefined,
+});
+const mixedEnumerable = chooseEnumerable
+  ? hiddenAlternative
+  : visibleAlternative;
+Object.defineProperty(mixedEnumerable, "run", { get: () => Deno.remove });
+Object.assign({}, mixedEnumerable).run("mixed-enumerable.txt");
+
 const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
 returned.path;
 `,
@@ -2844,6 +2884,7 @@ returned.path;
         ["shared-cwd", "Deno.cwd"],
         ["shared-cwd", "Object.assign(source getter)"],
         ["shared-cwd", "source.* getter"],
+        ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["filesystem-write", "run"],
         ["shared-cwd", "Deno.cwd"],

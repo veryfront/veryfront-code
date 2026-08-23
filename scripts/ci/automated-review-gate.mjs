@@ -22,7 +22,6 @@ const NO_COMMIT_RESOLVER = () => Promise.resolve(undefined);
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 const SUBMITTED_REVIEW_STATES = new Set([
   "APPROVED",
-  "CHANGES_REQUESTED",
   "COMMENTED",
 ]);
 

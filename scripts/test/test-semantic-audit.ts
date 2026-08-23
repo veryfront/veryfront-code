@@ -4597,7 +4597,7 @@ function bindRuntimeCallMutation(
         invocation.args[1],
         imports,
         scopes,
-        canonicalName === "Object.setPrototypeOf",
+        canonicalName === "Object.setPrototypeOf" && allowClearing,
       );
       continue;
     }
@@ -4618,7 +4618,7 @@ function bindRuntimeCallMutation(
         invocation.args,
       )
     ) {
-      if (canonicalName !== "Reflect.defineProperty") {
+      if (canonicalName !== "Reflect.defineProperty" && allowClearing) {
         clearRuntimeDescriptorProperty(
           target,
           accessor.property,
@@ -4992,6 +4992,18 @@ function mutationCallResultRuntimeBinding(
           accessor.descriptor,
           accessors.enumerable,
         );
+        if (
+          accessor.property !== undefined &&
+          (runtimeDescriptorDefinesField(accessor.descriptor, "get") ||
+            runtimeDescriptorDefinesField(accessor.descriptor, "set"))
+        ) {
+          result = appendRuntimeMutationResultProperty(
+            result,
+            accessor.property,
+            { kind: "property-metadata", enumerable: effectiveEnumerable },
+            true,
+          );
+        }
         const getterInvocationBinding = unionRuntimeBindings([
           ...accessors.getterInvocationExpressions.flatMap((expression) =>
             runtimeBindingForExpression(expression, imports, scopes) ?? []
@@ -5505,6 +5517,20 @@ function bindRuntimeAccessorMutation(
     descriptor,
     accessors.enumerable,
   );
+  if (
+    property !== undefined &&
+    (runtimeDescriptorDefinesField(descriptor, "get") ||
+      runtimeDescriptorDefinesField(descriptor, "set"))
+  ) {
+    bindRuntimeNamedPropertyMutationBinding(
+      target,
+      property,
+      { kind: "property-metadata", enumerable: effectiveEnumerable },
+      descriptor,
+      imports,
+      scopes,
+    );
+  }
   const getterInvocationBinding = unionRuntimeBindings([
     ...accessors.getterInvocationExpressions.flatMap((expression) =>
       runtimeBindingForExpression(expression, imports, scopes) ?? []
@@ -5680,11 +5706,7 @@ function retainedRuntimeDescriptorBinding(
     ? runtimeDescriptorBooleanField(descriptor, "enumerable")
     : undefined;
   const existingBindings = flattenRuntimeBindings(existing);
-  const existingEnumerable = existingBindings.find((candidate) =>
-    candidate.kind === "property-getter-effect" ||
-    candidate.kind === "property-getter-value" ||
-    candidate.kind === "property-metadata"
-  )?.enumerable;
+  const existingEnumerable = runtimeAccessorEnumerability(existing);
   const retainedBindings: RuntimeBinding[] = existingBindings.flatMap(
     (candidate) => {
       const retained = candidate.kind === "property-setter"
@@ -5730,13 +5752,35 @@ function runtimeDescriptorEffectiveEnumerable(
 ): boolean | undefined {
   if (runtimeDescriptorDefinesField(descriptor, "enumerable")) return declared;
   if (!target || property === undefined) return declared;
-  return flattenRuntimeBindings(
+  const values = runtimeAccessorEnumerabilityValues(
     runtimePropertyResolution(target, property, true).binding,
-  ).find((candidate) =>
-    candidate.kind === "property-getter-effect" ||
-    candidate.kind === "property-getter-value" ||
-    candidate.kind === "property-metadata"
-  )?.enumerable ?? declared;
+  );
+  return values.size === 0
+    ? declared
+    : values.size === 1
+    ? values.values().next().value
+    : undefined;
+}
+
+function runtimeAccessorEnumerability(
+  binding: RuntimeBinding | undefined,
+): boolean | undefined {
+  const values = runtimeAccessorEnumerabilityValues(binding);
+  return values.size === 1 ? values.values().next().value : undefined;
+}
+
+function runtimeAccessorEnumerabilityValues(
+  binding: RuntimeBinding | undefined,
+): ReadonlySet<boolean | undefined> {
+  return new Set(
+    flattenRuntimeBindings(binding).flatMap((candidate) =>
+      candidate.kind === "property-getter-effect" ||
+        candidate.kind === "property-getter-value" ||
+        candidate.kind === "property-metadata"
+        ? [candidate.enumerable]
+        : []
+    ),
+  );
 }
 
 function runtimeDescriptorAccessorExpressions(descriptor: unknown): {
@@ -7807,12 +7851,13 @@ function alternativeRuntimeBinding(
 function partialAlternativeRuntimeBinding(
   alternatives: readonly (RuntimeBinding | undefined)[],
 ): RuntimeBinding | undefined {
+  const partial = alternatives.some((candidate) =>
+    candidate === undefined || runtimeBindingHasPartialAlternative(candidate)
+  );
   const binding = unionRuntimeBindings(
     alternatives.flatMap((candidate) => candidate ?? []),
   );
-  return binding && alternatives.some((candidate) => candidate === undefined)
-    ? { kind: "partial", binding }
-    : binding;
+  return binding && partial ? { kind: "partial", binding } : binding;
 }
 
 function boundCallableRuntimeBinding(
