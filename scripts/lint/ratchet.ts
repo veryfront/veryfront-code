@@ -39,6 +39,10 @@
  *  - `--update`          write that baseline (needs `--allow-write`)
  *  - `--list`            print every finding before the verdict
  *
+ * Both baseline flags refuse (exit 1, nothing written) while a file cannot be
+ * parsed or a `blocking` finding exists — a baseline produced then would look
+ * like a fix while the check itself still fails.
+ *
  * Exit codes: 0 ok or improved, 1 regression / blocking finding / unparsable
  * file, 2 configuration error (missing root, malformed baseline, bad flag).
  */
@@ -626,6 +630,14 @@ export async function runRatchet(
         `${spec.label}: refusing to produce a baseline while files cannot be parsed:`,
       );
       for (const failure of parseFailures) err(`  ${failure}`);
+      return 1;
+    }
+    if (blocking.length > 0) {
+      err(
+        `${spec.label}: refusing to produce a baseline while blocking findings ` +
+          `exist — they are never baselined, so the check would still fail:`,
+      );
+      for (const finding of blocking) err(formatFinding(finding));
       return 1;
     }
     const serialized = serializeBaseline(kind, current);

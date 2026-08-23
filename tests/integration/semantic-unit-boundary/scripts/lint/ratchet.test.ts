@@ -318,6 +318,46 @@ describe("runRatchet", () => {
     );
   });
 
+  it("refuses --update and --print-baseline while a blocking finding exists", async () => {
+    // Writing (or printing) a baseline here would report success while the
+    // check itself still hard-fails — blocking findings are never baselined.
+    await Deno.writeTextFile(
+      `${root}todos.json`,
+      '{"src/a.test.ts": 1, "src/b.test.ts": 1}',
+    );
+    const spec = perFile({
+      scan: (source, file) => todoScan(source, file).map((f) => ({ ...f, blocking: f.line === 3 })),
+    });
+    const before = await Deno.readTextFile(`${root}todos.json`);
+
+    const updated = capture();
+    assertEquals(
+      await runRatchet(spec, { repoRoot: root, args: ["--update"], ...updated.io }),
+      1,
+    );
+    assertEquals(
+      await Deno.readTextFile(`${root}todos.json`),
+      before,
+      "the baseline file must not be written",
+    );
+    assertMatch(
+      updated.stderr.join("\n"),
+      /refusing to produce a baseline while blocking findings exist[^\n]*\n {2}src\/a\.test\.ts:3 {2}todo/,
+    );
+
+    const printed = capture();
+    assertEquals(
+      await runRatchet(spec, {
+        repoRoot: root,
+        args: ["--print-baseline"],
+        ...printed.io,
+      }),
+      1,
+    );
+    assertEquals(printed.stdout, [], "no baseline may reach stdout");
+    assertMatch(printed.stderr.join("\n"), /src\/a\.test\.ts:3 {2}todo/);
+  });
+
   it("fails closed when a matcher cannot parse a file", async () => {
     await Deno.writeTextFile(`${root}todos.json`, "{}");
     const spec = perFile({
