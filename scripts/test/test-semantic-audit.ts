@@ -1404,6 +1404,7 @@ function sharedGlobalMutationTarget(
       return { kind: "runtime-root", symbol: name };
     }
     const isSharedObject = resolved.binding?.kind === "shared-object" ||
+      isGlobalRuntimeObject(name, scopes, importedNames) ||
       isGlobalIntrinsic(name, scopes, importedNames);
     return isSharedObject ? { kind: "shared-object", symbol: name } : undefined;
   }
@@ -1424,6 +1425,17 @@ function sharedGlobalMutationTarget(
     return { kind: "shared-object", symbol: chain.join(".") };
   }
   return undefined;
+}
+
+function isGlobalRuntimeObject(
+  name: string,
+  scopes: readonly Scope[],
+  importedNames: ReadonlySet<string>,
+): boolean {
+  const resolved = resolveLocalBinding(name, scopes);
+  if (resolved.binding?.kind === "global-runtime") return true;
+  return (name === "Deno" || name === "process") &&
+    !resolved.declared && !importedNames.has(name);
 }
 
 function isGlobalIntrinsic(

@@ -431,13 +431,29 @@ await writeAgain("tmp.txt", "x");
 const fs = await import("node:fs/promises");
 const aliasedFs = fs;
 await aliasedFs.readFile("deno.json");
+const watcher = Deno.watchFs;
+const watcherAgain = watcher;
+watcherAgain(".");
 `,
         "src/aliased-effects.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
       [
         ["filesystem-write", "writeAgain"],
         ["filesystem-read", "aliasedFs.readFile"],
+        ["filesystem-watch", "watcherAgain"],
       ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(Deno: { watchFs(path: string): unknown }) {
+  const watcher = Deno.watchFs;
+  watcher(".");
+}
+`,
+        "src/shadowed-global-runtime-method-alias.test.ts",
+      ),
+      [],
     );
   });
 
@@ -790,6 +806,45 @@ process.kill(123, "SIGTERM");
     );
   });
 
+  it("classifies mutation of global runtime members through direct and aliased receivers", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const originalStat = Deno.stat;
+Deno.stat = originalStat;
+const denoRuntime = Deno;
+denoRuntime.noColor = false;
+const processRuntime = process;
+processRuntime.title = "veryfront-test";
+`,
+        "src/global-runtime-member-mutation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Deno.stat"],
+        ["process", "denoRuntime.noColor"],
+        ["process", "processRuntime.title"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(
+  Deno: { stat: unknown; noColor: boolean },
+  process: { title: string },
+) {
+  Deno.stat = undefined;
+  const denoRuntime = Deno;
+  denoRuntime.noColor = false;
+  const processRuntime = process;
+  processRuntime.title = "local";
+}
+`,
+        "src/shadowed-global-runtime-member-mutation.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies unshadowed global Worker construction as process debt", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -993,7 +1048,7 @@ localDeno.exit = () => undefined;
     assertEquals(
       markers.map((marker) => [marker.effect, marker.line, marker.symbol]),
       [
-        ["server", 8, "denoRuntime.serve"],
+        ["process", 8, "denoRuntime.serve"],
         ["process", 9, "denoRuntime.addSignalListener"],
         ["process", 10, "denoRuntime.removeSignalListener"],
         ["process", 11, "denoRuntime.exit"],

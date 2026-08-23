@@ -1995,7 +1995,6 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("src/agent/hosted/veryfront-cloud-agent-service.test.ts", [
       "filesystem-write",
       "process",
-      "server",
       "network",
     ], {
       "disposition": "integration-relocation",
@@ -6171,7 +6170,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry(
       "src/server/service-server.test.ts",
-      ["process", "server", "network"],
+      ["process", "network"],
       {
         "disposition": "integration-relocation",
         "owner": "server-routes",
@@ -6243,6 +6242,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/server/services/rsc/endpoints/handler-registry.test.ts", [
       "filesystem-read",
+      "process",
     ], {
       "disposition": "integration-relocation",
       "owner": "server-routes",
@@ -6553,7 +6553,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4n",
     }),
-    entry("src/transforms/esm/http-cache.test.ts", ["filesystem-read"], {
+    entry("src/transforms/esm/http-cache.test.ts", [
+      "filesystem-read",
+      "process",
+    ], {
       "disposition": "integration-relocation",
       "owner": "core-runtime",
       "rationale":
@@ -6803,6 +6806,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("src/transforms/npm-import-rewrites.test.ts", [
       "filesystem-read",
       "filesystem-write",
+      "process",
       "shared-cwd",
     ], {
       "disposition": "integration-relocation",
