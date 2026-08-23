@@ -31,17 +31,16 @@ export async function findAutomatedReview(
 
   if (allowPullRequestReviews) {
     for (const review of reviews) {
-      const login = review?.user?.login;
       const state = typeof review?.state === "string"
         ? review.state.toUpperCase()
         : "";
       if (
-        BOTS.has(login) && isPinnedBot(review.user, login) &&
+        isPinnedBot(review?.user, CODEX_LOGIN) &&
         review?.commit_id?.toLowerCase() === headSha.toLowerCase() &&
         SUBMITTED_REVIEW_STATES.has(state)
       ) {
         return {
-          reviewer: login,
+          reviewer: CODEX_LOGIN,
           source: "pull-request-review",
           state,
           url: typeof review.html_url === "string"
@@ -126,6 +125,86 @@ async function collectAll(github, endpoint, parameters, source) {
   return items;
 }
 
+async function uniqueOpenPullForHead(github, owner, repo, headSha) {
+  const pulls = await collectAll(
+    github,
+    github.rest.repos.listPullRequestsAssociatedWithCommit,
+    { owner, repo, commit_sha: headSha },
+    "associated pull requests",
+  );
+  const matches = pulls.filter((pull) =>
+    pull?.state === "open" && pull?.head?.sha === headSha
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      "Captured head must belong to exactly one open pull request",
+    );
+  }
+  return matches[0];
+}
+
+function isCodeRabbitCompletion(status) {
+  return status?.context === "CodeRabbit" &&
+    status?.state === "success" &&
+    status?.description === "Review completed" &&
+    isPinnedBot(status?.creator, CODERABBIT_LOGIN);
+}
+
+/** Publish monotonic CodeRabbit completion for one uniquely associated PR. */
+export async function publishCodeRabbitCompletionStatus({
+  github,
+  owner,
+  repo,
+  headSha,
+  status,
+}) {
+  if (!FULL_SHA.test(headSha) || !isCodeRabbitCompletion(status)) {
+    return { state: "ignored", review: undefined, failure: undefined };
+  }
+
+  try {
+    const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
+    const current = await github.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: pull.number,
+    });
+    if (
+      current?.data?.state !== "open" ||
+      current?.data?.head?.sha !== headSha
+    ) {
+      throw new Error(
+        "Associated pull request head changed before publication",
+      );
+    }
+    const pullUrl = current.data.html_url ?? pull.html_url;
+    const state = current.data.draft === true ? "pending" : "success";
+    const review = state === "success"
+      ? {
+        reviewer: CODERABBIT_LOGIN,
+        source: "coderabbit-status",
+        state: "COMMENTED",
+        url: pullUrl,
+      }
+      : undefined;
+    await github.rest.repos.createCommitStatus({
+      owner,
+      repo,
+      sha: headSha,
+      state,
+      context: AUTOMATED_REVIEW_STATUS_CONTEXT,
+      description: state === "success"
+        ? `Reviewed by ${CODERABBIT_LOGIN}`
+        : "Draft pull request waits for ready for review",
+      target_url: pullUrl,
+    });
+    return { state, review, failure: undefined };
+  } catch (error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    return { state: "failure", review: undefined, failure };
+  }
+}
+
 /** Publish the review decision on the captured head after checking for drift. */
 export async function publishAutomatedReviewStatus({
   github,
@@ -180,6 +259,14 @@ export async function publishAutomatedReviewStatus({
         },
         { allowPullRequestReviews },
       );
+      if (review?.source === "coderabbit-status") {
+        const pull = await uniqueOpenPullForHead(github, owner, repo, headSha);
+        if (pull.number !== pullNumber) {
+          throw new Error(
+            "CodeRabbit status belongs to a different pull request",
+          );
+        }
+      }
       if (!review) {
         throw new Error("No automated review proof for captured head");
       }

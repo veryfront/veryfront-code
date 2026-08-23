@@ -7,16 +7,13 @@ on:
     types: [submitted, dismissed]
   issue_comment:
     types: [created, edited, deleted]
+  status:
 
 permissions:
   contents: read
   issues: read
   pull-requests: read
   statuses: write
-
-concurrency:
-  group: automated-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  queue: max
 
 jobs:
   review:
@@ -26,9 +23,13 @@ jobs:
     # write a commit status, so skip it there and let the trusted
     # pull_request_target and issue_comment runs publish the decision instead.
     if: >-
+      github.event_name != 'status' &&
       (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
       (github.event_name != 'pull_request_review' ||
        github.event.pull_request.head.repo.full_name == github.repository)
+    concurrency:
+      group: automated-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -104,5 +105,63 @@ jobs:
                 `Automated review submitted by ${result.review.reviewer} for ${headSha.slice(0, 12)}.`,
               );
             } else {
+              core.warning(result.failure.message);
+            }
+
+  status_review:
+    name: publish completed CodeRabbit review status
+    # This SHA-scoped path publishes only durable completion success. It never
+    # runs mutable PR reconciliation, so it can safely use separate concurrency.
+    if: >-
+      github.event_name == 'status' &&
+      github.event.context == 'CodeRabbit' &&
+      github.event.state == 'success' &&
+      github.event.description == 'Review completed' &&
+      github.event.creator.login == 'coderabbitai[bot]' &&
+      github.event.creator.id == 136622811 &&
+      github.event.creator.type == 'Bot'
+    concurrency:
+      group: automated-review-status-${{ github.event.sha }}
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Publish authenticated CodeRabbit completion
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          retries: 3
+          script: |
+            const { pathToFileURL } = require("node:url");
+            const gateUrl = pathToFileURL(
+              `${process.env.GITHUB_WORKSPACE}/scripts/ci/automated-review-gate.mjs`,
+            ).href;
+            let publishCodeRabbitCompletionStatus;
+            try {
+              ({ publishCodeRabbitCompletionStatus } = await import(gateUrl));
+            } catch (error) {
+              core.setFailed(`Could not load the review gate: ${error}`);
+              return;
+            }
+            const result = await publishCodeRabbitCompletionStatus({
+              github,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              headSha: context.payload.sha,
+              status: {
+                context: context.payload.context,
+                state: context.payload.state,
+                description: context.payload.description,
+                creator: context.payload.creator,
+              },
+            });
+            if (result.state === "success") {
+              core.notice(
+                `Authenticated CodeRabbit completion for ${context.payload.sha.slice(0, 12)}.`,
+              );
+            } else if (result.failure) {
               core.warning(result.failure.message);
             }
