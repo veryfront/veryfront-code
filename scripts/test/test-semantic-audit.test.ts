@@ -1698,6 +1698,233 @@ knownWrite("known-write.txt", "x");
     );
   });
 
+  it("widens exact arrays after call-based mutations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const pushed = [() => undefined];
+pushed.push(Deno.writeTextFile);
+const [, pushedWrite] = [...pushed, () => undefined];
+pushedWrite("pushed.txt", "x");
+
+const assigned = [() => undefined];
+Object.assign(assigned, { 1: Deno.writeTextFile });
+const [, assignedWrite] = [...assigned, () => undefined];
+assignedWrite("assigned.txt", "x");
+
+const defined = [() => undefined];
+Object.defineProperty(defined, "1", { value: Deno.writeTextFile });
+const [, definedWrite] = [...defined, () => undefined];
+definedWrite("defined.txt", "x");
+
+const reflected = [() => undefined];
+Reflect.set(reflected, "1", Deno.writeTextFile);
+const [, reflectedWrite] = [...reflected, () => undefined];
+reflectedWrite("reflected.txt", "x");
+
+const aliasedTarget = [() => undefined];
+const targetAlias = aliasedTarget;
+targetAlias.unshift(Deno.writeTextFile);
+const [aliasedWrite] = [...aliasedTarget, () => undefined];
+aliasedWrite("aliased.txt", "x");
+
+const nested = { values: [() => undefined] };
+nested.values.splice(1, 0, Deno.writeTextFile);
+const [, nestedWrite] = [...nested.values, () => undefined];
+nestedWrite("nested.txt", "x");
+
+const reordered = [() => undefined, Deno.writeTextFile];
+reordered.reverse();
+const [reorderedWrite] = [...reordered, () => undefined];
+reorderedWrite("reordered.txt", "x");
+
+const definedMany = [() => undefined];
+Object.defineProperties(definedMany, {
+  1: { value: Deno.writeTextFile },
+});
+const [, definedManyWrite] = [...definedMany, () => undefined];
+definedManyWrite("defined-many.txt", "x");
+
+const reflectDefined = [() => undefined];
+Reflect.defineProperty(reflectDefined, "1", {
+  value: Deno.writeTextFile,
+});
+const [, reflectDefinedWrite] = [...reflectDefined, () => undefined];
+reflectDefinedWrite("reflect-defined.txt", "x");
+
+const prototypeCall = [() => undefined];
+Array.prototype.push.call(prototypeCall, Deno.writeTextFile);
+const [, prototypeCallWrite] = [...prototypeCall, () => undefined];
+prototypeCallWrite("prototype-call.txt", "x");
+
+const prototypeApply = [() => undefined];
+Array.prototype.push.apply(prototypeApply, [Deno.writeTextFile]);
+const [, prototypeApplyWrite] = [...prototypeApply, () => undefined];
+prototypeApplyWrite("prototype-apply.txt", "x");
+
+const reflectApply = [() => undefined];
+Reflect.apply(Array.prototype.push, reflectApply, [Deno.writeTextFile]);
+const [, reflectApplyWrite] = [...reflectApply, () => undefined];
+reflectApplyWrite("reflect-apply.txt", "x");
+
+const aliasedCall = [() => undefined];
+const push = aliasedCall.push;
+push.call(aliasedCall, Deno.writeTextFile);
+const [, aliasedCallWrite] = [...aliasedCall, () => undefined];
+aliasedCallWrite("aliased-call.txt", "x");
+
+const dynamicCall = [() => undefined];
+const method = "push";
+dynamicCall[method](Deno.writeTextFile);
+const [, dynamicCallWrite] = [...dynamicCall, () => undefined];
+dynamicCallWrite("dynamic-call.txt", "x");
+
+const getterDefined = [() => undefined];
+Object.defineProperty(getterDefined, "1", {
+  get: () => Deno.writeTextFile,
+});
+const [, getterDefinedWrite] = [...getterDefined, () => undefined];
+getterDefinedWrite("getter-defined.txt", "x");
+
+const getterDefinedMany = [() => undefined];
+Object.defineProperties(getterDefinedMany, {
+  1: { get: () => Deno.writeTextFile },
+});
+const [, getterDefinedManyWrite] = [
+  ...getterDefinedMany,
+  () => undefined,
+];
+getterDefinedManyWrite("getter-defined-many.txt", "x");
+
+const prototypeObject = [() => undefined];
+Object.setPrototypeOf(prototypeObject, { 1: Deno.writeTextFile });
+const [, prototypeObjectWrite] = [...prototypeObject, () => undefined];
+prototypeObjectWrite("prototype-object.txt", "x");
+
+const prototypeReflect = [() => undefined];
+Reflect.setPrototypeOf(prototypeReflect, { 1: Deno.writeTextFile });
+const [, prototypeReflectWrite] = [...prototypeReflect, () => undefined];
+prototypeReflectWrite("prototype-reflect.txt", "x");
+
+const assignedGetter = [() => undefined];
+Object.assign(assignedGetter, {
+  get 1() {
+    return Deno.writeTextFile;
+  },
+});
+const [, assignedGetterWrite] = [...assignedGetter, () => undefined];
+assignedGetterWrite("assigned-getter.txt", "x");
+
+const assignedDynamicGetter = [() => undefined];
+const assignedDynamicKey = "1";
+Object.assign(assignedDynamicGetter, {
+  get [assignedDynamicKey]() {
+    return Deno.writeTextFile;
+  },
+});
+const [, assignedDynamicGetterWrite] = [
+  ...assignedDynamicGetter,
+  () => undefined,
+];
+assignedDynamicGetterWrite("assigned-dynamic-getter.txt", "x");
+`,
+        "src/runtime-call-mutated-array-spreads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "pushedWrite"],
+        ["filesystem-write", "assignedWrite"],
+        ["filesystem-write", "definedWrite"],
+        ["filesystem-write", "reflectedWrite"],
+        ["filesystem-write", "aliasedWrite"],
+        ["filesystem-write", "nestedWrite"],
+        ["filesystem-write", "reorderedWrite"],
+        ["filesystem-write", "definedManyWrite"],
+        ["filesystem-write", "reflectDefinedWrite"],
+        ["filesystem-write", "prototypeCallWrite"],
+        ["filesystem-write", "prototypeApplyWrite"],
+        ["filesystem-write", "reflectApplyWrite"],
+        ["filesystem-write", "aliasedCallWrite"],
+        ["filesystem-write", "dynamicCallWrite"],
+        ["filesystem-write", "getterDefinedWrite"],
+        ["filesystem-write", "getterDefinedManyWrite"],
+        ["filesystem-write", "prototypeObjectWrite"],
+        ["filesystem-write", "prototypeReflectWrite"],
+        ["filesystem-write", "assignedGetterWrite"],
+        ["filesystem-write", "assignedDynamicGetterWrite"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const stable = [Deno.writeTextFile];
+stable.slice();
+const [, stableLocal] = [...stable, () => undefined];
+stableLocal();
+
+const fake = { push(_value: unknown) {} };
+fake.push(Deno.writeTextFile);
+
+const emptyPrototype = [() => undefined];
+Object.setPrototypeOf(emptyPrototype, {});
+const [, emptyPrototypeLocal] = [...emptyPrototype, () => undefined];
+emptyPrototypeLocal();
+`,
+        "src/local-non-mutating-array-calls.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const descriptor: PropertyDescriptor;
+const unknownAccessor = [() => undefined];
+Object.defineProperty(unknownAccessor, "1", descriptor);
+const [, unknownAccessorCall] = [
+  ...unknownAccessor,
+  () => undefined,
+];
+unknownAccessorCall();
+`,
+        "src/runtime-unknown-array-accessor.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const prototype: object;
+const unknownPrototype = [() => undefined];
+Object.setPrototypeOf(unknownPrototype, prototype);
+const [, unknownPrototypeCall] = [
+  ...unknownPrototype,
+  () => undefined,
+];
+unknownPrototypeCall();
+`,
+        "src/runtime-unknown-array-prototype.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ],
+    );
+  });
+
   it("classifies optional runtime calls", () => {
     assertEquals(
       collectSemanticMarkers(
