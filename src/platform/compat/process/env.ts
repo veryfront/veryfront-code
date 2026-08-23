@@ -14,6 +14,14 @@ const apply = Reflect.apply;
 const denoRuntime = IS_DENO ? getDenoRuntime() : undefined;
 const denoEnv = denoRuntime?.env;
 const denoEnvGet = denoEnv?.get;
+const allowDeniedDenoEnvTestOverlay = (() => {
+  if (!denoEnv || !denoEnvGet) return false;
+  try {
+    return apply(denoEnvGet, denoEnv, ["DENO_TESTING"]) === "1";
+  } catch {
+    return false;
+  }
+})();
 const MapConstructor = Map;
 const mapEntries = Map.prototype.entries;
 const mapGet = Map.prototype.get;
@@ -87,6 +95,10 @@ export function getHostEnv(key: string): string | undefined {
       // project cannot replace Deno.env.get after module initialization.
       value = apply(denoEnvGet, denoEnv, [key]);
     } catch {
+      if (allowDeniedDenoEnvTestOverlay) {
+        const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+        if (overlayResult.hasValue) return overlayResult.value;
+      }
       return undefined;
     }
 

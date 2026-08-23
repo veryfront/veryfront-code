@@ -313,7 +313,7 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "loadRemoteToolsFromSource");
     assertStringIncludes(guide, "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID");
     assertStringIncludes(guide, "tools: salesforceTools");
-    assertStringIncludes(guide, "Credentials stay in the host process");
+    assertStringIncludes(guide, "Credentials stay in the local runtime process");
     assertEquals(guide.includes("remoteTools:"), false);
     assertEquals(
       guide.includes(
