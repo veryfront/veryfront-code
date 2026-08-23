@@ -239,4 +239,28 @@ describe("readTypeScriptDecoratorOptions", () => {
       await remove(projectDir, { recursive: true });
     }
   });
+
+  it("preserves path-free diagnostics from a caller-owned bounded reader", async () => {
+    const error = await assertRejects(
+      () =>
+        readTypeScriptDecoratorOptions({
+          configPath: "/project/tsconfig.json",
+          readTextFile: (path) => {
+            if (path === "/project/tsconfig.json") {
+              return Promise.resolve(JSON.stringify({ extends: "./base.json" }));
+            }
+            return Promise.reject(
+              new TypeError("TypeScript configuration exceeds 1048576 bytes"),
+            );
+          },
+          resolveExtends: (specifier, fromPath) => {
+            const base = fromPath.slice(0, fromPath.lastIndexOf("/") + 1);
+            return Promise.resolve(`${base}${specifier.replace(/^\.\//, "")}`);
+          },
+        }),
+      TypeError,
+      "exceeds 1048576 bytes",
+    );
+    assertInstanceOf(error, TypeError);
+  });
 });

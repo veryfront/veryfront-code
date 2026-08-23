@@ -66,6 +66,27 @@ function isMissingFileError(error: unknown): boolean {
   return descriptor?.value === "ENOENT" || descriptor?.value === "NotFound";
 }
 
+function diagnosticIncludesPath(value: unknown, path: string, seen = new Set<object>()): boolean {
+  if (path.length === 0) return false;
+  if (typeof value === "string") return value.includes(path);
+  if (value === null || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return true;
+  }
+
+  for (const descriptor of Object.values(descriptors)) {
+    if (!("value" in descriptor)) continue;
+    if (diagnosticIncludesPath(descriptor.value, path, seen)) return true;
+  }
+  return false;
+}
+
 async function defaultReadTextFile(path: string): Promise<string> {
   const { readFile } = await import("node:fs/promises");
   return await readFile(path, "utf8");
@@ -133,6 +154,7 @@ export async function readTypeScriptDecoratorOptions(
   input: ReadTypeScriptDecoratorOptionsInput,
 ): Promise<TypeScriptDecoratorOptions> {
   const readTextFile = input.readTextFile ?? defaultReadTextFile;
+  const callerOwnsReadBoundary = input.readTextFile !== undefined;
   const resolveExtends = input.resolveExtends ?? defaultResolveExtends;
   const cache = new Map<string, PartialDecoratorOptions>();
   const active = new Set<string>();
@@ -160,6 +182,9 @@ export async function readTypeScriptDecoratorOptions(
       source = await readTextFile(path);
     } catch (error) {
       if (root && isMissingFileError(error)) return {};
+      if (callerOwnsReadBoundary && !diagnosticIncludesPath(error, path)) {
+        throw error;
+      }
       throw TSCONFIG_READ_ERROR.create({
         detail: root
           ? "TypeScript configuration could not be read"
