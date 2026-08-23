@@ -359,6 +359,37 @@ childProcess.spawn("git");
     );
   });
 
+  it("classifies canonical compat filesystem and process imports", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { remove, stat } from "#veryfront/compat/fs.ts";
+import {
+  deleteEnv,
+  getEnvNumber,
+  runCommand,
+  setEnv,
+} from "#veryfront/compat/process.ts";
+await stat("fixture.txt");
+await remove("fixture.txt");
+getEnvNumber("TEST_KEY");
+setEnv("TEST_KEY", "value");
+deleteEnv("TEST_KEY");
+await runCommand({ command: "deno", args: ["--version"] });
+`,
+        "src/canonical-compat-imports.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "stat"],
+        ["filesystem-write", "remove"],
+        ["process", "getEnvNumber"],
+        ["process", "setEnv"],
+        ["process", "deleteEnv"],
+        ["process", "runCommand"],
+      ],
+    );
+  });
+
   it("classifies effect bindings loaded through require and dynamic import", () => {
     const markers = collectSemanticMarkers(
       `

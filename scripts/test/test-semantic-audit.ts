@@ -210,6 +210,7 @@ const PROCESS_METHODS = new Set([
   "fork",
   "kill",
   "removeSignalListener",
+  "runCommand",
 ]);
 
 const PROCESS_ENV_METHODS = new Set([
@@ -224,6 +225,10 @@ const PROCESS_STATE_METHODS = new Set([
   "deleteEnv",
   "env",
   "getEnv",
+  "getEnvBoolean",
+  "getEnvNumber",
+  "getEnvOverlayStorage",
+  "getEnvString",
   "getHostEnv",
   "setEnv",
 ]);
@@ -1626,12 +1631,14 @@ function isPlaywrightFixture(name: string, scopes: readonly Scope[]): boolean {
 function isFilesystemSpecifier(source: string): boolean {
   return source === "node:fs" || source === "node:fs/promises" ||
     source === "fs" || source === "fs/promises" ||
+    source === "#veryfront/compat/fs.ts" ||
     source.endsWith("platform/compat/fs.ts");
 }
 
 function isProcessSpecifier(source: string): boolean {
   return source === "node:child_process" || source === "child_process" ||
     source === "node:process" || source === "process" ||
+    source === "#veryfront/compat/process.ts" ||
     source.endsWith("platform/compat/process.ts") ||
     source.endsWith("platform/compat/process.js");
 }
