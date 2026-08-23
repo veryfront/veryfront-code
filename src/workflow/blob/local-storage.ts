@@ -207,7 +207,8 @@ export class LocalBlobStorage implements BlobStorage {
     try {
       for await (const entry of this.fs.readDir(prefixDir)) {
         if (!entry.isFile || !entry.name.endsWith(".meta.json")) continue;
-        ids.push(entry.name.slice(0, -".meta.json".length));
+        const id = entry.name.slice(0, -".meta.json".length);
+        if (isSafeBlobId(id)) ids.push(id);
       }
       return ids;
     } catch (error) {

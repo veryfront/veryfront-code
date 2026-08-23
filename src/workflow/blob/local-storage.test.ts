@@ -9,7 +9,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
-import { remove, stat } from "#veryfront/compat/fs.ts";
+import { remove, stat, writeTextFile } from "#veryfront/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import {
   __registerLogRecordEmitter,
@@ -233,6 +233,18 @@ describe("LocalBlobStorage", () => {
     } finally {
       await remove(testDir, { recursive: true });
     }
+  });
+
+  it("ignores malformed metadata filenames in valid partitions", async () => {
+    await withTempStorage(async (storage, dir) => {
+      await storage.put("valid", { id: "custom-valid" });
+      const partition = join(dir, "cu");
+      await writeTextFile(join(partition, ".meta.json"), "{}");
+      await writeTextFile(join(partition, "blob.meta.json.meta.json"), "{}");
+
+      assertEquals((await storage.list()).map((ref) => ref.id), ["custom-valid"]);
+      await storage.cleanupExpiredBlobs();
+    });
   });
 
   it("rootDir is created if not exists", async () => {
