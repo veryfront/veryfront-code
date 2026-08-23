@@ -11,8 +11,9 @@ const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN =
-  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+))*(?:Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between[ \t]+([^ \t\r\n]+)[ \t]+and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})[^\r\n]*))/gi;
+  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between[ \t]+([^ \t\r\n]+)(?:[ \t]+|[ \t]*\r?\n[ \t]*)and(?:[ \t]*\r?\n)?[ \t]*([0-9a-f]{40})[^\r\n]*))/gi;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
+const MARKDOWN_FENCE_LINE_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
@@ -265,7 +266,7 @@ function codeRabbitSelectedRecentReview(body) {
   if (typeof body !== "string") return undefined;
   const groups = [];
   let openGroup;
-  let previousCompleteContent;
+  let previousFallbackContent;
   for (
     const marker of body.matchAll(CODERABBIT_RECENT_REVIEW_MARKER_PATTERN)
   ) {
@@ -287,13 +288,13 @@ function codeRabbitSelectedRecentReview(body) {
       terminated: !openGroup.invalid,
     };
     groups.push(group);
-    if (group.terminated) previousCompleteContent = content;
+    previousFallbackContent = content;
     openGroup = undefined;
   }
   if (openGroup) {
     groups.push({
       content: body.slice(openGroup.contentStart),
-      fallbackContent: previousCompleteContent,
+      fallbackContent: previousFallbackContent,
       terminated: false,
     });
   }
@@ -322,13 +323,66 @@ function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
 }
 
 function codeRabbitRangeEvidenceStatements(content) {
-  return [...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN)].map((
-    match,
-  ) => ({
-    baseToken: match[2].toLowerCase(),
-    statement: match[1],
-    tipToken: match[3].toLowerCase(),
-  }));
+  const fenceRanges = markdownFenceRanges(content);
+  const statements = [];
+  let fenceIndex = 0;
+  for (
+    const match of content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN)
+  ) {
+    const statementIndex = match.index + match[0].indexOf(match[1]);
+    while (
+      fenceIndex < fenceRanges.length &&
+      fenceRanges[fenceIndex][1] <= statementIndex
+    ) {
+      fenceIndex += 1;
+    }
+    const insideFence = fenceIndex < fenceRanges.length &&
+      fenceRanges[fenceIndex][0] <= statementIndex &&
+      statementIndex < fenceRanges[fenceIndex][1];
+    if (insideFence) continue;
+    statements.push({
+      baseToken: match[2].toLowerCase(),
+      statement: match[1],
+      tipToken: match[3].toLowerCase(),
+    });
+  }
+  return statements;
+}
+
+function markdownFenceRanges(content) {
+  const ranges = [];
+  let openFence;
+  let lineStart = 0;
+  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r?\n|$)/g)) {
+    const line = lineMatch[0];
+    if (line.length === 0 && lineStart >= content.length) break;
+    const lineEnd = lineStart + line.length;
+    const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      const lineWithoutEnding = line.replace(/\r?\n$/, "");
+      const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
+      const hasOnlyClosingFenceWhitespace = /^[ \t]*$/.test(
+        lineWithoutEnding.slice(markerEnd),
+      );
+      if (openFence === undefined) {
+        openFence = {
+          char: marker[0],
+          length: marker.length,
+          start: lineStart,
+        };
+      } else if (
+        marker[0] === openFence.char && marker.length >= openFence.length &&
+        hasOnlyClosingFenceWhitespace
+      ) {
+        ranges.push([openFence.start, lineEnd]);
+        openFence = undefined;
+      }
+    }
+    lineStart = lineEnd;
+  }
+  if (openFence !== undefined) ranges.push([openFence.start, content.length]);
+  return ranges;
 }
 
 function parseCodeRabbitRangeEvidence(evidence, headSha) {
