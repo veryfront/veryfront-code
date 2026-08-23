@@ -234,6 +234,25 @@ describe("createProject filesystem conflicts", () => {
     },
   );
 
+  projectTest("overwrites existing Deno metadata when force is explicit", async (
+    parentDir,
+  ) => {
+    const projectDir = join(parentDir, "contract-project");
+    const denoConfigPath = join(projectDir, "deno.json");
+    await Deno.mkdir(projectDir);
+    await Deno.writeTextFile(denoConfigPath, '{"keep":"old"}\n');
+
+    const result = await createProject(baseRequest(parentDir, {
+      runtime: "deno",
+      conflictPolicy: "overwrite",
+    }));
+
+    const denoConfig = JSON.parse(await Deno.readTextFile(denoConfigPath));
+    assertEquals(denoConfig.keep, undefined);
+    assertEquals(denoConfig.nodeModulesDir, "auto");
+    assertEquals(result.createdPaths.includes("deno.json"), true);
+  });
+
   projectTest("refuses a linked project root instead of scaffolding through it", async (
     parentDir,
     context,

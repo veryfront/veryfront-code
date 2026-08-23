@@ -1,9 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { dirname, join } from "veryfront/platform/path";
+import { dirname, fromFileUrl, join } from "veryfront/platform/path";
 import { vfCreateProject } from "#cli/mcp/catalog-tools";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { type TestContext, withTestContext } from "../../../../_helpers/context.ts";
+
+const HOST_ONLY_SENTINEL = "VERYFRONT_TEST_HOST_ONLY_CHILD_SENTINEL";
 
 async function createFakeNpm(binDir: string): Promise<void> {
   await Deno.mkdir(binDir);
@@ -14,12 +17,14 @@ async function createFakeNpm(binDir: string): Promise<void> {
     ? [
       "@echo off",
       `>>"${logPath}" echo %CD% %*`,
+      `if defined ${HOST_ONLY_SENTINEL} (>>"${logPath}" echo host-sentinel=%${HOST_ONLY_SENTINEL}%) else (>>"${logPath}" echo host-sentinel=unset)`,
       `>package-lock.json echo {"lockfileVersion":3,"packages":{}}`,
       "exit /b 0",
       "",
     ].join("\r\n")
     : `#!/usr/bin/env sh
 printf '%s\n' "$PWD $*" >> "${logPath}"
+printf 'host-sentinel=%s\n' "\${${HOST_ONLY_SENTINEL}-unset}" >> "${logPath}"
 printf '%s\n' '{"lockfileVersion":3,"packages":{}}' > package-lock.json
 exit 0
 `;
@@ -30,7 +35,6 @@ exit 0
 
 async function withFakeNpm(
   parentDir: string,
-  context: TestContext,
   action: () => Promise<void>,
 ): Promise<void> {
   const binDir = join(parentDir, "fake-npm");
@@ -38,9 +42,14 @@ async function withFakeNpm(
   const pathDelimiter = Deno.build.os === "windows" ? ";" : ":";
   const originalDenoPath = Deno.env.get("PATH");
   const nextPath = `${binDir}${pathDelimiter}${originalDenoPath ?? ""}`;
-
-  context.setEnv({ PATH: nextPath });
-  await action();
+  const originalSentinel = Deno.env.get(HOST_ONLY_SENTINEL);
+  Deno.env.set(HOST_ONLY_SENTINEL, "must-not-reach-child");
+  try {
+    await runWithProjectEnv({ PATH: nextPath }, action);
+  } finally {
+    if (originalSentinel === undefined) Deno.env.delete(HOST_ONLY_SENTINEL);
+    else Deno.env.set(HOST_ONLY_SENTINEL, originalSentinel);
+  }
 }
 
 function projectTest(
@@ -78,11 +87,11 @@ describe("vfCreateProject filesystem conflicts", () => {
     },
   );
 
-  projectTest("scaffolds into an existing empty directory", async (parentDir, context) => {
+  projectTest("scaffolds into an existing empty directory", async (parentDir) => {
     const projectDir = join(parentDir, "example-app");
     await Deno.mkdir(projectDir);
 
-    await withFakeNpm(parentDir, context, async () => {
+    await withFakeNpm(parentDir, async () => {
       const result = await vfCreateProject.execute({
         name: "Example App",
         template: "minimal",
@@ -91,11 +100,43 @@ describe("vfCreateProject filesystem conflicts", () => {
 
       assertEquals(result.success, true);
       assertEquals(result.projectDir, projectDir);
-      assertStringIncludes(
-        await Deno.readTextFile(join(parentDir, "fake-npm", "npm.log")),
-        `${projectDir} install`,
-      );
+      const npmLog = await Deno.readTextFile(join(parentDir, "fake-npm", "npm.log"));
+      assertStringIncludes(npmLog, `${projectDir} install`);
+      assertStringIncludes(npmLog, "host-sentinel=unset");
+      assertEquals(npmLog.includes("must-not-reach-child"), false);
     });
+  });
+
+  projectTest("keeps host-only variables out of dependency installers", async (parentDir) => {
+    const modulePath = fromFileUrl(import.meta.url);
+    const configPath = fromFileUrl(
+      new URL("../../../../../deno.json", import.meta.url),
+    );
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--allow-all",
+        `--config=${configPath}`,
+        modulePath,
+        "--host-environment-probe",
+        parentDir,
+      ],
+      clearEnv: true,
+      env: {
+        ...Deno.env.toObject(),
+        [HOST_ONLY_SENTINEL]: "must-not-reach-child",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (!output.success) {
+      throw new Error(new TextDecoder().decode(output.stderr));
+    }
+
+    const npmLog = await Deno.readTextFile(join(parentDir, "fake-npm", "npm.log"));
+    assertStringIncludes(npmLog, "host-env-app install");
+    assertStringIncludes(npmLog, "host-sentinel=unset");
+    assertEquals(npmLog.includes("must-not-reach-child"), false);
   });
 
   projectTest(
@@ -302,3 +343,19 @@ describe("vfCreateProject filesystem conflicts", () => {
     },
   );
 });
+
+if (import.meta.main && Deno.args[0] === "--host-environment-probe") {
+  const parentDir = Deno.args[1];
+  if (!parentDir) throw new Error("Host environment probe requires a parent directory");
+  const binDir = join(parentDir, "fake-npm");
+  await createFakeNpm(binDir);
+  const pathDelimiter = Deno.build.os === "windows" ? ";" : ":";
+  const path = `${binDir}${pathDelimiter}${Deno.env.get("PATH") ?? ""}`;
+  const result = await runWithProjectEnv({ PATH: path }, () =>
+    vfCreateProject.execute({
+      name: "Host Env App",
+      template: "minimal",
+      directory: parentDir,
+    }));
+  if (!result.success) throw new Error(result.message);
+}

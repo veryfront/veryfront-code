@@ -741,7 +741,9 @@ export async function createProject(
     createdPaths.push("package.json");
 
     if (request.runtime === "deno") {
-      await createDenoConfig(projectDir, fs);
+      await createDenoConfig(projectDir, fs, {
+        overwrite: request.conflictPolicy === "overwrite",
+      });
       createdPaths.push("deno.json");
     }
   }
