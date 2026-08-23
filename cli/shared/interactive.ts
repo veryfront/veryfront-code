@@ -8,7 +8,7 @@
  * @module cli/shared/interactive
  */
 
-import { getEnv } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime } from "veryfront/platform";
 
 let _nonInteractive = false;
 let _autoConfirm = false;
@@ -38,9 +38,9 @@ export function resetInteractiveMode(): void {
 
 const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL", "CIRCLECI", "BUILDKITE"];
 
-export function detectCI(): boolean {
+export function detectCI(host: HostRuntime = liveHostRuntime()): boolean {
   return CI_ENV_VARS.some((v) => {
-    const val = getEnv(v);
+    const val = host.env.get(v);
     return val !== undefined && val !== "" && val !== "0" && val !== "false";
   });
 }

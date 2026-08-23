@@ -112,3 +112,20 @@ children. The `parallel`, `branch`, and `map` record IDs derive from the composi
 generated component. None of those local records are persisted or available for lookup. Only
 the root persisted ID identifies a run outside the process, so callers, the backends, and
 observability all key on it.
+
+## Host Runtime
+
+The single owner of how framework code sees the process it runs in:
+`src/platform/compat/process/host-runtime.ts` (`HostRuntime`). It covers
+environment variables, the working directory, command-line arguments, process
+exit, and termination signals — nothing else. CLI command handlers and shared
+CLI helpers consult it through an optional `host` parameter that defaults to
+the live adapter (`options.host ?? liveHostRuntime()`), the same shape as
+`projectDir ?? cwd()`. There are exactly two adapters: `liveHostRuntime()`
+delegates to the cross-runtime compat functions and is the production path;
+`createInMemoryHostRuntime()` holds an isolated env map, a fixed cwd and argv,
+recorded exits, and signal subscribers a test fires itself. Code that takes a
+host never reads or mutates `Deno.env`, `process.env`, `Deno.args`,
+`Deno.exit`, or signal listeners directly, so it is live in production and
+in-memory in tests without saving and restoring global state. Outbound
+transport is a separate seam and is not folded in here.

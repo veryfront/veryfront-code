@@ -7,8 +7,12 @@
  * @module cli/shared/update-check
  */
 
-import { getEnv } from "veryfront/platform";
-import { createFileSystem, type FileSystem } from "veryfront/platform";
+import {
+  createFileSystem,
+  type FileSystem,
+  type HostRuntime,
+  liveHostRuntime,
+} from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { getEnvironmentConfig } from "veryfront/config";
 import { isJsonMode } from "./json-output.ts";
@@ -68,9 +72,9 @@ export function compareVersions(current: string, latest: string): boolean {
   return false;
 }
 
-export function shouldSkip(): boolean {
-  if (getEnv("VERYFRONT_NO_UPDATE_CHECK") === "1") return true;
-  if (detectCI()) return true;
+export function shouldSkip(host: HostRuntime = liveHostRuntime()): boolean {
+  if (host.env.get("VERYFRONT_NO_UPDATE_CHECK") === "1") return true;
+  if (detectCI(host)) return true;
   if (isJsonMode()) return true;
   if (isQuiet()) return true;
   return false;

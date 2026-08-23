@@ -1,33 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
-import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
+import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleServeCommand, parseServeArgs } from "./handler.ts";
 
-function withServeEnv(
-  values: { PORT?: string; VERYFRONT_PORT?: string; BIND_ADDRESS?: string },
-  run: () => void,
-): void {
-  const previous = {
-    PORT: getEnv("PORT"),
-    VERYFRONT_PORT: getEnv("VERYFRONT_PORT"),
-    BIND_ADDRESS: getEnv("BIND_ADDRESS"),
-  };
-
-  try {
-    for (const [key, value] of Object.entries(values)) {
-      if (value === undefined) deleteEnv(key);
-      else setEnv(key, value);
-    }
-    run();
-  } finally {
-    for (const [key, value] of Object.entries(previous)) {
-      if (value === undefined) deleteEnv(key);
-      else setEnv(key, value);
-    }
-  }
+function serveHost(env: Record<string, string>) {
+  return createInMemoryHostRuntime({ env });
 }
 
 describe("commands/serve/handler", () => {
@@ -75,52 +55,54 @@ describe("commands/serve/handler", () => {
 
     describe("port handling", () => {
       it("uses deployment environment defaults when flags are omitted", () => {
-        withServeEnv(
-          { PORT: "4321", VERYFRONT_PORT: undefined, BIND_ADDRESS: "0.0.0.0" },
-          () => {
-            const parsed = parseServeArgs({ _: ["serve"] });
-
-            assertEquals(parsed.success, true);
-            assertExists(parsed.data);
-            assertEquals(parsed.data.port, 4321);
-            assertEquals(parsed.data.hostname, "0.0.0.0");
-          },
+        const parsed = parseServeArgs(
+          { _: ["serve"] },
+          serveHost({ PORT: "4321", BIND_ADDRESS: "0.0.0.0" }),
         );
+
+        assertEquals(parsed.success, true, "parsing succeeds");
+        assertExists(parsed.data);
+        assertEquals(parsed.data.port, 4321, "PORT supplies the default port");
+        assertEquals(parsed.data.hostname, "0.0.0.0", "BIND_ADDRESS supplies the hostname");
       });
 
       it("uses VERYFRONT_PORT when PORT is absent", () => {
-        withServeEnv(
-          { PORT: undefined, VERYFRONT_PORT: "4322", BIND_ADDRESS: undefined },
-          () => {
-            const parsed = parseServeArgs({ _: ["serve"] });
+        const parsed = parseServeArgs({ _: ["serve"] }, serveHost({ VERYFRONT_PORT: "4322" }));
 
-            assertEquals(parsed.success, true);
-            assertExists(parsed.data);
-            assertEquals(parsed.data.port, 4322);
-          },
+        assertEquals(parsed.success, true, "parsing succeeds");
+        assertExists(parsed.data);
+        assertEquals(parsed.data.port, 4322, "VERYFRONT_PORT is honoured");
+      });
+
+      it("prefers PORT over VERYFRONT_PORT", () => {
+        const parsed = parseServeArgs(
+          { _: ["serve"] },
+          serveHost({ PORT: "4321", VERYFRONT_PORT: "4322" }),
         );
+
+        assertEquals(parsed.success, true, "parsing succeeds");
+        assertExists(parsed.data);
+        assertEquals(parsed.data.port, 4321, "PORT outranks VERYFRONT_PORT");
       });
 
       it("keeps explicit network flags ahead of environment defaults", () => {
-        withServeEnv(
-          { PORT: "4321", VERYFRONT_PORT: undefined, BIND_ADDRESS: "0.0.0.0" },
-          () => {
-            const parsed = parseServeArgs({
-              _: ["serve"],
-              port: 8080,
-              hostname: "127.0.0.1",
-            });
-
-            assertEquals(parsed.success, true);
-            assertExists(parsed.data);
-            assertEquals(parsed.data.port, 8080);
-            assertEquals(parsed.data.hostname, "127.0.0.1");
+        const parsed = parseServeArgs(
+          {
+            _: ["serve"],
+            port: 8080,
+            hostname: "127.0.0.1",
           },
+          serveHost({ PORT: "4321", BIND_ADDRESS: "0.0.0.0" }),
         );
+
+        assertEquals(parsed.success, true, "parsing succeeds");
+        assertExists(parsed.data);
+        assertEquals(parsed.data.port, 8080, "the port flag wins");
+        assertEquals(parsed.data.hostname, "127.0.0.1", "the hostname flag wins");
       });
 
       it("keeps -p as a compatibility alias for --port", () => {
-        const parsed = parseServeArgs(parseCliArgs(["serve", "-p", "8081"]));
+        const parsed = parseServeArgs(parseCliArgs(["serve", "-p", "8081"]), serveHost({}));
 
         assertEquals(parsed.success, true);
         assertExists(parsed.data);
@@ -131,7 +113,7 @@ describe("commands/serve/handler", () => {
     describe("boolean flag extraction", () => {
       it("parses --binary without consuming the following positional", () => {
         const args = parseCliArgs(["serve", "--binary", "project"]);
-        const parsed = parseServeArgs(args);
+        const parsed = parseServeArgs(args, serveHost({}));
 
         assertEquals(parsed.success, true);
         assertExists(parsed.data);
@@ -167,21 +149,24 @@ describe("commands/serve/handler", () => {
 
     describe("hostname/host/bindAddress resolution", () => {
       it("defaults production mode to all interfaces", () => {
-        withServeEnv(
-          { PORT: undefined, VERYFRONT_PORT: undefined, BIND_ADDRESS: undefined },
-          () => {
-            const parsed = parseServeArgs({ _: ["serve"] });
+        const parsed = parseServeArgs({ _: ["serve"] }, serveHost({}));
 
-            assertEquals(parsed.success, true);
-            assertExists(parsed.data);
-            assertEquals(parsed.data.hostname, "0.0.0.0");
-          },
-        );
+        assertEquals(parsed.success, true, "parsing succeeds");
+        assertExists(parsed.data);
+        assertEquals(parsed.data.hostname, "0.0.0.0", "no BIND_ADDRESS binds all interfaces");
+      });
+
+      it("ignores a blank BIND_ADDRESS", () => {
+        const parsed = parseServeArgs({ _: ["serve"] }, serveHost({ BIND_ADDRESS: "   " }));
+
+        assertEquals(parsed.success, true, "parsing succeeds");
+        assertExists(parsed.data);
+        assertEquals(parsed.data.hostname, "0.0.0.0", "whitespace falls back to all interfaces");
       });
 
       it("uses --hostname when provided", () => {
         const args: ParsedArgs = { _: ["serve"], hostname: "127.0.0.1" };
-        const parsed = parseServeArgs(args);
+        const parsed = parseServeArgs(args, serveHost({}));
         assertEquals(parsed.success, true);
         assertExists(parsed.data);
         assertEquals(parsed.data.hostname, "127.0.0.1");
@@ -189,7 +174,7 @@ describe("commands/serve/handler", () => {
 
       it("uses --host when provided", () => {
         const args: ParsedArgs = { _: ["serve"], host: "localhost" };
-        const parsed = parseServeArgs(args);
+        const parsed = parseServeArgs(args, serveHost({}));
         assertEquals(parsed.success, true);
         assertExists(parsed.data);
         assertEquals(parsed.data.hostname, "localhost");
@@ -201,7 +186,7 @@ describe("commands/serve/handler", () => {
           hostname: "10.0.0.1",
           host: "192.168.1.1",
         };
-        const parsed = parseServeArgs(args);
+        const parsed = parseServeArgs(args, serveHost({}));
         assertEquals(parsed.success, true);
         assertExists(parsed.data);
         assertEquals(parsed.data.hostname, "10.0.0.1");

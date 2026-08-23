@@ -1,25 +1,25 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
-import { getEnv } from "veryfront/platform";
+import { type HostRuntime, liveHostRuntime } from "veryfront/platform";
 import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { ServerModeSchema } from "#cli/shared/types";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import { ensureCliBundlerContracts } from "#cli/shared/default-contracts";
 import type { ParsedArgs } from "#cli/shared/types";
 
-function readPortEnv(name: string, fallback: number): number {
-  const value = getEnv(name);
+function readPortEnv(host: HostRuntime, name: string, fallback: number): number {
+  const value = host.env.get(name);
   if (value === undefined) return fallback;
   const port = Number.parseInt(value, 10);
   return Number.isNaN(port) ? fallback : port;
 }
 
-function getDefaultServePort(): number {
-  const veryfrontPort = readPortEnv("VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
-  return readPortEnv("PORT", veryfrontPort);
+function getDefaultServePort(host: HostRuntime): number {
+  const veryfrontPort = readPortEnv(host, "VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
+  return readPortEnv(host, "PORT", veryfrontPort);
 }
 
-function getDefaultBindAddress(): string {
-  return getEnv("BIND_ADDRESS")?.trim() || "0.0.0.0";
+function getDefaultBindAddress(host: HostRuntime): string {
+  return host.env.get("BIND_ADDRESS")?.trim() || "0.0.0.0";
 }
 
 const getServeArgsSchema = defineSchema((v) =>
@@ -46,7 +46,15 @@ const parseServeArgsBase = createArgParser(ServeArgsSchema, {
   debug: { keys: ["debug"], type: "boolean" },
 });
 
-export const parseServeArgs: typeof parseServeArgsBase = (args) => {
+/**
+ * Parses serve command arguments, honouring `PORT` / `VERYFRONT_PORT` and
+ * `BIND_ADDRESS` from the host as lower-precedence defaults when the matching
+ * flags are omitted.
+ */
+export function parseServeArgs(
+  args: ParsedArgs,
+  host: HostRuntime = liveHostRuntime(),
+): ReturnType<typeof parseServeArgsBase> {
   const result = parseServeArgsBase(args);
   if (!result.success) return result;
 
@@ -55,14 +63,14 @@ export const parseServeArgs: typeof parseServeArgsBase = (args) => {
     data: {
       ...result.data,
       port: args.port === undefined && args.p === undefined
-        ? getDefaultServePort()
+        ? getDefaultServePort(host)
         : result.data.port,
       hostname: args.hostname === undefined && args.host === undefined
-        ? getDefaultBindAddress()
+        ? getDefaultBindAddress(host)
         : result.data.hostname,
     },
   };
-};
+}
 
 export async function handleServeCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseServeArgs, "serve", args);

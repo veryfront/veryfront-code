@@ -33,6 +33,13 @@ describe("platform/index.ts exports", () => {
   });
 
   describe("compat re-exports", () => {
+    it("should export the host runtime seam", async () => {
+      const { createInMemoryHostRuntime, isHostExit, liveHostRuntime } = await importIndex();
+      assertEquals(typeof liveHostRuntime, "function", "live adapter factory is exported");
+      assertEquals(typeof createInMemoryHostRuntime, "function", "in-memory factory is exported");
+      assertEquals(typeof isHostExit, "function", "host exit guard is exported");
+    });
+
     it("should export createKVStore", async () => {
       const { createKVStore } = await importIndex();
       assertExists(createKVStore);

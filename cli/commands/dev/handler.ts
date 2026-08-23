@@ -4,7 +4,7 @@
 
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
-import { cwd, getEnv, setEnv } from "veryfront/platform";
+import { cwd, type HostRuntime, liveHostRuntime, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { cliLogger, DEFAULT_DEV_SERVER_PORT, logWarning, showHeader } from "#cli/utils";
 import { refreshLoggerConfig } from "veryfront/utils";
@@ -21,8 +21,8 @@ import type { ParsedArgs } from "#cli/shared/types";
  * `Number.parseInt("3001abc")` silently returns 3001, so this function requires
  * the entire trimmed string to be digits before converting — no prefix parsing.
  */
-function parsePortEnv(name: string): number | undefined {
-  const raw = getEnv(name);
+function parsePortEnv(host: HostRuntime, name: string): number | undefined {
+  const raw = host.env.get(name);
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
   if (trimmed === "") return undefined;
@@ -43,8 +43,8 @@ function parsePortEnv(name: string): number | undefined {
  * absent or contains a value that fails strict validation (non-integer string,
  * trailing garbage, or a value outside the 1-65535 range).
  */
-function readPortEnv(name: string, fallback: number): number {
-  return parsePortEnv(name) ?? fallback;
+function readPortEnv(host: HostRuntime, name: string, fallback: number): number {
+  return parsePortEnv(host, name) ?? fallback;
 }
 
 /**
@@ -54,8 +54,8 @@ function readPortEnv(name: string, fallback: number): number {
  * Used to determine whether the port came from an explicit env var rather than
  * falling through to the hardcoded default.
  */
-function isValidPortEnv(name: string): boolean {
-  const raw = getEnv(name);
+function isValidPortEnv(host: HostRuntime, name: string): boolean {
+  const raw = host.env.get(name);
   if (!raw) return false;
   const t = raw.trim();
   if (!/^\d+$/.test(t)) return false;
@@ -75,9 +75,9 @@ function isValidPortEnv(name: string): boolean {
  * This matches how `veryfront serve` handles the same env vars, and how
  * Next.js, Vite, Create React App, Heroku, and Railway all treat `PORT`.
  */
-function getDefaultDevPort(): number {
-  const veryfrontPort = readPortEnv("VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
-  return readPortEnv("PORT", veryfrontPort);
+function getDefaultDevPort(host: HostRuntime): number {
+  const veryfrontPort = readPortEnv(host, "VERYFRONT_PORT", DEFAULT_DEV_SERVER_PORT);
+  return readPortEnv(host, "PORT", veryfrontPort);
 }
 
 const getDevArgsSchema = defineSchema((v) =>
@@ -106,7 +106,10 @@ const parseDevArgsBase = createArgParser(DevArgsSchema, {
  * Parses dev command arguments, honouring `PORT` / `VERYFRONT_PORT` as
  * lower-precedence defaults when no explicit `--port` / `-p` is given.
  */
-export const parseDevArgs: typeof parseDevArgsBase = (args) => {
+export function parseDevArgs(
+  args: ParsedArgs,
+  host: HostRuntime = liveHostRuntime(),
+): ReturnType<typeof parseDevArgsBase> {
   const result = parseDevArgsBase(args);
   if (!result.success) return result;
 
@@ -115,11 +118,11 @@ export const parseDevArgs: typeof parseDevArgsBase = (args) => {
     data: {
       ...result.data,
       port: args.port === undefined && args.p === undefined
-        ? getDefaultDevPort()
+        ? getDefaultDevPort(host)
         : result.data.port,
     },
   };
-};
+}
 
 async function resolveProjectDir(projectArg: string | undefined): Promise<string> {
   if (projectArg) {
@@ -144,6 +147,7 @@ async function resolveProjectDir(projectArg: string | undefined): Promise<string
 }
 
 export async function handleDevCommand(args: ParsedArgs): Promise<void> {
+  const host = liveHostRuntime();
   const opts = parseArgsOrThrow(parseDevArgs, "dev", args);
   showHeader();
 
@@ -159,10 +163,10 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
   // env var that happens to equal the default value.
   const portExplicit = args.port !== undefined ||
     args.p !== undefined ||
-    isValidPortEnv("PORT") ||
-    isValidPortEnv("VERYFRONT_PORT");
+    isValidPortEnv(host, "PORT") ||
+    isValidPortEnv(host, "VERYFRONT_PORT");
   if (args.port !== undefined || args.p !== undefined) {
-    const portFromEnv = parsePortEnv("PORT");
+    const portFromEnv = parsePortEnv(host, "PORT");
     if (portFromEnv !== undefined && opts.port !== portFromEnv) {
       logWarning(
         `PORT=${portFromEnv} is set but --port ${opts.port} takes precedence`,

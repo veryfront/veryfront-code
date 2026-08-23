@@ -4,7 +4,8 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createInMemoryHostRuntime } from "#veryfront/platform/compat/process.ts";
 import { parseCliArgs } from "#cli/shared/args";
 import { handleDevCommand, parseDevArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -78,91 +79,68 @@ describe("commands/dev/handler", () => {
   });
 
   describe("PORT env var", () => {
-    let savedPort: string | undefined;
-    let savedVeryfrontPort: string | undefined;
-
-    beforeEach(() => {
-      savedPort = Deno.env.get("PORT");
-      savedVeryfrontPort = Deno.env.get("VERYFRONT_PORT");
-      Deno.env.delete("PORT");
-      Deno.env.delete("VERYFRONT_PORT");
-    });
-
-    afterEach(() => {
-      if (savedPort === undefined) Deno.env.delete("PORT");
-      else Deno.env.set("PORT", savedPort);
-      if (savedVeryfrontPort === undefined) Deno.env.delete("VERYFRONT_PORT");
-      else Deno.env.set("VERYFRONT_PORT", savedVeryfrontPort);
-    });
+    function parseDevWithEnv(argv: string[], env: Record<string, string>) {
+      return parseDevArgs(parseCliArgs(argv), createInMemoryHostRuntime({ env }));
+    }
 
     it("uses PORT env var as the default port when --port is not passed", () => {
-      Deno.env.set("PORT", "3001");
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 3001);
+      const result = parseDevWithEnv(["dev"], { PORT: "3001" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 3001, "PORT supplies the default");
     });
 
     it("--port flag wins over PORT env var", () => {
-      Deno.env.set("PORT", "3001");
-      const result = parseDevArgs(parseCliArgs(["dev", "--port", "4000"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 4000);
+      const result = parseDevWithEnv(["dev", "--port", "4000"], { PORT: "3001" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 4000, "the flag wins");
     });
 
     it("-p alias also wins over PORT env var", () => {
-      Deno.env.set("PORT", "3001");
-      const result = parseDevArgs(parseCliArgs(["dev", "-p", "4000"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 4000);
+      const result = parseDevWithEnv(["dev", "-p", "4000"], { PORT: "3001" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 4000, "the alias wins");
     });
 
     it("uses VERYFRONT_PORT when PORT is not set", () => {
-      Deno.env.set("VERYFRONT_PORT", "3001");
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 3001);
+      const result = parseDevWithEnv(["dev"], { VERYFRONT_PORT: "3001" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 3001, "VERYFRONT_PORT is honoured");
     });
 
     it("PORT takes precedence over VERYFRONT_PORT", () => {
-      Deno.env.set("PORT", "4000");
-      Deno.env.set("VERYFRONT_PORT", "3001");
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 4000);
+      const result = parseDevWithEnv(["dev"], { PORT: "4000", VERYFRONT_PORT: "3001" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 4000, "PORT outranks VERYFRONT_PORT");
     });
 
     it("falls back to 3000 when PORT is not a valid integer", () => {
-      Deno.env.set("PORT", "not-a-port");
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 3000);
+      const result = parseDevWithEnv(["dev"], { PORT: "not-a-port" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 3000, "garbage falls back");
     });
 
     it("rejects PORT with trailing garbage (PORT=3001abc) — full string must be digits", () => {
-      Deno.env.set("PORT", "3001abc");
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 3000);
+      const result = parseDevWithEnv(["dev"], { PORT: "3001abc" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 3000, "no prefix parsing");
     });
 
     it("rejects PORT=0 as outside the valid range (1-65535)", () => {
-      Deno.env.set("PORT", "0");
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 3000);
+      const result = parseDevWithEnv(["dev"], { PORT: "0" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 3000, "0 is out of range");
     });
 
     it("rejects PORT=65536 as outside the valid range (1-65535)", () => {
-      Deno.env.set("PORT", "65536");
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 3000);
+      const result = parseDevWithEnv(["dev"], { PORT: "65536" });
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 3000, "65536 is out of range");
     });
 
     it("uses default 3000 when neither PORT nor VERYFRONT_PORT are set", () => {
-      const result = parseDevArgs(parseCliArgs(["dev"]));
-      assertEquals(result.success, true);
-      if (result.success) assertEquals(result.data.port, 3000);
+      const result = parseDevWithEnv(["dev"], {});
+      assertEquals(result.success, true, "parsing succeeds");
+      if (result.success) assertEquals(result.data.port, 3000, "the hardcoded default applies");
     });
   });
 });
