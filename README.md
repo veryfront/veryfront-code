@@ -1,7 +1,9 @@
 # Veryfront Code
 
+[![CI/CD](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml/badge.svg?branch=main)](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml)
 [![npm version](https://badge.fury.io/js/veryfront.svg)](https://www.npmjs.com/package/veryfront)
 [![Socket Badge](https://socket.dev/api/badge/npm/package/veryfront)](https://socket.dev/npm/package/veryfront)
+[![codecov](https://codecov.io/gh/veryfront/veryfront-code/branch/main/graph/badge.svg)](https://codecov.io/gh/veryfront/veryfront-code)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
 **Put your agents to work.**

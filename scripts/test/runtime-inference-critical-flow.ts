@@ -3,6 +3,7 @@ import {
   assertCondition,
   ensureCommand,
   installDependencies,
+  type PackedWorkspace,
   packNpmPackage,
   parseCommaSeparatedFlag,
   runChecked,
@@ -770,7 +771,7 @@ async function assertAgentRoute(
 
 async function assertRuntimeJourney(
   workDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
   runtime: RuntimeName,
   providerMode: ProviderMode,
 ): Promise<void> {
@@ -786,7 +787,7 @@ async function assertRuntimeJourney(
     console.log(`${label}: scaffold`);
     const projectDir = await scaffoldProject(
       workDir,
-      tarballPath,
+      packed,
       "agentic-workflow",
       runtime,
     );
@@ -955,12 +956,12 @@ export async function runRuntimeInferenceCriticalFlow(
     }
 
     console.log("pack npm package");
-    const tarballPath = await packNpmPackage(rootDir, workDir);
+    const packed = await packNpmPackage(rootDir, workDir);
 
     for (const runtime of runtimes) {
       await assertRuntimeJourney(
         workDir,
-        tarballPath,
+        packed,
         runtime,
         providerMode,
       );
