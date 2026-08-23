@@ -334,8 +334,8 @@ jobs:
         with:
           path: coverage-profiles
           pattern: coverage-shard-*
-      # `deno coverage --lcov` emits absolute `SF:` paths (e.g.
-      # /home/runner/work/veryfront-code/veryfront-code/src/...). Codecov matches
+      # `deno coverage --lcov` emits absolute `SF:` paths (for example,
+      # `$GITHUB_WORKSPACE/src/...`). Codecov matches
       # coverage records against repo-relative paths, so strip the workspace
       # prefix. This edits the downloaded copies only. The stored artifact and
       # the `coverage gate` job read their own copies and are unaffected.
