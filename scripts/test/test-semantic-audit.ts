@@ -337,6 +337,9 @@ const OBJECT_RECEIVER_RETURNING_MUTATORS = new Set([
   "assign",
   "defineProperties",
   "defineProperty",
+  "freeze",
+  "preventExtensions",
+  "seal",
   "setPrototypeOf",
 ]);
 
@@ -1755,7 +1758,7 @@ function memberAssignmentRuntimeEffectMarker(
   line: number,
   imports: ImportBindings,
   scopes: readonly Scope[],
-): SemanticMarker | undefined {
+): SemanticMarker | readonly SemanticMarker[] | undefined {
   if (
     member.type !== "MemberExpression" &&
     member.type !== "OptionalMemberExpression"
@@ -1786,7 +1789,7 @@ function memberSetterRuntimeEffectMarker(
   line: number,
   imports: ImportBindings,
   scopes: readonly Scope[],
-): SemanticMarker | undefined {
+): readonly SemanticMarker[] | undefined {
   if (
     member.type !== "MemberExpression" &&
     member.type !== "OptionalMemberExpression"
@@ -1805,13 +1808,14 @@ function memberSetterRuntimeEffectMarker(
       candidate.kind === "effect" ? [candidate.effect] : []
     ),
   );
-  if (effects.length !== 1) return undefined;
+  if (effects.length === 0) return undefined;
   const chain = memberChain(member);
-  return {
-    effect: effects[0],
+  const symbol = `${chain?.join(".") ?? invocationSymbol(member)} setter`;
+  return effects.map((effect) => ({
+    effect,
     line,
-    symbol: `${chain?.join(".") ?? invocationSymbol(member)} setter`,
-  };
+    symbol,
+  }));
 }
 
 function isProcessModuleEnvDetail(
@@ -2536,7 +2540,7 @@ function mutationCallMarker(
   line: number,
   scopes: readonly Scope[],
   imports: ImportBindings,
-): SemanticMarker | undefined {
+): SemanticMarker | readonly SemanticMarker[] | undefined {
   if (binding.receiver === "Array") {
     if (binding.method !== "sort") return undefined;
     const comparatorBinding = runtimeBindingForExpression(
@@ -2549,26 +2553,28 @@ function mutationCallMarker(
         candidate.kind === "effect" ? [candidate.effect] : []
       ),
     );
-    return effects.length === 1
-      ? {
-        effect: effects[0],
+    return effects.length > 0
+      ? effects.map((effect) => ({
+        effect,
         line,
         symbol: `${calleeName}(comparator)`,
-      }
+      }))
       : undefined;
   }
   const canonicalName = `${binding.receiver}.${binding.method}`;
+  let setterMarkers: readonly SemanticMarker[] = [];
   if (canonicalName === "Reflect.set") {
     const property = literalPropertyName(args[1]);
-    const setterMarker = memberSetterRuntimeEffectMarker(
+    setterMarkers = memberSetterRuntimeEffectMarker(
       property === undefined
         ? runtimeUnknownPropertyExpression(args[0])
         : runtimePropertyExpression(args[0], property),
       line,
       imports,
       scopes,
-    );
-    if (setterMarker) return setterMarker;
+    ) ?? [];
+  } else if (canonicalName === "Object.assign") {
+    setterMarkers = objectAssignSetterMarkers(args, line, imports, scopes);
   }
   const mutatesSingleProperty = GLOBAL_SINGLE_PROPERTY_MUTATORS.has(
     canonicalName,
@@ -2579,22 +2585,73 @@ function mutationCallMarker(
     scopes,
     imports.importedNames,
   );
-  const property = mutatesSingleProperty ? literalValue(args[1]) : undefined;
+  const property = mutatesSingleProperty
+    ? literalPropertyName(args[1])
+    : undefined;
+  let mutationMarker: SemanticMarker | undefined;
   if (!target) {
-    if (!isUnknownMutationTarget(targetArgument)) return undefined;
-    return {
-      effect: "process",
+    if (isUnknownMutationTarget(targetArgument)) {
+      mutationMarker = {
+        effect: "process",
+        line,
+        symbol: `${calleeName}(*)`,
+      };
+    }
+  } else {
+    mutationMarker = {
+      effect: mutatesSingleProperty && target.kind === "runtime-root"
+        ? globalRuntimeMutationEffect(property)
+        : "process",
       line,
-      symbol: `${calleeName}(*)`,
+      symbol: `${calleeName}(${target.symbol}.${property ?? "*"})`,
     };
   }
-  return {
-    effect: mutatesSingleProperty && target.kind === "runtime-root"
-      ? globalRuntimeMutationEffect(property)
-      : "process",
-    line,
-    symbol: `${calleeName}(${target.symbol}.${property ?? "*"})`,
-  };
+  return setterMarkers.length > 0
+    ? [...setterMarkers, ...(mutationMarker ? [mutationMarker] : [])]
+    : mutationMarker;
+}
+
+function objectAssignSetterMarkers(
+  args: readonly unknown[],
+  line: number,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly SemanticMarker[] {
+  const markers: SemanticMarker[] = [];
+  for (const sourceExpression of args.slice(1)) {
+    const source = unwrapExpression(sourceExpression);
+    if (!source || source.type !== "ObjectExpression") {
+      markers.push(
+        ...(memberSetterRuntimeEffectMarker(
+          runtimeUnknownPropertyExpression(args[0]),
+          line,
+          imports,
+          scopes,
+        ) ?? []),
+      );
+      continue;
+    }
+    for (
+      const property of Array.isArray(source.properties)
+        ? source.properties
+        : []
+    ) {
+      const propertyName = isNode(property)
+        ? staticObjectPropertyName(property)
+        : undefined;
+      markers.push(
+        ...(memberSetterRuntimeEffectMarker(
+          propertyName === undefined
+            ? runtimeUnknownPropertyExpression(args[0])
+            : runtimePropertyExpression(args[0], propertyName),
+          line,
+          imports,
+          scopes,
+        ) ?? []),
+      );
+    }
+  }
+  return markers;
 }
 
 function sharedGlobalMutationTarget(
@@ -4443,7 +4500,13 @@ function mutationCallResultRuntimeBinding(
       (invocation.binding.method === "pop" ||
         invocation.binding.method === "shift")
     ) {
-      const removed = targetBinding
+      const exactLength = exactRuntimeArrayLength(targetBinding);
+      const removed = targetBinding && exactLength !== undefined
+        ? exactLength === 0 ? undefined : runtimePropertyBinding(
+          targetBinding,
+          invocation.binding.method === "pop" ? String(exactLength - 1) : "0",
+        )
+        : targetBinding
         ? runtimeUnknownPropertyResolution(targetBinding).binding
         : undefined;
       if (removed) results.push(removed);
@@ -4475,29 +4538,43 @@ function mutationCallResultRuntimeBinding(
     let result = targetBinding ?? emptyRuntimeNamespaceBinding();
     const canonicalName =
       `${invocation.binding.receiver}.${invocation.binding.method}`;
-    const assigned = invocation.binding.receiver === "Array"
-      ? arrayMutationInsertedExpressions(
+    if (invocation.binding.receiver === "Object") {
+      for (
+        const entry of localMutationResultAssignedEntries(
+          canonicalName,
+          invocation.args,
+        )
+      ) {
+        result = appendRuntimeMutationResultProperty(
+          result,
+          entry.property,
+          runtimeBindingForExpression(entry.expression, imports, scopes),
+          false,
+        );
+      }
+    } else {
+      const assigned = arrayMutationInsertedExpressions(
         invocation.binding.method,
         invocation.args,
-      )
-      : localMutationAssignedExpressions(canonicalName, invocation.args);
-    const assignedBindings = assigned.flatMap((expression) =>
-      runtimeBindingForExpression(expression, imports, scopes) ?? []
-    );
-    const carried = assignedBindings.length > 0
-      ? assignedBindings
-      : invocation.binding.receiver === "Array" && targetBinding
-      ? [runtimeUnknownPropertyResolution(targetBinding).binding].flatMap((
-        binding,
-      ) => binding ?? [])
-      : [];
-    for (const binding of carried) {
-      result = appendRuntimePropertyOperation(result, {
-        kind: "define-unknown",
-        binding,
-        defaultMayRun: true,
-        crossesFunctionBoundary: false,
-      });
+      );
+      const assignedBindings = assigned.flatMap((expression) =>
+        runtimeBindingForExpression(expression, imports, scopes) ?? []
+      );
+      const carried = assignedBindings.length > 0
+        ? assignedBindings
+        : targetBinding
+        ? [runtimeUnknownPropertyResolution(targetBinding).binding].flatMap((
+          binding,
+        ) => binding ?? [])
+        : [];
+      for (const binding of carried) {
+        result = appendRuntimePropertyOperation(result, {
+          kind: "define-unknown",
+          binding,
+          defaultMayRun: true,
+          crossesFunctionBoundary: false,
+        });
+      }
     }
     if (invocation.binding.receiver === "Object") {
       for (
@@ -4610,6 +4687,40 @@ function localMutationAssignedExpressions(
   }
   if (canonicalName === "Reflect.set") return [args[2]];
   return [];
+}
+
+function localMutationResultAssignedEntries(
+  canonicalName: string,
+  args: readonly unknown[],
+): readonly { readonly property?: string; readonly expression: unknown }[] {
+  if (canonicalName === "Object.defineProperty") {
+    return [{
+      property: literalPropertyName(args[1]),
+      expression: runtimePropertyExpression(args[2], "value"),
+    }];
+  }
+  if (canonicalName === "Object.defineProperties") {
+    const descriptors = unwrapExpression(args[1]);
+    if (descriptors?.type === "ObjectExpression") {
+      return (Array.isArray(descriptors.properties)
+        ? descriptors.properties
+        : []).map((property) => {
+          const descriptor = isNode(property) &&
+              property.type === "ObjectProperty"
+            ? property.value
+            : undefined;
+          return {
+            property: isNode(property)
+              ? staticObjectPropertyName(property)
+              : undefined,
+            expression: runtimePropertyExpression(descriptor, "value"),
+          };
+        });
+    }
+  }
+  return localMutationAssignedExpressions(canonicalName, args).map(
+    (expression) => ({ expression }),
+  );
 }
 
 function bindRuntimeLiteralDescriptorMutations(

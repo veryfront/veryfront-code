@@ -2198,10 +2198,43 @@ const definedSetter = Object.defineProperty({}, "path", {
   set: Deno.remove,
 });
 definedSetter.path = "defined-setter.txt";
+
+const frozen = Object.freeze({ run: Deno.remove });
+frozen.run("frozen.txt");
+
+const sealed = Object.seal({ run: Deno.remove });
+sealed.run("sealed.txt");
+
+const prevented = Object.preventExtensions({ run: Deno.remove });
+prevented.run("prevented.txt");
+
+const localPoppedValues = [Deno.remove, () => undefined];
+const localPopped = localPoppedValues.pop();
+localPopped();
+
+const localShiftedValues = [() => undefined, Deno.remove];
+const localShifted = localShiftedValues.shift();
+localShifted();
+
+const definedNamedReturn = Object.defineProperty(
+  { safe: () => undefined },
+  "write",
+  { value: Deno.remove },
+);
+definedNamedReturn.safe();
+
+const definedManyNamedReturn = Object.defineProperties(
+  { safe: () => undefined },
+  {
+    safe: { value: () => undefined },
+    write: { value: Deno.remove },
+  },
+);
+definedManyNamedReturn.safe();
 `,
         "src/runtime-mutation-return-values.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 12 }, () => "filesystem-write"),
+      Array.from({ length: 15 }, () => "filesystem-write"),
     );
   });
 
@@ -2232,6 +2265,16 @@ bound.path = "bound.txt";
 const unread = {};
 Object.defineProperty(unread, "path", { set: Deno.remove });
 unread.path;
+
+const multiple = {};
+Object.defineProperty(multiple, "path", {
+  set: maybe ? Deno.remove : fetch,
+});
+multiple.path = "multiple.txt";
+
+const assigned = {};
+Object.defineProperty(assigned, "path", { set: Deno.remove });
+Object.assign(assigned, { path: "assigned.txt" });
 `,
         "src/runtime-descriptor-setters.test.ts",
       ).map((marker) => marker.effect),
@@ -2240,6 +2283,9 @@ unread.path;
         "filesystem-write",
         "filesystem-write",
         "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "network",
         "filesystem-write",
       ],
     );
