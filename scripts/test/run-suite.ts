@@ -7,6 +7,7 @@ import {
 } from "../../tests/test-file-utils.mjs";
 import { DENO_ONLY_TESTS } from "../../tests/deno-only-tests.mjs";
 import { discoverTests } from "./test-layout.ts";
+import { LEAF_TEST_SUITES } from "./suites.ts";
 
 export type SuitePlanId =
   | "unit:parallel"
@@ -42,7 +43,28 @@ export interface SuiteFilePlan {
   readonly files: readonly string[];
 }
 
-const UNIT_ROOTS = ["src/", "cli/", "templates/"];
+// deno.json's root `exclude` lists scripts/, so those files are undiscoverable
+// under the main config -- `deno test` reports "No test modules found" for them.
+// They run through the dedicated `test:scripts` task with scripts/test.deno.json
+// instead, so the unit planner skips the root while the registry still owns it.
+const UNPLANNABLE_UNIT_ROOTS = new Set(["scripts/"]);
+
+/**
+ * Derived from the unit suite's own `pathSelectors` so ownership and execution
+ * cannot drift: a root added in suites.ts is planned here without a second
+ * edit. Hardcoding the list is what left extensions/ and react/ owned by the
+ * unit suite -- `resolveLeafSuiteOwners` said so and suites.test.ts asserted it
+ * -- while no runner selected them, so 90 extension test files never executed
+ * even though `--include=src/` still counted every extension package's own
+ * `src` directory toward the coverage gate.
+ */
+const UNIT_ROOTS = (() => {
+  const unit = LEAF_TEST_SUITES.find((suite) => suite.id === "unit");
+  if (!unit) {
+    throw new Error("The leaf suite registry no longer defines a unit suite.");
+  }
+  return unit.pathSelectors.filter((root) => !UNPLANNABLE_UNIT_ROOTS.has(root));
+})();
 const UNIT_CWD_FILES = [
   "cli/router.test.ts",
   "cli/app/operations/project-creation.test.ts",

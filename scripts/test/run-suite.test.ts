@@ -16,6 +16,8 @@ import {
   buildDenoSuiteCommandArgs,
   parseDenoSuiteArgs,
 } from "./run-deno-suite.ts";
+import { LEAF_TEST_SUITES } from "./suites.ts";
+import { classifyTestPath } from "./test-layout.ts";
 import {
   formatSuitePlan,
   planSuiteFiles,
@@ -54,6 +56,21 @@ describe("suite planning parity", () => {
     for (const [suite, files] of Object.entries(expected)) {
       const plan = await planSuiteFiles({ suite: suite as SuitePlanId });
       assertEquals(plan.files, sorted(files), suite);
+    }
+  });
+
+  it("runs every root the unit suite claims to own", async () => {
+    // Regression guard. suites.ts, deno.json's test.include and
+    // suites.test.ts all place extensions/ and react/ in the unit suite, but
+    // UNIT_ROOTS omitted them, so 90 extension test files never executed while
+    // extensions/*/src/** still counted toward the 80% coverage gate.
+    const plan = await planSuiteFiles({ suite: "coverage:unit" });
+
+    for (const root of LEGACY_UNIT_ROOTS) {
+      assert(
+        plan.files.some((path) => path.startsWith(`${root}/`)),
+        `the unit suite owns ${root}/ but planned no test file from it`,
+      );
     }
   });
 
@@ -284,11 +301,46 @@ describe("migration command surface", () => {
     assert(match, "pre-push must invoke a named E2E task");
     assert(config.tasks[match[1]], `${match[1]} must exist in deno.json`);
   });
+
+  it("routes the Dev UI browser bundle test through the browser E2E lane", async () => {
+    const config = JSON.parse(
+      await Deno.readTextFile(new URL("../../deno.json", import.meta.url)),
+    );
+    const task = config.tasks["test:e2e:rsc-browser"] as string | undefined;
+    const browserBundleTest =
+      "tests/e2e/regressions/dev-ui-browser-bundle.test.ts";
+
+    assert(task, "browser E2E task must remain defined");
+    assert(
+      task.includes(browserBundleTest),
+      "the Chromium-backed Dev UI bundle test needs an explicit browser-capable runner",
+    );
+    assertEquals(classifyTestPath(browserBundleTest), {
+      kind: "canonical",
+      path: browserBundleTest,
+      level: "e2e",
+      suite: "e2e",
+      runner: "deno",
+    });
+  });
 });
 
+// Read from the suite registry rather than restated here. A second hand-kept
+// copy of the roots is what let ownership and execution drift in the first
+// place: it would keep passing while a newly owned root went unplanned.
+// scripts/ is excluded for the reason documented on UNPLANNABLE_UNIT_ROOTS in
+// run-suite.ts -- deno.json's root `exclude` hides it from the main config.
+const LEGACY_UNIT_ROOTS = (LEAF_TEST_SUITES
+  .find((suite) => suite.id === "unit")?.pathSelectors ?? [])
+  .filter((root) => root !== "scripts/")
+  .map((root) => root.replace(/\/$/, ""));
+
 async function legacyUnitParallelFiles(): Promise<string[]> {
-  const files = await collectLegacyTestFiles(["src", "cli", "templates"]);
-  const excluded = new Set([...UNIT_CWD_FILES, ...UNIT_CWD_EXCLUSION_FILES]);
+  const files = await collectLegacyTestFiles(LEGACY_UNIT_ROOTS);
+  const excluded = new Set([
+    ...UNIT_CWD_FILES,
+    ...UNIT_CWD_EXCLUSION_FILES,
+  ]);
   return sorted(
     files.filter((path) =>
       !path.includes(".integration.test.ts") &&
@@ -308,7 +360,7 @@ async function legacyCliIntegrationFiles(): Promise<string[]> {
 
 async function legacyUnitCoverageFiles(): Promise<string[]> {
   return sorted(
-    (await collectLegacyTestFiles(["src", "cli", "templates"]))
+    (await collectLegacyTestFiles(LEGACY_UNIT_ROOTS))
       .filter((path) => !/\.integration\.test\.tsx?$/.test(path))
       .filter((path) => !path.startsWith("src/workflow/__tests__/")),
   );
