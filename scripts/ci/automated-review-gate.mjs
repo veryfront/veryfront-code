@@ -112,21 +112,19 @@ export async function findAutomatedReview(
     if (
       typeof login === "string" &&
       login.toLowerCase() === CODERABBIT_LOGIN &&
-      typeof body === "string" &&
-      body.includes(CODERABBIT_RECENT_REVIEW_MARKER)
+      typeof body === "string"
     ) {
+      const explicitOutcomeTip = body.match(
+        CODERABBIT_CURRENT_HEAD_PATTERN,
+      )?.[1];
+      if (explicitOutcomeTip?.toLowerCase() === headSha.toLowerCase()) {
+        return undefined;
+      }
+      if (!body.includes(CODERABBIT_RECENT_REVIEW_MARKER)) continue;
       const recentReview = codeRabbitRecentReview(body);
       const reviewedTip = recentReview?.match(
         CODERABBIT_REVIEW_RANGE_PATTERN,
       )?.[2];
-      const explicitOutcomeTip = body.match(
-        CODERABBIT_CURRENT_HEAD_PATTERN,
-      )?.[1];
-      if (
-        explicitOutcomeTip?.toLowerCase() === headSha.toLowerCase()
-      ) {
-        return undefined;
-      }
       if (
         typeof reviewedTip !== "string" ||
         reviewedTip.toLowerCase() !== headSha.toLowerCase()
