@@ -5,6 +5,7 @@ import {
   TEMPLATE_NOT_FOUND,
   toError,
 } from "veryfront/errors";
+import { isNotFoundError } from "veryfront/fs";
 import { cliLogger as logger } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
@@ -391,7 +392,8 @@ async function writeGitignore(projectDir: string): Promise<void> {
   let existingGitignore: string | undefined;
   try {
     existingGitignore = await fs.readTextFile(gitignorePath);
-  } catch {
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     existingGitignore = undefined;
   }
 

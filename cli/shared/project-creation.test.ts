@@ -1010,6 +1010,35 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses an unreadable .gitignore before writing scaffold files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-unreadable-" });
+    const projectDir = join(parentDir, "contract-project");
+    const gitignorePath = join(projectDir, ".gitignore");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(gitignorePath, "keep-me\n");
+      const before = await Deno.lstat(gitignorePath);
+      await Deno.chmod(gitignorePath, 0o000);
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+      );
+
+      const after = await Deno.lstat(gitignorePath);
+      assertEquals(after.ino, before.ino);
+      await Deno.chmod(gitignorePath, 0o600);
+      assertEquals(await Deno.readTextFile(gitignorePath), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await Deno.chmod(gitignorePath, 0o600).catch(() => {});
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("refuses installer lockfiles before dependency installation can replace them", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-lockfile-conflict-" });
     const projectDir = join(parentDir, "contract-project");
