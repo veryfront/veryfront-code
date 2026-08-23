@@ -453,8 +453,22 @@ describe("automated review gate", () => {
     );
   });
 
-  it("fails closed on tied cross-source exact-head outcomes", async () => {
+  it("accepts matching tied successes and rejects conflicting outcomes", async () => {
     const timestamp = "2026-08-22T12:00:00Z";
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [review({ submitted_at: timestamp })],
+          comments: [codeRabbitSummary({
+            created_at: timestamp,
+            updated_at: timestamp,
+          })],
+        },
+        HEAD_SHA,
+      ))?.reviewer,
+      "coderabbitai[bot]",
+    );
+
     assertEquals(
       await findAutomatedReview(
         {
@@ -471,6 +485,42 @@ describe("automated review gate", () => {
       ),
       undefined,
     );
+
+    for (
+      const conflictingSummary of [
+        codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "No actionable comments were generated in the recent review.",
+            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            "<!-- recent_review_end -->",
+            `Review skipped for current commit ${HEAD_SHA}.`,
+          ].join("\n"),
+          created_at: timestamp,
+          updated_at: timestamp,
+        }),
+        codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+          created_at: timestamp,
+          updated_at: timestamp,
+        }),
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [review({ submitted_at: timestamp })],
+            comments: [conflictingSummary],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
   });
 
   it("publishes the automated review decision on the exact pull request head", async () => {
