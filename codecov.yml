@@ -1,0 +1,58 @@
+# Codecov configuration
+# Docs: https://docs.codecov.com/docs/codecov-yaml
+#
+# Coverage is uploaded from the `coverage shard N/8` jobs in
+# .github/workflows/cicd.yml — one upload per shard, merged by Codecov.
+#
+# Codecov is ADVISORY here. The blocking threshold is still enforced in CI by
+# `deno task coverage:gate` (scripts/lint/check-coverage.ts, 80% line coverage).
+# Both status checks below are `informational: true`, so they report but never
+# block a merge. Remove `informational` to make them required checks.
+
+codecov:
+  require_ci_to_pass: true
+  notify:
+    # Wait for all 8 unit coverage shards before reporting, otherwise the first
+    # shard to land would be treated as the full picture and report ~1/8th of
+    # actual coverage.
+    after_n_builds: 8
+    wait_for_ci: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...90"
+
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 1%
+        informational: true
+    patch:
+      default:
+        # Coverage of lines changed by the PR itself.
+        target: 80%
+        threshold: 0%
+        informational: true
+
+comment:
+  layout: "condensed_header, diff, condensed_files, condensed_footer"
+  behavior: default
+  require_changes: false
+  after_n_builds: 8
+
+# Mirrors the filters in `buildCoverageCommandArgs` (scripts/test/coverage-ci.ts):
+# only src/ is measured, with test files excluded. Listed again here so uploads
+# stay consistent if the coverage command ever changes.
+ignore:
+  - "tests/**"
+  - "scripts/**"
+  - "extensions/**"
+  - "templates/**"
+  - "docs/**"
+  - "npm/**"
+  - "src/**/*_test.ts"
+  - "src/**/*_test.tsx"
+  - "src/**/*.test.ts"
+  - "src/**/*.test.tsx"
