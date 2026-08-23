@@ -892,6 +892,29 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses a linked .gitignore before merging it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-link-" });
+    const projectDir = join(parentDir, "contract-project");
+    const outside = join(parentDir, "outside-gitignore");
+
+    try {
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outside, "keep-me\n");
+      await Deno.symlink(outside, join(projectDir, ".gitignore"));
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains .gitignore as a file or a link',
+      );
+
+      assertEquals(await Deno.readTextFile(outside), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("still reports a real file at a scaffold path as an overwritable conflict", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-leaf-file-" });
     const projectDir = join(parentDir, "contract-project");

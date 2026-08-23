@@ -504,6 +504,13 @@ function scaffoldWritePaths(assembly: ScaffoldAssembly, request: CreateProjectRe
   return paths;
 }
 
+function protectedWritePaths(
+  assembly: ScaffoldAssembly,
+  request: CreateProjectRequest,
+): string[] {
+  return [...scaffoldWritePaths(assembly, request), ".gitignore"];
+}
+
 async function findExistingPaths(dir: string, paths: string[]): Promise<string[]> {
   const fs = createFileSystem();
   const existing: string[] = [];
@@ -614,7 +621,7 @@ export async function createProject(
 
   // Checked whatever the conflict policy is: `--force` says you accept your
   // files being replaced, not the scaffold writing somewhere else entirely.
-  const unwritable = await findUnwritablePaths(projectDir, writePaths);
+  const unwritable = await findUnwritablePaths(projectDir, protectedWritePaths(assembly, request));
   if (unwritable.length) {
     throw ALREADY_EXISTS.create({
       detail: `${where} already contains ${unwritable.join(", ")} as a file or a link ` +

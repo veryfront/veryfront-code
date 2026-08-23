@@ -279,6 +279,31 @@ describe("mcp/tools/catalog-tools", () => {
       assertEquals(written, []);
     });
 
+    it("refuses a linked .gitignore instead of merging through it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const outside = join(parentDir, "outside-gitignore");
+      await Deno.mkdir(projectDir);
+      await Deno.writeTextFile(outside, "keep-me\n");
+      await Deno.symlink(outside, join(projectDir, ".gitignore"));
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains .gitignore as a file or a link"),
+        true,
+      );
+      assertEquals(await Deno.readTextFile(outside), "keep-me\n");
+      assertEquals(await Deno.readTextFile(join(projectDir, ".gitignore")), "keep-me\n");
+    });
+
     it("reports project-name validation failures", async () => {
       const result = await vfCreateProject.execute({
         name: "invalid/name",
