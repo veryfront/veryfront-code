@@ -2165,6 +2165,14 @@ unknownAccessorCall();
         "process",
         "server",
         "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
       ],
     );
     assertEquals(
@@ -2562,6 +2570,8 @@ Object.defineProperty(target, "write", { set: Deno.writeTextFile });
 [target.write] = ["array.txt"];
 ({ x: target.write = "object-default.txt" } = { x: undefined });
 [target.write = "array-default.txt"] = [undefined];
+for (target.write of ["loop-of.txt"]) {}
+for (target.write in { "loop-in.txt": true }) {}
 
 const getterOnly = {};
 Object.defineProperty(getterOnly, "write", {
@@ -2577,6 +2587,90 @@ void unusedGetter;
         "filesystem-write",
         "filesystem-write",
         "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+      ],
+    );
+  });
+
+  it("invokes descriptor getters on property reads and copies", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const direct = {};
+Object.defineProperty(direct, "path", { get: Deno.cwd });
+direct.path;
+
+const source = {};
+Object.defineProperty(source, "path", { get: Deno.cwd });
+Object.assign({}, source);
+const spread = { ...source };
+void spread;
+
+const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
+returned.path;
+`,
+        "src/runtime-descriptor-getters.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "direct.path getter"],
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "Object.assign(source getter)"],
+        ["shared-cwd", "source.* getter"],
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "returned.path getter"],
+      ],
+    );
+  });
+
+  it("fails closed when an opaque descriptor may contain a getter", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const descriptor: PropertyDescriptor;
+
+const direct = {};
+Object.defineProperty(direct, "path", descriptor);
+direct.path;
+
+const returned = Object.defineProperty({}, "path", descriptor);
+returned.path;
+
+const bulk = Object.defineProperties({}, { path: descriptor });
+bulk.path;
+
+const deleted = {};
+Object.defineProperty(deleted, "path", descriptor);
+delete deleted.path;
+`,
+        "src/runtime-opaque-descriptor-getters.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
       ],
     );
   });
