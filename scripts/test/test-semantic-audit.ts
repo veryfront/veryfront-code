@@ -2008,7 +2008,10 @@ function conservativeRuntimeEffects(
   binding: RuntimeBinding | undefined,
 ): readonly SemanticEffect[] {
   const effects: SemanticEffect[] = [];
+  const visited = new Set<RuntimeBinding>();
   const visit = (candidate: RuntimeBinding): void => {
+    if (visited.has(candidate)) return;
+    visited.add(candidate);
     if (
       candidate.kind === "effect" || candidate.kind === "effect-object" ||
       candidate.kind === "constructor-effect"
@@ -3928,11 +3931,13 @@ function bindRuntimeAssignment(
   allowClearing: boolean,
 ): void {
   if (
-    node.type !== "AssignmentExpression" || node.operator !== "=" ||
+    node.type !== "AssignmentExpression" ||
+    !["=", "&&=", "||=", "??="].includes(String(node.operator)) ||
     !isNode(node.left)
   ) {
     return;
   }
+  const canClearPrevious = node.operator === "=" && allowClearing;
   const binding = runtimeBindingForExpression(node.right, imports, scopes);
   const assignedMayBeUndefined = expressionMayBeUndefined(
     node.right,
@@ -3945,7 +3950,7 @@ function bindRuntimeAssignment(
     node.right,
     imports,
     scopes,
-    allowClearing,
+    canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
   );
   bindDefinitelyNonUndefinedPattern(
@@ -3954,7 +3959,7 @@ function bindRuntimeAssignment(
     assignedMayBeUndefined,
     imports,
     scopes,
-    allowClearing,
+    canClearPrevious,
     (name) => declaringScopeForName(name, scopes),
   );
   if (
@@ -3964,7 +3969,7 @@ function bindRuntimeAssignment(
       node.right,
       imports,
       scopes,
-      allowClearing,
+      canClearPrevious,
     )
   ) {
     return;
@@ -3975,11 +3980,11 @@ function bindRuntimeAssignment(
       binding,
       imports,
       scopes,
-      !allowClearing,
-      allowClearing,
+      !canClearPrevious,
+      canClearPrevious,
     );
   } else {
-    if (allowClearing) {
+    if (canClearPrevious) {
       clearCurrentScopeRuntimeAssignmentPattern(node.left, scopes);
     }
     bindRuntimePatternDefaults(
@@ -3992,8 +3997,8 @@ function bindRuntimeAssignment(
           defaultBinding,
           imports,
           scopes,
-          !allowClearing,
-          allowClearing,
+          !canClearPrevious,
+          canClearPrevious,
         ),
     );
   }
@@ -4267,10 +4272,9 @@ function possibleMutationValueBinding(
     const value = unwrapMutationValueExpression(expression);
     const binding = runtimeBindingForExpression(value, imports, scopes);
     if (binding) {
-      bindings.push(binding);
-      const nested = runtimeUnknownPropertyResolution(binding);
-      if (nested.binding) bindings.push(nested.binding);
-      aliasTargets.push(...nested.aliasTargets ?? []);
+      const nested = runtimeMutationValueBindings(binding);
+      bindings.push(...nested.bindings);
+      aliasTargets.push(...nested.aliasTargets);
     }
     aliasTargets.push(
       ...runtimeNamespaceAliasTargetsForExpression(value, imports, scopes),
@@ -4280,6 +4284,34 @@ function possibleMutationValueBinding(
     binding: unionRuntimeBindings(bindings),
     aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
     defaultMayRun: true,
+  };
+}
+
+function runtimeMutationValueBindings(
+  binding: RuntimeBinding,
+): {
+  readonly bindings: readonly RuntimeBinding[];
+  readonly aliasTargets: readonly RuntimeAliasTarget[];
+} {
+  const bindings: RuntimeBinding[] = [];
+  const aliasTargets: RuntimeAliasTarget[] = [];
+  const visited = new Set<RuntimeBinding>();
+  const visit = (candidate: RuntimeBinding): void => {
+    if (visited.has(candidate)) return;
+    visited.add(candidate);
+    bindings.push(candidate);
+    if (candidate.kind !== "namespace-object") return;
+    for (const resolution of namespaceUnknownPropertyResolutions(candidate)) {
+      aliasTargets.push(...resolution.aliasTargets ?? []);
+      for (const nested of flattenRuntimeBindings(resolution.binding)) {
+        visit(nested);
+      }
+    }
+  };
+  for (const candidate of flattenRuntimeBindings(binding)) visit(candidate);
+  return {
+    bindings,
+    aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
   };
 }
 

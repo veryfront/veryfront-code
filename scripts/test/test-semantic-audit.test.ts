@@ -1359,6 +1359,28 @@ function local(fs: { writeFileSync(): void }, method: string) {
     );
   });
 
+  it("bounds conservative lookup across cyclic runtime aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const holder = { run: Deno.writeTextFile };
+holder.self = holder;
+holder[key]("self-cycle.txt", "x");
+
+const left = { run: Deno.writeTextFile };
+const right = { peer: left };
+left.peer = right;
+right[key]("mutual-cycle.txt", "x");
+`,
+        "src/cyclic-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "holder.*"],
+        ["filesystem-write", "right.*"],
+      ],
+    );
+  });
+
   it("retains runtime provenance stored through unknown computed properties", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -1727,6 +1749,13 @@ Object.defineProperty(defined, "1", { value: Deno.writeTextFile });
 const [, definedRun] = [...defined, () => undefined];
 definedRun("defined.txt", "x");
 
+const definedMany = [() => undefined];
+Object.defineProperties(definedMany, {
+  1: { value: Deno.writeTextFile },
+});
+const [, definedManyRun] = [...definedMany, () => undefined];
+definedManyRun("defined-many.txt", "x");
+
 const reflected = [() => undefined];
 Reflect.set(reflected, "1", Deno.writeTextFile);
 const [, reflectedRun] = [...reflected, () => undefined];
@@ -1776,6 +1805,7 @@ reflectVariableAppliedRun("reflect-variable-applied.txt", "x");
         ["filesystem-write", "filledRun"],
         ["filesystem-write", "assignedRun"],
         ["filesystem-write", "definedRun"],
+        ["filesystem-write", "definedManyRun"],
         ["filesystem-write", "reflectedRun"],
         ["filesystem-write", "calledRun"],
         ["filesystem-write", "appliedRun"],
@@ -1814,6 +1844,35 @@ copiedRun();
         "src/shadowed-array-mutator.test.ts",
       ),
       [],
+    );
+  });
+
+  it("preserves both branches of logical property assignments", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const nullish = [() => undefined];
+nullish[1] ??= Deno.writeTextFile;
+const [, nullishRun] = [...nullish, () => undefined];
+nullishRun("nullish.txt", "x");
+
+const disjoined = [() => undefined];
+disjoined[1] ||= Deno.writeTextFile;
+const [, disjoinedRun] = [...disjoined, () => undefined];
+disjoinedRun("disjoined.txt", "x");
+
+const conjoined = [() => undefined, () => undefined];
+conjoined[1] &&= Deno.writeTextFile;
+const [, conjoinedRun] = [...conjoined, () => undefined];
+conjoinedRun("conjoined.txt", "x");
+`,
+        "src/logical-property-assignments.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "nullishRun"],
+        ["filesystem-write", "disjoinedRun"],
+        ["filesystem-write", "conjoinedRun"],
+      ],
     );
   });
 
