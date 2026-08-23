@@ -14,13 +14,15 @@ const apply = Reflect.apply;
 const denoRuntime = IS_DENO ? getDenoRuntime() : undefined;
 const denoEnv = denoRuntime?.env;
 const denoEnvGet = denoEnv?.get;
-const allowDeniedDenoEnvTestOverlay = (() => {
-  if (!denoEnv || !denoEnvGet) return false;
-  try {
-    return apply(denoEnvGet, denoEnv, ["DENO_TESTING"]) === "1";
-  } catch {
-    return false;
+const allowHostEnvTestOverlay = (() => {
+  if (denoEnv && denoEnvGet) {
+    try {
+      return apply(denoEnvGet, denoEnv, ["DENO_TESTING"]) === "1";
+    } catch {
+      return false;
+    }
   }
+  return hostProcessEnv?.DENO_TESTING === "1";
 })();
 const MapConstructor = Map;
 const mapEntries = Map.prototype.entries;
@@ -83,8 +85,8 @@ export function env(): Record<string, string> {
 }
 
 /**
- * Read a host variable without consulting the project-scoped environment snapshot.
- * The test harness overlay stays visible; tenant project scopes cannot shadow this read.
+ * Read outside the project snapshot. Test overlays require a captured host DENO_TESTING=1.
+ * Tenant project scopes and later global mutations cannot shadow this read.
  */
 export function getHostEnv(key: string): string | undefined {
   if (denoRuntime && denoEnv && denoEnvGet) {
@@ -95,20 +97,23 @@ export function getHostEnv(key: string): string | undefined {
       // project cannot replace Deno.env.get after module initialization.
       value = apply(denoEnvGet, denoEnv, [key]);
     } catch {
-      if (allowDeniedDenoEnvTestOverlay) {
+      if (allowHostEnvTestOverlay) {
         const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
         if (overlayResult.hasValue) return overlayResult.value;
       }
       return undefined;
     }
 
-    const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
-    return overlayResult.hasValue ? overlayResult.value : value;
+    if (allowHostEnvTestOverlay) {
+      const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+      if (overlayResult.hasValue) return overlayResult.value;
+    }
+    return value;
   }
 
-  const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
-  if (overlayResult.hasValue) {
-    return overlayResult.value;
+  if (allowHostEnvTestOverlay) {
+    const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+    if (overlayResult.hasValue) return overlayResult.value;
   }
 
   // Read the captured host record rather than `runtimeProcess.env`, so the
