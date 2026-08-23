@@ -3453,16 +3453,31 @@ function constructedRuntimeBinding(
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): RuntimeBinding | undefined {
-  if (value.type !== "NewExpression" || !isNode(value.callee)) {
-    return undefined;
-  }
+  const constructorBindings = value.type === "NewExpression" &&
+      isNode(value.callee)
+    ? [runtimeBindingForExpression(value.callee, imports, scopes)]
+    : isCallLikeExpression(value) && isNode(value.callee)
+    ? reflectInvocationCalls(
+      unwrapExpression(value.callee),
+      Array.isArray(value.arguments) ? value.arguments : [],
+      imports,
+      scopes,
+    ).filter((invocation) => invocation.method === "construct")
+      .map((invocation) =>
+        runtimeBindingForExpression(
+          invocation.arguments[0],
+          imports,
+          scopes,
+        )
+      )
+    : [];
   return unionRuntimeBindings(
-    flattenRuntimeBindings(
-      runtimeBindingForExpression(value.callee, imports, scopes),
-    ).flatMap((binding) =>
-      binding.kind === "module-constructor"
-        ? [{ kind: "module-instance", source: binding.source } as const]
-        : []
+    constructorBindings.flatMap((binding) =>
+      flattenRuntimeBindings(binding).flatMap((candidate) =>
+        candidate.kind === "module-constructor"
+          ? [{ kind: "module-instance", source: candidate.source } as const]
+          : []
+      )
     ),
   );
 }

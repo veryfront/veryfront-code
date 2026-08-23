@@ -1039,6 +1039,15 @@ const namespaceResolver = new legacyDns.Resolver();
 namespaceResolver.resolveSoa("example.com", () => {});
 const requiredResolver = new requiredDns.Resolver();
 await requiredResolver.reverse("127.0.0.1");
+const reflectedResolver = Reflect.construct(PromiseResolver, []);
+await reflectedResolver.resolve4("example.com");
+reflectedResolver.cancel();
+const { construct: constructResolver } = Reflect;
+const destructuredResolver = constructResolver(CallbackResolver, []);
+destructuredResolver.resolve6("example.com", () => {});
+const boundResolverConstruct = Reflect.construct.bind(Reflect);
+const boundResolver = boundResolverConstruct(PromiseResolver, []);
+await boundResolver.resolveCaa("example.com");
 function local(
   lookup: () => void,
   dns: { resolve(): void },
@@ -1048,6 +1057,12 @@ function local(
   dns.resolve();
   const resolver = new Resolver();
   resolver.resolve();
+}
+function localReflect(
+  Reflect: { construct(constructor: unknown, args: unknown[]): unknown },
+) {
+  const resolver = Reflect.construct(PromiseResolver, []);
+  resolver.resolve4("example.com");
 }
 `,
         "src/node-dns-effects.test.ts",
@@ -1067,6 +1082,9 @@ function local(
         ["network", "defaultResolver.resolveNs"],
         ["network", "namespaceResolver.resolveSoa"],
         ["network", "requiredResolver.reverse"],
+        ["network", "reflectedResolver.resolve4"],
+        ["network", "destructuredResolver.resolve6"],
+        ["network", "boundResolver.resolveCaa"],
       ],
     );
   });
