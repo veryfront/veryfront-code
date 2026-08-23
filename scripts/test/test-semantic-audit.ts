@@ -4517,6 +4517,40 @@ function bindRuntimeCallMutation(
     ) {
       continue;
     }
+    if (canonicalName === "Object.assign") {
+      for (
+        const entry of localMutationResultAssignedEntries(
+          canonicalName,
+          invocation.args,
+        )
+      ) {
+        const binding = runtimeBindingForExpression(
+          entry.expression,
+          imports,
+          scopes,
+        );
+        if (entry.property !== undefined) {
+          bindRuntimeNamedPropertyMutationBinding(
+            target,
+            entry.property,
+            binding,
+            entry.expression,
+            imports,
+            scopes,
+            true,
+          );
+        } else {
+          bindRuntimeUnknownPropertyMutationBinding(
+            target,
+            binding,
+            entry.expression,
+            imports,
+            scopes,
+          );
+        }
+      }
+      continue;
+    }
     const assigned = localMutationAssignedExpressions(
       canonicalName,
       invocation.args,
@@ -4750,6 +4784,7 @@ function mutationCallResultRuntimeBinding(
           entry.property,
           runtimeBindingForExpression(entry.expression, imports, scopes),
           false,
+          true,
         );
       }
       if (canonicalName === "Object.setPrototypeOf") {
@@ -4926,8 +4961,9 @@ function appendRuntimeMutationResultProperty(
   property: string | undefined,
   binding: RuntimeBinding | undefined,
   preservesPrevious: boolean,
+  allowClearing = false,
 ): RuntimeBinding {
-  if (!binding) return existing;
+  if (!binding && (property === undefined || !allowClearing)) return existing;
   return appendRuntimePropertyOperation(
     existing,
     property === undefined

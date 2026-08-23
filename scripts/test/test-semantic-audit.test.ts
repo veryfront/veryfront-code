@@ -2325,6 +2325,43 @@ localValues.sort(() => 0);
     );
   });
 
+  it("keeps statically named Object.assign overwrites precise", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { safe: () => undefined };
+Object.assign(target, { write: Deno.remove });
+target.safe();
+
+const overwrittenTarget = { run: Deno.remove };
+Object.assign(overwrittenTarget, { run: () => undefined });
+overwrittenTarget.run();
+
+const result = Object.assign(
+  {},
+  { run: Deno.remove },
+  { run: () => undefined },
+);
+result.run();
+`,
+        "src/runtime-object-assign-overwrites.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { safe: () => undefined };
+Object.assign(target, { write: Deno.remove });
+target.write("target.txt");
+`,
+        "src/runtime-object-assign-named-write.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "target.write"]],
+    );
+  });
+
   it("preserves every callable comparator and setter effect", () => {
     assertEquals(
       collectSemanticMarkers(
