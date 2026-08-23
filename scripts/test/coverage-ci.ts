@@ -72,11 +72,19 @@ export function buildCoverageCommandArgs(profileDirs: string[]): string[] {
     "coverage",
     ...profileDirs,
     "--include=src/",
+    // cli/ ships as a published export and the unit suite already runs its 184
+    // test files on every shard; without this their coverage was collected and
+    // then discarded at report time, leaving 532 source files unmeasured.
+    "--include=cli/",
     "--exclude=tests",
     "--exclude=src/**/*_test.ts",
     "--exclude=src/**/*_test.tsx",
     "--exclude=src/**/*.test.ts",
     "--exclude=src/**/*.test.tsx",
+    "--exclude=cli/**/*_test.ts",
+    "--exclude=cli/**/*_test.tsx",
+    "--exclude=cli/**/*.test.ts",
+    "--exclude=cli/**/*.test.tsx",
     "--lcov",
   ];
 }

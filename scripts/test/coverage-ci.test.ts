@@ -1,7 +1,10 @@
 import { fromFileUrl } from "#std/path";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { buildDenoTestCommandArgs } from "./coverage-ci.ts";
+import {
+  buildCoverageCommandArgs,
+  buildDenoTestCommandArgs,
+} from "./coverage-ci.ts";
 
 const providerDenyNet =
   "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
@@ -19,6 +22,26 @@ describe("coverage CI command", () => {
       args.indexOf(providerDenyNet) > args.indexOf("--allow-all"),
       true,
     );
+  });
+
+  it("reports on cli/ as well as src/, without counting either suite's tests", () => {
+    const args = buildCoverageCommandArgs(["coverage-shard-1"]);
+
+    // The unit suite runs cli/ tests on every shard; before cli/ was included
+    // here that coverage was collected and then dropped at report time.
+    assert(args.includes("--include=src/"));
+    assert(args.includes("--include=cli/"));
+
+    for (const pattern of ["_test.ts", "_test.tsx", ".test.ts", ".test.tsx"]) {
+      assert(
+        args.includes(`--exclude=src/**/*${pattern}`),
+        `src/ ${pattern} files must not count toward coverage`,
+      );
+      assert(
+        args.includes(`--exclude=cli/**/*${pattern}`),
+        `cli/ ${pattern} files must not count toward coverage`,
+      );
+    }
   });
 
   it("keeps the merge task loadable with npm disabled", async () => {
