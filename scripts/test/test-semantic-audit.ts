@@ -857,7 +857,12 @@ export function collectSemanticMarkers(
         );
       }
     }
-    bindRuntimeCallMutation(node, bindings, nextScopes);
+    bindRuntimeCallMutation(
+      node,
+      bindings,
+      nextScopes,
+      allowAssignmentClearing,
+    );
   };
   visit(program, []);
   return uniqueMarkers(markers).sort((a, b) =>
@@ -3807,7 +3812,7 @@ function visitRuntimeBindingSummary(
       );
     }
   }
-  bindRuntimeCallMutation(node, imports, nextScopes);
+  bindRuntimeCallMutation(node, imports, nextScopes, allowClearing);
 }
 
 function collectHoistedVarDeclaredNames(
@@ -4290,6 +4295,7 @@ function bindRuntimeCallMutation(
   node: Node,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  allowClearing: boolean,
 ): void {
   if (!isCallLikeExpression(node) || !isNode(node.callee)) return;
   const callee = unwrapExpression(node.callee);
@@ -4399,17 +4405,25 @@ function bindRuntimeCallMutation(
       continue;
     }
     for (const entry of assigned) {
+      const binding = localMutationAssignedEntryBinding(
+        entry,
+        imports,
+        scopes,
+      );
       if (entry.property !== undefined) {
-        bindRuntimeNamedPropertyMutation(
+        bindRuntimeNamedPropertyMutationBinding(
           target,
           entry.property,
+          binding,
           entry.expression,
           imports,
           scopes,
+          entry.definiteOverwrite === true && allowClearing,
         );
       } else {
-        bindRuntimeUnknownPropertyMutation(
+        bindRuntimeUnknownPropertyMutationBinding(
           target,
+          binding,
           entry.expression,
           imports,
           scopes,
@@ -4614,8 +4628,9 @@ function mutationCallResultRuntimeBinding(
           result = appendRuntimeMutationResultProperty(
             result,
             entry.property,
-            runtimeBindingForExpression(entry.expression, imports, scopes),
+            localMutationAssignedEntryBinding(entry, imports, scopes),
             false,
+            entry.definiteOverwrite === true,
           );
         }
       }
@@ -4695,8 +4710,9 @@ function appendRuntimeMutationResultProperty(
   property: string | undefined,
   binding: RuntimeBinding | undefined,
   preservesPrevious: boolean,
+  allowClearing = false,
 ): RuntimeBinding {
-  if (!binding) return existing;
+  if (!binding && (property === undefined || !allowClearing)) return existing;
   return appendRuntimePropertyOperation(
     existing,
     property === undefined
@@ -4731,16 +4747,24 @@ function arrayMutationInsertedExpressions(
   return inserted.map(runtimeSpreadValueExpression);
 }
 
+interface LocalMutationAssignedEntry {
+  readonly property?: string;
+  readonly expression: unknown;
+  readonly unknownSource?: unknown;
+  readonly definiteOverwrite?: boolean;
+}
+
 function localMutationAssignedEntries(
   canonicalName: string,
   args: readonly unknown[],
-): readonly { readonly property?: string; readonly expression: unknown }[] {
+): readonly LocalMutationAssignedEntry[] {
   if (canonicalName === "Object.assign") {
     return args.slice(1).flatMap((sourceExpression) => {
       const source = unwrapExpression(sourceExpression);
       if (source?.type !== "ObjectExpression") {
         return [{
           expression: runtimeUnknownPropertyExpression(sourceExpression),
+          unknownSource: sourceExpression,
         }];
       }
       return (Array.isArray(source.properties) ? source.properties : []).map(
@@ -4755,6 +4779,7 @@ function localMutationAssignedEntries(
                 sourceExpression,
                 propertyName,
               ),
+              definiteOverwrite: true,
             };
           }
           const unknownSource = isNode(property) &&
@@ -4763,6 +4788,7 @@ function localMutationAssignedEntries(
             : sourceExpression;
           return {
             expression: runtimeUnknownPropertyExpression(unknownSource),
+            unknownSource,
           };
         },
       );
@@ -4791,10 +4817,35 @@ function localMutationAssignedEntries(
   return [];
 }
 
+function localMutationAssignedEntryBinding(
+  entry: LocalMutationAssignedEntry,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  const binding = runtimeBindingForExpression(
+    entry.expression,
+    imports,
+    scopes,
+  );
+  if (binding || entry.unknownSource === undefined) return binding;
+  const sourceBinding = runtimeBindingForExpression(
+    entry.unknownSource,
+    imports,
+    scopes,
+  );
+  const source = unwrapExpression(entry.unknownSource);
+  const sourceIsFullyModeled = source?.type === "ObjectExpression" &&
+    sourceBinding !== undefined &&
+    flattenRuntimeBindings(sourceBinding).every((candidate) =>
+      candidate.kind === "namespace-object"
+    );
+  return sourceIsFullyModeled ? undefined : conservativeSemanticEffectBinding();
+}
+
 function localMutationResultAssignedEntries(
   canonicalName: string,
   args: readonly unknown[],
-): readonly { readonly property?: string; readonly expression: unknown }[] {
+): readonly LocalMutationAssignedEntry[] {
   if (canonicalName === "Object.defineProperties") {
     const descriptors = unwrapExpression(args[1]);
     if (descriptors?.type === "ObjectExpression") {

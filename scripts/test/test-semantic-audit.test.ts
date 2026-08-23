@@ -2277,6 +2277,69 @@ definedManyNamedReturn.safe();
     );
   });
 
+  it("fails closed for unknown Object.assign sources without retaining overwritten values", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const source: Record<string, unknown>;
+
+const target = { safe: () => undefined };
+Object.assign(target, source);
+target.safe();
+
+const returned = Object.assign({ safe: () => undefined }, source);
+returned.safe();
+
+const spreadReturned = Object.assign(
+  { safe: () => undefined },
+  { ...source },
+);
+spreadReturned.safe();
+
+function assignDefaultedSource(defaultedSource = {}) {
+  const defaultedTarget = { safe: () => undefined };
+  Object.assign(defaultedTarget, defaultedSource);
+  defaultedTarget.safe();
+}
+assignDefaultedSource();
+
+const overwrittenReturn = Object.assign(
+  { write: Deno.remove },
+  { write: () => undefined },
+);
+overwrittenReturn.write("local-return.txt");
+
+const overwrittenTarget = { write: Deno.remove };
+Object.assign(overwrittenTarget, { write: () => undefined });
+overwrittenTarget.write("local-target.txt");
+
+const knownSafeTarget = { safe: () => undefined };
+Object.assign(knownSafeTarget, { ...{ safe: () => undefined } });
+knownSafeTarget.safe();
+
+declare const maybe: boolean;
+const conditionalTarget = { write: Deno.remove };
+if (maybe) Object.assign(conditionalTarget, { write: () => undefined });
+conditionalTarget.write("conditional.txt");
+`,
+        "src/runtime-object-assign-unknown-source.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from(
+        { length: 4 },
+        () => [
+          "browser",
+          "filesystem-read",
+          "filesystem-watch",
+          "filesystem-write",
+          "network",
+          "process",
+          "server",
+          "shared-cwd",
+        ],
+      ).flat().concat("filesystem-write"),
+    );
+  });
+
   it("preserves every possible sort comparator effect", () => {
     assertEquals(
       collectSemanticMarkers(
