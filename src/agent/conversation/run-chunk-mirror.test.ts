@@ -525,4 +525,47 @@ describe("agent/conversation-run-chunk-mirror", () => {
       globalThis.fetch = originalFetch;
     }
   });
+  // veryfront-issue-inbox#743: deleting a project cancels its in-flight runs, so
+  // the next append is rejected with `Cannot append external events to a terminal
+  // run`. That is a clean stop: warn once, record the reason finalization keys on,
+  // and never log at error level.
+  it("stops cleanly with a run_terminal reason when the run is already terminal", async () => {
+    const logs: Array<{ level: "warn" | "error"; message: string }> = [];
+    const terminalRunFetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ detail: "Cannot append external events to a terminal run" }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
+      )) as typeof fetch;
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "11111111-1111-4111-8111-111111111111",
+      runId: "run-1",
+      latestEventId: 0,
+      fetch: terminalRunFetch,
+      instrumentation: {
+        warn: (message) => {
+          logs.push({ level: "warn", message });
+        },
+        error: (message) => {
+          logs.push({ level: "error", message });
+        },
+      },
+    });
+
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    const snapshot = await mirror.flush();
+    mirror.dispose();
+
+    assertEquals(snapshot.disabled, true);
+    assertEquals(snapshot.disableReason, "run_terminal");
+    assertEquals(snapshot.pendingEventCount, 0);
+    assertEquals(snapshot.hasRetryTimer, false);
+    assertEquals(logs, [{
+      level: "warn",
+      message: "Stopping durable run mirroring because the run is already terminal",
+    }]);
+  });
 });

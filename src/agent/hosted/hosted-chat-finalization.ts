@@ -268,13 +268,31 @@ async function flushMirror(
   await lifecycleAdapter.durableRunMirror?.flush();
 }
 
+/**
+ * True once the durable run mirror has been told by the API that the run is already
+ * terminal (veryfront-issue-inbox#743). Deleting a project cancels its in-flight
+ * runs before the cascade removes them, so the append that follows is rejected with
+ * `Cannot append external events to a terminal run` and the row is gone moments
+ * later. Completing such a run can only fail, so finalization is skipped.
+ *
+ * This deliberately keys on the one narrow reason and no other: every other mirror
+ * stop leaves a live run that still has to be completed.
+ */
+export function isDurableRunKnownTerminal(
+  lifecycleAdapter: HostedChatExecutionLifecycleAdapter,
+): boolean {
+  return lifecycleAdapter.durableRunMirror?.getSnapshot().disableReason === "run_terminal";
+}
+
 async function dispatchTerminalState(
   input: {
     lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
     terminalState: HostedLifecycleTerminalState;
   },
 ): Promise<void> {
-  await dispatchConversationHostedTerminalState(input.lifecycleAdapter, input.terminalState);
+  await dispatchConversationHostedTerminalState(input.lifecycleAdapter, input.terminalState, {
+    skipDurableRunFinalization: isDurableRunKnownTerminal(input.lifecycleAdapter),
+  });
 }
 
 async function dispatchFailedTerminalError(

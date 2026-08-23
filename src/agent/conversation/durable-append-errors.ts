@@ -36,6 +36,26 @@ export function parseAppendConversationRunEventsErrorBody(bodyText: string): str
   return bodyText;
 }
 
+const TERMINAL_RUN_APPEND_REJECTION_DETAIL = "Cannot append external events to a terminal run";
+
+/**
+ * The run already reached a terminal status server-side, so it will never accept
+ * another event -- nor a terminal transition. Cancelling a project's in-flight runs
+ * before deleting it is the common source. This is deliberately narrower than
+ * {@link isIgnorableConversationRunAppendError}: an absent run and a run waiting for
+ * a tool result are ignorable for appends but say nothing about finalization, and
+ * every other rejection must keep surfacing as an error.
+ */
+export function isTerminalRunConversationRunAppendError(
+  error: unknown,
+): error is AppendConversationRunEventsError {
+  return (
+    error instanceof AppendConversationRunEventsError &&
+    error.status === 400 &&
+    error.detail === TERMINAL_RUN_APPEND_REJECTION_DETAIL
+  );
+}
+
 /** Error shape for is ignorable conversation run append. */
 export function isIgnorableConversationRunAppendError(
   error: unknown,
@@ -53,7 +73,7 @@ export function isIgnorableConversationRunAppendError(
   }
 
   return (
-    error.detail === "Cannot append external events to a terminal run" ||
+    error.detail === TERMINAL_RUN_APPEND_REJECTION_DETAIL ||
     error.detail === "Cannot append external events while the run is waiting for a tool result"
   );
 }
