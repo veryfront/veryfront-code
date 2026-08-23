@@ -32,7 +32,7 @@ const MAX_PROVIDER_STREAM_RETRIES = 2;
  * Shortening the first attempt instead would sacrifice a provider that was
  * going to answer, for a replay that may never fire.
  */
-const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
+export const DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS = 40_000;
 
 /**
  * Elapsed-time source for the header budget. `Date.now` can step backwards
@@ -834,9 +834,10 @@ export async function requestJson(options: {
 /**
  * Request a streaming response. When the request body is replayable,
  * typed retryable failures are retried up to two times before provider output
- * is exposed. Each attempt gets a fresh stream header deadline. ReadableStream
- * request bodies are not retried because fetch can consume them on the first
- * attempt.
+ * is exposed. Each attempt gets a fresh stream header deadline, and replays are
+ * capped so the default total header wait stays under the hosted fork idle
+ * watchdog. ReadableStream request bodies are not retried because fetch can
+ * consume them on the first attempt.
  *
  * Response headers and error bodies have a 30-second default per-attempt
  * deadline, and replays are additionally capped so the whole header wait stays

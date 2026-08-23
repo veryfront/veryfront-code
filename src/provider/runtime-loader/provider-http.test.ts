@@ -5,10 +5,12 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS } from "../../agent/hosted/child-fork-execution-runner.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import { MAX_TIMER_DELAY_MS } from "../../utils/timer.ts";
 import {
   buildProviderError,
+  DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
   parseRetryAfterMs,
   ProviderOverloadedError,
   ProviderQuotaError,
@@ -705,6 +707,14 @@ describe("provider-http", () => {
   });
 
   describe("requestStream", () => {
+    it("keeps the default header replay budget below the hosted child idle watchdog", () => {
+      assertEquals(
+        DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS <=
+          DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS - 5_000,
+        true,
+      );
+    });
+
     it("returns the successful response body", async () => {
       const stream = await requestStream({
         url: "https://provider.test/stream",
