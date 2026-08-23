@@ -2433,8 +2433,14 @@ function runtimeUnknownPropertyResolution(
       aliasTargets.push(...resolution.aliasTargets ?? []);
     }
   }
+  const resolvedBinding = unionRuntimeBindingsPreservingPartial(
+    propertyBindings,
+  );
   return {
-    binding: unionRuntimeBindingsPreservingPartial(propertyBindings),
+    binding: resolvedBinding && runtimeBindingHasPartialAlternative(binding) &&
+        !runtimeBindingHasPartialAlternative(resolvedBinding)
+      ? { kind: "partial", binding: resolvedBinding }
+      : resolvedBinding,
     aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
     defaultMayRun: true,
   };
@@ -7249,7 +7255,7 @@ function bindRuntimeAssignmentPattern(
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
       binding.kind !== "module" && binding.kind !== "module-instance" &&
       binding.kind !== "namespace-object" &&
-      binding.kind !== "one-of")
+      binding.kind !== "one-of" && binding.kind !== "partial")
   ) {
     return;
   }
@@ -9142,7 +9148,7 @@ function mergeRuntimeBinding(
   merge: boolean,
 ): RuntimeBinding {
   return merge && existing
-    ? unionRuntimeBindings([existing, incoming]) ?? incoming
+    ? unionRuntimeBindingsPreservingPartial([existing, incoming]) ?? incoming
     : incoming;
 }
 
@@ -9420,7 +9426,8 @@ function bindPatternToRuntime(
       binding.kind !== "module-instance" &&
       binding.kind !== "global-object" &&
       binding.kind !== "shared-object" && binding.kind !== "effect-object" &&
-      binding.kind !== "namespace-object" && binding.kind !== "one-of")
+      binding.kind !== "namespace-object" && binding.kind !== "one-of" &&
+      binding.kind !== "partial")
   ) {
     return;
   }
