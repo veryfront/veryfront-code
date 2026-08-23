@@ -187,6 +187,44 @@ jobs:
       - name: Run runtime critical flow
         run: deno task test:e2e:runtime-inference-critical-flow --runtime=${{ matrix.runtime }}
 
+  tests-windows-localhost:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: windows-2022
+    timeout-minutes: 20
+    name: tests (Windows localhost routing)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Record wildcard localhost resolution
+        shell: pwsh
+        run: |
+          $nodeReport = node scripts/ci/probe-localhost-resolution.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $denoReport = deno run --allow-net scripts/ci/probe-localhost-resolution.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @(
+            "### Windows wildcard localhost resolution",
+            "",
+            '```json',
+            $nodeReport,
+            $denoReport,
+            '```'
+          ) | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+      - name: Install Chromium
+        timeout-minutes: 10
+        run: deno run -A npm:playwright@1.60.0 install chromium
+      - name: Exercise local virtual-host routing
+        run: deno run -A scripts/ci/run-windows-localhost-e2e.ts
+
   coverage-shards:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
@@ -496,11 +534,37 @@ jobs:
   # Clean-room install of the generated npm packages under Node: bare-install
   # CLI startup, optional-peer metadata, extension package loading, and a real
   # starter dev-server render (see scripts/test/npm-install-smoke.sh).
-  tests-npm-install-smoke:
+  npm-smoke-node-versions:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    name: npm smoke Node version contract
+    outputs:
+      node_versions: ${{ steps.versions.outputs.node_versions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Read npm smoke Node versions
+        id: versions
+        run: |
+          deno eval '
+            import { NPM_SMOKE_NODE_VERSIONS } from "./scripts/build/runtime-support.ts";
+            console.log(`node_versions=${JSON.stringify(NPM_SMOKE_NODE_VERSIONS)}`);
+          ' >> "$GITHUB_OUTPUT"
+
+  tests-npm-install-smoke:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: npm-smoke-node-versions
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-    name: tests (npm install smoke)
+    name: "tests (npm install smoke: Node ${{ matrix.node-version }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJSON(needs.npm-smoke-node-versions.outputs.node_versions) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -511,7 +575,7 @@ jobs:
           warm-cache: "true"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
-          node-version: "24"
+          node-version: ${{ matrix.node-version }}
           package-manager-cache: false
       - name: Install TypeScript toolchain
         run: npm --prefix storybook ci --ignore-scripts
@@ -831,6 +895,7 @@ jobs:
       tests-binary-e2e,
       tests-npm-install-smoke,
       tests-sentry-runtime-packages,
+      tests-windows-localhost,
       build-binaries,
       version-check,
     ]
@@ -967,6 +1032,7 @@ jobs:
       tests-binary-e2e,
       tests-npm-install-smoke,
       tests-sentry-runtime-packages,
+      tests-windows-localhost,
       build-binaries,
       version-check,
     ]

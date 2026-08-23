@@ -462,6 +462,10 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(persistedWhileRunning.workerId, "run-execution:old-owner");
     assertEquals(persistedWhileRunning.nodeStates["side-effect"]?.attempt, 2);
     assertEquals(persistedWhileRunning.nodeStates["side-effect"]?.status, "running");
+    assertExists(
+      persistedWhileRunning.nodeStates["side-effect"]?.startedAt,
+      "the recovery is persisted at admission, so the durable write carries its start",
+    );
 
     release.resolve();
     await execution;

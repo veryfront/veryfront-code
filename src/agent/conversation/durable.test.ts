@@ -1399,6 +1399,50 @@ describe("agent/durable", () => {
     });
   });
 
+  it("stops with run_terminal when a cursor resync resolves to a terminal run", async () => {
+    for (const status of ["completed", "failed", "cancelled"] as const) {
+      const terminalController = createConversationRunEventQueueController({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_cursor_resync_terminal",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        maxEventsPerBatch: 2,
+      });
+
+      terminalController.enqueue([{ type: "STATE_DELTA", id: 1 }]);
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/events")) {
+          return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+        }
+
+        return jsonResponse(
+          camelCaseDurableRunProjection({
+            runId: "run_cursor_resync_terminal",
+            latestExternalEventSequence: 4,
+            status,
+          }),
+          200,
+        );
+      }) as typeof fetch;
+
+      const flushed = await terminalController.flush();
+
+      if (flushed.outcome !== "stopped") {
+        throw new Error(
+          `expected a stopped flush for a ${status} projection, got ${flushed.outcome}`,
+        );
+      }
+      assertEquals(
+        flushed.disableReason,
+        "run_terminal",
+        `expected run_terminal for a ${status} projection`,
+      );
+      assertEquals(terminalController.getSnapshot().disableReason, "run_terminal");
+    }
+  });
+
   it("merges events enqueued during an in-flight retry flush", async () => {
     let resolveAppend: (response: Response) => void = (_response) => {
       throw new Error("Append request was not started");
@@ -1878,8 +1922,74 @@ describe("agent/durable", () => {
         outcome: "stopped",
         latestEventId: 2,
         latestExternalEventSequence: 4,
+        disableReason: "run_terminal",
+      },
+    );
+
+    // veryfront-issue-inbox#743: only the terminal-run detail earns the
+    // finalization-skipping stop. A run waiting for a tool result is still alive
+    // and a missing run is a different condition, so both keep the generic
+    // ignorable stop -- and any other `validation-failed` detail must still retry
+    // rather than be silently swallowed.
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "Cannot append external events while the run is waiting for a tool result",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_waiting",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
         disableReason: "ignorable_append_rejection",
       },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({ status: 404 }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_missing",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "ignorable_append_rejection",
+      },
+    );
+
+    assertEquals(
+      (await recoverConversationRunAppendFailure({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "Agent run event type is not supported",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_failure_other_validation",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        cursorResyncsThisFlush: 0,
+        maxCursorResyncsPerFlush: 3,
+      })).outcome,
+      "retry_scheduled",
     );
 
     assertEquals(
@@ -2046,7 +2156,7 @@ describe("agent/durable", () => {
         outcome: "stopped",
         latestEventId: 2,
         latestExternalEventSequence: 4,
-        disableReason: "ignorable_append_rejection",
+        disableReason: "run_terminal",
       },
     );
 
