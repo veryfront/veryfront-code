@@ -3155,6 +3155,28 @@ Object.assign({}, hidden).run("hidden-assign.txt");
     assertEquals(
       collectSemanticMarkers(
         `
+declare const descriptorKey: "enumerable" | "configurable";
+const maybeEnumerable = {};
+Object.defineProperty(maybeEnumerable, "run", {
+  value: Deno.remove,
+  [descriptorKey]: true,
+});
+Object.assign({}, maybeEnumerable).run("maybe-enumerable-assign.txt");
+({ ...maybeEnumerable }).run("maybe-enumerable-spread.txt");
+`,
+        "src/runtime-computed-descriptor-attributes.test.ts",
+      ).filter((marker) =>
+        marker.effect === "filesystem-write" && marker.symbol === "run"
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+      ],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
 const visible = {};
 Object.defineProperty(visible, "run", {
   value: Deno.remove,

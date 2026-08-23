@@ -6220,7 +6220,8 @@ function runtimeDescriptorDefinedFields(
       return undefined;
     }
     const name = staticObjectPropertyName(property);
-    if (name !== undefined) fields.add(name);
+    if (name === undefined) return undefined;
+    fields.add(name);
   }
   return fields;
 }
