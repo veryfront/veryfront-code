@@ -2,7 +2,7 @@ import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
 import {
-  CURRENT_CI_NODE_RELEASE_LINE,
+  CURRENT_NPM_SMOKE_NODE_RELEASE_LINE,
   MINIMUM_NODE_RELEASE_LINE,
   MINIMUM_NODE_VERSION,
   NPM_SMOKE_NODE_VERSIONS,
@@ -31,7 +31,7 @@ function steps(
 }
 
 describe("npm smoke Node support contract", () => {
-  it("runs the packed npm smoke at the support floor and current CI release", async () => {
+  it("runs the packed npm smoke on the oldest supported and current release lines", async () => {
     const workflow = record(
       parse(await Deno.readTextFile(WORKFLOW_PATH)),
       "CI workflow",
@@ -108,10 +108,10 @@ describe("npm smoke Node support contract", () => {
 
     assertEquals(
       NPM_SMOKE_NODE_VERSIONS,
-      [MINIMUM_NODE_RELEASE_LINE, CURRENT_CI_NODE_RELEASE_LINE],
+      [MINIMUM_NODE_RELEASE_LINE, CURRENT_NPM_SMOKE_NODE_RELEASE_LINE],
     );
     assertEquals(MINIMUM_NODE_RELEASE_LINE, "22");
     assertEquals(MINIMUM_NODE_VERSION, "22.3.0");
-    assertEquals(CURRENT_CI_NODE_RELEASE_LINE, "24");
+    assertEquals(CURRENT_NPM_SMOKE_NODE_RELEASE_LINE, "24");
   });
 });
