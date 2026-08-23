@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "veryfront/errors";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve } from "veryfront/extensions/contracts";
 import type { SchemaValidator } from "veryfront/extensions/schema";
@@ -13,6 +14,7 @@ import {
   extractArg,
   extractArgs,
   GLOBAL_BOOLEAN_FLAGS,
+  parseArgsOrThrow,
   parseCliArgs,
 } from "./args.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
@@ -368,5 +370,22 @@ describe("cli/shared/args", () => {
       ]);
       assertEquals(parseCliArgs(["veryfront", "login", "--token"])._, ["veryfront", "login"]);
     });
+  });
+});
+
+describe("parseArgsOrThrow", () => {
+  it("throws a registered usage error naming the command and the problem", () => {
+    const failing = () => ({
+      success: false as const,
+      error: Object.assign(new Error("expected number, received NaN"), { issues: [] }),
+    });
+
+    const error = assertThrows(() => parseArgsOrThrow(failing, "dev", { _: [] }));
+
+    assertEquals(error instanceof VeryfrontError, true);
+    const vfError = error as VeryfrontError;
+    assertEquals(vfError.slug, "invalid-argument");
+    assertEquals(vfError.exitCode, 2);
+    assertEquals(vfError.detail, "Invalid dev arguments: expected number, received NaN");
   });
 });

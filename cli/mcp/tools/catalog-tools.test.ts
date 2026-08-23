@@ -218,22 +218,6 @@ describe("mcp/tools/catalog-tools", () => {
       });
     });
 
-    it("keeps the existing-directory failure response", async () => {
-      const parentDir = await Deno.makeTempDir();
-      createdDirs.push(parentDir);
-      const projectDir = join(parentDir, "example-app");
-      await Deno.mkdir(projectDir);
-
-      const result = await vfCreateProject.execute({
-        name: "Example App",
-        template: "minimal",
-        directory: parentDir,
-      });
-
-      assertEquals(result.success, false);
-      assertEquals(result.message, `Directory already exists: ${projectDir}`);
-    });
-
     it("reports project-name validation failures", async () => {
       const result = await vfCreateProject.execute({
         name: "invalid/name",

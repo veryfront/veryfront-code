@@ -6,7 +6,7 @@
 import { cliLogger as logger, isVerbose } from "#cli/utils";
 import { brand, dim } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
-import { createError, toError } from "veryfront/errors";
+import { INVALID_ARGUMENT } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
 import { cwd } from "veryfront/platform";
 import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
@@ -135,7 +135,7 @@ export async function initCommand(
   if (name) {
     const nameError = validateProjectName(name);
     if (nameError) {
-      throw toError(createError({ type: "config", message: nameError }));
+      throw INVALID_ARGUMENT.create({ detail: nameError });
     }
   }
 
