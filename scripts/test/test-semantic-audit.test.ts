@@ -1506,6 +1506,9 @@ const [exact = Deno.readTextFile] = [Deno.writeTextFile];
 exact("exact.txt", "x");
 const [, ...rest] = [() => undefined, Deno.writeTextFile];
 rest[0]("rest.txt", "x");
+const knownArraySource = [() => undefined, Deno.writeTextFile];
+const [, ...knownArrayRest] = knownArraySource;
+knownArrayRest[0]("known-array-rest.txt", "x");
 const dynamic = [() => undefined];
 dynamic[Math.random()] = Deno.writeTextFile;
 const [...dynamicRest] = dynamic;
@@ -1538,11 +1541,26 @@ ArrayRestClass.write("array-rest-class.txt", "x");
         ["filesystem-write", "defaulted"],
         ["filesystem-write", "exact"],
         ["filesystem-write", "rest.0"],
+        ["filesystem-write", "knownArrayRest.0"],
         ["filesystem-write", "dynamicRest.0"],
         ["filesystem-write", "ArrayClass.write"],
         ["filesystem-write", "ArrayExactClass.write"],
         ["filesystem-write", "ArrayRestClass.write"],
       ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const numericObjectSource = {
+  0: Deno.writeTextFile,
+  1: () => undefined,
+};
+const [, ...objectRest] = numericObjectSource;
+objectRest[0]("numeric-object-rest.txt", "x");
+`,
+        "src/runtime-numeric-object-rest.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "objectRest.0"]],
     );
     assertEquals(
       collectSemanticMarkers(
@@ -1563,6 +1581,9 @@ const [discardedEffect, ...localRest] = [
   () => undefined,
 ];
 localRest[0]();
+const knownLocalArraySource = [Deno.writeTextFile, () => undefined];
+const [, ...knownLocalArrayRest] = knownLocalArraySource;
+knownLocalArrayRest[0]();
 class LocalArrayClass {}
 const [LocalArrayAlias] = [LocalArrayClass];
 LocalArrayAlias.write = () => undefined;

@@ -591,6 +591,7 @@ type RuntimeBinding =
   | { readonly kind: "effect-object"; readonly effect: SemanticEffect }
   | {
     readonly kind: "namespace-object";
+    readonly shape?: "array" | "object";
     readonly properties: ReadonlyMap<string, RuntimeBinding>;
     readonly propertyOperations?: readonly NamespacePropertyOperation[];
   }
@@ -3714,7 +3715,11 @@ function mergeRuntimeNamespaceBindings(
       mergeNamespacePropertyBinding(existingProperty, binding),
     );
   }
-  return { kind: "namespace-object", properties };
+  return {
+    kind: "namespace-object",
+    shape: existing.shape === incoming.shape ? existing.shape : undefined,
+    properties,
+  };
 }
 
 function mergeNamespacePropertyBinding(
@@ -4424,12 +4429,14 @@ function appendRuntimePropertyOperation(
   if (existing?.kind === "namespace-object" && existing.propertyOperations) {
     return {
       kind: "namespace-object",
+      shape: existing.shape,
       properties: existing.properties,
       propertyOperations: [...existing.propertyOperations, operation],
     };
   }
   return {
     kind: "namespace-object",
+    shape: existing?.kind === "namespace-object" ? existing.shape : undefined,
     properties: new Map(),
     propertyOperations: existing
       ? [{ kind: "spread", binding: existing }, operation]
@@ -5010,7 +5017,12 @@ function arrayLiteralRuntimeBinding(
     });
     if (binding) properties.set(name, binding);
   }
-  return { kind: "namespace-object", properties, propertyOperations };
+  return {
+    kind: "namespace-object",
+    shape: "array",
+    properties,
+    propertyOperations,
+  };
 }
 
 function objectLiteralRuntimeBinding(
@@ -5102,7 +5114,12 @@ function objectLiteralRuntimeBinding(
       properties.delete(name);
     }
   }
-  return { kind: "namespace-object", properties, propertyOperations };
+  return {
+    kind: "namespace-object",
+    shape: "object",
+    properties,
+    propertyOperations,
+  };
 }
 
 function expressionMayBeUndefined(
@@ -5460,7 +5477,7 @@ function runtimeArrayRestBinding(
       staticRuntimeArrayRestBinding(candidate, startIndex) ??
         conservativeRuntimeArrayRestBinding(candidate)
     ),
-  ) ?? { kind: "namespace-object", properties: new Map() };
+  ) ?? { kind: "namespace-object", shape: "array", properties: new Map() };
 }
 
 function staticRuntimeArrayRestBinding(
@@ -5469,6 +5486,7 @@ function staticRuntimeArrayRestBinding(
 ): RuntimeBinding | undefined {
   if (
     binding.kind !== "namespace-object" ||
+    binding.shape !== "array" ||
     binding.propertyOperations?.some((operation) => operation.kind !== "define")
   ) {
     return undefined;
@@ -5501,7 +5519,12 @@ function staticRuntimeArrayRestBinding(
     });
     if (resolution.binding) properties.set(name, resolution.binding);
   }
-  return { kind: "namespace-object", properties, propertyOperations };
+  return {
+    kind: "namespace-object",
+    shape: "array",
+    properties,
+    propertyOperations,
+  };
 }
 
 function runtimeArrayIndex(property: string): number | undefined {
@@ -5519,6 +5542,7 @@ function conservativeRuntimeArrayRestBinding(
   return resolution.binding || aliasTargets.length > 0
     ? {
       kind: "namespace-object",
+      shape: "array",
       properties: new Map(),
       propertyOperations: [{
         kind: "define-unknown",
@@ -5528,7 +5552,7 @@ function conservativeRuntimeArrayRestBinding(
         crossesFunctionBoundary: false,
       }],
     }
-    : { kind: "namespace-object", properties: new Map() };
+    : { kind: "namespace-object", shape: "array", properties: new Map() };
 }
 
 function runtimePropertyBinding(
