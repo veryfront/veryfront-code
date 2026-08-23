@@ -587,6 +587,36 @@ describe("automated review gate", () => {
         [
           "<!-- recent_review_start -->",
           "No actionable comments were generated in the recent review.",
+          `    ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `> ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `1. ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `> 1. ${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `${"> ".repeat(2_000)}${codeRabbitReviewRange()}`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
           "Reviewing changed files from the base of the PR and between " +
           `${STALE_SHA} and ${HEAD_SHA}.`,
           "<!-- recent_review_end -->",
@@ -659,6 +689,68 @@ describe("automated review gate", () => {
       ))?.source,
       "summary",
     );
+
+    const newerCompleteCurrentThenUnterminatedStale = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+        "<!-- recent_review_start -->",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:50Z",
+      updated_at: "2026-08-22T12:03:50Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerCompleteCurrentThenUnterminatedStale],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
+    for (
+      const newerNestedMarkerBody of [
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          codeRabbitReviewRange(),
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+      ]
+    ) {
+      const newerNestedMarkers = codeRabbitSummary({
+        body: newerNestedMarkerBody,
+        created_at: "2026-08-22T12:03:55Z",
+        updated_at: "2026-08-22T12:03:55Z",
+      });
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerNestedMarkers],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
 
     const newerOutOfScopeCurrentRange = codeRabbitSummary({
       body: [

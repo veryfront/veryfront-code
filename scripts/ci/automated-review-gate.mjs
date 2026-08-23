@@ -4,13 +4,14 @@ const AUTOMATED_REVIEW_LOGINS = new Set([
 ]);
 const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
-const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
+const CODERABBIT_RECENT_REVIEW_MARKER_PATTERN =
+  /<!-- recent_review_start -->|<!-- recent_review_end -->/g;
 const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN =
-  /(?:^|\r?\n)\s*(?:[-*+]\s+)?(Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between\s+[0-9a-f]{40}\s+and(?:[ \t]*\r?\n)?[ \t]*[0-9a-f]{40}[^\r\n]*)/gi;
+  /(?:^|\r?\n)[ \t]*(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+))*(Reviewing\s+(?:files(?:\s+that\s+changed\s+from\s+the\s+base\s+of\s+the\s+PR)?|changed files(?:\s+from\s+the\s+base\s+of\s+the\s+PR)?)\s+(?:and\s+)?between\s+[0-9a-f]{40}\s+and(?:[ \t]*\r?\n)?[ \t]*[0-9a-f]{40}[^\r\n]*)/gi;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
@@ -215,22 +216,32 @@ async function classifyAutomatedReviewEvent(
     selectedRecentReview,
     headSha,
   );
-  if (rangeEvidence === "current-invalid") {
+  const effectiveRangeReview =
+    rangeEvidence === "none" && selectedRecentReview?.fallbackContent
+      ? {
+        content: selectedRecentReview.fallbackContent,
+        terminated: false,
+      }
+      : selectedRecentReview;
+  const effectiveRangeEvidence = effectiveRangeReview === selectedRecentReview
+    ? rangeEvidence
+    : classifyCodeRabbitRangeEvidence(effectiveRangeReview, headSha);
+  if (effectiveRangeEvidence === "current-invalid") {
     return {
       kind: "failure",
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,
     };
   }
-  if (rangeEvidence !== "current-valid") {
+  if (effectiveRangeEvidence !== "current-valid") {
     return { kind: "not-head" };
   }
-  if (!selectedRecentReview?.terminated) {
+  if (!effectiveRangeReview?.terminated) {
     return {
       kind: "failure",
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,
     };
   }
-  return selectedRecentReview?.content.includes(
+  return effectiveRangeReview?.content.includes(
       CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER,
     )
     ? {
@@ -252,45 +263,55 @@ async function classifyAutomatedReviewEvent(
 
 function codeRabbitSelectedRecentReview(body) {
   if (typeof body !== "string") return undefined;
-  const start = body.lastIndexOf(CODERABBIT_RECENT_REVIEW_MARKER);
-  if (start < 0) return undefined;
-  const contentStart = start + CODERABBIT_RECENT_REVIEW_MARKER.length;
-  const end = body.indexOf(CODERABBIT_RECENT_REVIEW_END_MARKER, contentStart);
-  if (end < 0) {
-    const previousStart = body.lastIndexOf(
-      CODERABBIT_RECENT_REVIEW_MARKER,
-      start - 1,
-    );
-    const previousContentStart = previousStart +
-      CODERABBIT_RECENT_REVIEW_MARKER.length;
-    const previousEnd = previousStart < 0 ? -1 : body.indexOf(
-      CODERABBIT_RECENT_REVIEW_END_MARKER,
-      previousContentStart,
-    );
-    return {
-      content: body.slice(
-        previousEnd < 0 ? contentStart : previousContentStart,
-      ),
-      terminated: false,
+  const groups = [];
+  let openGroup;
+  let previousCompleteContent;
+  for (
+    const marker of body.matchAll(CODERABBIT_RECENT_REVIEW_MARKER_PATTERN)
+  ) {
+    if (marker[0] === CODERABBIT_RECENT_REVIEW_MARKER) {
+      if (openGroup) {
+        openGroup.invalid = true;
+      } else {
+        openGroup = {
+          contentStart: marker.index + CODERABBIT_RECENT_REVIEW_MARKER.length,
+          invalid: false,
+        };
+      }
+      continue;
+    }
+    if (!openGroup) continue;
+    const content = body.slice(openGroup.contentStart, marker.index);
+    const group = {
+      content,
+      terminated: !openGroup.invalid,
     };
+    groups.push(group);
+    if (group.terminated) previousCompleteContent = content;
+    openGroup = undefined;
   }
-  return {
-    content: body.slice(contentStart, end),
-    terminated: true,
-  };
+  if (openGroup) {
+    groups.push({
+      content: body.slice(openGroup.contentStart),
+      fallbackContent: previousCompleteContent,
+      terminated: false,
+    });
+  }
+  return groups.at(-1);
 }
 
 function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
-  if (!selectedRecentReview) return "not-head";
+  if (!selectedRecentReview) return "none";
   const evidenceBlocks = codeRabbitRangeEvidenceStatements(
     selectedRecentReview.content,
   ).map((block) => parseCodeRabbitRangeEvidence(block, headSha)).filter((
     evidence,
   ) => evidence !== undefined);
+  if (evidenceBlocks.length === 0) return "none";
   const currentEvidence = evidenceBlocks.filter((evidence) =>
     evidence.tipIsHead || evidence.extraHasHead
   );
-  if (currentEvidence.length === 0) return "not-head";
+  if (currentEvidence.length === 0) return "stale";
   if (
     currentEvidence.length === 1 && evidenceBlocks.length === 1 &&
     currentEvidence[0].isExactProduction && !currentEvidence[0].extraHasHead
@@ -303,7 +324,7 @@ function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
 function codeRabbitRangeEvidenceStatements(content) {
   return [...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_PATTERN)].map((
     match,
-  ) => match[0].trim());
+  ) => match[0].replace(/^\r?\n/, ""));
 }
 
 function parseCodeRabbitRangeEvidence(block, headSha) {
