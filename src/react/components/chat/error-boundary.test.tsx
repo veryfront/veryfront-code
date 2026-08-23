@@ -35,14 +35,15 @@ describe("ChatErrorBoundary", () => {
     } catch {
       threw = true;
     }
-    assert(threw, "legacy synchronous renderToString does not run componentDidCatch");
+    assert(
+      threw,
+      "legacy synchronous renderToString does not run componentDidCatch",
+    );
   });
 
   it("render() produces the default alert fallback with the Try Again button once state has an error", () => {
-    const instance = Object.create(ChatErrorBoundary.prototype);
+    const instance = new ChatErrorBoundary({ children: null });
     instance.state = { hasError: true, error: new Error("kaboom") };
-    instance.props = { children: null };
-    instance.reset = () => undefined;
     const html = renderToString(instance.render());
     assertStringIncludes(html, 'role="alert"');
     assertStringIncludes(html, "An error occurred in the chat component");
@@ -51,39 +52,38 @@ describe("ChatErrorBoundary", () => {
   });
 
   it("render() uses a custom errorMessage in place of the default heading", () => {
-    const instance = Object.create(ChatErrorBoundary.prototype);
+    const instance = new ChatErrorBoundary({
+      children: null,
+      errorMessage: "Custom failure banner",
+    });
     instance.state = { hasError: true, error: new Error("kaboom") };
-    instance.props = { children: null, errorMessage: "Custom failure banner" };
-    instance.reset = () => undefined;
     const html = renderToString(instance.render());
     assertStringIncludes(html, "Custom failure banner");
     assert(!html.includes("An error occurred in the chat component"));
   });
 
   it("render() renders a node fallback in place of the default UI", () => {
-    const instance = Object.create(ChatErrorBoundary.prototype);
-    instance.state = { hasError: true, error: new Error("kaboom") };
-    instance.props = {
+    const instance = new ChatErrorBoundary({
       children: null,
       fallback: <div data-testid="custom-fallback">custom fallback</div>,
-    };
-    instance.reset = () => undefined;
+    });
+    instance.state = { hasError: true, error: new Error("kaboom") };
     const html = renderToString(instance.render());
     assertStringIncludes(html, "custom fallback");
     assert(!html.includes('role="alert"'));
   });
 
   it("render() calls a function fallback with the caught error and reset callback", () => {
-    const instance = Object.create(ChatErrorBoundary.prototype);
     const error = new Error("kaboom");
-    instance.state = { hasError: true, error };
-    instance.props = {
+    const instance = new ChatErrorBoundary({
       children: null,
       fallback: (err: Error, reset: () => void) => (
-        <div data-testid="fn-fallback" data-has-reset={typeof reset}>{err.message}</div>
+        <div data-testid="fn-fallback" data-has-reset={typeof reset}>
+          {err.message}
+        </div>
       ),
-    };
-    instance.reset = () => undefined;
+    });
+    instance.state = { hasError: true, error };
     const html = renderToString(instance.render());
     assertStringIncludes(html, "kaboom");
     assertStringIncludes(html, "fn-fallback");

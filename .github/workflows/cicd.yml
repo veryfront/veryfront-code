@@ -59,7 +59,11 @@ jobs:
             fetch_ref="main"
             base="origin/main"
           fi
-          git fetch --no-tags --depth=1 origin "$fetch_ref"
+          if [ "$base" = "origin/main" ]; then
+            git fetch --no-tags --depth=1 origin "main:refs/remotes/origin/main"
+          else
+            git fetch --no-tags --depth=1 origin "$fetch_ref"
+          fi
 
           echo "TEST_LAYOUT_MIGRATION_BASE_REF=$base" >> "$GITHUB_ENV"
           echo "TEST_SEMANTIC_AUDIT_BASE_REF=$base" >> "$GITHUB_ENV"

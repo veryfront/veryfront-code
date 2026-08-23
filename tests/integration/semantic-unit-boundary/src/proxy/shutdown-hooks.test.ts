@@ -6,10 +6,31 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createProxyShutdownAggregateError, createProxyShutdownHooks } from "./shutdown-hooks.ts";
+import {
+  createProxyShutdownAggregateError,
+  createProxyShutdownHooks,
+} from "veryfront/proxy/shutdown-hooks";
+import { withTestContext } from "../../../../_helpers/context.ts";
+
+function integrationTest(
+  name: string,
+  action: () => void | Promise<void>,
+): void {
+  it(name, async () => {
+    await withTestContext(name, async () => {
+      await action();
+    });
+  });
+}
+
+function ownDescriptor(target: object, property: string): PropertyDescriptor {
+  const descriptor = Object.getOwnPropertyDescriptor(target, property);
+  if (!descriptor) throw new Error(`Missing ${property} descriptor`);
+  return descriptor;
+}
 
 describe("proxy shutdown hooks", () => {
-  it("awaits every hook once and rejects late registration", async () => {
+  integrationTest("awaits every hook once and rejects late registration", async () => {
     const hooks = createProxyShutdownHooks();
     const gate = Promise.withResolvers<void>();
     const events: string[] = [];
@@ -37,7 +58,7 @@ describe("proxy shutdown hooks", () => {
     assertEquals(events, ["sync", "async-start", "async-end"]);
   });
 
-  it("reports hook failures after allowing peer cleanup to finish", async () => {
+  integrationTest("reports hook failures after allowing peer cleanup to finish", async () => {
     const hooks = createProxyShutdownHooks();
     const completed: string[] = [];
     hooks.register(() => {
@@ -57,7 +78,7 @@ describe("proxy shutdown hooks", () => {
     );
   });
 
-  it("aggregates failures for callers that require successful teardown", async () => {
+  integrationTest("aggregates failures for callers that require successful teardown", async () => {
     const hooks = createProxyShutdownHooks();
     hooks.register(() => {
       throw "primitive teardown failure";
@@ -77,9 +98,9 @@ describe("proxy shutdown hooks", () => {
     );
   });
 
-  it("aggregates without consulting the mutable Array iterator prototype", () => {
+  integrationTest("aggregates without consulting the mutable Array iterator prototype", () => {
     const iteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
-    const nextDescriptor = Object.getOwnPropertyDescriptor(iteratorPrototype, "next")!;
+    const nextDescriptor = ownDescriptor(iteratorPrototype, "next");
     let aggregate: AggregateError | undefined;
 
     try {
@@ -103,7 +124,7 @@ describe("proxy shutdown hooks", () => {
     assertEquals(aggregate?.errors[1], "second");
   });
 
-  it("disposes the exact registration idempotently", async () => {
+  integrationTest("disposes the exact registration idempotently", async () => {
     const hooks = createProxyShutdownHooks();
     let calls = 0;
     const hook = () => {
@@ -118,7 +139,7 @@ describe("proxy shutdown hooks", () => {
     assertEquals(calls, 1);
   });
 
-  it("rejects non-function hooks", () => {
+  integrationTest("rejects non-function hooks", () => {
     const hooks = createProxyShutdownHooks();
     assertThrows(
       () => hooks.register(null as never),
@@ -127,40 +148,43 @@ describe("proxy shutdown hooks", () => {
     );
   });
 
-  it("uses collection and Promise intrinsics captured before extension mutation", async () => {
-    const hooks = createProxyShutdownHooks();
-    const targets: Array<readonly [object, string]> = [
-      [Map.prototype, "set"],
-      [Map.prototype, "delete"],
-      [Map.prototype, "forEach"],
-      [Map.prototype, "clear"],
-      [Promise, "resolve"],
-      [Promise, "allSettled"],
-    ];
-    const descriptors = targets.map(([target, property]) =>
-      Object.getOwnPropertyDescriptor(target, property)!
-    );
-    let settlement: Promise<readonly unknown[]> | undefined;
+  integrationTest(
+    "uses collection and Promise intrinsics captured before extension mutation",
+    async () => {
+      const hooks = createProxyShutdownHooks();
+      const targets: Array<readonly [object, string]> = [
+        [Map.prototype, "set"],
+        [Map.prototype, "delete"],
+        [Map.prototype, "forEach"],
+        [Map.prototype, "clear"],
+        [Promise, "resolve"],
+        [Promise, "allSettled"],
+      ];
+      const descriptors = targets.map(([target, property]) => ({
+        target,
+        property,
+        descriptor: ownDescriptor(target, property),
+      }));
+      let settlement: Promise<readonly unknown[]> | undefined;
 
-    try {
-      for (let index = 0; index < targets.length; index++) {
-        const [target, property] = targets[index]!;
-        Object.defineProperty(target, property, {
-          ...descriptors[index],
-          value: () => {
-            throw new Error(`poisoned ${property}`);
-          },
-        });
+      try {
+        for (const { target, property, descriptor } of descriptors) {
+          Object.defineProperty(target, property, {
+            ...descriptor,
+            value: () => {
+              throw new Error(`poisoned ${property}`);
+            },
+          });
+        }
+        hooks.register(() => undefined);
+        settlement = hooks.settle();
+      } finally {
+        for (const { target, property, descriptor } of descriptors) {
+          Object.defineProperty(target, property, descriptor);
+        }
       }
-      hooks.register(() => undefined);
-      settlement = hooks.settle();
-    } finally {
-      for (let index = 0; index < targets.length; index++) {
-        const [target, property] = targets[index]!;
-        Object.defineProperty(target, property, descriptors[index]!);
-      }
-    }
 
-    assertEquals(await settlement, []);
-  });
+      assertEquals(await settlement, []);
+    },
+  );
 });

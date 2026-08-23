@@ -3408,19 +3408,17 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4j",
     }),
-    entry(
-      "src/integrations/local-credential-host-policy.test.ts",
-      ["process"],
-      {
-        "disposition": "replaceable-fake",
-        "owner": "data-runtime",
-        "rationale":
-          "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
-        "replacement":
-          "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
-        "removalPr": "PR 4j",
-      },
-    ),
+    entry("src/integrations/local-credential-host-policy.test.ts", [
+      "process",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "data-runtime",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject the host-environment reader instead of mutating process-global environment state through withEnv.",
+      "removalPr": "PR 4j",
+    }),
     entry("src/integrations/local-tool-source.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "data-runtime",
@@ -4475,7 +4473,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "disposition": "integration-relocation",
       "owner": "runtime-platform",
       "rationale":
-        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "Exercises subprocess isolation and host permission behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/src/platform/compat/process/env.test.ts",
       "removalPr": "PR 4b",

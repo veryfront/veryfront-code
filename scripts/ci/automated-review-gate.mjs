@@ -4,6 +4,15 @@ const AUTOMATED_REVIEW_LOGINS = new Set([
 ]);
 const CODERABBIT_LOGIN = "coderabbitai[bot]";
 const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
+const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
+const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
+  "No actionable comments were generated in the recent review.";
+const CODERABBIT_REVIEW_RANGE_PATTERN =
+  /Reviewing files between\s+([0-9a-f]{40})\s+and\s+([0-9a-f]{40})(?:\.|\s|$)/i;
+const CODERABBIT_REQUESTED_COMMIT_PATTERN =
+  /Requested commit:\s*([0-9a-f]{40})/i;
+const CODERABBIT_SKIPPED_COMMIT_PATTERN =
+  /Review skipped for current commit\s*([0-9a-f]{40})/i;
 const CODEX_LOGIN = "chatgpt-codex-connector[bot]";
 const CODEX_BOT_ID = 199175422;
 const CODEX_NO_FINDING_PREFIX = "Codex Review: Didn't find any major issues.";
@@ -15,7 +24,6 @@ const NO_COMMIT_RESOLVER = () => Promise.resolve(undefined);
 export const AUTOMATED_REVIEW_STATUS_CONTEXT = "Automated review";
 const SUBMITTED_REVIEW_STATES = new Set([
   "APPROVED",
-  "CHANGES_REQUESTED",
   "COMMENTED",
 ]);
 
@@ -28,77 +36,192 @@ export async function findAutomatedReview(
   },
   headSha,
 ) {
-  for (let index = reviews.length - 1; index >= 0; index--) {
-    const review = reviews[index];
-    const login = review?.user?.login;
-    const state = review?.state;
+  const events = [
+    ...reviews.map((review, index) => ({
+      kind: "review",
+      value: review,
+      order: index,
+      time: automatedReviewEventTime(review),
+    })),
+    ...comments.map((comment, index) => ({
+      kind: "comment",
+      value: comment,
+      order: reviews.length + index,
+      time: automatedReviewEventTime(comment),
+    })),
+  ];
+  const outcomePromises = new Map();
+  const outcomeFor = (event) => {
+    let outcome = outcomePromises.get(event);
+    if (!outcome) {
+      outcome = classifyAutomatedReviewEvent(
+        event,
+        headSha,
+        resolveCommit,
+      );
+      outcomePromises.set(event, outcome);
+    }
+    return outcome;
+  };
+  for (const event of events) {
+    if (
+      event.time === undefined &&
+      (await outcomeFor(event)).kind !== "not-head"
+    ) {
+      return undefined;
+    }
+  }
+  const timedEvents = Map.groupBy(
+    events.filter((event) => event.time !== undefined),
+    (event) => event.time,
+  );
+  for (const tiedEvents of timedEvents.values()) {
+    if (new Set(tiedEvents.map((event) => event.kind)).size < 2) continue;
+    const exactHeadOutcomes = (await Promise.all(
+      tiedEvents.map(outcomeFor),
+    )).filter(
+      (outcome) => outcome.kind !== "not-head",
+    );
+    if (
+      exactHeadOutcomes.length > 1 &&
+      exactHeadOutcomes.some((outcome) => outcome.kind !== "success")
+    ) return undefined;
+  }
+  events.sort((left, right) => {
+    if (left.time === undefined) {
+      return right.time === undefined ? right.order - left.order : 1;
+    }
+    if (right.time === undefined) return -1;
+    return right.time - left.time || right.order - left.order;
+  });
+
+  for (const event of events) {
+    const outcome = await outcomeFor(event);
+    if (outcome.kind === "not-head") continue;
+    return outcome.kind === "success" ? outcome.review : undefined;
+  }
+  return undefined;
+}
+
+function automatedReviewEventTime(value) {
+  for (
+    const timestamp of [
+      value?.updated_at,
+      value?.submitted_at,
+      value?.created_at,
+    ]
+  ) {
+    if (typeof timestamp !== "string") continue;
+    const parsed = Date.parse(timestamp);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+async function classifyAutomatedReviewEvent(
+  event,
+  headSha,
+  resolveCommit,
+) {
+  if (event.kind === "review") {
+    const review = event.value;
+    const login = event.value?.user?.login;
     if (
       typeof login !== "string" ||
       !AUTOMATED_REVIEW_LOGINS.has(login.toLowerCase()) ||
+      review?.commit_id !== headSha
+    ) return { kind: "not-head" };
+    const state = review?.state;
+    if (
       typeof state !== "string" ||
-      !SUBMITTED_REVIEW_STATES.has(state.toUpperCase()) ||
-      review?.commit_id !== headSha ||
       typeof review?.submitted_at !== "string" ||
       review.submitted_at.length === 0
-    ) {
-      continue;
+    ) return { kind: "invalid" };
+    if (!SUBMITTED_REVIEW_STATES.has(state.toUpperCase())) {
+      return { kind: "failure" };
     }
     return {
-      reviewer: login,
-      source: "review",
-      state: state.toUpperCase(),
-      url: typeof review.html_url === "string" ? review.html_url : undefined,
+      kind: "success",
+      review: {
+        reviewer: login,
+        source: "review",
+        state: state.toUpperCase(),
+        url: typeof review.html_url === "string" ? review.html_url : undefined,
+      },
     };
   }
 
-  for (let index = comments.length - 1; index >= 0; index--) {
-    const comment = comments[index];
-    const login = comment?.user?.login;
-    const body = comment?.body;
-    if (
-      typeof login === "string" &&
-      login.toLowerCase() === CODEX_LOGIN &&
-      comment?.user?.type === "Bot" &&
-      comment?.user?.id === CODEX_BOT_ID &&
-      typeof body === "string" &&
-      body.startsWith(CODEX_NO_FINDING_PREFIX)
-    ) {
-      const reviewedCommit = body.match(CODEX_REVIEWED_COMMIT_PATTERN)?.[1];
-      if (typeof reviewedCommit === "string") {
-        const resolvedCommit = await resolveCommit(reviewedCommit);
-        if (
-          typeof resolvedCommit === "string" &&
-          FULL_COMMIT_PATTERN.test(resolvedCommit) &&
-          resolvedCommit.toLowerCase() === headSha.toLowerCase()
-        ) {
-          return {
-            reviewer: login,
-            source: "summary",
-            state: "COMMENTED",
-            url: typeof comment.html_url === "string"
-              ? comment.html_url
-              : undefined,
-          };
-        }
-      }
-    }
-    if (
-      typeof login !== "string" ||
-      login.toLowerCase() !== CODERABBIT_LOGIN ||
-      typeof body !== "string" ||
-      !body.includes(CODERABBIT_RECENT_REVIEW_MARKER) ||
-      !body.includes(headSha)
-    ) {
-      continue;
-    }
-    return {
-      reviewer: login,
-      source: "summary",
-      state: "COMMENTED",
-      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
-    };
+  const comment = event.value;
+  const login = comment?.user?.login;
+  const body = comment?.body;
+  if (typeof login !== "string" || typeof body !== "string") {
+    return { kind: "not-head" };
   }
-  return undefined;
+  if (
+    login.toLowerCase() === CODEX_LOGIN &&
+    comment?.user?.type === "Bot" &&
+    comment?.user?.id === CODEX_BOT_ID
+  ) {
+    const reviewedCommit = body.match(CODEX_REVIEWED_COMMIT_PATTERN)?.[1];
+    if (typeof reviewedCommit !== "string") return { kind: "not-head" };
+    const resolvedCommit = await resolveCommit(reviewedCommit);
+    if (
+      typeof resolvedCommit !== "string" ||
+      !FULL_COMMIT_PATTERN.test(resolvedCommit) ||
+      resolvedCommit.toLowerCase() !== headSha.toLowerCase()
+    ) return { kind: "not-head" };
+    return body.startsWith(CODEX_NO_FINDING_PREFIX)
+      ? {
+        kind: "success",
+        review: {
+          reviewer: login,
+          source: "summary",
+          state: "COMMENTED",
+          url: typeof comment.html_url === "string"
+            ? comment.html_url
+            : undefined,
+        },
+      }
+      : { kind: "failure" };
+  }
+  if (login.toLowerCase() !== CODERABBIT_LOGIN) {
+    return { kind: "not-head" };
+  }
+  const recentReview = codeRabbitRecentReview(body);
+  const skippedTip = body.match(CODERABBIT_SKIPPED_COMMIT_PATTERN)?.[1];
+  const requestedTip = body.match(CODERABBIT_REQUESTED_COMMIT_PATTERN)?.[1];
+  if (
+    skippedTip?.toLowerCase() === headSha.toLowerCase() ||
+    requestedTip?.toLowerCase() === headSha.toLowerCase()
+  ) return { kind: "failure" };
+  const reviewedTip = recentReview?.match(
+    CODERABBIT_REVIEW_RANGE_PATTERN,
+  )?.[2];
+  if (reviewedTip?.toLowerCase() !== headSha.toLowerCase()) {
+    return { kind: "not-head" };
+  }
+  return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER)
+    ? {
+      kind: "success",
+      review: {
+        reviewer: login,
+        source: "summary",
+        state: "COMMENTED",
+        url: typeof comment.html_url === "string"
+          ? comment.html_url
+          : undefined,
+      },
+    }
+    : { kind: "failure" };
+}
+
+function codeRabbitRecentReview(body) {
+  if (typeof body !== "string") return undefined;
+  const start = body.lastIndexOf(CODERABBIT_RECENT_REVIEW_MARKER);
+  if (start < 0) return undefined;
+  const contentStart = start + CODERABBIT_RECENT_REVIEW_MARKER.length;
+  const end = body.indexOf(CODERABBIT_RECENT_REVIEW_END_MARKER, contentStart);
+  return end < 0 ? undefined : body.slice(contentStart, end);
 }
 
 /** Publish the current automated-review decision on the exact PR head SHA. */

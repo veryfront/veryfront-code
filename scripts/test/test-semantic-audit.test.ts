@@ -1106,6 +1106,7 @@ function local(fetch: () => Promise<Response>) {
     assertEquals(
       collectSemanticMarkers(
         `
+import * as fs from "node:fs";
 const ops = {};
 ops.run = fetch;
 await ops.run("https://example.com/assigned");
@@ -1126,6 +1127,28 @@ await conditional.run("https://example.com/conditional");
 const cleared = { run: fetch };
 cleared.run = () => undefined;
 cleared.run("https://example.com/not-network");
+const clearedAliasSource = { run: fetch };
+clearedAliasSource.run = () => undefined;
+const clearedRun = clearedAliasSource.run;
+clearedRun("https://example.com/not-network-alias");
+const { run: clearedDestructuredRun } = clearedAliasSource;
+clearedDestructuredRun("https://example.com/not-network-destructured");
+const clearedSpread = { ...fs };
+clearedSpread.writeFileSync = () => undefined;
+const clearedSpreadWrite = clearedSpread.writeFileSync;
+clearedSpreadWrite("not-a-write.txt", "x");
+const { writeFileSync: clearedDestructuredWrite } = clearedSpread;
+clearedDestructuredWrite("not-a-destructured-write.txt", "x");
+const conditionallyCleared = { run: fetch };
+if (maybe) conditionallyCleared.run = () => undefined;
+const { run: possibleRun } = conditionallyCleared;
+await possibleRun("https://example.com/possible");
+const rebound = { run: () => undefined };
+rebound.run = fetch;
+const reboundRun = rebound.run;
+await reboundRun("https://example.com/rebound-alias");
+const { run: reboundDestructuredRun } = rebound;
+await reboundDestructuredRun("https://example.com/rebound-destructured");
 function local(fetch: () => Promise<Response>) {
   const localOps = {};
   localOps.run = fetch;
@@ -1140,6 +1163,9 @@ function local(fetch: () => Promise<Response>) {
         ["network", "nested.io.run"],
         ["network", "computed.run"],
         ["network", "conditional.run"],
+        ["network", "possibleRun"],
+        ["network", "reboundRun"],
+        ["network", "reboundDestructuredRun"],
       ],
     );
   });
@@ -1329,15 +1355,13 @@ function local(fs: { promises: { readFile(): void } }) {
     );
   });
 
-  it("classifies statically known computed runtime properties", () => {
+  it("classifies literal computed runtime properties", () => {
     const markers = collectSemanticMarkers(
       `
 await Deno["writeTextFile"]("tmp.txt", "x");
 await Deno["readTextFile"]("deno.json");
 process["exit"](0);
 globalThis["fetch"]("https://example.com");
-const method = "writeTextFile";
-Deno[method]("tmp.txt", "x");
 `,
       "src/computed-runtime.test.ts",
     );
@@ -1350,6 +1374,2772 @@ Deno[method]("tmp.txt", "x");
         ["process", "process.exit"],
         ["network", "globalThis.fetch"],
       ],
+    );
+  });
+
+  it("fails closed for unknown computed properties on runtime receivers", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import * as fs from "node:fs";
+const denoMethod = "writeTextFile";
+await Deno[denoMethod]("tmp.txt", "x");
+await Deno["write" + "TextFile"]("tmp.txt", "x");
+const fsMethod = "writeFileSync";
+fs[fsMethod]("tmp.txt", "x");
+`,
+        "src/unknown-computed-runtime.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "Deno.*"],
+        ["filesystem-watch", "Deno.*"],
+        ["filesystem-write", "Deno.*"],
+        ["network", "Deno.*"],
+        ["process", "Deno.*"],
+        ["server", "Deno.*"],
+        ["shared-cwd", "Deno.*"],
+        ["filesystem-read", "Deno.*"],
+        ["filesystem-watch", "Deno.*"],
+        ["filesystem-write", "Deno.*"],
+        ["network", "Deno.*"],
+        ["process", "Deno.*"],
+        ["server", "Deno.*"],
+        ["shared-cwd", "Deno.*"],
+        ["filesystem-read", "fs.*"],
+        ["filesystem-watch", "fs.*"],
+        ["filesystem-write", "fs.*"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const Deno = { writeTextFile: () => undefined };
+const method = "writeTextFile";
+Deno[method]("tmp.txt", "x");
+function local(fs: { writeFileSync(): void }, method: string) {
+  fs[method]();
+}
+`,
+        "src/shadowed-unknown-computed-runtime.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("bounds conservative lookup across cyclic runtime aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const holder = { run: Deno.writeTextFile };
+holder.self = holder;
+holder[key]("self-cycle.txt", "x");
+
+const left = { run: Deno.writeTextFile };
+const right = { peer: left };
+left.peer = right;
+right[key]("mutual-cycle.txt", "x");
+`,
+        "src/cyclic-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "holder.*"],
+        ["filesystem-write", "right.*"],
+      ],
+    );
+  });
+
+  it("bounds conservative lookup across deep acyclic runtime aliases", () => {
+    const depth = 16_384;
+    const aliases = Array.from(
+      { length: depth },
+      (_, index) => `const alias${index + 1} = { peer: alias${index} };`,
+    ).join("\n");
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const alias0 = { run: Deno.writeTextFile };
+${aliases}
+alias${depth}[key]("deep-alias.txt", "x");
+`,
+        "src/deep-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", `alias${depth}.*`]],
+    );
+    const spreads = Array.from(
+      { length: depth },
+      (_, index) => `const spread${index + 1} = { ...spread${index} };`,
+    ).join("\n");
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const spread0 = { run: Deno.writeTextFile };
+${spreads}
+spread${depth}[key]("deep-spread.txt", "x");
+`,
+        "src/deep-runtime-spreads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", `spread${depth}.*`]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const mutationSpread0 = { run: () => undefined };
+${
+          Array.from(
+            { length: depth },
+            (_, index) =>
+              `const mutationSpread${
+                index + 1
+              } = { ...mutationSpread${index} };`,
+          ).join("\n")
+        }
+mutationSpread${depth}.run = Deno.writeTextFile;
+mutationSpread${depth}.run("deep-spread-mutation.txt", "x");
+`,
+        "src/deep-runtime-spread-mutation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", `mutationSpread${depth}.run`]],
+    );
+  });
+
+  it("retains runtime provenance stored through unknown computed properties", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const key = "write";
+const otherKey = "write";
+const assigned = {};
+assigned[key] = Deno.writeTextFile;
+assigned.write("assigned.txt", "x");
+assigned[otherKey]("assigned-computed.txt", "x");
+const literal = { [key]: Deno.writeTextFile };
+literal.write("literal.txt", "x");
+literal[otherKey]("literal-computed.txt", "x");
+const literalAlias = literal[otherKey];
+literalAlias("literal-alias.txt", "x");
+const known = { write: Deno.writeTextFile };
+const knownAlias = known[otherKey];
+knownAlias("known-alias.txt", "x");
+const { [otherKey]: knownDestructuredAlias } = known;
+knownDestructuredAlias("known-destructured-alias.txt", "x");
+class ComputedInstanceField {
+  [key] = Deno.writeTextFile;
+  run() {
+    this.write("instance-field.txt", "x");
+  }
+}
+class ComputedStaticField {
+  static [key] = Deno.writeTextFile;
+  static run() {
+    this.write("static-field-this.txt", "x");
+    ComputedStaticField.write("static-field-name.txt", "x");
+  }
+}
+const indexed = [Deno.writeTextFile];
+indexed[0]("indexed.txt", "x");
+const dynamicIndex = 0;
+indexed[dynamicIndex]("indexed-dynamic.txt", "x");
+const indexedAlias = indexed[dynamicIndex];
+indexedAlias("indexed-alias.txt", "x");
+const assignedIndexed = [];
+assignedIndexed[0] = Deno.writeTextFile;
+assignedIndexed[0]("assigned-indexed.txt", "x");
+`,
+        "src/unknown-computed-storage.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "assigned.write"],
+        ["filesystem-write", "assigned.*"],
+        ["filesystem-write", "literal.write"],
+        ["filesystem-write", "literal.*"],
+        ["filesystem-write", "literalAlias"],
+        ["filesystem-write", "knownAlias"],
+        ["filesystem-write", "knownDestructuredAlias"],
+        ["filesystem-write", "this.write"],
+        ["filesystem-write", "this.write"],
+        ["filesystem-write", "ComputedStaticField.write"],
+        ["filesystem-write", "indexed.0"],
+        ["filesystem-write", "indexed.*"],
+        ["filesystem-write", "indexedAlias"],
+        ["filesystem-write", "assignedIndexed.0"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const key = "write";
+const otherKey = "write";
+const assigned = {};
+assigned[key] = () => undefined;
+assigned.write();
+assigned[otherKey]();
+const literal = { [key]: () => undefined };
+literal.write();
+literal[otherKey]();
+const literalAlias = literal[otherKey];
+literalAlias();
+const known = { write: () => undefined };
+const knownAlias = known[otherKey];
+knownAlias();
+const { [otherKey]: knownDestructuredAlias } = known;
+knownDestructuredAlias();
+class LocalComputedField {
+  [key] = () => undefined;
+  run() {
+    this.write();
+  }
+}
+const indexed = [() => undefined];
+indexed[0]();
+const dynamicIndex = 0;
+indexed[dynamicIndex]();
+const indexedAlias = indexed[dynamicIndex];
+indexedAlias();
+`,
+        "src/local-unknown-computed-storage.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("keeps repeated unknown property writes bounded", () => {
+    const writes = Array.from(
+      { length: 30 },
+      (_, index) => `holder[key${index}] = Deno.writeTextFile;`,
+    ).join("\n");
+    const conditionalWrites = Array.from(
+      { length: 30 },
+      (_, index) =>
+        `if (maybe${index}) conditionalHolder.write = Deno.writeTextFile;`,
+    ).join("\n");
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const holder = {};
+${writes}
+const selected = "write";
+holder[selected]("bounded.txt", "x");
+const conditionalHolder = {};
+${conditionalWrites}
+conditionalHolder.write("conditional-bounded.txt", "x");
+`,
+        "src/repeated-unknown-property-writes.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "holder.*"],
+        ["filesystem-write", "conditionalHolder.write"],
+      ],
+    );
+  });
+
+  it("propagates runtime provenance through array destructuring", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const [declared] = [Deno.writeTextFile];
+declared("declared.txt", "x");
+let assigned;
+[assigned] = [Deno.writeTextFile];
+assigned("assigned.txt", "x");
+const { fns: [nested] } = { fns: [Deno.writeTextFile] };
+nested("nested.txt", "x");
+const [defaulted = Deno.writeTextFile] = [];
+defaulted("defaulted.txt", "x");
+const [exact = Deno.readTextFile] = [Deno.writeTextFile];
+exact("exact.txt", "x");
+const [conditionalDefault = fetch] = [
+  maybe ? Deno.writeTextFile : undefined,
+];
+await conditionalDefault("conditional-default.txt", "x");
+const [prefixBeforeSpread] = [
+  Deno.writeTextFile,
+  ...[() => undefined],
+];
+prefixBeforeSpread("prefix-before-spread.txt", "x");
+const postSpreadValues = [() => undefined, Deno.writeTextFile];
+const [, postSpreadSelected] = [
+  ...postSpreadValues,
+  () => undefined,
+];
+postSpreadSelected("post-spread-selected.txt", "x");
+const [, knownPostSpreadEffect] = [
+  ...[() => undefined],
+  Deno.writeTextFile,
+];
+knownPostSpreadEffect("known-post-spread-effect.txt", "x");
+const unknownSpreadValues = maybe ? [] : [() => undefined];
+const [unknownPostSpreadEffect] = [
+  ...unknownSpreadValues,
+  Deno.writeTextFile,
+];
+unknownPostSpreadEffect("unknown-post-spread-effect.txt", "x");
+const unknownEffectSpreadValues = maybe ? [] : [Deno.writeTextFile];
+const [, unknownSpreadEffect] = [
+  () => undefined,
+  ...unknownEffectSpreadValues,
+];
+unknownSpreadEffect("unknown-spread-effect.txt", "x");
+const [, ...rest] = [() => undefined, Deno.writeTextFile];
+rest[0]("rest.txt", "x");
+const knownArraySource = [() => undefined, Deno.writeTextFile];
+const [, ...knownArrayRest] = knownArraySource;
+knownArrayRest[0]("known-array-rest.txt", "x");
+const dynamic = [() => undefined];
+dynamic[Math.random()] = Deno.writeTextFile;
+const [...dynamicRest] = dynamic;
+dynamicRest[0]("dynamic-rest.txt", "x");
+
+class ArrayClass {}
+const [ArrayAlias] = [ArrayClass];
+ArrayAlias.write = Deno.writeTextFile;
+ArrayClass.write("array-class.txt", "x");
+
+class ArrayExactClass {}
+class ArrayUnusedDefaultClass {}
+const [ArrayExactAlias = ArrayUnusedDefaultClass] = [ArrayExactClass];
+ArrayExactAlias.write = Deno.writeTextFile;
+ArrayExactClass.write("array-exact-class.txt", "x");
+ArrayUnusedDefaultClass.write("array-unused-default-class.txt", "x");
+
+class ArrayRestClass {}
+const [, ...classes] = [class {}, ArrayRestClass];
+const RestClassAlias = classes[0];
+RestClassAlias.write = Deno.writeTextFile;
+ArrayRestClass.write("array-rest-class.txt", "x");
+
+class PostSpreadClass {}
+const postSpreadClasses = [class {}, PostSpreadClass];
+const [, PostSpreadAlias] = [...postSpreadClasses, class {}];
+PostSpreadAlias.write = Deno.writeTextFile;
+PostSpreadClass.write("post-spread-class.txt", "x");
+`,
+        "src/runtime-array-destructuring.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "declared"],
+        ["filesystem-write", "assigned"],
+        ["filesystem-write", "nested"],
+        ["filesystem-write", "defaulted"],
+        ["filesystem-write", "exact"],
+        ["filesystem-write", "conditionalDefault"],
+        ["network", "conditionalDefault"],
+        ["filesystem-write", "prefixBeforeSpread"],
+        ["filesystem-write", "postSpreadSelected"],
+        ["filesystem-write", "knownPostSpreadEffect"],
+        ["filesystem-write", "unknownPostSpreadEffect"],
+        ["filesystem-write", "unknownSpreadEffect"],
+        ["filesystem-write", "rest.0"],
+        ["filesystem-write", "knownArrayRest.0"],
+        ["filesystem-write", "dynamicRest.0"],
+        ["filesystem-write", "ArrayClass.write"],
+        ["filesystem-write", "ArrayExactClass.write"],
+        ["filesystem-write", "ArrayRestClass.write"],
+        ["filesystem-write", "PostSpreadClass.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const numericObjectSource = {
+  0: Deno.writeTextFile,
+  1: () => undefined,
+};
+const [, ...objectRest] = numericObjectSource;
+objectRest[0]("numeric-object-rest.txt", "x");
+`,
+        "src/runtime-numeric-object-rest.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "objectRest.0"]],
+    );
+    const nestedKnownSpreads = Array.from(
+      { length: 24 },
+      (_, index) =>
+        `const spread${index + 1} = [...spread${index}, ...spread${index}];`,
+    ).join("\n");
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const spread0 = [Deno.writeTextFile];
+${nestedKnownSpreads}
+spread24[0]("bounded-nested-spread.txt", "x");
+`,
+        "src/runtime-bounded-nested-array-spreads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "spread24.0"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const [declared] = [() => undefined];
+declared();
+let assigned;
+[assigned] = [() => undefined];
+assigned();
+const { fns: [nested] } = { fns: [() => undefined] };
+nested();
+const [defaulted = () => undefined] = [];
+defaulted();
+const [, ...rest] = [() => undefined, () => undefined];
+rest[0]();
+const [discardedEffect, ...localRest] = [
+  Deno.writeTextFile,
+  () => undefined,
+];
+localRest[0]();
+const knownLocalArraySource = [Deno.writeTextFile, () => undefined];
+const [, ...knownLocalArrayRest] = knownLocalArraySource;
+knownLocalArrayRest[0]();
+const [localPrefixBeforeSpread] = [
+  () => undefined,
+  ...[Deno.writeTextFile],
+];
+localPrefixBeforeSpread();
+const possibleEffectTail = maybe ? [] : [Deno.writeTextFile];
+const [localPrefixBeforeUnknownSpread] = [
+  () => undefined,
+  ...possibleEffectTail,
+];
+localPrefixBeforeUnknownSpread();
+class LocalArrayClass {}
+const [LocalArrayAlias] = [LocalArrayClass];
+LocalArrayAlias.write = () => undefined;
+LocalArrayClass.write();
+class BeforeRestClass {}
+const [BeforeRestAlias, ...localClasses] = [BeforeRestClass, {}];
+const LocalClassAlias = localClasses[0];
+LocalClassAlias.write = Deno.writeTextFile;
+BeforeRestClass.write("before-rest-class.txt", "x");
+`,
+        "src/local-array-destructuring.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("keeps post-spread array positions conservative until length is proven", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const dynamic = [() => undefined];
+dynamic[Math.random()] = Deno.writeTextFile;
+const [, possibleDynamicWrite] = [...dynamic, () => undefined];
+possibleDynamicWrite("possible-dynamic-write.txt", "x");
+
+const [, knownLocal, knownWrite] = [
+  ...[() => undefined, () => undefined],
+  Deno.writeTextFile,
+];
+knownLocal();
+knownWrite("known-write.txt", "x");
+`,
+        "src/post-spread-array-positions.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "possibleDynamicWrite"],
+        ["filesystem-write", "knownWrite"],
+      ],
+    );
+  });
+
+  it("widens exact arrays after call-based mutations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const pushed = [() => undefined];
+pushed.push(Deno.writeTextFile);
+const [, pushedWrite] = [...pushed, () => undefined];
+pushedWrite("pushed.txt", "x");
+
+const assigned = [() => undefined];
+Object.assign(assigned, { 1: Deno.writeTextFile });
+const [, assignedWrite] = [...assigned, () => undefined];
+assignedWrite("assigned.txt", "x");
+
+const defined = [() => undefined];
+Object.defineProperty(defined, "1", { value: Deno.writeTextFile });
+const [, definedWrite] = [...defined, () => undefined];
+definedWrite("defined.txt", "x");
+
+const reflected = [() => undefined];
+Reflect.set(reflected, "1", Deno.writeTextFile);
+const [, reflectedWrite] = [...reflected, () => undefined];
+reflectedWrite("reflected.txt", "x");
+
+const numericReflected = [() => undefined, () => undefined];
+Reflect.set(numericReflected, 1, Deno.writeTextFile);
+const [numericReflectedLocal, numericReflectedWrite] = numericReflected;
+numericReflectedLocal();
+numericReflectedWrite("numeric-reflected.txt", "x");
+
+const aliasedTarget = [() => undefined];
+const targetAlias = aliasedTarget;
+targetAlias.unshift(Deno.writeTextFile);
+const [aliasedWrite] = [...aliasedTarget, () => undefined];
+aliasedWrite("aliased.txt", "x");
+
+const nested = { values: [() => undefined] };
+nested.values.splice(1, 0, Deno.writeTextFile);
+const [, nestedWrite] = [...nested.values, () => undefined];
+nestedWrite("nested.txt", "x");
+
+const reordered = [() => undefined, Deno.writeTextFile];
+reordered.reverse();
+const [reorderedWrite] = [...reordered, () => undefined];
+reorderedWrite("reordered.txt", "x");
+
+const directReordered = [() => undefined, Deno.writeTextFile];
+directReordered.reverse();
+const [directReorderedWrite] = directReordered;
+directReorderedWrite("direct-reordered.txt", "x");
+
+const copiedWithin = [() => undefined, Deno.writeTextFile];
+copiedWithin.copyWithin(0, 1, 2);
+const [copiedWithinWrite] = copiedWithin;
+copiedWithinWrite("copied-within.txt", "x");
+
+const copiedFromDefaultStart = [Deno.writeTextFile, () => undefined];
+copiedFromDefaultStart.copyWithin(1);
+copiedFromDefaultStart[1]("copied-default-start.txt", "x");
+
+const shifted = [() => undefined, Deno.writeTextFile];
+shifted.shift();
+const [shiftedWrite] = shifted;
+shiftedWrite("shifted.txt", "x");
+
+const sorted = [() => undefined, Deno.writeTextFile];
+sorted.sort();
+const [sortedWrite] = sorted;
+sortedWrite("sorted.txt", "x");
+
+const spliced = [() => undefined, Deno.writeTextFile];
+spliced.splice(0, 1);
+const [splicedWrite] = spliced;
+splicedWrite("spliced.txt", "x");
+
+const unshifted = [Deno.writeTextFile, () => undefined];
+unshifted.unshift(() => undefined);
+const [, unshiftedWrite] = unshifted;
+unshiftedWrite("unshifted.txt", "x");
+
+const prototypeReordered = [() => undefined, Deno.writeTextFile];
+Array.prototype.reverse.call(prototypeReordered);
+const [prototypeReorderedWrite] = prototypeReordered;
+prototypeReorderedWrite("prototype-reordered.txt", "x");
+
+const reflectedReorder = [() => undefined, Deno.writeTextFile];
+Reflect.apply(Array.prototype.copyWithin, reflectedReorder, [0, 1, 2]);
+const [reflectedReorderWrite] = reflectedReorder;
+reflectedReorderWrite("reflected-reorder.txt", "x");
+
+const boundReorder = [() => undefined, Deno.writeTextFile];
+const boundShift = Array.prototype.shift.bind(boundReorder);
+boundShift();
+const [boundReorderWrite] = boundReorder;
+boundReorderWrite("bound-reorder.txt", "x");
+
+const filled = [() => undefined];
+filled.fill(Deno.writeTextFile, 0, 1);
+const [filledWrite] = [...filled];
+filledWrite("filled.txt", "x");
+
+const definedMany = [() => undefined];
+Object.defineProperties(definedMany, {
+  1: { value: Deno.writeTextFile },
+});
+const [, definedManyWrite] = [...definedMany, () => undefined];
+definedManyWrite("defined-many.txt", "x");
+
+const definedNamedProperties = { safe: () => undefined };
+Object.defineProperties(definedNamedProperties, {
+  safe: { value: () => undefined },
+  write: { value: Deno.writeTextFile },
+});
+definedNamedProperties.safe();
+definedNamedProperties.write("defined-named-properties.txt", "x");
+
+const definedNamedAccessors = { safe: () => undefined };
+Object.defineProperties(definedNamedAccessors, {
+  safe: { get: () => () => undefined },
+  write: { get: () => Deno.writeTextFile },
+});
+definedNamedAccessors.safe();
+definedNamedAccessors.write("defined-named-accessors.txt", "x");
+
+const computedDefinedProperties = { safe: () => undefined };
+declare const computedDescriptorName: string;
+Object.defineProperties(computedDefinedProperties, {
+  [computedDescriptorName]: { value: Deno.writeTextFile },
+});
+computedDefinedProperties.safe("computed-defined-properties.txt", "x");
+
+const reflectDefined = [() => undefined];
+Reflect.defineProperty(reflectDefined, "1", {
+  value: Deno.writeTextFile,
+});
+const [, reflectDefinedWrite] = [...reflectDefined, () => undefined];
+reflectDefinedWrite("reflect-defined.txt", "x");
+
+const prototypeCall = [() => undefined];
+Array.prototype.push.call(prototypeCall, Deno.writeTextFile);
+const [, prototypeCallWrite] = [...prototypeCall, () => undefined];
+prototypeCallWrite("prototype-call.txt", "x");
+
+const prototypeApply = [() => undefined];
+Array.prototype.push.apply(prototypeApply, [Deno.writeTextFile]);
+const [, prototypeApplyWrite] = [...prototypeApply, () => undefined];
+prototypeApplyWrite("prototype-apply.txt", "x");
+
+const reflectApply = [() => undefined];
+Reflect.apply(Array.prototype.push, reflectApply, [Deno.writeTextFile]);
+const [, reflectApplyWrite] = [...reflectApply, () => undefined];
+reflectApplyWrite("reflect-apply.txt", "x");
+
+const aliasedCall = [() => undefined];
+const push = aliasedCall.push;
+push.call(aliasedCall, Deno.writeTextFile);
+const [, aliasedCallWrite] = [...aliasedCall, () => undefined];
+aliasedCallWrite("aliased-call.txt", "x");
+
+const dynamicCall = [() => undefined];
+const method = "push";
+dynamicCall[method](Deno.writeTextFile);
+const [, dynamicCallWrite] = [...dynamicCall, () => undefined];
+dynamicCallWrite("dynamic-call.txt", "x");
+
+const getterDefined = [() => undefined];
+Object.defineProperty(getterDefined, "1", {
+  get: () => Deno.writeTextFile,
+});
+const [, getterDefinedWrite] = [...getterDefined, () => undefined];
+getterDefinedWrite("getter-defined.txt", "x");
+
+const getterDefinedMany = [() => undefined];
+Object.defineProperties(getterDefinedMany, {
+  1: { get: () => Deno.writeTextFile },
+});
+const [, getterDefinedManyWrite] = [
+  ...getterDefinedMany,
+  () => undefined,
+];
+getterDefinedManyWrite("getter-defined-many.txt", "x");
+
+const prototypeObject = [() => undefined];
+Object.setPrototypeOf(prototypeObject, { 1: Deno.writeTextFile });
+const [, prototypeObjectWrite] = [...prototypeObject, () => undefined];
+prototypeObjectWrite("prototype-object.txt", "x");
+
+const prototypeReflect = [() => undefined];
+Reflect.setPrototypeOf(prototypeReflect, { 1: Deno.writeTextFile });
+const [, prototypeReflectWrite] = [...prototypeReflect, () => undefined];
+prototypeReflectWrite("prototype-reflect.txt", "x");
+
+const assignedGetter = [() => undefined];
+Object.assign(assignedGetter, {
+  get 1() {
+    return Deno.writeTextFile;
+  },
+});
+const [, assignedGetterWrite] = [...assignedGetter, () => undefined];
+assignedGetterWrite("assigned-getter.txt", "x");
+
+const assignedDynamicGetter = [() => undefined];
+const assignedDynamicKey = "1";
+Object.assign(assignedDynamicGetter, {
+  get [assignedDynamicKey]() {
+    return Deno.writeTextFile;
+  },
+});
+const [, assignedDynamicGetterWrite] = [
+  ...assignedDynamicGetter,
+  () => undefined,
+];
+assignedDynamicGetterWrite("assigned-dynamic-getter.txt", "x");
+
+const boundTarget = [() => undefined];
+const boundPush = Array.prototype.push.bind(boundTarget);
+boundPush(Deno.writeTextFile);
+const [, boundWrite] = [...boundTarget, () => undefined];
+boundWrite("bound.txt", "x");
+
+const applyValues = [Deno.writeTextFile];
+const variableApply = [() => undefined];
+Array.prototype.push.apply(variableApply, applyValues);
+const [, variableApplyWrite] = [...variableApply, () => undefined];
+variableApplyWrite("variable-apply.txt", "x");
+
+const reflectVariableApply = [() => undefined];
+Reflect.apply(Array.prototype.push, reflectVariableApply, applyValues);
+const [, reflectVariableApplyWrite] = [
+  ...reflectVariableApply,
+  () => undefined,
+];
+reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
+
+const popArgument = [Deno.writeTextFile];
+popArgument.pop(popArgument[0]("pop-argument.txt", "x"));
+`,
+        "src/runtime-call-mutated-array-spreads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "pushedWrite"],
+        ["filesystem-write", "assignedWrite"],
+        ["filesystem-write", "definedWrite"],
+        ["filesystem-write", "reflectedWrite"],
+        ["filesystem-write", "numericReflectedWrite"],
+        ["filesystem-write", "aliasedWrite"],
+        ["filesystem-write", "nestedWrite"],
+        ["filesystem-write", "reorderedWrite"],
+        ["filesystem-write", "directReorderedWrite"],
+        ["filesystem-write", "copiedWithinWrite"],
+        ["filesystem-write", "copiedFromDefaultStart.1"],
+        ["filesystem-write", "shiftedWrite"],
+        ["filesystem-write", "sortedWrite"],
+        ["filesystem-write", "splicedWrite"],
+        ["filesystem-write", "unshiftedWrite"],
+        ["filesystem-write", "prototypeReorderedWrite"],
+        ["filesystem-write", "reflectedReorderWrite"],
+        ["filesystem-write", "boundReorderWrite"],
+        ["filesystem-write", "filledWrite"],
+        ["filesystem-write", "definedManyWrite"],
+        ["filesystem-write", "definedNamedProperties.write"],
+        ["filesystem-write", "definedNamedAccessors.write"],
+        ["filesystem-write", "computedDefinedProperties.safe"],
+        ["filesystem-write", "reflectDefinedWrite"],
+        ["filesystem-write", "prototypeCallWrite"],
+        ["filesystem-write", "prototypeApplyWrite"],
+        ["filesystem-write", "reflectApplyWrite"],
+        ["filesystem-write", "aliasedCallWrite"],
+        ["filesystem-write", "dynamicCallWrite"],
+        ["filesystem-write", "getterDefinedWrite"],
+        ["filesystem-write", "getterDefinedManyWrite"],
+        ["filesystem-write", "prototypeObjectWrite"],
+        ["filesystem-write", "prototypeReflectWrite"],
+        ["filesystem-write", "assignedGetterWrite"],
+        ["filesystem-write", "assignedDynamicGetterWrite"],
+        ["filesystem-write", "boundWrite"],
+        ["filesystem-write", "variableApplyWrite"],
+        ["filesystem-write", "reflectVariableApplyWrite"],
+        ["filesystem-write", "popArgument.0"],
+      ],
+    );
+    const repeatedReorders = "values.sort();\n".repeat(1_000);
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const values = [() => undefined, Deno.writeTextFile];
+${repeatedReorders}
+values[0]("repeated-reorders.txt", "x");
+`,
+        "src/repeated-array-reorders.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "values.0"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const stable = [Deno.writeTextFile];
+stable.slice();
+const [, stableLocal] = [...stable, () => undefined];
+stableLocal();
+
+const fake = { push(_value: unknown) {} };
+fake.push(Deno.writeTextFile);
+
+const emptyPrototype = [() => undefined];
+Object.setPrototypeOf(emptyPrototype, {});
+const [, emptyPrototypeLocal] = [...emptyPrototype, () => undefined];
+emptyPrototypeLocal();
+
+const nullPrototype = [() => undefined];
+Object.setPrototypeOf(nullPrototype, null);
+const [, nullPrototypeLocal] = [...nullPrototype, () => undefined];
+nullPrototypeLocal();
+
+function shadow(Array: { prototype: { push: { call(...args: unknown[]): void } } }) {
+  const values = [() => undefined];
+  Array.prototype.push.call(values, Deno.writeTextFile);
+  const [, run] = [...values, () => undefined];
+  run("shadowed.txt", "x");
+}
+
+const overridden = [() => undefined];
+overridden.push = () => undefined;
+overridden.push(Deno.writeTextFile);
+const [, overriddenRun] = [...overridden, () => undefined];
+overriddenRun("overridden.txt", "x");
+
+const reversed = [() => undefined];
+reversed.reverse(Deno.writeTextFile);
+const [reversedRun] = [...reversed];
+reversedRun();
+
+const copied = [() => undefined];
+copied.copyWithin(Deno.writeTextFile, 0);
+const [copiedRun] = [...copied];
+copiedRun();
+
+const popped = [() => undefined, Deno.writeTextFile];
+popped.pop();
+const [poppedRun] = popped;
+poppedRun();
+
+const shifted = [Deno.writeTextFile, () => undefined];
+shifted.shift();
+const [shiftedRun] = shifted;
+shiftedRun();
+
+const definedNamed = { run: () => undefined };
+Object.defineProperty(definedNamed, "write", {
+  value: Deno.writeTextFile,
+});
+definedNamed.run();
+
+const reflectedNamed = { run: () => undefined };
+Reflect.set(reflectedNamed, "write", Deno.writeTextFile);
+reflectedNamed.run();
+
+const definedBulkNamed = { safe: () => undefined };
+Object.defineProperties(definedBulkNamed, {
+  safe: { value: () => undefined },
+  write: { value: Deno.writeTextFile },
+});
+definedBulkNamed.safe();
+`,
+        "src/local-non-mutating-array-calls.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const descriptor: PropertyDescriptor;
+const unknownAccessor = [() => undefined];
+Object.defineProperty(unknownAccessor, "1", descriptor);
+const [, unknownAccessorCall] = [
+  ...unknownAccessor,
+  () => undefined,
+];
+unknownAccessorCall();
+`,
+        "src/runtime-unknown-array-accessor.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const prototype: object;
+const unknownPrototype = [() => undefined];
+Object.setPrototypeOf(unknownPrototype, prototype);
+const [, unknownPrototypeCall] = [
+  ...unknownPrototype,
+  () => undefined,
+];
+unknownPrototypeCall();
+`,
+        "src/runtime-unknown-array-prototype.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ],
+    );
+  });
+
+  it("preserves mutation API return-value provenance", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const poppedValues = [Deno.remove];
+const popped = poppedValues.pop();
+popped("popped.txt");
+
+const shiftedValues = [Deno.remove];
+const shifted = shiftedValues.shift();
+shifted("shifted.txt");
+
+const splicedValues = [Deno.remove];
+const [spliced] = splicedValues.splice(0, 1);
+spliced("spliced.txt");
+
+const reversedValues = [Deno.remove];
+const reversed = reversedValues.reverse();
+reversed[0]("reversed.txt");
+
+const sortedValues = [Deno.remove];
+const sorted = sortedValues.sort();
+sorted[0]("sorted.txt");
+
+const filledValues = [() => undefined];
+const filled = filledValues.fill(Deno.remove);
+filled[0]("filled.txt");
+
+const copiedValues = [Deno.remove];
+const copied = copiedValues.copyWithin(0, 0, 1);
+copied[0]("copied.txt");
+
+const sortedWithEffect = [2, 1];
+sortedWithEffect.sort(Deno.remove);
+
+const assigned = Object.assign({}, { run: Deno.remove });
+assigned.run("assigned.txt");
+
+const assignedNamedReturn = Object.assign(
+  { safe: () => undefined },
+  { write: Deno.remove },
+);
+assignedNamedReturn.safe();
+
+const assignedNamedTarget = { safe: () => undefined };
+Object.assign(assignedNamedTarget, { write: Deno.remove });
+assignedNamedTarget.safe();
+
+const prototypeReturn = Object.setPrototypeOf({}, { run: Deno.remove });
+prototypeReturn.run("prototype.txt");
+
+const defined = Object.defineProperty({}, "run", { value: Deno.remove });
+defined.run("defined.txt");
+
+const definedGetter = Object.defineProperty({}, "run", {
+  get: () => Deno.remove,
+});
+definedGetter.run("defined-getter.txt");
+
+const definedSetter = Object.defineProperty({}, "path", {
+  set: Deno.remove,
+});
+definedSetter.path = "defined-setter.txt";
+
+const frozen = Object.freeze({ run: Deno.remove });
+frozen.run("frozen.txt");
+
+const sealed = Object.seal({ run: Deno.remove });
+sealed.run("sealed.txt");
+
+const prevented = Object.preventExtensions({ run: Deno.remove });
+prevented.run("prevented.txt");
+
+const localPoppedValues = [Deno.remove, () => undefined];
+const localPopped = localPoppedValues.pop();
+localPopped();
+
+const localShiftedValues = [() => undefined, Deno.remove];
+const localShifted = localShiftedValues.shift();
+localShifted();
+
+const definedNamedReturn = Object.defineProperty(
+  { safe: () => undefined },
+  "write",
+  { value: Deno.remove },
+);
+definedNamedReturn.safe();
+
+const definedManyNamedReturn = Object.defineProperties(
+  { safe: () => undefined },
+  {
+    safe: { value: () => undefined },
+    write: { value: Deno.remove },
+  },
+);
+definedManyNamedReturn.safe();
+`,
+        "src/runtime-mutation-return-values.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from({ length: 16 }, () => "filesystem-write"),
+    );
+  });
+
+  it("fails closed for unknown Object.assign sources without retaining overwritten values", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const source: Record<string, unknown>;
+
+const target = { safe: () => undefined };
+Object.assign(target, source);
+target.safe();
+
+const returned = Object.assign({ safe: () => undefined }, source);
+returned.safe();
+
+const spreadReturned = Object.assign(
+  { safe: () => undefined },
+  { ...source },
+);
+spreadReturned.safe();
+
+function assignDefaultedSource(defaultedSource = {}) {
+  const defaultedTarget = { safe: () => undefined };
+  Object.assign(defaultedTarget, defaultedSource);
+  defaultedTarget.safe();
+}
+assignDefaultedSource();
+
+const overwrittenReturn = Object.assign(
+  { write: Deno.remove },
+  { write: () => undefined },
+);
+overwrittenReturn.write("local-return.txt");
+
+const overwrittenTarget = { write: Deno.remove };
+Object.assign(overwrittenTarget, { write: () => undefined });
+overwrittenTarget.write("local-target.txt");
+
+const knownSafeTarget = { safe: () => undefined };
+Object.assign(knownSafeTarget, { ...{ safe: () => undefined } });
+knownSafeTarget.safe();
+
+declare const maybe: boolean;
+const conditionalTarget = { write: Deno.remove };
+if (maybe) Object.assign(conditionalTarget, { write: () => undefined });
+conditionalTarget.write("conditional.txt");
+`,
+        "src/runtime-object-assign-unknown-source.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from(
+        { length: 4 },
+        () => [
+          "browser",
+          "filesystem-read",
+          "filesystem-watch",
+          "filesystem-write",
+          "network",
+          "process",
+          "server",
+          "shared-cwd",
+        ],
+      ).flat().concat("filesystem-write"),
+    );
+  });
+
+  it("fails closed when only part of a copied source resolves", () => {
+    const expectedEffects = [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ];
+    const cases = [
+      {
+        name: "direct",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+Object.assign({}, source).run();
+`,
+      },
+      {
+        name: "property",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const box = { source: maybe ? { run: Deno.cwd } : loadSource() };
+Object.assign({}, box.source).run();
+`,
+      },
+      {
+        name: "nested",
+        source: `
+declare const maybe: boolean;
+declare const other: boolean;
+declare function loadSource(): object;
+const nested = maybe
+  ? (other ? { run: Deno.cwd } : loadSource())
+  : { run: Deno.cwd };
+Object.assign({}, nested).run();
+`,
+      },
+      {
+        name: "descriptor-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const getterBox = {};
+Object.defineProperty(getterBox, "source", { get: () => source });
+Object.assign({}, getterBox.source).run();
+`,
+      },
+      {
+        name: "returned-descriptor-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const returnedGetterBox = Object.defineProperty({}, "source", {
+  get: () => source,
+});
+Object.assign({}, returnedGetterBox.source).run();
+`,
+      },
+      {
+        name: "literal-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const literalGetterBox = {
+  get source() {
+    return source;
+  },
+};
+Object.assign({}, literalGetterBox.source).run();
+`,
+      },
+      {
+        name: "copied-attributed-property",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const attributedBox = { source };
+Object.defineProperty(attributedBox, "source", { enumerable: true });
+const copiedBox = Object.assign({}, attributedBox);
+Object.assign({}, copiedBox.source).run();
+`,
+      },
+      {
+        name: "copied-property",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const copiedBox = Object.assign({}, { source });
+Object.assign({}, copiedBox.source).run();
+`,
+      },
+      {
+        name: "copied-descriptor-getter",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const getterBox = {};
+Object.defineProperty(getterBox, "source", {
+  enumerable: true,
+  get: () => source,
+});
+const copiedBox = Object.assign({}, getterBox);
+Object.assign({}, copiedBox.source).run();
+`,
+      },
+      {
+        name: "object-spread",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+({ ...source }).run();
+`,
+      },
+    ] as const;
+    for (const testCase of cases) {
+      assertEquals(
+        [
+          ...new Set(
+            collectSemanticMarkers(
+              testCase.source,
+              `src/runtime-object-assign-partial-source-${testCase.name}.test.ts`,
+            ).map((marker) => marker.effect),
+          ),
+        ].sort(),
+        expectedEffects,
+        testCase.name,
+      );
+    }
+  });
+
+  it("preserves every possible sort comparator effect", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const maybe: boolean;
+const conditionalComparator = maybe ? Deno.remove : fetch;
+const conditionalValues = [2, 1];
+conditionalValues.sort(conditionalComparator);
+
+const comparators = { remove: Deno.remove, request: fetch };
+declare const comparatorName: string;
+const computedValues = [2, 1];
+computedValues.sort(comparators[comparatorName]);
+
+const localValues = [2, 1];
+localValues.sort(() => 0);
+`,
+        "src/runtime-sort-comparator-effects.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "conditionalValues.sort(comparator)"],
+        ["network", "conditionalValues.sort(comparator)"],
+        ["filesystem-write", "computedValues.sort(comparator)"],
+        ["network", "computedValues.sort(comparator)"],
+      ],
+    );
+  });
+
+  it("preserves partial bindings through object destructuring", () => {
+    const cases = [
+      {
+        name: "declaration",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: () => undefined } : loadSource();
+const { run: declaredRun } = source;
+declaredRun();
+`,
+      },
+      {
+        name: "assignment",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: () => undefined } : loadSource();
+let assignedRun;
+({ run: assignedRun } = source);
+assignedRun();
+`,
+      },
+    ] as const;
+    for (const testCase of cases) {
+      const effects = collectSemanticMarkers(
+        testCase.source,
+        `src/runtime-partial-object-destructuring-${testCase.name}.test.ts`,
+      ).map((marker) => marker.effect);
+      assertEquals(effects, [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ]);
+    }
+  });
+
+  it("preserves partial bindings through computed object destructuring", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare const key: string;
+declare function loadSource(): object;
+const source = maybe ? { choice: () => undefined } : loadSource();
+const { [key]: picked } = source;
+picked();
+`,
+      "src/runtime-partial-computed-object-destructuring.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
+  });
+
+  it("preserves partial bindings through array rest destructuring", () => {
+    const cases = [
+      {
+        name: "declaration",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? [{ run: Deno.cwd }] : loadSource();
+const [...rest] = source;
+Object.assign({}, rest[0]).run();
+`,
+      },
+      {
+        name: "assignment",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? [{ run: Deno.cwd }] : loadSource();
+let rest;
+[...rest] = source;
+Object.assign({}, rest[0]).run();
+`,
+      },
+    ] as const;
+    for (const testCase of cases) {
+      const effects = [
+        ...new Set(
+          collectSemanticMarkers(
+            testCase.source,
+            `src/runtime-partial-array-rest-destructuring-${testCase.name}.test.ts`,
+          ).map((marker) => marker.effect),
+        ),
+      ].sort();
+      assertEquals(effects, [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ], testCase.name);
+    }
+  });
+
+  it("preserves partial bindings through destructuring defaults", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { nested: { run: Deno.cwd } } : loadSource();
+let nested;
+({ nested = { run: Deno.cwd } } = source);
+Object.assign({}, nested).run();
+`,
+      "src/runtime-partial-defaulted-object-destructuring.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
+  it("keeps statically named Object.assign overwrites precise", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { safe: () => undefined };
+Object.assign(target, { write: Deno.remove });
+target.safe();
+
+const overwrittenTarget = { run: Deno.remove };
+Object.assign(overwrittenTarget, { run: () => undefined });
+overwrittenTarget.run();
+
+const result = Object.assign(
+  {},
+  { run: Deno.remove },
+  { run: () => undefined },
+);
+result.run();
+`,
+        "src/runtime-object-assign-overwrites.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { safe: () => undefined };
+Object.assign(target, { write: Deno.remove });
+target.write("target.txt");
+`,
+        "src/runtime-object-assign-named-write.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "target.write"]],
+    );
+  });
+
+  it("retains data properties when Reflect mutations may fail", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const setTarget = {};
+Object.defineProperty(setTarget, "run", { value: Deno.remove });
+Reflect.set(setTarget, "run", () => undefined);
+setTarget.run("set.txt");
+
+const deleteTarget = {};
+Object.defineProperty(deleteTarget, "run", { value: Deno.remove });
+Reflect.deleteProperty(deleteTarget, "run");
+deleteTarget.run("delete.txt");
+
+const defineTarget = {};
+Object.defineProperty(defineTarget, "run", { value: Deno.remove });
+Reflect.defineProperty(defineTarget, "run", { value: () => undefined });
+defineTarget.run("define.txt");
+
+const assignTarget = {};
+Object.defineProperty(assignTarget, "run", { value: Deno.remove });
+try {
+  Object.assign(assignTarget, { run: () => undefined });
+} catch {}
+assignTarget.run("assign.txt");
+
+const caughtDefineTarget = {};
+Object.defineProperty(caughtDefineTarget, "run", { value: Deno.remove });
+try {
+  Object.defineProperty(caughtDefineTarget, "run", {
+    value: () => undefined,
+  });
+} catch {}
+caughtDefineTarget.run("caught-define.txt");
+
+const caughtDefineManyTarget = {};
+Object.defineProperty(caughtDefineManyTarget, "run", { value: Deno.remove });
+try {
+  Object.defineProperties(caughtDefineManyTarget, {
+    run: { value: () => undefined },
+  });
+} catch {}
+caughtDefineManyTarget.run("caught-define-many.txt");
+`,
+        "src/runtime-reflect-failed-mutations.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from({ length: 6 }, () => "filesystem-write"),
+    );
+  });
+
+  it("writes explicit Reflect.set receivers without mutating the target", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { run: () => undefined };
+const receiver = {};
+Reflect.set(target, "run", Deno.remove, receiver);
+target.run();
+receiver.run("receiver.txt");
+`,
+        "src/runtime-reflect-set-receiver.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "receiver.run"]],
+    );
+  });
+
+  it("stops Object.defineProperties after the first failed descriptor", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = { run: Deno.remove };
+Object.defineProperty(target, "locked", { value: 1 });
+try {
+  Object.defineProperties(target, {
+    locked: { configurable: true },
+    run: { value: () => undefined },
+  });
+} catch {}
+target.run("retained.txt");
+`,
+        "src/runtime-define-properties-short-circuit.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "target.run"]],
+    );
+  });
+
+  it("preserves every callable comparator and setter effect", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const maybe: boolean;
+const values = [2, 1];
+values.sort(maybe ? Deno.remove : fetch);
+values.sort(Deno.open);
+
+const conditionalSetter = Object.defineProperty({}, "path", {
+  set: maybe ? Deno.remove : fetch,
+});
+conditionalSetter.path = "conditional.txt";
+
+declare const unknownDescriptor: PropertyDescriptor;
+const unknownSetter = Object.defineProperty({}, "path", unknownDescriptor);
+unknownSetter.path = "unknown.txt";
+
+const openSetter = Object.defineProperty({}, "path", {
+  set: Deno.open.bind(Deno, "setter.txt", { write: true, create: true }),
+});
+openSetter.path = "ignored";
+
+const openComparatorValues = [2, 1];
+openComparatorValues.sort(
+  Deno.open.bind(Deno, "sort.txt", { write: true, create: true }),
+);
+`,
+        "src/runtime-multi-effect-callables.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "values.sort(comparator)"],
+        ["network", "values.sort(comparator)"],
+        ["filesystem-read", "values.sort(comparator)"],
+        ["filesystem-write", "conditionalSetter.path setter"],
+        ["network", "conditionalSetter.path setter"],
+        ["browser", "unknownSetter.path setter"],
+        ["filesystem-read", "unknownSetter.path setter"],
+        ["filesystem-watch", "unknownSetter.path setter"],
+        ["filesystem-write", "unknownSetter.path setter"],
+        ["network", "unknownSetter.path setter"],
+        ["process", "unknownSetter.path setter"],
+        ["server", "unknownSetter.path setter"],
+        ["shared-cwd", "unknownSetter.path setter"],
+        ["filesystem-write", "openSetter.path setter"],
+        ["filesystem-write", "openComparatorValues.sort(comparator)"],
+      ],
+    );
+  });
+
+  it("preserves receiver and prototype provenance through returned Object APIs", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+Object.freeze({ run: Deno.remove }).run("freeze.txt");
+Object.seal({ run: Deno.remove }).run("seal.txt");
+Object.preventExtensions({ run: Deno.remove }).run("prevent-extensions.txt");
+Object.setPrototypeOf({}, { run: Deno.remove }).run("prototype.txt");
+Object.setPrototypeOf(
+  { safe: () => undefined },
+  { run: Deno.remove },
+).safe();
+Object.setPrototypeOf(
+  { run: () => undefined },
+  { run: Deno.remove },
+).run();
+const prototypeTarget = { run: () => undefined };
+Object.setPrototypeOf(prototypeTarget, { run: Deno.remove });
+prototypeTarget.run();
+
+const target = { safe: () => undefined };
+Object.setPrototypeOf(target, { run: Deno.remove });
+target.safe();
+target.run("target-prototype.txt");
+
+const deleted = { run: () => undefined };
+Object.setPrototypeOf(deleted, { run: Deno.remove });
+delete deleted.run;
+deleted.run("deleted-prototype.txt");
+
+const reflectedDelete = { run: () => undefined };
+Object.setPrototypeOf(reflectedDelete, { run: Deno.remove });
+Reflect.deleteProperty(reflectedDelete, "run");
+reflectedDelete.run("reflected-delete-prototype.txt");
+
+const replacedPrototype = {};
+Object.setPrototypeOf(replacedPrototype, { run: Deno.remove });
+Object.setPrototypeOf(replacedPrototype, null);
+replacedPrototype.run();
+
+const retainedPrototype = {};
+Object.setPrototypeOf(retainedPrototype, { run: Deno.remove });
+Object.preventExtensions(retainedPrototype);
+try {
+  Object.setPrototypeOf(retainedPrototype, null);
+} catch {}
+retainedPrototype.run("retained-prototype.txt");
+`,
+        "src/runtime-object-receiver-returns.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from({ length: 8 }, () => "filesystem-write"),
+    );
+  });
+
+  it("keeps frozen and sealed property provenance after failed mutations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const frozen = Object.freeze({ run: Deno.remove });
+Reflect.set(frozen, "run", () => undefined);
+Reflect.deleteProperty(frozen, "run");
+Reflect.defineProperty(frozen, "run", { value: () => undefined });
+frozen.run("frozen.txt");
+
+const sealed = Object.seal({ run: Deno.remove });
+Reflect.deleteProperty(sealed, "run");
+try {
+  Object.defineProperty(sealed, "run", { value: () => undefined });
+} catch {}
+sealed.run("sealed.txt");
+
+const frozenRedefined = Object.freeze({ run: Deno.remove });
+Reflect.defineProperty(frozenRedefined, "run", { value: () => undefined });
+frozenRedefined.run("frozen-redefined.txt");
+
+const sealedRedefined = Object.seal({ run: Deno.remove });
+Reflect.defineProperty(sealedRedefined, "run", { value: () => undefined });
+sealedRedefined.run("sealed-redefined.txt");
+
+const sealedLocked = { run: Deno.remove };
+Object.defineProperty(sealedLocked, "run", { writable: false });
+Object.seal(sealedLocked);
+Reflect.defineProperty(sealedLocked, "run", { value: () => undefined });
+sealedLocked.run("sealed-locked.txt");
+
+const prevented = Object.preventExtensions({ run: Deno.remove });
+Reflect.defineProperty(prevented, "run", { value: () => undefined });
+prevented.run("prevented.txt");
+`,
+        "src/runtime-property-integrity-levels.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "frozen.run"],
+        ["filesystem-write", "sealed.run"],
+        ["filesystem-write", "frozenRedefined.run"],
+        ["filesystem-write", "sealedLocked.run"],
+      ],
+    );
+  });
+
+  it("retains exact array elements when removals may fail", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const frozenPopped = Object.freeze([Deno.remove]);
+try {
+  frozenPopped.pop();
+} catch {}
+frozenPopped[0]("frozen.txt");
+
+const sealedShifted = Object.seal([Deno.remove]);
+try {
+  sealedShifted.shift();
+} catch {}
+sealedShifted[0]("sealed.txt");
+
+const locked = [Deno.remove];
+Object.defineProperty(locked, "0", { configurable: false });
+try {
+  locked.pop();
+} catch {}
+locked[0]("locked.txt");
+
+const lockedShift = [Deno.remove, () => undefined];
+Object.defineProperty(lockedShift, "0", { writable: false });
+try {
+  lockedShift.shift();
+} catch {}
+lockedShift[0]("locked-shift.txt");
+
+const lockedLength = [Deno.remove];
+Object.defineProperty(lockedLength, "length", { writable: false });
+try {
+  lockedLength.pop();
+} catch {}
+lockedLength[0]("locked-length.txt");
+`,
+        "src/runtime-failed-exact-array-removals.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "frozenPopped.0"],
+        ["filesystem-write", "sealedShifted.0"],
+        ["filesystem-write", "locked.0"],
+        ["filesystem-write", "lockedShift.0"],
+        ["filesystem-write", "lockedLength.0"],
+      ],
+    );
+  });
+
+  it("retains outer array elements across unevaluated function mutations", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const retained = [Deno.remove];
+function unused() {
+  retained.pop();
+}
+retained[0]("retained.txt");
+`,
+        "src/runtime-unevaluated-array-removal.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "retained.0"]],
+    );
+  });
+
+  it("clears exact removals that succeed on non-extensible arrays", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const popped = Object.preventExtensions([Deno.remove]);
+popped.pop();
+popped[0]?.("popped.txt");
+
+const shifted = Object.preventExtensions([() => undefined, Deno.remove]);
+shifted.shift();
+shifted[1]?.("shifted.txt");
+`,
+        "src/runtime-non-extensible-exact-array-removals.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("keeps exact array removal and bulk descriptor return provenance", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const popped = [Deno.remove, () => undefined].pop();
+popped();
+const shifted = [() => undefined, Deno.remove].shift();
+shifted();
+const [spliced] = [() => undefined, Deno.remove].splice(0, 1);
+spliced();
+const [negativeSpliced] = [Deno.remove, () => undefined].splice(-1, 1);
+negativeSpliced();
+`,
+        "src/runtime-exact-array-removal-results.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const defined = Object.defineProperties({}, {
+  safe: { value: () => undefined },
+  run: { value: Deno.remove },
+  nested: { get: () => ({ run: Deno.remove }) },
+  [1]: { value: Deno.remove },
+  ["computed"]: { get: () => Deno.remove },
+});
+defined.safe();
+defined.run("run.txt");
+defined.nested.run("nested.txt");
+defined[1]("numeric.txt");
+defined.computed("computed.txt");
+`,
+        "src/runtime-bulk-descriptor-return-values.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "defined.run"],
+        ["filesystem-write", "defined.nested.run"],
+        ["filesystem-write", "defined.1"],
+        ["filesystem-write", "defined.computed"],
+      ],
+    );
+  });
+
+  it("invokes descriptor setters on writes without exposing them to reads", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const direct = {};
+Object.defineProperty(direct, "path", { set: Deno.remove });
+direct.path = "direct.txt";
+direct.path = "direct-again.txt";
+direct.path++;
+
+const definedMany = {};
+Object.defineProperties(definedMany, {
+  path: { set: Deno.writeTextFile },
+});
+Reflect.set(definedMany, "path", "many.txt");
+
+const remove = Deno.remove;
+const aliased = {};
+Object.defineProperty(aliased, "path", { set: remove });
+aliased.path = "aliased.txt";
+
+const bound = {};
+Object.defineProperty(bound, "path", { set: Deno.remove.bind(Deno) });
+bound.path = "bound.txt";
+
+const unread = {};
+Object.defineProperty(unread, "path", { set: Deno.remove });
+unread.path;
+
+declare const unknownProperty: string;
+declare const maybe: boolean;
+const multiple = {};
+Object.defineProperty(multiple, "path", { set: Deno.remove });
+Object.defineProperty(multiple, "url", { set: fetch });
+multiple[unknownProperty] = "unknown";
+Reflect.set(multiple, unknownProperty, "unknown");
+
+const conditional = {};
+Object.defineProperty(conditional, "path", {
+  set: maybe ? Deno.remove : fetch,
+});
+conditional.path = "conditional.txt";
+
+const assigned = {};
+Object.defineProperty(assigned, "path", { set: Deno.remove });
+Object.assign(assigned, { path: "assigned.txt" });
+assigned.path = "assigned-again.txt";
+`,
+        "src/runtime-descriptor-setters.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "network",
+        "filesystem-write",
+        "network",
+        "filesystem-write",
+        "network",
+        "filesystem-write",
+        "filesystem-write",
+      ],
+    );
+  });
+
+  it("classifies filesystem-open setters with their assigned values", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const direct = {};
+Object.defineProperty(direct, "options", {
+  set: Deno.open.bind(Deno, "direct.txt"),
+});
+direct.options = { write: true, create: true };
+
+const loop = {};
+Object.defineProperty(loop, "options", {
+  set: Deno.open.bind(Deno, "loop.txt"),
+});
+for (loop.options of [{ write: true, create: true }]) {}
+
+const assigned = {};
+Object.defineProperty(assigned, "options", {
+  set: Deno.open.bind(Deno, "assigned.txt"),
+});
+Object.assign(assigned, { options: { write: true, create: true } });
+`,
+        "src/runtime-filesystem-open-setters.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "direct.options setter"],
+        ["filesystem-write", "loop.options setter"],
+        ["filesystem-write", "assigned.options setter"],
+      ],
+    );
+  });
+
+  it("invokes inherited descriptor setters without bypassing own properties", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "path", { set: Deno.remove });
+
+const direct = Object.setPrototypeOf({}, prototype);
+direct.path = "direct.txt";
+
+const assigned = Object.setPrototypeOf({}, prototype);
+Object.assign(assigned, { path: "assigned.txt" });
+
+const openPrototype = {};
+Object.defineProperty(openPrototype, "options", {
+  set: Deno.open.bind(Deno, "inherited.txt"),
+});
+const opened = Object.setPrototypeOf({}, openPrototype);
+opened.options = { write: true, create: true };
+
+const own = Object.setPrototypeOf(
+  { path: "safe" },
+  prototype,
+);
+own.path = "still-safe";
+`,
+        "src/runtime-inherited-setters.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "direct.path setter"],
+        ["filesystem-write", "assigned.path setter"],
+        ["filesystem-write", "opened.options setter"],
+      ],
+    );
+  });
+
+  it("preserves Object.create prototype provenance without inventing a null prototype", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const created = Object.create({ run: Deno.remove });
+created.run("created.txt");
+`,
+        "src/runtime-object-create-property.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "created.run"]],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "path", { set: Deno.remove });
+const created = Object.create(prototype);
+created.path = "created.txt";
+`,
+        "src/runtime-object-create-setter.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "created.path setter"]],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const nullPrototype = Object.create(null);
+nullPrototype.run = () => undefined;
+nullPrototype.run();
+
+const ownDescriptor = Object.create(
+  { run: () => undefined },
+  { run: { value: Deno.remove } },
+);
+ownDescriptor.run("descriptor.txt");
+`,
+        "src/runtime-object-create-descriptors.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "ownDescriptor.run"]],
+    );
+
+    assertEquals(
+      [
+        ...new Set(
+          collectSemanticMarkers(
+            `
+declare function loadPrototype(): object;
+const created = Object.create(loadPrototype());
+created.run();
+`,
+            "src/runtime-object-create-unknown-prototype.test.ts",
+          ).map((marker) => marker.effect),
+        ),
+      ].sort(),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ],
+    );
+  });
+
+  it("invokes descriptor setters through destructuring assignments", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "write", { set: Deno.writeTextFile });
+({ x: target.write } = { x: "object.txt" });
+[target.write] = ["array.txt"];
+({ x: target.write = "object-default.txt" } = { x: undefined });
+[target.write = "array-default.txt"] = [undefined];
+for (target.write of ["loop-of.txt"]) {}
+for (target.write in { "loop-in.txt": true }) {}
+
+const getterOnly = {};
+Object.defineProperty(getterOnly, "write", {
+  get: () => Deno.writeTextFile,
+});
+const { write: unusedGetter } = getterOnly;
+void unusedGetter;
+`,
+        "src/runtime-descriptor-setter-destructuring.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+      ],
+    );
+  });
+
+  it("passes assigned values to bound filesystem-open setters", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "options", {
+  set: Deno.open.bind(Deno, "assigned.txt"),
+});
+target.options = { write: true, create: true };
+for (target.options of [{ write: true, create: true }]) {}
+`,
+        "src/runtime-bound-open-setter-values.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "target.options setter"],
+        ["filesystem-write", "target.options setter"],
+      ],
+    );
+  });
+
+  it("preserves setters after Object.assign invokes them", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "path", { set: Deno.remove });
+const returned = Object.assign(target, { path: "first.txt" });
+returned.path = "second.txt";
+
+const getterTarget = {};
+Object.defineProperty(getterTarget, "path", { set: Deno.remove });
+const getterSource = {};
+Object.defineProperty(getterSource, "path", {
+  enumerable: true,
+  get: () => "first.txt",
+});
+const getterReturned = Object.assign(getterTarget, getterSource);
+getterReturned.path = "second.txt";
+`,
+        "src/runtime-object-assign-setter-preservation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "target.path setter"],
+        ["filesystem-write", "returned.path setter"],
+        ["filesystem-write", "runtime effect setter"],
+        ["filesystem-write", "getterReturned.path setter"],
+      ],
+    );
+  });
+
+  it("preserves returned target properties skipped by Object.assign", () => {
+    const markers = collectSemanticMarkers(
+      `
+const target = { run: Deno.remove };
+const source = {};
+Object.defineProperty(source, "run", { value: () => undefined });
+Object.defineProperty(source, "observed", {
+  enumerable: true,
+  get: Deno.cwd,
+});
+Object.assign(target, source).run("retained.txt");
+`,
+      "src/runtime-object-assign-non-enumerable-return.test.ts",
+    );
+    assertEquals(
+      markers.map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "run"],
+        ["shared-cwd", "Object.assign(source getter)"],
+      ],
+    );
+  });
+
+  it("preserves descriptor attributes omitted by redefinition", () => {
+    const effects = collectSemanticMarkers(
+      `
+const source = {};
+Object.defineProperty(source, "run", {
+  configurable: true,
+  enumerable: true,
+  value: () => undefined,
+});
+Object.defineProperty(source, "run", { value: Deno.remove });
+Object.assign({}, source).run("copied.txt");
+Reflect.defineProperty(source, "run", { value: () => undefined });
+source.run("cleared.txt");
+`,
+      "src/runtime-descriptor-redefinition-attributes.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, ["filesystem-write"]);
+  });
+
+  it("models Object.assign getter copies as writable data properties", () => {
+    const effects = collectSemanticMarkers(
+      `
+const source = {};
+Object.defineProperty(source, "run", {
+  enumerable: true,
+  get: () => Deno.remove,
+});
+const target = Object.assign({}, source);
+Object.seal(target);
+Object.defineProperty(target, "run", { value: () => undefined });
+target.run("cleared.txt");
+`,
+      "src/runtime-object-assign-getter-copy-writable.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("models Object.assign literal copies as writable data properties", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = Object.assign({}, { run: Deno.remove });
+Object.seal(target);
+Object.defineProperty(target, "run", { value: () => undefined });
+target.run("cleared.txt");
+`,
+      "src/runtime-object-assign-literal-copy-writable.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("clears accessors replaced by descriptor definitions", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "path", {
+  configurable: true,
+  set: Deno.remove,
+});
+Object.defineProperty(target, "path", { set: () => undefined });
+target.path = "safe.txt";
+
+const retained = {};
+Object.defineProperty(retained, "path", {
+  configurable: true,
+  set: Deno.remove,
+});
+Object.defineProperty(retained, "path", { enumerable: true });
+retained.path = "retained.txt";
+`,
+        "src/runtime-descriptor-accessor-redefinition.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "retained.path setter"]],
+    );
+  });
+
+  it("clears accessors only when direct deletion can succeed", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const retained = {};
+Object.defineProperty(retained, "path", { set: Deno.remove });
+delete retained.path;
+retained.path = "retained.txt";
+
+const retainedGetter = {};
+Object.defineProperty(retainedGetter, "path", {
+  get: () => Deno.remove,
+});
+delete retainedGetter.path;
+retainedGetter.path("retained-getter.txt");
+
+const cleared = {};
+Object.defineProperty(cleared, "path", {
+  configurable: true,
+  set: Deno.remove,
+});
+delete cleared.path;
+cleared.path = "cleared.txt";
+
+const clearedGetter = {};
+Object.defineProperty(clearedGetter, "path", {
+  configurable: true,
+  get: () => Deno.remove,
+});
+delete clearedGetter.path;
+clearedGetter.path?.("cleared-getter.txt");
+
+declare const opaqueDescriptor: PropertyDescriptor;
+const opaque = Object.defineProperty({}, "path", opaqueDescriptor);
+delete opaque.path;
+opaque.path;
+`,
+        "src/runtime-descriptor-delete-configurability.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "retained.path setter"],
+        ["filesystem-write", "retainedGetter.path"],
+        ["browser", "opaque.path getter"],
+        ["filesystem-read", "opaque.path getter"],
+        ["filesystem-watch", "opaque.path getter"],
+        ["filesystem-write", "opaque.path getter"],
+        ["network", "opaque.path getter"],
+        ["process", "opaque.path getter"],
+        ["server", "opaque.path getter"],
+        ["shared-cwd", "opaque.path getter"],
+      ],
+    );
+  });
+
+  it("preserves both outcomes when delete configurability is unknown", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const configurable: boolean;
+const deleted = { run: Deno.cwd };
+Object.defineProperty(deleted, "run", { configurable });
+Object.setPrototypeOf(deleted, { run: Deno.remove });
+delete deleted.run;
+deleted.run("delete.txt");
+
+const reflected = { run: Deno.cwd };
+Object.defineProperty(reflected, "run", { configurable });
+Object.setPrototypeOf(reflected, { run: Deno.remove });
+Reflect.deleteProperty(reflected, "run");
+reflected.run("reflect-delete.txt");
+`,
+        "src/runtime-unknown-property-delete.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "deleted.run"],
+        ["shared-cwd", "deleted.run"],
+        ["shared-cwd", "Deno.cwd"],
+        ["filesystem-write", "reflected.run"],
+        ["shared-cwd", "reflected.run"],
+      ],
+    );
+  });
+
+  it("retains properties when Reflect.defineProperty can fail", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const retainedValue = {};
+Object.defineProperty(retainedValue, "run", { value: Deno.remove });
+Reflect.defineProperty(retainedValue, "run", { value: () => undefined });
+retainedValue.run("retained-value.txt");
+
+const retainedGetter = {};
+Object.defineProperty(retainedGetter, "run", {
+  get: () => Deno.remove,
+});
+Reflect.defineProperty(retainedGetter, "run", {
+  get: () => () => undefined,
+});
+retainedGetter.run("retained-getter.txt");
+
+const retainedSetter = {};
+Object.defineProperty(retainedSetter, "path", { set: Deno.remove });
+Reflect.defineProperty(retainedSetter, "path", {
+  set: () => undefined,
+});
+retainedSetter.path = "retained-setter.txt";
+
+const clearedValue = {};
+Object.defineProperty(clearedValue, "run", {
+  configurable: true,
+  value: Deno.remove,
+});
+Reflect.defineProperty(clearedValue, "run", { value: () => undefined });
+clearedValue.run("cleared-value.txt");
+
+const clearedGetter = {};
+Object.defineProperty(clearedGetter, "run", {
+  configurable: true,
+  get: () => Deno.remove,
+});
+Reflect.defineProperty(clearedGetter, "run", {
+  get: () => () => undefined,
+});
+clearedGetter.run("cleared-getter.txt");
+
+const clearedSetter = {};
+Object.defineProperty(clearedSetter, "path", {
+  configurable: true,
+  set: Deno.remove,
+});
+Reflect.defineProperty(clearedSetter, "path", {
+  set: () => undefined,
+});
+clearedSetter.path = "cleared-setter.txt";
+`,
+        "src/runtime-reflect-define-property-configurability.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "retainedValue.run"],
+        ["filesystem-write", "retainedGetter.run"],
+        ["filesystem-write", "retainedSetter.path setter"],
+      ],
+    );
+  });
+
+  it("invokes descriptor getters on property reads and copies", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const direct = {};
+Object.defineProperty(direct, "path", { get: Deno.cwd });
+direct.path;
+
+const source = {};
+Object.defineProperty(source, "path", { get: Deno.cwd, enumerable: true });
+Object.assign({}, source);
+const spread = { ...source };
+void spread;
+
+const hidden = {};
+Object.defineProperty(hidden, "request", { get: fetch });
+Object.assign({}, hidden);
+const hiddenSpread = { ...hidden };
+void hiddenSpread;
+
+const enumerableSource = {};
+Object.defineProperty(enumerableSource, "path", {
+  get: Deno.cwd,
+  enumerable: true,
+});
+Object.assign({}, enumerableSource);
+const enumerableSpread = { ...enumerableSource };
+void enumerableSpread;
+
+const hiddenReturn = Object.defineProperty({}, "run", {
+  get: () => Deno.remove,
+});
+Object.assign({}, hiddenReturn).run();
+
+const hiddenData = Object.defineProperty({}, "run", {
+  value: Deno.remove,
+});
+Object.assign({}, hiddenData).run();
+
+const visibleData = {};
+Object.defineProperty(visibleData, "run", {
+  configurable: true,
+  enumerable: true,
+  value: () => undefined,
+});
+Object.defineProperty(visibleData, "run", { value: Deno.remove });
+Object.assign({}, visibleData).run("visible-data.txt");
+
+const ordinaryData = { run: () => undefined };
+Object.defineProperty(ordinaryData, "run", { value: Deno.remove });
+Object.assign({}, ordinaryData).run("ordinary-data.txt");
+
+const hiddenPreserved = { run: Deno.remove };
+Object.assign(hiddenPreserved, hiddenReturn).run("preserved.txt");
+
+const madeEnumerable = {};
+Object.defineProperty(madeEnumerable, "run", {
+  configurable: true,
+  get: () => Deno.remove,
+});
+Object.defineProperty(madeEnumerable, "run", { enumerable: true });
+Object.assign({}, madeEnumerable).run("enumerable.txt");
+
+declare const chooseEnumerable: boolean;
+const hiddenAlternative = {};
+Object.defineProperty(hiddenAlternative, "run", {
+  configurable: true,
+  get: () => undefined,
+});
+const visibleAlternative = {};
+Object.defineProperty(visibleAlternative, "run", {
+  configurable: true,
+  enumerable: true,
+  get: () => undefined,
+});
+const mixedEnumerable = chooseEnumerable
+  ? hiddenAlternative
+  : visibleAlternative;
+Object.defineProperty(mixedEnumerable, "run", { get: () => Deno.remove });
+Object.assign({}, mixedEnumerable).run("mixed-enumerable.txt");
+
+const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
+returned.path;
+`,
+        "src/runtime-descriptor-getters.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "direct.path getter"],
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "Object.assign(source getter)"],
+        ["shared-cwd", "source.* getter"],
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "Object.assign(enumerableSource getter)"],
+        ["shared-cwd", "enumerableSource.* getter"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["shared-cwd", "Deno.cwd"],
+        ["shared-cwd", "returned.path getter"],
+      ],
+    );
+  });
+
+  it("copies only own enumerable descriptor properties", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const hidden = {};
+Object.defineProperty(hidden, "run", {
+  value: Deno.remove,
+});
+Object.assign({}, hidden).run("hidden-assign.txt");
+({ ...hidden }).run("hidden-spread.txt");
+`,
+        "src/runtime-hidden-descriptor-enumerability.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const descriptorKey: "enumerable" | "configurable";
+const maybeEnumerable = {};
+Object.defineProperty(maybeEnumerable, "run", {
+  value: Deno.remove,
+  [descriptorKey]: true,
+});
+Object.assign({}, maybeEnumerable).run("maybe-enumerable-assign.txt");
+({ ...maybeEnumerable }).run("maybe-enumerable-spread.txt");
+`,
+        "src/runtime-computed-descriptor-attributes.test.ts",
+      ).filter((marker) =>
+        marker.effect === "filesystem-write" && marker.symbol === "run"
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+      ],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const visible = {};
+Object.defineProperty(visible, "run", {
+  value: Deno.remove,
+  enumerable: true,
+});
+Object.assign({}, visible).run("visible-assign.txt");
+({ ...visible }).run("visible-spread.txt");
+
+const revealed = {};
+Object.defineProperty(revealed, "run", {
+  value: () => undefined,
+  configurable: true,
+});
+Object.defineProperty(revealed, "run", {
+  value: Deno.remove,
+  enumerable: true,
+});
+Object.assign({}, revealed).run("revealed-assign.txt");
+({ ...revealed }).run("revealed-spread.txt");
+
+const preservedEnumerable = {};
+Object.defineProperty(preservedEnumerable, "run", {
+  value: Deno.remove,
+  enumerable: true,
+  configurable: true,
+});
+Object.defineProperty(preservedEnumerable, "run", {
+  value: Deno.remove,
+});
+Object.assign({}, preservedEnumerable).run("preserved-assign.txt");
+({ ...preservedEnumerable }).run("preserved-spread.txt");
+`,
+        "src/runtime-visible-descriptor-enumerability.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+        ["filesystem-write", "run"],
+      ],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "run", {
+  value: Deno.remove,
+  enumerable: true,
+});
+const inherited = Object.setPrototypeOf({}, prototype);
+Object.assign({}, inherited).run("inherited-assign.txt");
+({ ...inherited }).run("inherited-spread.txt");
+`,
+        "src/runtime-inherited-descriptor-enumerability.test.ts",
+      ),
+      [],
+    );
+
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = {};
+Object.defineProperty(prototype, "run", {
+  value: () => undefined,
+  enumerable: true,
+});
+const target = {};
+Object.setPrototypeOf(target, prototype);
+Object.defineProperty(target, "run", { value: Deno.remove });
+Object.assign({}, target).run("new-own-assign.txt");
+({ ...target }).run("new-own-spread.txt");
+`,
+        "src/runtime-new-own-descriptor-defaults.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("distinguishes new own descriptors from inherited and blocked definitions", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const prototype = { run: Deno.remove };
+
+const defined = Object.setPrototypeOf({}, prototype);
+Object.defineProperty(defined, "run", {});
+defined.run("defined.txt");
+
+const attributed = Object.setPrototypeOf({}, prototype);
+Object.defineProperty(attributed, "run", { enumerable: true });
+attributed.run("attributed.txt");
+
+const reflected = Object.setPrototypeOf({}, prototype);
+Reflect.defineProperty(reflected, "run", {});
+reflected.run("reflected.txt");
+
+const definedMany = Object.setPrototypeOf({}, prototype);
+Object.defineProperties(definedMany, { run: {} });
+definedMany.run("defined-many.txt");
+
+const own = { run: Deno.remove };
+Object.defineProperty(own, "run", { enumerable: true });
+own.run("own.txt");
+
+const blockedObject = Object.setPrototypeOf(
+  Object.preventExtensions({}),
+  prototype,
+);
+try {
+  Object.defineProperty(blockedObject, "run", {});
+} catch {}
+blockedObject.run("blocked-object.txt");
+
+const blockedReflect = Object.setPrototypeOf(
+  Object.preventExtensions({}),
+  prototype,
+);
+Reflect.defineProperty(blockedReflect, "run", {});
+blockedReflect.run("blocked-reflect.txt");
+
+const blockedInPlace = Object.setPrototypeOf({}, prototype);
+Object.preventExtensions(blockedInPlace);
+try {
+  Object.defineProperty(blockedInPlace, "run", {});
+} catch {}
+blockedInPlace.run("blocked-in-place.txt");
+
+const blockedReflectInPlace = Object.setPrototypeOf({}, prototype);
+Reflect.preventExtensions(blockedReflectInPlace);
+Reflect.defineProperty(blockedReflectInPlace, "run", {});
+blockedReflectInPlace.run("blocked-reflect-in-place.txt");
+
+const blockedMany = Object.setPrototypeOf(
+  Object.preventExtensions({}),
+  prototype,
+);
+try {
+  Object.defineProperties(blockedMany, { run: {} });
+} catch {}
+blockedMany.run("blocked-many.txt");
+`,
+        "src/runtime-descriptor-ownness.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "own.run"],
+        ["filesystem-write", "blockedObject.run"],
+        ["filesystem-write", "blockedReflect.run"],
+        ["filesystem-write", "blockedInPlace.run"],
+        ["filesystem-write", "blockedReflectInPlace.run"],
+        ["filesystem-write", "blockedMany.run"],
+      ],
+    );
+  });
+
+  it("fails closed when an opaque descriptor may contain a getter", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+declare const descriptor: PropertyDescriptor;
+
+const direct = {};
+Object.defineProperty(direct, "path", descriptor);
+direct.path;
+Object.assign({}, direct);
+const directSpread = { ...direct };
+void directSpread;
+
+const returned = Object.defineProperty({}, "path", descriptor);
+returned.path;
+
+const bulk = Object.defineProperties({}, { path: descriptor });
+bulk.path;
+
+const deleted = {};
+Object.defineProperty(deleted, "path", descriptor);
+delete deleted.path;
+`,
+        "src/runtime-opaque-descriptor-getters.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ],
+    );
+  });
+
+  it("preserves both branches of logical property assignments", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const nullish = [() => undefined];
+nullish[1] ??= Deno.writeTextFile;
+const [, nullishRun] = [...nullish, () => undefined];
+nullishRun("nullish.txt", "x");
+
+const disjoined = [() => undefined];
+disjoined[1] ||= Deno.writeTextFile;
+const [, disjoinedRun] = [...disjoined, () => undefined];
+disjoinedRun("disjoined.txt", "x");
+
+const conjoined = [() => undefined, () => undefined];
+conjoined[1] &&= Deno.writeTextFile;
+const [, conjoinedRun] = [...conjoined, () => undefined];
+conjoinedRun("conjoined.txt", "x");
+
+const resultHolder = {};
+const disjoinedResult = (resultHolder.write ||= Deno.writeTextFile);
+disjoinedResult("disjoined-result.txt", "x");
+
+const nullishResultHolder = {};
+const nullishResult = (nullishResultHolder.write ??= Deno.writeTextFile);
+nullishResult("nullish-result.txt", "x");
+
+const conjoinedResultHolder = { write: () => undefined };
+const conjoinedResult = (conjoinedResultHolder.write &&= Deno.writeTextFile);
+conjoinedResult("conjoined-result.txt", "x");
+
+const assignedResultHolder = {};
+const assignedResult = (assignedResultHolder.write = Deno.writeTextFile);
+assignedResult("assigned-result.txt", "x");
+
+class LogicalAssignmentResultClass {}
+const logicalClassHolder = {};
+const LogicalAssignmentResultAlias =
+  (logicalClassHolder.Receiver ||= LogicalAssignmentResultClass);
+LogicalAssignmentResultAlias.write = Deno.writeTextFile;
+LogicalAssignmentResultClass.write("logical-class-result.txt", "x");
+
+class DirectAssignmentResultClass {}
+const directClassHolder = {};
+const DirectAssignmentResultAlias =
+  (directClassHolder.Receiver = DirectAssignmentResultClass);
+DirectAssignmentResultAlias.write = Deno.writeTextFile;
+DirectAssignmentResultClass.write("direct-class-result.txt", "x");
+`,
+        "src/logical-property-assignments.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "nullishRun"],
+        ["filesystem-write", "disjoinedRun"],
+        ["filesystem-write", "conjoinedRun"],
+        ["filesystem-write", "disjoinedResult"],
+        ["filesystem-write", "nullishResult"],
+        ["filesystem-write", "conjoinedResult"],
+        ["filesystem-write", "assignedResult"],
+        ["filesystem-write", "LogicalAssignmentResultClass.write"],
+        ["filesystem-write", "DirectAssignmentResultClass.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const local = () => undefined;
+const holder = { write: local };
+const disjoinedResult = (holder.write ||= local);
+const nullishResult = (holder.write ??= local);
+const conjoinedResult = (holder.write &&= local);
+disjoinedResult();
+nullishResult();
+conjoinedResult();
+`,
+        "src/local-logical-assignment-results.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("uses JavaScript array-index bounds for sparse writes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const values = [() => undefined];
+values[4294967295] = Deno.writeTextFile;
+const copy = [...values];
+copy[0]();
+
+const [, ...rest] = values;
+rest[0]();
+`,
+        "src/non-array-index-property.test.ts",
+      ),
+      [],
     );
   });
 
@@ -1748,12 +4538,231 @@ function shadow(defaultWrite = (() => undefined)) {
 class RuntimeParameterProperty {
   constructor(public write = Deno.writeTextFile) {
     write("parameter-property.txt", "x");
+    this.write("parameter-property-this.txt", "x");
   }
 }
 `,
         "src/runtime-parameter-property.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
-      [["filesystem-write", "write"]],
+      [
+        ["filesystem-write", "write"],
+        ["filesystem-write", "this.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class AssignedRuntimeProperty {
+  constructor() {
+    this.write = Deno.writeTextFile;
+    this.write("assigned-property.txt", "x");
+  }
+}
+`,
+        "src/assigned-runtime-property.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "this.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class RuntimeClassFields {
+  write = Deno.writeTextFile;
+  ["read"] = Deno.readTextFile;
+  #request = fetch;
+  constructor() {
+    this.write("class-field.txt", "x");
+  }
+  run() {
+    this.read("class-field.txt");
+    this.#request("https://example.com");
+  }
+}
+`,
+        "src/runtime-class-fields.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "this.write"],
+        ["filesystem-read", "this.read"],
+        ["network", "this.#request"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class SeparatedClassFields {
+  write = () => undefined;
+  static write = Deno.writeTextFile;
+  run() {
+    this.write();
+  }
+  static run() {
+    this.write("static-class-field.txt", "x");
+  }
+}
+`,
+        "src/separated-runtime-class-fields.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "this.write"]],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class CrossMethodRuntimeProperty {
+  run() {
+    this.write("cross-method.txt", "x");
+  }
+  constructor() {
+    this.write = Deno.writeTextFile;
+  }
+}
+class CrossMethodParameterProperty {
+  run() {
+    this.request("https://example.com");
+  }
+  constructor(public request = fetch) {}
+}
+`,
+        "src/cross-method-runtime-properties.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "this.write"],
+        ["network", "this.request"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class RuntimeArrowClassFields {
+  write = Deno.writeTextFile;
+  run = () => {
+    this.write("arrow-class-field.txt", "x");
+  };
+  assign = () => {
+    this.request = fetch;
+    this.request("https://example.com");
+  };
+  static read = Deno.readTextFile;
+  static run = () => {
+    this.read("static-arrow-class-field.txt");
+  };
+}
+class CrossFieldArrowAssignment {
+  assign = () => {
+    this.request = fetch;
+  };
+  run() {
+    this.request("https://example.com/method");
+  }
+  runArrow = () => {
+    this.request("https://example.com/arrow");
+  };
+  static run() {
+    this.write("static-arrow-assignment.txt", "x");
+  }
+  static assign = () => {
+    this.write = Deno.writeTextFile;
+  };
+}
+class RuntimeStaticBlock {
+  static {
+    this.remove = Deno.remove;
+    this.remove("static-block.txt");
+  }
+  static run() {
+    this.remove("static-block-method.txt");
+  }
+  static runArrow = () => {
+    this.remove("static-block-arrow.txt");
+  };
+}
+class StaticNameFromField {
+  static write = Deno.writeTextFile;
+  static run() {
+    StaticNameFromField.write("named-static-field.txt", "x");
+  }
+}
+class StaticNameToThis {
+  static {
+    StaticNameToThis.request = fetch;
+  }
+  static run() {
+    this.request("https://example.com/named-to-this");
+  }
+}
+class StaticThisToName {
+  static {
+    this.read = Deno.readTextFile;
+  }
+  static run() {
+    StaticThisToName.read("named-static-block.txt");
+  }
+}
+class InstanceReadsStaticName {
+  static remove = Deno.remove;
+  run() {
+    InstanceReadsStaticName.remove("instance-static-name.txt");
+  }
+}
+class ExternalStaticName {
+  static write = Deno.writeTextFile;
+}
+ExternalStaticName.write("external-static-name.txt", "x");
+class AliasedStaticReceiver {
+  static {
+    const Receiver = AliasedStaticReceiver;
+    Receiver.write = Deno.writeTextFile;
+    Receiver.write("aliased-same-block.txt", "x");
+    this.write("aliased-this-same-block.txt", "x");
+    AliasedStaticReceiver.write("aliased-name-same-block.txt", "x");
+  }
+  static run() {
+    this.write("aliased-this-later-method.txt", "x");
+    AliasedStaticReceiver.write("aliased-name-later-method.txt", "x");
+  }
+}
+class PossibleStaticReceiverA {}
+class PossibleStaticReceiverB {}
+let PossibleStaticReceiver = PossibleStaticReceiverA;
+if (maybe) PossibleStaticReceiver = PossibleStaticReceiverB;
+PossibleStaticReceiver.write = Deno.writeTextFile;
+PossibleStaticReceiverA.write("possible-static-a.txt", "x");
+PossibleStaticReceiverB.write("possible-static-b.txt", "x");
+const NamedClassExpression = class InnerStaticName {
+  static write = Deno.writeTextFile;
+  static run() {
+    InnerStaticName.write("inner-static-name.txt", "x");
+  }
+};
+NamedClassExpression.write("named-class-expression.txt", "x");
+`,
+        "src/runtime-arrow-class-fields.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "this.write"],
+        ["network", "this.request"],
+        ["filesystem-read", "this.read"],
+        ["network", "this.request"],
+        ["network", "this.request"],
+        ["filesystem-write", "this.write"],
+        ["filesystem-write", "this.remove"],
+        ["filesystem-write", "this.remove"],
+        ["filesystem-write", "this.remove"],
+        ["filesystem-write", "StaticNameFromField.write"],
+        ["network", "this.request"],
+        ["filesystem-read", "StaticThisToName.read"],
+        ["filesystem-write", "InstanceReadsStaticName.remove"],
+        ["filesystem-write", "ExternalStaticName.write"],
+        ["filesystem-write", "Receiver.write"],
+        ["filesystem-write", "this.write"],
+        ["filesystem-write", "AliasedStaticReceiver.write"],
+        ["filesystem-write", "this.write"],
+        ["filesystem-write", "AliasedStaticReceiver.write"],
+        ["filesystem-write", "PossibleStaticReceiverA.write"],
+        ["filesystem-write", "PossibleStaticReceiverB.write"],
+        ["filesystem-write", "InnerStaticName.write"],
+        ["filesystem-write", "NamedClassExpression.write"],
+      ],
     );
     assertEquals(
       collectSemanticMarkers(
@@ -1764,10 +4773,345 @@ class ShadowedParameterProperty {
     public write = Deno.writeTextFile,
   ) {
     write("parameter-property.txt", "x");
+    this.write("parameter-property-this.txt", "x");
+  }
+}
+class LocalRuntimeProperty {
+  constructor() {
+    this.write = () => undefined;
+    this.write();
+  }
+}
+function typedThis(this: { write(): void }) {
+  this.write();
+}
+const localRuntime = { writeTextFile: () => undefined };
+class LocalRuntimeClassField {
+  write = localRuntime.writeTextFile;
+  run() {
+    this.write();
+  }
+}
+class LocalCrossMethodRuntimeProperty {
+  constructor() {
+    this.write = () => undefined;
+  }
+  run() {
+    this.write();
+  }
+}
+class LocalArrowClassField {
+  write = () => undefined;
+  run = () => {
+    this.write();
+  };
+}
+class FunctionFieldReceiverIsolation {
+  write = Deno.writeTextFile;
+  run = function () {
+    this.write("isolated-function-field.txt", "x");
+  };
+}
+class LocalStaticBlock {
+  static {
+    this.write = () => undefined;
+    this.write();
+    function isolated() {
+      this.write("isolated-static-block.txt", "x");
+    }
+  }
+  static run() {
+    this.write();
+  }
+}
+class LaterStaticFieldDoesNotLeakBackward {
+  static {
+    this.write("before-static-field.txt", "x");
+  }
+  static write = Deno.writeTextFile;
+}
+class ShadowedStaticClassName {
+  static write = Deno.writeTextFile;
+  static run() {
+    const ShadowedStaticClassName = { write: () => undefined };
+    ShadowedStaticClassName.write();
   }
 }
 `,
         "src/shadowed-parameter-property.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("preserves class receiver identity through object aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class HolderClass {}
+const holder = { HolderClass };
+const HolderAlias = holder.HolderClass;
+HolderAlias.write = Deno.writeTextFile;
+holder.HolderClass.write("holder-property.txt", "x");
+HolderClass.write("holder-class.txt", "x");
+
+class DestructuredClass {}
+const { DestructuredClass: DestructuredAlias } = { DestructuredClass };
+DestructuredAlias.write = Deno.writeTextFile;
+DestructuredClass.write("destructured-class.txt", "x");
+
+class AssignedHolderClass {}
+const assignedHolder = {};
+assignedHolder.Receiver = AssignedHolderClass;
+const AssignedHolderAlias = assignedHolder.Receiver;
+AssignedHolderAlias.write = Deno.writeTextFile;
+AssignedHolderClass.write("assigned-holder-class.txt", "x");
+
+class SpreadHolderClass {}
+const spreadSource = { Receiver: SpreadHolderClass };
+const spreadHolder = { ...spreadSource };
+const SpreadHolderAlias = spreadHolder.Receiver;
+SpreadHolderAlias.write = Deno.writeTextFile;
+SpreadHolderClass.write("spread-holder-class.txt", "x");
+
+class NestedHolderClass {}
+const nestedHolder = { nested: { Receiver: NestedHolderClass } };
+const NestedHolderAlias = nestedHolder.nested.Receiver;
+NestedHolderAlias.write = Deno.writeTextFile;
+NestedHolderClass.write("nested-holder-class.txt", "x");
+
+class ReverseHolderClass {}
+const reverseHolder = { Receiver: ReverseHolderClass };
+ReverseHolderClass.write = Deno.writeTextFile;
+reverseHolder.Receiver.write("reverse-holder-class.txt", "x");
+
+class DirectHolderClass {}
+const directHolder = { Receiver: DirectHolderClass };
+directHolder.Receiver.write = Deno.writeTextFile;
+DirectHolderClass.write("direct-holder-class.txt", "x");
+
+class DirectNestedHolderClass {}
+const directNestedHolder = {
+  nested: { Receiver: DirectNestedHolderClass },
+};
+directNestedHolder.nested.Receiver.write = Deno.writeTextFile;
+DirectNestedHolderClass.write("direct-nested-holder-class.txt", "x");
+
+class ComputedHolderClass {}
+const computedHolder = { Receiver: ComputedHolderClass };
+const computedKey = "Receiver";
+const ComputedHolderAlias = computedHolder[computedKey];
+ComputedHolderAlias.write = Deno.writeTextFile;
+ComputedHolderClass.write("computed-holder-class.txt", "x");
+
+class DirectComputedHolderClass {}
+const directComputedHolder = { Receiver: DirectComputedHolderClass };
+directComputedHolder[computedKey].write = Deno.writeTextFile;
+DirectComputedHolderClass.write("direct-computed-holder-class.txt", "x");
+
+class ComputedDestructuredClass {}
+const computedDestructuredHolder = { Receiver: ComputedDestructuredClass };
+const { [computedKey]: ComputedDestructuredAlias } =
+  computedDestructuredHolder;
+ComputedDestructuredAlias.write = Deno.writeTextFile;
+ComputedDestructuredClass.write("computed-destructured-class.txt", "x");
+
+const ClassExpression = class {};
+const ClassExpressionAlias = ClassExpression;
+ClassExpressionAlias.write = Deno.writeTextFile;
+ClassExpression.write("class-expression.txt", "x");
+
+class PossibleHolderClassA {}
+class PossibleHolderClassB {}
+const possibleHolder = maybe
+  ? { Receiver: PossibleHolderClassA }
+  : { Receiver: PossibleHolderClassB };
+const PossibleHolderAlias = possibleHolder.Receiver;
+PossibleHolderAlias.write = Deno.writeTextFile;
+PossibleHolderClassA.write("possible-holder-a.txt", "x");
+PossibleHolderClassB.write("possible-holder-b.txt", "x");
+
+class DirectPossibleHolderClassA {}
+class DirectPossibleHolderClassB {}
+const directPossibleHolder = maybe
+  ? { Receiver: DirectPossibleHolderClassA }
+  : { Receiver: DirectPossibleHolderClassB };
+directPossibleHolder.Receiver.write = Deno.writeTextFile;
+DirectPossibleHolderClassA.write("direct-possible-holder-a.txt", "x");
+DirectPossibleHolderClassB.write("direct-possible-holder-b.txt", "x");
+
+class ConditionalReceiverClassA {}
+class ConditionalReceiverClassB {}
+const conditionalReceiverLeft = { Receiver: ConditionalReceiverClassA };
+const conditionalReceiverRight = { Receiver: ConditionalReceiverClassB };
+(maybe ? conditionalReceiverLeft.Receiver : conditionalReceiverRight.Receiver)
+  .write = Deno.writeTextFile;
+ConditionalReceiverClassA.write("conditional-receiver-a.txt", "x");
+ConditionalReceiverClassB.write("conditional-receiver-b.txt", "x");
+
+class LogicalReceiverClassA {}
+class LogicalReceiverClassB {}
+const logicalReceiverLeft = { Receiver: LogicalReceiverClassA };
+const logicalReceiverRight = { Receiver: LogicalReceiverClassB };
+const possibleLogicalReceiver = maybe
+  ? logicalReceiverLeft.Receiver
+  : undefined;
+(possibleLogicalReceiver || logicalReceiverRight.Receiver).write =
+  Deno.writeTextFile;
+LogicalReceiverClassA.write("logical-receiver-a.txt", "x");
+LogicalReceiverClassB.write("logical-receiver-b.txt", "x");
+
+class ConditionalPropertyClassA {}
+class ConditionalPropertyClassB {}
+const conditionalPropertyHolder = {
+  Receiver: maybe ? ConditionalPropertyClassA : ConditionalPropertyClassB,
+};
+conditionalPropertyHolder.Receiver.write = Deno.writeTextFile;
+ConditionalPropertyClassA.write("conditional-property-a.txt", "x");
+ConditionalPropertyClassB.write("conditional-property-b.txt", "x");
+
+class ConditionalVariableClassA {}
+class ConditionalVariableClassB {}
+const ConditionalVariableAlias = maybe
+  ? ConditionalVariableClassA
+  : ConditionalVariableClassB;
+ConditionalVariableAlias.write = Deno.writeTextFile;
+ConditionalVariableClassA.write("conditional-variable-a.txt", "x");
+ConditionalVariableClassB.write("conditional-variable-b.txt", "x");
+
+class IgnoredSequenceReceiverClass {}
+class SequenceReceiverClass {}
+const ignoredSequenceReceiver = { Receiver: IgnoredSequenceReceiverClass };
+const sequenceReceiver = { Receiver: SequenceReceiverClass };
+(ignoredSequenceReceiver.Receiver, sequenceReceiver.Receiver).write =
+  Deno.writeTextFile;
+IgnoredSequenceReceiverClass.write("ignored-sequence-receiver.txt", "x");
+SequenceReceiverClass.write("sequence-receiver.txt", "x");
+
+class ExactDefaultClass {}
+class UnusedDefaultClass {}
+const { Receiver: ExactDefaultAlias = UnusedDefaultClass } = {
+  Receiver: ExactDefaultClass,
+};
+ExactDefaultAlias.write = Deno.writeTextFile;
+ExactDefaultClass.write("exact-default-class.txt", "x");
+UnusedDefaultClass.write("unused-default-class.txt", "x");
+`,
+        "src/class-receiver-object-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "holder.HolderClass.write"],
+        ["filesystem-write", "HolderClass.write"],
+        ["filesystem-write", "DestructuredClass.write"],
+        ["filesystem-write", "AssignedHolderClass.write"],
+        ["filesystem-write", "SpreadHolderClass.write"],
+        ["filesystem-write", "NestedHolderClass.write"],
+        ["filesystem-write", "reverseHolder.Receiver.write"],
+        ["filesystem-write", "DirectHolderClass.write"],
+        ["filesystem-write", "DirectNestedHolderClass.write"],
+        ["filesystem-write", "ComputedHolderClass.write"],
+        ["filesystem-write", "DirectComputedHolderClass.write"],
+        ["filesystem-write", "ComputedDestructuredClass.write"],
+        ["filesystem-write", "ClassExpression.write"],
+        ["filesystem-write", "PossibleHolderClassA.write"],
+        ["filesystem-write", "PossibleHolderClassB.write"],
+        ["filesystem-write", "DirectPossibleHolderClassA.write"],
+        ["filesystem-write", "DirectPossibleHolderClassB.write"],
+        ["filesystem-write", "ConditionalReceiverClassA.write"],
+        ["filesystem-write", "ConditionalReceiverClassB.write"],
+        ["filesystem-write", "LogicalReceiverClassA.write"],
+        ["filesystem-write", "LogicalReceiverClassB.write"],
+        ["filesystem-write", "ConditionalPropertyClassA.write"],
+        ["filesystem-write", "ConditionalPropertyClassB.write"],
+        ["filesystem-write", "ConditionalVariableClassA.write"],
+        ["filesystem-write", "ConditionalVariableClassB.write"],
+        ["filesystem-write", "SequenceReceiverClass.write"],
+        ["filesystem-write", "ExactDefaultClass.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class LocalHolderClass {}
+const holder = { Receiver: {} };
+const HolderAlias = holder.Receiver;
+HolderAlias.write = Deno.writeTextFile;
+LocalHolderClass.write("local-holder.txt", "x");
+
+class LocalDirectHolderClass {}
+const directHolder = { Receiver: {} };
+directHolder.Receiver.write = Deno.writeTextFile;
+LocalDirectHolderClass.write("local-direct-holder.txt", "x");
+
+class LocalDestructuredClass {}
+const { Receiver: DestructuredAlias } = { Receiver: {} };
+DestructuredAlias.write = Deno.writeTextFile;
+LocalDestructuredClass.write("local-destructured.txt", "x");
+
+class LocalComputedClass {}
+const computedKey = "Receiver";
+const computedHolder = { Receiver: {} };
+const ComputedAlias = computedHolder[computedKey];
+ComputedAlias.write = Deno.writeTextFile;
+LocalComputedClass.write("local-computed.txt", "x");
+`,
+        "src/local-class-receiver-object-aliases.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("preserves namespace aliases through conditional and logical assignment receivers", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class ConditionalReceiverA {}
+class ConditionalReceiverB {}
+const conditionalA = { Receiver: ConditionalReceiverA };
+const conditionalB = { Receiver: ConditionalReceiverB };
+(maybe ? conditionalA.Receiver : conditionalB.Receiver).write =
+  Deno.writeTextFile;
+ConditionalReceiverA.write("conditional-a.txt", "x");
+ConditionalReceiverB.write("conditional-b.txt", "x");
+
+class LogicalReceiverA {}
+class LogicalReceiverB {}
+const logicalA = { Receiver: LogicalReceiverA };
+const logicalB = { Receiver: LogicalReceiverB };
+(maybe && logicalA.Receiver || logicalB.Receiver).write = Deno.writeTextFile;
+LogicalReceiverA.write("logical-a.txt", "x");
+LogicalReceiverB.write("logical-b.txt", "x");
+`,
+        "src/alternative-assignment-receivers.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "ConditionalReceiverA.write"],
+        ["filesystem-write", "ConditionalReceiverB.write"],
+        ["filesystem-write", "LogicalReceiverA.write"],
+        ["filesystem-write", "LogicalReceiverB.write"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class LocalConditionalA {}
+class LocalConditionalB {}
+const conditionalA = { Receiver: {} };
+const conditionalB = { Receiver: {} };
+(maybe ? conditionalA.Receiver : conditionalB.Receiver).write =
+  Deno.writeTextFile;
+LocalConditionalA.write("local-conditional-a.txt", "x");
+LocalConditionalB.write("local-conditional-b.txt", "x");
+
+class LocalLogicalA {}
+class LocalLogicalB {}
+const logicalA = { Receiver: {} };
+const logicalB = { Receiver: {} };
+(maybe && logicalA.Receiver || logicalB.Receiver).write = Deno.writeTextFile;
+LocalLogicalA.write("local-logical-a.txt", "x");
+LocalLogicalB.write("local-logical-b.txt", "x");
+`,
+        "src/local-alternative-assignment-receivers.test.ts",
       ),
       [],
     );
@@ -1878,6 +5222,7 @@ await tryTarget("try.txt", "x");
     assertEquals(
       collectSemanticMarkers(
         `
+import * as fs from "node:fs";
 let request;
 ({ fetch: request } = globalThis);
 await request("https://example.com");
@@ -1890,6 +5235,26 @@ await runtimeRest.fetch("https://example.com/rest");
 let denoRest;
 ({ ...denoRest } = Deno);
 await denoRest.writeTextFile("rest.txt", "x");
+let clearedRequest = fetch;
+const clearedOps = { run: fetch };
+clearedOps.run = () => undefined;
+({ run: clearedRequest } = clearedOps);
+clearedRequest("https://example.com/cleared");
+let clearedWrite = fs.writeFileSync;
+const clearedSpread = { ...fs };
+clearedSpread.writeFileSync = () => undefined;
+({ writeFileSync: clearedWrite } = clearedSpread);
+clearedWrite("not-a-write.txt", "x");
+let possibleRequest = fetch;
+const conditionallyCleared = { run: fetch };
+if (maybe) conditionallyCleared.run = () => undefined;
+({ run: possibleRequest } = conditionallyCleared);
+await possibleRequest("https://example.com/possible");
+let restoredRequest;
+const restoredOps = { run: () => undefined };
+restoredOps.run = fetch;
+({ run: restoredRequest } = restoredOps);
+await restoredRequest("https://example.com/restored");
 `,
         "src/destructured-assigned-runtime-aliases.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1898,6 +5263,8 @@ await denoRest.writeTextFile("rest.txt", "x");
         ["filesystem-write", "write"],
         ["network", "runtimeRest.fetch"],
         ["filesystem-write", "denoRest.writeTextFile"],
+        ["network", "possibleRequest"],
+        ["network", "restoredRequest"],
       ],
     );
     assertEquals(
@@ -1915,6 +5282,239 @@ write("tmp.txt", "x");
         "src/shadowed-destructured-assigned-runtime-aliases.test.ts",
       ),
       [],
+    );
+  });
+
+  it("propagates runtime aliases from destructuring defaults", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const declarationOps = {};
+const { run: declarationRun = fetch } = declarationOps;
+await declarationRun("https://example.com/declaration-default");
+let assignmentRun;
+const assignmentOps = {};
+({ run: assignmentRun = fetch } = assignmentOps);
+await assignmentRun("https://example.com/assignment-default");
+let nestedRun;
+const nestedOps = { child: {} };
+({ child: { run: nestedRun = fetch } } = nestedOps);
+await nestedRun("https://example.com/nested-default");
+const undefinedOps = { run: () => undefined };
+undefinedOps.run = undefined;
+const { run: undefinedRun = fetch } = undefinedOps;
+await undefinedRun("https://example.com/undefined-default");
+const conditionalExpressionOps = {
+  run: maybe ? Deno.writeTextFile : undefined,
+};
+const { run: conditionalExpressionRun = fetch } = conditionalExpressionOps;
+await conditionalExpressionRun("conditional-expression-default.txt", "x");
+const conditionalLocalExpressionOps = {
+  run: maybe ? (() => undefined) : undefined,
+};
+const { run: conditionalLocalExpressionRun = fetch } =
+  conditionalLocalExpressionOps;
+await conditionalLocalExpressionRun(
+  "https://example.com/conditional-local-expression-default",
+);
+let mutableRun = () => undefined;
+mutableRun = undefined;
+const mutableOps = { run: mutableRun };
+const { run: mutableDefaultRun = fetch } = mutableOps;
+await mutableDefaultRun("https://example.com/mutable-undefined-default");
+let conditionalRun = () => undefined;
+if (maybe) conditionalRun = undefined;
+const conditionalOps = { run: conditionalRun };
+const { run: conditionalDefaultRun = fetch } = conditionalOps;
+await conditionalDefaultRun("https://example.com/conditional-undefined-default");
+let destructuredRun = () => undefined;
+({ value: destructuredRun } = { value: undefined });
+const destructuredOps = { run: destructuredRun };
+const { run: destructuredDefaultRun = fetch } = destructuredOps;
+await destructuredDefaultRun("https://example.com/destructured-undefined-default");
+let nestedDestructuredRun = () => undefined;
+({ outer: { value: nestedDestructuredRun } } = {
+  outer: { value: undefined },
+});
+const nestedDestructuredOps = { run: nestedDestructuredRun };
+const { run: nestedDestructuredDefaultRun = fetch } = nestedDestructuredOps;
+await nestedDestructuredDefaultRun("https://example.com/nested-destructured-undefined-default");
+let arrayDestructuredRun = () => undefined;
+[arrayDestructuredRun] = [undefined];
+const arrayDestructuredOps = { run: arrayDestructuredRun };
+const { run: arrayDestructuredDefaultRun = fetch } = arrayDestructuredOps;
+await arrayDestructuredDefaultRun("https://example.com/array-destructured-undefined-default");
+`,
+        "src/destructuring-default-runtime-aliases.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "declarationRun"],
+        ["network", "assignmentRun"],
+        ["network", "nestedRun"],
+        ["network", "undefinedRun"],
+        ["filesystem-write", "conditionalExpressionRun"],
+        ["network", "conditionalExpressionRun"],
+        ["network", "conditionalLocalExpressionRun"],
+        ["network", "mutableDefaultRun"],
+        ["network", "conditionalDefaultRun"],
+        ["network", "destructuredDefaultRun"],
+        ["network", "nestedDestructuredDefaultRun"],
+        ["network", "arrayDestructuredDefaultRun"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const declarationOps = { run: () => undefined };
+const { run: declarationRun = fetch } = declarationOps;
+await declarationRun("https://example.com/declaration-local-property");
+let assignmentRun = () => undefined;
+const assignmentOps = { run: () => undefined };
+({ run: assignmentRun = fetch } = assignmentOps);
+await assignmentRun("https://example.com/assignment-local-property");
+let nestedRun;
+const nestedOps = { child: { run: () => undefined } };
+({ child: { run: nestedRun = fetch } } = nestedOps);
+await nestedRun("https://example.com/nested-local-property");
+const assignedOps = {};
+assignedOps.run = () => undefined;
+const { run: assignedRun = fetch } = assignedOps;
+await assignedRun("https://example.com/assigned-local-property");
+const effectOps = { run: fetch };
+const spreadOps = { ...effectOps, run: () => undefined };
+const { run: spreadRun = fetch } = spreadOps;
+await spreadRun("https://example.com/spread-local-property");
+const localRun = () => undefined;
+const identifierOps = { run: localRun };
+const { run: identifierRun = fetch } = identifierOps;
+await identifierRun("https://example.com/identifier-local-property");
+function declaredRun() {}
+const nestedIdentifierOps = { child: { run: declaredRun } };
+const { child: { run: declaredIdentifierRun = fetch } } = nestedIdentifierOps;
+await declaredIdentifierRun("https://example.com/declared-local-property");
+const shorthandRun = () => undefined;
+const shorthandOps = { shorthandRun };
+const { shorthandRun: selectedShorthandRun = fetch } = shorthandOps;
+await selectedShorthandRun("https://example.com/shorthand-local-property");
+let assignedIdentifierRun = fetch;
+({ run: assignedIdentifierRun = fetch } = identifierOps);
+await assignedIdentifierRun("https://example.com/assigned-identifier-property");
+const spreadIdentifierOps = { ...effectOps, run: localRun };
+const { run: spreadIdentifierRun = fetch } = spreadIdentifierOps;
+await spreadIdentifierRun("https://example.com/spread-identifier-property");
+let restoredIdentifierRun = undefined;
+({ value: restoredIdentifierRun } = { value: () => undefined });
+const restoredIdentifierOps = { run: restoredIdentifierRun };
+const { run: selectedRestoredRun = fetch } = restoredIdentifierOps;
+await selectedRestoredRun("https://example.com/restored-identifier-property");
+const { value: declaredIdentifierValue } = { value: () => undefined };
+const declaredIdentifierOps = { run: declaredIdentifierValue };
+const { run: selectedDeclaredValue = fetch } = declaredIdentifierOps;
+await selectedDeclaredValue("https://example.com/declared-identifier-property");
+`,
+        "src/local-property-destructuring-defaults.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function local(fetch: () => Promise<Response>) {
+  const declarationOps = {};
+  const { run: declarationRun = fetch } = declarationOps;
+  declarationRun("https://example.com/declaration-default");
+  let assignmentRun;
+  const assignmentOps = {};
+  ({ run: assignmentRun = fetch } = assignmentOps);
+  assignmentRun("https://example.com/assignment-default");
+}
+`,
+        "src/shadowed-destructuring-default-runtime-aliases.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const conditionalEffectOps = { run: fetch };
+if (maybe) conditionalEffectOps.run = undefined;
+const { run: conditionalEffectRun = Deno.writeTextFile } = conditionalEffectOps;
+await conditionalEffectRun("conditional-effect.txt", "x");
+let assignedConditionalEffectRun;
+({ run: assignedConditionalEffectRun = Deno.writeTextFile } = conditionalEffectOps);
+await assignedConditionalEffectRun("assigned-conditional-effect.txt", "x");
+const conditionalLocalOps = { run: () => undefined };
+if (maybe) conditionalLocalOps.run = undefined;
+const { run: conditionalLocalRun = fetch } = conditionalLocalOps;
+await conditionalLocalRun("https://example.com/conditional-local-default");
+const blockEffectOps = { run: fetch };
+{
+  blockEffectOps.run = undefined;
+}
+const { run: blockEffectRun = Deno.writeTextFile } = blockEffectOps;
+await blockEffectRun("block-effect.txt", "x");
+const earlierCrossFunctionOps = { run: fetch };
+function clearEarlierCrossFunctionOps() {
+  earlierCrossFunctionOps.run = undefined;
+}
+earlierCrossFunctionOps.run = () => undefined;
+clearEarlierCrossFunctionOps();
+const { run: earlierCrossFunctionRun = Deno.writeTextFile } = earlierCrossFunctionOps;
+await earlierCrossFunctionRun("earlier-cross-function.txt", "x");
+const laterCrossFunctionOps = { run: () => undefined };
+laterCrossFunctionOps.run = () => undefined;
+function clearLaterCrossFunctionOps() {
+  laterCrossFunctionOps.run = undefined;
+}
+clearLaterCrossFunctionOps();
+const { run: laterCrossFunctionRun = Deno.writeTextFile } = laterCrossFunctionOps;
+await laterCrossFunctionRun("later-cross-function.txt", "x");
+const siblingOps = { a: fetch, b: fetch };
+function clearSiblingA() {
+  siblingOps.a = undefined;
+}
+siblingOps.b = () => undefined;
+const { b: siblingRun = Deno.writeTextFile } = siblingOps;
+await siblingRun("sibling.txt", "x");
+const nestedSiblingOps = { child: { a: fetch, b: fetch } };
+function clearNestedSiblingA() {
+  nestedSiblingOps.child.a = undefined;
+}
+nestedSiblingOps.child.b = () => undefined;
+const { b: nestedSiblingRun = Deno.writeTextFile } = nestedSiblingOps.child;
+await nestedSiblingRun("nested-sibling.txt", "x");
+const parentReplacementOps = { child: { run: () => undefined } };
+function replaceParentOps() {
+  parentReplacementOps.child = { run: fetch };
+}
+parentReplacementOps.child.run = () => undefined;
+replaceParentOps();
+const { run: parentReplacementRun = Deno.writeTextFile } = parentReplacementOps.child;
+await parentReplacementRun("parent-replacement.txt", "x");
+const parentDefaultOps = { child: { run: () => undefined } };
+function clearParentDefaultOps() {
+  parentDefaultOps.child = { run: undefined };
+}
+parentDefaultOps.child.run = () => undefined;
+clearParentDefaultOps();
+const { run: parentDefaultRun = Deno.writeTextFile } = parentDefaultOps.child;
+await parentDefaultRun("parent-default.txt", "x");
+`,
+        "src/conditional-member-destructuring-defaults.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "conditionalEffectRun"],
+        ["network", "conditionalEffectRun"],
+        ["filesystem-write", "assignedConditionalEffectRun"],
+        ["network", "assignedConditionalEffectRun"],
+        ["network", "conditionalLocalRun"],
+        ["filesystem-write", "blockEffectRun"],
+        ["filesystem-write", "earlierCrossFunctionRun"],
+        ["network", "earlierCrossFunctionRun"],
+        ["filesystem-write", "laterCrossFunctionRun"],
+        ["network", "parentReplacementRun"],
+        ["filesystem-write", "parentDefaultRun"],
+      ],
     );
   });
 
@@ -3570,6 +7170,12 @@ describe("semantic audit task wiring", () => {
     assertEquals(
       workflow.includes(
         'echo "TEST_SEMANTIC_AUDIT_BASE_REF=$base" >> "$GITHUB_ENV"',
+      ),
+      true,
+    );
+    assertEquals(
+      workflow.includes(
+        'git fetch --no-tags --depth=1 origin "main:refs/remotes/origin/main"',
       ),
       true,
     );

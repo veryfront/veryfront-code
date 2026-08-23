@@ -37,9 +37,12 @@ function codeRabbitSummary(
       "<!-- recent_review_start -->",
       "No actionable comments were generated in the recent review.",
       `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+      "<!-- recent_review_end -->",
     ].join("\n"),
     html_url:
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    created_at: "2026-08-22T12:00:00Z",
+    updated_at: "2026-08-22T12:00:00Z",
     ...overrides,
   };
 }
@@ -59,6 +62,8 @@ function codexNoFindingComment(
     ].join("\n\n"),
     html_url:
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-2",
+    created_at: "2026-08-22T12:01:00Z",
+    updated_at: "2026-08-22T12:01:00Z",
     ...overrides,
   };
 }
@@ -207,6 +212,7 @@ describe("automated review gate", () => {
         reviews: [
           review({ commit_id: STALE_SHA }),
           review({ state: "PENDING" }),
+          review({ state: "CHANGES_REQUESTED" }),
           review({ state: "DISMISSED" }),
           review({ user: { login: "maintainer" } }),
         ],
@@ -215,10 +221,306 @@ describe("automated review gate", () => {
           codeRabbitSummary({
             body: "<!-- recent_review_start -->\nstale review",
           }),
+          codeRabbitSummary({
+            body: [
+              "<!-- recent_review_start -->",
+              `Reviewing files through ${STALE_SHA}.`,
+              "<!-- recent_review_end -->",
+              `Review skipped for current commit ${HEAD_SHA}.`,
+            ].join("\n"),
+          }),
+          codeRabbitSummary({
+            body: [
+              "<!-- recent_review_start -->",
+              "No actionable comments were generated in the recent review.",
+              `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+              "<!-- recent_review_end -->",
+            ].join("\n"),
+          }),
+          codeRabbitSummary({
+            body: [
+              "<!-- recent_review_start -->",
+              "Review limit reached. This review was skipped.",
+              `Requested commit: ${HEAD_SHA}.`,
+              "<!-- recent_review_end -->",
+            ].join("\n"),
+          }),
         ],
       }, HEAD_SHA),
       undefined,
     );
+
+    const newerUnmarkedCurrentSkip = codeRabbitSummary({
+      body: `Review skipped for current commit ${HEAD_SHA}.`,
+      created_at: "2026-08-22T12:06:00Z",
+      updated_at: "2026-08-22T12:06:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment(), newerUnmarkedCurrentSkip],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("makes the newest CodeRabbit summary authoritative", async () => {
+    const skipped = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "Review limit reached. This review was skipped.",
+        `Requested commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-3",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [codeRabbitSummary(), skipped] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const undatedSkip = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "Review limit reached. This review was skipped.",
+        `Requested commit: ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: undefined,
+      updated_at: undefined,
+    });
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [codeRabbitSummary(), undatedSkip] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("lets a current-head skip override a stale retained review range", async () => {
+    const staleRangeWithCurrentSkip = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [olderSuccess, staleRangeWithCurrentSkip] },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("fails closed when exact-head event chronology is indeterminate", async () => {
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({ state: "PENDING", submitted_at: undefined })],
+          comments: [olderSuccess],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [
+            review({ state: "PENDING", submitted_at: "2026-08-22T12:02:00Z" }),
+          ],
+          comments: [
+            olderSuccess,
+            {
+              user: { login: "human" },
+              body: "untimestamped noise",
+            },
+          ],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("makes the newest exact-head bot outcome authoritative across reviewers", async () => {
+    const failedCodex = codexNoFindingComment({
+      body: [
+        "Codex Review: Action not completed.",
+        `**Reviewed commit:** \`${HEAD_SHA.slice(0, 10)}\``,
+      ].join("\n\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codeRabbitSummary(), codexNoFindingComment(), failedCodex],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerCodeRabbit = codeRabbitSummary({
+      created_at: "2026-08-22T12:03:00Z",
+      updated_at: "2026-08-22T12:03:00Z",
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-4",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment(), failedCodex, newerCodeRabbit],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ))?.reviewer,
+      "coderabbitai[bot]",
+    );
+
+    const newerStaleCodeRabbit = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:04:00Z",
+      updated_at: "2026-08-22T12:04:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment(), newerStaleCodeRabbit],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ))?.reviewer,
+      "chatgpt-codex-connector[bot]",
+    );
+
+    const newerCurrentSkipWithStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+        "<!-- recent_review_end -->",
+        `Review skipped for current commit ${HEAD_SHA}.`,
+      ].join("\n"),
+      created_at: "2026-08-22T12:05:00Z",
+      updated_at: "2026-08-22T12:05:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment(), newerCurrentSkipWithStaleRange],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+  });
+
+  it("accepts matching tied successes and rejects conflicting outcomes", async () => {
+    const timestamp = "2026-08-22T12:00:00Z";
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [review({ submitted_at: timestamp })],
+          comments: [codeRabbitSummary({
+            created_at: timestamp,
+            updated_at: timestamp,
+          })],
+        },
+        HEAD_SHA,
+      ))?.reviewer,
+      "coderabbitai[bot]",
+    );
+
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [review({
+            state: "CHANGES_REQUESTED",
+            submitted_at: timestamp,
+          })],
+          comments: [codeRabbitSummary({
+            created_at: timestamp,
+            updated_at: timestamp,
+          })],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    for (
+      const conflictingSummary of [
+        codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "No actionable comments were generated in the recent review.",
+            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            "<!-- recent_review_end -->",
+            `Review skipped for current commit ${HEAD_SHA}.`,
+          ].join("\n"),
+          created_at: timestamp,
+          updated_at: timestamp,
+        }),
+        codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+          created_at: timestamp,
+          updated_at: timestamp,
+        }),
+      ]
+    ) {
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [review({ submitted_at: timestamp })],
+            comments: [conflictingSummary],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
   });
 
   it("publishes the automated review decision on the exact pull request head", async () => {
@@ -455,6 +757,15 @@ describe("automated review gate", () => {
       "pull-requests": "read",
       statuses: "write",
     });
+
+    assertEquals(
+      record(workflow.concurrency, "automated review concurrency"),
+      {
+        group:
+          "automated-review-${{ github.event.pull_request.number || github.event.issue.number }}",
+        queue: "max",
+      },
+    );
 
     const job = record(
       record(workflow.jobs, "automated review jobs").review,
