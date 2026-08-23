@@ -519,6 +519,51 @@ utimes("tmp.txt", new Date(), new Date(), () => undefined);
     );
   });
 
+  it("classifies writable filesystem open modes without widening static reads", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { openSync as nodeOpenSync } from "node:fs";
+import * as fs from "node:fs";
+await Deno.open("read.txt", { read: true, write: false });
+Deno.openSync("write.txt", { write: true, create: true });
+const denoOptions = { write: true };
+await Deno.open("dynamic.txt", denoOptions);
+nodeOpenSync("read.txt", "r");
+const aliasedOpen = nodeOpenSync;
+aliasedOpen("write.txt", "r+");
+fs.open("append.txt", "a", () => undefined);
+await fs.promises.open("promise-read.txt", "r");
+await fs.promises.open("promise-write.txt", "w");
+const { open: dynamicOpen } = await import("node:fs/promises");
+await dynamicOpen("read.txt", "r");
+`,
+        "src/filesystem-open-modes.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-read", "Deno.open"],
+        ["filesystem-write", "Deno.openSync"],
+        ["filesystem-write", "Deno.open"],
+        ["filesystem-read", "nodeOpenSync"],
+        ["filesystem-write", "aliasedOpen"],
+        ["filesystem-write", "fs.open"],
+        ["filesystem-read", "fs.promises.open"],
+        ["filesystem-write", "fs.promises.open"],
+        ["filesystem-read", "dynamicOpen"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function open(_path: string, _options: unknown) {}
+open("local.txt", { write: true });
+`,
+        "src/local-open.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("treats loop headers as lexical scopes for runtime names", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -714,6 +759,47 @@ new DynamicWorker("./worker.js");
     );
   });
 
+  it("classifies unshadowed global WebSocket construction as network debt", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+new WebSocket("ws://localhost/socket");
+new globalThis.WebSocket("ws://localhost/socket");
+new window.WebSocket("ws://localhost/socket");
+new self.WebSocket("ws://localhost/socket");
+`,
+        "src/global-websocket.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "WebSocket"],
+        ["network", "globalThis.WebSocket"],
+        ["network", "window.WebSocket"],
+        ["network", "self.WebSocket"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+class WebSocket {}
+new WebSocket();
+function connect(globalThis: { WebSocket: new () => unknown }) {
+  return new globalThis.WebSocket();
+}
+`,
+        "src/shadowed-websocket.test.ts",
+      ),
+      [],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `import { WebSocket } from "./socket.ts";
+new WebSocket();`,
+        "src/imported-websocket.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies typed aliases of global runtime objects", () => {
     const markers = collectSemanticMarkers(
       `
@@ -827,6 +913,45 @@ globalThis.fetch();`,
         `const Object = { defineProperty: () => undefined };
 Object.defineProperty(globalThis, "fetch", { value: () => undefined });`,
         "src/local-object.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("classifies arbitrary shared-global mutations conservatively", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const key = "navigator";
+Object.defineProperty(globalThis, key, { value: {} });
+Object.defineProperty(globalThis, "XMLHttpRequest", { value: class {} });
+Reflect.deleteProperty(globalThis, key);
+globalThis.window = {} as typeof globalThis;
+delete globalThis.navigator;
+`,
+        "src/global-runtime-mutation.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Object.defineProperty(globalThis.*)"],
+        ["network", "Object.defineProperty(globalThis.XMLHttpRequest)"],
+        ["process", "Reflect.deleteProperty(globalThis.*)"],
+        ["process", "globalThis.window"],
+        ["process", "globalThis.navigator"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const Object = { defineProperty: () => undefined };
+Object.defineProperty(globalThis, "navigator", { value: {} });
+const Reflect = { deleteProperty: () => false };
+Reflect.deleteProperty(globalThis, "navigator");
+function mutate(globalThis: { window: unknown; navigator?: unknown }) {
+  globalThis.window = {};
+  delete globalThis.navigator;
+}
+`,
+        "src/local-global-runtime-mutation.test.ts",
       ),
       [],
     );

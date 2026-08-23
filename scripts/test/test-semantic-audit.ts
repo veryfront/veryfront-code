@@ -119,8 +119,6 @@ const READ_METHODS = new Set([
   "readDirSync",
   "readdir",
   "readdirSync",
-  "open",
-  "openSync",
   "realPath",
   "realPathSync",
   "stat",
@@ -199,6 +197,16 @@ const WRITE_METHODS = new Set([
   "writevSync",
 ]);
 
+const FILESYSTEM_OPEN_METHODS = new Set(["open", "openSync"]);
+const FILESYSTEM_MUTATING_OPEN_OPTIONS = new Set([
+  "append",
+  "create",
+  "createNew",
+  "truncate",
+  "write",
+]);
+const READ_ONLY_NODE_OPEN_FLAGS = new Set(["r", "rs"]);
+
 const PROCESS_METHODS = new Set([
   "Command",
   "addSignalListener",
@@ -214,6 +222,18 @@ const PROCESS_METHODS = new Set([
 ]);
 
 const PROCESS_CONSTRUCTORS = new Set(["Worker"]);
+
+const GLOBAL_CONSTRUCTOR_EFFECTS = new Map<string, SemanticEffect>([
+  ["Worker", "process"],
+  ["WebSocket", "network"],
+]);
+
+const NETWORK_GLOBAL_PROPERTIES = new Set([
+  "EventSource",
+  "WebSocket",
+  "XMLHttpRequest",
+  "fetch",
+]);
 
 const PROCESS_ENV_METHODS = new Set([
   "delete",
@@ -294,6 +314,7 @@ interface Node {
 interface ImportBindings {
   readonly filesystemRead: Set<string>;
   readonly filesystemWrite: Set<string>;
+  readonly filesystemOpen: Map<string, string>;
   readonly filesystemNamespaces: Set<string>;
   readonly process: Set<string>;
   readonly processNamespaces: Set<string>;
@@ -310,6 +331,7 @@ type RuntimeBinding =
   | { readonly kind: "module"; readonly source: string }
   | { readonly kind: "effect"; readonly effect: SemanticEffect }
   | { readonly kind: "effect-object"; readonly effect: SemanticEffect }
+  | { readonly kind: "filesystem-open"; readonly source: string }
   | {
     readonly kind: "global-runtime";
     readonly runtime: "Deno" | "process";
@@ -826,7 +848,7 @@ function markerForNode(
   }
 
   if (node.type === "AssignmentExpression" && isNode(node.left)) {
-    const globalMarker = globalFetchMarker(
+    const globalMarker = globalRuntimeMemberMutationMarker(
       node.left,
       line,
       scopes,
@@ -841,6 +863,15 @@ function markerForNode(
   }
   const callee = node.callee;
   if (!isNode(callee)) return undefined;
+
+  const filesystemOpen = filesystemOpenMarker(
+    node,
+    callee,
+    line,
+    bindings,
+    scopes,
+  );
+  if (filesystemOpen) return filesystemOpen;
 
   if (callee.type === "Identifier") {
     const name = callee.name as string;
@@ -871,11 +902,12 @@ function markerForNode(
     ) {
       return { effect: "network", line, symbol: "fetch" };
     }
+    const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(name);
     if (
-      node.type === "NewExpression" && name === "Worker" &&
-      !isGlobalShadowed("Worker", scopes, bindings.importedNames)
+      node.type === "NewExpression" && constructorEffect &&
+      !isGlobalShadowed(name, scopes, bindings.importedNames)
     ) {
-      return { effect: "process", line, symbol: "Worker" };
+      return { effect: constructorEffect, line, symbol: name };
     }
     return undefined;
   }
@@ -885,12 +917,17 @@ function markerForNode(
   const objectName = memberObjectName(callee);
   if (!method || !objectName) return undefined;
 
+  const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(method);
   if (
-    node.type === "NewExpression" && method === "Worker" &&
+    node.type === "NewExpression" && constructorEffect &&
     GLOBAL_RUNTIME_RECEIVERS.has(objectName) &&
     !isGlobalShadowed(objectName, scopes, bindings.importedNames)
   ) {
-    return { effect: "process", line, symbol: `${objectName}.Worker` };
+    return {
+      effect: constructorEffect,
+      line,
+      symbol: `${objectName}.${method}`,
+    };
   }
 
   const fetchMarker = globalFetchMarker(
@@ -996,15 +1033,122 @@ function memberRuntimeEffectMarker(
     : undefined;
 }
 
+function filesystemOpenMarker(
+  node: Node,
+  callee: Node,
+  line: number,
+  bindings: ImportBindings,
+  scopes: readonly Scope[],
+): SemanticMarker | undefined {
+  if (node.type !== "CallExpression") return undefined;
+  const binding = filesystemOpenBinding(callee, bindings, scopes);
+  if (!binding) return undefined;
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  return {
+    effect: filesystemOpenEffect(args[1]),
+    line,
+    symbol: callee.type === "Identifier"
+      ? callee.name as string
+      : memberChain(callee)?.join(".") ?? "open",
+  };
+}
+
+function filesystemOpenBinding(
+  callee: Node,
+  bindings: ImportBindings,
+  scopes: readonly Scope[],
+): { readonly source: string } | undefined {
+  if (callee.type === "Identifier") {
+    const name = callee.name as string;
+    const resolved = resolveLocalBinding(name, scopes);
+    if (resolved.binding?.kind === "filesystem-open") {
+      return resolved.binding;
+    }
+    if (resolved.declared) return undefined;
+    const source = bindings.filesystemOpen.get(name);
+    return source ? { source } : undefined;
+  }
+  if (callee.type !== "MemberExpression") return undefined;
+  const chain = memberChain(callee);
+  const method = chain?.at(-1);
+  const receiver = chain?.[0];
+  if (
+    !chain || !method || !FILESYSTEM_OPEN_METHODS.has(method) || !receiver
+  ) {
+    return undefined;
+  }
+  if (
+    chain.length === 2 && receiver === "Deno" &&
+    !isGlobalShadowed("Deno", scopes, bindings.importedNames)
+  ) {
+    return { source: "Deno" };
+  }
+  const supportedModuleChain = chain.length === 2 ||
+    (chain.length === 3 && chain[1] === "promises");
+  if (!supportedModuleChain) return undefined;
+  const resolved = resolveLocalBinding(receiver, scopes);
+  if (
+    resolved.binding?.kind === "module" &&
+    isFilesystemSpecifier(resolved.binding.source)
+  ) {
+    return { source: resolved.binding.source };
+  }
+  if (
+    !resolved.declared && bindings.filesystemNamespaces.has(receiver) &&
+    !isShadowed(receiver, scopes)
+  ) {
+    return { source: "node:fs" };
+  }
+  return undefined;
+}
+
+function filesystemOpenEffect(options: unknown): SemanticEffect {
+  const value = unwrapExpression(options);
+  if (!value) return "filesystem-read";
+  if (value.type === "StringLiteral") {
+    return READ_ONLY_NODE_OPEN_FLAGS.has(value.value as string)
+      ? "filesystem-read"
+      : "filesystem-write";
+  }
+  if (value.type !== "ObjectExpression") return "filesystem-write";
+  for (
+    const property of Array.isArray(value.properties) ? value.properties : []
+  ) {
+    if (!isNode(property) || property.type !== "ObjectProperty") {
+      return "filesystem-write";
+    }
+    const key = isNode(property.key)
+      ? property.key.type === "Identifier" && property.computed !== true
+        ? property.key.name as string
+        : literalValue(property.key)
+      : undefined;
+    if (!key || !FILESYSTEM_MUTATING_OPEN_OPTIONS.has(key)) continue;
+    const option = unwrapExpression(property.value);
+    if (!option || option.type !== "BooleanLiteral" || option.value !== false) {
+      return "filesystem-write";
+    }
+  }
+  return "filesystem-read";
+}
+
 function globalPropertyMutationMarker(
   node: Node,
   line: number,
   scopes: readonly Scope[],
   importedNames: ReadonlySet<string>,
 ): SemanticMarker | undefined {
-  if (node.type !== "CallExpression" || !isNode(node.callee)) {
-    return undefined;
+  if (
+    node.type === "UnaryExpression" && node.operator === "delete" &&
+    isNode(node.argument)
+  ) {
+    return globalRuntimeMemberMutationMarker(
+      node.argument,
+      line,
+      scopes,
+      importedNames,
+    );
   }
+  if (node.type !== "CallExpression" || !isNode(node.callee)) return undefined;
   const callee = memberChain(node.callee);
   if (
     callee?.length !== 2 ||
@@ -1016,27 +1160,64 @@ function globalPropertyMutationMarker(
     return undefined;
   }
   const args = Array.isArray(node.arguments) ? node.arguments : [];
-  const target = args[0];
+  const target = unwrapExpression(args[0]);
   const property = literalValue(args[1]);
   if (
-    !isNode(target) || target.type !== "Identifier" ||
-    target.name !== "globalThis" ||
-    isGlobalShadowed("globalThis", scopes, importedNames)
+    !target || target.type !== "Identifier" ||
+    !GLOBAL_RUNTIME_RECEIVERS.has(target.name as string) ||
+    isGlobalShadowed(target.name as string, scopes, importedNames)
   ) {
     return undefined;
   }
-  const effect = property === "fetch"
+  return {
+    effect: globalRuntimeMutationEffect(property),
+    line,
+    symbol: `${callee.join(".")}(${target.name}.${property ?? "*"})`,
+  };
+}
+
+function globalRuntimeMemberMutationMarker(
+  member: Node,
+  line: number,
+  scopes: readonly Scope[],
+  importedNames: ReadonlySet<string>,
+): SemanticMarker | undefined {
+  const value = unwrapExpression(member);
+  if (
+    !value ||
+    (value.type !== "MemberExpression" &&
+      value.type !== "OptionalMemberExpression")
+  ) {
+    return undefined;
+  }
+  const chain = memberChain(value);
+  const directReceiver = isNode(value.object)
+    ? unwrapExpression(value.object)
+    : undefined;
+  const receiver = chain?.[0] ??
+    (directReceiver?.type === "Identifier"
+      ? directReceiver.name as string
+      : undefined);
+  if (
+    !receiver || !GLOBAL_RUNTIME_RECEIVERS.has(receiver) ||
+    isGlobalShadowed(receiver, scopes, importedNames)
+  ) {
+    return undefined;
+  }
+  const property = chain?.[1] ?? memberProperty(value);
+  return {
+    effect: globalRuntimeMutationEffect(property),
+    line,
+    symbol: chain?.join(".") ?? `${receiver}.${property ?? "*"}`,
+  };
+}
+
+function globalRuntimeMutationEffect(
+  property: string | undefined,
+): SemanticEffect {
+  return property && NETWORK_GLOBAL_PROPERTIES.has(property)
     ? "network"
-    : property === "process" || property === "Deno"
-    ? "process"
-    : undefined;
-  return effect
-    ? {
-      effect,
-      line,
-      symbol: `${callee.join(".")}(globalThis.${property})`,
-    }
-    : undefined;
+    : "process";
 }
 
 function processGlobalMarker(
@@ -1139,6 +1320,7 @@ function collectImportBindings(program: Node): ImportBindings {
   const bindings: ImportBindings = {
     filesystemRead: new Set(),
     filesystemWrite: new Set(),
+    filesystemOpen: new Map(),
     filesystemNamespaces: new Set(),
     process: new Set(),
     processNamespaces: new Set(),
@@ -1183,8 +1365,11 @@ function collectImportBindings(program: Node): ImportBindings {
           ? specifier.imported.name as string
           : local;
       if (isFilesystemSpecifier(source)) {
-        if (READ_METHODS.has(importedName)) bindings.filesystemRead.add(local);
-        if (WRITE_METHODS.has(importedName)) {
+        if (FILESYSTEM_OPEN_METHODS.has(importedName)) {
+          bindings.filesystemOpen.set(local, source);
+        } else if (READ_METHODS.has(importedName)) {
+          bindings.filesystemRead.add(local);
+        } else if (WRITE_METHODS.has(importedName)) {
           bindings.filesystemWrite.add(local);
         }
       }
@@ -1376,6 +1561,10 @@ function identifierRuntimeBinding(
   const resolved = resolveLocalBinding(name, scopes);
   if (resolved.binding) return resolved.binding;
   if (resolved.declared) return undefined;
+  const filesystemOpenSource = imports.filesystemOpen.get(name);
+  if (filesystemOpenSource) {
+    return { kind: "filesystem-open", source: filesystemOpenSource };
+  }
   if (imports.filesystemRead.has(name)) {
     return { kind: "effect", effect: "filesystem-read" };
   }
@@ -1512,6 +1701,16 @@ function bindPatternToModule(
       ? property.value.left.name as string
       : undefined;
     if (!importedName || !localName) continue;
+    if (
+      isFilesystemSpecifier(source) &&
+      FILESYSTEM_OPEN_METHODS.has(importedName)
+    ) {
+      scope.runtimeBindings.set(localName, {
+        kind: "filesystem-open",
+        source,
+      });
+      continue;
+    }
     const effect = effectForModuleMethod(source, importedName);
     if (effect) {
       scope.runtimeBindings.set(localName, { kind: "effect", effect });
