@@ -2391,6 +2391,30 @@ const spreadReturned = Object.assign(
 );
 spreadReturned.safe();
 
+const mixedSource = { known: Deno.remove, ...source };
+const mixedReturned = Object.assign(
+  { safe: () => undefined },
+  mixedSource,
+);
+mixedReturned.safe();
+
+const mixedWrapper = { ...mixedSource };
+const wrappedReturned = Object.assign(
+  { safe: () => undefined },
+  mixedWrapper,
+);
+wrappedReturned.safe();
+
+const reorderedTarget = { 0: () => undefined };
+Object.preventExtensions(reorderedTarget);
+try {
+  Object.assign(reorderedTarget, {
+    blocked: () => undefined,
+    ...source,
+  });
+} catch {}
+reorderedTarget[0]();
+
 function assignDefaultedSource(defaultedSource = {}) {
   const defaultedTarget = { safe: () => undefined };
   Object.assign(defaultedTarget, defaultedSource);
@@ -2420,7 +2444,7 @@ conditionalTarget.write("conditional.txt");
         "src/runtime-object-assign-unknown-source.test.ts",
       ).map((marker) => marker.effect),
       Array.from(
-        { length: 4 },
+        { length: 7 },
         () => [
           "browser",
           "filesystem-read",
@@ -3493,6 +3517,289 @@ Object.defineProperty(target, "run", { value: () => undefined });
 target.run("cleared.txt");
 `,
       "src/runtime-object-assign-literal-copy-writable.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("does not create Object.assign properties on non-extensible targets", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = {};
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { run: Deno.remove });
+} catch {}
+target.run?.("not-created.txt");
+`,
+      "src/runtime-object-assign-non-extensible-target.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("stops Object.assign after a definitely blocked property", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = { retained: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    blocked: () => undefined,
+    retained: () => undefined,
+  });
+} catch {}
+target.retained("still-retained.txt");
+`,
+      "src/runtime-object-assign-blocked-order.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, ["filesystem-write"]);
+  });
+
+  it("keeps successful Object.assign prefix writes inside try blocks", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("cleared.txt");
+`,
+      "src/runtime-object-assign-try-prefix.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("does not clear Object.assign writes when a try entry may be skipped", () => {
+    const laterCall = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  maybeThrow();
+  Object.assign(target, {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-earlier-call.txt");
+`,
+      "src/runtime-object-assign-later-try-call.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(laterCall, ["filesystem-write"]);
+
+    const conditionalCall = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  if (maybe) {
+    Object.assign(target, {
+      safe: () => undefined,
+      effectful: Deno.remove,
+    });
+  }
+} catch {}
+target.safe("retained-after-conditional-call.txt");
+`,
+      "src/runtime-object-assign-conditional-try-call.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(conditionalCall, ["filesystem-write"]);
+
+    const argumentCall = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, makeSource(), {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-argument-call.txt");
+`,
+      "src/runtime-object-assign-throwing-argument.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(argumentCall, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
+
+    const argumentGetter = collectSemanticMarkers(
+      `
+const source = {};
+Object.defineProperty(source, "value", {
+  get() { throw new Error("before call"); },
+});
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, source.value, {
+    safe: () => undefined,
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-argument-getter.txt");
+`,
+      "src/runtime-object-assign-throwing-argument-getter.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(argumentGetter, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
+
+    const outerConditionalTry = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+if (maybe) {
+  try {
+    Object.assign(target, {
+      safe: () => undefined,
+      effectful: Deno.remove,
+    });
+  } catch {}
+}
+target.safe("retained-after-outer-conditional-try.txt");
+`,
+      "src/runtime-object-assign-conditional-try.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(outerConditionalTry, ["filesystem-write"]);
+  });
+
+  it("tracks Object.assign getter throws within try prefixes", () => {
+    const getterBeforeWrite = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    get safe() { throw new Error("before write"); },
+    effectful: Deno.remove,
+  });
+} catch {}
+target.safe("retained-after-getter.txt");
+`,
+      "src/runtime-object-assign-throwing-getter.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(getterBeforeWrite, ["filesystem-write"]);
+
+    const getterAfterWrite = collectSemanticMarkers(
+      `
+const target = { safe: Deno.remove };
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    safe: () => undefined,
+    get effectful() { throw new Error("after write"); },
+  });
+} catch {}
+target.safe("cleared-before-getter.txt");
+`,
+      "src/runtime-object-assign-later-throwing-getter.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(getterAfterWrite, []);
+  });
+
+  it("does not invoke Object.assign getters after a blocked write", () => {
+    const markers = collectSemanticMarkers(
+      `
+const later = {};
+Object.defineProperty(later, "observed", {
+  enumerable: true,
+  get: Deno.cwd,
+});
+
+const target = {};
+Object.preventExtensions(target);
+try {
+  Object.assign(target, { blocked: () => undefined }, later);
+} catch {}
+`,
+      "src/runtime-object-assign-blocked-getter-order.test.ts",
+    ).map((marker) => [marker.effect, marker.symbol]);
+    assertEquals(markers, [["shared-cwd", "Deno.cwd"]]);
+  });
+
+  it("does not invoke Object.assign setters after a blocked write", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = {};
+Object.defineProperty(target, "observed", { set: Deno.remove });
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    blocked: () => undefined,
+    observed: "not-written.txt",
+  });
+} catch {}
+`,
+      "src/runtime-object-assign-blocked-setter-order.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, []);
+  });
+
+  it("uses JavaScript property order for Object.assign accessors", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = {};
+Object.defineProperty(target, "0", { set: Deno.remove });
+Object.preventExtensions(target);
+try {
+  Object.assign(target, {
+    1: "blocked.txt",
+    0: "setter-runs-first.txt",
+  });
+} catch {}
+`,
+      "src/runtime-object-assign-property-order.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects, ["filesystem-write"]);
+  });
+
+  it("masks inherited data when Object.assign creates an own property", () => {
+    const effects = collectSemanticMarkers(
+      `
+const target = Object.create({ run: Deno.remove });
+Object.assign(target, { run: () => undefined });
+Object.seal(target);
+Object.defineProperty(target, "run", { value: () => undefined });
+target.run("cleared.txt");
+
+const returned = Object.assign(
+  Object.create({ run: Deno.remove }),
+  { run: () => undefined },
+);
+returned.run("returned.txt");
+
+const getterReturned = Object.assign(
+  Object.create({ run: Deno.remove }),
+  { get run() { return () => undefined; } },
+);
+getterReturned.run("getter-returned.txt");
+
+const getterSource = { get run() { return () => undefined; } };
+const getterSourceReturned = Object.assign(
+  Object.create({ run: Deno.remove }),
+  getterSource,
+);
+getterSourceReturned.run("getter-source-returned.txt");
+`,
+      "src/runtime-object-assign-inherited-data-shadow.test.ts",
     ).map((marker) => marker.effect);
     assertEquals(effects, []);
   });
