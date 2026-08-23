@@ -1964,6 +1964,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4g",
     }),
+    entry("src/agent/hosted/project-reference-resolver.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "agent-runtime",
+      "rationale":
+        "Mutates Object.prototype and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Build the inherited-value fixture with a test-owned prototype chain instead of mutating Object.prototype.",
+      "removalPr": "PR 4g",
+    }),
     entry("src/agent/hosted/project-remote-tool-source.test.ts", [
       "filesystem-read",
     ], {
@@ -2995,6 +3004,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
+    entry("src/extensions/contract-registry-internal.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "extensions-templates",
+      "rationale":
+        "Mutates Object.prototype and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Build inherited contract-registry fixtures with a test-owned prototype chain instead of mutating Object.prototype.",
+      "removalPr": "PR 4e",
+    }),
     entry("src/extensions/css/css-optimization-engine.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "extensions-templates",
@@ -3110,6 +3128,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
+      "removalPr": "PR 4e",
+    }),
+    entry("src/extensions/promise-intrinsics-internal.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "extensions-templates",
+      "rationale":
+        "Mutates Promise and Promise.prototype and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Exercise poisoned Promise hooks through an injected intrinsic table or an isolated runtime instead of mutating the host Promise intrinsic.",
       "removalPr": "PR 4e",
     }),
     entry(
@@ -3253,6 +3280,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
+      "removalPr": "PR 4j",
+    }),
+    entry("src/integrations/local-tool-source.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "data-runtime",
+      "rationale":
+        "Mutates Object.prototype across an asynchronous credential flow and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject the body-serialization boundary so post-auth drift is exercised without poisoning Object.prototype.",
       "removalPr": "PR 4j",
     }),
     entry("src/integrations/remote-tools.hardening.test.ts", ["process"], {

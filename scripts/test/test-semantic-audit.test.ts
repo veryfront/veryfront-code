@@ -1143,6 +1143,113 @@ function mutateIntrinsics(
     );
   });
 
+  it("classifies aliased Object and Reflect mutation methods without counting shadowed fakes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const defineGlobalProperty = Object.defineProperty;
+const defineAgain = defineGlobalProperty;
+const ObjectAlias = Object;
+const defineViaObjectAlias = ObjectAlias.defineProperty;
+const defineFromGlobalObject = globalThis.Object.defineProperty;
+const { set: reflectSet, deleteProperty: reflectDeleteProperty } = Reflect;
+const deleteViaReflect = Reflect.deleteProperty;
+defineGlobalProperty(globalThis, "fetch", { value: () => undefined });
+defineAgain(Map.prototype, "size", { value: 0 });
+defineViaObjectAlias(Promise, "resolve", { value: () => undefined });
+defineFromGlobalObject(Set.prototype, "size", { value: 0 });
+reflectSet(Array.prototype, Symbol.iterator, () => undefined);
+reflectDeleteProperty(globalThis, "navigator");
+deleteViaReflect(Object.prototype, "polluted");
+globalThis.Reflect.deleteProperty(Object.prototype, "tainted");
+`,
+        "src/aliased-global-mutators.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "defineGlobalProperty(globalThis.fetch)"],
+        ["process", "defineAgain(Map.prototype.size)"],
+        ["process", "defineViaObjectAlias(Promise.resolve)"],
+        ["process", "defineFromGlobalObject(Set.prototype.size)"],
+        ["process", "reflectSet(Array.prototype.*)"],
+        ["process", "reflectDeleteProperty(globalThis.navigator)"],
+        ["process", "deleteViaReflect(Object.prototype.polluted)"],
+        [
+          "process",
+          "globalThis.Reflect.deleteProperty(Object.prototype.tainted)",
+        ],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const Object = { defineProperty: () => undefined };
+const defineGlobalProperty = Object.defineProperty;
+defineGlobalProperty(globalThis, "fetch", { value: () => undefined });
+const Reflect = { set: () => false, deleteProperty: () => false };
+const { set: reflectSet, deleteProperty: reflectDeleteProperty } = Reflect;
+reflectSet(Array.prototype, Symbol.iterator, () => undefined);
+reflectDeleteProperty(globalThis, "navigator");
+`,
+        "src/shadowed-aliased-global-mutators.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("preserves runtime and intrinsic identity through nested destructuring", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const {
+  Object: { defineProperty: defineGlobalProperty },
+  Reflect: { set: reflectSet },
+  Array: { prototype: nativeArrayPrototype },
+  Deno: { env: { set: setEnv } = Deno.env },
+} = globalThis;
+const { prototype: { constructor: NativeArray } } = Array;
+defineGlobalProperty(globalThis, "fetch", { value: () => undefined });
+reflectSet(nativeArrayPrototype, Symbol.iterator, () => undefined);
+setEnv("VERYFRONT_TEST", "1");
+Object.defineProperty(NativeArray, "x", {});
+`,
+        "src/nested-runtime-destructuring.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Deno.env"],
+        ["network", "defineGlobalProperty(globalThis.fetch)"],
+        ["process", "reflectSet(nativeArrayPrototype.*)"],
+        ["process", "setEnv"],
+        ["process", "Object.defineProperty(NativeArray.x)"],
+      ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function mutate(globalThis: {
+  Object: { defineProperty: typeof Object.defineProperty };
+  Reflect: { set: typeof Reflect.set };
+  Array: { prototype: object };
+  Deno: { env: { set(name: string, value: string): void } };
+}, Array: { prototype: { constructor: object } }) {
+  const {
+    Object: { defineProperty: defineGlobalProperty },
+    Reflect: { set: reflectSet },
+    Array: { prototype: nativeArrayPrototype },
+    Deno: { env: { set: setEnv } = globalThis.Deno.env },
+  } = globalThis;
+  const { prototype: { constructor: NativeArray } } = Array;
+  defineGlobalProperty(globalThis, "fetch", { value: () => undefined });
+  reflectSet(nativeArrayPrototype, Symbol.iterator, () => undefined);
+  setEnv("VERYFRONT_TEST", "1");
+  Object.defineProperty(NativeArray, "x", {});
+}
+`,
+        "src/shadowed-nested-runtime-destructuring.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("preserves shared intrinsic identity through aliases", () => {
     assertEquals(
       collectSemanticMarkers(

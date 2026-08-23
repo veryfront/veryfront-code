@@ -451,7 +451,12 @@ type RuntimeBinding =
   | { readonly kind: "effect-object"; readonly effect: SemanticEffect }
   | { readonly kind: "filesystem-open"; readonly source: string }
   | { readonly kind: "global-object" }
-  | { readonly kind: "shared-object" }
+  | { readonly kind: "shared-object"; readonly intrinsic?: string }
+  | {
+    readonly kind: "mutation-method";
+    readonly receiver: "Object" | "Reflect";
+    readonly method: string;
+  }
   | {
     readonly kind: "constructor-effect";
     readonly effect: SemanticEffect;
@@ -947,7 +952,7 @@ function markerForNode(
     node,
     line,
     scopes,
-    bindings.importedNames,
+    bindings,
   );
   if (globalPropertyMutation) return globalPropertyMutation;
 
@@ -1313,7 +1318,7 @@ function globalPropertyMutationMarker(
   node: Node,
   line: number,
   scopes: readonly Scope[],
-  importedNames: ReadonlySet<string>,
+  imports: ImportBindings,
 ): SemanticMarker | undefined {
   if (
     node.type === "UnaryExpression" && node.operator === "delete" &&
@@ -1323,24 +1328,50 @@ function globalPropertyMutationMarker(
       node.argument,
       line,
       scopes,
-      importedNames,
+      imports.importedNames,
     );
   }
   if (node.type !== "CallExpression" || !isNode(node.callee)) return undefined;
-  const callee = memberChain(node.callee);
-  const calleeName = callee?.join(".");
-  const mutatesSingleProperty = calleeName !== undefined &&
-    GLOBAL_SINGLE_PROPERTY_MUTATORS.has(calleeName);
-  const mutatesBulkState = calleeName !== undefined &&
-    GLOBAL_BULK_MUTATORS.has(calleeName);
-  if (
-    callee?.length !== 2 ||
-    (!mutatesSingleProperty && !mutatesBulkState) ||
-    isGlobalShadowed(callee[0], scopes, importedNames)
-  ) {
-    return undefined;
-  }
+  const binding = globalRuntimeAliasBinding(node.callee, imports, scopes);
+  if (binding?.kind !== "mutation-method") return undefined;
   const args = Array.isArray(node.arguments) ? node.arguments : [];
+  const calleeName = node.callee.type === "Identifier"
+    ? node.callee.name as string
+    : memberChain(node.callee)?.join(".") ?? binding.method;
+  return mutationCallMarker(
+    binding,
+    calleeName,
+    args,
+    line,
+    scopes,
+    imports.importedNames,
+  );
+}
+
+function mutationMethodBinding(
+  receiver: string,
+  method: string,
+): Extract<RuntimeBinding, { readonly kind: "mutation-method" }> | undefined {
+  if (receiver !== "Object" && receiver !== "Reflect") return undefined;
+  const calleeName = `${receiver}.${method}`;
+  return GLOBAL_SINGLE_PROPERTY_MUTATORS.has(calleeName) ||
+      GLOBAL_BULK_MUTATORS.has(calleeName)
+    ? { kind: "mutation-method", receiver, method }
+    : undefined;
+}
+
+function mutationCallMarker(
+  binding: Extract<RuntimeBinding, { readonly kind: "mutation-method" }>,
+  calleeName: string,
+  args: readonly unknown[],
+  line: number,
+  scopes: readonly Scope[],
+  importedNames: ReadonlySet<string>,
+): SemanticMarker | undefined {
+  const canonicalName = `${binding.receiver}.${binding.method}`;
+  const mutatesSingleProperty = GLOBAL_SINGLE_PROPERTY_MUTATORS.has(
+    canonicalName,
+  );
   const target = sharedGlobalMutationTarget(
     args[0],
     scopes,
@@ -1896,55 +1927,54 @@ function globalRuntimeAliasBinding(
   scopes: readonly Scope[],
 ): RuntimeBinding | undefined {
   if (init.type === "Identifier") {
-    const name = init.name as string;
-    const resolved = resolveLocalBinding(name, scopes);
-    if (
-      resolved.binding?.kind === "global-runtime" ||
-      resolved.binding?.kind === "global-object" ||
-      resolved.binding?.kind === "shared-object" ||
-      resolved.binding?.kind === "constructor-effect"
-    ) {
-      return resolved.binding;
-    }
-    const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(name);
-    if (
-      constructorEffect &&
-      !isGlobalShadowed(name, scopes, imports.importedNames)
-    ) {
-      return { kind: "constructor-effect", effect: constructorEffect };
-    }
-    if (
-      GLOBAL_RUNTIME_RECEIVERS.has(name) &&
-      !isGlobalShadowed(name, scopes, imports.importedNames)
-    ) {
-      return { kind: "global-object" };
-    }
-    if (
-      (name === "Deno" || name === "process") &&
-      !isGlobalShadowed(name, scopes, imports.importedNames)
-    ) {
-      return { kind: "global-runtime", runtime: name };
-    }
-    if (isGlobalIntrinsic(name, scopes, imports.importedNames)) {
-      return { kind: "shared-object" };
-    }
-    return undefined;
+    return globalIdentifierRuntimeBinding(
+      init.name as string,
+      imports,
+      scopes,
+    );
   }
 
   const chain = memberChain(init);
-  if (
-    chain?.length === 2 &&
-    isGlobalRuntimeReceiver(chain[0], scopes, imports.importedNames)
-  ) {
-    return globalObjectPropertyBinding(chain[1]);
-  }
-  const target = sharedGlobalMutationTarget(
-    init,
+  if (!chain || chain.length < 2) return undefined;
+  let binding = globalIdentifierRuntimeBinding(
+    chain[0],
+    imports,
     scopes,
-    imports.importedNames,
   );
-  return target?.kind === "shared-object"
-    ? { kind: "shared-object" }
+  for (const property of chain.slice(1)) {
+    if (!binding) return undefined;
+    binding = runtimePropertyBinding(binding, property);
+  }
+  return binding;
+}
+
+function globalIdentifierRuntimeBinding(
+  name: string,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  const resolved = resolveLocalBinding(name, scopes);
+  if (
+    resolved.binding?.kind === "global-runtime" ||
+    resolved.binding?.kind === "global-object" ||
+    resolved.binding?.kind === "shared-object" ||
+    resolved.binding?.kind === "effect-object" ||
+    resolved.binding?.kind === "mutation-method" ||
+    resolved.binding?.kind === "constructor-effect"
+  ) {
+    return resolved.binding;
+  }
+  if (resolved.declared || imports.importedNames.has(name)) return undefined;
+  const constructorEffect = GLOBAL_CONSTRUCTOR_EFFECTS.get(name);
+  if (constructorEffect) {
+    return { kind: "constructor-effect", effect: constructorEffect };
+  }
+  if (GLOBAL_RUNTIME_RECEIVERS.has(name)) return { kind: "global-object" };
+  if (name === "Deno" || name === "process") {
+    return { kind: "global-runtime", runtime: name };
+  }
+  return GLOBAL_INTRINSIC_OBJECTS.has(name)
+    ? { kind: "shared-object", intrinsic: name }
     : undefined;
 }
 
@@ -1962,11 +1992,45 @@ function globalObjectPropertyBinding(
     return { kind: "constructor-effect", effect: constructorEffect };
   }
   if (GLOBAL_INTRINSIC_OBJECTS.has(property)) {
-    return { kind: "shared-object" };
+    return { kind: "shared-object", intrinsic: property };
   }
   return property === "fetch"
     ? { kind: "effect", effect: "network" }
     : undefined;
+}
+
+function sharedObjectPropertyBinding(
+  intrinsic: string | undefined,
+  property: string,
+): RuntimeBinding {
+  const mutation = intrinsic
+    ? mutationMethodBinding(intrinsic, property)
+    : undefined;
+  if (mutation) return mutation;
+  return { kind: "shared-object" };
+}
+
+function runtimePropertyBinding(
+  binding: RuntimeBinding,
+  property: string,
+): RuntimeBinding | undefined {
+  if (binding.kind === "global-object") {
+    return globalObjectPropertyBinding(property);
+  }
+  if (binding.kind === "shared-object") {
+    return sharedObjectPropertyBinding(binding.intrinsic, property);
+  }
+  if (binding.kind === "global-runtime") {
+    const effect = effectForGlobalRuntimeMethod(binding.runtime, property);
+    if (!effect) return undefined;
+    return property === "env"
+      ? { kind: "effect-object", effect }
+      : { kind: "effect", effect };
+  }
+  if (binding.kind === "effect-object") {
+    return { kind: "effect", effect: binding.effect };
+  }
+  return undefined;
 }
 
 function bindPatternToRuntime(
@@ -1974,6 +2038,10 @@ function bindPatternToRuntime(
   binding: RuntimeBinding,
   scope: Scope,
 ): void {
+  if (pattern.type === "AssignmentPattern" && isNode(pattern.left)) {
+    bindPatternToRuntime(pattern.left, binding, scope);
+    return;
+  }
   if (pattern.type === "Identifier") {
     scope.runtimeBindings.set(pattern.name as string, binding);
     return;
@@ -1981,7 +2049,7 @@ function bindPatternToRuntime(
   if (
     pattern.type !== "ObjectPattern" ||
     (binding.kind !== "global-runtime" && binding.kind !== "global-object" &&
-      binding.kind !== "shared-object")
+      binding.kind !== "shared-object" && binding.kind !== "effect-object")
   ) {
     return;
   }
@@ -1999,33 +2067,11 @@ function bindPatternToRuntime(
       : property.key.type === "StringLiteral"
       ? property.key.value as string
       : undefined;
-    const localName = property.value.type === "Identifier"
-      ? property.value.name as string
-      : property.value.type === "AssignmentPattern" &&
-          isNode(property.value.left) &&
-          property.value.left.type === "Identifier"
-      ? property.value.left.name as string
-      : undefined;
-    if (!method || !localName) continue;
-    if (binding.kind === "global-object") {
-      const propertyBinding = globalObjectPropertyBinding(method);
-      if (propertyBinding) {
-        scope.runtimeBindings.set(localName, propertyBinding);
-      }
-      continue;
+    if (!method) continue;
+    const propertyBinding = runtimePropertyBinding(binding, method);
+    if (propertyBinding) {
+      bindPatternToRuntime(property.value, propertyBinding, scope);
     }
-    if (binding.kind === "shared-object") {
-      scope.runtimeBindings.set(localName, binding);
-      continue;
-    }
-    const effect = effectForGlobalRuntimeMethod(binding.runtime, method);
-    if (!effect) continue;
-    scope.runtimeBindings.set(
-      localName,
-      method === "env"
-        ? { kind: "effect-object", effect }
-        : { kind: "effect", effect },
-    );
   }
 }
 
