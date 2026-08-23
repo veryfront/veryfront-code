@@ -239,11 +239,9 @@ const HEARTBEAT_RETRY_BASE_DELAY_MS = 250;
 /**
  * Share of one heartbeat interval the retry backoff may occupy.
  *
- * This bounds the waits between attempts and nothing else. A request has no
- * deadline, so a slow control plane can still push a tick past its interval —
- * overlap is prevented by the in-flight guard on the interval below, not here.
- * Keeping backoff well inside the interval only stops the waits from being the
- * thing that provokes a skip.
+ * This bounds only the waits between attempts. Each request has its own
+ * interval-sized deadline, so a complete retry sequence can still outlive one
+ * interval. The in-flight guard below prevents overlap in that case.
  */
 const HEARTBEAT_RETRY_BUDGET_RATIO = 0.25;
 
@@ -371,7 +369,23 @@ async function readAgentPushRuntimeServiceResponse(
     });
   }
 
-  const parsed = agentPushRuntimeServiceResponseSchema.parse(await response.json());
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (cause) {
+    // The headers landed but the body did not: the deadline fired while the
+    // JSON was still arriving, or the connection reset mid-body. No complete
+    // response came back and nothing upstream was applied, so this is as
+    // transport-level as a failed connect and gets the same retries. It
+    // carries no httpStatus, which is what marks it retryable.
+    throw NETWORK_ERROR.create({ detail: getErrorMessage(cause), cause });
+  }
+
+  // Outside that wrapper on purpose. A body that arrived intact but does not
+  // match the schema is a permanent protocol mismatch, not a transient one.
+  // Wrapping it as a transport error would make every tick spend all three
+  // attempts on a response that will never parse.
+  const parsed = agentPushRuntimeServiceResponseSchema.parse(payload);
   return parsed.service;
 }
 
@@ -431,13 +445,21 @@ async function sendHeartbeatRequest(
       signal: abortSignal,
     });
   } catch (cause) {
-    // No response, so the request never reached a handler and applied nothing.
-    // It carries no httpStatus, which is what marks it transport-level below.
+    // A caller-supplied fetch may reject with an error that is already ours,
+    // and that error already carries its own slug and httpStatus. Reclassifying
+    // it would drop the status that keeps a 4xx from being retried.
+    if (isVeryfrontError(cause)) throw cause;
+    // Anything else means no response, so the request never reached a handler
+    // and applied nothing. It carries no httpStatus, which is what marks it
+    // transport-level below.
     throw NETWORK_ERROR.create({
       detail: getErrorMessage(cause),
       cause,
     });
   }
+  // Deliberately outside the wrapper above. The read does its own transport
+  // mapping, so a failed body read is still retried, while a non-ok status
+  // keeps its httpStatus and a schema mismatch stays permanent.
   return await readAgentPushRuntimeServiceResponse(response);
 }
 
@@ -474,6 +496,13 @@ async function heartbeatAgentPushRuntimeService(
   return await retryWithBackoff((signal) => sendHeartbeatRequest(input, fetchImpl, signal), {
     maxAttempts: schedule.maxAttempts,
     abortSignal: options.abortSignal,
+    // One interval is the deadline for a single attempt. A heartbeat that has
+    // not answered by the time the next one is due is not slow, it is gone, and
+    // without a deadline a hung request never fails, so the failure counter
+    // never advances and the service looks alive to itself while doing nothing.
+    // Deriving the deadline from the configured interval keeps the two in step:
+    // raise the interval for a slow link and the deadline moves with it.
+    timeoutMs: input.heartbeatIntervalMs,
     computeDelay: (attempt) => schedule.delaysMs[attempt] ?? 0,
     shouldRetry: isRetryableHeartbeatFailure,
     onRetry: ({ error, attempt, delay }) => {

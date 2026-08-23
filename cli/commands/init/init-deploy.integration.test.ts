@@ -98,8 +98,9 @@ describe("init command integration", () => {
   });
 
   describe("validation", () => {
-    it("should reject existing directories without --force", async () => {
+    it("should reject a directory holding files the template writes without --force", async () => {
       await mkdir(projectDir);
+      await writeTextFile(join(projectDir, "README.md"), "mine");
 
       const result = await runInitCommand(projectName, [
         "-t",
@@ -107,7 +108,8 @@ describe("init command integration", () => {
         "--skip-install",
         "--skip-env-prompt",
       ]);
-      assertEquals(result.code !== 0 || (result.stderr ?? "").includes("already exists"), true);
+      assertEquals(result.code !== 0, true);
+      assertEquals((result.stderr ?? "").includes("already contains README.md"), true);
     });
 
     it("should overwrite with --force flag", async () => {

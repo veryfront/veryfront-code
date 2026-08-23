@@ -205,11 +205,43 @@ describe("initCommand target directory", () => {
             quiet: true,
           }),
         Error,
-        `Directory "${name}" already exists`,
+        `Directory "${name}" already contains README.md`,
       );
 
       assertEquals(await Deno.readTextFile(keepsake), "keep me\n");
       assertEquals(await exists(join(parentDir, name, "app")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+});
+
+describe("initCommand into the current directory", () => {
+  it("refuses to overwrite files already in the directory without --force", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-init-cwd-" });
+    const readme = join(parentDir, "README.md");
+
+    try {
+      await Deno.writeTextFile(readme, "mine\n");
+
+      // Non-interactive `veryfront init` with no name scaffolds into the
+      // current directory. It must hold the same line as the named path: an
+      // existing file is refused, not replaced.
+      await assertRejects(
+        () =>
+          initCommand({
+            parentDir,
+            template: "minimal",
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          }),
+        Error,
+        "README.md",
+      );
+
+      assertEquals(await Deno.readTextFile(readme), "mine\n");
+      assertEquals(await exists(join(parentDir, "app")), false);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }

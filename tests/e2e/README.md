@@ -75,9 +75,9 @@ VERYFRONT_BINARY=/path/to/binary deno task test:e2e:binary
 ### Run a Specific E2E Test File
 
 ```bash
-PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/smoke.playwright.ts --config=tests/e2e/playwright.config.cjs
-PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/ssr.playwright.ts --config=tests/e2e/playwright.config.cjs
-PW_DISABLE_TS_ESM=1 npx playwright test tests/e2e/navigation.playwright.ts --config=tests/e2e/playwright.config.cjs
+deno task test:e2e:playwright tests/e2e/smoke.playwright.ts
+deno task test:e2e:playwright tests/e2e/ssr.playwright.ts
+deno task test:e2e:playwright tests/e2e/navigation.playwright.ts
 PLAYWRIGHT_PROJECT=preview-host deno task test:e2e:playwright
 E2E_PROJECTS=blank,second deno task test:e2e:playwright
 deno test --allow-all tests/e2e/features/layouts.test.ts

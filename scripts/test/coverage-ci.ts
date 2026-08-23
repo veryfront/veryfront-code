@@ -7,7 +7,7 @@ export interface ShardSpec {
 
 export interface DenoTestCommandOptions {
   coverageDir: string;
-  files: string[];
+  files: readonly string[];
 }
 
 interface LcovLineRecord {
@@ -15,7 +15,6 @@ interface LcovLineRecord {
   line: number;
 }
 
-const UNIT_COVERAGE_ROOTS = ["src", "cli", "templates"];
 const PROVIDER_EGRESS_DENY_NET =
   "--deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai";
 const UNIT_COVERAGE_ENV = {
@@ -42,33 +41,6 @@ export function parseShardSpec(value: string): ShardSpec {
   }
 
   return { index, total };
-}
-
-export function selectShardFiles(files: string[], shard: ShardSpec): string[] {
-  return [...files]
-    .sort((a, b) => a.localeCompare(b))
-    .filter((_, index) => index % shard.total === shard.index - 1);
-}
-
-export async function collectUnitCoverageTestFiles(): Promise<string[]> {
-  const files: string[] = [];
-
-  for (const root of UNIT_COVERAGE_ROOTS) {
-    if (!(await exists(root))) continue;
-
-    for await (
-      const entry of walk(root, {
-        includeDirs: false,
-        exts: [".ts", ".tsx"],
-      })
-    ) {
-      const normalizedPath = entry.path.replaceAll("\\", "/");
-      if (!isUnitCoverageTestFile(normalizedPath)) continue;
-      files.push(normalizedPath);
-    }
-  }
-
-  return files.sort((a, b) => a.localeCompare(b));
 }
 
 export function buildDenoTestCommandArgs(
@@ -161,12 +133,10 @@ async function runShard(args: string[]): Promise<void> {
   await removeIfExists(coverageDir);
   await runDeno(["task", "generate"]);
 
-  const files = selectShardFiles(await collectUnitCoverageTestFiles(), shard);
-  if (files.length === 0) {
-    throw new Error(
-      `Coverage shard ${shard.index}/${shard.total} selected no test files.`,
-    );
-  }
+  // Keep merge mode usable with `--no-npm`: the planner owns shard selection,
+  // but its layout validator imports the Babel parser and is only needed here.
+  const { planSuiteFiles } = await import("./run-suite.ts");
+  const { files } = await planSuiteFiles({ suite: "coverage:unit", shard });
 
   await runDeno(
     buildDenoTestCommandArgs({ coverageDir, files }),
@@ -223,13 +193,6 @@ function parseLcovLine(line: string): LcovLineRecord | undefined {
   return { line: lineNumber, covered };
 }
 
-export function isUnitCoverageTestFile(path: string): boolean {
-  return (path.endsWith(".test.ts") || path.endsWith(".test.tsx")) &&
-    !path.endsWith(".integration.test.ts") &&
-    !path.endsWith(".integration.test.tsx") &&
-    !path.startsWith("src/workflow/__tests__/");
-}
-
 function readOption(args: string[], name: string): string | undefined {
   const prefix = `${name}=`;
   const inline = args.find((arg) => arg.startsWith(prefix));
@@ -238,16 +201,6 @@ function readOption(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index >= 0) return args[index + 1];
   return undefined;
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
-    throw error;
-  }
 }
 
 async function collectLcovFiles(paths: string[]): Promise<string[]> {

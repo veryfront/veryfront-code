@@ -477,6 +477,84 @@ async function assembleScaffold(request: {
   };
 }
 
+/**
+ * Every path `createProject` writes outright, in the order it writes them.
+ *
+ * `.gitignore` is absent on purpose: it is merged with whatever is already
+ * there rather than replaced, so an existing one is never a conflict.
+ */
+function scaffoldWritePaths(assembly: ScaffoldAssembly, request: CreateProjectRequest): string[] {
+  const paths = assembly.files
+    .map((file) => file.path)
+    .filter((path) => path !== ".env" && path !== ".env.example");
+  if (request.includePackageMetadata) {
+    paths.push("package.json");
+    if (request.runtime === "deno") paths.push("deno.json");
+  }
+  if (assembly.envVars.length) paths.push(".env", ".env.example");
+  return paths;
+}
+
+async function findExistingPaths(dir: string, paths: string[]): Promise<string[]> {
+  const fs = createFileSystem();
+  const existing: string[] = [];
+  for (const path of paths) {
+    if (await fs.exists(join(dir, path))) existing.push(path);
+  }
+  return existing;
+}
+
+/**
+ * Paths the scaffold cannot write through, checked before anything is written.
+ *
+ * `findExistingPaths` resolves a whole path, so it cannot see either of these:
+ *
+ * - a link anywhere along the path. `app -> ../elsewhere` makes `app/page.tsx`
+ *   resolve outside the project, and a dangling `README.md -> ../outside.md`
+ *   resolves to nothing at all, so both are reported absent and the write then
+ *   follows the link out of the project.
+ * - a regular file where a directory has to go. `app/page.tsx` cannot resolve
+ *   through a file named `app`, so the write stops halfway through instead.
+ *
+ * A real file sitting at a scaffold path is not listed here. That one resolves
+ * fine and is the conflict `findExistingPaths` reports.
+ */
+async function findUnwritablePaths(dir: string, paths: string[]): Promise<string[]> {
+  const fs = createFileSystem();
+  // `lstat` is what makes a link visible: `stat` follows it and reports the
+  // target. It is optional only for virtual filesystems that have no links of
+  // their own; every runtime this CLI scaffolds on provides it, and `stat`
+  // still catches a plain file in the way if one ever does not.
+  const describe = fs.lstat?.bind(fs) ?? fs.stat.bind(fs);
+  const blocked = new Set<string>();
+
+  for (const path of paths) {
+    const segments = path.split("/");
+    for (let depth = 1; depth <= segments.length; depth++) {
+      const prefix = segments.slice(0, depth).join("/");
+      if (blocked.has(prefix)) break;
+      let info: Awaited<ReturnType<typeof describe>>;
+      try {
+        info = await describe(join(dir, prefix));
+      } catch {
+        break; // Nothing there yet, so nothing below it either.
+      }
+      if (info.isSymlink) {
+        blocked.add(prefix);
+        break;
+      }
+      // The last segment is the file itself, and a real file there is a
+      // conflict rather than something to refuse outright.
+      if (depth < segments.length && !info.isDirectory) {
+        blocked.add(prefix);
+        break;
+      }
+    }
+  }
+
+  return [...blocked].sort();
+}
+
 export async function createProject(
   request: CreateProjectRequest,
   dependencies: CreateProjectDependencies = {},
@@ -490,19 +568,36 @@ export async function createProject(
   const projectDir = projectName === undefined
     ? request.parentDir
     : join(request.parentDir, projectName);
-  const fs = createFileSystem();
 
   validateIntegrationsOrThrow(request.integrations);
 
-  if (
-    projectName !== undefined &&
-    request.conflictPolicy === "fail" &&
-    await fs.exists(projectDir)
-  ) {
-    throw createConfigError(`Directory "${projectName}" already exists`);
+  const assembly = await assembleScaffold(request);
+  const writePaths = scaffoldWritePaths(assembly, request);
+  const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
+
+  // Checked whatever the conflict policy is: `--force` says you accept your
+  // files being replaced, not the scaffold writing somewhere else entirely.
+  const unwritable = await findUnwritablePaths(projectDir, writePaths);
+  if (unwritable.length) {
+    throw createConfigError(
+      `${where} already contains ${unwritable.join(", ")} as a file or a link ` +
+        `the scaffold cannot write through. Move it aside or use a different name.`,
+    );
   }
 
-  const assembly = await assembleScaffold(request);
+  // A conflict is a file the scaffold would write over - a `package.json` with
+  // the author's scripts, a `README.md` - not the directory existing. So an
+  // empty directory, a fresh clone holding only `.git`, or the working
+  // directory itself (the no-name case) all scaffold, and a `--force` is asked
+  // for only when something would actually be replaced.
+  if (request.conflictPolicy === "fail") {
+    const conflicts = await findExistingPaths(projectDir, writePaths);
+    if (conflicts.length) {
+      throw createConfigError(
+        `${where} already contains ${conflicts.join(", ")}. Use --force to overwrite.`,
+      );
+    }
+  }
 
   if (projectName !== undefined) await ensureDir(projectDir);
 

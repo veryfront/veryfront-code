@@ -357,6 +357,20 @@ function recordHostedChunkMirrorStopped(input: {
     return;
   }
 
+  // veryfront-issue-inbox#743: the run finished server-side before the mirror
+  // drained. Nothing is lost that the runtime can still write, so this is a clean
+  // stop, not a failure.
+  if (input.flushAttempt.disableReason === "run_terminal") {
+    input.instrumentation?.warn?.(
+      "Stopping durable run mirroring because the run is already terminal",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+      },
+    );
+    return;
+  }
+
   if (input.flushAttempt.disableReason === "ignorable_append_rejection") {
     input.instrumentation?.warn?.(
       "Disabling durable run mirroring after external append rejection",
