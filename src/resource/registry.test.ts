@@ -121,7 +121,7 @@ describe("resource registry", () => {
 
     it("should match multiple parameters within one path segment", () => {
       const file = resource({
-        pattern: "/files/:base.:ext",
+        pattern: "/files/file-:base.:ext",
         description: "File by name",
         paramsSchema: defineSchema((v) => v.object({ base: v.string(), ext: v.string() }))(),
         load: async () => ({}),
@@ -129,10 +129,23 @@ describe("resource registry", () => {
 
       resourceRegistry.register(file.id, file);
 
-      assertEquals(resourceRegistry.findByPattern("/files/report.pdf"), file);
+      assertEquals(resourceRegistry.findByPattern("/files/file-report.pdf"), file);
       assertEquals(
-        resourceRegistry.extractParams("/files/report.pdf", file.pattern),
+        resourceRegistry.extractParams("/files/file-report.pdf", file.pattern),
         { base: "report", ext: "pdf" },
+      );
+
+      const search = resource({
+        pattern: "/search?q=prefix-:term",
+        description: "Prefixed search query",
+        paramsSchema: defineSchema((v) => v.object({ term: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(search.id, search);
+      assertEquals(resourceRegistry.findByPattern("/search?q=prefix-books"), search);
+      assertEquals(
+        resourceRegistry.extractParams("/search?q=prefix-books", search.pattern),
+        { term: "books" },
       );
     });
 
@@ -149,6 +162,25 @@ describe("resource registry", () => {
       assertEquals(
         resourceRegistry.extractParams("custom:collection/42", item.pattern),
         { id: "42" },
+      );
+
+      const dynamicCollection = resource({
+        pattern: "custom::collection/items",
+        description: "Dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(dynamicCollection.id, dynamicCollection);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:books/items"),
+        dynamicCollection,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:books/items",
+          dynamicCollection.pattern,
+        ),
+        { collection: "books" },
       );
     });
 

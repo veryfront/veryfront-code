@@ -999,9 +999,16 @@ describe("mcp/server", () => {
       });
       registerResource("test:files", {
         id: "test:files",
-        pattern: "/files/:base.:ext",
+        pattern: "/files/file-:base.:ext",
         description: "File by name",
         paramsSchema: defineSchema((v) => v.object({ base: v.string(), ext: v.string() }))(),
+        load: async () => ({}),
+      });
+      registerResource("test:search", {
+        id: "test:search",
+        pattern: "/search?q=prefix-:term",
+        description: "Search by term",
+        paramsSchema: defineSchema((v) => v.object({ term: v.string() }))(),
         load: async () => ({}),
       });
 
@@ -1016,7 +1023,11 @@ describe("mcp/server", () => {
 
       assertEquals(
         templates.find((entry) => entry.name === "test:files")?.uriTemplate,
-        "/files/{base}.{ext}",
+        "/files/file-{base}.{ext}",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:search")?.uriTemplate,
+        "/search?q=prefix-{term}",
       );
     });
 
@@ -1032,6 +1043,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
         load: async () => ({}),
       });
+      registerResource("test:dynamic-collection", {
+        id: "test:dynamic-collection",
+        pattern: "custom::collection/items",
+        description: "Dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ collection: v.string() }))(),
+        load: async () => ({}),
+      });
 
       const response = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1045,6 +1063,10 @@ describe("mcp/server", () => {
       assertEquals(
         templates.find((entry) => entry.name === "test:collection")?.uriTemplate,
         "custom:collection/{id}",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:dynamic-collection")?.uriTemplate,
+        "custom:{collection}/items",
       );
     });
 

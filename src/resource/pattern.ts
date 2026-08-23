@@ -14,9 +14,28 @@ function isParameterNamePart(code: number): boolean {
   return isParameterNameStart(code) || isAsciiDigit(code);
 }
 
-function isParameterBoundary(character: string | undefined): boolean {
-  return character === "/" || character === "?" || character === "&" ||
-    character === "=" || character === "#";
+function findSchemeDelimiter(pattern: string): number {
+  if (!isAsciiLetter(pattern.charCodeAt(0))) return -1;
+  for (let index = 1; index < pattern.length; index++) {
+    const code = pattern.charCodeAt(index);
+    if (code === 58) return index;
+    if (
+      !isAsciiLetter(code) && !isAsciiDigit(code) && code !== 43 &&
+      code !== 45 && code !== 46
+    ) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+function findFirstSchemeComponentEnd(pattern: string, schemeDelimiter: number): number {
+  if (schemeDelimiter < 0) return -1;
+  for (let index = schemeDelimiter + 1; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (character === "/" || character === "?" || character === "#") return index;
+  }
+  return pattern.length;
 }
 
 function escapeRegExp(value: string): string {
@@ -60,17 +79,22 @@ function transformResourcePattern(
   let value = "";
   let literalStart = 0;
   let parameterized = false;
-  let segmentParameterized = false;
+  const schemeDelimiter = findSchemeDelimiter(pattern);
+  const firstSchemeComponentEnd = findFirstSchemeComponentEnd(pattern, schemeDelimiter);
 
   for (let index = 0; index < pattern.length; index++) {
-    if (isParameterBoundary(pattern[index])) {
-      segmentParameterized = false;
-    }
     if (pattern[index] !== ":") continue;
+    if (index === schemeDelimiter) continue;
     const firstNameCode = pattern.charCodeAt(index + 1);
+    if (!isParameterNameStart(firstNameCode)) continue;
+
+    const inFirstSchemeComponent = schemeDelimiter >= 0 &&
+      index > schemeDelimiter && index < firstSchemeComponentEnd;
+    if (inFirstSchemeComponent && index !== schemeDelimiter + 1) continue;
+    const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
     if (
-      (index !== 0 && !isParameterBoundary(pattern[index - 1]) && !segmentParameterized) ||
-      !isParameterNameStart(firstNameCode)
+      !inFirstSchemeComponent && index !== 0 &&
+      (isAsciiLetter(previousCode) || isAsciiDigit(previousCode))
     ) {
       continue;
     }
@@ -82,7 +106,6 @@ function transformResourcePattern(
     literalStart = end;
     index = end - 1;
     parameterized = true;
-    segmentParameterized = true;
   }
   value += transformLiteral(pattern.slice(literalStart));
   return { value, parameterized };
