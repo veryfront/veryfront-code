@@ -131,13 +131,15 @@ describe("Config Command", () => {
   });
 
   describe("detectConfigSource", () => {
-    it("detects config file in current project", async () => {
-      const { cwd } = await import("veryfront/platform");
-      const source = await detectConfigSource(cwd());
-      // Project may or may not have a config file — just verify it returns string or null
-      assertEquals(
-        source === null || typeof source === "string",
-        true,
+    it("detects config file in project", async () => {
+      await withTempConfigProject(
+        { "veryfront.config.ts": "export default {};\n" },
+        async (projectDir) => {
+          assertEquals(
+            await detectConfigSource(projectDir),
+            "veryfront.config.ts",
+          );
+        },
       );
     });
 

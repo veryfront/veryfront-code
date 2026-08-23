@@ -511,6 +511,33 @@ exit(0);
     );
   });
 
+  it("classifies process wrappers on the public platform namespace", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import * as platform from "veryfront/platform";
+platform.cwd();
+platform.chdir("fixtures");
+platform.getEnv("TEST_KEY");
+platform.setEnv("TEST_KEY", "value");
+platform.deleteEnv("TEST_KEY");
+await platform.runCommand({ command: "deno", args: ["--version"] });
+platform.exit(0);
+`,
+        "src/public-platform-process-namespace.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["shared-cwd", "platform.cwd"],
+        ["shared-cwd", "platform.chdir"],
+        ["process", "platform.getEnv"],
+        ["process", "platform.setEnv"],
+        ["process", "platform.deleteEnv"],
+        ["process", "platform.runCommand"],
+        ["process", "platform.exit"],
+      ],
+    );
+  });
+
   it("classifies repo-relative compat filesystem and process imports from importer path", () => {
     assertEquals(
       collectSemanticMarkers(
