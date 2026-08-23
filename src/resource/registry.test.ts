@@ -117,6 +117,22 @@ describe("resource registry", () => {
       resourceRegistry.register(custom.id, custom);
       assertEquals(resourceRegistry.findByPattern("custom:namespace/path:literal"), custom);
       assertEquals(resourceRegistry.findByPattern("custom:namespace/pathanything"), undefined);
+
+      const punctuatedPath = resource({
+        pattern: "custom:namespace/path-:literal",
+        description: "Punctuated opaque path",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(punctuatedPath.id, punctuatedPath);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:namespace/path-:literal"),
+        punctuatedPath,
+      );
+      assertEquals(
+        resourceRegistry.findByPattern("custom:namespace/path-anything"),
+        undefined,
+      );
     });
 
     it("should match multiple parameters within one path segment", () => {
@@ -181,6 +197,26 @@ describe("resource registry", () => {
           dynamicCollection.pattern,
         ),
         { collection: "books" },
+      );
+
+      const prefixedCollection = resource({
+        pattern: "custom:collection-:id/items",
+        description: "Prefixed dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.clearAll();
+      resourceRegistry.register(prefixedCollection.id, prefixedCollection);
+      assertEquals(
+        resourceRegistry.findByPattern("custom:collection-42/items"),
+        prefixedCollection,
+      );
+      assertEquals(
+        resourceRegistry.extractParams(
+          "custom:collection-42/items",
+          prefixedCollection.pattern,
+        ),
+        { id: "42" },
       );
     });
 

@@ -1050,6 +1050,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({ collection: v.string() }))(),
         load: async () => ({}),
       });
+      registerResource("test:prefixed-collection", {
+        id: "test:prefixed-collection",
+        pattern: "custom:collection-:id/items",
+        description: "Prefixed dynamic collection",
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+        load: async () => ({}),
+      });
 
       const response = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1067,6 +1074,10 @@ describe("mcp/server", () => {
       assertEquals(
         templates.find((entry) => entry.name === "test:dynamic-collection")?.uriTemplate,
         "custom:{collection}/items",
+      );
+      assertEquals(
+        templates.find((entry) => entry.name === "test:prefixed-collection")?.uriTemplate,
+        "custom:collection-{id}/items",
       );
     });
 
@@ -1129,6 +1140,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
+      registerResource("test:punctuated-path-opaque", {
+        id: "test:punctuated-path-opaque",
+        pattern: "custom:namespace/path-:literal",
+        description: "Punctuated opaque path",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
 
       const templatesResponse = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1145,6 +1163,10 @@ describe("mcp/server", () => {
         false,
       );
       assertEquals(templates.some((entry) => entry.name === "test:custom-opaque"), false);
+      assertEquals(
+        templates.some((entry) => entry.name === "test:punctuated-path-opaque"),
+        false,
+      );
 
       const resourcesResponse = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1158,6 +1180,10 @@ describe("mcp/server", () => {
       assertEquals(resources.some((entry) => entry.name === "test:ietf"), true);
       assertEquals(resources.some((entry) => entry.name === "test:punctuated-opaque"), true);
       assertEquals(resources.some((entry) => entry.name === "test:custom-opaque"), true);
+      assertEquals(
+        resources.some((entry) => entry.name === "test:punctuated-path-opaque"),
+        true,
+      );
     });
 
     it("includes title when set on resource", async () => {

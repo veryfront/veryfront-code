@@ -38,6 +38,14 @@ function findFirstSchemeComponentEnd(pattern: string, schemeDelimiter: number): 
   return pattern.length;
 }
 
+function isUrnScheme(pattern: string, schemeDelimiter: number): boolean {
+  if (schemeDelimiter !== 3) return false;
+  const first = pattern.charCodeAt(0) | 32;
+  const second = pattern.charCodeAt(1) | 32;
+  const third = pattern.charCodeAt(2) | 32;
+  return first === 117 && second === 114 && third === 110;
+}
+
 function escapeRegExp(value: string): string {
   let escaped = "";
   for (let index = 0; index < value.length; index++) {
@@ -81,8 +89,18 @@ function transformResourcePattern(
   let parameterized = false;
   const schemeDelimiter = findSchemeDelimiter(pattern);
   const firstSchemeComponentEnd = findFirstSchemeComponentEnd(pattern, schemeDelimiter);
+  const urnScheme = isUrnScheme(pattern, schemeDelimiter);
+  let segmentParameterized = false;
+  let inQueryOrFragment = false;
 
   for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (character === "/") segmentParameterized = false;
+    if (character === "?" || character === "#") {
+      segmentParameterized = false;
+      inQueryOrFragment = true;
+    }
+    if (character === "&" && inQueryOrFragment) segmentParameterized = false;
     if (pattern[index] !== ":") continue;
     if (index === schemeDelimiter) continue;
     const firstNameCode = pattern.charCodeAt(index + 1);
@@ -90,14 +108,15 @@ function transformResourcePattern(
 
     const inFirstSchemeComponent = schemeDelimiter >= 0 &&
       index > schemeDelimiter && index < firstSchemeComponentEnd;
-    if (inFirstSchemeComponent && index !== schemeDelimiter + 1) continue;
     const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
-    if (
-      !inFirstSchemeComponent && index !== 0 &&
-      (isAsciiLetter(previousCode) || isAsciiDigit(previousCode))
-    ) {
-      continue;
-    }
+    const legacyParameterContext = index === 0 ||
+      (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode));
+    const parameterContext = schemeDelimiter < 0 || inQueryOrFragment
+      ? legacyParameterContext
+      : inFirstSchemeComponent
+      ? !urnScheme && legacyParameterContext
+      : pattern[index - 1] === "/" || segmentParameterized;
+    if (!parameterContext) continue;
 
     let end = index + 2;
     while (end < pattern.length && isParameterNamePart(pattern.charCodeAt(end))) end++;
@@ -106,6 +125,7 @@ function transformResourcePattern(
     literalStart = end;
     index = end - 1;
     parameterized = true;
+    segmentParameterized = true;
   }
   value += transformLiteral(pattern.slice(literalStart));
   return { value, parameterized };
