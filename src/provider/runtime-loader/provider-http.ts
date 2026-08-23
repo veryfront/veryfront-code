@@ -864,8 +864,10 @@ export async function requestStream(options: {
 }): Promise<ReadableStream<Uint8Array>> {
   const headersTimeoutMs = options.headersTimeoutMs ??
     DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS;
-  const totalHeadersBudgetMs = options.totalHeadersBudgetMs ??
-    DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS;
+  const totalHeadersBudgetMs = normalizeTimerDurationMs(
+    options.totalHeadersBudgetMs ?? DEFAULT_PROVIDER_STREAM_TOTAL_HEADERS_BUDGET_MS,
+    "totalHeadersBudgetMs",
+  );
   const requestBodyIsReplayable = !(options.init.body instanceof ReadableStream);
   const requestStartedAt = monotonicMilliseconds();
   let retryCount = 0;

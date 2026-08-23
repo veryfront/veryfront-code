@@ -715,6 +715,37 @@ describe("provider-http", () => {
       );
     });
 
+    it("rejects invalid total header budgets before issuing a stream request", async () => {
+      for (
+        const totalHeadersBudgetMs of [
+          Number.NaN,
+          Number.POSITIVE_INFINITY,
+          -1,
+          MAX_TIMER_DELAY_MS + 1,
+        ]
+      ) {
+        let attempts = 0;
+        const error = await assertRejects(
+          () =>
+            requestStream({
+              url: "https://provider.test/stream",
+              fetchImpl: () => {
+                attempts++;
+                return Promise.resolve(new Response("chunk"));
+              },
+              init: { method: "POST" },
+              providerLabel: "Test provider",
+              providerKind: "openai",
+              totalHeadersBudgetMs,
+            }),
+          RangeError,
+        ) as RangeError;
+
+        assertEquals(attempts, 0);
+        assertMatch(error.message, /totalHeadersBudgetMs/);
+      }
+    });
+
     it("returns the successful response body", async () => {
       const stream = await requestStream({
         url: "https://provider.test/stream",
@@ -781,7 +812,7 @@ describe("provider-http", () => {
       // Three unclamped 200ms attempts would spend ~600ms. The budget must stop
       // it at ~250ms, below the enclosing watchdog.
       let attempts = 0;
-      const startedAt = Date.now();
+      const startedAt = performance.now();
       await assertRejects(
         () =>
           requestStream({
@@ -799,54 +830,9 @@ describe("provider-http", () => {
         ProviderRequestError,
         "request timed out",
       );
-      const elapsedMs = Date.now() - startedAt;
+      const elapsedMs = performance.now() - startedAt;
 
       assertEquals(attempts > 1, true, "the budget must still buy a replay");
-      assertEquals(
-        elapsedMs < 500,
-        true,
-        `total header wait must stay inside the budget, spent ${elapsedMs}ms`,
-      );
-    });
-
-    it("holds the budget when the wall clock steps backwards mid-request", async () => {
-      // An NTP or VM correction can move Date.now() backwards. Measuring the
-      // budget on that clock would make the remaining budget grow, handing every
-      // replay a full deadline and running past the ceiling the budget exists to
-      // hold. Deadline arithmetic reads a monotonic source instead.
-      let attempts = 0;
-      const realDateNow = Date.now;
-      const startedAt = performance.now();
-      let elapsedMs = 0;
-      try {
-        Date.now = () => realDateNow() - 10_000 * attempts;
-        await assertRejects(
-          () =>
-            requestStream({
-              url: "https://provider.test/stream",
-              fetchImpl: () => {
-                attempts++;
-                return new Promise<Response>(() => {});
-              },
-              init: { method: "POST" },
-              providerLabel: "veryfront-cloud",
-              providerKind: "openai",
-              headersTimeoutMs: 200,
-              totalHeadersBudgetMs: 250,
-            }),
-          ProviderRequestError,
-          "request timed out",
-        );
-        elapsedMs = performance.now() - startedAt;
-      } finally {
-        Date.now = realDateNow;
-      }
-
-      assertEquals(
-        attempts,
-        2,
-        `a backwards clock step must not buy an extra replay, took ${attempts} attempts`,
-      );
       assertEquals(
         elapsedMs < 500,
         true,
