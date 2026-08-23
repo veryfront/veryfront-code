@@ -1,4 +1,5 @@
 import { TEMPLATES } from "../../cli/commands/init/catalog.ts";
+import { getTemplateConfig } from "../../templates/index.ts";
 import {
   allocatePort,
   assertCondition,
@@ -63,6 +64,18 @@ const TEMPLATE_ROUTE_EXPECTATIONS: Partial<
     { route: "/workflows/test-run" },
   ],
 };
+
+export function getTemplateExtensionNames(
+  templates: readonly TemplateName[],
+): string[] {
+  return [
+    ...new Set(
+      templates.flatMap((template) =>
+        getTemplateConfig(template)?.firstPartyExtensions ?? []
+      ),
+    ),
+  ].sort();
+}
 
 function hasFlag(name: string): boolean {
   return Deno.args.includes(`--${name}`);
@@ -271,6 +284,7 @@ async function testCase(
     packed,
     template,
     runtime,
+    getTemplateExtensionNames([template]),
   );
 
   console.log(`test ${label}: install`);
@@ -352,7 +366,11 @@ async function main(): Promise<void> {
     }
 
     console.log("pack npm package");
-    const packed = await packNpmPackage(rootDir, workDir);
+    const packed = await packNpmPackage(
+      rootDir,
+      workDir,
+      getTemplateExtensionNames(templates),
+    );
 
     for (const template of templates) {
       for (const runtime of runtimes) {
