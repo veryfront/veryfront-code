@@ -8,7 +8,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { basename, join } from "#veryfront/compat/path/index.ts";
+import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import {
   getCycleManifestCacheDir,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
@@ -186,6 +186,65 @@ describe("module-loader/cycle-manifest", () => {
       assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "cache-error");
       assertEquals(published, false);
+    } finally {
+      await removeFixture(tmpDir);
+    }
+  });
+
+  it("rejects a graph root whose persisted bytes lost their sealed evidence", async () => {
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-cycle-manifest-missing-evidence-" });
+    const localAdapter = await getLocalAdapter();
+    const transaction = new CycleManifestTransaction(tmpDir, "missing-evidence");
+    const rootSource = "/project/root.ts";
+    const rootArtifact = transaction.registerEdge(rootSource, rootSource, false);
+
+    try {
+      await Deno.mkdir(dirname(rootArtifact), { recursive: true });
+      await transaction.sealRootArtifactCode(
+        "export const root = true;",
+        rootSource,
+        false,
+        localAdapter,
+      );
+      await Deno.writeTextFile(rootArtifact, "export const root = true;");
+      transaction.recordArtifact(rootSource, rootArtifact, false, true);
+
+      await assertRejects(
+        () => transaction.commit(localAdapter),
+        VeryfrontError,
+        "Cycle manifest root evidence is missing",
+      );
+    } finally {
+      await removeFixture(tmpDir);
+    }
+  });
+
+  it("rejects graph root bytes changed after sealing", async () => {
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-cycle-manifest-changed-root-" });
+    const localAdapter = await getLocalAdapter();
+    const transaction = new CycleManifestTransaction(tmpDir, "changed-root");
+    const rootSource = "/project/root.ts";
+    const rootArtifact = transaction.registerEdge(rootSource, rootSource, false);
+
+    try {
+      await Deno.mkdir(dirname(rootArtifact), { recursive: true });
+      const sealed = await transaction.sealRootArtifactCode(
+        "export const root = true;",
+        rootSource,
+        false,
+        localAdapter,
+      );
+      await Deno.writeTextFile(
+        rootArtifact,
+        sealed.replace("root = true", "root = false"),
+      );
+      transaction.recordArtifact(rootSource, rootArtifact, false, true);
+
+      await assertRejects(
+        () => transaction.commit(localAdapter),
+        VeryfrontError,
+        "Cycle manifest changed after its root was sealed",
+      );
     } finally {
       await removeFixture(tmpDir);
     }

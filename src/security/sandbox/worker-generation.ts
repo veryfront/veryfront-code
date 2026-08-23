@@ -1,4 +1,5 @@
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { encodeSandboxBytesAsHex } from "./worker-byte-encoding.ts";
 
 const MAX_WORKER_GENERATION_ID_LENGTH = 1024;
 const WORKER_KEY_PREFIX = "veryfront-worker:v1";
@@ -71,7 +72,7 @@ async function sha256Hex(value: string): Promise<string> {
   const digest = new Uint8Array(
     await crypto.subtle.digest("SHA-256", encodeExactString(value)),
   );
-  return digest.toHex();
+  return encodeSandboxBytesAsHex(digest);
 }
 
 /**

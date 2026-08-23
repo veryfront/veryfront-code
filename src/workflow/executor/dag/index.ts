@@ -58,6 +58,17 @@ import {
 } from "./context-patch.ts";
 
 const RESUMABLE_COMPOSITE_TYPES = new Set(["branch", "parallel", "map", "loop", "subWorkflow"]);
+const MAX_STALLED_GRAPH_NODE_DETAILS = 10;
+
+function getUnfinishedNodeDetails(
+  nodes: WorkflowNode[],
+  nodeStates: Record<string, NodeState>,
+): Array<{ nodeId: string; status: NodeState["status"] }> {
+  return nodes.flatMap((node) => {
+    const status = nodeStates[node.id]?.status ?? "pending";
+    return status === "completed" || status === "skipped" ? [] : [{ nodeId: node.id, status }];
+  });
+}
 
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
@@ -120,6 +131,23 @@ export class DAGExecutor {
       };
     }
 
+    // Only the top-level run has a row in the backend to write. Composites
+    // execute their children against synthetic runs (`${node.id}_parallel`,
+    // `_branch`, `_iter_N`) whose node states are a different keyspace: a loop
+    // iteration's run carries only that iteration's children. Persisting one
+    // of those under the real run id would replace the run's whole node-state
+    // map with an iteration-local fragment, stranding every completed
+    // top-level node as pending and re-running the workflow from the start --
+    // the duplicate side effect this recovery path exists to prevent.
+    // Child recoveries are persisted by the parent when it returns.
+    const isDurableRun = run.id === scope.rootRunId;
+    // Nodes queued for crash recovery that have not been admitted to a batch
+    // yet. Being queued spends nothing: an earlier node in the queue can park
+    // on a wait and end the pass before these ever start, and a node that
+    // never started must keep its one recovery for the next pass. The budget
+    // is charged at admission instead, below.
+    const recoveryQueued = new Set<string>();
+
     let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
     if (!startFromNode) {
       // A node recorded as running means different things depending on why the
@@ -140,16 +168,6 @@ export class DAGExecutor {
       // charge every nested composite re-entry to the crash budget on an
       // ordinary approval.
       const { resumingWait } = scope;
-      // Only the top-level run has a row in the backend to write. Composites
-      // execute their children against synthetic runs (`${node.id}_parallel`,
-      // `_branch`, `_iter_N`) whose node states are a different keyspace: a loop
-      // iteration's run carries only that iteration's children. Persisting one
-      // of those under the real run id would replace the run's whole node-state
-      // map with an iteration-local fragment, stranding every completed
-      // top-level node as pending and re-running the workflow from the start --
-      // the duplicate side effect this recovery path exists to prevent.
-      // Child recoveries are persisted by the parent when it returns.
-      const isDurableRun = run.id === scope.rootRunId;
       const exhausted: Array<{ nodeId: string; attempts: number; maxAttempts: number }> = [];
       for (const [nodeId, degree] of inDegree) {
         if (degree !== 0 || ready.includes(nodeId)) continue;
@@ -186,30 +204,17 @@ export class DAGExecutor {
         //
         // An interrupted attempt never finished, so it does not consume the
         // node's retry budget outright -- a default node still gets recovered
-        // once. What it does consume is one recovery: the count below is
-        // written back before scheduling, and nothing overwrites it if the
-        // worker dies again, so the next resume sees a higher number.
+        // once. What it does consume is one recovery, charged when the node is
+        // admitted to a batch: the raised count is written back before the node
+        // executes, and nothing overwrites it if the worker dies again, so the
+        // next resume sees a higher number.
         const maxAttempts = node.config.retry?.maxAttempts ?? 1;
         const attempts = state.attempt ?? 0;
         if (attempts > maxAttempts) {
           exhausted.push({ nodeId, attempts, maxAttempts });
           continue;
         }
-        nodeStates[nodeId] = { ...state, attempt: attempts + 1 };
-        if (isDurableRun) {
-          const recovered = await this.config.onRecoveryScheduled?.({
-            runId: scope.rootRunId,
-            nodeId,
-            nodeStates: structuredClone(nodeStates),
-            ownership: scope.ownership,
-          });
-          if (recovered === false) {
-            throw ORCHESTRATION_ERROR.create({
-              detail:
-                `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
-            });
-          }
-        }
+        recoveryQueued.add(nodeId);
         ready.push(nodeId);
       }
 
@@ -241,15 +246,26 @@ export class DAGExecutor {
       const batch = ready.slice(0, this.config.maxConcurrency);
       ready = ready.slice(this.config.maxConcurrency);
 
-      const isDurableRun = run.id === scope.rootRunId;
       const batchStartedAt = new Date();
+      // Recoveries this batch charges. A node only reaches here once it is
+      // actually starting, so the recovery it spends is one it gets to use.
+      const recovered: string[] = [];
       for (const nodeId of batch) {
         const existing = nodeStates[nodeId];
+        // A node already recorded running keeps its attempt: it is being
+        // re-entered, not restarted (a composite resuming a parked wait). A
+        // node admitted off the recovery queue is the exception -- an
+        // interrupted attempt is being replaced, and raising the count here is
+        // what bounds repeated worker deaths.
+        const isRecovery = recoveryQueued.delete(nodeId);
+        if (isRecovery) recovered.push(nodeId);
         const runningState: NodeState = {
           ...existing,
           nodeId,
           status: "running",
-          attempt: existing?.status === "running" ? existing.attempt : (existing?.attempt ?? 0) + 1,
+          attempt: existing?.status === "running" && !isRecovery
+            ? existing.attempt
+            : (existing?.attempt ?? 0) + 1,
           startedAt: existing?.status === "running" && existing.startedAt
             ? existing.startedAt
             : batchStartedAt,
@@ -260,6 +276,20 @@ export class DAGExecutor {
         nodeStates[nodeId] = runningState;
       }
       if (isDurableRun) {
+        for (const nodeId of recovered) {
+          const persisted = await this.config.onRecoveryScheduled?.({
+            runId: scope.rootRunId,
+            nodeId,
+            nodeStates: structuredClone(nodeStates),
+            ownership: scope.ownership,
+          });
+          if (persisted === false) {
+            throw ORCHESTRATION_ERROR.create({
+              detail:
+                `Cannot recover workflow node "${nodeId}" because execution ownership changed`,
+            });
+          }
+        }
         await this.publishNodeStates(scope, nodeStates, context, batch);
         abortSignal?.throwIfAborted();
       }
@@ -431,6 +461,26 @@ export class DAGExecutor {
         queued.add(nodeId);
         ready.push(nodeId);
       }
+    }
+
+    const unfinished = getUnfinishedNodeDetails(nodes, nodeStates);
+    if (unfinished.length > 0) {
+      const graph = run.id === scope.rootRunId
+        ? "the root graph"
+        : `child graph ${JSON.stringify(run.id)}`;
+      const details = unfinished.slice(0, MAX_STALLED_GRAPH_NODE_DETAILS)
+        .map(({ nodeId, status }) => `${JSON.stringify(nodeId)} (${status})`)
+        .join(", ");
+      const omitted = unfinished.length - MAX_STALLED_GRAPH_NODE_DETAILS;
+      return {
+        completed: false,
+        waiting: false,
+        context,
+        nodeStates,
+        contextPatch,
+        error: `Workflow run ${JSON.stringify(scope.rootRunId)} stalled in ${graph}; ` +
+          `unfinished nodes: ${details}${omitted > 0 ? `, and ${omitted} more` : ""}`,
+      };
     }
 
     return {

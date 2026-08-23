@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 
 import {
+  assert,
   assertEquals,
   assertInstanceOf,
   assertRejects,
@@ -551,5 +552,122 @@ describe("cli/project-creation MDX extension declaration", () => {
     );
     const declared = Object.keys(packageJson.dependencies ?? {});
     assertEquals(declared.includes("@veryfront/ext-content-mdx"), false);
+  });
+});
+
+describe("createProject into the current directory", () => {
+  /** The request `veryfront init` builds when no project name is given. */
+  function cwdRequest(parentDir: string): CreateProjectRequest {
+    return { ...baseRequest(parentDir), name: undefined };
+  }
+
+  it("refuses to overwrite files the scaffold would write when the policy is fail", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-conflict-" });
+    const readme = join(parentDir, "README.md");
+    const packageJson = join(parentDir, "package.json");
+
+    try {
+      await Deno.writeTextFile(readme, "mine\n");
+      await Deno.writeTextFile(packageJson, '{"name":"mine"}\n');
+
+      await assertRejects(
+        () => createProject(cwdRequest(parentDir)),
+        Error,
+        "README.md",
+      );
+
+      assertEquals(await Deno.readTextFile(readme), "mine\n");
+      assertEquals(await Deno.readTextFile(packageJson), '{"name":"mine"}\n');
+      assertEquals(await exists(join(parentDir, "app")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("names every file that would be overwritten", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-conflicts-" });
+
+    try {
+      await Deno.writeTextFile(join(parentDir, "README.md"), "mine\n");
+      await Deno.writeTextFile(join(parentDir, "package.json"), "{}\n");
+
+      const error = await createProject(cwdRequest(parentDir)).then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+      assert(error instanceof Error, "expected the conflict to reject");
+      assertStringIncludes(error.message, "README.md");
+      assertStringIncludes(error.message, "package.json");
+      assertStringIncludes(error.message, "--force");
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("scaffolds into an empty directory, and beside unrelated files", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-empty-" });
+
+    try {
+      await Deno.writeTextFile(join(parentDir, "notes.txt"), "unrelated\n");
+      // .gitignore is merged rather than replaced, so it is never a conflict.
+      await Deno.writeTextFile(join(parentDir, ".gitignore"), "dist\n");
+
+      const result = await createProject(cwdRequest(parentDir));
+
+      assertEquals(result.projectDir, parentDir);
+      assertEquals(await exists(join(parentDir, "app", "page.tsx")), true);
+      assertEquals(await Deno.readTextFile(join(parentDir, "notes.txt")), "unrelated\n");
+      assertStringIncludes(await Deno.readTextFile(join(parentDir, ".gitignore")), "dist");
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("names every path a fresh scaffold writes, so the conflict list cannot drift", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-drift-" });
+    // Deno plus an integration is the widest scaffold there is: template files,
+    // package.json, deno.json, .env and .env.example all get written.
+    const request: CreateProjectRequest = {
+      ...cwdRequest(parentDir),
+      runtime: "deno",
+      integrations: ["github"],
+    };
+
+    try {
+      const written = await createProject(request);
+
+      // Run again over what the first run just wrote. Every one of those paths
+      // has to come back named, which is what stops the conflict list drifting
+      // when a new write lands in createProject and nobody mirrors it into
+      // scaffoldWritePaths. .gitignore is merged, so it stays off the list.
+      const error = await createProject(request).then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+      assert(error instanceof Error, "expected the second run to reject");
+      for (const path of written.createdPaths) {
+        if (path === ".gitignore") continue;
+        assertStringIncludes(error.message, path);
+      }
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("overwrites when the policy says so", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-cwd-overwrite-" });
+    const readme = join(parentDir, "README.md");
+
+    try {
+      await Deno.writeTextFile(readme, "mine\n");
+
+      await createProject({ ...cwdRequest(parentDir), conflictPolicy: "overwrite" });
+
+      assertEquals((await Deno.readTextFile(readme)) === "mine\n", false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
   });
 });

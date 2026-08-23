@@ -5,6 +5,7 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { CACHE_ERROR } from "#veryfront/errors";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { isCacheWriteRaceError } from "#veryfront/utils/cache-file-ops.ts";
@@ -32,6 +33,7 @@ const createdDirs = new Set<string>();
 type ModulePathCacheSave = (cacheDir: string) => Promise<void>;
 
 const pendingModulePathCacheSaves = new Set<Promise<void>>();
+const cycleArtifactPublications = new Map<string, Promise<void>>();
 let modulePathCacheSave: ModulePathCacheSave = saveModulePathCache;
 
 /** Prune oldest entries when cache exceeds limit. */
@@ -97,6 +99,69 @@ async function ensureDir(
 
   createdDirs.add(dir);
   pruneCreatedDirs();
+}
+
+async function readExistingCycleArtifact(
+  adapter: RuntimeAdapter,
+  artifactPath: string,
+): Promise<string | undefined> {
+  try {
+    return await adapter.fs.readFile(artifactPath);
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+}
+
+async function publishCycleArtifact(
+  adapter: RuntimeAdapter,
+  artifactPath: string,
+  code: string,
+): Promise<void> {
+  const stagedPath = `${artifactPath}.pending-${crypto.randomUUID()}`;
+  try {
+    await adapter.fs.writeFile(stagedPath, code);
+    const previous = cycleArtifactPublications.get(artifactPath) ?? Promise.resolve();
+    const publication = previous.catch(() => undefined).then(async () => {
+      const existing = await readExistingCycleArtifact(adapter, artifactPath);
+      if (existing !== undefined) {
+        if (existing !== code) {
+          throw CACHE_ERROR.create({
+            detail: "Cycle artifact path contains conflicting content",
+          });
+        }
+        return;
+      }
+      if (!adapter.fs.rename) {
+        throw CACHE_ERROR.create({
+          detail: "Cycle artifact filesystem cannot publish an atomic replacement",
+        });
+      }
+      try {
+        await adapter.fs.rename(stagedPath, artifactPath);
+      } catch (error) {
+        // A different process can win after the read above. Reuse only the
+        // complete artifact with the exact immutable bytes this path denotes.
+        const raced = await readExistingCycleArtifact(adapter, artifactPath);
+        if (raced === code) return;
+        throw error;
+      }
+    }).finally(() => {
+      if (cycleArtifactPublications.get(artifactPath) === publication) {
+        cycleArtifactPublications.delete(artifactPath);
+      }
+    });
+    cycleArtifactPublications.set(artifactPath, publication);
+    await publication;
+  } finally {
+    try {
+      await adapter.fs.remove(stagedPath);
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        logger.debug("Failed to remove a staged cycle artifact", { error });
+      }
+    }
+  }
 }
 
 export interface PersistTransformedModuleInput {
@@ -574,8 +639,13 @@ export async function persistTransformedModule(
     // Fall through to the write, which retries the mkdir on failure.
   });
 
+  const writeArtifact = () =>
+    input.cycleArtifactPath
+      ? publishCycleArtifact(input.localAdapter, tempFilePath, input.transformedCode)
+      : input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
+
   try {
-    await input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
+    await writeArtifact();
   } catch (error) {
     // The cache directory can vanish between mkdir and write — a manual
     // `rm -rf .cache`, a cache sweep, or a mkdir that never actually landed.
@@ -591,7 +661,7 @@ export async function persistTransformedModule(
 
     try {
       await ensureDir(input.localAdapter, tempDir, true);
-      await input.localAdapter.fs.writeFile(tempFilePath, input.transformedCode);
+      await writeArtifact();
       logger.debug("Recreated module cache directory after failed write", { tempDir });
     } catch (retryError) {
       logger.error("Failed to write module:", {
