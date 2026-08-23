@@ -4,6 +4,7 @@ import {
   assertCondition,
   ensureCommand,
   installDependencies,
+  type PackedWorkspace,
   packNpmPackage,
   parseCommaSeparatedFlag,
   runChecked,
@@ -259,7 +260,7 @@ async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
 
 async function testCase(
   workDir: string,
-  tarballPath: string,
+  packed: PackedWorkspace,
   template: TemplateName,
   runtime: RuntimeName,
 ): Promise<void> {
@@ -267,7 +268,7 @@ async function testCase(
   console.log(`test ${label}: scaffold`);
   const projectDir = await scaffoldProject(
     workDir,
-    tarballPath,
+    packed,
     template,
     runtime,
   );
@@ -351,11 +352,11 @@ async function main(): Promise<void> {
     }
 
     console.log("pack npm package");
-    const tarballPath = await packNpmPackage(rootDir, workDir);
+    const packed = await packNpmPackage(rootDir, workDir);
 
     for (const template of templates) {
       for (const runtime of runtimes) {
-        await testCase(workDir, tarballPath, template, runtime);
+        await testCase(workDir, packed, template, runtime);
       }
     }
 
