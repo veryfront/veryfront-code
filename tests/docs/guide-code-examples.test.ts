@@ -8,6 +8,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { withEnv } from "#veryfront/testing";
 import {
   agent,
   createAgUiHandler,
@@ -19,15 +20,15 @@ import {
   AttachmentsPanel,
   Chat,
   ChatContextProvider,
-  ChatThemeScope,
   ChatInputContextProvider,
+  ChatThemeScope,
   Message,
   MessageContextProvider,
   useAgent,
+  useAttachments,
   useChat,
   useChatContextOptional,
   useCompletion,
-  useAttachments,
 } from "../../src/chat/index.ts";
 import { createUploadHandler, ragStore } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
@@ -62,6 +63,7 @@ import {
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
+import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "../../src/integrations/local-credential-host-policy.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { parseDeployArgs } from "../../cli/commands/deploy/command.ts";
 import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
@@ -932,22 +934,24 @@ describe("Guide: integrations.md", () => {
   });
 
   it("loads an exact-grant local integration source with named credentials", async () => {
-    const credentials = new Map([
-      ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID", "client-id"],
-      ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET", "client-secret"],
-      [
-        "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
-        "https://acme.my.salesforce.com",
-      ],
-    ]);
-    const source = createLocalIntegrationToolSource({
-      tools: ["salesforce__find_customer"],
-      credentialProvider: (name) => credentials.get(name),
+    await withEnv({ [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "1" }, async () => {
+      const credentials = new Map([
+        ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID", "client-id"],
+        ["SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET", "client-secret"],
+        [
+          "SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL",
+          "https://acme.my.salesforce.com",
+        ],
+      ]);
+      const source = createLocalIntegrationToolSource({
+        tools: ["salesforce__find_customer"],
+        credentialProvider: (name) => credentials.get(name),
+      });
+
+      const integrationTools = await loadRemoteToolsFromSource(source);
+
+      assertEquals(Object.keys(integrationTools), ["salesforce__find_customer"]);
     });
-
-    const integrationTools = await loadRemoteToolsFromSource(source);
-
-    assertEquals(Object.keys(integrationTools), ["salesforce__find_customer"]);
   });
 });
 

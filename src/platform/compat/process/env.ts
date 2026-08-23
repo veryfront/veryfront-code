@@ -10,6 +10,25 @@ import type { ProjectEnvSnapshot } from "./project-env-contract.ts";
 type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
 
+const apply = Reflect.apply;
+const denoRuntime = IS_DENO ? getDenoRuntime() : undefined;
+const denoEnv = denoRuntime?.env;
+const denoEnvGet = denoEnv?.get;
+const allowHostEnvTestOverlay = (() => {
+  if (denoEnv && denoEnvGet) {
+    try {
+      return apply(denoEnvGet, denoEnv, ["DENO_TESTING"]) === "1";
+    } catch {
+      return false;
+    }
+  }
+  return hostProcessEnv?.DENO_TESTING === "1";
+})();
+const MapConstructor = Map;
+const mapEntries = Map.prototype.entries;
+const mapGet = Map.prototype.get;
+const mapHas = Map.prototype.has;
+
 export type EnvOverlayStorage = {
   getStore: () => unknown;
   run?: <T>(store: unknown, fn: () => T) => T;
@@ -19,18 +38,18 @@ export type EnvOverlayStorage = {
 function getEnvOverlayStore(): EnvOverlayStore | null {
   const storage = getEnvOverlayStorage();
   const store = storage?.getStore();
-  return store instanceof Map ? store as EnvOverlayStore : null;
+  return store instanceof MapConstructor ? store as EnvOverlayStore : null;
 }
 
 function getOverlayEnvValue(
   store: EnvOverlayStore | null,
   key: string,
 ): { hasValue: boolean; value: string | undefined } {
-  if (!store?.has(key)) {
+  if (!store || !apply(mapHas, store, [key])) {
     return { hasValue: false, value: undefined };
   }
 
-  const value = store.get(key);
+  const value = apply(mapGet, store, [key]);
   return { hasValue: true, value: value ?? undefined };
 }
 
@@ -54,7 +73,7 @@ export function env(): Record<string, string> {
   const overlay = getEnvOverlayStore();
   if (!overlay) return base;
 
-  for (const [key, value] of overlay.entries()) {
+  for (const [key, value] of apply(mapEntries, overlay, [])) {
     if (value === null) {
       delete base[key];
       continue;
@@ -66,28 +85,37 @@ export function env(): Record<string, string> {
 }
 
 /**
- * Read a host-level environment variable without consulting any project env overlay.
- * Use this for framework-owned runtime configuration that should not be shadowed by tenant env.
+ * Read outside the project snapshot. Test overlays require a captured host DENO_TESTING=1.
+ * Tenant project scopes and later global mutations cannot shadow this read.
  */
 export function getHostEnv(key: string): string | undefined {
-  const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
-  if (overlayResult.hasValue) {
-    return overlayResult.value;
-  }
-
-  const deno = IS_DENO ? getDenoRuntime() : undefined;
-  if (deno) {
+  if (denoRuntime && denoEnv && denoEnvGet) {
+    let value: string | undefined;
     try {
-      return deno.env.get(key);
+      // Probe the real host permission through the accessor captured before
+      // project code runs. A denied worker must not reach test overlays, and a
+      // project cannot replace Deno.env.get after module initialization.
+      value = apply(denoEnvGet, denoEnv, [key]);
     } catch {
-      // Under a tightened env permission allowlist (project isolation workers),
-      // reading a non-allowlisted variable throws NotCapable. Treat it as absent
-      // to match the prior `env: true` behavior where reads never threw, so
-      // optional-variable lookups degrade to undefined instead of crashing the
-      // request.
+      if (allowHostEnvTestOverlay) {
+        const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+        if (overlayResult.hasValue) return overlayResult.value;
+      }
       return undefined;
     }
+
+    if (allowHostEnvTestOverlay) {
+      const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+      if (overlayResult.hasValue) return overlayResult.value;
+    }
+    return value;
   }
+
+  if (allowHostEnvTestOverlay) {
+    const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+    if (overlayResult.hasValue) return overlayResult.value;
+  }
+
   // Read the captured host record rather than `runtimeProcess.env`, so the
   // narrower view installed over `process.env` cannot redirect a host-scoped
   // read back into a project scope.

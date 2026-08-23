@@ -102,6 +102,9 @@ export default agent({
 ```
 
 This path needs no Veryfront account, project token, or hosted integration API.
+The host must set `VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1` before
+it lists or executes a local integration tool. The same grant covers
+`createSalesforceServiceAccountToolSource` below.
 It reads the three service-account variables from the active project environment,
 exchanges them at the configured Salesforce My Domain, and sends the resulting
 bearer token only to that org's returned My Domain instance. Raw credentials and
@@ -115,7 +118,7 @@ For a local or self-hosted project, create a source with
 `createSalesforceServiceAccountToolSource` from `veryfront/integrations`, then
 materialize it with `loadRemoteToolsFromSource` from `veryfront/tool` and pass
 the result through each agent's `tools` field. The source reads the same three
-variables from the host environment and calls Salesforce directly. See
+variables from the active project environment and calls Salesforce directly. See
 [Self-host Veryfront Code](../self-hosting.md#run-salesforce-integration-tools-locally)
 for a complete agent example.
 

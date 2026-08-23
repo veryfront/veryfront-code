@@ -11,13 +11,15 @@ import {
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { executeConfiguredTool } from "#veryfront/agent/runtime/tool-helpers.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { EXPERIMENTAL_INTEGRATIONS_ENV } from "./feature-flags.ts";
 import { createLocalIntegrationToolSource, getConnector } from "./index.ts";
+import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
 import type { LocalIntegrationEndpointTransport } from "./local-endpoint-executor.ts";
 import { _createLocalIntegrationToolSourceForTesting } from "./local-tool-source.ts";
 
@@ -82,9 +84,14 @@ async function assertConfigurationError(
 }
 
 describe("createLocalIntegrationToolSource", () => {
+  beforeEach(() => {
+    setEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, "1");
+  });
+
   afterEach(() => {
     _resetEnvironmentConfig();
     deleteEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
   });
 
   it("lists only explicitly granted catalog tools with credential-free metadata", async () => {
@@ -309,22 +316,103 @@ describe("createLocalIntegrationToolSource", () => {
     }, "duplicate");
   });
 
-  it("rejects local credential execution in hosted and proxy runtimes", async () => {
+  it("denies unmarked deployment modes through listing and execution", async () => {
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
     for (
-      const environment of [
-        { veryfrontMode: "hosted", proxyMode: false },
-        { veryfrontMode: "production", proxyMode: true },
+      const veryfrontMode of [
+        "development",
+        "production",
+        "proxy",
+        "saas",
+        "single-tenant",
+        "unknown",
       ]
     ) {
-      _setEnvironmentConfigForTesting(environment);
-      const source = createLocalIntegrationToolSource({
-        tools: ["vercel__list_projects"],
-        credentialProvider: testCredentialProvider,
-      });
+      _setEnvironmentConfigForTesting({ veryfrontMode, proxyMode: false });
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["vercel__list_projects"],
+          credentialProvider: testCredentialProvider,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({ projects: [] }));
+        },
+      );
 
-      await assertConfigurationError(() => source.listTools(), "local or self-hosted");
+      await assertConfigurationError(
+        () => source.listTools(),
+        HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
+      );
+      await assertConfigurationError(
+        () => source.executeTool("vercel__list_projects", {}),
+        HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
+      );
+      assertEquals(transportCalls, 0);
       _resetEnvironmentConfig();
     }
+  });
+
+  it("allows the exact host grant on any non-proxy deployment mode", async () => {
+    for (const veryfrontMode of ["development", "self-hosted", "production"]) {
+      _setEnvironmentConfigForTesting({ veryfrontMode, proxyMode: false });
+      let transportCalls = 0;
+      const source = _createLocalIntegrationToolSourceForTesting(
+        {
+          tools: ["vercel__list_projects"],
+          credentialProvider: testCredentialProvider,
+        },
+        () => {
+          transportCalls += 1;
+          return Promise.resolve(Response.json({ projects: [] }));
+        },
+      );
+
+      assertEquals((await source.listTools()).length, 1);
+      await source.executeTool("vercel__list_projects", {});
+      assertEquals(transportCalls, 1);
+      _resetEnvironmentConfig();
+    }
+  });
+
+  it("does not accept the host grant from a project environment", async () => {
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+    const source = createLocalIntegrationToolSource({
+      tools: ["vercel__list_projects"],
+      credentialProvider: testCredentialProvider,
+    });
+
+    await runWithProjectEnv(
+      { [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "1" },
+      () =>
+        assertConfigurationError(() => source.listTools(), HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV),
+    );
+  });
+
+  it("proxy mode denies an explicit local-credential grant", async () => {
+    _setEnvironmentConfigForTesting({ veryfrontMode: "development", proxyMode: true });
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["vercel__list_projects"],
+        credentialProvider: testCredentialProvider,
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ projects: [] }));
+      },
+    );
+
+    await assertConfigurationError(
+      () => source.listTools(),
+      HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
+    );
+    await assertConfigurationError(
+      () => source.executeTool("vercel__list_projects", {}),
+      HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV,
+    );
+    assertEquals(transportCalls, 0);
   });
 
   it("never executes a catalog tool outside its exact source grant", async () => {

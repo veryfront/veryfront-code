@@ -13,6 +13,7 @@ import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outboun
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { connectors } from "./_data.ts";
+import { guardLocalCredentialSource } from "./local-credential-host-policy.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
@@ -21,7 +22,7 @@ import {
 import type { IntegrationToolMeta } from "./schema.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 
-/** Host environment variables required by the local Salesforce service-account source. */
+/** Project environment variables required by the local Salesforce service-account source. */
 export const SALESFORCE_SERVICE_ACCOUNT_ENV_VARS = [
   "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
   "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
@@ -670,7 +671,7 @@ async function executeSalesforceEndpoint(
  *
  * Materialize the returned source with `loadRemoteToolsFromSource` and pass
  * the result through an agent's `tools` field. The source reads credentials
- * lazily from the host environment when a tool executes.
+ * lazily from the active project environment when a tool executes.
  */
 export function createSalesforceServiceAccountToolSource(
   options: SalesforceServiceAccountToolSourceOptions,
@@ -717,10 +718,10 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
     return token;
   };
 
-  return Object.freeze({
+  return guardLocalCredentialSource(Object.freeze({
     id: "salesforce-service-account",
-    listTools(): Promise<ToolDefinition[]> {
-      return Promise.resolve([...definitions]);
+    async listTools(): Promise<ToolDefinition[]> {
+      return [...definitions];
     },
     async executeTool(
       toolName: string,
@@ -785,5 +786,5 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
         ? result.result
         : apiFailureResult(result.status);
     },
-  });
+  }));
 }
