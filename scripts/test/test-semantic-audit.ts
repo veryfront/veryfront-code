@@ -4629,19 +4629,29 @@ function bindRuntimeCallMutation(
     ) {
       continue;
     }
+    const mutationAllowsClearing = allowClearing &&
+      runtimePropertyMutationAllowsClearing(
+        canonicalName,
+        target,
+        literalPropertyName(invocation.args[1]),
+        imports,
+        scopes,
+      );
     for (
       const accessor of localMutationAccessorDescriptors(
         canonicalName,
         invocation.args,
       )
     ) {
-      clearRuntimeDescriptorProperty(
-        target,
-        accessor.property,
-        accessor.descriptor,
-        imports,
-        scopes,
-      );
+      if (mutationAllowsClearing) {
+        clearRuntimeDescriptorProperty(
+          target,
+          accessor.property,
+          accessor.descriptor,
+          imports,
+          scopes,
+        );
+      }
     }
     const assigned = localMutationAssignedEntries(
       canonicalName,
@@ -4672,7 +4682,8 @@ function bindRuntimeCallMutation(
           imports,
           scopes,
           {
-            allowClearing: entry.definiteOverwrite === true && allowClearing,
+            allowClearing: entry.definiteOverwrite === true &&
+              mutationAllowsClearing,
             enumerable: entry.enumerable,
             configurable: entry.configurable,
           },
@@ -4702,6 +4713,21 @@ function bindRuntimeCallMutation(
       );
     }
   }
+}
+
+function runtimePropertyMutationAllowsClearing(
+  canonicalName: string,
+  target: unknown,
+  property: string | undefined,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): boolean {
+  if (canonicalName !== "Reflect.defineProperty") return true;
+  if (property === undefined) return false;
+  const targetBinding = runtimeBindingForExpression(target, imports, scopes);
+  return targetBinding !== undefined &&
+    runtimePropertyResolution(targetBinding, property, true).configurable ===
+      true;
 }
 
 function bindRuntimeArrayShapeMutation(

@@ -2876,6 +2876,69 @@ opaque.path;
     );
   });
 
+  it("retains properties when Reflect.defineProperty can fail", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const retainedValue = {};
+Object.defineProperty(retainedValue, "run", { value: Deno.remove });
+Reflect.defineProperty(retainedValue, "run", { value: () => undefined });
+retainedValue.run("retained-value.txt");
+
+const retainedGetter = {};
+Object.defineProperty(retainedGetter, "run", {
+  get: () => Deno.remove,
+});
+Reflect.defineProperty(retainedGetter, "run", {
+  get: () => () => undefined,
+});
+retainedGetter.run("retained-getter.txt");
+
+const retainedSetter = {};
+Object.defineProperty(retainedSetter, "path", { set: Deno.remove });
+Reflect.defineProperty(retainedSetter, "path", {
+  set: () => undefined,
+});
+retainedSetter.path = "retained-setter.txt";
+
+const clearedValue = {};
+Object.defineProperty(clearedValue, "run", {
+  configurable: true,
+  value: Deno.remove,
+});
+Reflect.defineProperty(clearedValue, "run", { value: () => undefined });
+clearedValue.run("cleared-value.txt");
+
+const clearedGetter = {};
+Object.defineProperty(clearedGetter, "run", {
+  configurable: true,
+  get: () => Deno.remove,
+});
+Reflect.defineProperty(clearedGetter, "run", {
+  get: () => () => undefined,
+});
+clearedGetter.run("cleared-getter.txt");
+
+const clearedSetter = {};
+Object.defineProperty(clearedSetter, "path", {
+  configurable: true,
+  set: Deno.remove,
+});
+Reflect.defineProperty(clearedSetter, "path", {
+  set: () => undefined,
+});
+clearedSetter.path = "cleared-setter.txt";
+`,
+        "src/runtime-reflect-define-property-configurability.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "retainedValue.run"],
+        ["filesystem-write", "retainedGetter.run"],
+        ["filesystem-write", "retainedSetter.path setter"],
+      ],
+    );
+  });
+
   it("invokes descriptor getters on property reads and copies", () => {
     assertEquals(
       collectSemanticMarkers(
