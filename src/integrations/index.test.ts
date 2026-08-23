@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { AgentConfig } from "#veryfront/agent";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, setEnv } from "#veryfront/testing/deno-compat.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { connectors, icons } from "./_data.ts";
 import {
@@ -9,7 +16,9 @@ import {
   filterVisibleIntegrations,
   HOST_ADAPTER_INTEGRATIONS_ENV,
 } from "./feature-flags.ts";
+import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
 import {
+  createLocalIntegrationToolSource,
   createSalesforceServiceAccountToolSource,
   getConnector,
   getConnectorNames,
@@ -19,7 +28,10 @@ import {
 } from "./index.ts";
 
 describe("integrations/index", () => {
-  afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
+  afterEach(() => {
+    deleteEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+  });
 
   it("exposes default-visible connector data through lookup helpers", () => {
     const visibleConnectors = filterVisibleIntegrations(connectors);
@@ -40,7 +52,7 @@ describe("integrations/index", () => {
   });
 
   it("shows eligible experimental connectors when explicitly enabled", () => {
-    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "stripe");
+    setEnv(EXPERIMENTAL_INTEGRATIONS_ENV, "stripe");
 
     assertStrictEquals(
       getConnector("stripe"),
@@ -51,7 +63,7 @@ describe("integrations/index", () => {
   });
 
   it("keeps provider-adapter-only connectors unavailable when explicitly enabled", () => {
-    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+    setEnv(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
 
     assertEquals(getConnector("salesforce"), undefined);
     assertEquals(getIcon("salesforce"), undefined);
@@ -63,14 +75,14 @@ describe("integrations/index", () => {
     // client, so it needs the connector definitions to resolve tool names and
     // authorize calls. Without this the integration stays connectable but every
     // tool call fails to resolve.
-    Deno.env.set(HOST_ADAPTER_INTEGRATIONS_ENV, "salesforce");
+    setEnv(HOST_ADAPTER_INTEGRATIONS_ENV, "salesforce");
     try {
       assertEquals(getConnector("salesforce") !== undefined, true);
       assertEquals(getConnectorNames().includes("salesforce"), true);
       // Adapter-only and not declared by the host, so still absent.
       assertEquals(getConnector("pipedrive"), undefined);
     } finally {
-      Deno.env.delete(HOST_ADAPTER_INTEGRATIONS_ENV);
+      deleteEnv(HOST_ADAPTER_INTEGRATIONS_ENV);
     }
   });
 
@@ -80,6 +92,7 @@ describe("integrations/index", () => {
   });
 
   it("exports the explicit local Salesforce service-account source", async () => {
+    setEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, "1");
     assertEquals(SALESFORCE_SERVICE_ACCOUNT_ENV_VARS, [
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
       "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
@@ -100,5 +113,24 @@ describe("integrations/index", () => {
     };
     assertStrictEquals(config.tools, tools);
     assertEquals(Object.keys(tools), ["salesforce__get_case"]);
+  });
+
+  it("keeps every exported local credential source behind the host grant", async () => {
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+    const sources = [
+      createLocalIntegrationToolSource({
+        tools: ["vercel__list_projects"],
+        credentialProvider: () => "test-credential",
+      }),
+      createSalesforceServiceAccountToolSource({
+        allowedTools: ["salesforce__get_case"],
+      }),
+    ];
+
+    for (const source of sources) {
+      const error = await assertRejects(() => source.listTools(), VeryfrontError);
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "local-integration-config-invalid");
+    }
   });
 });
