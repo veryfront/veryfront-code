@@ -2414,6 +2414,10 @@ const result = Object.assign(
   { run: () => undefined },
 );
 result.run();
+
+const reflected = { run: Deno.remove };
+Reflect.set(reflected, "run", () => undefined);
+reflected.run();
 `,
         "src/runtime-object-assign-overwrites.test.ts",
       ),
@@ -2507,10 +2511,20 @@ const target = { safe: () => undefined };
 Object.setPrototypeOf(target, { run: Deno.remove });
 target.safe();
 target.run("target-prototype.txt");
+
+const deleted = { run: () => undefined };
+Object.setPrototypeOf(deleted, { run: Deno.remove });
+delete deleted.run;
+deleted.run("deleted-prototype.txt");
+
+const reflectedDelete = { run: () => undefined };
+Object.setPrototypeOf(reflectedDelete, { run: Deno.remove });
+Reflect.deleteProperty(reflectedDelete, "run");
+reflectedDelete.run("reflected-delete-prototype.txt");
 `,
         "src/runtime-object-receiver-returns.test.ts",
       ).map((marker) => marker.effect),
-      Array.from({ length: 5 }, () => "filesystem-write"),
+      Array.from({ length: 7 }, () => "filesystem-write"),
     );
   });
 
@@ -2696,6 +2710,24 @@ target.path = "second.txt";
     );
   });
 
+  it("clears accessors replaced by descriptor definitions", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "path", {
+  configurable: true,
+  set: Deno.remove,
+});
+Object.defineProperty(target, "path", { set: () => undefined });
+target.path = "safe.txt";
+`,
+        "src/runtime-descriptor-accessor-redefinition.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("invokes descriptor getters on property reads and copies", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -2715,6 +2747,11 @@ Object.defineProperty(hidden, "request", { get: fetch });
 Object.assign({}, hidden);
 const hiddenSpread = { ...hidden };
 void hiddenSpread;
+
+const hiddenReturn = Object.defineProperty({}, "run", {
+  get: () => Deno.remove,
+});
+Object.assign({}, hiddenReturn).run();
 
 const returned = Object.defineProperty({}, "path", { get: Deno.cwd });
 returned.path;
