@@ -1058,6 +1058,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
+      registerResource("test:ietf", {
+        id: "test:ietf",
+        pattern: "urn:ietf:params",
+        description: "IETF parameters namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
 
       const templatesResponse = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1068,6 +1075,7 @@ describe("mcp/server", () => {
         resourceTemplates: Array<Record<string, unknown>>;
       }).resourceTemplates;
       assertEquals(templates.some((entry) => entry.name === "test:isbn"), false);
+      assertEquals(templates.some((entry) => entry.name === "test:ietf"), false);
 
       const resourcesResponse = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1078,6 +1086,7 @@ describe("mcp/server", () => {
         resources: Array<Record<string, unknown>>;
       }).resources;
       assertEquals(resources.some((entry) => entry.name === "test:isbn"), true);
+      assertEquals(resources.some((entry) => entry.name === "test:ietf"), true);
     });
 
     it("includes title when set on resource", async () => {

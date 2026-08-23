@@ -26,7 +26,8 @@ function transformResourcePattern(
   transformParameter: (name: string) => string,
 ): { value: string; parameterized: boolean } {
   const schemeMatch = RESOURCE_SCHEME.exec(pattern);
-  const schemeColonIndex = schemeMatch ? schemeMatch[0].length - 1 : -1;
+  const firstPathSlash = schemeMatch ? pattern.indexOf("/", schemeMatch[0].length) : 0;
+  const parameterStart = firstPathSlash < 0 ? pattern.length : firstPathSlash;
   let value = "";
   let literalStart = 0;
   let parameterized = false;
@@ -37,7 +38,7 @@ function transformResourcePattern(
     match;
     match = RESOURCE_PARAMETER.exec(pattern)
   ) {
-    if (match.index === schemeColonIndex) continue;
+    if (match.index < parameterStart) continue;
     value += transformLiteral(pattern.slice(literalStart, match.index));
     value += transformParameter(match[1]!);
     literalStart = match.index + match[0].length;

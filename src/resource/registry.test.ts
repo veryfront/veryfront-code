@@ -87,6 +87,16 @@ describe("resource registry", () => {
 
       assertEquals(resourceRegistry.findByPattern("urn:isbn"), isbn);
       assertEquals(resourceRegistry.findByPattern("urn:other"), undefined);
+
+      const ietf = resource({
+        pattern: "urn:ietf:params",
+        description: "IETF parameters namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(ietf.id, ietf);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf:params"), ietf);
+      assertEquals(resourceRegistry.findByPattern("urn:ietf:anything"), undefined);
     });
 
     it("should match multiple parameters within one path segment", () => {
