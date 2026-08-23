@@ -83,8 +83,8 @@ export function env(): Record<string, string> {
 }
 
 /**
- * Read a host-level environment variable without consulting any project env overlay.
- * Use this for framework-owned runtime configuration that should not be shadowed by tenant env.
+ * Read a host variable without consulting the project-scoped environment snapshot.
+ * The test harness overlay stays visible; tenant project scopes cannot shadow this read.
  */
 export function getHostEnv(key: string): string | undefined {
   if (denoRuntime && denoEnv && denoEnvGet) {
