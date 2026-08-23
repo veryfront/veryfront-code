@@ -32,6 +32,14 @@ const TSCONFIG_READ_ERROR = defineError({
   suggestion: 'Check the tsconfig.json "extends" entry and filesystem permissions',
 });
 
+const TSCONFIG_EXTENDS_RESOLUTION_ERROR = defineError({
+  slug: "tsconfig-extends-resolution-failed",
+  category: "CONFIG",
+  status: 422,
+  title: "TypeScript configuration inheritance target could not be resolved",
+  suggestion: 'Check the tsconfig.json "extends" package name and installation',
+});
+
 /**
  * Input for {@link readTypeScriptDecoratorOptions}.
  *
@@ -156,6 +164,7 @@ export async function readTypeScriptDecoratorOptions(
   const readTextFile = input.readTextFile ?? defaultReadTextFile;
   const callerOwnsReadBoundary = input.readTextFile !== undefined;
   const resolveExtends = input.resolveExtends ?? defaultResolveExtends;
+  const callerOwnsResolveBoundary = input.resolveExtends !== undefined;
   const cache = new Map<string, PartialDecoratorOptions>();
   const active = new Set<string>();
 
@@ -202,7 +211,18 @@ export async function readTypeScriptDecoratorOptions(
       );
       let merged: PartialDecoratorOptions = {};
       for (const specifier of inheritedSpecifiers(config.extends)) {
-        const parentPath = await resolveExtends(specifier, path);
+        let parentPath: string;
+        try {
+          parentPath = await resolveExtends(specifier, path);
+        } catch (error) {
+          if (callerOwnsResolveBoundary && !diagnosticIncludesPath(error, path)) {
+            throw error;
+          }
+          throw TSCONFIG_EXTENDS_RESOLUTION_ERROR.create({
+            detail: "TypeScript configuration inheritance target could not be resolved",
+            cause: new Error("TypeScript configuration inheritance resolution failed"),
+          });
+        }
         merged = { ...merged, ...await read(parentPath, depth + 1, false) };
       }
       merged = { ...merged, ...localDecoratorOptions(config) };

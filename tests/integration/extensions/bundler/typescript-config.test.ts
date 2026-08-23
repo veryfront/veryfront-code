@@ -263,4 +263,45 @@ describe("readTypeScriptDecoratorOptions", () => {
     );
     assertInstanceOf(error, TypeError);
   });
+
+  it("sanitizes unresolved package extends diagnostics", async () => {
+    const projectDir = await makeTempDir();
+    try {
+      await writeTextFile(
+        join(projectDir, "tsconfig.json"),
+        JSON.stringify({ extends: "@fixture/missing-tsconfig" }),
+      );
+
+      const error = await assertRejects(
+        () =>
+          readTypeScriptDecoratorOptions({
+            configPath: join(projectDir, "tsconfig.json"),
+          }),
+        VeryfrontError,
+      );
+      assertInstanceOf(error, VeryfrontError);
+      assertEquals(error.slug, "tsconfig-extends-resolution-failed");
+      assertEquals(error.message.includes(projectDir), false);
+      assertEquals(error.detail?.includes(projectDir) ?? false, false);
+      assertEquals(JSON.stringify(error.context ?? {}).includes(projectDir), false);
+      assertEquals(String(error.cause).includes(projectDir), false);
+    } finally {
+      await remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("preserves path-free diagnostics from a caller-owned extends resolver", async () => {
+    const error = await assertRejects(
+      () =>
+        readTypeScriptDecoratorOptions({
+          configPath: "/project/tsconfig.json",
+          readTextFile: () => Promise.resolve(JSON.stringify({ extends: "virtual-config" })),
+          resolveExtends: () =>
+            Promise.reject(new TypeError("Configured TypeScript base is unavailable")),
+        }),
+      TypeError,
+      "Configured TypeScript base is unavailable",
+    );
+    assertInstanceOf(error, TypeError);
+  });
 });
