@@ -62,6 +62,7 @@ export interface SemanticMarker {
   readonly effect: SemanticEffect;
   readonly line: number;
   readonly symbol: string;
+  readonly filesystemReadLocality?: "repository" | "external-or-unresolved";
 }
 
 export interface SemanticAuditCandidate {
@@ -361,6 +362,25 @@ const NETWORK_METHODS = new Set([
   "get",
   "request",
   "resolveDns",
+]);
+
+const DNS_NETWORK_METHODS = new Set([
+  "lookup",
+  "lookupService",
+  "resolve",
+  "resolve4",
+  "resolve6",
+  "resolveAny",
+  "resolveCaa",
+  "resolveCname",
+  "resolveMx",
+  "resolveNaptr",
+  "resolveNs",
+  "resolvePtr",
+  "resolveSoa",
+  "resolveSrv",
+  "resolveTxt",
+  "reverse",
 ]);
 
 const GLOBAL_RUNTIME_RECEIVERS = new Set(["globalThis", "window", "self"]);
@@ -668,7 +688,13 @@ export function collectSemanticMarkers(
     const nodeMarkers = suppressMarker
       ? undefined
       : markerForNode(node, bindings, nextScopes);
-    if (nodeMarkers) markers.push(...semanticMarkers(nodeMarkers));
+    if (nodeMarkers) {
+      markers.push(
+        ...semanticMarkers(nodeMarkers).map((marker) =>
+          annotateFilesystemReadLocality(marker, node, bindings, nextScopes)
+        ),
+      );
+    }
 
     for (const key of Object.keys(node)) {
       if (
@@ -759,6 +785,18 @@ export function validateSemanticDispositions(
           extraEffects.join(", ")
         }`,
       );
+    }
+    if (entry.disposition === "hermetic-unit") {
+      for (
+        const marker of candidate.markers.filter((marker) =>
+          marker.effect === "filesystem-read" &&
+          marker.filesystemReadLocality !== "repository"
+        )
+      ) {
+        errors.push(
+          `hermetic-unit filesystem read is not proven repository-local: ${path}:${marker.line} ${marker.symbol}`,
+        );
+      }
     }
   }
 
@@ -1374,6 +1412,121 @@ function semanticMarkers(
   markers: SemanticMarker | readonly SemanticMarker[],
 ): readonly SemanticMarker[] {
   return Array.isArray(markers) ? markers : [markers as SemanticMarker];
+}
+
+function annotateFilesystemReadLocality(
+  marker: SemanticMarker,
+  node: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): SemanticMarker {
+  if (marker.effect !== "filesystem-read") return marker;
+  const operand = filesystemReadPathOperand(node);
+  return {
+    ...marker,
+    filesystemReadLocality: isRepositoryLocalFilesystemOperand(
+        operand,
+        imports,
+        scopes,
+      )
+      ? "repository"
+      : "external-or-unresolved",
+  };
+}
+
+function filesystemReadPathOperand(node: Node): unknown {
+  if (
+    node.type !== "CallExpression" && node.type !== "OptionalCallExpression" &&
+    node.type !== "NewExpression"
+  ) return undefined;
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  const callee = unwrapExpression(node.callee);
+  if (!callee) return undefined;
+  if (
+    (callee.type === "MemberExpression" ||
+      callee.type === "OptionalMemberExpression") &&
+    memberObjectName(callee) === "Reflect" &&
+    memberProperty(callee) === "apply"
+  ) {
+    return firstArrayElement(args[2]);
+  }
+  if (
+    callee.type === "MemberExpression" ||
+    callee.type === "OptionalMemberExpression"
+  ) {
+    const wrapper = memberProperty(callee);
+    if (wrapper === "call") return args[1];
+    if (wrapper === "apply") return firstArrayElement(args[1]);
+  }
+  return args[0];
+}
+
+function firstArrayElement(value: unknown): unknown {
+  const array = unwrapExpression(value);
+  return array?.type === "ArrayExpression" && Array.isArray(array.elements)
+    ? array.elements[0]
+    : undefined;
+}
+
+function isRepositoryLocalFilesystemOperand(
+  operand: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): boolean {
+  const value = unwrapExpression(operand);
+  if (!value) return false;
+  if (value.type === "StringLiteral") {
+    return isSafeRepositoryFilesystemLiteral(value.value as string);
+  }
+  if (
+    value.type === "TemplateLiteral" &&
+    Array.isArray(value.expressions) && value.expressions.length === 0 &&
+    Array.isArray(value.quasis) && value.quasis.length === 1 &&
+    isNode(value.quasis[0]) &&
+    typeof value.quasis[0].value === "object" &&
+    value.quasis[0].value !== null
+  ) {
+    const cooked = (value.quasis[0].value as { readonly cooked?: unknown })
+      .cooked;
+    return typeof cooked === "string" &&
+      isSafeRepositoryFilesystemLiteral(cooked);
+  }
+  if (
+    value.type !== "NewExpression" || !isNode(value.callee) ||
+    value.callee.type !== "Identifier" || value.callee.name !== "URL" ||
+    isGlobalShadowed("URL", scopes, imports.importedNames)
+  ) {
+    return false;
+  }
+  const args = Array.isArray(value.arguments) ? value.arguments : [];
+  const relative = unwrapExpression(args[0]);
+  return relative?.type === "StringLiteral" &&
+    isSafeRepositoryFilesystemLiteral(relative.value as string) &&
+    isImportMetaUrl(args[1]);
+}
+
+function isSafeRepositoryFilesystemLiteral(value: string): boolean {
+  const normalized = normalizeProjectPath(value);
+  return value !== "" && !value.includes("\\") &&
+    !/^[A-Za-z][A-Za-z\d+.-]*:/.test(value) &&
+    isSafeRepoRelativePath(normalized);
+}
+
+function isImportMetaUrl(value: unknown): boolean {
+  const member = unwrapExpression(value);
+  if (
+    !member ||
+    (member.type !== "MemberExpression" &&
+      member.type !== "OptionalMemberExpression") ||
+    memberProperty(member) !== "url"
+  ) {
+    return false;
+  }
+  const object = unwrapExpression(member.object);
+  return object?.type === "MetaProperty" && isNode(object.meta) &&
+    object.meta.type === "Identifier" && object.meta.name === "import" &&
+    isNode(object.property) && object.property.type === "Identifier" &&
+    object.property.name === "meta";
 }
 
 function markersForRuntimeBinding(
@@ -2339,6 +2492,9 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
       if (isServerSpecifier(source) && NETWORK_METHODS.has(importedName)) {
         bindings.network.add(local);
       }
+      if (isDnsSpecifier(source) && DNS_NETWORK_METHODS.has(importedName)) {
+        bindings.network.add(local);
+      }
       if (isPlaywrightSpecifier(source)) bindings.playwright.add(local);
       if (
         isCreateRequireSpecifier(source) && importedName === "createRequire"
@@ -3170,6 +3326,12 @@ function runtimeBindingForExpression(
   if (boundCallableBinding) return boundCallableBinding;
   const alternativeBinding = alternativeRuntimeBinding(value, imports, scopes);
   if (alternativeBinding) return alternativeBinding;
+  const literalObjectBinding = objectLiteralRuntimeBinding(
+    value,
+    imports,
+    scopes,
+  );
+  if (literalObjectBinding) return literalObjectBinding;
   if (
     value.type !== "MemberExpression" &&
     value.type !== "OptionalMemberExpression"
@@ -3183,6 +3345,50 @@ function runtimeBindingForExpression(
   );
   return objectBinding
     ? runtimePropertyBinding(objectBinding, property)
+    : undefined;
+}
+
+function objectLiteralRuntimeBinding(
+  value: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  if (value.type !== "ObjectExpression") return undefined;
+  const properties = new Map<string, RuntimeBinding>();
+  for (
+    const property of Array.isArray(value.properties) ? value.properties : []
+  ) {
+    if (!isNode(property)) continue;
+    if (property.type === "SpreadElement") {
+      const spread = runtimeBindingForExpression(
+        property.argument,
+        imports,
+        scopes,
+      );
+      for (const candidate of flattenRuntimeBindings(spread)) {
+        if (candidate.kind !== "namespace-object") continue;
+        for (const [name, binding] of candidate.properties) {
+          properties.set(name, binding);
+        }
+      }
+      continue;
+    }
+    const name = staticObjectPropertyName(property);
+    if (!name) continue;
+    if (property.type !== "ObjectProperty") {
+      properties.delete(name);
+      continue;
+    }
+    const binding = runtimeBindingForExpression(
+      property.value,
+      imports,
+      scopes,
+    );
+    if (binding) properties.set(name, binding);
+    else properties.delete(name);
+  }
+  return properties.size > 0
+    ? { kind: "namespace-object", properties }
     : undefined;
 }
 
@@ -3813,13 +4019,19 @@ function isServerSpecifier(source: string): boolean {
     source === "tls";
 }
 
+function isDnsSpecifier(source: string): boolean {
+  return source === "node:dns" || source === "node:dns/promises" ||
+    source === "dns" || source === "dns/promises";
+}
+
 function isCreateRequireSpecifier(source: string): boolean {
   return source === "node:module" || source === "module";
 }
 
 function isRuntimeEffectModule(source: string): boolean {
   return isFilesystemSpecifier(source) || isProcessSpecifier(source) ||
-    isServerSpecifier(source) || isPlaywrightSpecifier(source) ||
+    isServerSpecifier(source) || isDnsSpecifier(source) ||
+    isPlaywrightSpecifier(source) ||
     isTestingRuntimeSpecifier(source);
 }
 
@@ -3857,6 +4069,9 @@ function effectForModuleMethod(
   if (isProcessSpecifier(source) && method === "argv") return "process";
   if (isServerSpecifier(source) && SERVER_METHODS.has(method)) return "server";
   if (isServerSpecifier(source) && NETWORK_METHODS.has(method)) {
+    return "network";
+  }
+  if (isDnsSpecifier(source) && DNS_NETWORK_METHODS.has(method)) {
     return "network";
   }
   if (isPlaywrightSpecifier(source) && BROWSER_METHODS.has(method)) {
@@ -3932,6 +4147,14 @@ function memberProperty(node: Node): string | undefined {
       : undefined;
   }
   return property.type === "Identifier" ? property.name as string : undefined;
+}
+
+function staticObjectPropertyName(property: Node): string | undefined {
+  if (!isNode(property.key)) return undefined;
+  if (property.computed === true) return literalValue(property.key);
+  return property.key.type === "Identifier"
+    ? property.key.name as string
+    : literalValue(property.key);
 }
 
 function memberObjectName(node: Node): string | undefined {
@@ -4037,7 +4260,9 @@ function uniqueMarkers(
 ): SemanticMarker[] {
   const seen = new Set<string>();
   return markers.filter((marker) => {
-    const key = `${marker.effect}\0${marker.line}\0${marker.symbol}`;
+    const key = `${marker.effect}\0${marker.line}\0${marker.symbol}\0${
+      marker.filesystemReadLocality ?? ""
+    }`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

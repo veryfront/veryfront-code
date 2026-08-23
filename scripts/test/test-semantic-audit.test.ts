@@ -140,6 +140,54 @@ describe("semantic unit boundary candidate discovery", () => {
     }
   });
 
+  it("grants hermetic reads only when every operand is proven repository-local", async () => {
+    const root = await Deno.makeTempDir();
+    try {
+      await writeFixture(
+        root,
+        "src/repository-read.test.ts",
+        `
+await Deno.readTextFile("fixtures/data.json");
+await Deno.readTextFile(new URL("./fixture.json", import.meta.url));
+`,
+      );
+      await writeFixture(
+        root,
+        "src/external-read.test.ts",
+        `await Deno.readTextFile("/etc/hosts");`,
+      );
+      await writeFixture(
+        root,
+        "src/unresolved-read.test.ts",
+        `async function read(path: string) { await Deno.readTextFile(path); }`,
+      );
+
+      const dispositions: SemanticDispositionEntry[] = [
+        "src/repository-read.test.ts",
+        "src/external-read.test.ts",
+        "src/unresolved-read.test.ts",
+      ].map((path) => ({
+        path,
+        effects: ["filesystem-read"],
+        disposition: "hermetic-unit",
+        owner: "test-architecture",
+        rationale: "Reads a checked-in repository fixture.",
+      }));
+      const result = await collectSemanticAuditCandidates({
+        root,
+        paths: dispositions.map((entry) => entry.path),
+        dispositions,
+      });
+
+      assertEquals(result.errors, [
+        "hermetic-unit filesystem read is not proven repository-local: src/external-read.test.ts:1 Deno.readTextFile",
+        "hermetic-unit filesystem read is not proven repository-local: src/unresolved-read.test.ts:1 Deno.readTextFile",
+      ]);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("fails closed on invalid TypeScript", async () => {
     const root = await Deno.makeTempDir();
     try {
@@ -899,6 +947,65 @@ function local(
         ["network", "mockFetchHelpers.restoreMockFetch"],
         ["network", "relativeWithMockFetch"],
         ["network", "loadedMockFetch.withMockFetch"],
+      ],
+    );
+  });
+
+  it("preserves callable effects through statically known object literals", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { readFile } from "node:fs/promises";
+const ops = { request: fetch, read: readFile };
+await ops.request("https://example.com");
+await ops.read("fixtures/data.json");
+const nested = { io: { request: fetch } };
+await nested.io.request("https://example.com");
+const spread = { ...ops };
+await spread.request("https://example.com");
+function local(fetch: () => Promise<Response>) {
+  const helpers = { request: fetch };
+  return helpers.request();
+}
+`,
+        "src/object-literal-effects.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "ops.request"],
+        ["filesystem-read", "ops.read"],
+        ["network", "nested.io.request"],
+        ["network", "spread.request"],
+      ],
+    );
+  });
+
+  it("classifies Node DNS modules as network effects", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { lookup, resolve4 as resolveIpv4 } from "node:dns";
+import dns from "node:dns/promises";
+import * as legacyDns from "dns";
+const loadedDns = await import("dns/promises");
+const lookupAlias = lookup;
+lookupAlias("example.com", () => {});
+resolveIpv4("example.com", () => {});
+await dns.resolve("example.com");
+legacyDns.reverse("127.0.0.1", () => {});
+await loadedDns.resolveTxt("example.com");
+function local(lookup: () => void, dns: { resolve(): void }) {
+  lookup();
+  dns.resolve();
+}
+`,
+        "src/node-dns-effects.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "lookupAlias"],
+        ["network", "resolveIpv4"],
+        ["network", "dns.resolve"],
+        ["network", "legacyDns.reverse"],
+        ["network", "loadedDns.resolveTxt"],
       ],
     );
   });

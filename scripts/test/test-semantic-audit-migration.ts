@@ -8,6 +8,12 @@ type EntryMetadata = SemanticDispositionEntry extends infer Entry
   : never
   : never;
 
+interface UnresolvedReadRelocation {
+  readonly disposition: "unresolved-read-relocation";
+  readonly owner: string;
+  readonly removalPr: string;
+}
+
 export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
   readonly SemanticDispositionEntry[] = Object.freeze([
     entry("cli/app/operations/project-creation.test.ts", [
@@ -437,12 +443,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/commands/init/init.integration.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/commands/init/interactive-wizard.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "cli",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "cli/commands/init/interactive-wizard.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("cli", "PR 4a"),
+    ),
     entry("cli/commands/install/detect.test.ts", ["filesystem-write"], {
       "disposition": "integration-relocation",
       "owner": "cli",
@@ -845,12 +850,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/mcp/tools/scaffold-tools.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/node-engine-precondition.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "cli",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "cli/node-engine-precondition.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("cli", "PR 4a"),
+    ),
     entry("cli/router.test.ts", ["filesystem-write", "process"], {
       "disposition": "integration-relocation",
       "owner": "cli",
@@ -894,12 +898,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/shared/config.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/shared/constants.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "cli",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "cli/shared/constants.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("cli", "PR 4a"),
+    ),
     entry("cli/shared/deployment-provenance.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -1302,12 +1305,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("extensions/ext-node-websocket-ws/src/package-boundary.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "extensions-templates",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("extensions-templates", "PR 4e")),
     entry("extensions/ext-observability-opentelemetry/src/index.test.ts", [
       "process",
     ], {
@@ -1521,18 +1519,16 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/scripts/build/prepare-framework-sources.test.ts",
       "removalPr": "PR 4f",
     }),
-    entry("scripts/build/report-artifact-sizes.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "scripts-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
-    entry("scripts/build/runtime-support.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "scripts-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "scripts/build/report-artifact-sizes.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("scripts-tooling", "PR 4f"),
+    ),
+    entry(
+      "scripts/build/runtime-support.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("scripts-tooling", "PR 4f"),
+    ),
     entry("scripts/build/sentry-runtime-packages.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -1547,12 +1543,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/scripts/build/sentry-runtime-packages.test.ts",
       "removalPr": "PR 4f",
     }),
-    entry("scripts/ci/automated-review-gate.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "scripts-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "scripts/ci/automated-review-gate.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("scripts-tooling", "PR 4f"),
+    ),
     entry("scripts/ci/prepare-rc-build.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -1663,12 +1658,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/scripts/lint/extension-manifest-reader.test.ts",
       "removalPr": "PR 4f",
     }),
-    entry("scripts/lint/lint-config.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "scripts-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "scripts/lint/lint-config.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("scripts-tooling", "PR 4f"),
+    ),
     entry("scripts/postinstall-lib.test.js", [
       "filesystem-read",
       "filesystem-write",
@@ -1695,21 +1689,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("scripts/security/secret-scanning-config.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "scripts-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("scripts-tooling", "PR 4f")),
     entry(
       "scripts/storybook/storybook-workbench.test.ts",
       ["filesystem-read"],
-      {
-        "disposition": "hermetic-unit",
-        "owner": "scripts-tooling",
-        "rationale":
-          "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-      },
+      unresolvedReadRelocation("scripts-tooling", "PR 4f"),
     ),
     entry("scripts/test/coverage-ci.test.ts", ["process"], {
       "disposition": "integration-relocation",
@@ -2056,12 +2040,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/agent/hosted/project-remote-tool-source.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "agent-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("agent-runtime", "PR 4g")),
     entry("src/agent/hosted/project-steering-adapter.test.ts", [
       "filesystem-write",
     ], {
@@ -2784,12 +2763,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
-    entry("src/chat/client-import-boundary.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/chat/client-import-boundary.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
     entry("src/chat/upload-handler.test.ts", ["filesystem-write"], {
       "disposition": "integration-relocation",
       "owner": "core-runtime",
@@ -2844,12 +2822,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/config/cicd-coverage-workflow.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "config-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/config/cicd-coverage-workflow.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("config-tooling", "PR 4i"),
+    ),
     entry("src/config/cicd-stable-release.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -2917,12 +2894,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4i",
     }),
-    entry("src/config/tsconfig-paths-parity.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "config-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/config/tsconfig-paths-parity.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("config-tooling", "PR 4i"),
+    ),
     entry("src/data/server-data-fetcher.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -3164,12 +3140,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4e",
     }),
-    entry("src/extensions/builtin-extensions.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/extensions/builtin-extensions.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
     entry("src/extensions/contract-registry-internal.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "extensions-templates",
@@ -3418,18 +3393,16 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/html/utils.test.ts",
       "removalPr": "PR 4h",
     }),
-    entry("src/index.client.boundary.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
-    entry("src/integrations/_data.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "data-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/index.client.boundary.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
+    entry(
+      "src/integrations/_data.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("data-runtime", "PR 4j"),
+    ),
     entry("src/integrations/feature-flags.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "data-runtime",
@@ -3819,12 +3792,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject a fetch implementation or use a scoped per-test transport fake instead of assigning globalThis.fetch.",
       "removalPr": "PR 4n",
     }),
-    entry("src/oauth/providers/atlassian.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/oauth/providers/atlassian.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
     entry("src/oauth/providers/base.test.ts", ["network"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -3834,24 +3806,21 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4n",
     }),
-    entry("src/oauth/providers/common.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
-    entry("src/oauth/providers/google.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
-    entry("src/oauth/providers/microsoft.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/oauth/providers/common.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
+    entry(
+      "src/oauth/providers/google.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
+    entry(
+      "src/oauth/providers/microsoft.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
     entry("src/oauth/providers/protocols.test.ts", ["network"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -3894,12 +3863,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry(
       "src/observability/production-log-noise.test.ts",
       ["filesystem-read"],
-      {
-        "disposition": "hermetic-unit",
-        "owner": "config-tooling",
-        "rationale":
-          "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-      },
+      unresolvedReadRelocation("config-tooling", "PR 4i"),
     ),
     entry("src/observability/request-profiler.test.ts", ["process"], {
       "disposition": "replaceable-fake",
@@ -3957,12 +3921,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/platform/adapters/adapter-readme-guidance.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "runtime-platform",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("runtime-platform", "PR 4b")),
     entry("src/platform/adapters/bounded-file-read.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "runtime-platform",
@@ -4056,12 +4015,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/platform/adapters/fs/veryfront/platform-boundary.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "runtime-platform",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("runtime-platform", "PR 4b")),
     entry("src/platform/adapters/fs/veryfront/proxy-manager.test.ts", [
       "process",
     ], {
@@ -4360,12 +4314,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/platform/compat/cross-runtime.test.ts",
       "removalPr": "PR 4b",
     }),
-    entry("src/platform/compat/dynamic-import.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "runtime-platform",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/platform/compat/dynamic-import.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("runtime-platform", "PR 4b"),
+    ),
     entry("src/platform/compat/error-introspection.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "runtime-platform",
@@ -5109,12 +5062,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4n",
       },
     ),
-    entry("src/react/components/chat/coverage.test.tsx", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/react/components/chat/coverage.test.tsx",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
     entry("src/react/components/chat/csp-nonce.test.tsx", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -5138,12 +5090,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/react/components/chat/missing-renderer-warning.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("core-runtime", "PR 4n")),
     entry("src/react/components/clipboard.test.tsx", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -5288,12 +5235,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/react/components/ui/boundary.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/react/components/ui/boundary.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
     entry("src/react/components/ui/code-block.test.tsx", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -5332,12 +5278,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/react/components/ui/coverage.test.tsx", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/react/components/ui/coverage.test.tsx",
+      ["filesystem-read"],
+      unresolvedReadRelocation("core-runtime", "PR 4n"),
+    ),
     entry("src/react/components/ui/floating.test.tsx", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -5763,12 +5708,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     ),
     entry("src/rendering/rsc/server-renderer/component-detector.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "build-rendering",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("build-rendering", "PR 4h")),
     entry("src/rendering/script-page-handling.test.ts", ["filesystem-write"], {
       "disposition": "integration-relocation",
       "owner": "build-rendering",
@@ -6039,12 +5979,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/security/http/outbound-fetch.test.ts",
       "removalPr": "PR 4d",
     }),
-    entry("src/security/index.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "security-filesystem",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/security/index.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("security-filesystem", "PR 4d"),
+    ),
     entry("src/security/path-validation/canonical.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -6069,12 +6008,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/security/path-validation/index.test.ts",
       "removalPr": "PR 4d",
     }),
-    entry("src/security/repository-hardening.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "security-filesystem",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/security/repository-hardening.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("security-filesystem", "PR 4d"),
+    ),
     entry("src/security/sandbox/isolation-posture.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "security-filesystem",
@@ -6233,12 +6171,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/server/dev-server/cache-initialization.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "server-routes",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("server-routes", "PR 4c")),
     entry("src/server/dev-server/handler-only.integration.test.ts", [
       "filesystem-write",
     ], {
@@ -6315,12 +6248,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/server/handlers/execution-surface-policy.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "server-routes",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("server-routes", "PR 4c")),
     entry("src/server/handlers/monitoring/client-log.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "server-routes",
@@ -7459,12 +7387,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/transforms/pipeline/__fixtures__/fixture-runner.test.ts", [
       "filesystem-read",
-    ], {
-      "disposition": "hermetic-unit",
-      "owner": "core-runtime",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    ], unresolvedReadRelocation("core-runtime", "PR 4n")),
     entry("src/transforms/pipeline/cache-identity.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -7549,12 +7472,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/utils/cache-dir.test.ts",
       "removalPr": "PR 4i",
     }),
-    entry("src/utils/constants/cdn.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "config-tooling",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "src/utils/constants/cdn.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("config-tooling", "PR 4i"),
+    ),
     entry("src/utils/css-candidate-admission.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "config-tooling",
@@ -7833,12 +7755,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4k",
     }),
-    entry("templates/index.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "extensions-templates",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "templates/index.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("extensions-templates", "PR 4e"),
+    ),
     entry("templates/integration-loader.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "extensions-templates",
@@ -7848,18 +7769,16 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4e",
     }),
-    entry("templates/manifest-artifact.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "extensions-templates",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
-    entry("templates/scaffold-export.test.ts", ["filesystem-read"], {
-      "disposition": "hermetic-unit",
-      "owner": "extensions-templates",
-      "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
-    }),
+    entry(
+      "templates/manifest-artifact.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("extensions-templates", "PR 4e"),
+    ),
+    entry(
+      "templates/scaffold-export.test.ts",
+      ["filesystem-read"],
+      unresolvedReadRelocation("extensions-templates", "PR 4e"),
+    ),
     entry("templates/scaffold-parity.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -7890,7 +7809,30 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
 function entry(
   path: string,
   effects: readonly SemanticEffect[],
-  metadata: EntryMetadata,
+  metadata: EntryMetadata | UnresolvedReadRelocation,
 ): SemanticDispositionEntry {
+  if (metadata.disposition === "unresolved-read-relocation") {
+    return {
+      path,
+      effects,
+      disposition: "integration-relocation",
+      owner: metadata.owner,
+      rationale:
+        "Reads through an operand the semantic audit cannot prove repository-local; relocate until the dependency is explicit.",
+      destination: `tests/integration/semantic-unit-boundary/${path}`,
+      removalPr: metadata.removalPr,
+    };
+  }
   return { path, effects, ...metadata };
+}
+
+function unresolvedReadRelocation(
+  owner: string,
+  removalPr: string,
+): UnresolvedReadRelocation {
+  return {
+    disposition: "unresolved-read-relocation",
+    owner,
+    removalPr,
+  };
 }
