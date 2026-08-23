@@ -303,6 +303,18 @@ const GLOBAL_BULK_MUTATORS = new Set([
   "Reflect.setPrototypeOf",
 ]);
 
+const ARRAY_SHAPE_MUTATORS = new Set([
+  "copyWithin",
+  "fill",
+  "pop",
+  "push",
+  "reverse",
+  "shift",
+  "sort",
+  "splice",
+  "unshift",
+]);
+
 const PROCESS_ENV_METHODS = new Set([
   "delete",
   "get",
@@ -760,6 +772,7 @@ export function collectSemanticMarkers(
       nextScopes,
       allowAssignmentClearing,
     );
+    bindRuntimeCallMutation(node, bindings, nextScopes);
 
     for (const key of Object.keys(node)) {
       if (
@@ -3980,6 +3993,189 @@ function bindRuntimeAssignment(
   }
 }
 
+function bindRuntimeCallMutation(
+  node: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): void {
+  if (!isCallLikeExpression(node) || !isNode(node.callee)) return;
+  const callee = unwrapExpression(node.callee);
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  if (
+    callee &&
+    (callee.type === "MemberExpression" ||
+      callee.type === "OptionalMemberExpression") &&
+    ARRAY_SHAPE_MUTATORS.has(memberProperty(callee) ?? "")
+  ) {
+    bindRuntimeArrayMutationTarget(
+      callee.object,
+      args,
+      imports,
+      scopes,
+    );
+  }
+  for (
+    const invocation of mutationMethodInvocations(
+      node.callee,
+      args,
+      imports,
+      scopes,
+    )
+  ) {
+    bindRuntimeArrayMutationTarget(
+      invocation.args[0],
+      invocation.args.slice(1),
+      imports,
+      scopes,
+    );
+  }
+}
+
+function bindRuntimeArrayMutationTarget(
+  targetExpression: unknown,
+  valueExpressions: readonly unknown[],
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): void {
+  const target = unwrapExpression(targetExpression);
+  if (!target) return;
+  const mutationValue = possibleMutationValueBinding(
+    valueExpressions,
+    imports,
+    scopes,
+  );
+  const mutations: Array<{
+    readonly target: RuntimeAliasTarget;
+    readonly propertyPath: readonly string[];
+  }> = runtimeNamespaceAliasTargetsForExpression(
+    target,
+    imports,
+    scopes,
+  ).map((alias) => ({ target: alias, propertyPath: [] }));
+  const chain = memberChain(target);
+  if (chain && chain.length > 0) {
+    const classAlias = classStaticAliasResolution(chain[0], scopes);
+    const aliases = classAlias?.receiverScope
+      ? [{ scope: classAlias.receiverScope, root: THIS_RUNTIME_ROOT }]
+      : runtimeAliasTargetsForName(chain[0], scopes);
+    const direct = assignmentTargetScope(chain[0], scopes);
+    for (
+      const root of uniqueRuntimeAliasTargets([
+        ...aliases,
+        ...(classAlias?.receiverScope || !direct
+          ? []
+          : [{ scope: direct.scope, root: chain[0] }]),
+      ])
+    ) {
+      mutations.push({ target: root, propertyPath: chain.slice(1) });
+    }
+  }
+  const seen = new Map<Scope, Set<string>>();
+  for (const mutation of mutations) {
+    const key = `${mutation.target.root}\u0000${
+      mutation.propertyPath.join("\u0000")
+    }`;
+    const keys = seen.get(mutation.target.scope) ?? new Set<string>();
+    if (keys.has(key)) continue;
+    keys.add(key);
+    seen.set(mutation.target.scope, keys);
+    const { scope, root } = mutation.target;
+    const existing = scope.runtimeBindings.get(root);
+    const updated = mutateRuntimeArrayAtPath(
+      existing,
+      mutation.propertyPath,
+      mutationValue,
+    );
+    if (updated !== existing && updated) {
+      scope.runtimeBindings.set(root, updated);
+      if (
+        root !== THIS_RUNTIME_ROOT &&
+        scope.classRuntimeBindings?.name === root
+      ) {
+        syncClassStaticRuntimeBinding(scope);
+      }
+    }
+  }
+}
+
+function possibleMutationValueBinding(
+  expressions: readonly unknown[],
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimePropertyResolution {
+  const bindings: RuntimeBinding[] = [];
+  const aliasTargets: RuntimeAliasTarget[] = [];
+  for (const expression of expressions) {
+    const value = unwrapMutationValueExpression(expression);
+    const binding = runtimeBindingForExpression(value, imports, scopes);
+    if (binding) {
+      bindings.push(binding);
+      const nested = runtimeUnknownPropertyResolution(binding);
+      if (nested.binding) bindings.push(nested.binding);
+      aliasTargets.push(...nested.aliasTargets ?? []);
+    }
+    aliasTargets.push(
+      ...runtimeNamespaceAliasTargetsForExpression(value, imports, scopes),
+    );
+  }
+  return {
+    binding: unionRuntimeBindings(bindings),
+    aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
+    defaultMayRun: true,
+  };
+}
+
+function unwrapMutationValueExpression(expression: unknown): unknown {
+  const value = unwrapExpression(expression);
+  return value?.type === "SpreadElement" ? value.argument : expression;
+}
+
+function mutateRuntimeArrayAtPath(
+  existing: RuntimeBinding | undefined,
+  propertyPath: readonly string[],
+  mutationValue: RuntimePropertyResolution,
+): RuntimeBinding | undefined {
+  if (propertyPath.length === 0) {
+    let changed = false;
+    const candidates = flattenRuntimeBindings(existing).map((candidate) => {
+      if (
+        candidate.kind !== "namespace-object" || candidate.shape !== "array"
+      ) {
+        return candidate;
+      }
+      changed = true;
+      const current = runtimeUnknownPropertyResolution(candidate);
+      return appendRuntimePropertyOperation(candidate, {
+        kind: "define-unknown",
+        binding: unionRuntimeBindings(
+          [current.binding, mutationValue.binding].filter(
+            (binding): binding is RuntimeBinding => binding !== undefined,
+          ),
+        ),
+        aliasTargets: uniqueRuntimeAliasTargets([
+          ...current.aliasTargets ?? [],
+          ...mutationValue.aliasTargets ?? [],
+        ]),
+        defaultMayRun: true,
+        minimumArrayIndex: 0,
+      });
+    });
+    return changed ? unionRuntimeBindings(candidates) : existing;
+  }
+  const [property, ...rest] = propertyPath;
+  const nested = existing
+    ? runtimePropertyBinding(existing, property)
+    : undefined;
+  const updated = mutateRuntimeArrayAtPath(nested, rest, mutationValue);
+  return updated === nested || !updated ? existing : assignRuntimeProperty(
+    existing,
+    [property],
+    updated,
+    false,
+    false,
+  );
+}
+
 function bindRuntimeMemberAssignment(
   member: Node,
   binding: RuntimeBinding | undefined,
@@ -4539,6 +4735,7 @@ function appendRuntimePropertyOperation(
     return {
       kind: "namespace-object",
       shape: existing.shape,
+      exactArrayLength: updatedRuntimeArrayLength(existing, operation),
       properties: existing.properties,
       propertyOperations: [...existing.propertyOperations, operation],
     };
@@ -4546,11 +4743,32 @@ function appendRuntimePropertyOperation(
   return {
     kind: "namespace-object",
     shape: existing?.kind === "namespace-object" ? existing.shape : undefined,
+    exactArrayLength: existing?.kind === "namespace-object"
+      ? updatedRuntimeArrayLength(existing, operation)
+      : undefined,
     properties: new Map(),
     propertyOperations: existing
       ? [{ kind: "spread", binding: existing }, operation]
       : [operation],
   };
+}
+
+function updatedRuntimeArrayLength(
+  existing: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
+  operation: NamespacePropertyOperation,
+): number | undefined {
+  if (
+    existing.shape !== "array" || existing.exactArrayLength === undefined ||
+    operation.kind !== "define" || operation.name === "length"
+  ) {
+    return undefined;
+  }
+  const index = runtimeArrayIndex(operation.name);
+  if (index === undefined) return existing.exactArrayLength;
+  if (operation.preservesPrevious && index >= existing.exactArrayLength) {
+    return undefined;
+  }
+  return Math.max(existing.exactArrayLength, index + 1);
 }
 
 function bindRuntimeAssignmentPattern(
@@ -5719,7 +5937,13 @@ function staticRuntimeArrayRestBinding(
   }> = [];
   for (const property of namespacePropertyNames(binding)) {
     const index = runtimeArrayIndex(property);
-    if (index === undefined) return undefined;
+    if (
+      index === undefined ||
+      binding.exactArrayLength !== undefined &&
+        index >= binding.exactArrayLength
+    ) {
+      continue;
+    }
     indexedProperties.push({ property, index });
   }
   const properties = new Map<string, RuntimeBinding>();
@@ -5754,7 +5978,8 @@ function staticRuntimeArrayRestBinding(
 
 function runtimeArrayIndex(property: string): number | undefined {
   const index = Number(property);
-  return Number.isSafeInteger(index) && index >= 0 && String(index) === property
+  return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 &&
+      String(index) === property
     ? index
     : undefined;
 }

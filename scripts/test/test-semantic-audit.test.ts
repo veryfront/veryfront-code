@@ -1698,6 +1698,65 @@ knownWrite("known-write.txt", "x");
     );
   });
 
+  it("widens exact arrays after mutator calls", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const pushed = [() => undefined];
+pushed.push(Deno.writeTextFile);
+const [, pushedRun] = [...pushed, () => undefined];
+pushedRun("pushed.txt", "x");
+
+const spliced = [() => undefined];
+spliced.splice(1, 0, Deno.writeTextFile);
+const [, splicedRun] = [...spliced, () => undefined];
+splicedRun("spliced.txt", "x");
+
+const assigned = [() => undefined];
+Object.assign(assigned, { 1: Deno.writeTextFile });
+const [, assignedRun] = [...assigned, () => undefined];
+assignedRun("assigned.txt", "x");
+
+const defined = [() => undefined];
+Object.defineProperty(defined, "1", { value: Deno.writeTextFile });
+const [, definedRun] = [...defined, () => undefined];
+definedRun("defined.txt", "x");
+
+const reflected = [() => undefined];
+Reflect.set(reflected, "1", Deno.writeTextFile);
+const [, reflectedRun] = [...reflected, () => undefined];
+reflectedRun("reflected.txt", "x");
+`,
+        "src/runtime-array-mutators.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "pushedRun"],
+        ["filesystem-write", "splicedRun"],
+        ["filesystem-write", "assignedRun"],
+        ["filesystem-write", "definedRun"],
+        ["filesystem-write", "reflectedRun"],
+      ],
+    );
+  });
+
+  it("uses JavaScript array-index bounds for sparse writes", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const values = [() => undefined];
+values[4294967295] = Deno.writeTextFile;
+const copy = [...values];
+copy[0]();
+
+const [, ...rest] = values;
+rest[0]();
+`,
+        "src/non-array-index-property.test.ts",
+      ),
+      [],
+    );
+  });
+
   it("classifies optional runtime calls", () => {
     assertEquals(
       collectSemanticMarkers(
