@@ -118,7 +118,7 @@ For a local or self-hosted project, create a source with
 `createSalesforceServiceAccountToolSource` from `veryfront/integrations`, then
 materialize it with `loadRemoteToolsFromSource` from `veryfront/tool` and pass
 the result through each agent's `tools` field. The source reads the same three
-variables from the host environment and calls Salesforce directly. See
+variables from the active project environment and calls Salesforce directly. See
 [Self-host Veryfront Code](../self-hosting.md#run-salesforce-integration-tools-locally)
 for a complete agent example.
 

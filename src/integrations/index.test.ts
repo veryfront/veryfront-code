@@ -3,6 +3,7 @@ import type { AgentConfig } from "#veryfront/agent";
 import { VeryfrontError } from "#veryfront/errors";
 import {
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
@@ -127,6 +128,7 @@ describe("integrations/index", () => {
 
     for (const source of sources) {
       const error = await assertRejects(() => source.listTools(), VeryfrontError);
+      assertInstanceOf(error, VeryfrontError);
       assertEquals(error.slug, "local-integration-config-invalid");
     }
   });

@@ -22,7 +22,7 @@ import {
 import type { IntegrationToolMeta } from "./schema.ts";
 import { parseIntegrationToolIdentity } from "./source-policy.ts";
 
-/** Host environment variables required by the local Salesforce service-account source. */
+/** Project environment variables required by the local Salesforce service-account source. */
 export const SALESFORCE_SERVICE_ACCOUNT_ENV_VARS = [
   "SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID",
   "SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET",
