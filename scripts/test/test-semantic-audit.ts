@@ -5163,7 +5163,7 @@ function mutationCallResultRuntimeBinding(
             enumerable,
           },
         );
-        const getterBinding = unionRuntimeBindings([
+        const getterBinding = unionRuntimeBindingsPreservingPartial([
           ...accessors.getterExpressions.flatMap((expression) =>
             runtimeBindingForExpression(expression, imports, scopes) ?? []
           ),

@@ -2387,6 +2387,10 @@ Object.defineProperty(getterBox, "source", {
   get: () => source,
 });
 Object.assign({}, getterBox.source).run();
+const returnedGetterBox = Object.defineProperty({}, "source", {
+  get: () => source,
+});
+Object.assign({}, returnedGetterBox.source).run();
 const literalGetterBox = {
   get source() {
     return source;

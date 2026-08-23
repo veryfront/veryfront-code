@@ -62,6 +62,23 @@ export async function findAutomatedReview(
       return undefined;
     }
   }
+  const timedEvents = Map.groupBy(
+    events.filter((event) => event.time !== undefined),
+    (event) => event.time,
+  );
+  for (const tiedEvents of timedEvents.values()) {
+    if (new Set(tiedEvents.map((event) => event.kind)).size < 2) continue;
+    const targetsHead = await Promise.all(
+      tiedEvents.map((event) =>
+        untimestampedAutomatedEventTargetsHead(
+          event,
+          headSha,
+          resolveCommit,
+        )
+      ),
+    );
+    if (targetsHead.filter(Boolean).length > 1) return undefined;
+  }
   events.sort((left, right) => {
     if (left.time === undefined) {
       return right.time === undefined ? right.order - left.order : 1;
