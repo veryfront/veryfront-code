@@ -2605,27 +2605,49 @@ picked();
   });
 
   it("preserves partial bindings through array rest destructuring", () => {
-    const effects = collectSemanticMarkers(
-      `
+    const cases = [
+      {
+        name: "declaration",
+        source: `
 declare const maybe: boolean;
 declare function loadSource(): object;
 const source = maybe ? [{ run: Deno.cwd }] : loadSource();
 const [...rest] = source;
 Object.assign({}, rest[0]).run();
 `,
-      "src/runtime-partial-array-rest-destructuring.test.ts",
-    ).map((marker) => marker.effect);
-    assertEquals(effects, [
-      "shared-cwd",
-      "browser",
-      "filesystem-read",
-      "filesystem-watch",
-      "filesystem-write",
-      "network",
-      "process",
-      "server",
-      "shared-cwd",
-    ]);
+      },
+      {
+        name: "assignment",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? [{ run: Deno.cwd }] : loadSource();
+let rest;
+[...rest] = source;
+Object.assign({}, rest[0]).run();
+`,
+      },
+    ] as const;
+    for (const testCase of cases) {
+      const effects = [
+        ...new Set(
+          collectSemanticMarkers(
+            testCase.source,
+            `src/runtime-partial-array-rest-destructuring-${testCase.name}.test.ts`,
+          ).map((marker) => marker.effect),
+        ),
+      ].sort();
+      assertEquals(effects, [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ], testCase.name);
+    }
   });
 
   it("preserves partial bindings through destructuring defaults", () => {
