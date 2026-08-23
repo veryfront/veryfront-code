@@ -90,6 +90,25 @@ describe("stripCommentsAndStrings", () => {
     assertEquals(stripped.includes("keep();"), true);
   });
 
+  it("strips pathological escape runs in linear time", () => {
+    // The ambiguous `(?:\\.|[^`])*` form backtracked exponentially on exactly
+    // this shape: an opening quote followed by thousands of escapes and no
+    // closing quote. The unrolled patterns must stay linear. The elapsed guard
+    // is deliberately coarse — the linear scan takes microseconds, while the
+    // old pattern would effectively never return.
+    const escapes = "\\a".repeat(5000);
+    const started = Date.now();
+
+    const unterminated = stripCommentsAndStrings(`\`${escapes}`);
+    const terminated = stripCommentsAndStrings(`\`${escapes}\` after`);
+    const quoted = stripCommentsAndStrings(`"${escapes}`);
+
+    assertEquals(Date.now() - started < 2000, true, "stripping must be linear");
+    assertEquals(unterminated, `\`${escapes}`, "no closing quote, no match");
+    assertEquals(terminated, "`` after");
+    assertEquals(quoted, `"${escapes}`);
+  });
+
   it("preserves line numbers across multi-line comments and templates", () => {
     const source = [
       "/**",

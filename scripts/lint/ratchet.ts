@@ -254,9 +254,17 @@ export function stripCommentsAndStrings(text: string): string {
   const keepNewlines = (match: string) => match.replace(/[^\n]/g, "");
   let out = text.replace(/\/\*[\s\S]*?\*\//g, keepNewlines); // block comments
   out = out.replace(/(^|[^:])\/\/[^\n]*/g, "$1"); // line comments (keep http:// etc.)
-  out = out.replace(/`(?:\\.|[^`])*`/gs, (m) => `\`${keepNewlines(m)}\``); // templates
-  out = out.replace(/'(?:\\.|[^'\n])*'/g, "''"); // single-quoted
-  out = out.replace(/"(?:\\.|[^"\n])*"/g, '""'); // double-quoted
+  // The literal patterns are unrolled — a plain run, then zero or more groups
+  // of exactly one escape followed by another plain run — so no character can
+  // match in two ways. The naive `(?:\\.|[^`])*` alternation is ambiguous (a
+  // backslash fits both branches) and backtracks exponentially on an
+  // unterminated literal full of escapes.
+  out = out.replace(
+    /`[^`\\]*(?:\\[\s\S][^`\\]*)*`/g,
+    (m) => `\`${keepNewlines(m)}\``,
+  ); // templates
+  out = out.replace(/'[^'\\\n]*(?:\\[^\n][^'\\\n]*)*'/g, "''"); // single-quoted
+  out = out.replace(/"[^"\\\n]*(?:\\[^\n][^"\\\n]*)*"/g, '""'); // double-quoted
   return out;
 }
 
