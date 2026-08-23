@@ -108,6 +108,22 @@ describe("resource registry", () => {
       assertEquals(resourceRegistry.findByPattern("urn:ietf_:xml"), punctuated);
       assertEquals(resourceRegistry.findByPattern("urn:ietf_anything"), undefined);
 
+      const slashDelimitedUrn = resource({
+        pattern: "urn:example:path/:literal",
+        description: "Slash-delimited URN",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(slashDelimitedUrn.id, slashDelimitedUrn);
+      assertEquals(
+        resourceRegistry.findByPattern("urn:example:path/:literal"),
+        slashDelimitedUrn,
+      );
+      assertEquals(
+        resourceRegistry.findByPattern("urn:example:path/anything"),
+        undefined,
+      );
+
       const custom = resource({
         pattern: "custom:namespace/path:literal",
         description: "Opaque custom namespace",

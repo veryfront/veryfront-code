@@ -111,7 +111,9 @@ function transformResourcePattern(
     const previousCode = index === 0 ? -1 : pattern.charCodeAt(index - 1);
     const legacyParameterContext = index === 0 ||
       (!isAsciiLetter(previousCode) && !isAsciiDigit(previousCode));
-    const parameterContext = schemeDelimiter < 0 || inQueryOrFragment
+    const parameterContext = urnScheme && !inQueryOrFragment
+      ? false
+      : schemeDelimiter < 0 || inQueryOrFragment
       ? legacyParameterContext
       : inFirstSchemeComponent
       ? !urnScheme && legacyParameterContext

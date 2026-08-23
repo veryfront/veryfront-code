@@ -1133,6 +1133,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
+      registerResource("test:slash-delimited-urn", {
+        id: "test:slash-delimited-urn",
+        pattern: "urn:example:path/:literal",
+        description: "Slash-delimited URN",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
       registerResource("test:custom-opaque", {
         id: "test:custom-opaque",
         pattern: "custom:namespace/path:literal",
@@ -1162,6 +1169,10 @@ describe("mcp/server", () => {
         templates.some((entry) => entry.name === "test:punctuated-opaque"),
         false,
       );
+      assertEquals(
+        templates.some((entry) => entry.name === "test:slash-delimited-urn"),
+        false,
+      );
       assertEquals(templates.some((entry) => entry.name === "test:custom-opaque"), false);
       assertEquals(
         templates.some((entry) => entry.name === "test:punctuated-path-opaque"),
@@ -1179,6 +1190,10 @@ describe("mcp/server", () => {
       assertEquals(resources.some((entry) => entry.name === "test:isbn"), true);
       assertEquals(resources.some((entry) => entry.name === "test:ietf"), true);
       assertEquals(resources.some((entry) => entry.name === "test:punctuated-opaque"), true);
+      assertEquals(
+        resources.some((entry) => entry.name === "test:slash-delimited-urn"),
+        true,
+      );
       assertEquals(resources.some((entry) => entry.name === "test:custom-opaque"), true);
       assertEquals(
         resources.some((entry) => entry.name === "test:punctuated-path-opaque"),
