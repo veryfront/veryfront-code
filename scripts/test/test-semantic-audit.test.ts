@@ -2451,6 +2451,42 @@ Object.assign({}, box.source).run();
     assertEquals(effects.includes("filesystem-write"), true);
   });
 
+  it("preserves partial provenance returned by descriptor getters", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const box = {};
+Object.defineProperty(box, "source", { get: () => source });
+Object.assign({}, box.source).run();
+`,
+      "src/runtime-descriptor-getter-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
+  it("preserves partial descriptor getters through enumerable copies", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: Deno.cwd } : loadSource();
+const box = {};
+Object.defineProperty(box, "source", {
+  enumerable: true,
+  get: () => source,
+});
+const copied = Object.assign({}, box);
+Object.assign({}, copied.source).run();
+`,
+      "src/runtime-enumerable-getter-partial-source.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
   it("preserves partial provenance while copying enumerable values", () => {
     const effects = collectSemanticMarkers(
       `

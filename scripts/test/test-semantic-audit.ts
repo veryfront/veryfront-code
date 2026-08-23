@@ -8688,7 +8688,7 @@ function runtimeUnknownPropertySetterBinding(
 function runtimeReadablePropertyBinding(
   binding: RuntimeBinding | undefined,
 ): RuntimeBinding | undefined {
-  const readable = unionRuntimeBindings(
+  const readable = unionRuntimeBindingsPreservingPartial(
     flattenRuntimeBindings(binding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? [candidate.binding]
@@ -8698,7 +8698,8 @@ function runtimeReadablePropertyBinding(
         : [candidate]
     ),
   );
-  return readable && runtimeBindingHasPartialAlternative(binding)
+  return readable && runtimeBindingHasPartialAlternative(binding) &&
+      !runtimeBindingHasPartialAlternative(readable)
     ? { kind: "partial", binding: readable }
     : readable;
 }
@@ -8710,7 +8711,7 @@ function runtimeEnumerablePropertyBinding(
   const resolution = runtimePropertyResolution(binding, property, true, true);
   if (resolution.enumerable === false) return undefined;
   const rawBinding = resolution.binding;
-  const enumerable = unionRuntimeBindings(
+  const enumerable = unionRuntimeBindingsPreservingPartial(
     flattenRuntimeBindings(rawBinding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? candidate.enumerable === false ? [] : [candidate.binding]
@@ -8720,7 +8721,8 @@ function runtimeEnumerablePropertyBinding(
         : [candidate]
     ),
   );
-  return enumerable && runtimeBindingHasPartialAlternative(rawBinding)
+  return enumerable && runtimeBindingHasPartialAlternative(rawBinding) &&
+      !runtimeBindingHasPartialAlternative(enumerable)
     ? { kind: "partial", binding: enumerable }
     : enumerable;
 }
