@@ -152,6 +152,25 @@ describe("automated review gate", () => {
         ?.source,
       "summary",
     );
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [
+            codeRabbitSummary({
+              body: [
+                "<!-- recent_review_start -->",
+                "No actionable comments were generated in the recent review.",
+                codeRabbitReviewRange(),
+                "<!-- recent_review_end -->",
+              ].join("\r"),
+            }),
+          ],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
   });
 
   it("requires CodeRabbit's exact current base-change review sentence", async () => {
@@ -505,6 +524,10 @@ describe("automated review gate", () => {
         `not a sha and ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between " +
         `not-a-sha\nand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha\rand ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and\r${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between\n" +
         `${STALE_SHA}\nand ${HEAD_SHA}.`,
         "Reviewing files that changed from the base of the PR and between\n" +
@@ -553,6 +576,49 @@ describe("automated review gate", () => {
         undefined,
       );
     }
+
+    const newerBareCarriageReturnCurrentRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\r"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerBareCarriageReturnCurrentRange],
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerBareCarriageReturnStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_end -->",
+      ].join("\r"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerBareCarriageReturnStaleRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
 
     for (const prefix of ["> ", "1. ", "- [x] ", "> 1. - [ ] "]) {
       for (
@@ -1596,6 +1662,32 @@ describe("automated review gate", () => {
     assert(
       performance.now() - startedAt < 1_000,
       "dense malformed range parsing must stay linear",
+    );
+
+    const newerDenseBareCarriageReturnRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...denseMalformedRanges,
+        "<!-- recent_review_end -->",
+      ].join("\r"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    const denseBareCarriageReturnStartedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseBareCarriageReturnRanges],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - denseBareCarriageReturnStartedAt < 1_000,
+      "dense bare carriage-return range parsing must stay linear",
     );
 
     const newerBareCarriageReturnLine = codeRabbitSummary({

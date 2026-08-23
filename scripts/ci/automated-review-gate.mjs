@@ -9,9 +9,9 @@ const CODERABBIT_RECENT_REVIEW_MARKER_PATTERN =
 const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
-  /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
+  /(?:^|\r\n|[\r\n])Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r\n|[\r\n]|$)/;
 const CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN =
-  /(?:^|\r?\n)([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
+  /(?:^|\r\n|[\r\n])([ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(?:Reviewing[ \t]+(?:files(?:[ \t]+that[ \t]+changed[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?|changed[ \t]+files(?:[ \t]+from[ \t]+the[ \t]+base[ \t]+of[ \t]+the[ \t]+PR)?)[ \t]+(?:and[ \t]+)?between))([^\r\n]*)/gi;
 const CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN =
   /^[ \t]*(?:(?:>[ \t]*)|(?:#{1,6}[ \t]+)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*/;
 const CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN =
@@ -584,6 +584,8 @@ function codeRabbitNextLine(content, lineEnd, continuationEnd) {
     ? "\r\n"
     : content.startsWith("\n", lineEnd)
     ? "\n"
+    : content.startsWith("\r", lineEnd)
+    ? "\r"
     : undefined;
   if (!separator) return undefined;
   const contentStart = lineEnd + separator.length;
