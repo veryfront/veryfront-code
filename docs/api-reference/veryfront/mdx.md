@@ -32,16 +32,16 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 | Name          | Description                                  | Source                                                                                                   |
 | ------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `MDXProvider` | Provide component overrides to compiled MDX. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L20) |
+| `MDXProvider` | Provide component overrides to compiled MDX. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L19) |
 
 ### Functions
 
 | Name               | Description                                  | Source                                                                                                   |
 | ------------------ | -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `useMDXComponents` | Return the memoized effective component map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L33) |
+| `useMDXComponents` | Return the memoized effective component map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L32) |
 
 ### Types
 
 | Name               | Description                      | Source                                                                                                  |
 | ------------------ | -------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `MDXProviderProps` | Props accepted by `MDXProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
+| `MDXProviderProps` | Props accepted by `MDXProvider`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L6) |
