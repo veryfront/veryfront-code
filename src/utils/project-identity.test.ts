@@ -13,6 +13,16 @@ import {
 Deno.test("project identity validation", async (t) => {
   await t.step("normalizes only surrounding slug whitespace", () => {
     assertEquals(normalizeProjectSlug("  project-slug\n"), "project-slug");
+    assertEquals(
+      normalizeProjectSlug(" a b "),
+      "a b",
+      "interior whitespace is preserved",
+    );
+    assertEquals(
+      isCanonicalProjectSlug(normalizeProjectSlug(" project slug ")),
+      false,
+      "interior whitespace stays non-canonical after normalization",
+    );
   });
 
   await t.step("accepts only bounded canonical hosted slugs", () => {

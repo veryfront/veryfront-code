@@ -43,7 +43,9 @@ describe("hash-utils", () => {
         Uint8Array.prototype,
         "byteLength",
       );
-      let hashPromise: Promise<string> | undefined;
+      // sha256("typed-array-accessor-regression"), computed independently of this module.
+      const expected = "e6f350a0d3a7ab1460425109d5aef847b5fcda425a8b45af135af8dff19b5154";
+      let hash: string | undefined;
       try {
         Object.defineProperty(Uint8Array.prototype, "length", {
           configurable: true,
@@ -53,7 +55,7 @@ describe("hash-utils", () => {
           configurable: true,
           get: () => 0,
         });
-        hashPromise = computeHash("typed-array-accessor-regression");
+        hash = await computeHash("typed-array-accessor-regression");
       } finally {
         if (lengthDescriptor) {
           Object.defineProperty(Uint8Array.prototype, "length", lengthDescriptor);
@@ -71,9 +73,11 @@ describe("hash-utils", () => {
         }
       }
 
-      const hash = await hashPromise;
-      assertEquals(hash.length, 64);
-      assertEquals(hash, await computeHash("typed-array-accessor-regression"));
+      assertEquals(
+        hash,
+        expected,
+        "toHex must use the captured %TypedArray%.prototype length getter",
+      );
     });
   });
 
@@ -101,6 +105,19 @@ describe("hash-utils", () => {
         sourceMap: "//# sourceMappingURL=...",
       });
       assertNotEquals(hashWithoutMap, hashWithMap);
+    });
+
+    it("distinguishes fields at their boundaries", async () => {
+      assertNotEquals(
+        await computeCodeHash({ code: "c", css: "a" }),
+        await computeCodeHash({ code: "c", sourceMap: "a" }),
+        "css and sourceMap content must not hash identically",
+      );
+      assertNotEquals(
+        await computeCodeHash({ code: "ab" }),
+        await computeCodeHash({ code: "a", css: "b" }),
+        "the code/css boundary must be encoded in the hash",
+      );
     });
 
     it("should produce consistent hash for same bundle", async () => {

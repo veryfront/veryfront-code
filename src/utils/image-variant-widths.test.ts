@@ -24,6 +24,16 @@ describe("resolveImageVariantWidths", () => {
         () => resolveImageVariantWidths(width),
         TypeError,
         "Image source width",
+        `source width ${width} must be rejected`,
+      );
+    }
+
+    for (const width of [0, -320, 1.5, Number.NaN, 32_769]) {
+      assertThrows(
+        () => resolveImageVariantWidths(2_000, [width]),
+        TypeError,
+        "Configured image width",
+        `configured width ${width} must be rejected`,
       );
     }
   });

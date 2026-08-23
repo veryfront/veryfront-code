@@ -447,8 +447,13 @@ export function stopMemoryMonitoring(): void {
   logger.info("Memory monitoring stopped");
 }
 
+/** Clamp a heap warning threshold into the supported 0.1 to 0.99 range. */
+export function clampHeapWarningThreshold(threshold: number): number {
+  return Math.max(0.1, Math.min(0.99, threshold));
+}
+
 export function setHeapWarningThreshold(threshold: number): void {
-  heapGrowthWarningThreshold = Math.max(0.1, Math.min(0.99, threshold));
+  heapGrowthWarningThreshold = clampHeapWarningThreshold(threshold);
 }
 
 /**

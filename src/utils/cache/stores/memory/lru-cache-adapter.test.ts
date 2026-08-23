@@ -135,10 +135,27 @@ describe("LRUCacheAdapter", () => {
     });
 
     it("should use default TTL when not specified", () => {
-      const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100 });
+      let now = 1_000;
+      const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100, now: () => now });
 
       cacheWithTtl.set("key", "value");
       expect(cacheWithTtl.get("key")).toBe("value");
+
+      // The constructor ttlMs must reach entries stored without an explicit ttl,
+      // otherwise they never expire.
+      now = 1_100;
+      expect(cacheWithTtl.get("key")).toBeUndefined();
+      expect(cacheWithTtl.has("key")).toBe(false);
+    });
+
+    it("should reclaim entries expired by the default TTL", () => {
+      let now = 1_000;
+      const cacheWithTtl = new LRUCacheAdapter({ maxEntries: 10, ttlMs: 100, now: () => now });
+
+      cacheWithTtl.set("key", "value");
+      now = 1_100;
+
+      expect(cacheWithTtl.cleanupExpired()).toBe(1);
     });
 
     it("should cleanup expired entries", async () => {

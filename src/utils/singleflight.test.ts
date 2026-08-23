@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { delay } from "#std/async.ts";
 import { FakeTime } from "#std/testing/time";
 import { Singleflight, waitForSharedPromise } from "./singleflight.ts";
 
@@ -16,6 +17,43 @@ describe("Singleflight", () => {
 
     shared.resolve(42);
     assertEquals(await follower, 42);
+  });
+
+  it("rejects a pre-aborted waiter without waiting for the shared promise", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("already stopped"));
+    const shared = Promise.withResolvers<number>();
+
+    await assertRejects(
+      () => waitForSharedPromise(shared.promise, controller.signal),
+      Error,
+      "already stopped",
+    );
+
+    // The detached waiter must still observe the shared rejection, otherwise a
+    // sole detached caller leaves it unhandled and crashes the process.
+    shared.reject(new Error("shared failed"));
+    await delay(0);
+  });
+
+  it("does not start shared work for a caller that already gave up", async () => {
+    const sf = new Singleflight<string>();
+    const controller = new AbortController();
+    controller.abort(new Error("caller gave up"));
+    let calls = 0;
+
+    await assertRejects(
+      () =>
+        sf.do("key", () => {
+          calls++;
+          return Promise.resolve("value");
+        }, { signal: controller.signal }),
+      Error,
+      "caller gave up",
+    );
+
+    assertEquals(calls, 0, "an already-aborted caller must not start the shared operation");
+    assertEquals(sf.has("key"), false, "no leader entry may be registered for an aborted caller");
   });
 
   it("cancels shared work only after its final abortable waiter detaches", async () => {

@@ -68,6 +68,7 @@ function resetNodeModulesLinkState(): void {
 
 /** Internal test seam for platform-specific resolved module paths. */
 export const __cacheDirInternals = {
+  createIgnoreMarker,
   describeCacheRoot,
   getReactNodeModulesDir,
   redactCachePathDetails,

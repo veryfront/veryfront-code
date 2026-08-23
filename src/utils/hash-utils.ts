@@ -74,7 +74,10 @@ export interface BundleCode {
 
 /** Compute code hash. */
 export function computeCodeHash(code: BundleCode): Promise<string> {
-  return computeHash(`${code.code}${code.css ?? ""}${code.sourceMap ?? ""}`);
+  // Length-prefix every field so field boundaries cannot collapse
+  // (`{ code: "ab" }` must not hash as `{ code: "a", css: "b" }`).
+  const fields = [code.code, code.css ?? "", code.sourceMap ?? ""];
+  return computeHash(fields.map((field) => `${field.length}:${field}`).join(""));
 }
 
 /** Create simple hash. */
