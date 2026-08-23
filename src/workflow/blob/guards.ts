@@ -78,7 +78,7 @@ export function isBlobRef(value: unknown): value is BlobRef {
 
     return kind === "blob" && isSafeBlobId(id) &&
       typeof size === "number" && numberIsSafeInteger(size) && size >= 0 &&
-      typeof mimeType === "string" && mimeType.length > 0 &&
+      typeof mimeType === "string" &&
       isValidDate(createdAt) &&
       (expiresAt === missing || expiresAt === undefined || isValidDate(expiresAt)) &&
       (url === missing || url === undefined || typeof url === "string") &&

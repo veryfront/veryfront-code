@@ -14,6 +14,7 @@ describe("workflow/blob/guards", () => {
         createdAt: new Date(),
       };
       expect(isBlobRef(ref)).toBe(true);
+      expect(isBlobRef({ ...ref, mimeType: "" })).toBe(true);
     });
 
     it("rejects objects missing required fields", () => {
