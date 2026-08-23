@@ -855,6 +855,25 @@ describe("semantic audit task wiring", () => {
       true,
     );
   });
+
+  it("provides the pull-request baseline to the lint shard", async () => {
+    const workflow = await Deno.readTextFile(
+      new URL("../../.github/workflows/cicd.yml", import.meta.url),
+    );
+
+    assertEquals(
+      workflow.includes(
+        "if: ${{ matrix.check == 'test-layout' || matrix.check == 'lint' }}",
+      ),
+      true,
+    );
+    assertEquals(
+      workflow.includes(
+        'echo "TEST_SEMANTIC_AUDIT_BASE_REF=$base" >> "$GITHUB_ENV"',
+      ),
+      true,
+    );
+  });
 });
 
 function marker(
