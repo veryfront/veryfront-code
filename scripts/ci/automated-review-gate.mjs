@@ -376,6 +376,24 @@ function markdownReviewMarkers(content) {
 function scanMarkdownStructure(content) {
   const ranges = [];
   const reviewMarkers = [];
+  const inlineCodeRanges = markdownInlineCodeRanges(content);
+  const possibleInlineCodeRanges = [];
+  appendMarkdownInlineCodeRanges(
+    content,
+    0,
+    content.length,
+    possibleInlineCodeRanges,
+  );
+  let possibleInlineCodeRangeIndex = 0;
+  const isInsidePossibleInlineCode = (index) => {
+    while (
+      possibleInlineCodeRanges[possibleInlineCodeRangeIndex]?.[1] <= index
+    ) {
+      possibleInlineCodeRangeIndex += 1;
+    }
+    const range = possibleInlineCodeRanges[possibleInlineCodeRangeIndex];
+    return range?.[0] <= index && index < range[1];
+  };
   let openFence;
   let openHtmlCommentStart;
   let lineStart = 0;
@@ -400,6 +418,7 @@ function scanMarkdownStructure(content) {
         relativeCloseStart + 3,
         ranges,
         reviewMarkers,
+        isInsidePossibleInlineCode,
       );
       lineStart = lineEnd;
       continue;
@@ -427,7 +446,7 @@ function scanMarkdownStructure(content) {
     }
 
     const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
-    if (fenceMatch) {
+    if (fenceMatch && hasValidMarkdownBlockquoteSpacing(fenceMatch[1])) {
       const marker = fenceMatch[2];
       const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
       const hasValidInfoString = marker[0] === "~" ||
@@ -451,6 +470,7 @@ function scanMarkdownStructure(content) {
       0,
       ranges,
       reviewMarkers,
+      isInsidePossibleInlineCode,
     );
     lineStart = lineEnd;
   }
@@ -459,7 +479,48 @@ function scanMarkdownStructure(content) {
   } else if (openFence !== undefined) {
     ranges.push([openFence.start, content.length]);
   }
-  return { excludedRanges: ranges, reviewMarkers };
+  return {
+    excludedRanges: mergeMarkdownRanges(ranges, inlineCodeRanges),
+    reviewMarkers,
+  };
+}
+
+function mergeMarkdownRanges(left, right) {
+  const merged = [];
+  let leftIndex = 0;
+  let rightIndex = 0;
+  while (leftIndex < left.length || rightIndex < right.length) {
+    const next = rightIndex >= right.length ||
+        (leftIndex < left.length &&
+          left[leftIndex][0] <= right[rightIndex][0])
+      ? left[leftIndex++]
+      : right[rightIndex++];
+    const previous = merged.at(-1);
+    if (previous && next[0] <= previous[1]) {
+      previous[1] = Math.max(previous[1], next[1]);
+    } else {
+      merged.push([...next]);
+    }
+  }
+  return merged;
+}
+
+function hasValidMarkdownBlockquoteSpacing(prefix) {
+  let column = 0;
+  for (let index = 0; index < prefix.length;) {
+    const character = prefix[index];
+    column += character === "\t" ? 4 - (column % 4) : 1;
+    index += 1;
+    if (character !== ">") continue;
+
+    const contentColumn = column;
+    while (prefix[index] === " " || prefix[index] === "\t") {
+      column += prefix[index] === "\t" ? 4 - (column % 4) : 1;
+      index += 1;
+    }
+    if (column - contentColumn > 4) return false;
+  }
+  return true;
 }
 
 function scanMarkdownHtmlComments(
@@ -469,19 +530,23 @@ function scanMarkdownHtmlComments(
   searchStart,
   ranges,
   reviewMarkers,
+  isInsidePossibleInlineCode,
 ) {
   while (searchStart < line.length) {
     const relativeCommentStart = line.indexOf("<!--", searchStart);
     if (relativeCommentStart < 0) return undefined;
     const commentStart = lineStart + relativeCommentStart;
-    if (isEscapedMarkdownToken(content, commentStart)) {
-      searchStart = relativeCommentStart + 4;
-      continue;
-    }
     const reviewMarker = codeRabbitReviewMarkerAt(line, relativeCommentStart);
     if (reviewMarker) {
       reviewMarkers.push({ value: reviewMarker, index: commentStart });
       searchStart = relativeCommentStart + reviewMarker.length;
+      continue;
+    }
+    if (
+      isInsidePossibleInlineCode(commentStart) ||
+      isEscapedMarkdownToken(content, commentStart)
+    ) {
+      searchStart = relativeCommentStart + 4;
       continue;
     }
     const relativeCloseStart = line.indexOf("-->", relativeCommentStart + 4);
@@ -490,6 +555,81 @@ function scanMarkdownHtmlComments(
     searchStart = relativeCloseStart + 3;
   }
   return undefined;
+}
+
+function markdownInlineCodeRanges(content) {
+  const ranges = [];
+  let segmentStart = 0;
+  let lineStart = 0;
+  for (const lineMatch of content.matchAll(/[^\r\n]*(?:\r\n|[\r\n]|$)/g)) {
+    const line = lineMatch[0];
+    if (line.length === 0 && lineStart >= content.length) break;
+    const lineEnd = lineStart + line.length;
+    const lineWithoutEnding = line.replace(/(?:\r\n|[\r\n])$/, "");
+    if (isMarkdownInlineCodeBarrier(lineWithoutEnding)) {
+      appendMarkdownInlineCodeRanges(content, segmentStart, lineStart, ranges);
+      segmentStart = lineEnd;
+    }
+    lineStart = lineEnd;
+  }
+  appendMarkdownInlineCodeRanges(content, segmentStart, content.length, ranges);
+  return ranges;
+}
+
+function isMarkdownInlineCodeBarrier(line) {
+  if (
+    line.trim().length === 0 ||
+    /^ {0,3}<(?:[A-Za-z!?/])/.test(line) ||
+    /^ {0,3}(?:>|#{1,6}(?:[ \t]|$)|(?:[-+*]|\d+[.)])(?:[ \t]|$))/.test(
+      line,
+    ) ||
+    /^ {0,3}=+[ \t]*$/.test(line) ||
+    /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(
+      line,
+    )
+  ) return true;
+  const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
+  return fenceMatch !== null &&
+    hasValidMarkdownBlockquoteSpacing(fenceMatch[1]);
+}
+
+function appendMarkdownInlineCodeRanges(content, start, end, ranges) {
+  const delimiterRuns = [];
+  for (let index = start; index < end;) {
+    if (content[index] !== "`") {
+      index += 1;
+      continue;
+    }
+    if (isEscapedMarkdownToken(content, index)) {
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (content[end] === "`") end += 1;
+    delimiterRuns.push({ start: index, end, length: end - index });
+    index = end;
+  }
+
+  const nextRunWithLength = new Array(delimiterRuns.length);
+  const nextIndexByLength = new Map();
+  for (let index = delimiterRuns.length - 1; index >= 0; index -= 1) {
+    const run = delimiterRuns[index];
+    nextRunWithLength[index] = nextIndexByLength.get(run.length);
+    nextIndexByLength.set(run.length, index);
+  }
+
+  for (let index = 0; index < delimiterRuns.length;) {
+    const closingIndex = nextRunWithLength[index];
+    if (closingIndex === undefined) {
+      index += 1;
+      continue;
+    }
+    ranges.push([
+      delimiterRuns[index].start,
+      delimiterRuns[closingIndex].end,
+    ]);
+    index = closingIndex + 1;
+  }
 }
 
 function codeRabbitReviewMarkerAt(line, markerStart) {
