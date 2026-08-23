@@ -143,9 +143,13 @@ describe("webhook validation with hostile ambient intrinsics", () => {
       matched = matchesWebhookEventFilter(
         {
           mode: "all",
-          conditions: [{ path: "action", operator: "equals", value: "opened" }],
+          conditions: [{
+            path: "action",
+            operator: "equals",
+            value: ["opened", "expected"],
+          }],
         },
-        { action: "closed" },
+        { action: ["opened", "actual"] },
       );
     } finally {
       Array.prototype[Symbol.iterator] = originalIterator;
