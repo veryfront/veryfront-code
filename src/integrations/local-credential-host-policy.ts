@@ -1,6 +1,13 @@
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { localIntegrationConfigurationError } from "#veryfront/integrations/local-integration-errors.ts";
+import type {
+  RemoteToolSource,
+  ToolDefinition,
+  ToolExecutionContext,
+} from "#veryfront/tool/types.ts";
+
+const freeze = Object.freeze;
 
 /**
  * Operator-owned grant for resolving and using local integration credentials.
@@ -21,10 +28,8 @@ export function isHostLocalIntegrationCredentialsEnabled(
 /**
  * Refuse local credential discovery and execution unless the host granted it.
  *
- * Every source that resolves credentials from the host environment calls this
- * before it lists or executes a tool, so a source cannot inherit the capability
- * by omitting its own call-site check. A proxy runtime is refused even when the
- * grant is set, because it never owns the credentials it would forward.
+ * A proxy runtime is refused even when the grant is set, because it never owns
+ * the credentials it would forward.
  */
 export function assertLocalCredentialHostGrant(): void {
   if (getEnvironmentConfig().proxyMode || !isHostLocalIntegrationCredentialsEnabled()) {
@@ -34,4 +39,23 @@ export function assertLocalCredentialHostGrant(): void {
         "or dedicated self-hosted runtime. A proxy runtime is refused even with the grant set.",
     );
   }
+}
+
+/** @internal Apply the host grant to both operations of a local credential source. */
+export function guardLocalCredentialSource(source: RemoteToolSource): RemoteToolSource {
+  return freeze({
+    id: source.id,
+    async listTools(context?: ToolExecutionContext): Promise<ToolDefinition[]> {
+      assertLocalCredentialHostGrant();
+      return await source.listTools(context);
+    },
+    async executeTool(
+      toolName: string,
+      args: Record<string, unknown>,
+      context?: ToolExecutionContext,
+    ): Promise<unknown> {
+      assertLocalCredentialHostGrant();
+      return await source.executeTool(toolName, args, context);
+    },
+  });
 }

@@ -40,13 +40,16 @@ VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1
 This is a host-owned capability. Project environment overlays cannot enable it.
 Leave it unset on shared or proxy runtimes. Without it, both sources refuse to
 list or execute a tool. If you already run a local source, set this variable
-before you upgrade, or discovery starts failing.
+before you upgrade, or discovery starts failing. Veryfront does not infer the
+deployment shape. Setting this exact variable authorizes the current non-proxy
+process.
 
-Worker isolation (`WORKER_ISOLATION_ENABLED=1`) and local integration
-credentials are mutually exclusive. An isolated project worker runs with the
-Deno `env` permission denied, so it cannot read this grant or any host
-credential. Run local integration sources on a runtime that does not enable
-worker isolation.
+Local integration credentials are unavailable inside an effective isolated
+worker. The `WORKER_ISOLATION_ENABLED=1` master switch enables no surface by
+itself, but an enabled isolation surface runs its project worker with the Deno
+`env` permission denied. That worker cannot read this grant or any host
+credential. Run local integration sources outside effective isolated worker
+surfaces.
 
 For supported fixed REST tools, create a local source with the exact canonical
 tool IDs the application grants:
@@ -73,7 +76,7 @@ REST tools without a backing API.
 
 Use a dedicated Salesforce integration user and External Client App with the
 OAuth client credentials flow. Existing Connected Apps remain supported. Set
-these values in the host environment:
+these values in the project environment used by the self-hosted runtime:
 
 ```dotenv title=".env"
 SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID=<CLIENT_ID>
@@ -117,7 +120,7 @@ export default agent({
 });
 ```
 
-Credentials stay in the host process. Tool discovery exposes only tool names,
+Credentials stay in the local runtime process. Tool discovery exposes only tool names,
 descriptions, and input schemas. Credential resolution happens when a tool
 executes, and requests go directly to the configured Salesforce org through
 an origin-bound outbound transport. Credentials do not enter prompts, tool

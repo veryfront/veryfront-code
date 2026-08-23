@@ -13,7 +13,7 @@ import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outboun
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { connectors } from "./_data.ts";
-import { assertLocalCredentialHostGrant } from "./local-credential-host-policy.ts";
+import { guardLocalCredentialSource } from "./local-credential-host-policy.ts";
 import {
   INTEGRATION_REQUEST_TIMEOUT_MS,
   MAX_INTEGRATION_TOOL_CALL_RESPONSE_BYTES,
@@ -671,7 +671,7 @@ async function executeSalesforceEndpoint(
  *
  * Materialize the returned source with `loadRemoteToolsFromSource` and pass
  * the result through an agent's `tools` field. The source reads credentials
- * lazily from the host environment when a tool executes.
+ * lazily from the active project environment when a tool executes.
  */
 export function createSalesforceServiceAccountToolSource(
   options: SalesforceServiceAccountToolSourceOptions,
@@ -718,24 +718,16 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
     return token;
   };
 
-  return Object.freeze({
+  return guardLocalCredentialSource(Object.freeze({
     id: "salesforce-service-account",
-    // A refused host grant rejects rather than throwing synchronously, so a
-    // caller that only awaits discovery still sees the refusal.
-    listTools(): Promise<ToolDefinition[]> {
-      try {
-        assertLocalCredentialHostGrant();
-      } catch (cause) {
-        return Promise.reject(cause);
-      }
-      return Promise.resolve([...definitions]);
+    async listTools(): Promise<ToolDefinition[]> {
+      return [...definitions];
     },
     async executeTool(
       toolName: string,
       rawArgs: Record<string, unknown>,
       context?: ToolExecutionContext,
     ): Promise<unknown> {
-      assertLocalCredentialHostGrant();
       context?.abortSignal?.throwIfAborted();
       const tool = toolByName.get(toolName);
       if (!tool?.endpoint) {
@@ -794,5 +786,5 @@ export function createSalesforceServiceAccountToolSourceWithTransport(
         ? result.result
         : apiFailureResult(result.status);
     },
-  });
+  }));
 }

@@ -351,8 +351,8 @@ describe("createLocalIntegrationToolSource", () => {
     }
   });
 
-  it("allows explicitly marked local and self-hosted runtimes", async () => {
-    for (const veryfrontMode of ["development", "self-hosted"]) {
+  it("allows the exact host grant on any non-proxy deployment mode", async () => {
+    for (const veryfrontMode of ["development", "self-hosted", "production"]) {
       _setEnvironmentConfigForTesting({ veryfrontMode, proxyMode: false });
       let transportCalls = 0;
       const source = _createLocalIntegrationToolSourceForTesting(
@@ -388,12 +388,24 @@ describe("createLocalIntegrationToolSource", () => {
 
   it("proxy mode denies an explicit local-credential grant", async () => {
     _setEnvironmentConfigForTesting({ veryfrontMode: "development", proxyMode: true });
-    const source = createLocalIntegrationToolSource({
-      tools: ["vercel__list_projects"],
-      credentialProvider: testCredentialProvider,
-    });
+    let transportCalls = 0;
+    const source = _createLocalIntegrationToolSourceForTesting(
+      {
+        tools: ["vercel__list_projects"],
+        credentialProvider: testCredentialProvider,
+      },
+      () => {
+        transportCalls += 1;
+        return Promise.resolve(Response.json({ projects: [] }));
+      },
+    );
 
     await assertConfigurationError(() => source.listTools(), "local or self-hosted");
+    await assertConfigurationError(
+      () => source.executeTool("vercel__list_projects", {}),
+      "local or self-hosted",
+    );
+    assertEquals(transportCalls, 0);
   });
 
   it("never executes a catalog tool outside its exact source grant", async () => {

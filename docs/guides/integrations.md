@@ -51,6 +51,8 @@ The host must explicitly allow local credential use. Set
 `VERYFRONT_HOST_ALLOW_LOCAL_INTEGRATION_CREDENTIALS=1` on a local or dedicated
 self-hosted runtime. Leave it unset on shared, hosted, and proxy runtimes.
 Project environment variables cannot grant this host-owned capability.
+Veryfront does not infer the deployment shape. Setting the exact host variable
+authorizes local credential use for the current non-proxy process.
 
 By default, the source reads the credential environment variables declared by
 the connector catalog from the active project environment. An application can

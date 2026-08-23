@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { AgentConfig } from "#veryfront/agent";
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { loadRemoteToolsFromSource } from "#veryfront/tool";
 import { connectors, icons } from "./_data.ts";
@@ -11,6 +16,7 @@ import {
 } from "./feature-flags.ts";
 import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
 import {
+  createLocalIntegrationToolSource,
   createSalesforceServiceAccountToolSource,
   getConnector,
   getConnectorNames,
@@ -105,5 +111,23 @@ describe("integrations/index", () => {
     };
     assertStrictEquals(config.tools, tools);
     assertEquals(Object.keys(tools), ["salesforce__get_case"]);
+  });
+
+  it("keeps every exported local credential source behind the host grant", async () => {
+    Deno.env.delete(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+    const sources = [
+      createLocalIntegrationToolSource({
+        tools: ["vercel__list_projects"],
+        credentialProvider: () => "test-credential",
+      }),
+      createSalesforceServiceAccountToolSource({
+        allowedTools: ["salesforce__get_case"],
+      }),
+    ];
+
+    for (const source of sources) {
+      const error = await assertRejects(() => source.listTools(), VeryfrontError);
+      assertEquals(error.slug, "local-integration-config-invalid");
+    }
   });
 });

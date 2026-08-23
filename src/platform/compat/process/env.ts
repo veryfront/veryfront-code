@@ -11,6 +11,9 @@ type EnvOverlayValue = string | null;
 type EnvOverlayStore = Map<string, EnvOverlayValue>;
 
 const apply = Reflect.apply;
+const denoRuntime = IS_DENO ? getDenoRuntime() : undefined;
+const denoEnv = denoRuntime?.env;
+const denoEnvGet = denoEnv?.get;
 const MapConstructor = Map;
 const mapEntries = Map.prototype.entries;
 const mapGet = Map.prototype.get;
@@ -76,24 +79,26 @@ export function env(): Record<string, string> {
  * Use this for framework-owned runtime configuration that should not be shadowed by tenant env.
  */
 export function getHostEnv(key: string): string | undefined {
+  if (denoRuntime && denoEnv && denoEnvGet) {
+    let value: string | undefined;
+    try {
+      // Probe the real host permission through the accessor captured before
+      // project code runs. A denied worker must not reach test overlays, and a
+      // project cannot replace Deno.env.get after module initialization.
+      value = apply(denoEnvGet, denoEnv, [key]);
+    } catch {
+      return undefined;
+    }
+
+    const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
+    return overlayResult.hasValue ? overlayResult.value : value;
+  }
+
   const overlayResult = getOverlayEnvValue(getEnvOverlayStore(), key);
   if (overlayResult.hasValue) {
     return overlayResult.value;
   }
 
-  const deno = IS_DENO ? getDenoRuntime() : undefined;
-  if (deno) {
-    try {
-      return deno.env.get(key);
-    } catch {
-      // Under a tightened env permission allowlist (project isolation workers),
-      // reading a non-allowlisted variable throws NotCapable. Treat it as absent
-      // to match the prior `env: true` behavior where reads never threw, so
-      // optional-variable lookups degrade to undefined instead of crashing the
-      // request.
-      return undefined;
-    }
-  }
   // Read the captured host record rather than `runtimeProcess.env`, so the
   // narrower view installed over `process.env` cannot redirect a host-scoped
   // read back into a project scope.

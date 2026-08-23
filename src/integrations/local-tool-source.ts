@@ -22,7 +22,7 @@ import {
   localIntegrationConfigurationError,
   safeLocalIntegrationIdentifier,
 } from "#veryfront/integrations/local-integration-errors.ts";
-import { assertLocalCredentialHostGrant } from "#veryfront/integrations/local-credential-host-policy.ts";
+import { guardLocalCredentialSource } from "#veryfront/integrations/local-credential-host-policy.ts";
 import { MAX_LOCAL_INTEGRATION_TOOLS } from "#veryfront/integrations/limits.ts";
 import { parseIntegrationToolIdentity } from "#veryfront/integrations/source-policy.ts";
 import type { IntegrationConfig, IntegrationToolMeta } from "#veryfront/integrations/schema.ts";
@@ -503,10 +503,9 @@ function createLocalIntegrationToolSourceInternal(
     apply(mapSet, admitted, [toolId, admitTool(toolId)]);
   }
 
-  return freeze({
+  return guardLocalCredentialSource(freeze({
     id: "veryfront-local-integrations",
     async listTools(): Promise<ToolDefinition[]> {
-      assertLocalCredentialHostGrant();
       const validatedConnectors = new SetConstructor<string>();
       for (let index = 0; index < snapshot.tools.length; index++) {
         const toolId = snapshot.tools[index]!;
@@ -526,7 +525,6 @@ function createLocalIntegrationToolSourceInternal(
       args: Record<string, unknown>,
       context?: ToolExecutionContext,
     ): Promise<unknown> {
-      assertLocalCredentialHostGrant();
       throwIfCallerAborted(context?.abortSignal);
       const tool = mapValue(admitted, toolName);
       if (!tool) {
@@ -575,7 +573,7 @@ function createLocalIntegrationToolSourceInternal(
         transport,
       });
     },
-  });
+  }));
 }
 
 /** Create an explicitly granted, catalog-backed local integration tool source. */
