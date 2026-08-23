@@ -2539,20 +2539,45 @@ localValues.sort(() => 0);
   });
 
   it("preserves partial bindings through object destructuring", () => {
-    const effects = collectSemanticMarkers(
-      `
+    const cases = [
+      {
+        name: "declaration",
+        source: `
 declare const maybe: boolean;
 declare function loadSource(): object;
-const source = maybe ? { run: Deno.remove } : loadSource();
+const source = maybe ? { run: () => undefined } : loadSource();
 const { run: declaredRun } = source;
-declaredRun("declared.txt");
+declaredRun();
+`,
+      },
+      {
+        name: "assignment",
+        source: `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { run: () => undefined } : loadSource();
 let assignedRun;
 ({ run: assignedRun } = source);
-assignedRun("assigned.txt");
+assignedRun();
 `,
-      "src/runtime-partial-object-destructuring.test.ts",
-    ).map((marker) => marker.effect);
-    assertEquals(effects.includes("filesystem-write"), true);
+      },
+    ] as const;
+    for (const testCase of cases) {
+      const effects = collectSemanticMarkers(
+        testCase.source,
+        `src/runtime-partial-object-destructuring-${testCase.name}.test.ts`,
+      ).map((marker) => marker.effect);
+      assertEquals(effects, [
+        "browser",
+        "filesystem-read",
+        "filesystem-watch",
+        "filesystem-write",
+        "network",
+        "process",
+        "server",
+        "shared-cwd",
+      ]);
+    }
   });
 
   it("preserves partial bindings through computed object destructuring", () => {
@@ -2561,14 +2586,22 @@ assignedRun("assigned.txt");
 declare const maybe: boolean;
 declare const key: string;
 declare function loadSource(): object;
-const source = maybe ? { choice: { run: Deno.cwd } } : loadSource();
+const source = maybe ? { choice: () => undefined } : loadSource();
 const { [key]: picked } = source;
-Object.assign({}, picked).run();
+picked();
 `,
       "src/runtime-partial-computed-object-destructuring.test.ts",
     ).map((marker) => marker.effect);
-    assertEquals(effects.includes("shared-cwd"), true);
-    assertEquals(effects.includes("filesystem-write"), true);
+    assertEquals(effects, [
+      "browser",
+      "filesystem-read",
+      "filesystem-watch",
+      "filesystem-write",
+      "network",
+      "process",
+      "server",
+      "shared-cwd",
+    ]);
   });
 
   it("preserves partial bindings through destructuring defaults", () => {

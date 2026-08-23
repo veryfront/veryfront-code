@@ -8455,10 +8455,21 @@ function runtimePatternPropertyResolution(
   property: Node,
 ): RuntimePropertyResolution {
   const propertyName = staticObjectPropertyName(property);
-  if (propertyName) return runtimePropertyResolution(binding, propertyName);
-  return property.computed === true
+  const resolution = propertyName
+    ? runtimePropertyResolution(binding, propertyName)
+    : property.computed === true
     ? runtimeUnknownPropertyResolution(binding)
     : { defaultMayRun: true };
+  if (!runtimeBindingHasPartialAlternative(binding)) return resolution;
+  return {
+    ...resolution,
+    binding: unionDerivedRuntimeBindingsPreservingPartial(
+      binding,
+      [resolution.binding, conservativeSemanticEffectBinding()].flatMap(
+        (candidate) => candidate ?? [],
+      ),
+    ),
+  };
 }
 
 function runtimeArrayPatternEntries(
