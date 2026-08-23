@@ -934,6 +934,32 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses a non-file .gitignore before writing scaffold files", async () => {
+    if (Deno.build.os === "windows") return;
+
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-gitignore-fifo-" });
+    const projectDir = join(parentDir, "contract-project");
+
+    try {
+      await Deno.mkdir(projectDir, { recursive: true });
+      const command = new Deno.Command("mkfifo", {
+        args: [join(projectDir, ".gitignore")],
+      });
+      const output = await command.output();
+      if (!output.success) return;
+
+      await assertRejects(
+        () => createProject(baseRequest(parentDir)),
+        Error,
+        'Directory "contract-project" already contains .gitignore as a file or a link',
+      );
+
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("refuses installer lockfiles before dependency installation can replace them", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-lockfile-conflict-" });
     const projectDir = join(parentDir, "contract-project");
@@ -951,6 +977,32 @@ describe("createProject when a path cannot be written through", () => {
           }),
         Error,
         'Directory "contract-project" already contains package-lock.json. Use --force to overwrite.',
+      );
+
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(await exists(join(projectDir, "README.md")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
+  it("refuses npm's hidden lockfile before dependency installation can replace it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-hidden-lockfile-" });
+    const projectDir = join(parentDir, "contract-project");
+    const lockfile = join(projectDir, "node_modules", ".package-lock.json");
+
+    try {
+      await Deno.mkdir(join(projectDir, "node_modules"), { recursive: true });
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      await assertRejects(
+        () =>
+          createProject({
+            ...baseRequest(parentDir),
+            installDependencies: true,
+          }),
+        Error,
+        'Directory "contract-project" already contains node_modules/.package-lock.json. Use --force to overwrite.',
       );
 
       assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");

@@ -334,6 +334,37 @@ describe("mcp/tools/catalog-tools", () => {
       );
     });
 
+    it("refuses a non-file .gitignore before partially scaffolding", async () => {
+      if (Deno.build.os === "windows") return;
+
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      await Deno.mkdir(projectDir, { recursive: true });
+      const command = new Deno.Command("mkfifo", {
+        args: [join(projectDir, ".gitignore")],
+      });
+      const output = await command.output();
+      if (!output.success) return;
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains .gitignore as a file or a link"),
+        true,
+      );
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
     it("refuses a package lock before dependency installation can replace it", async () => {
       const parentDir = await Deno.makeTempDir();
       createdDirs.push(parentDir);
@@ -351,6 +382,33 @@ describe("mcp/tools/catalog-tools", () => {
       assertEquals(result.success, false);
       assertEquals(result.projectDir, undefined);
       assertEquals(result.message.includes("already contains package-lock.json"), true);
+      assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
+      assertEquals(
+        await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),
+        "absent",
+      );
+    });
+
+    it("refuses npm's hidden lockfile before dependency installation can replace it", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const projectDir = join(parentDir, "example-app");
+      const lockfile = join(projectDir, "node_modules", ".package-lock.json");
+      await Deno.mkdir(join(projectDir, "node_modules"), { recursive: true });
+      await Deno.writeTextFile(lockfile, "keep-me\n");
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(
+        result.message.includes("already contains node_modules/.package-lock.json"),
+        true,
+      );
       assertEquals(await Deno.readTextFile(lockfile), "keep-me\n");
       assertEquals(
         await Deno.readTextFile(join(projectDir, "README.md")).catch(() => "absent"),

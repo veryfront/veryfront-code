@@ -509,9 +509,11 @@ function installerWritePaths(request: CreateProjectRequest): string[] {
   if (!request.installDependencies) return [];
 
   const packageManager = packageManagerPreference(request.runtime);
-  return LOCKFILE_CLIENTS
+  const lockfiles = LOCKFILE_CLIENTS
     .filter(([, client]) => client === packageManager)
     .map(([path]) => path);
+  if (packageManager === "npm") lockfiles.push("node_modules/.package-lock.json");
+  return lockfiles;
 }
 
 function conflictWritePaths(
@@ -596,7 +598,7 @@ async function findUnwritablePaths(
         blocked.add(prefix);
         break;
       }
-      if (protectedLeafPaths.includes(prefix) && depth === segments.length && info.isDirectory) {
+      if (protectedLeafPaths.includes(prefix) && depth === segments.length && !info.isFile) {
         blocked.add(prefix);
         break;
       }
