@@ -2432,8 +2432,14 @@ function runtimeUnknownPropertyResolution(
       aliasTargets.push(...resolution.aliasTargets ?? []);
     }
   }
+  const resolvedBinding = unionRuntimeBindingsPreservingPartial(
+    propertyBindings,
+  );
   return {
-    binding: unionRuntimeBindingsPreservingPartial(propertyBindings),
+    binding: resolvedBinding && runtimeBindingHasPartialAlternative(binding) &&
+        !runtimeBindingHasPartialAlternative(resolvedBinding)
+      ? { kind: "partial", binding: resolvedBinding }
+      : resolvedBinding,
     aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
     defaultMayRun: true,
   };
@@ -9118,7 +9124,7 @@ function mergeRuntimeBinding(
   merge: boolean,
 ): RuntimeBinding {
   return merge && existing
-    ? unionRuntimeBindings([existing, incoming]) ?? incoming
+    ? unionRuntimeBindingsPreservingPartial([existing, incoming]) ?? incoming
     : incoming;
 }
 

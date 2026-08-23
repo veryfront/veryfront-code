@@ -2562,6 +2562,38 @@ assignedRun("assigned.txt");
     assertEquals(effects.includes("filesystem-write"), true);
   });
 
+  it("preserves partial bindings through computed object destructuring", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare const key: string;
+declare function loadSource(): object;
+const source = maybe ? { choice: { run: Deno.cwd } } : loadSource();
+const { [key]: picked } = source;
+Object.assign({}, picked).run();
+`,
+      "src/runtime-partial-computed-object-destructuring.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
+  it("preserves partial bindings through destructuring defaults", () => {
+    const effects = collectSemanticMarkers(
+      `
+declare const maybe: boolean;
+declare function loadSource(): object;
+const source = maybe ? { nested: { run: Deno.cwd } } : loadSource();
+let nested;
+({ nested = { run: Deno.cwd } } = source);
+Object.assign({}, nested).run();
+`,
+      "src/runtime-partial-defaulted-object-destructuring.test.ts",
+    ).map((marker) => marker.effect);
+    assertEquals(effects.includes("shared-cwd"), true);
+    assertEquals(effects.includes("filesystem-write"), true);
+  });
+
   it("keeps statically named Object.assign overwrites precise", () => {
     assertEquals(
       collectSemanticMarkers(
