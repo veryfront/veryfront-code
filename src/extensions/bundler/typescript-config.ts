@@ -63,25 +63,26 @@ async function defaultReadTextFile(path: string): Promise<string> {
 }
 
 function withJsonExtension(path: string): string {
-  return extname(path) === "" ? `${path}.json` : path;
+  const extension = extname(path).toLowerCase();
+  return extension === ".json" || extension === ".jsonc" ? path : `${path}.json`;
 }
 
-async function defaultResolveExtends(
+function defaultResolveExtends(
   specifier: string,
   fromPath: string,
 ): Promise<string> {
   if (isAbsolute(specifier) || specifier.startsWith(".")) {
-    return withJsonExtension(resolve(dirname(fromPath), specifier));
+    return Promise.resolve(withJsonExtension(resolve(dirname(fromPath), specifier)));
   }
 
   const require = createRequire(resolve(dirname(fromPath), "package.json"));
   try {
-    return require.resolve(specifier);
+    return Promise.resolve(require.resolve(specifier));
   } catch (firstError) {
     try {
-      return require.resolve(`${specifier}/tsconfig.json`);
+      return Promise.resolve(require.resolve(`${specifier}/tsconfig.json`));
     } catch {
-      throw firstError;
+      return Promise.reject(firstError);
     }
   }
 }

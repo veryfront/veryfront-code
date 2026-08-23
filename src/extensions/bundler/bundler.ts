@@ -288,8 +288,8 @@ export interface BuildFailure extends Error {
  * optimized output suitable for deployment or development.
  */
 export interface Bundler {
-  /** Force local TypeScript source through this bundler instead of direct runtime import. */
-  readonly forceBundleTypeScript?: boolean;
+  /** Decide whether resolved project flags require bundled local TypeScript execution. */
+  shouldBundleTypeScript?(options: TypeScriptDecoratorOptions): boolean;
   /** Bundle one or more entry points into output files. */
   bundle(options: BundleOptions): Promise<BundleResult>;
   /** Transform a single source string without writing to disk. */

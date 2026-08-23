@@ -111,6 +111,15 @@ extension, esbuild remains the default and ignores `emitDecoratorMetadata`.
 Projects that use standard decorators or validation libraries without runtime
 type reflection do not need the extension.
 
+Enabling `experimentalDecorators` routes local Deno API modules through
+per-route SWC bundles. Separate route bundles do not share module-level state
+from a common project import. The extension reads only the two decorator flags
+from TypeScript configuration; other TypeScript emit settings are not forwarded
+to SWC. The active legacy transform rejects source-map requests because it does
+not compose SWC and esbuild maps yet. Review the extension package README before
+treating module singletons or compiler-specific output as part of your route
+contract.
+
 ## Authorize React Server Actions
 
 Server Actions require an application-owned authorization provider. Create a

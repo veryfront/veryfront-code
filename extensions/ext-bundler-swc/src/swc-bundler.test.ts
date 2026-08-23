@@ -1,6 +1,7 @@
-import type { ValidationError } from "npm:class-validator@0.15.1";
+import type { ValidationError } from "class-validator";
 import {
   assertEquals,
+  assertRejects,
   assertStrictEquals,
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
@@ -141,6 +142,62 @@ describe("SwcBundler decorator metadata", () => {
       String,
     );
     await bundler.stop();
+  });
+
+  it("honors decorator flags from string tsconfigRaw", async () => {
+    const bundler = new SwcBundler();
+    try {
+      const result = await bundler.transform({
+        code: METADATA_SOURCE,
+        loader: "ts",
+        format: "esm",
+        sourcefile: "string-tsconfig.ts",
+        tsconfigRaw: `{
+          // esbuild accepts JSONC text for this option.
+          "compilerOptions": {
+            "experimentalDecorators": true,
+            "emitDecoratorMetadata": true
+          }
+        }`,
+      });
+
+      assertStringIncludes(result.code, "design:paramtypes");
+    } finally {
+      await bundler.stop();
+    }
+  });
+
+  it("rejects misleading source maps only when the SWC transform is active", async () => {
+    const delegate = new RecordingBundler();
+    const bundler = new SwcBundler({ delegate });
+    try {
+      await bundler.transform({
+        code: "export const value: number = 1;",
+        loader: "ts",
+        sourcemap: "external",
+        tsconfigRaw: { compilerOptions: {} },
+      });
+      assertEquals(delegate.transformed?.sourcemap, "external");
+
+      await assertRejects(
+        () =>
+          bundler.transform({
+            code: METADATA_SOURCE,
+            loader: "ts",
+            sourcemap: "external",
+            tsconfigRaw: {
+              compilerOptions: {
+                experimentalDecorators: true,
+                emitDecoratorMetadata: true,
+              },
+            },
+          }),
+        Error,
+        "does not support source maps",
+      );
+    } finally {
+      await bundler.stop();
+    }
   });
 
   it("honors decorator flags inherited through tsconfig", async () => {

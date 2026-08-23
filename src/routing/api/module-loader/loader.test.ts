@@ -18,6 +18,7 @@ import {
   rewriteDenoNpmDependencyImports,
   rewriteNodeExternalImports,
   toCjsDestructureBindings,
+  typeScriptBuildOptions,
 } from "./loader.ts";
 import { __setCompiledBinaryForTests } from "#veryfront/security/sandbox/isolation-capability.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -112,11 +113,38 @@ const adapter: RuntimeAdapter = {
 };
 
 describe("TypeScript source execution selection", () => {
-  it("routes local source through an opt-in transform bundler only", () => {
-    assertEquals(bundlerForcesTypeScript(undefined), false);
-    assertEquals(bundlerForcesTypeScript({}), false);
-    assertEquals(bundlerForcesTypeScript({ forceBundleTypeScript: false }), false);
-    assertEquals(bundlerForcesTypeScript({ forceBundleTypeScript: true }), true);
+  it("routes local source only when the selected bundler accepts the project flags", () => {
+    const off = { experimentalDecorators: false, emitDecoratorMetadata: false };
+    const on = { experimentalDecorators: true, emitDecoratorMetadata: false };
+    assertEquals(bundlerForcesTypeScript(undefined, off), false);
+    assertEquals(bundlerForcesTypeScript({}, off), false);
+    assertEquals(
+      bundlerForcesTypeScript({ shouldBundleTypeScript: () => false }, on),
+      false,
+    );
+    assertEquals(
+      bundlerForcesTypeScript({
+        shouldBundleTypeScript: (options) => options.experimentalDecorators,
+      }, off),
+      false,
+    );
+    assertEquals(
+      bundlerForcesTypeScript({
+        shouldBundleTypeScript: (options) => options.experimentalDecorators,
+      }, on),
+      true,
+    );
+  });
+
+  it("adds a working directory only when the selected bundler handles TypeScript", () => {
+    const off = { experimentalDecorators: false, emitDecoratorMetadata: false };
+    assertEquals(typeScriptBuildOptions("/project", off, false), {
+      typescriptDecoratorOptions: off,
+    });
+    assertEquals(typeScriptBuildOptions("/project", off, true), {
+      typescriptDecoratorOptions: off,
+      absWorkingDir: "/project",
+    });
   });
 });
 

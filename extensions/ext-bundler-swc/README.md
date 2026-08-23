@@ -48,22 +48,39 @@ Veryfront follows inherited TypeScript configuration. The extension embeds
 worker modules and compiled runtime routes.
 
 If `experimentalDecorators` is false or absent, the extension delegates source
-unchanged to esbuild. If only `experimentalDecorators` is true, SWC emits legacy
-decorators without runtime type metadata.
+unchanged to esbuild when Veryfront already needs a bundle or transform. Local
+Deno routes keep their normal direct-import path. If only
+`experimentalDecorators` is true, SWC emits legacy decorators without runtime
+type metadata.
 
 ## What changes when you enable it
 
 `experimentalDecorators: true` switches the TypeScript transform for the whole
 project boundary, not just for decorated files. Every `.ts` and `.tsx` module in
 the build graph is compiled by SWC instead of esbuild, so the emitted JavaScript
-differs in places that have nothing to do with decorators. The clearest example
-is enum declaration merging: esbuild emits `(function (E) { ... })(E || {})`, so
-a later block merges into the earlier one, while SWC emits
-`(function (E) { ... })({})` and each block starts fresh.
+can differ in places that have nothing to do with decorators. Examples include
+enum declaration merging and class-field initialization.
+
+The extension reads only `experimentalDecorators` and
+`emitDecoratorMetadata` from `tsconfig.json`. Veryfront bundle settings still
+control the target and JSX transform. Other TypeScript emit settings, such as
+`useDefineForClassFields`, are not forwarded to SWC.
+
+The legacy SWC path does not compose source maps yet. A bundle or transform
+that enables legacy decorators and requests a source map fails with an
+actionable error instead of returning a map to generated JavaScript. Flags-off
+calls continue to delegate source maps to esbuild.
+
+When legacy decorators are enabled, local Deno API routes use per-route bundles
+so their source passes through SWC. Two route bundles do not share module-level
+state from a common imported project file. Put shared clients, pools, caches,
+and registries behind a framework service or extension instead of relying on a
+cross-route module singleton.
 
 Treat turning the flag on as a transform swap, not as an addition. Re-run your
 test suite after enabling it. Leaving `experimentalDecorators` false or absent
-keeps every module on esbuild with byte-identical output.
+does not force local routes through bundling and keeps existing bundler calls on
+the esbuild delegate.
 
 ## Runtime and packaging
 
@@ -73,4 +90,6 @@ incremental contexts, and final output generation to
 `@veryfront/ext-bundler-esbuild`.
 
 The WASM and reflection runtime stay in this explicit extension package. They
-do not become dependencies of core or the default `veryfront` package.
+do not become dependencies of core or the default `veryfront` package. The SWC
+WASM asset is about 20 MB, so distributions and compiled binaries that embed
+the explicit extension must account for that size.

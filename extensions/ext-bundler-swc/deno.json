@@ -15,6 +15,7 @@
   "imports": {
     "@swc/wasm": "npm:@swc/wasm@1.16.1",
     "@veryfront/ext-bundler-esbuild": "../ext-bundler-esbuild/src/index.ts",
+    "class-validator": "npm:class-validator@0.15.1",
     "reflect-metadata": "npm:reflect-metadata@0.2.2",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/bundler": "../../src/extensions/bundler/index.ts"

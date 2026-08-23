@@ -1,8 +1,10 @@
 import { type Options as SwcOptions, transform as transformWithSwc } from "@swc/wasm";
 import { EsbuildBundler } from "@veryfront/ext-bundler-esbuild";
+import { parseExtensionManifest } from "veryfront/extensions";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { extname, join } from "node:path";
+import process from "node:process";
 import type {
   BuildContext,
   BundleOptions,
@@ -36,6 +38,9 @@ export interface SwcBundlerOptions {
 }
 
 function rawDecoratorOptions(value: unknown): TypeScriptDecoratorOptions | undefined {
+  if (typeof value === "string") {
+    value = parseExtensionManifest<TsconfigRaw>(value, "jsonc", "tsconfigRaw");
+  }
   if (value === null || typeof value !== "object") return undefined;
   const compilerOptionsDescriptor = Reflect.getOwnPropertyDescriptor(value, "compilerOptions");
   const compilerOptions = compilerOptionsDescriptor?.value;
@@ -84,6 +89,16 @@ async function decoratorOptions(
 
 function isTypeScriptLoader(loader: unknown): loader is "ts" | "tsx" {
   return loader === "ts" || loader === "tsx";
+}
+
+function assertLegacyDecoratorSourceMapsDisabled(
+  options: BundleOptions | TransformOptions,
+): void {
+  if (!options.sourcemap) return;
+  throw new TypeError(
+    "The SWC legacy decorator transform does not support source maps. " +
+      "Disable source maps or use the default esbuild transform.",
+  );
 }
 
 function loaderForPath(path: string): "ts" | "tsx" | undefined {
@@ -334,11 +349,14 @@ async function prepareLegacyDecoratorBundle(
  * behavior even when a project has selected this extension.
  */
 export class SwcBundler implements Bundler {
-  readonly forceBundleTypeScript = true;
   readonly #delegate: Bundler;
 
   constructor(options: SwcBundlerOptions = {}) {
     this.#delegate = options.delegate ?? new EsbuildBundler();
+  }
+
+  shouldBundleTypeScript(options: TypeScriptDecoratorOptions): boolean {
+    return options.experimentalDecorators;
   }
 
   async bundle(options: BundleOptions): Promise<BundleResult> {
@@ -346,6 +364,7 @@ export class SwcBundler implements Bundler {
     if (!flags.experimentalDecorators) {
       return await this.#delegate.bundle(delegateBundleOptions(options));
     }
+    assertLegacyDecoratorSourceMapsDisabled(options);
 
     return await this.#delegate.bundle(
       await prepareLegacyDecoratorBundle(options, flags),
@@ -357,6 +376,7 @@ export class SwcBundler implements Bundler {
     if (!flags.experimentalDecorators || !isTypeScriptLoader(options.loader)) {
       return await this.#delegate.transform(delegateTransformOptions(options));
     }
+    assertLegacyDecoratorSourceMapsDisabled(options);
 
     let code = await transformTypeScript(
       options.code,
@@ -384,6 +404,7 @@ export class SwcBundler implements Bundler {
     if (!flags.experimentalDecorators) {
       return await this.#delegate.context(delegateBundleOptions(options));
     }
+    assertLegacyDecoratorSourceMapsDisabled(options);
     return await this.#delegate.context(
       await prepareLegacyDecoratorBundle(options, flags),
     );

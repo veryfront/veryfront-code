@@ -1,5 +1,11 @@
 import { computeHash, isCompiledBinary, serverLogger } from "#veryfront/utils";
-import type { BuildResult, Bundler, Plugin } from "veryfront/extensions/bundler";
+import type {
+  BuildResult,
+  BundleOptions,
+  Bundler,
+  Plugin,
+  TypeScriptDecoratorOptions,
+} from "veryfront/extensions/bundler";
 import { readTypeScriptDecoratorOptions } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -10,7 +16,10 @@ import type { APIRoute, LoadHostModuleOptions, LoadModuleOptions } from "./types
 import { createError, toError } from "#veryfront/errors";
 import { tryResolve as tryResolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  readTextFile as readHostTextFile,
+} from "#veryfront/platform/compat/fs.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { FILE_EXTENSIONS, getLoaderForFile, validateModulePath } from "./loader-helpers.ts";
@@ -159,8 +168,22 @@ async function loadModule(args: {
 
   const fileExistsLocally = await fs.exists(modulePath);
   if (fileExistsLocally) {
-    if (selectedBundlerForcesTypeScript()) {
-      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+    const bundler = selectedTypeScriptBundler();
+    const decoratorOptions = bundler
+      ? await readProjectTypeScriptDecoratorOptions(
+        projectDir,
+        await createProjectSourceSnapshot(projectDir, adapter),
+      )
+      : undefined;
+    if (decoratorOptions && bundlerForcesTypeScript(bundler, decoratorOptions)) {
+      return loadAndTranspileModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+      );
     }
     try {
       return await loadTSModuleDirect(modulePath, await moduleRevision(fs, modulePath));
@@ -176,7 +199,14 @@ async function loadModule(args: {
         modulePath,
         error: error instanceof Error ? error.message : String(error),
       });
-      return loadAndTranspileModule(modulePath, projectDir, adapter, fs, config);
+      return loadAndTranspileModule(
+        modulePath,
+        projectDir,
+        adapter,
+        fs,
+        config,
+        decoratorOptions,
+      );
     }
   }
 
@@ -186,15 +216,48 @@ async function loadModule(args: {
 
 /** @internal Exported for the runtime-selection regression test. */
 export function bundlerForcesTypeScript(
-  bundler: Pick<Bundler, "forceBundleTypeScript"> | undefined,
+  bundler: Pick<Bundler, "shouldBundleTypeScript"> | undefined,
+  options: TypeScriptDecoratorOptions,
 ): boolean {
-  return bundler?.forceBundleTypeScript === true;
+  return bundler?.shouldBundleTypeScript?.(options) === true;
 }
 
-function selectedBundlerForcesTypeScript(): boolean {
-  return bundlerForcesTypeScript(
-    tryResolveExtensionContract<Bundler>("Bundler"),
-  );
+/** @internal Exported for the runtime-selection regression test. */
+export function typeScriptBuildOptions(
+  projectDir: string,
+  options: TypeScriptDecoratorOptions,
+  bundleTypeScript: boolean,
+): Pick<BundleOptions, "typescriptDecoratorOptions"> & { absWorkingDir?: string } {
+  return {
+    typescriptDecoratorOptions: options,
+    ...(bundleTypeScript ? { absWorkingDir: projectDir } : {}),
+  };
+}
+
+function selectedTypeScriptBundler():
+  | Pick<Bundler, "shouldBundleTypeScript">
+  | undefined {
+  const bundler = tryResolveExtensionContract<Bundler>("Bundler");
+  return bundler?.shouldBundleTypeScript ? bundler : undefined;
+}
+
+async function readProjectTypeScriptDecoratorOptions(
+  projectDir: string,
+  sourceSnapshot: ProjectSourceSnapshot,
+): Promise<TypeScriptDecoratorOptions> {
+  const projectRoot = pathHelper.resolve(projectDir);
+  return await readTypeScriptDecoratorOptions({
+    configPath: pathHelper.join(projectRoot, "tsconfig.json"),
+    readTextFile: (path) => {
+      const resolvedPath = pathHelper.resolve(path);
+      // Executable imports remain snapshot-contained. Compiler configuration
+      // may inherit a bounded pair of booleans from a monorepo parent or an
+      // installed package, neither of which is executable project source.
+      return isWithinDirectory(projectRoot, resolvedPath)
+        ? sourceSnapshot.readTextFile(resolvedPath)
+        : readHostTextFile(resolvedPath);
+    },
+  });
 }
 
 /**
@@ -518,12 +581,14 @@ async function loadAndTranspileModule(
   adapter: RuntimeAdapter,
   fs: FileSystem,
   config?: VeryfrontConfig,
+  decoratorOptions?: TypeScriptDecoratorOptions,
 ): Promise<APIRoute> {
   const source = await buildTranspiledModuleSource(
     modulePath,
     projectDir,
     adapter,
     config,
+    decoratorOptions,
   );
   return await loadModuleFromCode(source, fs, `${projectDir}\u0000${modulePath}`);
 }
@@ -533,6 +598,7 @@ function buildTranspiledModuleSource(
   projectDir: string,
   adapter: RuntimeAdapter,
   config?: VeryfrontConfig,
+  resolvedDecoratorOptions?: TypeScriptDecoratorOptions,
 ): Promise<string> {
   return withSpan(
     "api.buildTranspiledModuleSource",
@@ -560,12 +626,13 @@ function buildTranspiledModuleSource(
       validateHTTPImports(source, allowedHosts);
 
       const allDeps = await readProjectDependencies(projectDir, sourceSnapshot);
-      const typescriptDecoratorOptions = selectedBundlerForcesTypeScript()
-        ? await readTypeScriptDecoratorOptions({
-          configPath: pathHelper.join(projectDir, "tsconfig.json"),
-          readTextFile: (path) => sourceSnapshot.readTextFile(path),
-        })
-        : undefined;
+      const typeScriptBundler = selectedTypeScriptBundler();
+      const typescriptDecoratorOptions = resolvedDecoratorOptions ??
+        (typeScriptBundler
+          ? await readProjectTypeScriptDecoratorOptions(projectDir, sourceSnapshot)
+          : undefined);
+      const bundleTypeScript = typescriptDecoratorOptions !== undefined &&
+        bundlerForcesTypeScript(typeScriptBundler, typescriptDecoratorOptions);
 
       // Filter out framework-managed packages from user deps. These are already
       // handled by the framework's own external/rewrite logic and should not be
@@ -645,7 +712,7 @@ function buildTranspiledModuleSource(
         // it unconditionally would change how the default esbuild path reports
         // paths for every project.
         ...(typescriptDecoratorOptions
-          ? { absWorkingDir: projectDir, typescriptDecoratorOptions }
+          ? typeScriptBuildOptions(projectDir, typescriptDecoratorOptions, bundleTypeScript)
           : {}),
       });
 

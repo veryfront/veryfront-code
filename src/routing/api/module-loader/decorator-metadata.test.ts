@@ -10,15 +10,17 @@ import { loadHandlerModule, prepareHandlerModule } from "./loader.ts";
 import type { AppRouteContext, AppRouteHandler } from "./types.ts";
 
 describe("API route decorator metadata", () => {
-  it("uses the selected SWC transform for local Deno source execution", async () => {
-    const projectDir = await Deno.makeTempDir();
+  it("uses inherited SWC decorator flags outside the project source boundary", async () => {
+    const workspaceDir = await Deno.makeTempDir();
+    const projectDir = join(workspaceDir, "app");
+    await Deno.mkdir(projectDir);
     const modulePath = join(projectDir, "handler.ts");
     const previousBundler = tryResolve<Bundler>("Bundler");
     const swcBundler = new SwcBundler();
 
     try {
       await Deno.writeTextFile(
-        join(projectDir, "tsconfig.base.json"),
+        join(workspaceDir, "tsconfig.base.json"),
         JSON.stringify({
           compilerOptions: {
             experimentalDecorators: true,
@@ -28,7 +30,7 @@ describe("API route decorator metadata", () => {
       );
       await Deno.writeTextFile(
         join(projectDir, "tsconfig.json"),
-        JSON.stringify({ extends: "./tsconfig.base.json" }),
+        JSON.stringify({ extends: "../tsconfig.base.json" }),
       );
       await Deno.writeTextFile(
         modulePath,
@@ -83,6 +85,55 @@ describe("API route decorator metadata", () => {
       });
       assertEquals(preparedModule.source.includes("design:paramtypes"), true);
       assertEquals(preparedModule.source.includes("getMetadata"), true);
+    } finally {
+      unregister("Bundler");
+      if (previousBundler) register("Bundler", previousBundler);
+      await swcBundler.stop();
+      await Deno.remove(workspaceDir, { recursive: true });
+    }
+  });
+
+  it("keeps flags-off local routes in one shared Deno module graph", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const previousBundler = tryResolve<Bundler>("Bundler");
+    const swcBundler = new SwcBundler();
+
+    try {
+      await Deno.writeTextFile(
+        join(projectDir, "shared.ts"),
+        `
+          let count = 0;
+          export function next(): number { return ++count; }
+        `,
+      );
+      for (const route of ["first", "second"]) {
+        await Deno.writeTextFile(
+          join(projectDir, `${route}.ts`),
+          `
+            import { next } from "./shared.ts";
+            export function GET() { return Response.json(next()); }
+          `,
+        );
+      }
+
+      register("Bundler", swcBundler);
+      const values: number[] = [];
+      for (const route of ["first", "second"]) {
+        const loaded = await loadHandlerModule({
+          projectDir,
+          modulePath: join(projectDir, `${route}.ts`),
+          adapter: denoAdapter,
+          allowHostProjectCodeExecution: true,
+        });
+        const handler = loaded?.GET as AppRouteHandler;
+        const response = await handler(
+          new Request(`http://localhost/api/${route}`),
+          { params: {}, env: {} } satisfies AppRouteContext,
+        );
+        values.push(await response.json());
+      }
+
+      assertEquals(values, [1, 2]);
     } finally {
       unregister("Bundler");
       if (previousBundler) register("Bundler", previousBundler);
