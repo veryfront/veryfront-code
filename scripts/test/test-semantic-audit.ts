@@ -1308,28 +1308,23 @@ function markerForNode(
   }
 
   if (node.type === "AssignmentExpression" && isNode(node.left)) {
-    const globalMarker = globalRuntimeMemberMutationMarker(
-      node.left,
-      line,
-      scopes,
-      bindings.importedNames,
-    );
-    if (globalMarker) return globalMarker;
-    return memberAssignmentRuntimeEffectMarker(
+    const markers = assignmentTargetRuntimeEffectMarkers(
       node.left,
       line,
       bindings,
       scopes,
     );
+    return markers.length > 0 ? markers : undefined;
   }
 
   if (node.type === "UpdateExpression" && isNode(node.argument)) {
-    return globalRuntimeMemberMutationMarker(
+    const markers = assignmentTargetRuntimeEffectMarkers(
       node.argument,
       line,
+      bindings,
       scopes,
-      bindings.importedNames,
     );
+    return markers.length > 0 ? markers : undefined;
   }
 
   if (
@@ -1750,23 +1745,23 @@ function memberRuntimeEffectMarker(
     : undefined;
 }
 
-function memberAssignmentRuntimeEffectMarker(
+function memberAssignmentRuntimeEffectMarkers(
   member: Node,
   line: number,
   imports: ImportBindings,
   scopes: readonly Scope[],
-): SemanticMarker | undefined {
+): readonly SemanticMarker[] {
   if (
     member.type !== "MemberExpression" &&
     member.type !== "OptionalMemberExpression"
-  ) return undefined;
-  const setterMarker = memberSetterRuntimeEffectMarker(
+  ) return [];
+  const setterMarkers = memberSetterRuntimeEffectMarkers(
     member,
     line,
     imports,
     scopes,
   );
-  if (setterMarker) return setterMarker;
+  if (setterMarkers.length > 0) return setterMarkers;
   const object = unwrapExpression(member.object);
   const objectBinding = object
     ? runtimeBindingForExpression(object, imports, scopes)
@@ -1776,26 +1771,88 @@ function memberAssignmentRuntimeEffectMarker(
     objectBindings.length > 0 &&
     objectBindings.every((binding) => binding.kind === "namespace-object")
   ) {
-    return undefined;
+    return [];
   }
-  return memberRuntimeEffectMarker(member, line, imports, scopes);
+  const marker = memberRuntimeEffectMarker(member, line, imports, scopes);
+  return marker ? [marker] : [];
 }
 
-function memberSetterRuntimeEffectMarker(
+function assignmentTargetRuntimeEffectMarkers(
+  target: Node,
+  line: number,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): readonly SemanticMarker[] {
+  const unwrapped = unwrapExpression(target);
+  if (!unwrapped) return [];
+  if (
+    unwrapped.type === "MemberExpression" ||
+    unwrapped.type === "OptionalMemberExpression"
+  ) {
+    const globalMarker = globalRuntimeMemberMutationMarker(
+      unwrapped,
+      line,
+      scopes,
+      imports.importedNames,
+    );
+    if (globalMarker) return [globalMarker];
+    return memberAssignmentRuntimeEffectMarkers(
+      unwrapped,
+      line,
+      imports,
+      scopes,
+    );
+  }
+  if (unwrapped.type === "AssignmentPattern" && isNode(unwrapped.left)) {
+    return assignmentTargetRuntimeEffectMarkers(
+      unwrapped.left,
+      line,
+      imports,
+      scopes,
+    );
+  }
+  if (unwrapped.type === "RestElement" && isNode(unwrapped.argument)) {
+    return assignmentTargetRuntimeEffectMarkers(
+      unwrapped.argument,
+      line,
+      imports,
+      scopes,
+    );
+  }
+  const children = unwrapped.type === "ObjectPattern"
+    ? unwrapped.properties
+    : unwrapped.type === "ArrayPattern"
+    ? unwrapped.elements
+    : undefined;
+  return (Array.isArray(children) ? children : []).flatMap((child) => {
+    if (!isNode(child)) return [];
+    const target = child.type === "ObjectProperty" && isNode(child.value)
+      ? child.value
+      : child;
+    return assignmentTargetRuntimeEffectMarkers(
+      target,
+      line,
+      imports,
+      scopes,
+    );
+  });
+}
+
+function memberSetterRuntimeEffectMarkers(
   member: Node,
   line: number,
   imports: ImportBindings,
   scopes: readonly Scope[],
-): SemanticMarker | undefined {
+): readonly SemanticMarker[] {
   if (
     member.type !== "MemberExpression" &&
     member.type !== "OptionalMemberExpression"
-  ) return undefined;
+  ) return [];
   const object = unwrapExpression(member.object);
   const objectBinding = object
     ? runtimeBindingForExpression(object, imports, scopes)
     : undefined;
-  if (!objectBinding) return undefined;
+  if (!objectBinding) return [];
   const property = memberProperty(member);
   const setterBinding = property === undefined
     ? runtimeUnknownPropertySetterBinding(objectBinding)
@@ -1805,13 +1862,14 @@ function memberSetterRuntimeEffectMarker(
       candidate.kind === "effect" ? [candidate.effect] : []
     ),
   );
-  if (effects.length !== 1) return undefined;
+  if (effects.length === 0) return [];
   const chain = memberChain(member);
-  return {
-    effect: effects[0],
+  const symbol = `${chain?.join(".") ?? invocationSymbol(member)} setter`;
+  return effects.map((effect) => ({
+    effect,
     line,
-    symbol: `${chain?.join(".") ?? invocationSymbol(member)} setter`,
-  };
+    symbol,
+  }));
 }
 
 function isProcessModuleEnvDetail(
@@ -2560,7 +2618,7 @@ function mutationCallMarker(
   const canonicalName = `${binding.receiver}.${binding.method}`;
   if (canonicalName === "Reflect.set") {
     const property = literalPropertyName(args[1]);
-    const setterMarker = memberSetterRuntimeEffectMarker(
+    const setterMarkers = memberSetterRuntimeEffectMarkers(
       property === undefined
         ? runtimeUnknownPropertyExpression(args[0])
         : runtimePropertyExpression(args[0], property),
@@ -2568,7 +2626,7 @@ function mutationCallMarker(
       imports,
       scopes,
     );
-    if (setterMarker) return setterMarker;
+    if (setterMarkers.length > 0) return setterMarkers;
   }
   const mutatesSingleProperty = GLOBAL_SINGLE_PROPERTY_MUTATORS.has(
     canonicalName,

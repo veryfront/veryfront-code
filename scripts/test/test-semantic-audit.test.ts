@@ -2267,6 +2267,7 @@ const direct = {};
 Object.defineProperty(direct, "path", { set: Deno.remove });
 direct.path = "direct.txt";
 direct.path = "direct-again.txt";
+direct.path++;
 
 const definedMany = {};
 Object.defineProperties(definedMany, {
@@ -2286,11 +2287,52 @@ bound.path = "bound.txt";
 const unread = {};
 Object.defineProperty(unread, "path", { set: Deno.remove });
 unread.path;
+
+declare const unknownProperty: string;
+const multiple = {};
+Object.defineProperty(multiple, "path", { set: Deno.remove });
+Object.defineProperty(multiple, "url", { set: fetch });
+multiple[unknownProperty] = "unknown";
+Reflect.set(multiple, unknownProperty, "unknown");
 `,
         "src/runtime-descriptor-setters.test.ts",
       ).map((marker) => marker.effect),
       [
         "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "network",
+        "filesystem-write",
+        "network",
+      ],
+    );
+  });
+
+  it("invokes descriptor setters through destructuring assignments", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const target = {};
+Object.defineProperty(target, "write", { set: Deno.writeTextFile });
+({ x: target.write } = { x: "object.txt" });
+[target.write] = ["array.txt"];
+({ x: target.write = "object-default.txt" } = { x: undefined });
+[target.write = "array-default.txt"] = [undefined];
+
+const getterOnly = {};
+Object.defineProperty(getterOnly, "write", {
+  get: () => Deno.writeTextFile,
+});
+const { write: unusedGetter } = getterOnly;
+void unusedGetter;
+`,
+        "src/runtime-descriptor-setter-destructuring.test.ts",
+      ).map((marker) => marker.effect),
+      [
         "filesystem-write",
         "filesystem-write",
         "filesystem-write",
