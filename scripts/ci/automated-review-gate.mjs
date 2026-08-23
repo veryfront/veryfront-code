@@ -22,7 +22,9 @@ const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
   /^[ \t]*and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
 const MARKDOWN_FENCE_LINE_PATTERN =
-  /^[ \t]{0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(`{3,}|~{3,})/;
+  /^([ \t]{0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*)(`{3,}|~{3,})/;
+const MARKDOWN_LIST_PREFIX_PATTERN =
+  /([-*+]|\d+[.)])([ \t]+)(?:\[[ xX]\][ \t]+)?/g;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
@@ -493,10 +495,17 @@ function markdownFenceRanges(content) {
     const line = lineMatch[0];
     if (line.length === 0 && lineStart >= content.length) break;
     const lineEnd = lineStart + line.length;
+    const lineWithoutEnding = line.replace(/\r?\n$/, "");
+    if (
+      openFence !== undefined &&
+      !continuesMarkdownFenceContainer(lineWithoutEnding, openFence.container)
+    ) {
+      ranges.push([openFence.start, lineStart]);
+      openFence = undefined;
+    }
     const fenceMatch = line.match(MARKDOWN_FENCE_LINE_PATTERN);
     if (fenceMatch) {
-      const marker = fenceMatch[1];
-      const lineWithoutEnding = line.replace(/\r?\n$/, "");
+      const marker = fenceMatch[2];
       const markerEnd = lineWithoutEnding.indexOf(marker) + marker.length;
       const hasOnlyClosingFenceWhitespace = /^[ \t]*$/.test(
         lineWithoutEnding.slice(markerEnd),
@@ -506,6 +515,7 @@ function markdownFenceRanges(content) {
           char: marker[0],
           length: marker.length,
           start: lineStart,
+          container: markdownFenceContainer(fenceMatch[1]),
         };
       } else if (
         marker[0] === openFence.char && marker.length >= openFence.length &&
@@ -519,6 +529,34 @@ function markdownFenceRanges(content) {
   }
   if (openFence !== undefined) ranges.push([openFence.start, content.length]);
   return ranges;
+}
+
+function markdownFenceContainer(prefix) {
+  const listPrefixes = [...prefix.matchAll(MARKDOWN_LIST_PREFIX_PATTERN)];
+  return {
+    structuralPrefix: codeRabbitMarkdownPrefixSignature(
+      prefix.replace(MARKDOWN_LIST_PREFIX_PATTERN, ""),
+    ),
+    continuationIndent: listPrefixes.length === 0
+      ? 0
+      : prefix.length - (prefix.lastIndexOf(">") + 1),
+  };
+}
+
+function continuesMarkdownFenceContainer(line, container) {
+  if (
+    container.structuralPrefix.length === 0 &&
+    container.continuationIndent === 0
+  ) return true;
+  const linePrefix = line.match(
+    CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
+  )?.[0] ?? "";
+  if (
+    codeRabbitMarkdownPrefixSignature(linePrefix) !==
+      container.structuralPrefix
+  ) return false;
+  return (linePrefix.match(/[ \t]*$/)?.[0].length ?? 0) >=
+    container.continuationIndent;
 }
 
 function parseCodeRabbitRangeEvidence(evidence, headSha) {
