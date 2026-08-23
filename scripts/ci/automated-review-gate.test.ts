@@ -146,6 +146,33 @@ describe("automated review gate", () => {
     );
   });
 
+  it("accepts CodeRabbit's current base-change review wording", async () => {
+    const currentSummary = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        "Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and ${HEAD_SHA}.`,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+    });
+
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [currentSummary] },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assertEquals(
+      await findAutomatedReview(
+        { reviews: [], comments: [currentSummary] },
+        STALE_SHA,
+      ),
+      undefined,
+    );
+  });
+
   it("accepts an authenticated Codex no-finding comment for the current head", async () => {
     assertEquals(
       await findAutomatedReview(

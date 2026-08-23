@@ -8,7 +8,7 @@ const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
 const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
 const CODERABBIT_REVIEW_RANGE_PATTERN =
-  /Reviewing files between\s+([0-9a-f]{40})\s+and\s+([0-9a-f]{40})(?:\.|\s|$)/i;
+  /Reviewing files(?:\s+that changed from the base of the PR and)?\s+between\s+([0-9a-f]{40})\s+and\s+([0-9a-f]{40})(?:\.|\s|$)/i;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/i;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
