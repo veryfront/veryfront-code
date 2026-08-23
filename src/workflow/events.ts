@@ -38,16 +38,49 @@
 import type { NodeState, WorkflowRun, WorkflowStatus } from "./types.ts";
 import type { WorkflowRunObservation, WorkflowRunObservedState } from "./backends/types.ts";
 
-/** Terminal run statuses: no further event can follow one. */
-const TERMINAL_STATUSES: readonly WorkflowStatus[] = [
-  "completed",
-  "failed",
-  "cancelled",
-] as const;
+const objectDefineProperty = Object.defineProperty;
+const objectEntries = Object.entries;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const reflectApply = Reflect.apply;
+
+function defineRecordEntry<T>(record: Record<string, T>, key: string, value: T): void {
+  objectDefineProperty(record, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
+function readOwnNodeSnapshot(
+  nodes: RunEventSnapshot["nodes"],
+  nodeId: string,
+): { status: NodeState["status"]; attempt: number } | undefined {
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(nodes, nodeId);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readOwnNodeError(
+  nodeErrors: Record<string, string | undefined> | undefined,
+  nodeId: string,
+): string | undefined {
+  if (nodeErrors === undefined) return undefined;
+  try {
+    const descriptor = objectGetOwnPropertyDescriptor(nodeErrors, nodeId);
+    if (!descriptor || !("value" in descriptor)) return undefined;
+    return typeof descriptor.value === "string" ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Whether a run in this status can still produce events. */
 export function isTerminalRunStatus(status: WorkflowStatus): boolean {
-  return TERMINAL_STATUSES.includes(status);
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 /** A step began executing. */
@@ -122,9 +155,12 @@ export interface RunEventSnapshot {
 /** Reduce a run to the state {@linkcode deriveRunEvents} compares. */
 export function snapshotRun(run: Pick<WorkflowRun, "status" | "nodeStates">): RunEventSnapshot {
   const nodes: RunEventSnapshot["nodes"] = {};
-  for (const [nodeId, state] of Object.entries(run.nodeStates ?? {})) {
+  const entries = objectEntries(run.nodeStates ?? {});
+  for (let index = 0; index < entries.length; index++) {
+    const nodeId = entries[index]![0];
+    const state = entries[index]![1];
     if (!state) continue;
-    nodes[nodeId] = { status: state.status, attempt: state.attempt };
+    defineRecordEntry(nodes, nodeId, { status: state.status, attempt: state.attempt });
   }
   return { status: run.status, nodes };
 }
@@ -176,20 +212,23 @@ export function deriveRunEvents(
 ): WorkflowRunEvent[] {
   const events: WorkflowRunEvent[] = [];
 
-  for (const [nodeId, state] of Object.entries(next.nodes)) {
-    const before = previous?.nodes[nodeId];
+  const entries = objectEntries(next.nodes);
+  for (let index = 0; index < entries.length; index++) {
+    const nodeId = entries[index]![0];
+    const state = entries[index]![1];
+    const before = previous ? readOwnNodeSnapshot(previous.nodes, nodeId) : undefined;
     if (before && before.status === state.status && before.attempt === state.attempt) continue;
-    const event = stepEventFor(runId, nodeId, state, nodeErrors?.[nodeId]);
-    if (event) events.push(event);
+    const event = stepEventFor(runId, nodeId, state, readOwnNodeError(nodeErrors, nodeId));
+    if (event) events[events.length] = event;
   }
 
   if (!previous || previous.status !== next.status) {
-    events.push({
+    events[events.length] = {
       type: "run.status",
       runId,
       status: next.status,
       ...(next.status === "failed" && runError !== undefined ? { error: runError } : {}),
-    });
+    };
   }
 
   return events;
@@ -204,8 +243,11 @@ export interface WorkflowRunEventObservation {
 
 function snapshotObservedState(state: WorkflowRunObservedState): RunEventSnapshot {
   const nodes: RunEventSnapshot["nodes"] = {};
-  for (const [nodeId, node] of Object.entries(state.nodes)) {
-    nodes[nodeId] = { status: node.status, attempt: node.attempt };
+  const entries = objectEntries(state.nodes);
+  for (let index = 0; index < entries.length; index++) {
+    const nodeId = entries[index]![0];
+    const node = entries[index]![1];
+    defineRecordEntry(nodes, nodeId, { status: node.status, attempt: node.attempt });
   }
   return { status: state.status, nodes };
 }
@@ -214,6 +256,7 @@ function snapshotObservedState(state: WorkflowRunObservedState): RunEventSnapsho
 export function deriveWorkflowRunEventObservation(
   observation: WorkflowRunObservation,
 ): WorkflowRunEventObservation {
+  const close = observation.close;
   return {
     initial: observation.initial,
     events: {
@@ -222,20 +265,24 @@ export function deriveWorkflowRunEventObservation(
         for await (const state of observation.changes) {
           const next = snapshotObservedState(state);
           const nodeErrors: Record<string, string | undefined> = {};
-          for (const [nodeId, node] of Object.entries(state.nodes)) {
-            if (node.error !== undefined) nodeErrors[nodeId] = node.error;
+          const entries = objectEntries(state.nodes);
+          for (let index = 0; index < entries.length; index++) {
+            const nodeId = entries[index]![0];
+            const node = entries[index]![1];
+            if (node.error !== undefined) defineRecordEntry(nodeErrors, nodeId, node.error);
           }
-          yield* deriveRunEvents(
+          const events = deriveRunEvents(
             observation.initial.id,
             previous,
             next,
             state.runError,
             nodeErrors,
           );
+          for (let index = 0; index < events.length; index++) yield events[index]!;
           previous = next;
         }
       },
     },
-    close: () => observation.close(),
+    close: () => reflectApply(close, observation, []) as Promise<void>,
   };
 }
