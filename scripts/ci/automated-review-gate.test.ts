@@ -41,6 +41,8 @@ function codeRabbitSummary(
     ].join("\n"),
     html_url:
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-1",
+    created_at: "2026-08-22T12:00:00Z",
+    updated_at: "2026-08-22T12:00:00Z",
     ...overrides,
   };
 }
@@ -60,6 +62,8 @@ function codexNoFindingComment(
     ].join("\n\n"),
     html_url:
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-2",
+    created_at: "2026-08-22T12:01:00Z",
+    updated_at: "2026-08-22T12:01:00Z",
     ...overrides,
   };
 }
@@ -263,6 +267,46 @@ describe("automated review gate", () => {
         HEAD_SHA,
       ),
       undefined,
+    );
+  });
+
+  it("makes the newest exact-head bot outcome authoritative across reviewers", async () => {
+    const failedCodex = codexNoFindingComment({
+      body: [
+        "Codex Review: Action not completed.",
+        `**Reviewed commit:** \`${HEAD_SHA.slice(0, 10)}\``,
+      ].join("\n\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+    assertEquals(
+      await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codeRabbitSummary(), codexNoFindingComment(), failedCodex],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ),
+      undefined,
+    );
+
+    const newerCodeRabbit = codeRabbitSummary({
+      created_at: "2026-08-22T12:03:00Z",
+      updated_at: "2026-08-22T12:03:00Z",
+      html_url:
+        "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-4",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [codexNoFindingComment(), failedCodex, newerCodeRabbit],
+          resolveCommit: () => Promise.resolve(HEAD_SHA),
+        },
+        HEAD_SHA,
+      ))?.reviewer,
+      "coderabbitai[bot]",
     );
   });
 

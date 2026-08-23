@@ -33,32 +33,50 @@ export async function findAutomatedReview(
   },
   headSha,
 ) {
-  for (let index = reviews.length - 1; index >= 0; index--) {
-    const review = reviews[index];
-    const login = review?.user?.login;
-    const state = review?.state;
-    if (
-      typeof login !== "string" ||
-      !AUTOMATED_REVIEW_LOGINS.has(login.toLowerCase()) ||
-      typeof state !== "string" ||
-      !SUBMITTED_REVIEW_STATES.has(state.toUpperCase()) ||
-      review?.commit_id !== headSha ||
-      typeof review?.submitted_at !== "string" ||
-      review.submitted_at.length === 0
-    ) {
-      continue;
-    }
-    return {
-      reviewer: login,
-      source: "review",
-      state: state.toUpperCase(),
-      url: typeof review.html_url === "string" ? review.html_url : undefined,
-    };
-  }
+  const events = [
+    ...reviews.map((review, index) => ({
+      kind: "review",
+      value: review,
+      order: index,
+      time: automatedReviewEventTime(review, index),
+    })),
+    ...comments.map((comment, index) => ({
+      kind: "comment",
+      value: comment,
+      order: reviews.length + index,
+      time: automatedReviewEventTime(comment, reviews.length + index),
+    })),
+  ].sort((left, right) => right.time - left.time || right.order - left.order);
 
-  let latestCodeRabbitSummary;
-  for (let index = comments.length - 1; index >= 0; index--) {
-    const comment = comments[index];
+  for (const event of events) {
+    if (event.kind === "review") {
+      const review = event.value;
+      const login = review?.user?.login;
+      if (
+        typeof login !== "string" ||
+        !AUTOMATED_REVIEW_LOGINS.has(login.toLowerCase()) ||
+        review?.commit_id !== headSha
+      ) {
+        continue;
+      }
+      const state = review?.state;
+      if (
+        typeof state !== "string" ||
+        !SUBMITTED_REVIEW_STATES.has(state.toUpperCase()) ||
+        typeof review?.submitted_at !== "string" ||
+        review.submitted_at.length === 0
+      ) {
+        return undefined;
+      }
+      return {
+        reviewer: login,
+        source: "review",
+        state: state.toUpperCase(),
+        url: typeof review.html_url === "string" ? review.html_url : undefined,
+      };
+    }
+
+    const comment = event.value;
     const login = comment?.user?.login;
     const body = comment?.body;
     if (
@@ -66,8 +84,7 @@ export async function findAutomatedReview(
       login.toLowerCase() === CODEX_LOGIN &&
       comment?.user?.type === "Bot" &&
       comment?.user?.id === CODEX_BOT_ID &&
-      typeof body === "string" &&
-      body.startsWith(CODEX_NO_FINDING_PREFIX)
+      typeof body === "string"
     ) {
       const reviewedCommit = body.match(CODEX_REVIEWED_COMMIT_PATTERN)?.[1];
       if (typeof reviewedCommit === "string") {
@@ -77,45 +94,59 @@ export async function findAutomatedReview(
           FULL_COMMIT_PATTERN.test(resolvedCommit) &&
           resolvedCommit.toLowerCase() === headSha.toLowerCase()
         ) {
-          return {
-            reviewer: login,
-            source: "summary",
-            state: "COMMENTED",
-            url: typeof comment.html_url === "string"
-              ? comment.html_url
-              : undefined,
-          };
+          return body.startsWith(CODEX_NO_FINDING_PREFIX)
+            ? {
+              reviewer: login,
+              source: "summary",
+              state: "COMMENTED",
+              url: typeof comment.html_url === "string"
+                ? comment.html_url
+                : undefined,
+            }
+            : undefined;
         }
       }
     }
     if (
-      latestCodeRabbitSummary === undefined &&
       typeof login === "string" &&
       login.toLowerCase() === CODERABBIT_LOGIN &&
       typeof body === "string" &&
       body.includes(CODERABBIT_RECENT_REVIEW_MARKER)
     ) {
-      latestCodeRabbitSummary = comment;
+      const recentReview = codeRabbitRecentReview(body);
+      const reviewedTip = recentReview?.match(
+        CODERABBIT_REVIEW_RANGE_PATTERN,
+      )?.[2];
+      return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) &&
+          typeof reviewedTip === "string" &&
+          reviewedTip.toLowerCase() === headSha.toLowerCase()
+        ? {
+          reviewer: login,
+          source: "summary",
+          state: "COMMENTED",
+          url: typeof comment.html_url === "string"
+            ? comment.html_url
+            : undefined,
+        }
+        : undefined;
     }
   }
-  const latestCodeRabbitBody = latestCodeRabbitSummary?.body;
-  const recentReview = codeRabbitRecentReview(latestCodeRabbitBody);
-  const reviewedTip = recentReview?.match(CODERABBIT_REVIEW_RANGE_PATTERN)?.[2];
-  if (
-    recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER) &&
-    typeof reviewedTip === "string" &&
-    reviewedTip.toLowerCase() === headSha.toLowerCase()
-  ) {
-    return {
-      reviewer: latestCodeRabbitSummary.user.login,
-      source: "summary",
-      state: "COMMENTED",
-      url: typeof latestCodeRabbitSummary.html_url === "string"
-        ? latestCodeRabbitSummary.html_url
-        : undefined,
-    };
-  }
   return undefined;
+}
+
+function automatedReviewEventTime(value, fallback) {
+  for (
+    const timestamp of [
+      value?.updated_at,
+      value?.submitted_at,
+      value?.created_at,
+    ]
+  ) {
+    if (typeof timestamp !== "string") continue;
+    const parsed = Date.parse(timestamp);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
 }
 
 function codeRabbitRecentReview(body) {
