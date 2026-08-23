@@ -117,6 +117,8 @@ async function fetchDebugContext(input: GetDebugContextInput): Promise<Response>
     return await fetch(url);
   } catch (error) {
     if (!input.project || !isNameResolutionError(error)) throw error;
+    // This tool has no preview input. x-project-slug preserves project identity
+    // only; future preview support must retain the virtual-host environment.
     return await fetch(`http://127.0.0.1:${input.port}/_vf_debug/context`, {
       headers: { "x-project-slug": input.project },
     });

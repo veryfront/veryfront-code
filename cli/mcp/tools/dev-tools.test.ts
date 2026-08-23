@@ -86,28 +86,62 @@ describe("mcp/tools/dev-tools", () => {
       assertEquals(result.context?.projectSlug, "alpha");
     });
 
-    it("falls back to loopback after a native project-host resolution failure", async () => {
-      const requests: Request[] = [];
+    for (
+      const [runtime, resolutionError] of [
+        [
+          "Node",
+          new TypeError("fetch failed", {
+            cause: new Error("getaddrinfo ENOTFOUND alpha.localhost"),
+          }),
+        ],
+        [
+          "Deno",
+          new TypeError(
+            "client error (Connect): dns error: failed to lookup address information",
+          ),
+        ],
+      ] as const
+    ) {
+      it(`falls back to loopback after a ${runtime} project-host resolution failure`, async () => {
+        const requests: Request[] = [];
+        const result = await withMockFetch(
+          (input, init) => {
+            requests.push(new Request(input, init));
+            if (requests.length === 1) return Promise.reject(resolutionError);
+            return Promise.resolve(Response.json({
+              context: { projectSlug: "alpha", projectDir: "/project" },
+              adapter: { isMultiProjectMode: true },
+            }));
+          },
+          () => vfGetDebugContext.execute({ port: 4321, project: "alpha" }),
+        );
+
+        assertEquals(requests.map((request) => request.url), [
+          "http://alpha.localhost:4321/_vf_debug/context",
+          "http://127.0.0.1:4321/_vf_debug/context",
+        ]);
+        assertEquals(requests[1]?.headers.get("x-project-slug"), "alpha");
+        assertEquals(result.success, true);
+      });
+    }
+
+    it("does not fall back after a non-DNS connection failure", async () => {
+      let requests = 0;
       const result = await withMockFetch(
-        (input, init) => {
-          requests.push(new Request(input, init));
-          if (requests.length === 1) {
-            return Promise.reject(new TypeError("getaddrinfo ENOTFOUND alpha.localhost"));
-          }
-          return Promise.resolve(Response.json({
-            context: { projectSlug: "alpha", projectDir: "/project" },
-            adapter: { isMultiProjectMode: true },
-          }));
+        () => {
+          requests += 1;
+          return Promise.reject(
+            new TypeError("fetch failed", {
+              cause: new Error("connect ECONNREFUSED 127.0.0.1:4321"),
+            }),
+          );
         },
         () => vfGetDebugContext.execute({ port: 4321, project: "alpha" }),
       );
 
-      assertEquals(requests.map((request) => request.url), [
-        "http://alpha.localhost:4321/_vf_debug/context",
-        "http://127.0.0.1:4321/_vf_debug/context",
-      ]);
-      assertEquals(requests[1]?.headers.get("x-project-slug"), "alpha");
-      assertEquals(result.success, true);
+      assertEquals(requests, 1);
+      assertEquals(result.success, false);
+      assertExists(result.error);
     });
   });
 

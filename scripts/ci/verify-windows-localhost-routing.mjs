@@ -1,9 +1,11 @@
+// The preceding CI install step materializes Playwright for native Node through
+// the repository's `nodeModulesDir: "auto"` configuration.
 import { chromium, request as playwrightRequest } from "playwright";
 
 const PROJECTS = ["alpha", "beta"];
 const PORT = 8080;
 const DEBUG_CONTEXT_PATH = "/_vf_debug/context";
-const RUNTIMES = [
+const ROUTE_CASES = [
   {
     environment: "production",
     hostname: (project) => `${project}.localhost`,
@@ -30,18 +32,18 @@ const browser = await chromium.launch({ headless: true });
 const api = await playwrightRequest.newContext();
 try {
   const page = await browser.newPage();
-  for (const runtime of RUNTIMES) {
+  for (const routeCase of ROUTE_CASES) {
     for (const project of PROJECTS) {
-      const hostname = runtime.hostname(project);
+      const hostname = routeCase.hostname(project);
       const browserResponse = await page.goto(`http://${hostname}:${PORT}${DEBUG_CONTEXT_PATH}`);
       assert(browserResponse?.ok(), `Browser request failed for ${hostname}`);
-      verifyContext(await browserResponse.json(), project, runtime.environment);
+      verifyContext(await browserResponse.json(), project, routeCase.environment);
 
       const nativeResponse = await api.get(`http://127.0.0.1:${PORT}${DEBUG_CONTEXT_PATH}`, {
         headers: { host: `${hostname}:${PORT}` },
       });
       assert(nativeResponse.ok(), `Native request failed for ${hostname}`);
-      verifyContext(await nativeResponse.json(), project, runtime.environment);
+      verifyContext(await nativeResponse.json(), project, routeCase.environment);
     }
   }
   console.log(JSON.stringify({ success: true, browserRequests: 4, nativeRequests: 4 }));

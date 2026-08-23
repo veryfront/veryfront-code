@@ -17,8 +17,8 @@ import { getRuntimeForPlaywrightProject } from "./helpers/runtime.ts";
  * Projects to test.
  *
  * Configure via environment variables:
- *   E2E_PROJECT=myproject npx playwright test --config=tests/e2e/playwright.config.cjs
- *   E2E_PROJECTS="proj1,proj2" npx playwright test --config=tests/e2e/playwright.config.cjs
+ *   E2E_PROJECT=myproject deno task test:e2e:playwright tests/e2e/smoke.playwright.ts
+ *   E2E_PROJECTS="proj1,proj2" deno task test:e2e:playwright tests/e2e/smoke.playwright.ts
  *   PLAYWRIGHT_PROJECT=preview-host deno task test:e2e:playwright
  *
  * If neither is set, uses example projects for demonstration.

@@ -115,8 +115,8 @@ browser.
 ### Use project hosts from native clients
 
 Multi-project browser URLs use `http://<PROJECT>.localhost:<PORT>`. Preview
-browser URLs use `http://<PROJECT>.preview.localhost:<PORT>`. Browsers treat the
-reserved `.localhost` tree as loopback, including on Windows.
+browser URLs use `http://<PROJECT>.preview.localhost:<PORT>`. Chromium treats
+the reserved `.localhost` tree as loopback on Windows.
 
 Native Node, Deno, and command-line resolvers can depend on operating-system
 resolver behavior for wildcard names. Veryfront's Windows Server 2022 CI
