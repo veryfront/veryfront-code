@@ -21,7 +21,8 @@ const CODERABBIT_REVIEW_RANGE_WRAPPED_TIP_PATTERN =
 const CODERABBIT_REVIEW_RANGE_WRAPPED_SEPARATOR_PATTERN =
   /^[ \t]*and[ \t]+([0-9a-f]{40})(?![0-9a-f])/i;
 const FULL_COMMIT_TOKEN_PATTERN = /(^|[^0-9a-f])([0-9a-f]{40})(?![0-9a-f])/gi;
-const MARKDOWN_FENCE_LINE_PATTERN = /^[ \t]{0,3}(`{3,}|~{3,})/;
+const MARKDOWN_FENCE_LINE_PATTERN =
+  /^[ \t]{0,3}(?:(?:>[ \t]*)|(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?))*(`{3,}|~{3,})/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
   /Requested commit:\s*([0-9a-f]{40})/gi;
 const CODERABBIT_SKIPPED_COMMIT_PATTERN =
@@ -332,14 +333,14 @@ function classifyCodeRabbitRangeEvidence(selectedRecentReview, headSha) {
 
 function codeRabbitRangeEvidenceStatements(content) {
   const fenceRanges = markdownFenceRanges(content);
+  const matches = [
+    ...content.matchAll(CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN),
+  ];
+  const statementIndexes = matches.map(codeRabbitStatementIndex);
   const statements = [];
   let fenceIndex = 0;
-  for (
-    const match of content.matchAll(
-      CODERABBIT_REVIEW_RANGE_STATEMENT_START_PATTERN,
-    )
-  ) {
-    const statementIndex = match.index + match[0].indexOf(match[1]);
+  for (const [matchIndex, match] of matches.entries()) {
+    const statementIndex = statementIndexes[matchIndex];
     while (
       fenceIndex < fenceRanges.length &&
       fenceRanges[fenceIndex][1] <= statementIndex
@@ -350,13 +351,25 @@ function codeRabbitRangeEvidenceStatements(content) {
       fenceRanges[fenceIndex][0] <= statementIndex &&
       statementIndex < fenceRanges[fenceIndex][1];
     if (insideFence) continue;
-    const statement = parseCodeRabbitRangeStatement(content, match);
+    const continuationEnd = Math.min(
+      statementIndexes[matchIndex + 1] ?? content.length,
+      fenceRanges[fenceIndex]?.[0] ?? content.length,
+    );
+    const statement = parseCodeRabbitRangeStatement(
+      content,
+      match,
+      continuationEnd,
+    );
     if (statement) statements.push(statement);
   }
   return statements;
 }
 
-function parseCodeRabbitRangeStatement(content, match) {
+function codeRabbitStatementIndex(match) {
+  return match.index + match[0].indexOf(match[1]);
+}
+
+function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
   const statementStart = match[1];
   const firstLineTail = match[2];
   const sameLineSeparator = firstLineTail.match(
@@ -378,7 +391,7 @@ function parseCodeRabbitRangeStatement(content, match) {
   const statementParts = [statementStart + firstLineTail];
   let lineEnd = match.index + match[0].length;
   while (true) {
-    const nextLine = codeRabbitNextLine(content, lineEnd);
+    const nextLine = codeRabbitNextLine(content, lineEnd, continuationEnd);
     if (!nextLine) return undefined;
     const continuationContent = nextLine.content.replace(
       CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
@@ -430,7 +443,7 @@ function codeRabbitBaseSegment(lines, finalLine) {
   return [...lines, finalLine].join("\n").trim().toLowerCase();
 }
 
-function codeRabbitNextLine(content, lineEnd) {
+function codeRabbitNextLine(content, lineEnd, continuationEnd) {
   const separator = content.startsWith("\r\n", lineEnd)
     ? "\r\n"
     : content.startsWith("\n", lineEnd)
@@ -438,12 +451,20 @@ function codeRabbitNextLine(content, lineEnd) {
     : undefined;
   if (!separator) return undefined;
   const contentStart = lineEnd + separator.length;
-  const nextLineEnd = content.slice(contentStart).search(/[\r\n]/);
+  if (contentStart >= continuationEnd) return undefined;
+  const carriageReturn = content.indexOf("\r", contentStart);
+  const lineFeed = content.indexOf("\n", contentStart);
+  const nextLineEnd = carriageReturn < 0
+    ? lineFeed
+    : lineFeed < 0
+    ? carriageReturn
+    : Math.min(carriageReturn, lineFeed);
   return {
-    content: nextLineEnd < 0
-      ? content.slice(contentStart)
-      : content.slice(contentStart, contentStart + nextLineEnd),
-    lineEnd: nextLineEnd < 0 ? content.length : contentStart + nextLineEnd,
+    content: content.slice(
+      contentStart,
+      nextLineEnd < 0 ? content.length : nextLineEnd,
+    ),
+    lineEnd: nextLineEnd < 0 ? content.length : nextLineEnd,
     separator,
   };
 }

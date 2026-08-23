@@ -806,6 +806,46 @@ describe("automated review gate", () => {
       "summary",
     );
 
+    for (
+      const fencedContinuation of [
+        [
+          "Reviewing files that changed from the base of the PR and between " +
+          "not-a-sha",
+          "```text",
+          `and ${HEAD_SHA}.`,
+          "```",
+        ],
+        [
+          "> Reviewing files that changed from the base of the PR and between " +
+          "not-a-sha",
+          "> ```text",
+          `> and ${HEAD_SHA}.`,
+          "> ```",
+        ],
+      ]
+    ) {
+      const newerRangeEndingInFencedExample = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...fencedContinuation,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:42Z",
+        updated_at: "2026-08-22T12:03:42Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerRangeEndingInFencedExample],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
     const newerManyFencedCurrentRangeExamples = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",
@@ -1140,6 +1180,45 @@ describe("automated review gate", () => {
         HEAD_SHA,
       ))?.url,
       "https://github.com/veryfront/veryfront-code/pull/1#issuecomment-5",
+    );
+  });
+
+  it("scans dense malformed range candidates in linear time", async () => {
+    const olderSuccess = codeRabbitSummary({
+      created_at: "2026-08-22T12:01:00Z",
+      updated_at: "2026-08-22T12:01:00Z",
+    });
+    const denseMalformedRanges = Array.from(
+      { length: 5_000 },
+      (_, index) =>
+        "Reviewing files that changed from the base of the PR and between " +
+        `malformed-base-${index}`,
+    );
+    const newerDenseMalformedRanges = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        ...denseMalformedRanges,
+        "<!-- recent_review_end -->",
+      ].join("\n"),
+      created_at: "2026-08-22T12:02:00Z",
+      updated_at: "2026-08-22T12:02:00Z",
+    });
+
+    const startedAt = performance.now();
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerDenseMalformedRanges],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+    assert(
+      performance.now() - startedAt < 1_000,
+      "dense malformed range parsing must stay linear",
     );
   });
 
