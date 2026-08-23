@@ -1398,6 +1398,21 @@ alias${depth}[key]("deep-alias.txt", "x");
       ).map((marker) => [marker.effect, marker.symbol]),
       [["filesystem-write", `alias${depth}.*`]],
     );
+    const spreads = Array.from(
+      { length: depth },
+      (_, index) => `const spread${index + 1} = { ...spread${index} };`,
+    ).join("\n");
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const spread0 = { run: Deno.writeTextFile };
+${spreads}
+spread${depth}[key]("deep-spread.txt", "x");
+`,
+        "src/deep-runtime-spreads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", `spread${depth}.*`]],
+    );
   });
 
   it("retains runtime provenance stored through unknown computed properties", () => {
@@ -2129,6 +2144,103 @@ unknownPrototypeCall();
         "process",
         "server",
         "shared-cwd",
+      ],
+    );
+  });
+
+  it("preserves mutation API return-value provenance", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const poppedValues = [Deno.remove];
+const popped = poppedValues.pop();
+popped("popped.txt");
+
+const shiftedValues = [Deno.remove];
+const shifted = shiftedValues.shift();
+shifted("shifted.txt");
+
+const splicedValues = [Deno.remove];
+const [spliced] = splicedValues.splice(0, 1);
+spliced("spliced.txt");
+
+const reversedValues = [Deno.remove];
+const reversed = reversedValues.reverse();
+reversed[0]("reversed.txt");
+
+const sortedValues = [Deno.remove];
+const sorted = sortedValues.sort();
+sorted[0]("sorted.txt");
+
+const filledValues = [() => undefined];
+const filled = filledValues.fill(Deno.remove);
+filled[0]("filled.txt");
+
+const copiedValues = [Deno.remove];
+const copied = copiedValues.copyWithin(0, 0, 1);
+copied[0]("copied.txt");
+
+const sortedWithEffect = [2, 1];
+sortedWithEffect.sort(Deno.remove);
+
+const assigned = Object.assign({}, { run: Deno.remove });
+assigned.run("assigned.txt");
+
+const defined = Object.defineProperty({}, "run", { value: Deno.remove });
+defined.run("defined.txt");
+
+const definedGetter = Object.defineProperty({}, "run", {
+  get: () => Deno.remove,
+});
+definedGetter.run("defined-getter.txt");
+
+const definedSetter = Object.defineProperty({}, "path", {
+  set: Deno.remove,
+});
+definedSetter.path = "defined-setter.txt";
+`,
+        "src/runtime-mutation-return-values.test.ts",
+      ).map((marker) => marker.effect),
+      Array.from({ length: 12 }, () => "filesystem-write"),
+    );
+  });
+
+  it("invokes descriptor setters on writes without exposing them to reads", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const direct = {};
+Object.defineProperty(direct, "path", { set: Deno.remove });
+direct.path = "direct.txt";
+direct.path = "direct-again.txt";
+
+const definedMany = {};
+Object.defineProperties(definedMany, {
+  path: { set: Deno.writeTextFile },
+});
+Reflect.set(definedMany, "path", "many.txt");
+
+const remove = Deno.remove;
+const aliased = {};
+Object.defineProperty(aliased, "path", { set: remove });
+aliased.path = "aliased.txt";
+
+const bound = {};
+Object.defineProperty(bound, "path", { set: Deno.remove.bind(Deno) });
+bound.path = "bound.txt";
+
+const unread = {};
+Object.defineProperty(unread, "path", { set: Deno.remove });
+unread.path;
+`,
+        "src/runtime-descriptor-setters.test.ts",
+      ).map((marker) => marker.effect),
+      [
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
+        "filesystem-write",
       ],
     );
   });

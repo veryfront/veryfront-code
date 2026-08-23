@@ -227,6 +227,14 @@ describe("automated review gate", () => {
           codeRabbitSummary({
             body: [
               "<!-- recent_review_start -->",
+              "No actionable comments were generated in the recent review.",
+              `Reviewing files between ${HEAD_SHA} and ${STALE_SHA}.`,
+              "<!-- recent_review_end -->",
+            ].join("\n"),
+          }),
+          codeRabbitSummary({
+            body: [
+              "<!-- recent_review_start -->",
               "Review limit reached. This review was skipped.",
               `Requested commit: ${HEAD_SHA}.`,
               "<!-- recent_review_end -->",
