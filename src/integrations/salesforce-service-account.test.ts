@@ -2,14 +2,21 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assert,
   assertEquals,
+  assertInstanceOf,
   assertRejects,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
+import {
+  _resetEnvironmentConfig,
+  _setEnvironmentConfigForTesting,
+} from "#veryfront/config/environment-config.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import type { ToolExecutionContext } from "#veryfront/tool";
+import { HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV } from "./local-credential-host-policy.ts";
 import {
   createSalesforceServiceAccountToolSourceWithTransport,
   SALESFORCE_SERVICE_ACCOUNT_ENV_VARS,
@@ -65,7 +72,20 @@ function createTransport(
   };
 }
 
-afterEach(() => restoreEnv());
+beforeEach(() => setEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, "1"));
+
+afterEach(() => {
+  restoreEnv();
+  deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+  _resetEnvironmentConfig();
+});
+
+async function assertHostGrantRefusal(call: () => Promise<unknown>): Promise<void> {
+  const error = await assertRejects(call, VeryfrontError);
+  assertInstanceOf(error, VeryfrontError);
+  assertEquals(error.slug, "local-integration-config-invalid");
+  assertStringIncludes(error.message, HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+}
 
 describe("Salesforce service-account integration source", () => {
   it("rejects empty, non-Salesforce, and duplicate allowlists", () => {
@@ -598,6 +618,71 @@ describe("Salesforce service-account integration source", () => {
         ),
       DOMException,
       "cancelled",
+    );
+    assertEquals(transport.captures, []);
+  });
+  it("denies listing and execution when the host grant is missing", async () => {
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+    setCredentials({
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID: "client-id",
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET: "client-secret",
+      SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(() => {
+      throw new Error("an ungranted host must not reach Salesforce");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await assertHostGrantRefusal(() => source.listTools());
+    await assertHostGrantRefusal(
+      () => source.executeTool("salesforce__get_case", { caseId: "500000000000001" }),
+    );
+    assertEquals(transport.captures, []);
+  });
+
+  it("denies a malformed host grant and a project-supplied one", async () => {
+    setCredentials({
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_ID: "client-id",
+      SALESFORCE_SERVICE_ACCOUNT_CLIENT_SECRET: "client-secret",
+      SALESFORCE_SERVICE_ACCOUNT_LOGIN_URL: "https://acme.my.salesforce.com",
+    });
+    const transport = createTransport(() => {
+      throw new Error("an ungranted host must not reach Salesforce");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    for (const value of ["", "0", "true", " 1 "]) {
+      setEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV, value);
+      await assertHostGrantRefusal(() => source.listTools());
+    }
+
+    deleteEnv(HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV);
+    await runWithProjectEnv(
+      { [HOST_LOCAL_INTEGRATION_CREDENTIALS_ENV]: "1" },
+      () => assertHostGrantRefusal(() => source.listTools()),
+    );
+    assertEquals(transport.captures, []);
+  });
+
+  it("denies a granted host that runs in proxy mode", async () => {
+    _setEnvironmentConfigForTesting({ proxyMode: true });
+    const transport = createTransport(() => {
+      throw new Error("a proxy runtime must not reach Salesforce");
+    });
+    const source = createSalesforceServiceAccountToolSourceWithTransport({
+      allowedTools: ["salesforce__get_case"],
+      createOriginBoundFetch: transport.createOriginBoundFetch,
+    });
+
+    await assertHostGrantRefusal(() => source.listTools());
+    await assertHostGrantRefusal(
+      () => source.executeTool("salesforce__get_case", { caseId: "500000000000001" }),
     );
     assertEquals(transport.captures, []);
   });

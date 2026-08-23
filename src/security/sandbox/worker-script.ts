@@ -10,6 +10,9 @@
  * @module security/sandbox/worker-script
  */
 
+// Capture host-environment primordials before any project module is imported.
+import "#veryfront/platform/compat/process/env.ts";
+
 import type {
   ExecuteAppRouteRequest,
   ExecutePagesRouteRequest,
