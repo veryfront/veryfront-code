@@ -1,6 +1,8 @@
 # Veryfront Code
 
 [![CI/CD](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml/badge.svg?branch=main)](https://github.com/veryfront/veryfront-code/actions/workflows/cicd.yml)
+[![CodeQL](https://github.com/veryfront/veryfront-code/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/veryfront/veryfront-code/actions/workflows/codeql.yml)
+[![Dependabot Updates](https://github.com/veryfront/veryfront-code/actions/workflows/dependabot/dependabot-updates/badge.svg?branch=main)](https://github.com/veryfront/veryfront-code/actions/workflows/dependabot/dependabot-updates)
 [![npm version](https://badge.fury.io/js/veryfront.svg)](https://www.npmjs.com/package/veryfront)
 [![Socket Badge](https://socket.dev/api/badge/npm/package/veryfront)](https://socket.dev/npm/package/veryfront)
 [![codecov](https://codecov.io/gh/veryfront/veryfront-code/branch/main/graph/badge.svg)](https://codecov.io/gh/veryfront/veryfront-code)
