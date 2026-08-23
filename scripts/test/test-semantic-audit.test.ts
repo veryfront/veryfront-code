@@ -1790,6 +1790,51 @@ directReordered.reverse();
 const [directReorderedWrite] = directReordered;
 directReorderedWrite("direct-reordered.txt", "x");
 
+const copiedWithin = [() => undefined, Deno.writeTextFile];
+copiedWithin.copyWithin(0, 1, 2);
+const [copiedWithinWrite] = copiedWithin;
+copiedWithinWrite("copied-within.txt", "x");
+
+const copiedFromDefaultStart = [Deno.writeTextFile, () => undefined];
+copiedFromDefaultStart.copyWithin(1);
+copiedFromDefaultStart[1]("copied-default-start.txt", "x");
+
+const shifted = [() => undefined, Deno.writeTextFile];
+shifted.shift();
+const [shiftedWrite] = shifted;
+shiftedWrite("shifted.txt", "x");
+
+const sorted = [() => undefined, Deno.writeTextFile];
+sorted.sort();
+const [sortedWrite] = sorted;
+sortedWrite("sorted.txt", "x");
+
+const spliced = [() => undefined, Deno.writeTextFile];
+spliced.splice(0, 1);
+const [splicedWrite] = spliced;
+splicedWrite("spliced.txt", "x");
+
+const unshifted = [Deno.writeTextFile, () => undefined];
+unshifted.unshift(() => undefined);
+const [, unshiftedWrite] = unshifted;
+unshiftedWrite("unshifted.txt", "x");
+
+const prototypeReordered = [() => undefined, Deno.writeTextFile];
+Array.prototype.reverse.call(prototypeReordered);
+const [prototypeReorderedWrite] = prototypeReordered;
+prototypeReorderedWrite("prototype-reordered.txt", "x");
+
+const reflectedReorder = [() => undefined, Deno.writeTextFile];
+Reflect.apply(Array.prototype.copyWithin, reflectedReorder, [0, 1, 2]);
+const [reflectedReorderWrite] = reflectedReorder;
+reflectedReorderWrite("reflected-reorder.txt", "x");
+
+const boundReorder = [() => undefined, Deno.writeTextFile];
+const boundShift = Array.prototype.shift.bind(boundReorder);
+boundShift();
+const [boundReorderWrite] = boundReorder;
+boundReorderWrite("bound-reorder.txt", "x");
+
 const filled = [() => undefined];
 filled.fill(Deno.writeTextFile, 0, 1);
 const [filledWrite] = [...filled];
@@ -1917,6 +1962,15 @@ reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
         ["filesystem-write", "nestedWrite"],
         ["filesystem-write", "reorderedWrite"],
         ["filesystem-write", "directReorderedWrite"],
+        ["filesystem-write", "copiedWithinWrite"],
+        ["filesystem-write", "copiedFromDefaultStart.1"],
+        ["filesystem-write", "shiftedWrite"],
+        ["filesystem-write", "sortedWrite"],
+        ["filesystem-write", "splicedWrite"],
+        ["filesystem-write", "unshiftedWrite"],
+        ["filesystem-write", "prototypeReorderedWrite"],
+        ["filesystem-write", "reflectedReorderWrite"],
+        ["filesystem-write", "boundReorderWrite"],
         ["filesystem-write", "filledWrite"],
         ["filesystem-write", "definedManyWrite"],
         ["filesystem-write", "reflectDefinedWrite"],
@@ -1935,6 +1989,18 @@ reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
         ["filesystem-write", "variableApplyWrite"],
         ["filesystem-write", "reflectVariableApplyWrite"],
       ],
+    );
+    const repeatedReorders = "values.sort();\n".repeat(1_000);
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const values = [() => undefined, Deno.writeTextFile];
+${repeatedReorders}
+values[0]("repeated-reorders.txt", "x");
+`,
+        "src/repeated-array-reorders.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["filesystem-write", "values.0"]],
     );
     assertEquals(
       collectSemanticMarkers(
@@ -2075,17 +2141,35 @@ conjoined[1] &&= Deno.writeTextFile;
 const [, conjoinedRun] = [...conjoined, () => undefined];
 conjoinedRun("conjoined.txt", "x");
 
-const disjoinedHolder = {};
-const disjoinedResult = (disjoinedHolder.write ||= Deno.writeTextFile);
+const resultHolder = {};
+const disjoinedResult = (resultHolder.write ||= Deno.writeTextFile);
 disjoinedResult("disjoined-result.txt", "x");
 
-const nullishHolder = {};
-const nullishResult = (nullishHolder.write ??= Deno.writeTextFile);
+const nullishResultHolder = {};
+const nullishResult = (nullishResultHolder.write ??= Deno.writeTextFile);
 nullishResult("nullish-result.txt", "x");
 
-const conjoinedHolder = { write: () => undefined };
-const conjoinedResult = (conjoinedHolder.write &&= Deno.writeTextFile);
+const conjoinedResultHolder = { write: () => undefined };
+const conjoinedResult = (conjoinedResultHolder.write &&= Deno.writeTextFile);
 conjoinedResult("conjoined-result.txt", "x");
+
+const assignedResultHolder = {};
+const assignedResult = (assignedResultHolder.write = Deno.writeTextFile);
+assignedResult("assigned-result.txt", "x");
+
+class LogicalAssignmentResultClass {}
+const logicalClassHolder = {};
+const LogicalAssignmentResultAlias =
+  (logicalClassHolder.Receiver ||= LogicalAssignmentResultClass);
+LogicalAssignmentResultAlias.write = Deno.writeTextFile;
+LogicalAssignmentResultClass.write("logical-class-result.txt", "x");
+
+class DirectAssignmentResultClass {}
+const directClassHolder = {};
+const DirectAssignmentResultAlias =
+  (directClassHolder.Receiver = DirectAssignmentResultClass);
+DirectAssignmentResultAlias.write = Deno.writeTextFile;
+DirectAssignmentResultClass.write("direct-class-result.txt", "x");
 `,
         "src/logical-property-assignments.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -2096,7 +2180,26 @@ conjoinedResult("conjoined-result.txt", "x");
         ["filesystem-write", "disjoinedResult"],
         ["filesystem-write", "nullishResult"],
         ["filesystem-write", "conjoinedResult"],
+        ["filesystem-write", "assignedResult"],
+        ["filesystem-write", "LogicalAssignmentResultClass.write"],
+        ["filesystem-write", "DirectAssignmentResultClass.write"],
       ],
+    );
+    assertEquals(
+      collectSemanticMarkers(
+        `
+const local = () => undefined;
+const holder = { write: local };
+const disjoinedResult = (holder.write ||= local);
+const nullishResult = (holder.write ??= local);
+const conjoinedResult = (holder.write &&= local);
+disjoinedResult();
+nullishResult();
+conjoinedResult();
+`,
+        "src/local-logical-assignment-results.test.ts",
+      ),
+      [],
     );
   });
 
