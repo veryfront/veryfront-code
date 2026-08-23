@@ -1065,6 +1065,13 @@ describe("mcp/server", () => {
         paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
+      registerResource("test:custom-opaque", {
+        id: "test:custom-opaque",
+        pattern: "custom:namespace/path:literal",
+        description: "Opaque custom namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
 
       const templatesResponse = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1076,6 +1083,7 @@ describe("mcp/server", () => {
       }).resourceTemplates;
       assertEquals(templates.some((entry) => entry.name === "test:isbn"), false);
       assertEquals(templates.some((entry) => entry.name === "test:ietf"), false);
+      assertEquals(templates.some((entry) => entry.name === "test:custom-opaque"), false);
 
       const resourcesResponse = await server.handleRequest({
         jsonrpc: "2.0",
@@ -1087,6 +1095,7 @@ describe("mcp/server", () => {
       }).resources;
       assertEquals(resources.some((entry) => entry.name === "test:isbn"), true);
       assertEquals(resources.some((entry) => entry.name === "test:ietf"), true);
+      assertEquals(resources.some((entry) => entry.name === "test:custom-opaque"), true);
     });
 
     it("includes title when set on resource", async () => {

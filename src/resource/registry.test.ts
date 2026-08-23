@@ -97,6 +97,16 @@ describe("resource registry", () => {
       resourceRegistry.register(ietf.id, ietf);
       assertEquals(resourceRegistry.findByPattern("urn:ietf:params"), ietf);
       assertEquals(resourceRegistry.findByPattern("urn:ietf:anything"), undefined);
+
+      const custom = resource({
+        pattern: "custom:namespace/path:literal",
+        description: "Opaque custom namespace",
+        paramsSchema: defineSchema((v) => v.object({}))(),
+        load: async () => ({}),
+      });
+      resourceRegistry.register(custom.id, custom);
+      assertEquals(resourceRegistry.findByPattern("custom:namespace/path:literal"), custom);
+      assertEquals(resourceRegistry.findByPattern("custom:namespace/pathanything"), undefined);
     });
 
     it("should match multiple parameters within one path segment", () => {
