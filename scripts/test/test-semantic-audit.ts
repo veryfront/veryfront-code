@@ -4102,10 +4102,13 @@ function bindRuntimeCallMutation(
           invocation.binding.method !== "push" &&
           invocation.binding.method !== "unshift"
         ) {
-          if (invocation.binding.method === "pop") {
-            bindRuntimeUnknownPropertyMutation(
+          if (
+            invocation.binding.method === "pop" ||
+            invocation.binding.method === "shift"
+          ) {
+            bindRuntimeArrayRemovalMutation(
               invocation.target,
-              undefined,
+              invocation.binding.method,
               imports,
               scopes,
             );
@@ -4145,7 +4148,7 @@ function bindRuntimeCallMutation(
       invocation.args,
     );
     const propertyName = GLOBAL_SINGLE_PROPERTY_MUTATORS.has(canonicalName)
-      ? literalValue(invocation.args[1])
+      ? literalPropertyName(invocation.args[1])
       : undefined;
     if (canonicalName === "Object.assign" && assigned.length === 0) continue;
     if (assigned.length === 0) {
@@ -4205,6 +4208,64 @@ function bindRuntimeArrayShapeMutation(
     target,
     existingElements,
     runtimeUnknownPropertyExpression(target),
+    imports,
+    scopes,
+  );
+}
+
+function bindRuntimeArrayRemovalMutation(
+  target: unknown,
+  method: "pop" | "shift",
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): void {
+  const targetBinding = runtimeBindingForExpression(target, imports, scopes);
+  const exactLength = exactRuntimeArrayLength(targetBinding);
+  const receiver = unwrapExpression(target);
+  if (!targetBinding || exactLength === undefined || !receiver) {
+    if (method === "pop") {
+      bindRuntimeUnknownPropertyMutation(target, undefined, imports, scopes);
+    } else {
+      bindRuntimeArrayShapeMutation(target, imports, scopes);
+    }
+    return;
+  }
+  if (exactLength === 0) return;
+  if (method === "shift") {
+    const shifted = Array.from({ length: exactLength - 1 }, (_, index) => {
+      const sourceIndex = String(index + 1);
+      return {
+        index: String(index),
+        binding: runtimePropertyResolution(targetBinding, sourceIndex).binding,
+        expression: runtimePropertyExpression(receiver, sourceIndex),
+      };
+    });
+    for (const entry of shifted) {
+      bindRuntimeNamedPropertyMutationBinding(
+        target,
+        entry.index,
+        entry.binding,
+        entry.expression,
+        imports,
+        scopes,
+        true,
+      );
+    }
+  }
+  bindRuntimeNamedPropertyMutationBinding(
+    target,
+    String(exactLength - 1),
+    undefined,
+    undefined,
+    imports,
+    scopes,
+    true,
+  );
+  bindRuntimeNamedPropertyMutationBinding(
+    target,
+    "length",
+    undefined,
+    undefined,
     imports,
     scopes,
   );
@@ -4516,15 +4577,34 @@ function bindRuntimeNamedPropertyMutation(
   imports: ImportBindings,
   scopes: readonly Scope[],
 ): void {
-  const receiver = unwrapExpression(target);
-  if (!receiver) return;
-  bindRuntimeMemberAssignment(
-    runtimePropertyExpression(receiver, property),
+  bindRuntimeNamedPropertyMutationBinding(
+    target,
+    property,
     runtimeBindingForExpression(assignedExpression, imports, scopes),
     assignedExpression,
     imports,
     scopes,
-    false,
+  );
+}
+
+function bindRuntimeNamedPropertyMutationBinding(
+  target: unknown,
+  property: string,
+  binding: RuntimeBinding | undefined,
+  assignedExpression: unknown,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+  allowClearing = false,
+): void {
+  const receiver = unwrapExpression(target);
+  if (!receiver) return;
+  bindRuntimeMemberAssignment(
+    runtimePropertyExpression(receiver, property),
+    binding,
+    assignedExpression,
+    imports,
+    scopes,
+    allowClearing,
   );
 }
 
@@ -7369,6 +7449,16 @@ function isGlobalRuntimePrefixObject(
 function literalValue(value: unknown): string | undefined {
   return isNode(value) && value.type === "StringLiteral"
     ? value.value as string
+    : undefined;
+}
+
+function literalPropertyName(value: unknown): string | undefined {
+  const literal = unwrapExpression(value);
+  if (!literal) return undefined;
+  if (literal.type === "StringLiteral") return literal.value as string;
+  return literal.type === "NumericLiteral" &&
+      Number.isFinite(literal.value as number)
+    ? String(literal.value)
     : undefined;
 }
 

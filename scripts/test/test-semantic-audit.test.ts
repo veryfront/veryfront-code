@@ -1763,6 +1763,12 @@ Reflect.set(reflected, "1", Deno.writeTextFile);
 const [, reflectedWrite] = [...reflected, () => undefined];
 reflectedWrite("reflected.txt", "x");
 
+const numericReflected = [() => undefined, () => undefined];
+Reflect.set(numericReflected, 1, Deno.writeTextFile);
+const [numericReflectedLocal, numericReflectedWrite] = numericReflected;
+numericReflectedLocal();
+numericReflectedWrite("numeric-reflected.txt", "x");
+
 const aliasedTarget = [() => undefined];
 const targetAlias = aliasedTarget;
 targetAlias.unshift(Deno.writeTextFile);
@@ -1906,6 +1912,7 @@ reflectVariableApplyWrite("reflect-variable-apply.txt", "x");
         ["filesystem-write", "assignedWrite"],
         ["filesystem-write", "definedWrite"],
         ["filesystem-write", "reflectedWrite"],
+        ["filesystem-write", "numericReflectedWrite"],
         ["filesystem-write", "aliasedWrite"],
         ["filesystem-write", "nestedWrite"],
         ["filesystem-write", "reorderedWrite"],
@@ -1977,6 +1984,11 @@ const popped = [() => undefined, Deno.writeTextFile];
 popped.pop();
 const [poppedRun] = popped;
 poppedRun();
+
+const shifted = [Deno.writeTextFile, () => undefined];
+shifted.shift();
+const [shiftedRun] = shifted;
+shiftedRun();
 
 const definedNamed = { run: () => undefined };
 Object.defineProperty(definedNamed, "write", {
