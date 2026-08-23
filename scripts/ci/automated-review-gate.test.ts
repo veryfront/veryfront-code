@@ -548,6 +548,54 @@ describe("automated review gate", () => {
       "summary",
     );
 
+    for (
+      const unterminatedCurrentRange of [
+        codeRabbitReviewRange(),
+        `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,
+      ]
+    ) {
+      const newerUnterminatedCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          unterminatedCurrentRange,
+        ].join("\n"),
+        created_at: "2026-08-22T12:03:30Z",
+        updated_at: "2026-08-22T12:03:30Z",
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerUnterminatedCurrentRange],
+          },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const newerUnterminatedStaleRange = codeRabbitSummary({
+      body: [
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+      ].join("\n"),
+      created_at: "2026-08-22T12:03:45Z",
+      updated_at: "2026-08-22T12:03:45Z",
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        {
+          reviews: [],
+          comments: [olderSuccess, newerUnterminatedStaleRange],
+        },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+
     const newerOutOfScopeCurrentRange = codeRabbitSummary({
       body: [
         `Reviewing files between ${STALE_SHA} and ${HEAD_SHA}.`,

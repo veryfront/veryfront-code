@@ -199,7 +199,7 @@ async function classifyAutomatedReviewEvent(
   if (login.toLowerCase() !== CODERABBIT_LOGIN) {
     return { kind: "not-head" };
   }
-  const recentReview = codeRabbitRecentReview(body);
+  const selectedRecentReview = codeRabbitSelectedRecentReview(body);
   const currentHeadMarker = [
     ...body.matchAll(CODERABBIT_SKIPPED_COMMIT_PATTERN),
     ...body.matchAll(CODERABBIT_REQUESTED_COMMIT_PATTERN),
@@ -210,9 +210,9 @@ async function classifyAutomatedReviewEvent(
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,
     };
   }
-  const rangeCandidates = recentReview?.split(/\r?\n/).filter((line) =>
-    CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN.test(line)
-  );
+  const rangeCandidates = selectedRecentReview?.content.split(/\r?\n/).filter((
+    line,
+  ) => CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN.test(line));
   const rangeCandidateHasCurrentTip = rangeCandidates?.some((line) =>
     rangeCandidateReferencesTip(line, headSha)
   );
@@ -222,6 +222,15 @@ async function classifyAutomatedReviewEvent(
   const hasCurrentRange = reviewedTips?.some((tip) =>
     tip?.toLowerCase() === headSha.toLowerCase()
   );
+  if (
+    selectedRecentReview && !selectedRecentReview.terminated &&
+    (hasCurrentRange || rangeCandidateHasCurrentTip)
+  ) {
+    return {
+      kind: "failure",
+      url: typeof comment.html_url === "string" ? comment.html_url : undefined,
+    };
+  }
   if (rangeCandidates?.length !== 1) {
     return hasCurrentRange || rangeCandidateHasCurrentTip
       ? {
@@ -238,7 +247,9 @@ async function classifyAutomatedReviewEvent(
       ? { kind: "failure" }
       : { kind: "not-head" };
   }
-  return recentReview?.includes(CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER)
+  return selectedRecentReview?.content.includes(
+      CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER,
+    )
     ? {
       kind: "success",
       review: {
@@ -256,13 +267,16 @@ async function classifyAutomatedReviewEvent(
     };
 }
 
-function codeRabbitRecentReview(body) {
+function codeRabbitSelectedRecentReview(body) {
   if (typeof body !== "string") return undefined;
   const start = body.lastIndexOf(CODERABBIT_RECENT_REVIEW_MARKER);
   if (start < 0) return undefined;
   const contentStart = start + CODERABBIT_RECENT_REVIEW_MARKER.length;
   const end = body.indexOf(CODERABBIT_RECENT_REVIEW_END_MARKER, contentStart);
-  return end < 0 ? undefined : body.slice(contentStart, end);
+  return {
+    content: end < 0 ? body.slice(contentStart) : body.slice(contentStart, end),
+    terminated: end >= 0,
+  };
 }
 
 function rangeCandidateReferencesTip(value, headSha) {
