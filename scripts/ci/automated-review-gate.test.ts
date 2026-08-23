@@ -206,6 +206,59 @@ describe("automated review gate", () => {
     }
   });
 
+  it("requires one unambiguous range in the selected recent review", async () => {
+    for (
+      const ranges of [
+        [codeRabbitReviewRange(), codeRabbitReviewRange(HEAD_SHA, STALE_SHA)],
+        [codeRabbitReviewRange(HEAD_SHA, STALE_SHA), codeRabbitReviewRange()],
+        [codeRabbitReviewRange(), codeRabbitReviewRange()],
+        [
+          codeRabbitReviewRange(),
+          codeRabbitReviewRange() + " but this is not the final review.",
+        ],
+        [
+          codeRabbitReviewRange(),
+          codeRabbitReviewRange().replace("Reviewing", "reviewing"),
+        ],
+      ]
+    ) {
+      const ambiguousSummary = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          ...ranges,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+      });
+
+      assertEquals(
+        await findAutomatedReview(
+          { reviews: [], comments: [ambiguousSummary] },
+          HEAD_SHA,
+        ),
+        undefined,
+      );
+    }
+
+    const scopedSummary = codeRabbitSummary({
+      body: [
+        codeRabbitReviewRange(HEAD_SHA, STALE_SHA),
+        "<!-- recent_review_start -->",
+        "No actionable comments were generated in the recent review.",
+        codeRabbitReviewRange(),
+        "<!-- recent_review_end -->",
+        codeRabbitReviewRange() + " but this is not the final review.",
+      ].join("\n"),
+    });
+    assertEquals(
+      (await findAutomatedReview(
+        { reviews: [], comments: [scopedSummary] },
+        HEAD_SHA,
+      ))?.source,
+      "summary",
+    );
+  });
+
   it("accepts an authenticated Codex no-finding comment for the current head", async () => {
     assertEquals(
       await findAutomatedReview(

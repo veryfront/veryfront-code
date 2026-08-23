@@ -7,6 +7,7 @@ const CODERABBIT_RECENT_REVIEW_MARKER = "<!-- recent_review_start -->";
 const CODERABBIT_RECENT_REVIEW_END_MARKER = "<!-- recent_review_end -->";
 const CODERABBIT_NO_ACTIONABLE_REVIEW_MARKER =
   "No actionable comments were generated in the recent review.";
+const CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN = /^\s*reviewing\s+files\b/i;
 const CODERABBIT_REVIEW_RANGE_PATTERN =
   /(?:^|\r?\n)Reviewing files that changed from the base of the PR and between ([0-9a-f]{40}) and ([0-9a-f]{40})\.(?=\r?\n|$)/;
 const CODERABBIT_REQUESTED_COMMIT_PATTERN =
@@ -208,9 +209,26 @@ async function classifyAutomatedReviewEvent(
       url: typeof comment.html_url === "string" ? comment.html_url : undefined,
     };
   }
-  const reviewedTip = recentReview?.match(
-    CODERABBIT_REVIEW_RANGE_PATTERN,
-  )?.[2];
+  const rangeCandidates = recentReview?.split(/\r?\n/).filter((line) =>
+    CODERABBIT_REVIEW_RANGE_CANDIDATE_PATTERN.test(line)
+  );
+  const reviewedTips = rangeCandidates?.map((line) =>
+    line.match(CODERABBIT_REVIEW_RANGE_PATTERN)?.[2]
+  );
+  const hasCurrentRange = reviewedTips?.some((tip) =>
+    tip?.toLowerCase() === headSha.toLowerCase()
+  );
+  if (rangeCandidates?.length !== 1) {
+    return hasCurrentRange
+      ? {
+        kind: "failure",
+        url: typeof comment.html_url === "string"
+          ? comment.html_url
+          : undefined,
+      }
+      : { kind: "not-head" };
+  }
+  const reviewedTip = reviewedTips?.[0];
   if (reviewedTip?.toLowerCase() !== headSha.toLowerCase()) {
     return { kind: "not-head" };
   }
