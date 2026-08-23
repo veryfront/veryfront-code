@@ -208,7 +208,7 @@ function stringifyWebhookJson(
     let serialized = spaces > 0 ? "[\n" : "[";
     for (let index = 0; index < value.length; index++) {
       if (index > 0) serialized += separator;
-      const descriptor = reflectGetOwnPropertyDescriptor(value, String(index));
+      const descriptor = reflectGetOwnPropertyDescriptor(value, `${index}`);
       serialized += childIndent + stringifyWebhookJson(
         descriptor!.value as BoundedJsonValue,
         spaces,

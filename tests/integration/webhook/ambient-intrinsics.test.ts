@@ -111,6 +111,27 @@ describe("webhook validation with hostile ambient intrinsics", () => {
     assertStringIncludes(error.message, "Webhook payload must be 64 KiB or smaller.");
   });
 
+  it("does not trust the live String constructor for array payload sizing", () => {
+    const definition = webhook({
+      id: "oversized-array-event",
+      target: { kind: "task", id: "process-event" },
+    });
+    const originalString = globalThis.String;
+    let error: unknown;
+
+    try {
+      globalThis.String = (() => "0") as unknown as StringConstructor;
+      prepareWebhookInvocation(definition, ["", "x".repeat(64 * 1_024)]);
+    } catch (cause) {
+      error = cause;
+    } finally {
+      globalThis.String = originalString;
+    }
+
+    assertInstanceOf(error, VeryfrontError);
+    assertStringIncludes(error.message, "Webhook payload must be 64 KiB or smaller.");
+  });
+
   it("does not trust the live array iterator for structural equality", () => {
     const originalIterator = Array.prototype[Symbol.iterator];
     let matched: boolean | undefined;
