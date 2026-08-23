@@ -554,6 +554,94 @@ describe("automated review gate", () => {
       );
     }
 
+    for (const prefix of ["> ", "1. ", "- [x] ", "> 1. - [ ] "]) {
+      for (
+        const compatibleCurrentRange of [
+          `${prefix}Reviewing files that changed from the base of the PR and between ` +
+          `${STALE_SHA} and\n${prefix}${HEAD_SHA}.`,
+          `${prefix}Reviewing files that changed from the base of the PR and between ` +
+          `${STALE_SHA}\n${prefix}and ${HEAD_SHA}.`,
+        ]
+      ) {
+        const newerCompatibleCurrentRange = codeRabbitSummary({
+          body: [
+            "<!-- recent_review_start -->",
+            "No actionable comments were generated in the recent review.",
+            compatibleCurrentRange,
+            "<!-- recent_review_end -->",
+          ].join("\n"),
+          created_at: "2026-08-22T12:02:00Z",
+          updated_at: "2026-08-22T12:02:00Z",
+        });
+        assertEquals(
+          await findAutomatedReview(
+            {
+              reviews: [],
+              comments: [olderSuccess, newerCompatibleCurrentRange],
+            },
+            HEAD_SHA,
+          ),
+          undefined,
+        );
+      }
+
+      const newerCompatibleStaleRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          `${prefix}Reviewing files that changed from the base of the PR and between ` +
+          `${HEAD_SHA} and\n${prefix}${STALE_SHA}.`,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerCompatibleStaleRange],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
+    for (
+      const separatedCurrentRange of [
+        "> Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and\n${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA} and\n> ${HEAD_SHA}.`,
+        "1. Reviewing files that changed from the base of the PR and between " +
+        `${STALE_SHA}\n> and ${HEAD_SHA}.`,
+        "Reviewing files that changed from the base of the PR and between " +
+        `not-a-sha\n<!-- evidence boundary -->\nand ${HEAD_SHA}.`,
+      ]
+    ) {
+      const newerSeparatedCurrentRange = codeRabbitSummary({
+        body: [
+          "<!-- recent_review_start -->",
+          "No actionable comments were generated in the recent review.",
+          separatedCurrentRange,
+          "<!-- recent_review_end -->",
+        ].join("\n"),
+        created_at: "2026-08-22T12:02:00Z",
+        updated_at: "2026-08-22T12:02:00Z",
+      });
+      assertEquals(
+        (await findAutomatedReview(
+          {
+            reviews: [],
+            comments: [olderSuccess, newerSeparatedCurrentRange],
+          },
+          HEAD_SHA,
+        ))?.source,
+        "summary",
+      );
+    }
+
     const newerMalformedStaleRange = codeRabbitSummary({
       body: [
         "<!-- recent_review_start -->",

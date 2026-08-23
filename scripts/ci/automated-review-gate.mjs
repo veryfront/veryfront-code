@@ -372,6 +372,12 @@ function codeRabbitStatementIndex(match) {
 function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
   const statementStart = match[1];
   const firstLineTail = match[2];
+  const statementPrefix = codeRabbitMarkdownPrefixSignature(
+    statementStart.slice(
+      0,
+      statementStart.toLowerCase().lastIndexOf("reviewing"),
+    ),
+  );
   const sameLineSeparator = firstLineTail.match(
     CODERABBIT_REVIEW_RANGE_SEPARATOR_PATTERN,
   );
@@ -393,11 +399,17 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
   while (true) {
     const nextLine = codeRabbitNextLine(content, lineEnd, continuationEnd);
     if (!nextLine) return undefined;
-    const continuationContent = nextLine.content.replace(
+    const continuationPrefix = nextLine.content.match(
       CODERABBIT_REVIEW_RANGE_CONTINUATION_PREFIX_PATTERN,
-      "",
+    )?.[0] ?? "";
+    const continuationContent = nextLine.content.slice(
+      continuationPrefix.length,
     );
-    if (continuationContent.trim().length === 0) return undefined;
+    if (
+      continuationContent.trim().length === 0 ||
+      continuationContent.trimStart().startsWith("<!--") ||
+      codeRabbitMarkdownPrefixSignature(continuationPrefix) !== statementPrefix
+    ) return undefined;
     statementParts.push(nextLine.separator, nextLine.content);
 
     const previousLine = baseLines.at(-1);
@@ -437,6 +449,10 @@ function parseCodeRabbitRangeStatement(content, match, continuationEnd) {
     baseLines.push(continuationContent);
     lineEnd = nextLine.lineEnd;
   }
+}
+
+function codeRabbitMarkdownPrefixSignature(prefix) {
+  return prefix.trim().toLowerCase().replace(/[ \t]+/g, " ");
 }
 
 function codeRabbitBaseSegment(lines, finalLine) {
