@@ -2,11 +2,11 @@ name: Automated review gate
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   pull_request_review:
     types: [submitted, dismissed]
   issue_comment:
-    types: [created, edited]
+    types: [created, edited, deleted]
   status:
 
 permissions:

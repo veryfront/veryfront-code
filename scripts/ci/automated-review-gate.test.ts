@@ -244,6 +244,24 @@ describe("automated review evidence", () => {
       );
     }
   });
+
+  it("revokes a comment-only proof when the comment is deleted", async () => {
+    const evidence = {
+      reviews: [],
+      comments: [codexComment()],
+      statuses: [],
+    };
+    assertEquals(
+      (await findAutomatedReview(
+        evidence,
+        HEAD,
+        () => Promise.resolve(HEAD),
+      ))?.source,
+      "codex-comment",
+    );
+    evidence.comments = [];
+    assertEquals(await findAutomatedReview(evidence, HEAD), undefined);
+  });
 });
 
 function githubFixture(options: {
@@ -404,6 +422,20 @@ describe("automated review workflow", () => {
     );
 
     const triggers = record(workflow.on, "triggers");
+    assertEquals(
+      record(triggers.pull_request_target, "pull request trigger").types,
+      [
+        "opened",
+        "synchronize",
+        "reopened",
+        "ready_for_review",
+        "converted_to_draft",
+      ],
+    );
+    assertEquals(
+      record(triggers.issue_comment, "issue comment trigger").types,
+      ["created", "edited", "deleted"],
+    );
     assert(
       "status" in triggers,
       "CodeRabbit status changes must rerun the gate",
@@ -412,6 +444,10 @@ describe("automated review workflow", () => {
     assert(
       String(job.if).includes("github.event.context == 'CodeRabbit'"),
       "status events must be limited to CodeRabbit to prevent recursion",
+    );
+    assert(
+      String(job.if).includes("github.event.issue.pull_request"),
+      "deleted issue comments must still be guarded by the issue PR marker",
     );
     const steps = job.steps;
     assert(Array.isArray(steps));
@@ -425,6 +461,10 @@ describe("automated review workflow", () => {
     );
     assert(script.includes("publishAutomatedReviewStatus"));
     assert(script.includes("github.rest.pulls.get"));
+    assert(
+      !script.includes("context.payload.comment"),
+      "deleted comments must reconcile from current API evidence, not comment payload data",
+    );
     assert(script.includes("Review gate is unavailable on the default branch"));
   });
 });
