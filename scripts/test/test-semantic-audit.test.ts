@@ -860,6 +860,101 @@ function local(
     );
   });
 
+  it("classifies repository mock-fetch helpers as network effects", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import {
+  installMockFetch,
+  restoreMockFetch as restoreFetch,
+  withMockFetch,
+} from "#veryfront/testing/mock-fetch.ts";
+import * as mockFetchHelpers from "#veryfront/testing/mock-fetch";
+import { withMockFetch as relativeWithMockFetch } from "./testing/mock-fetch.ts";
+const loadedMockFetch = await import("#veryfront/testing/mock-fetch.ts");
+await withMockFetch(undefined, async () => {});
+installMockFetch(fetch);
+restoreFetch();
+await mockFetchHelpers.withMockFetch(undefined, async () => {});
+mockFetchHelpers.installMockFetch(fetch);
+mockFetchHelpers.restoreMockFetch();
+await relativeWithMockFetch(undefined, async () => {});
+await loadedMockFetch.withMockFetch(undefined, async () => {});
+function local(
+  withMockFetch: (mock: undefined, run: () => Promise<void>) => Promise<void>,
+  mockFetchHelpers: { restoreMockFetch(): void },
+) {
+  withMockFetch(undefined, async () => {});
+  mockFetchHelpers.restoreMockFetch();
+}
+`,
+        "src/example.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["network", "withMockFetch"],
+        ["network", "installMockFetch"],
+        ["network", "restoreFetch"],
+        ["network", "mockFetchHelpers.withMockFetch"],
+        ["network", "mockFetchHelpers.installMockFetch"],
+        ["network", "mockFetchHelpers.restoreMockFetch"],
+        ["network", "relativeWithMockFetch"],
+        ["network", "loadedMockFetch.withMockFetch"],
+      ],
+    );
+  });
+
+  it("classifies runtime argument reads as process effects", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import processDefault from "node:process";
+import * as processRuntime from "node:process";
+const loadedProcess = await import("node:process");
+const denoArgs = Deno.args;
+const processArgs = process.argv;
+const globalDenoArgs = globalThis.Deno.args;
+const globalProcessArgs = globalThis.process.argv;
+const defaultArgs = processDefault.argv;
+const namespaceArgs = processRuntime.argv;
+const loadedArgs = loadedProcess.argv;
+denoArgs.length;
+processArgs.length;
+globalDenoArgs.length;
+globalProcessArgs.length;
+defaultArgs.length;
+namespaceArgs.length;
+loadedArgs.length;
+function local(
+  Deno: { args: string[] },
+  process: { argv: string[] },
+  processRuntime: { argv: string[] },
+) {
+  Deno.args[0];
+  process.argv[0];
+  processRuntime.argv[0];
+}
+`,
+        "src/runtime-argument-reads.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["process", "Deno.args"],
+        ["process", "process.argv"],
+        ["process", "globalThis.Deno.args"],
+        ["process", "globalThis.process.argv"],
+        ["process", "processDefault.argv"],
+        ["process", "processRuntime.argv"],
+        ["process", "loadedProcess.argv"],
+        ["process", "denoArgs.length"],
+        ["process", "processArgs.length"],
+        ["process", "globalDenoArgs.length"],
+        ["process", "globalProcessArgs.length"],
+        ["process", "defaultArgs.length"],
+        ["process", "namespaceArgs.length"],
+        ["process", "loadedArgs.length"],
+      ],
+    );
+  });
+
   it("classifies extracted fs.promises methods from static namespace paths", () => {
     assertEquals(
       collectSemanticMarkers(

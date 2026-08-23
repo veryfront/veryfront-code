@@ -320,6 +320,8 @@ const PROCESS_STATE_METHODS = new Set([
   "setEnv",
 ]);
 
+const PROCESS_ARGUMENT_PROPERTIES = new Set(["args", "argv"]);
+
 const TESTING_RUNTIME_WRITE_METHODS = new Set([
   "makeTempDirWithOptions",
   "withTempDir",
@@ -327,6 +329,12 @@ const TESTING_RUNTIME_WRITE_METHODS = new Set([
 ]);
 
 const TESTING_RUNTIME_PROCESS_METHODS = new Set(["getArgs", "withEnv"]);
+
+const TESTING_RUNTIME_NETWORK_METHODS = new Set([
+  "installMockFetch",
+  "restoreMockFetch",
+  "withMockFetch",
+]);
 
 const SERVER_METHODS = new Set([
   "serve",
@@ -361,6 +369,7 @@ const CANONICAL_COMPAT_FS_SOURCE = "src/platform/compat/fs.ts";
 const CANONICAL_COMPAT_PROCESS_SOURCE = "src/platform/compat/process.ts";
 const CANONICAL_TESTING_DENO_COMPAT_SOURCE = "src/testing/deno-compat.ts";
 const CANONICAL_TESTING_BARREL_SOURCE = "src/testing/index.ts";
+const CANONICAL_TESTING_MOCK_FETCH_SOURCE = "src/testing/mock-fetch.ts";
 
 const GLOBAL_INTRINSIC_OBJECTS = new Set([
   "AbortController",
@@ -1128,7 +1137,9 @@ function markerForNode(
       : false;
     if (
       runtimeMarker &&
-      (memberProperty(node) === "env" || effectObject ||
+      (memberProperty(node) === "env" ||
+        PROCESS_ARGUMENT_PROPERTIES.has(memberProperty(node) ?? "") ||
+        effectObject ||
         isRuntimeEnvDetailChain(chain, bindings, scopes) ||
         isProcessModuleEnvDetail(node, bindings, scopes))
     ) {
@@ -1411,7 +1422,8 @@ function memberRuntimeEffectMarker(
   if (
     effectObjectBindings.length === 1 &&
     effectObjectBindings[0].kind === "effect-object" &&
-    isRuntimeEnvRootChain(chain, imports, scopes)
+    (isRuntimeEnvRootChain(chain, imports, scopes) ||
+      isRuntimeArgumentRootChain(chain))
   ) {
     return {
       effect: effectObjectBindings[0].effect,
@@ -1446,6 +1458,13 @@ function isProcessModuleEnvDetail(
     chain[1] === "env" &&
     moduleSourceForIdentifier(chain[0], imports, scopes) !== undefined &&
     isProcessSpecifier(moduleSourceForIdentifier(chain[0], imports, scopes)!);
+}
+
+function isRuntimeArgumentRootChain(
+  chain: readonly string[] | undefined,
+): boolean {
+  return chain !== undefined &&
+    PROCESS_ARGUMENT_PROPERTIES.has(chain.at(-1) ?? "");
 }
 
 function filesystemOpenMarker(
@@ -2404,6 +2423,9 @@ function canonicalCompatSource(source: string): string {
   if (pathBase === "src/testing/index") {
     return CANONICAL_TESTING_BARREL_SOURCE;
   }
+  if (pathBase === "src/testing/mock-fetch") {
+    return CANONICAL_TESTING_MOCK_FETCH_SOURCE;
+  }
   return normalized;
 }
 
@@ -3305,6 +3327,9 @@ function moduleRuntimeBindingForProperty(
   if (isProcessSpecifier(source) && property === "env") {
     return { kind: "effect-object", effect: "process" };
   }
+  if (isProcessSpecifier(source) && property === "argv") {
+    return { kind: "effect-object", effect: "process" };
+  }
   const effect = effectForModuleMethod(source, property);
   return effect ? { kind: "effect", effect } : undefined;
 }
@@ -3408,7 +3433,9 @@ function runtimePropertyBinding(
     }
     const effect = effectForGlobalRuntimeMethod(binding.runtime, property);
     if (!effect) return undefined;
-    return property === "env"
+    return property === "env" ||
+        (binding.runtime === "Deno" && property === "args") ||
+        (binding.runtime === "process" && property === "argv")
       ? { kind: "effect-object", effect }
       : { kind: "effect", effect };
   }
@@ -3767,8 +3794,11 @@ function isTestingRuntimeSpecifier(source: string): boolean {
   return source === "#veryfront/testing" ||
     source === "#veryfront/testing/deno-compat" ||
     source === "#veryfront/testing/deno-compat.ts" ||
+    source === "#veryfront/testing/mock-fetch" ||
+    source === "#veryfront/testing/mock-fetch.ts" ||
     source === CANONICAL_TESTING_DENO_COMPAT_SOURCE ||
-    source === CANONICAL_TESTING_BARREL_SOURCE;
+    source === CANONICAL_TESTING_BARREL_SOURCE ||
+    source === CANONICAL_TESTING_MOCK_FETCH_SOURCE;
 }
 
 function isProcessEffectMethod(method: string): boolean {
@@ -3811,6 +3841,7 @@ function effectForModuleMethod(
     ) {
       return "process";
     }
+    if (TESTING_RUNTIME_NETWORK_METHODS.has(method)) return "network";
   }
   if (isFilesystemSpecifier(source)) {
     if (WATCH_METHODS.has(method)) return "filesystem-watch";
@@ -3823,6 +3854,7 @@ function effectForModuleMethod(
   if (isProcessSpecifier(source) && isProcessEffectMethod(method)) {
     return "process";
   }
+  if (isProcessSpecifier(source) && method === "argv") return "process";
   if (isServerSpecifier(source) && SERVER_METHODS.has(method)) return "server";
   if (isServerSpecifier(source) && NETWORK_METHODS.has(method)) {
     return "network";
@@ -3842,12 +3874,14 @@ function effectForGlobalRuntimeMethod(
     if (WATCH_METHODS.has(method)) return "filesystem-watch";
     if (READ_METHODS.has(method)) return "filesystem-read";
     if (WRITE_METHODS.has(method)) return "filesystem-write";
-    if (PROCESS_METHODS.has(method) || method === "env") return "process";
+    if (
+      PROCESS_METHODS.has(method) || method === "env" || method === "args"
+    ) return "process";
     if (SERVER_METHODS.has(method)) return "server";
     if (NETWORK_METHODS.has(method)) return "network";
     return undefined;
   }
-  if (isProcessEffectMethod(method)) return "process";
+  if (isProcessEffectMethod(method) || method === "argv") return "process";
   return undefined;
 }
 

@@ -175,6 +175,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "filesystem-read",
       "filesystem-write",
       "process",
+      "network",
     ], {
       "disposition": "integration-relocation",
       "owner": "cli",
@@ -182,6 +183,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/cli/commands/deploy/command.integration.test.ts",
+      "removalPr": "PR 4a",
+    }),
+    entry("cli/commands/deploy/command.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "cli",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4a",
     }),
     entry("cli/commands/dev/dev-cache-guard.integration.test.ts", [
@@ -571,6 +581,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("cli/commands/schedule/handler.test.ts", [
       "filesystem-write",
       "process",
+      "network",
     ], {
       "disposition": "integration-relocation",
       "owner": "cli",
@@ -678,6 +689,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "filesystem-read",
       "filesystem-write",
       "process",
+      "network",
     ], {
       "disposition": "integration-relocation",
       "owner": "cli",
@@ -785,7 +797,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/mcp/tools/catalog-tools.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/mcp/tools/context7-tools.test.ts", ["process"], {
+    entry("cli/mcp/tools/context7-tools.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "cli",
       "rationale":
@@ -801,6 +813,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/cli/mcp/tools/deploy-tool.test.ts",
+      "removalPr": "PR 4a",
+    }),
+    entry("cli/mcp/tools/dev-tools.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "cli",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4a",
     }),
     entry("cli/mcp/tools/project-tools.test.ts", ["filesystem-write"], {
@@ -895,6 +916,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("cli/shared/deployment/deploy-project.test.ts", [
       "filesystem-read",
       "filesystem-write",
+      "network",
     ], {
       "disposition": "integration-relocation",
       "owner": "cli",
@@ -964,6 +986,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/cli/shared/project-source-context.test.ts",
+      "removalPr": "PR 4a",
+    }),
+    entry("cli/shared/reserve-slug.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "cli",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4a",
     }),
     entry("cli/shared/runtime-auth.test.ts", ["filesystem-write", "process"], {
@@ -1704,11 +1735,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("scripts/test/runtime-inference-critical-flow.test.ts", [
       "filesystem-read",
+      "network",
     ], {
-      "disposition": "hermetic-unit",
+      "disposition": "integration-relocation",
       "owner": "scripts-tooling",
       "rationale":
-        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/scripts/test/runtime-inference-critical-flow.test.ts",
+      "removalPr": "PR 4f",
     }),
     entry("scripts/test/template-runtime-e2e.test.ts", [
       "filesystem-read",
@@ -1906,6 +1941,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4g",
       },
     ),
+    entry("src/agent/hosted/child-status.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "agent-runtime",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
+      "removalPr": "PR 4g",
+    }),
     entry("src/agent/hosted/cloud-agent-paths.test.ts", ["filesystem-write"], {
       "disposition": "integration-relocation",
       "owner": "agent-runtime",
@@ -1937,7 +1981,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4g",
     }),
-    entry("src/agent/hosted/default-chat-runtime.test.ts", ["process"], {
+    entry("src/agent/hosted/default-chat-runtime.test.ts", [
+      "process",
+      "network",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "agent-runtime",
       "rationale":
@@ -1995,7 +2042,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4g",
     }),
-    entry("src/agent/hosted/project-reference-resolver.test.ts", ["process"], {
+    entry("src/agent/hosted/project-reference-resolver.test.ts", [
+      "process",
+      "network",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "agent-runtime",
       "rationale":
@@ -2150,6 +2200,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4g",
     }),
+    entry("src/agent/runtime/mcp-server-tool-sources.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "agent-runtime",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
+      "removalPr": "PR 4g",
+    }),
     entry("src/agent/runtime/message-preparation.test.ts", ["network"], {
       "disposition": "replaceable-fake",
       "owner": "agent-runtime",
@@ -2209,7 +2268,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4g",
     }),
-    entry("src/agent/runtime/refresh.test.ts", ["process"], {
+    entry("src/agent/runtime/refresh.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "agent-runtime",
       "rationale":
@@ -2622,7 +2681,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4h",
     }),
-    entry("src/cache/backend.test.ts", ["process"], {
+    entry("src/cache/backend.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "config-tooling",
       "rationale":
@@ -2952,6 +3011,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "filesystem-read",
       "filesystem-write",
       "process",
+      "network",
       "shared-cwd",
     ], {
       "disposition": "integration-relocation",
@@ -2962,7 +3022,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/embedding/rag-store.test.ts",
       "removalPr": "PR 4j",
     }),
-    entry("src/embedding/upload-handler.test.ts", ["process"], {
+    entry("src/embedding/upload-handler.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "data-runtime",
       "rationale":
@@ -3397,7 +3457,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject the body-serialization boundary so post-auth drift is exercised without poisoning Object.prototype.",
       "removalPr": "PR 4j",
     }),
-    entry("src/integrations/remote-tools.hardening.test.ts", ["process"], {
+    entry("src/integrations/remote-tools.hardening.test.ts", [
+      "process",
+      "network",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "data-runtime",
       "rationale":
@@ -3409,6 +3472,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("src/integrations/remote-tools.test.ts", [
       "filesystem-read",
       "process",
+      "network",
     ], {
       "disposition": "replaceable-fake",
       "owner": "data-runtime",
@@ -3737,6 +3801,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4h",
     }),
+    entry("src/oauth/handlers/callback-dispatcher.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
+      "removalPr": "PR 4n",
+    }),
     entry("src/oauth/handlers/callback-handler.test.ts", ["network"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -3751,6 +3824,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "owner": "core-runtime",
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
+    }),
+    entry("src/oauth/providers/base.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
+      "removalPr": "PR 4n",
     }),
     entry("src/oauth/providers/common.test.ts", ["filesystem-read"], {
       "disposition": "hermetic-unit",
@@ -3769,6 +3851,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "owner": "core-runtime",
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
+    }),
+    entry("src/oauth/providers/protocols.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "core-runtime",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
+      "removalPr": "PR 4n",
     }),
     entry("src/oauth/token-store/memory.test.ts", ["process"], {
       "disposition": "replaceable-fake",
@@ -3910,6 +4001,26 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Mutates the process-global fetch boundary and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject a fetch implementation or use a scoped per-test transport fake instead of assigning globalThis.fetch.",
+      "removalPr": "PR 4b",
+    }),
+    entry("src/platform/adapters/fs/github/github-api-client.test.ts", [
+      "network",
+    ], {
+      "disposition": "replaceable-fake",
+      "owner": "runtime-platform",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
+      "removalPr": "PR 4b",
+    }),
+    entry("src/platform/adapters/fs/integration.test.ts", ["network"], {
+      "disposition": "integration-relocation",
+      "owner": "runtime-platform",
+      "rationale":
+        "Exercises the filesystem adapter through the shared fetch transport and belongs in integration coverage.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/platform/adapters/fs/integration.test.ts",
       "removalPr": "PR 4b",
     }),
     entry("src/platform/adapters/fs/veryfront/adapter.test.ts", ["process"], {
@@ -4167,6 +4278,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Mutates the process-global fetch boundary and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject a fetch implementation or use a scoped per-test transport fake instead of assigning globalThis.fetch.",
+      "removalPr": "PR 4b",
+    }),
+    entry("src/platform/adapters/veryfront-api-client.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "runtime-platform",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4b",
     }),
     entry("src/platform/adapters/veryfront-api-client/operations.test.ts", [
@@ -4505,7 +4625,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/provider/local/local-provider.test.ts",
       "removalPr": "PR 4l",
     }),
-    entry("src/provider/model-registry.test.ts", ["process"], {
+    entry("src/provider/model-registry.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "provider-runtime",
       "rationale":
@@ -4543,13 +4663,25 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4l",
     }),
-    entry("src/provider/veryfront-cloud/provider.test.ts", ["process"], {
+    entry("src/provider/veryfront-cloud/provider.test.ts", [
+      "process",
+      "network",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "provider-runtime",
       "rationale":
         "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
+      "removalPr": "PR 4l",
+    }),
+    entry("src/provider/veryfront-cloud/shared.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "provider-runtime",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4l",
     }),
     entry("src/proxy/cache/index.test.ts", ["process"], {
@@ -4605,6 +4737,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
+      "removalPr": "PR 4c",
+    }),
+    entry("src/proxy/oauth-client.test.ts", ["network"], {
+      "disposition": "replaceable-fake",
+      "owner": "server-routes",
+      "rationale":
+        "Depends on the process-global fetch and outbound-transport boundary and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject a fetch or transport dependency owned by the test instead of replacing the shared runtime fetch and resolver.",
       "removalPr": "PR 4c",
     }),
     entry("src/proxy/proxy-access-control.test.ts", ["process"], {
@@ -5399,7 +5540,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4h",
     }),
-    entry("src/rendering/cache/stores/api-store.test.ts", ["process"], {
+    entry("src/rendering/cache/stores/api-store.test.ts", [
+      "process",
+      "network",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "build-rendering",
       "rationale":
@@ -5685,6 +5829,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     entry("src/routing/api/module-loader/esbuild-plugin.test.ts", [
       "filesystem-read",
       "filesystem-write",
+      "network",
     ], {
       "disposition": "integration-relocation",
       "owner": "server-routes",
@@ -5706,6 +5851,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/src/routing/api/module-loader/loader.test.ts",
+      "removalPr": "PR 4c",
+    }),
+    entry("src/routing/api/openapi/mcp-tools.test.ts", ["network"], {
+      "disposition": "integration-relocation",
+      "owner": "server-routes",
+      "rationale":
+        "Exercises API routing and remote MCP transport behavior across components and belongs in integration coverage.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/routing/api/openapi/mcp-tools.test.ts",
       "removalPr": "PR 4c",
     }),
     entry("src/routing/api/route-executor.test.ts", ["process"], {
@@ -5780,7 +5934,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4c",
     }),
-    entry("src/runs/runs-client.test.ts", ["process"], {
+    entry("src/runs/runs-client.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "agent-runtime",
       "rationale":
@@ -6189,6 +6343,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/server/handlers/request/agent-stream.handler.test.ts", [
       "process",
+      "network",
     ], {
       "disposition": "replaceable-fake",
       "owner": "server-routes",
@@ -6282,6 +6437,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/server/handlers/request/project-run-execute.handler.test.ts", [
       "process",
+      "network",
     ], {
       "disposition": "replaceable-fake",
       "owner": "server-routes",
@@ -6812,6 +6968,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/testing/env-exclusion.test.ts",
       "removalPr": "PR 4n",
     }),
+    entry("src/testing/mock-fetch.test.ts", ["network"], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Verifies mutation and restoration of the shared fetch, resolver, and outbound transport boundaries.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/testing/mock-fetch.test.ts",
+      "removalPr": "PR 4n",
+    }),
     entry("src/testing/testing.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -6833,7 +6998,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/tool/context7.test.ts", ["process"], {
+    entry("src/tool/context7.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "agent-tools",
       "rationale":
@@ -6860,7 +7025,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/tool/factory.test.ts",
       "removalPr": "PR 4k",
     }),
-    entry("src/tool/remote-mcp.test.ts", ["process"], {
+    entry("src/tool/remote-mcp.test.ts", ["process", "network"], {
       "disposition": "replaceable-fake",
       "owner": "agent-tools",
       "rationale":
@@ -6934,6 +7099,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "filesystem-read",
       "filesystem-write",
       "process",
+      "network",
     ], {
       "disposition": "integration-relocation",
       "owner": "core-runtime",
@@ -7247,6 +7413,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     ),
     entry("src/transforms/mdx/esm-module-loader/module-writer.test.ts", [
       "filesystem-write",
+      "network",
     ], {
       "disposition": "integration-relocation",
       "owner": "core-runtime",
@@ -7534,7 +7701,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/workflow/blob/local-storage.test.ts",
       "removalPr": "PR 4k",
     }),
-    entry("src/workflow/blob/veryfront-cloud-storage.test.ts", ["process"], {
+    entry("src/workflow/blob/veryfront-cloud-storage.test.ts", [
+      "process",
+      "network",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "agent-tools",
       "rationale":
