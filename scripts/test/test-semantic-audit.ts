@@ -5829,8 +5829,9 @@ function runtimeDescriptorEffectiveEnumerable(
 ): boolean | undefined {
   if (runtimeDescriptorDefinesField(descriptor, "enumerable")) return declared;
   if (!target || property === undefined) return declared;
+  const resolution = runtimePropertyResolution(target, property, true);
   const values = runtimeAccessorEnumerabilityValues(
-    runtimePropertyResolution(target, property, true).binding,
+    resolution.binding,
   );
   return values.size === 0
     ? declared
@@ -7704,11 +7705,16 @@ function objectLiteralRuntimeBinding(
       if (
         property.type === "ObjectProperty" && property.computed === true
       ) {
-        const binding = runtimeBindingForExpression(
+        const valueBinding = runtimeBindingForExpression(
           property.value,
           imports,
           scopes,
         );
+        const binding: RuntimeBinding = {
+          kind: "property-data-value",
+          binding: valueBinding,
+          enumerable: true,
+        };
         propertyOperations.push({
           kind: "define-unknown",
           binding,
@@ -7719,7 +7725,7 @@ function objectLiteralRuntimeBinding(
           ),
           defaultMayRun: expressionMayBeUndefined(
             property.value,
-            binding,
+            valueBinding,
             imports,
             scopes,
           ),
@@ -7754,11 +7760,16 @@ function objectLiteralRuntimeBinding(
       });
       continue;
     }
-    const binding = runtimeBindingForExpression(
+    const valueBinding = runtimeBindingForExpression(
       property.value,
       imports,
       scopes,
     );
+    const binding: RuntimeBinding = {
+      kind: "property-data-value",
+      binding: valueBinding,
+      enumerable: true,
+    };
     propertyOperations.push({
       kind: "define",
       name,
@@ -7770,16 +7781,12 @@ function objectLiteralRuntimeBinding(
       ),
       defaultMayRun: expressionMayBeUndefined(
         property.value,
-        binding,
+        valueBinding,
         imports,
         scopes,
       ),
     });
-    if (binding) {
-      properties.set(name, binding);
-    } else {
-      properties.delete(name);
-    }
+    properties.set(name, binding);
   }
   return {
     kind: "namespace-object",
