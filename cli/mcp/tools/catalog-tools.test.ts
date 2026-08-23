@@ -257,6 +257,28 @@ describe("mcp/tools/catalog-tools", () => {
       });
     });
 
+    it("refuses a linked project directory instead of scaffolding outside the parent", async () => {
+      const parentDir = await Deno.makeTempDir();
+      createdDirs.push(parentDir);
+      const outside = await Deno.makeTempDir();
+      createdDirs.push(outside);
+      await Deno.symlink(outside, join(parentDir, "example-app"));
+
+      const result = await vfCreateProject.execute({
+        name: "Example App",
+        template: "minimal",
+        directory: parentDir,
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(result.projectDir, undefined);
+      assertEquals(result.message.includes("is a link the scaffold cannot write through"), true);
+      // The link target is outside the requested parent; nothing was written there.
+      const written: string[] = [];
+      for await (const entry of Deno.readDir(outside)) written.push(entry.name);
+      assertEquals(written, []);
+    });
+
     it("reports project-name validation failures", async () => {
       const result = await vfCreateProject.execute({
         name: "invalid/name",

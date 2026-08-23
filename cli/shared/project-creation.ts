@@ -528,6 +528,21 @@ async function findExistingPaths(dir: string, paths: string[]): Promise<string[]
  * A real file sitting at a scaffold path is not listed here. That one resolves
  * fine and is the conflict `findExistingPaths` reports.
  */
+/**
+ * True when `path` is a symlink. `lstat` is what makes a link visible: `stat`
+ * follows it and reports the target. Adapters without `lstat` have no links of
+ * their own, so nothing can be one.
+ */
+async function isSymlinkPath(path: string): Promise<boolean> {
+  const fs = createFileSystem();
+  if (!fs.lstat) return false;
+  try {
+    return (await fs.lstat(path)).isSymlink === true;
+  } catch {
+    return false; // Nothing there, so nothing to write through.
+  }
+}
+
 async function findUnwritablePaths(dir: string, paths: string[]): Promise<string[]> {
   const fs = createFileSystem();
   // `lstat` is what makes a link visible: `stat` follows it and reports the
@@ -583,6 +598,19 @@ export async function createProject(
   const assembly = await assembleScaffold(request);
   const writePaths = scaffoldWritePaths(assembly, request);
   const where = projectName === undefined ? "Directory" : `Directory "${projectName}"`;
+
+  // The scaffold picks this path itself by joining the name onto the parent, so
+  // a link sitting there sends every write to a directory the caller never
+  // named, possibly outside the parent entirely. Refuse it for the same reason
+  // a link at any other scaffold path is refused. A parent directory the caller
+  // passed in is their own choice, so only the derived path is checked.
+  if (projectName !== undefined && await isSymlinkPath(projectDir)) {
+    throw ALREADY_EXISTS.create({
+      detail: `${where} is a link the scaffold cannot write through. ` +
+        `Move it aside or use a different name.`,
+      context: { projectDir },
+    });
+  }
 
   // Checked whatever the conflict policy is: `--force` says you accept your
   // files being replaced, not the scaffold writing somewhere else entirely.

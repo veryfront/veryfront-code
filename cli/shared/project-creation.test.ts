@@ -912,6 +912,28 @@ describe("createProject when a path cannot be written through", () => {
     }
   });
 
+  it("refuses a linked project root instead of scaffolding through it", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-linked-root-" });
+    const outside = await makeTempDir({ prefix: "veryfront-create-outside-" });
+
+    try {
+      await Deno.symlink(outside, join(parentDir, "contract-project"));
+
+      await assertRejects(
+        () => createProject({ ...baseRequest(parentDir), conflictPolicy: "overwrite" }),
+        Error,
+        'Directory "contract-project" is a link the scaffold cannot write through',
+      );
+
+      // Nothing reached the link target, which is outside the parent entirely.
+      assertEquals(await exists(join(outside, "README.md")), false);
+      assertEquals(await exists(join(outside, "package.json")), false);
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+      await remove(outside, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("scaffolds normally when the directories it needs are absent or already directories", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-blocked-clear-" });
     const projectDir = join(parentDir, "contract-project");
