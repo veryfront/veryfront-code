@@ -12,6 +12,29 @@ import {
 
 const MIGRATION_FILE_PATH = "scripts/test/test-semantic-audit-migration.ts";
 
+export function formatSemanticAuditFailure(
+  errors: readonly string[],
+  candidateCount: number,
+): string {
+  const staleOnly = errors.length > 0 && errors.every((error) =>
+    error.startsWith("stale semantic disposition must be removed:")
+  );
+  if (staleOnly) {
+    return [
+      `Semantic unit-boundary debt shrank to ${candidateCount} file(s).`,
+      ...errors.map((error) => `  ${error}`),
+      "",
+      `Regenerate ${MIGRATION_FILE_PATH} to remove the stale dispositions.`,
+    ].join("\n");
+  }
+  return [
+    "Semantic unit-boundary audit failed:",
+    ...errors.map((error) => `  ${error}`),
+    "",
+    `Do not grow ${MIGRATION_FILE_PATH}; move the test to integration/e2e or make the unit hermetic.`,
+  ].join("\n");
+}
+
 async function main(): Promise<void> {
   const flags = parseArgs(Deno.args, {
     boolean: ["json"],
@@ -42,21 +65,8 @@ async function main(): Promise<void> {
   }
 
   if (errors.length > 0) {
-    console.error("Semantic unit-boundary audit failed:");
-    for (const error of errors) console.error(`  ${error}`);
-    console.error(
-      `\nDo not grow ${MIGRATION_FILE_PATH}; move the test to integration/e2e or make the unit hermetic.`,
-    );
+    console.error(formatSemanticAuditFailure(errors, result.candidates.length));
     Deno.exit(1);
-  }
-
-  const disposed = TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES.length;
-  if (disposed > result.candidates.length) {
-    console.log(
-      `Semantic unit-boundary debt shrank to ${result.candidates.length} file(s). ` +
-        `Regenerate ${MIGRATION_FILE_PATH} to remove stale dispositions.`,
-    );
-    return;
   }
 
   console.log(

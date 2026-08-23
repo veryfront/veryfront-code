@@ -69,6 +69,11 @@ shrink-only: adding a new effect-bearing unit test, or adding a new effect to an
 already-listed test, fails CI. Removing debt should delete the stale disposition
 entry in the same change.
 
+The audit compares the inventory with the merge base of `origin/main` by
+default. Set `TEST_SEMANTIC_AUDIT_BASE_REF` to a fetched commit or ref when
+reproducing CI from a shallow checkout. Pass `--json` for machine-readable
+candidate, error, and considered-file output.
+
 Disposition values:
 
 - `hermetic-unit`: the test reads checked-in repository fixtures or contract

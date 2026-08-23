@@ -130,12 +130,43 @@ const READ_METHODS = new Set([
 ]);
 
 const WRITE_METHODS = new Set([
+  "appendFile",
+  "appendFileSync",
+  "chmod",
+  "chmodSync",
+  "chown",
+  "chownSync",
+  "copyFile",
+  "copyFileSync",
+  "cp",
+  "cpSync",
   "writeFile",
   "writeFileSync",
   "writeTextFile",
   "writeTextFileSync",
   "create",
   "createSync",
+  "createWriteStream",
+  "fdatasync",
+  "fdatasyncSync",
+  "fchmod",
+  "fchmodSync",
+  "fchown",
+  "fchownSync",
+  "fsync",
+  "fsyncSync",
+  "ftruncate",
+  "ftruncateSync",
+  "futimes",
+  "futimesSync",
+  "lchmod",
+  "lchmodSync",
+  "lchown",
+  "lchownSync",
+  "link",
+  "linkSync",
+  "lutimes",
+  "lutimesSync",
   "makeTempDir",
   "makeTempDirSync",
   "makeTempFile",
@@ -154,10 +185,18 @@ const WRITE_METHODS = new Set([
   "unlinkSync",
   "rename",
   "renameSync",
-  "copyFile",
-  "copyFileSync",
   "symlink",
   "symlinkSync",
+  "truncate",
+  "truncateSync",
+  "utime",
+  "utimeSync",
+  "utimes",
+  "utimesSync",
+  "write",
+  "writeSync",
+  "writev",
+  "writevSync",
 ]);
 
 const PROCESS_METHODS = new Set([
@@ -233,6 +272,9 @@ const SCOPE_NODES = new Set([
   "ObjectMethod",
   "ClassMethod",
   "ClassPrivateMethod",
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
 ]);
 
 interface Node {
@@ -467,6 +509,17 @@ export function validateSemanticDispositionShape(
   } else if (entry.disposition === "hermetic-unit") {
     if (!entry.rationale?.trim()) {
       errors.push(`hermetic-unit disposition missing rationale: ${path}`);
+    }
+    const forbiddenEffects = entry.effects
+      .filter(isEffect)
+      .filter((effect) => effect !== "filesystem-read")
+      .sort(compareOrdinal);
+    if (forbiddenEffects.length > 0) {
+      errors.push(
+        `hermetic-unit disposition only permits filesystem-read: ${path} has ${
+          forbiddenEffects.join(", ")
+        }`,
+      );
     }
   } else if (entry.disposition === "integration-relocation") {
     if (!entry.removalPr?.trim()) {
@@ -1155,6 +1208,22 @@ function collectLocalDeclaredNames(
     }
     return;
   }
+  if (
+    node.type === "ForStatement" || node.type === "ForInStatement" ||
+    node.type === "ForOfStatement"
+  ) {
+    const declaration = node.type === "ForStatement" ? node.init : node.left;
+    if (isNode(declaration) && declaration.type === "VariableDeclaration") {
+      for (
+        const declarator of Array.isArray(declaration.declarations)
+          ? declaration.declarations
+          : []
+      ) {
+        if (isNode(declarator)) collectPatternNames(declarator.id, names);
+      }
+    }
+    return;
+  }
   if (node.type === "CatchClause") collectPatternNames(node.param, names);
 }
 
@@ -1190,6 +1259,16 @@ function bindRuntimeDeclaration(
 ): void {
   const init = unwrapExpression(declaration.init);
   if (!init) return;
+
+  const identifierBinding = identifierRuntimeBinding(init, imports, scopes);
+  if (identifierBinding && isNode(declaration.id)) {
+    if (identifierBinding.kind === "module") {
+      bindPatternToModule(declaration.id, identifierBinding.source, scope);
+    } else {
+      bindPatternToRuntime(declaration.id, identifierBinding, scope);
+    }
+    return;
+  }
 
   const globalRuntime = globalRuntimeAliasBinding(init, imports, scopes);
   if (globalRuntime && isNode(declaration.id)) {
@@ -1228,6 +1307,43 @@ function bindRuntimeDeclaration(
       );
     }
   }
+}
+
+function identifierRuntimeBinding(
+  init: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  if (init.type !== "Identifier") return undefined;
+  const name = init.name as string;
+  const resolved = resolveLocalBinding(name, scopes);
+  if (resolved.binding) return resolved.binding;
+  if (resolved.declared) return undefined;
+  if (imports.filesystemRead.has(name)) {
+    return { kind: "effect", effect: "filesystem-read" };
+  }
+  if (imports.filesystemWrite.has(name)) {
+    return { kind: "effect", effect: "filesystem-write" };
+  }
+  if (imports.process.has(name)) return { kind: "effect", effect: "process" };
+  if (imports.server.has(name)) return { kind: "effect", effect: "server" };
+  if (imports.network.has(name)) return { kind: "effect", effect: "network" };
+  if (imports.playwright.has(name)) {
+    return { kind: "effect", effect: "browser" };
+  }
+  if (imports.filesystemNamespaces.has(name)) {
+    return { kind: "module", source: "node:fs" };
+  }
+  if (imports.processNamespaces.has(name)) {
+    return { kind: "module", source: "node:process" };
+  }
+  if (imports.serverNamespaces.has(name)) {
+    return { kind: "module", source: "node:http" };
+  }
+  if (imports.playwrightNamespaces.has(name)) {
+    return { kind: "module", source: "@playwright/test" };
+  }
+  return undefined;
 }
 
 function globalRuntimeAliasBinding(
@@ -1492,7 +1608,12 @@ function resolveLocalBinding(
 }
 
 function isPlaywrightFixture(name: string, scopes: readonly Scope[]): boolean {
-  return scopes.some((scope) => scope.playwrightFixtures.has(name));
+  for (let index = scopes.length - 1; index >= 0; index--) {
+    const scope = scopes[index];
+    if (!scope.names.has(name)) continue;
+    return scope.playwrightFixtures.has(name);
+  }
+  return false;
 }
 
 function isFilesystemSpecifier(source: string): boolean {
@@ -1606,7 +1727,12 @@ function unwrapReadonlyArray(value: unknown): Node | undefined {
 
 function memberProperty(node: Node): string | undefined {
   const property = node.property;
-  if (!isNode(property) || node.computed === true) return undefined;
+  if (!isNode(property)) return undefined;
+  if (node.computed === true) {
+    return property.type === "StringLiteral"
+      ? property.value as string
+      : undefined;
+  }
   return property.type === "Identifier" ? property.name as string : undefined;
 }
 
@@ -1623,14 +1749,12 @@ function memberChain(node: Node): readonly string[] | undefined {
   if (node.type === "Identifier") return [node.name as string];
   if (
     (node.type !== "MemberExpression" &&
-      node.type !== "OptionalMemberExpression") || node.computed === true
+      node.type !== "OptionalMemberExpression")
   ) {
     return undefined;
   }
   const object = isNode(node.object) ? memberChain(node.object) : undefined;
-  const property = isNode(node.property) && node.property.type === "Identifier"
-    ? node.property.name as string
-    : undefined;
+  const property = memberProperty(node);
   return object && property ? [...object, property] : undefined;
 }
 

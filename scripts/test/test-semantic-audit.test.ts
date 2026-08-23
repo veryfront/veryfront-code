@@ -1,7 +1,8 @@
-import { assertEquals, assertThrows } from "#std/assert";
 import { ensureDir } from "#std/fs/ensure-dir";
 import { dirname, join } from "#std/path";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { formatSemanticAuditFailure } from "../lint/audit-test-semantic-dispositions.ts";
 import { planSuiteFiles } from "./run-suite.ts";
 import { discoverTests } from "./test-layout.ts";
 import {
@@ -364,6 +365,140 @@ await fs.readFile("deno.json");
     );
   });
 
+  it("propagates imported and local effect bindings through aliases", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import { writeFile } from "node:fs/promises";
+const write = writeFile;
+const writeAgain = write;
+await writeAgain("tmp.txt", "x");
+const fs = await import("node:fs/promises");
+const aliasedFs = fs;
+await aliasedFs.readFile("deno.json");
+`,
+        "src/aliased-effects.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "writeAgain"],
+        ["filesystem-read", "aliasedFs.readFile"],
+      ],
+    );
+  });
+
+  it("classifies statically known computed runtime properties", () => {
+    const markers = collectSemanticMarkers(
+      `
+await Deno["writeTextFile"]("tmp.txt", "x");
+await Deno["readTextFile"]("deno.json");
+process["exit"](0);
+globalThis["fetch"]("https://example.com");
+const method = "writeTextFile";
+Deno[method]("tmp.txt", "x");
+`,
+      "src/computed-runtime.test.ts",
+    );
+
+    assertEquals(
+      markers.map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "Deno.writeTextFile"],
+        ["filesystem-read", "Deno.readTextFile"],
+        ["process", "process.exit"],
+        ["network", "globalThis.fetch"],
+      ],
+    );
+  });
+
+  it("classifies Deno and Node filesystem mutation APIs", () => {
+    const markers = collectSemanticMarkers(
+      `
+import {
+  appendFile,
+  chmod,
+  chown,
+  cp,
+  createWriteStream,
+  link,
+  truncate,
+  utimes,
+} from "node:fs";
+await Deno.chmod("tmp.txt", 0o600);
+await Deno.chown("tmp.txt", null, null);
+await Deno.link("tmp.txt", "linked.txt");
+await Deno.truncate("tmp.txt", 0);
+await Deno.utime("tmp.txt", new Date(), new Date());
+appendFile("tmp.txt", "x", () => undefined);
+chmod("tmp.txt", 0o600, () => undefined);
+chown("tmp.txt", 0, 0, () => undefined);
+cp("tmp.txt", "copy.txt", () => undefined);
+createWriteStream("tmp.txt");
+link("tmp.txt", "linked.txt", () => undefined);
+truncate("tmp.txt", 0, () => undefined);
+utimes("tmp.txt", new Date(), new Date(), () => undefined);
+`,
+      "src/filesystem-mutations.test.ts",
+    );
+
+    assertEquals(
+      markers.map((marker) => marker.symbol),
+      [
+        "Deno.chmod",
+        "Deno.chown",
+        "Deno.link",
+        "Deno.truncate",
+        "Deno.utime",
+        "appendFile",
+        "chmod",
+        "chown",
+        "cp",
+        "createWriteStream",
+        "link",
+        "truncate",
+        "utimes",
+      ],
+    );
+    assertEquals(
+      markers.every((marker) => marker.effect === "filesystem-write"),
+      true,
+    );
+  });
+
+  it("treats loop headers as lexical scopes for runtime names", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+for (const Deno of [{ writeTextFile: () => undefined }]) {
+  Deno.writeTextFile("tmp.txt", "x");
+}
+for (const process of [{ exit: () => undefined }]) {
+  process.exit(0);
+}
+`,
+        "src/loop-shadowing.test.ts",
+      ),
+      [],
+    );
+  });
+
+  it("stops fixture lookup at the innermost shadowing declaration", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+function outer({ page }: { page: { goto(path: string): void } }) {
+  page.goto("/outer");
+  function inner(page: { goto(path: string): void }) {
+    page.goto("/inner");
+  }
+  inner(page);
+}
+`,
+        "src/fixture-shadowing.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [["browser", "page.goto"]],
+    );
+  });
+
   it("ignores locally shadowed require and createRequire helpers", () => {
     assertEquals(
       collectSemanticMarkers(
@@ -672,11 +807,23 @@ describe("semantic disposition ratchet", () => {
     assertEquals(
       validateSemanticDispositionShape({
         path: "src/hermetic.test.ts",
-        effects: ["process"],
+        effects: ["filesystem-read"],
         disposition: "hermetic-unit",
         owner: "test-architecture",
       }),
       ["hermetic-unit disposition missing rationale: src/hermetic.test.ts"],
+    );
+    assertEquals(
+      validateSemanticDispositionShape({
+        path: "src/not-hermetic.test.ts",
+        effects: ["filesystem-read", "process", "network"],
+        disposition: "hermetic-unit",
+        owner: "test-architecture",
+        rationale: "This rationale must not turn side effects into an exception.",
+      }),
+      [
+        "hermetic-unit disposition only permits filesystem-read: src/not-hermetic.test.ts has network, process",
+      ],
     );
     assertEquals(
       validateSemanticDispositionShape({
@@ -805,6 +952,23 @@ describe("semantic disposition ratchet", () => {
 });
 
 describe("semantic audit task wiring", () => {
+  it("gives shrinking inventories regeneration guidance while still failing", () => {
+    assertEquals(
+      formatSemanticAuditFailure(
+        [
+          "stale semantic disposition must be removed: src/removed.test.ts",
+        ],
+        480,
+      ),
+      [
+        "Semantic unit-boundary debt shrank to 480 file(s).",
+        "  stale semantic disposition must be removed: src/removed.test.ts",
+        "",
+        "Regenerate scripts/test/test-semantic-audit-migration.ts to remove the stale dispositions.",
+      ].join("\n"),
+    );
+  });
+
   it("keeps suite-plan membership path-only at version 1", async () => {
     const plan = await planSuiteFiles({
       suite: "unit:parallel",
