@@ -692,15 +692,20 @@ Object.defineProperty(NativeArray.prototype, "constructor", {});
         `
 import fs from "node:fs";
 import * as nodeFs from "fs";
+import { default as namedDefaultFs } from "node:fs";
 await fs.promises.readFile("deno.json");
 await fs.promises.writeFile("tmp.txt", "x");
 await nodeFs.promises.rm("tmp.txt");
+await namedDefaultFs.promises.readFile("deno.json");
 const promised = fs.promises;
 await promised.stat("deno.json");
 const { promises: destructured } = nodeFs;
 await destructured.appendFile("tmp.txt", "x");
 function local(fs: { promises: { writeFile(): void } }) {
   fs.promises.writeFile();
+}
+function shadowNamedDefault(namedDefaultFs: { promises: { readFile(): void } }) {
+  namedDefaultFs.promises.readFile();
 }
 `,
         "src/fs-promises-namespaces.test.ts",
@@ -709,8 +714,148 @@ function local(fs: { promises: { writeFile(): void } }) {
         ["filesystem-read", "fs.promises.readFile"],
         ["filesystem-write", "fs.promises.writeFile"],
         ["filesystem-write", "nodeFs.promises.rm"],
+        ["filesystem-read", "namedDefaultFs.promises.readFile"],
         ["filesystem-read", "promised.stat"],
         ["filesystem-write", "destructured.appendFile"],
+      ],
+    );
+  });
+
+  it("classifies standard fs imports and loaders", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import stdFs from "#std/fs";
+import * as stdFsAlias from "#std/fs.ts";
+import * as stdWalk from "#std/fs/walk";
+import { ensureDir, walk as walkTree, emptyDir, copy, move } from "@std/fs";
+const loadedStdFs = require("@std/fs");
+const loadedStdWalk = await import("@std/fs/walk");
+const loadedEnsureDir = await import("@std/fs/ensure-dir");
+const aliasEnsureDir = ensureDir;
+await aliasEnsureDir("tmp");
+for await (const entry of walkTree(".")) entry.path;
+await emptyDir("tmp");
+await copy("source", "target");
+await move("source", "target");
+await stdFs.ensureDir("tmp");
+await stdFsAlias.ensureDir("tmp");
+for await (const entry of stdWalk.walk(".")) entry.path;
+await loadedStdFs.emptyDir("tmp");
+for await (const entry of loadedStdWalk.walk(".")) entry.path;
+await loadedEnsureDir.ensureDir("tmp");
+const { ensureDir: destructuredEnsureDir } = stdFs;
+await destructuredEnsureDir("tmp");
+function local(
+  ensureDir: (path: string) => Promise<void>,
+  stdFs: { ensureDir(path: string): Promise<void> },
+) {
+  ensureDir("local");
+  stdFs.ensureDir("local");
+}
+`,
+        "src/std-fs-imports.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "aliasEnsureDir"],
+        ["filesystem-read", "walkTree"],
+        ["filesystem-write", "emptyDir"],
+        ["filesystem-write", "copy"],
+        ["filesystem-write", "move"],
+        ["filesystem-write", "stdFs.ensureDir"],
+        ["filesystem-write", "stdFsAlias.ensureDir"],
+        ["filesystem-read", "stdWalk.walk"],
+        ["filesystem-write", "loadedStdFs.emptyDir"],
+        ["filesystem-read", "loadedStdWalk.walk"],
+        ["filesystem-write", "loadedEnsureDir.ensureDir"],
+        ["filesystem-write", "destructuredEnsureDir"],
+      ],
+    );
+  });
+
+  it("classifies repository testing runtime wrappers", () => {
+    assertEquals(
+      collectSemanticMarkers(
+        `
+import * as testingDeno from "#veryfront/testing/deno-compat";
+import {
+  cwd,
+  env,
+  exit,
+  getArgs,
+  getEnv,
+  makeTempDir,
+  readTextFile,
+  remove,
+  setEnv,
+  waitFor,
+  withEnv,
+  withTempDir,
+  withTempFile,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
+import {
+  env as barrelEnv,
+  withEnv as barrelWithEnv,
+  withTempDir as barrelWithTempDir,
+} from "#veryfront/testing";
+const loadedTesting = await import("#veryfront/testing/deno-compat.ts");
+await makeTempDir();
+await readTextFile("deno.json");
+await remove("tmp", { recursive: true });
+setEnv("KEY", "value");
+getEnv("KEY");
+getArgs();
+cwd();
+env();
+await withTempDir(async () => {});
+await withTempFile(async () => {});
+await withEnv({ KEY: "value" }, async () => {});
+await writeTextFile("tmp.txt", "x");
+exit(1);
+await testingDeno.readTextFile("deno.json");
+testingDeno.setEnv("KEY", "value");
+testingDeno.env();
+await loadedTesting.makeTempFile();
+loadedTesting.env();
+barrelEnv();
+await barrelWithEnv({ KEY: "value" }, async () => {});
+await barrelWithTempDir(async () => {});
+await waitFor(() => true);
+function local(
+  makeTempDir: () => Promise<string>,
+  testingDeno: { setEnv(name: string, value: string): void },
+  env: () => Record<string, string>,
+) {
+  makeTempDir();
+  testingDeno.setEnv("KEY", "value");
+  env();
+}
+`,
+        "src/testing-runtime-wrappers.test.ts",
+      ).map((marker) => [marker.effect, marker.symbol]),
+      [
+        ["filesystem-write", "makeTempDir"],
+        ["filesystem-read", "readTextFile"],
+        ["filesystem-write", "remove"],
+        ["process", "setEnv"],
+        ["process", "getEnv"],
+        ["process", "getArgs"],
+        ["shared-cwd", "cwd"],
+        ["process", "env"],
+        ["filesystem-write", "withTempDir"],
+        ["filesystem-write", "withTempFile"],
+        ["process", "withEnv"],
+        ["filesystem-write", "writeTextFile"],
+        ["process", "exit"],
+        ["filesystem-read", "testingDeno.readTextFile"],
+        ["process", "testingDeno.setEnv"],
+        ["process", "testingDeno.env"],
+        ["filesystem-write", "loadedTesting.makeTempFile"],
+        ["process", "loadedTesting.env"],
+        ["process", "barrelEnv"],
+        ["process", "barrelWithEnv"],
+        ["filesystem-write", "barrelWithTempDir"],
       ],
     );
   });
@@ -1216,6 +1361,10 @@ if (maybe) {
   conditionalTarget = fetch;
 }
 await conditionalTarget("conditional.txt", "x");
+const conditionalExpressionTarget = maybe ? fetch : Deno.writeTextFile;
+await conditionalExpressionTarget("conditional-expression.txt", "x");
+const logicalExpressionTarget = maybe && fetch || Deno.writeTextFile;
+await logicalExpressionTarget("logical-expression.txt", "x");
 
 let sequentialTarget;
 sequentialTarget = Deno.writeTextFile;
@@ -1277,6 +1426,10 @@ await tryTarget("try.txt", "x");
       [
         ["filesystem-write", "conditionalTarget"],
         ["network", "conditionalTarget"],
+        ["filesystem-write", "conditionalExpressionTarget"],
+        ["network", "conditionalExpressionTarget"],
+        ["filesystem-write", "logicalExpressionTarget"],
+        ["network", "logicalExpressionTarget"],
         ["network", "sequentialTarget"],
         ["network", "sequentialVarTarget"],
         ["filesystem-write", "conditionalVarTarget"],
@@ -1483,6 +1636,25 @@ window.Reflect.apply(Deno.open, Deno, ["global-read.txt", {
   write: false,
 }]);
 self.Reflect.construct(Worker, ["global-worker.js"]);
+const invoke = Reflect.apply;
+invoke(fetch, globalThis, ["https://example.com/invoke"]);
+const { construct } = Reflect;
+construct(Worker, ["worker-alias.js"]);
+let assignedInvoke;
+assignedInvoke = globalThis.Reflect.apply;
+assignedInvoke(Deno.open, Deno, ["assigned-read.txt", {
+  read: true,
+  write: false,
+}]);
+const boundInvoke = Reflect.apply.bind(Reflect, fetch, globalThis);
+boundInvoke(["https://example.com/bound"]);
+Reflect.apply.call(Reflect, Deno.writeTextFile, Deno, ["called.txt", "x"]);
+Reflect.apply.apply(Reflect, [Deno.open, Deno, ["applied-read.txt", {
+  read: true,
+  write: false,
+}]]);
+const boundConstruct = Reflect.construct.bind(Reflect);
+boundConstruct(Worker, ["bound-worker.js"]);
 `,
         "src/reflect-runtime-invocation.test.ts",
       ).map((marker) => [marker.effect, marker.symbol]),
@@ -1496,6 +1668,13 @@ self.Reflect.construct(Worker, ["global-worker.js"]);
         ["network", "globalThis.Reflect.apply(fetch)"],
         ["filesystem-read", "window.Reflect.apply(Deno.open)"],
         ["process", "self.Reflect.construct(Worker)"],
+        ["network", "invoke(fetch)"],
+        ["process", "construct(Worker)"],
+        ["filesystem-read", "assignedInvoke(Deno.open)"],
+        ["network", "boundInvoke(fetch)"],
+        ["filesystem-write", "Reflect.apply.call(Deno.writeTextFile)"],
+        ["filesystem-read", "Reflect.apply.apply(Deno.open)"],
+        ["process", "boundConstruct(Worker)"],
       ],
     );
     assertEquals(
@@ -1513,6 +1692,16 @@ function localWindow(window: { Reflect: typeof Reflect }) {
 function localSelf(self: { Reflect: typeof Reflect }) {
   self.Reflect.construct(Worker, ["worker.js"]);
 }
+const invoke = Reflect.apply;
+invoke(fetch, globalThis, ["https://example.com/local"]);
+const { construct } = Reflect;
+construct(Worker, ["worker.js"]);
+const boundInvoke = Reflect.apply.bind(Reflect, fetch, globalThis);
+boundInvoke(["https://example.com/local"]);
+Reflect.apply.call(Reflect, fetch, globalThis, ["https://example.com/local"]);
+Reflect.apply.apply(Reflect, [fetch, globalThis, ["https://example.com/local"]]);
+const boundConstruct = Reflect.construct.bind(Reflect);
+boundConstruct(Worker, ["worker.js"]);
 `,
         "src/shadowed-reflect-runtime-invocation.test.ts",
       ),

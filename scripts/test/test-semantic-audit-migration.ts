@@ -198,6 +198,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4a",
     }),
     entry("cli/commands/dev/dev-output.integration.test.ts", [
+      "filesystem-write",
       "process",
       "shared-cwd",
     ], {
@@ -248,7 +249,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/commands/dev/port-fallback.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/commands/doctor/ai-checks.test.ts", ["filesystem-write"], {
+    entry("cli/commands/doctor/ai-checks.test.ts", [
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "integration-relocation",
       "owner": "cli",
       "rationale":
@@ -396,7 +400,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/cli/commands/init/init-command.test.ts",
       "removalPr": "PR 4a",
     }),
-    entry("cli/commands/init/init-deploy.integration.test.ts", ["process"], {
+    entry("cli/commands/init/init-deploy.integration.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "integration-relocation",
       "owner": "cli",
       "rationale":
@@ -406,6 +414,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4a",
     }),
     entry("cli/commands/init/init.integration.test.ts", [
+      "filesystem-read",
       "filesystem-write",
       "process",
       "server",
@@ -1060,7 +1069,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4a",
     }),
-    entry("cli/utils/git.test.ts", ["filesystem-write", "process"], {
+    entry("cli/utils/git.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "integration-relocation",
       "owner": "cli",
       "rationale":
@@ -2384,6 +2397,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4h",
     }),
     entry("src/build/asset-pipeline/image-optimizer/manifest-manager.test.ts", [
+      "filesystem-read",
       "filesystem-write",
     ], {
       "disposition": "integration-relocation",
@@ -2479,6 +2493,18 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/build/bundler/code-splitter/esbuild-plugin.test.ts",
       "removalPr": "PR 4h",
     }),
+    entry("src/build/bundler/code-splitter/splitter.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "build-rendering",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/build/bundler/code-splitter/splitter.test.ts",
+      "removalPr": "PR 4h",
+    }),
     entry("src/build/compiler/mdx-compiler/compiler.test.ts", [
       "filesystem-write",
     ], {
@@ -2500,6 +2526,17 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/src/build/compiler/mdx-compiler/file-writer.test.ts",
+      "removalPr": "PR 4h",
+    }),
+    entry("src/build/compiler/mdx-compiler/validator.test.ts", [
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "build-rendering",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/build/compiler/mdx-compiler/validator.test.ts",
       "removalPr": "PR 4h",
     }),
     entry(
@@ -2606,6 +2643,40 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/cache/backends/disk.test.ts",
       "removalPr": "PR 4i",
     }),
+    entry("src/cache/backends/disk-pruning.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "config-tooling",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/cache/backends/disk-pruning.test.ts",
+      "removalPr": "PR 4i",
+    }),
+    entry("src/cache/backends/factory.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "config-tooling",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4i",
+    }),
+    entry("src/cache/backends/local-dev-disk-cache.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+      "process",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "config-tooling",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/cache/backends/local-dev-disk-cache.test.ts",
+      "removalPr": "PR 4i",
+    }),
     entry("src/cache/bounded-read.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "config-tooling",
@@ -2660,7 +2731,19 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
-    entry("src/client/spa/ClientApp.reactivity.test.tsx", ["process"], {
+    entry("src/chat/upload-handler.test.ts", ["filesystem-write"], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/chat/upload-handler.test.ts",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/client/spa/ClientApp.reactivity.test.tsx", [
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":
@@ -2669,7 +2752,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/client/spa/ClientApp.test.tsx", ["process"], {
+    entry("src/client/spa/ClientApp.test.tsx", [
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":
@@ -2678,7 +2764,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/client/spa/component-loader.test.ts", ["process"], {
+    entry("src/client/spa/component-loader.test.ts", [
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":
@@ -3365,7 +3454,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/issues/core.test.ts",
       "removalPr": "PR 4n",
     }),
-    entry("src/knowledge/index.test.ts", ["filesystem-read", "network"], {
+    entry("src/knowledge/index.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+      "network",
+    ], {
       "disposition": "integration-relocation",
       "owner": "data-runtime",
       "rationale":
@@ -3468,6 +3561,19 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/modules/react-loader/ssr-module-loader.stress.test.ts",
       "removalPr": "PR 4h",
     }),
+    entry(
+      "src/modules/react-loader/ssr-module-loader/cache/dev-disk-persistence.test.ts",
+      ["filesystem-read", "filesystem-write", "process"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "build-rendering",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/modules/react-loader/ssr-module-loader/cache/dev-disk-persistence.test.ts",
+        "removalPr": "PR 4h",
+      },
+    ),
     entry("src/modules/react-loader/ssr-module-loader/cache/memory.test.ts", [
       "process",
     ], {
@@ -3481,7 +3587,9 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
     }),
     entry("src/modules/react-loader/ssr-module-loader/loader.test.ts", [
       "filesystem-read",
+      "filesystem-write",
       "network",
+      "process",
     ], {
       "disposition": "integration-relocation",
       "owner": "build-rendering",
@@ -3491,6 +3599,58 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/modules/react-loader/ssr-module-loader/loader.test.ts",
       "removalPr": "PR 4h",
     }),
+    entry(
+      "src/modules/react-loader/ssr-module-loader/http-bundle-helpers.test.ts",
+      ["filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "build-rendering",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/modules/react-loader/ssr-module-loader/http-bundle-helpers.test.ts",
+        "removalPr": "PR 4h",
+      },
+    ),
+    entry(
+      "src/modules/react-loader/ssr-module-loader/ssr-cache-manager.test.ts",
+      ["filesystem-read", "filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "build-rendering",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/modules/react-loader/ssr-module-loader/ssr-cache-manager.test.ts",
+        "removalPr": "PR 4h",
+      },
+    ),
+    entry(
+      "src/modules/react-loader/ssr-module-loader/ssr-dependency-validator.test.ts",
+      ["filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "build-rendering",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/modules/react-loader/ssr-module-loader/ssr-dependency-validator.test.ts",
+        "removalPr": "PR 4h",
+      },
+    ),
+    entry(
+      "src/modules/react-loader/ssr-module-loader/vf-module-resolver.test.ts",
+      ["filesystem-read", "filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "build-rendering",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/modules/react-loader/ssr-module-loader/vf-module-resolver.test.ts",
+        "removalPr": "PR 4h",
+      },
+    ),
     entry("src/modules/react-loader/transformed-module-coordinator.test.ts", [
       "filesystem-write",
       "process",
@@ -3556,7 +3716,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/modules/server/module-source-bounds.test.ts",
       "removalPr": "PR 4h",
     }),
-    entry("src/modules/server/module-transform.test.ts", ["process"], {
+    entry("src/modules/server/module-transform.test.ts", [
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "build-rendering",
       "rationale":
@@ -3690,6 +3853,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
+      "removalPr": "PR 4i",
+    }),
+    entry("src/observability/tracing/telemetry-env.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "config-tooling",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4i",
     }),
     entry("src/platform/adapters/adapter-readme-guidance.test.ts", [
@@ -5207,6 +5379,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "removalPr": "PR 4h",
     }),
     entry("src/release-assets/scaffolded-project-build.test.ts", [
+      "filesystem-read",
       "filesystem-write",
     ], {
       "disposition": "integration-relocation",
@@ -5370,8 +5543,21 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       },
     ),
     entry(
+      "src/rendering/orchestrator/module-loader/module-persistence.test.ts",
+      ["filesystem-read", "filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "build-rendering",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/rendering/orchestrator/module-loader/module-persistence.test.ts",
+        "removalPr": "PR 4h",
+      },
+    ),
+    entry(
       "src/rendering/orchestrator/module-loader/module-transform-cache.test.ts",
-      ["process"],
+      ["filesystem-write", "process"],
       {
         "disposition": "replaceable-fake",
         "owner": "build-rendering",
@@ -5407,6 +5593,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/src/rendering/renderer.test.ts",
+      "removalPr": "PR 4h",
+    }),
+    entry("src/rendering/router-detection.test.ts", ["filesystem-write"], {
+      "disposition": "integration-relocation",
+      "owner": "build-rendering",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/rendering/router-detection.test.ts",
       "removalPr": "PR 4h",
     }),
     entry(
@@ -5630,6 +5825,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4n",
     }),
+    entry("src/security/host-execution-policy.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "security-filesystem",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4d",
+    }),
     entry("src/security/http/auth.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "security-filesystem",
@@ -5672,7 +5876,7 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
-    entry("src/security/http/outbound-fetch.test.ts", ["network"], {
+    entry("src/security/http/outbound-fetch.test.ts", ["network", "process"], {
       "disposition": "integration-relocation",
       "owner": "security-filesystem",
       "rationale":
@@ -5716,6 +5920,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "owner": "security-filesystem",
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
+    }),
+    entry("src/security/sandbox/isolation-posture.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "security-filesystem",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4d",
     }),
     entry("src/security/sandbox/project-worker.test.ts", [
       "filesystem-read",
@@ -5834,6 +6047,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/security/secure-fs.test.ts",
       "removalPr": "PR 4d",
     }),
+    entry("src/server/bootstrap.test.ts", ["filesystem-write", "process"], {
+      "disposition": "integration-relocation",
+      "owner": "server-routes",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/server/bootstrap.test.ts",
+      "removalPr": "PR 4c",
+    }),
     entry("src/server/build-app-route-renderer.test.ts", [
       "filesystem-write",
       "process",
@@ -5854,6 +6076,14 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "replacement":
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4c",
+    }),
+    entry("src/server/dev-server/cache-initialization.test.ts", [
+      "filesystem-read",
+    ], {
+      "disposition": "hermetic-unit",
+      "owner": "server-routes",
+      "rationale":
+        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
     entry("src/server/dev-server/handler-only.integration.test.ts", [
       "filesystem-write",
@@ -6158,7 +6388,10 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, or global runtime objects.",
       "removalPr": "PR 4c",
     }),
-    entry("src/server/project-env/hosted-authorization.test.ts", ["network"], {
+    entry("src/server/project-env/hosted-authorization.test.ts", [
+      "network",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "server-routes",
       "rationale":
@@ -6185,6 +6418,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Mutates the process-global fetch boundary and cannot run safely beside concurrent unit tests.",
       "replacement":
         "Inject a fetch implementation or use a scoped per-test transport fake instead of assigning globalThis.fetch.",
+      "removalPr": "PR 4c",
+    }),
+    entry("src/server/project-env/reserved-env.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "server-routes",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4c",
     }),
     entry("src/server/project-env/snapshot.test.ts", ["process"], {
@@ -6618,6 +6860,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/tool/factory.test.ts",
       "removalPr": "PR 4k",
     }),
+    entry("src/tool/remote-mcp.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "agent-tools",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4k",
+    }),
     entry("src/transforms/css-modules/naming.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -6638,6 +6889,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/transforms/esm/bundle-deps-validator.test.ts",
       "removalPr": "PR 4n",
     }),
+    entry("src/transforms/esm/bundle-manifest.test.ts", ["filesystem-write"], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/transforms/esm/bundle-manifest.test.ts",
+      "removalPr": "PR 4n",
+    }),
     entry("src/transforms/esm/bundle-recovery.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -6648,6 +6908,17 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
       "destination":
         "tests/integration/semantic-unit-boundary/src/transforms/esm/bundle-recovery.test.ts",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/transforms/esm/cached-bundle-validation.test.ts", [
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/transforms/esm/cached-bundle-validation.test.ts",
       "removalPr": "PR 4n",
     }),
     entry("src/transforms/esm/http-cache-helpers.test.ts", ["process"], {
@@ -6849,6 +7120,68 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/cache/index.test.ts",
       "removalPr": "PR 4n",
     }),
+    entry("src/transforms/mdx/esm-module-loader/jsx-cache.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/jsx-cache.test.ts",
+      "removalPr": "PR 4n",
+    }),
+    entry("src/transforms/mdx/esm-module-loader/loader-helpers.test.ts", [
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/loader-helpers.test.ts",
+      "removalPr": "PR 4n",
+    }),
+    entry(
+      "src/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.test.ts",
+      ["filesystem-read", "filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "core-runtime",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/module-fetcher/dependency-recovery.test.ts",
+        "removalPr": "PR 4n",
+      },
+    ),
+    entry(
+      "src/transforms/mdx/esm-module-loader/module-fetcher/distributed-cache.test.ts",
+      ["filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "core-runtime",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/module-fetcher/distributed-cache.test.ts",
+        "removalPr": "PR 4n",
+      },
+    ),
+    entry(
+      "src/transforms/mdx/esm-module-loader/module-fetcher/framework-validator.test.ts",
+      ["filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "core-runtime",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/module-fetcher/framework-validator.test.ts",
+        "removalPr": "PR 4n",
+      },
+    ),
     entry(
       "src/transforms/mdx/esm-module-loader/module-fetcher/http-fetcher.test.ts",
       ["filesystem-write", "network"],
@@ -6859,6 +7192,30 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
           "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
         "destination":
           "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/module-fetcher/http-fetcher.test.ts",
+        "removalPr": "PR 4n",
+      },
+    ),
+    entry("src/transforms/mdx/esm-module-loader/module-fetcher/index.test.ts", [
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/module-fetcher/index.test.ts",
+      "removalPr": "PR 4n",
+    }),
+    entry(
+      "src/transforms/mdx/esm-module-loader/module-fetcher/module-cache.test.ts",
+      ["filesystem-read", "filesystem-write"],
+      {
+        "disposition": "integration-relocation",
+        "owner": "core-runtime",
+        "rationale":
+          "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+        "destination":
+          "tests/integration/semantic-unit-boundary/src/transforms/mdx/esm-module-loader/module-fetcher/module-cache.test.ts",
         "removalPr": "PR 4n",
       },
     ),
@@ -6910,6 +7267,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary instead of mutating shared global runtime objects or intrinsic constructors and prototypes.",
       "removalPr": "PR 4n",
     }),
+    entry("src/transforms/mdx/index.test.ts", ["filesystem-write"], {
+      "disposition": "integration-relocation",
+      "owner": "core-runtime",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/src/transforms/mdx/index.test.ts",
+      "removalPr": "PR 4n",
+    }),
     entry("src/transforms/npm-import-rewrites.test.ts", [
       "filesystem-read",
       "filesystem-write",
@@ -6924,6 +7290,14 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/transforms/npm-import-rewrites.test.ts",
       "removalPr": "PR 4n",
     }),
+    entry("src/transforms/pipeline/__fixtures__/fixture-runner.test.ts", [
+      "filesystem-read",
+    ], {
+      "disposition": "hermetic-unit",
+      "owner": "core-runtime",
+      "rationale":
+        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
+    }),
     entry("src/transforms/pipeline/cache-identity.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
@@ -6933,7 +7307,11 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
       "removalPr": "PR 4n",
     }),
-    entry("src/transforms/pipeline/index.test.ts", ["process"], {
+    entry("src/transforms/pipeline/index.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "replaceable-fake",
       "owner": "core-runtime",
       "rationale":
@@ -7108,6 +7486,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "tests/integration/semantic-unit-boundary/src/utils/logger/serialization.test.ts",
       "removalPr": "PR 4i",
     }),
+    entry("src/utils/memory/profiler.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "config-tooling",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4i",
+    }),
     entry("src/utils/response-body.test.ts", ["process"], {
       "disposition": "replaceable-fake",
       "owner": "config-tooling",
@@ -7219,6 +7606,15 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
         "removalPr": "PR 4k",
       },
     ),
+    entry("src/workflow/http/handler.test.ts", ["process"], {
+      "disposition": "replaceable-fake",
+      "owner": "agent-tools",
+      "rationale":
+        "Depends on or mutates process-global environment/runtime state and cannot run safely beside concurrent unit tests.",
+      "replacement":
+        "Inject an environment/runtime-state boundary (and transport fake where applicable) instead of reading or mutating Deno.env, process.env, signals, exits, the shared working directory, or global runtime objects.",
+      "removalPr": "PR 4k",
+    }),
     entry("src/workflow/react/use-workflow-start.test.tsx", [
       "process",
       "network",
@@ -7288,7 +7684,29 @@ export const TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES:
       "rationale":
         "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
     }),
-    entry("templates/scaffold-quality.test.ts", ["process"], {
+    entry("templates/scaffold-export.test.ts", ["filesystem-read"], {
+      "disposition": "hermetic-unit",
+      "owner": "extensions-templates",
+      "rationale":
+        "Reads checked-in repository fixtures or contract files without mutating process, network, or external runtime state.",
+    }),
+    entry("templates/scaffold-parity.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+    ], {
+      "disposition": "integration-relocation",
+      "owner": "extensions-templates",
+      "rationale":
+        "Exercises filesystem mutation, process, server, network, browser, or multi-component runtime behavior outside the colocated unit boundary.",
+      "destination":
+        "tests/integration/semantic-unit-boundary/templates/scaffold-parity.test.ts",
+      "removalPr": "PR 4e",
+    }),
+    entry("templates/scaffold-quality.test.ts", [
+      "filesystem-read",
+      "filesystem-write",
+      "process",
+    ], {
       "disposition": "integration-relocation",
       "owner": "extensions-templates",
       "rationale":

@@ -113,6 +113,8 @@ const READ_METHODS = new Set([
   "createReadStream",
   "exists",
   "existsSync",
+  "expandGlob",
+  "expandGlobSync",
   "fstat",
   "fstatSync",
   "glob",
@@ -144,6 +146,8 @@ const READ_METHODS = new Set([
   "statfs",
   "statfsSync",
   "statSync",
+  "walk",
+  "walkSync",
 ]);
 
 const WATCH_METHODS = new Set([
@@ -160,10 +164,22 @@ const WRITE_METHODS = new Set([
   "chmodSync",
   "chown",
   "chownSync",
+  "copy",
   "copyFile",
   "copyFileSync",
+  "copySync",
   "cp",
   "cpSync",
+  "emptyDir",
+  "emptyDirSync",
+  "ensureDir",
+  "ensureDirSync",
+  "ensureFile",
+  "ensureFileSync",
+  "ensureLink",
+  "ensureLinkSync",
+  "ensureSymlink",
+  "ensureSymlinkSync",
   "writeFile",
   "writeFileSync",
   "writeTextFile",
@@ -199,6 +215,8 @@ const WRITE_METHODS = new Set([
   "mkdirSync",
   "mkdtemp",
   "mkdtempSync",
+  "move",
+  "moveSync",
   "remove",
   "removeSync",
   "rm",
@@ -302,6 +320,14 @@ const PROCESS_STATE_METHODS = new Set([
   "setEnv",
 ]);
 
+const TESTING_RUNTIME_WRITE_METHODS = new Set([
+  "makeTempDirWithOptions",
+  "withTempDir",
+  "withTempFile",
+]);
+
+const TESTING_RUNTIME_PROCESS_METHODS = new Set(["getArgs", "withEnv"]);
+
 const SERVER_METHODS = new Set([
   "serve",
   "listen",
@@ -333,6 +359,8 @@ const GLOBAL_RUNTIME_RECEIVERS = new Set(["globalThis", "window", "self"]);
 
 const CANONICAL_COMPAT_FS_SOURCE = "src/platform/compat/fs.ts";
 const CANONICAL_COMPAT_PROCESS_SOURCE = "src/platform/compat/process.ts";
+const CANONICAL_TESTING_DENO_COMPAT_SOURCE = "src/testing/deno-compat.ts";
+const CANONICAL_TESTING_BARREL_SOURCE = "src/testing/index.ts";
 
 const GLOBAL_INTRINSIC_OBJECTS = new Set([
   "AbortController",
@@ -479,6 +507,7 @@ interface ImportBindings {
   readonly network: Set<string>;
   readonly playwright: Set<string>;
   readonly playwrightNamespaces: Set<string>;
+  readonly runtimeNamespaces: Map<string, string>;
   readonly createRequire: Set<string>;
   readonly importedNames: Set<string>;
 }
@@ -502,6 +531,11 @@ type RuntimeBinding =
     readonly kind: "mutation-method";
     readonly receiver: "Object" | "Reflect";
     readonly method: string;
+  }
+  | {
+    readonly kind: "reflect-method";
+    readonly method: "apply" | "construct";
+    readonly boundArguments?: readonly unknown[];
   }
   | {
     readonly kind: "constructor-effect";
@@ -1440,69 +1474,94 @@ function reflectInvocationMarkers(
 ): readonly SemanticMarker[] {
   if (!isCallLikeExpression(node) || !isNode(node.callee)) return [];
   const callee = unwrapExpression(node.callee);
-  const reflectInvocation = reflectInvocationCall(callee, imports, scopes);
-  if (!reflectInvocation) return [];
-  const { method, symbolPrefix } = reflectInvocation;
-  if (method !== "apply" && method !== "construct") return [];
   const args = Array.isArray(node.arguments) ? node.arguments : [];
-  const target = unwrapExpression(args[0]);
-  if (!target) return [];
-  const targetSymbol = invocationSymbol(target);
-  const binding = runtimeBindingForExpression(target, imports, scopes);
-  const symbol = `${symbolPrefix}(${targetSymbol})`;
+  const reflectInvocations = reflectInvocationCalls(
+    callee,
+    args,
+    imports,
+    scopes,
+  );
+  return reflectInvocations.flatMap(
+    ({ method, symbolPrefix, arguments: invocationArguments }) => {
+      if (method !== "apply" && method !== "construct") return [];
+      const target = unwrapExpression(invocationArguments[0]);
+      if (!target) return [];
+      const targetSymbol = invocationSymbol(target);
+      const binding = runtimeBindingForExpression(target, imports, scopes);
+      const symbol = `${symbolPrefix}(${targetSymbol})`;
 
-  if (method === "construct") {
-    return markersForRuntimeBinding(binding, symbol, line, true);
-  }
+      if (method === "construct") {
+        return markersForRuntimeBinding(binding, symbol, line, true);
+      }
 
-  return flattenRuntimeBindings(binding).flatMap((candidate) => {
-    if (candidate.kind === "effect") {
-      return [{ effect: candidate.effect, line, symbol }];
-    }
-    if (candidate.kind === "filesystem-open") {
-      return [{
-        effect: filesystemOpenEffect(
-          filesystemOpenOptions(
-            candidate,
-            filesystemOpenApplyArguments(args[2]),
-          ),
-        ),
-        line,
-        symbol,
-      }];
-    }
-    return [];
-  });
+      return flattenRuntimeBindings(binding).flatMap((candidate) => {
+        if (candidate.kind === "effect") {
+          return [{ effect: candidate.effect, line, symbol }];
+        }
+        if (candidate.kind === "filesystem-open") {
+          return [{
+            effect: filesystemOpenEffect(
+              filesystemOpenOptions(
+                candidate,
+                filesystemOpenApplyArguments(invocationArguments[2]),
+              ),
+            ),
+            line,
+            symbol,
+          }];
+        }
+        return [];
+      });
+    },
+  );
 }
 
-function reflectInvocationCall(
+function reflectInvocationCalls(
   callee: Node | undefined,
+  args: readonly unknown[],
   imports: ImportBindings,
   scopes: readonly Scope[],
-): { readonly method: string; readonly symbolPrefix: string } | undefined {
+): readonly {
+  readonly method: "apply" | "construct";
+  readonly symbolPrefix: string;
+  readonly arguments: readonly unknown[];
+}[] {
+  if (!callee) return [];
+  const direct = flattenRuntimeBindings(
+    runtimeBindingForExpression(callee, imports, scopes),
+  ).flatMap((candidate) =>
+    candidate.kind === "reflect-method"
+      ? [{
+        method: candidate.method,
+        symbolPrefix: invocationSymbol(callee),
+        arguments: [...candidate.boundArguments ?? [], ...args],
+      }]
+      : []
+  );
   if (
-    !callee ||
-    (callee.type !== "MemberExpression" &&
-      callee.type !== "OptionalMemberExpression")
-  ) {
-    return undefined;
-  }
-  const chain = memberChain(callee);
-  const method = memberProperty(callee);
-  if (!chain || !method) return undefined;
-  if (
-    chain.length === 2 && chain[0] === "Reflect" &&
-    !isGlobalShadowed("Reflect", scopes, imports.importedNames)
-  ) {
-    return { method, symbolPrefix: `Reflect.${method}` };
-  }
-  if (
-    chain.length === 3 && chain[1] === "Reflect" &&
-    isGlobalRuntimeReceiver(chain[0], scopes, imports.importedNames)
-  ) {
-    return { method, symbolPrefix: chain.join(".") };
-  }
-  return undefined;
+    callee.type !== "MemberExpression" &&
+    callee.type !== "OptionalMemberExpression"
+  ) return direct;
+  const wrapper = memberProperty(callee);
+  if (wrapper !== "call" && wrapper !== "apply") return direct;
+  const wrapperArguments = wrapper === "apply"
+    ? arrayExpressionArguments(args[1])
+    : args.slice(1);
+  const wrapped = flattenRuntimeBindings(
+    runtimeBindingForExpression(callee.object, imports, scopes),
+  ).flatMap((candidate) =>
+    candidate.kind === "reflect-method"
+      ? [{
+        method: candidate.method,
+        symbolPrefix: invocationSymbol(callee),
+        arguments: [
+          ...candidate.boundArguments ?? [],
+          ...wrapperArguments,
+        ],
+      }]
+      : []
+  );
+  return [...direct, ...wrapped];
 }
 
 function filesystemOpenInvocations(
@@ -1612,7 +1671,7 @@ function callableMethodInvocationBindings(
   scopes: readonly Scope[],
 ): readonly Extract<
   RuntimeBinding,
-  { readonly kind: "effect" | "filesystem-open" }
+  { readonly kind: "effect" | "filesystem-open" | "reflect-method" }
 >[] {
   if (
     callee.type !== "MemberExpression" &&
@@ -1628,9 +1687,10 @@ function isCallableRuntimeBinding(
   binding: RuntimeBinding | undefined,
 ): binding is Extract<
   RuntimeBinding,
-  { readonly kind: "effect" | "filesystem-open" }
+  { readonly kind: "effect" | "filesystem-open" | "reflect-method" }
 > {
-  return binding?.kind === "effect" || binding?.kind === "filesystem-open";
+  return binding?.kind === "effect" || binding?.kind === "filesystem-open" ||
+    binding?.kind === "reflect-method";
 }
 
 function invocationSymbol(callee: Node): string {
@@ -1753,23 +1813,24 @@ function mutationMethodInvocations(
     return directBindings.map((binding) => ({ binding, calleeName, args }));
   }
 
-  const reflectInvocation = reflectInvocationCall(
+  const reflectInvocations = reflectInvocationCalls(
     unwrapExpression(callee),
+    args,
     imports,
     scopes,
   );
-  if (reflectInvocation?.method === "apply") {
-    const target = unwrapExpression(args[0]);
+  const reflectedMutations = reflectInvocations.flatMap((invocation) => {
+    if (invocation.method !== "apply") return [];
+    const target = unwrapExpression(invocation.arguments[0]);
     if (!target) return [];
-    const invocationArgs = arrayExpressionArguments(args[2]);
+    const invocationArgs = arrayExpressionArguments(invocation.arguments[2]);
     return mutationMethodBindings(target, imports, scopes).map((binding) => ({
       binding,
-      calleeName: `${reflectInvocation.symbolPrefix}(${
-        invocationSymbol(target)
-      })`,
+      calleeName: `${invocation.symbolPrefix}(${invocationSymbol(target)})`,
       args: invocationArgs,
     }));
-  }
+  });
+  if (reflectedMutations.length > 0) return reflectedMutations;
 
   if (
     callee.type !== "MemberExpression" &&
@@ -2172,6 +2233,7 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
     network: new Set(),
     playwright: new Set(),
     playwrightNamespaces: new Set(),
+    runtimeNamespaces: new Map(),
     createRequire: new Set(),
     importedNames: new Set(),
   };
@@ -2223,7 +2285,13 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
       const importedName =
         isNode(specifier.imported) && specifier.imported.type === "Identifier"
           ? specifier.imported.name as string
+          : isNode(specifier.imported)
+          ? literalValue(specifier.imported) ?? local
           : local;
+      if (importedName === "default" && isRuntimeEffectModule(source)) {
+        addRuntimeNamespaceImport(bindings, local, source);
+        continue;
+      }
       if (isFilesystemSpecifier(source)) {
         if (FILESYSTEM_OPEN_METHODS.has(importedName)) {
           bindings.filesystemOpen.set(local, source);
@@ -2242,6 +2310,10 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
           bindings.process.add(local);
         }
       }
+      if (isTestingRuntimeSpecifier(source)) {
+        const effect = effectForModuleMethod(source, importedName);
+        if (effect) addEffectImportBinding(bindings, local, effect);
+      }
       if (isServerSpecifier(source) && SERVER_METHODS.has(importedName)) {
         bindings.server.add(local);
       }
@@ -2259,12 +2331,32 @@ function collectImportBindings(program: Node, file: string): ImportBindings {
   return bindings;
 }
 
+function addEffectImportBinding(
+  bindings: ImportBindings,
+  local: string,
+  effect: SemanticEffect,
+): void {
+  if (effect === "filesystem-read") bindings.filesystemRead.add(local);
+  else if (effect === "filesystem-watch") {
+    bindings.filesystemWatch.add(local);
+  } else if (effect === "filesystem-write") {
+    bindings.filesystemWrite.add(local);
+  } else if (effect === "shared-cwd") bindings.sharedCwd.add(local);
+  else if (effect === "process") bindings.process.add(local);
+  else if (effect === "server") bindings.server.add(local);
+  else if (effect === "network") bindings.network.add(local);
+  else if (effect === "browser") bindings.playwright.add(local);
+}
+
 function addRuntimeNamespaceImport(
   bindings: ImportBindings,
   local: string,
   source: string,
 ): void {
   bindings.importedNames.add(local);
+  if (isRuntimeEffectModule(source)) {
+    bindings.runtimeNamespaces.set(local, source);
+  }
   if (isFilesystemSpecifier(source)) bindings.filesystemNamespaces.add(local);
   if (isProcessSpecifier(source)) bindings.processNamespaces.add(local);
   if (isServerSpecifier(source)) bindings.serverNamespaces.add(local);
@@ -2305,6 +2397,12 @@ function canonicalCompatSource(source: string): string {
   }
   if (pathBase === "src/platform/compat/process") {
     return CANONICAL_COMPAT_PROCESS_SOURCE;
+  }
+  if (pathBase === "src/testing/deno-compat") {
+    return CANONICAL_TESTING_DENO_COMPAT_SOURCE;
+  }
+  if (pathBase === "src/testing/index") {
+    return CANONICAL_TESTING_BARREL_SOURCE;
   }
   return normalized;
 }
@@ -3048,6 +3146,8 @@ function runtimeBindingForExpression(
     scopes,
   );
   if (boundCallableBinding) return boundCallableBinding;
+  const alternativeBinding = alternativeRuntimeBinding(value, imports, scopes);
+  if (alternativeBinding) return alternativeBinding;
   if (
     value.type !== "MemberExpression" &&
     value.type !== "OptionalMemberExpression"
@@ -3062,6 +3162,26 @@ function runtimeBindingForExpression(
   return objectBinding
     ? runtimePropertyBinding(objectBinding, property)
     : undefined;
+}
+
+function alternativeRuntimeBinding(
+  value: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimeBinding | undefined {
+  if (value.type === "ConditionalExpression") {
+    return unionRuntimeBindings([
+      runtimeBindingForExpression(value.consequent, imports, scopes),
+      runtimeBindingForExpression(value.alternate, imports, scopes),
+    ].flatMap((binding) => binding ?? []));
+  }
+  if (value.type === "LogicalExpression") {
+    return unionRuntimeBindings([
+      runtimeBindingForExpression(value.left, imports, scopes),
+      runtimeBindingForExpression(value.right, imports, scopes),
+    ].flatMap((binding) => binding ?? []));
+  }
+  return undefined;
 }
 
 function boundCallableRuntimeBinding(
@@ -3131,6 +3251,8 @@ function identifierRuntimeBinding(
   if (imports.playwright.has(name)) {
     return { kind: "effect", effect: "browser" };
   }
+  const runtimeNamespace = imports.runtimeNamespaces.get(name);
+  if (runtimeNamespace) return { kind: "module", source: runtimeNamespace };
   if (imports.filesystemNamespaces.has(name)) {
     return { kind: "module", source: "node:fs" };
   }
@@ -3154,6 +3276,8 @@ function moduleSourceForIdentifier(
   const resolved = resolveLocalBinding(name, scopes);
   if (resolved.binding?.kind === "module") return resolved.binding.source;
   if (resolved.declared) return undefined;
+  const runtimeNamespace = imports.runtimeNamespaces.get(name);
+  if (runtimeNamespace) return runtimeNamespace;
   if (imports.filesystemNamespaces.has(name)) return "node:fs";
   if (imports.processNamespaces.has(name)) return "node:process";
   if (imports.serverNamespaces.has(name)) return "node:http";
@@ -3240,6 +3364,12 @@ function sharedObjectPropertyBinding(
   intrinsic: string | undefined,
   property: string,
 ): RuntimeBinding {
+  if (
+    intrinsic === "Reflect" &&
+    (property === "apply" || property === "construct")
+  ) {
+    return { kind: "reflect-method", method: property };
+  }
   const mutation = intrinsic
     ? mutationMethodBinding(intrinsic, property)
     : undefined;
@@ -3345,6 +3475,11 @@ function runtimeBindingKey(binding: RuntimeBinding): string {
   }
   if (binding.kind === "mutation-method") {
     return `mutation-method:${binding.receiver}.${binding.method}`;
+  }
+  if (binding.kind === "reflect-method") {
+    return `reflect-method:${binding.method}:${
+      JSON.stringify(binding.boundArguments ?? [])
+    }`;
   }
   if (binding.kind === "shared-object") {
     return `shared-object:${binding.intrinsic ?? "*"}`;
@@ -3607,9 +3742,16 @@ function isPlaywrightFixture(name: string, scopes: readonly Scope[]): boolean {
 function isFilesystemSpecifier(source: string): boolean {
   return source === "node:fs" || source === "node:fs/promises" ||
     source === "fs" || source === "fs/promises" ||
+    isStandardFilesystemSpecifier(source) ||
     source === CANONICAL_COMPAT_FS_SOURCE ||
     source === "#veryfront/compat/fs.ts" ||
     source === "#veryfront/platform/compat/fs.ts";
+}
+
+function isStandardFilesystemSpecifier(source: string): boolean {
+  return source === "@std/fs" || source.startsWith("@std/fs/") ||
+    source === "#std/fs" || source === "#std/fs.ts" ||
+    source.startsWith("#std/fs/");
 }
 
 function isProcessSpecifier(source: string): boolean {
@@ -3619,6 +3761,14 @@ function isProcessSpecifier(source: string): boolean {
     source === CANONICAL_COMPAT_PROCESS_SOURCE ||
     source === "#veryfront/compat/process.ts" ||
     source === "#veryfront/platform/compat/process.ts";
+}
+
+function isTestingRuntimeSpecifier(source: string): boolean {
+  return source === "#veryfront/testing" ||
+    source === "#veryfront/testing/deno-compat" ||
+    source === "#veryfront/testing/deno-compat.ts" ||
+    source === CANONICAL_TESTING_DENO_COMPAT_SOURCE ||
+    source === CANONICAL_TESTING_BARREL_SOURCE;
 }
 
 function isProcessEffectMethod(method: string): boolean {
@@ -3639,13 +3789,29 @@ function isCreateRequireSpecifier(source: string): boolean {
 
 function isRuntimeEffectModule(source: string): boolean {
   return isFilesystemSpecifier(source) || isProcessSpecifier(source) ||
-    isServerSpecifier(source) || isPlaywrightSpecifier(source);
+    isServerSpecifier(source) || isPlaywrightSpecifier(source) ||
+    isTestingRuntimeSpecifier(source);
 }
 
 function effectForModuleMethod(
   source: string,
   method: string,
 ): SemanticEffect | undefined {
+  if (isTestingRuntimeSpecifier(source)) {
+    if (READ_METHODS.has(method)) return "filesystem-read";
+    if (
+      WRITE_METHODS.has(method) || TESTING_RUNTIME_WRITE_METHODS.has(method)
+    ) {
+      return "filesystem-write";
+    }
+    if (SHARED_CWD_METHODS.has(method)) return "shared-cwd";
+    if (
+      isProcessEffectMethod(method) ||
+      TESTING_RUNTIME_PROCESS_METHODS.has(method)
+    ) {
+      return "process";
+    }
+  }
   if (isFilesystemSpecifier(source)) {
     if (WATCH_METHODS.has(method)) return "filesystem-watch";
     if (READ_METHODS.has(method)) return "filesystem-read";
