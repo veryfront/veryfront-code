@@ -607,7 +607,11 @@ interface ImportBindings {
 }
 
 type NamespacePropertyOperation =
-  | { readonly kind: "spread"; readonly binding: RuntimeBinding }
+  | {
+    readonly kind: "spread";
+    readonly binding: RuntimeBinding;
+    readonly conservativePartial?: boolean;
+  }
   | {
     readonly kind: "define";
     readonly name: string;
@@ -2429,7 +2433,7 @@ function runtimeUnknownPropertyResolution(
     }
   }
   return {
-    binding: unionRuntimeBindings(propertyBindings),
+    binding: unionRuntimeBindingsPreservingPartial(propertyBindings),
     aliasTargets: uniqueRuntimeAliasTargets(aliasTargets),
     defaultMayRun: true,
   };
@@ -4517,8 +4521,8 @@ function bindRuntimeDeleteMutation(
   allowClearing: boolean,
 ): void {
   if (
-    !allowClearing || node.type !== "UnaryExpression" ||
-    node.operator !== "delete" || !isNode(node.argument)
+    node.type !== "UnaryExpression" || node.operator !== "delete" ||
+    !isNode(node.argument)
   ) {
     return;
   }
@@ -4530,17 +4534,23 @@ function bindRuntimeDeleteMutation(
   ) return;
   const property = memberProperty(member);
   const receiver = runtimeBindingForExpression(member.object, imports, scopes);
-  if (
-    property === undefined || receiver === undefined ||
-    runtimePropertyResolution(receiver, property, true).configurable !== true
-  ) return;
+  if (property === undefined || receiver === undefined) return;
+  const configurable = runtimePropertyResolution(
+    receiver,
+    property,
+    true,
+  ).configurable;
+  if (configurable === false) return;
   bindRuntimeMemberAssignment(
     node.argument,
     undefined,
     undefined,
     imports,
     scopes,
-    { allowClearing: true, clearAccessors: true },
+    {
+      allowClearing: allowClearing && configurable === true,
+      clearAccessors: true,
+    },
   );
 }
 
@@ -4696,6 +4706,10 @@ function bindRuntimeCallMutation(
       );
       continue;
     }
+    const mutationTarget = canonicalName === "Reflect.set" &&
+        invocation.args.length >= 4
+      ? invocation.args[3]
+      : target;
     for (const entry of assigned) {
       const attributes = descriptorMutations.find((descriptor) =>
         descriptor.property === entry.property
@@ -4707,7 +4721,7 @@ function bindRuntimeCallMutation(
       );
       if (entry.property !== undefined) {
         bindRuntimeNamedPropertyMutationBinding(
-          target,
+          mutationTarget,
           entry.property,
           binding,
           entry.expression,
@@ -4724,7 +4738,7 @@ function bindRuntimeCallMutation(
         );
       } else {
         bindRuntimeUnknownPropertyMutationBinding(
-          target,
+          mutationTarget,
           binding,
           entry.expression,
           imports,
@@ -6036,24 +6050,27 @@ function retainedRuntimeDescriptorBinding(
   const enumerable = changesEnumerable
     ? runtimeDescriptorBooleanField(descriptor, "enumerable")
     : undefined;
+  const retained = unionRuntimeBindings(
+    flattenRuntimeBindings(existing).flatMap((candidate) => {
+      const keep = candidate.kind === "property-setter"
+        ? !fields.has("set")
+        : candidate.kind === "property-getter-effect" ||
+            candidate.kind === "property-getter-value"
+        ? !fields.has("get")
+        : !changesProperty;
+      if (!keep) return [];
+      return changesEnumerable &&
+          (candidate.kind === "property-getter-effect" ||
+            candidate.kind === "property-getter-value")
+        ? [{ ...candidate, enumerable }]
+        : [candidate];
+    }),
+  );
   return {
     changed: true,
-    binding: unionRuntimeBindingsPreservingPartial(
-      flattenRuntimeBindings(existing).flatMap((candidate) => {
-        const retained = candidate.kind === "property-setter"
-          ? !fields.has("set")
-          : candidate.kind === "property-getter-effect" ||
-              candidate.kind === "property-getter-value"
-          ? !fields.has("get")
-          : !changesProperty;
-        if (!retained) return [];
-        return changesEnumerable &&
-            (candidate.kind === "property-getter-effect" ||
-              candidate.kind === "property-getter-value")
-          ? [{ ...candidate, enumerable }]
-          : [candidate];
-      }),
-    ),
+    binding: retained && runtimeBindingHasPartialAlternative(existing)
+      ? { kind: "partial", binding: retained }
+      : retained,
   };
 }
 
@@ -7899,7 +7916,13 @@ function objectLiteralRuntimeBinding(
         imports,
         scopes,
       );
-      if (spread) propertyOperations.push({ kind: "spread", binding: spread });
+      if (spread) {
+        propertyOperations.push({
+          kind: "spread",
+          binding: spread,
+          conservativePartial: true,
+        });
+      }
       continue;
     }
     const name = staticObjectPropertyName(property);
@@ -8665,7 +8688,7 @@ function runtimeUnknownPropertySetterBinding(
 function runtimeReadablePropertyBinding(
   binding: RuntimeBinding | undefined,
 ): RuntimeBinding | undefined {
-  return unionRuntimeBindingsPreservingPartial(
+  const readable = unionRuntimeBindings(
     flattenRuntimeBindings(binding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? [candidate.binding]
@@ -8675,6 +8698,9 @@ function runtimeReadablePropertyBinding(
         : [candidate]
     ),
   );
+  return readable && runtimeBindingHasPartialAlternative(binding)
+    ? { kind: "partial", binding: readable }
+    : readable;
 }
 
 function runtimeEnumerablePropertyBinding(
@@ -8684,7 +8710,7 @@ function runtimeEnumerablePropertyBinding(
   const resolution = runtimePropertyResolution(binding, property, true, true);
   if (resolution.enumerable === false) return undefined;
   const rawBinding = resolution.binding;
-  return unionRuntimeBindingsPreservingPartial(
+  const enumerable = unionRuntimeBindings(
     flattenRuntimeBindings(rawBinding).flatMap((candidate) =>
       candidate.kind === "property-getter-value"
         ? candidate.enumerable === false ? [] : [candidate.binding]
@@ -8694,6 +8720,9 @@ function runtimeEnumerablePropertyBinding(
         : [candidate]
     ),
   );
+  return enumerable && runtimeBindingHasPartialAlternative(rawBinding)
+    ? { kind: "partial", binding: enumerable }
+    : enumerable;
 }
 
 function runtimeUnknownGetterEnumerabilities(
@@ -8754,6 +8783,7 @@ function runtimePropertyResolution(
         binding: resolution.binding
           ? { kind: "partial", binding: resolution.binding }
           : undefined,
+        defaultMayRun: true,
       });
       continue;
     }
@@ -8864,10 +8894,17 @@ function runtimePropertyResolution(
         const spreadResolution = spreadResolutions[spreadIndex++] ?? {
           defaultMayRun: true,
         };
+        const spreadBinding = operation.conservativePartial === true &&
+            runtimeBindingHasPartialAlternative(spreadResolution.binding)
+          ? unionRuntimeBindings([
+            spreadResolution.binding,
+            conservativeSemanticEffectBinding(),
+          ].flatMap((candidate) => candidate ?? []))
+          : spreadResolution.binding;
         resolution = {
           binding: unionRuntimeBindingsPreservingPartial(
             [
-              spreadResolution.binding,
+              spreadBinding,
               spreadResolution.defaultMayRun ? resolution.binding : undefined,
             ].flatMap((candidate) => candidate ?? []),
           ),
