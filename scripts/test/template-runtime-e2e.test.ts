@@ -1,6 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getDevServerCommand } from "./template-runtime-e2e.ts";
+import {
+  getDevServerCommand,
+  getTemplateExtensionNames,
+} from "./template-runtime-e2e.ts";
 import {
   getDevServerEnvironment,
   inspectModuleExports,
@@ -19,6 +22,7 @@ describe("template runtime E2E commands", () => {
         "assertCondition",
         "ensureCommand",
         "getDevServerCommand",
+        "getTemplateExtensionNames",
         "installDependencies",
         "packNpmPackage",
         "parseCommaSeparatedFlag",
@@ -30,6 +34,17 @@ describe("template runtime E2E commands", () => {
       ],
       "Template runtime module should export only shared harness helpers on import",
     );
+  });
+
+  it("packs only the first-party extensions selected templates own", () => {
+    assertEquals(
+      getTemplateExtensionNames(["minimal", "docs-agent", "minimal"]),
+      [
+        "@veryfront/ext-content-mdx",
+        "@veryfront/ext-document-kreuzberg",
+      ],
+    );
+    assertEquals(getTemplateExtensionNames(["agentic-workflow"]), []);
   });
 
   it("passes the selected port through Deno task without a separator", () => {

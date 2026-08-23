@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1251",
+  "version": "0.1.1252-rc",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -492,12 +492,12 @@
     "test:coverage": "rm -rf coverage && deno task generate && DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --preload=src/testing/preload.ts --no-check --parallel --fail-fast --allow-all --deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai --v8-flags=--max-old-space-size=8192 --coverage=coverage '--ignore=tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net || exit 1",
     "test:coverage:unit": "rm -rf coverage && deno task generate && DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno run --config=scripts/test.deno.json --allow-read --allow-run=deno --deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai scripts/test/run-deno-suite.ts --suite=coverage:unit --coverage-dir=coverage || exit 1",
     "test:coverage:integration": "rm -rf coverage && deno task generate && DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --preload=src/testing/preload.ts --no-check --parallel --fail-fast --allow-all --deny-net=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.mistral.ai,api.groq.com,api.deepseek.com,openrouter.ai --v8-flags=--max-old-space-size=8192 --coverage=coverage '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' tests --unstable-worker-options --unstable-net || exit 1",
-    "coverage:report": "deno coverage coverage --include=src/ --exclude=tests '--exclude=src/**/*_test.ts' '--exclude=src/**/*_test.tsx' '--exclude=src/**/*.test.ts' '--exclude=src/**/*.test.tsx' --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
-    "coverage:gate": "deno coverage coverage --include=src/ --exclude=tests '--exclude=src/**/*_test.ts' '--exclude=src/**/*_test.tsx' '--exclude=src/**/*.test.ts' '--exclude=src/**/*.test.tsx' --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
+    "coverage:report": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
+    "coverage:gate": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage/lcov.info && deno run --allow-read scripts/lint/check-coverage.ts 80",
     "coverage:ci:shard": "deno run --config=scripts/test.deno.json --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts shard",
     "coverage:ci:merge": "deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
     "coverage:ci": "deno task test:coverage:unit && deno task coverage:gate",
-    "coverage:html": "deno coverage coverage --include=src/ --exclude=tests '--exclude=src/**/*_test.ts' '--exclude=src/**/*_test.tsx' '--exclude=src/**/*.test.ts' '--exclude=src/**/*.test.tsx' --html",
+    "coverage:html": "deno coverage coverage --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --html",
     "bench": "VF_DISABLE_LRU_INTERVAL=1 NODE_ENV=production LOG_FORMAT=text deno bench --no-check --allow-all --unstable-worker-options --unstable-net $(find src -name '*.bench.ts')",
     "clean": "rm -rf .cache/",
     "storybook": "npm --prefix storybook run storybook",
