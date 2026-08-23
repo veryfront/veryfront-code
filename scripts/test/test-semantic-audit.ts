@@ -2147,6 +2147,14 @@ function namespaceUnknownPropertyNames(
   binding: Extract<RuntimeBinding, { readonly kind: "namespace-object" }>,
 ): Set<string> {
   const propertyNames = namespacePropertyNames(binding);
+  for (const operation of binding.propertyOperations ?? []) {
+    if (
+      operation.kind === "define-unknown" &&
+      operation.minimumArrayIndex !== undefined
+    ) {
+      propertyNames.add(String(operation.minimumArrayIndex));
+    }
+  }
   let unknownPropertyName = "__veryfront_unknown_computed_property__";
   while (propertyNames.has(unknownPropertyName)) {
     unknownPropertyName += "_";
@@ -4092,32 +4100,46 @@ function bindRuntimeCallMutation(
       `${invocation.binding.receiver}.${invocation.binding.method}`;
     if (invocation.binding.receiver === "Array") {
       if (invocation.target === undefined) continue;
+      if (
+        invocation.binding.method === "pop" ||
+        invocation.binding.method === "shift"
+      ) {
+        bindRuntimeArrayRemovalMutation(
+          invocation.target,
+          invocation.binding.method,
+          imports,
+          scopes,
+        );
+        continue;
+      }
+      const movesExistingValues = arrayMutationMayMoveExistingValues(
+        invocation.binding.method,
+        invocation.args,
+      );
+      if (movesExistingValues) {
+        bindRuntimeArrayShapeMutation(
+          invocation.target,
+          imports,
+          scopes,
+        );
+      }
       const inserted = arrayMutationInsertedExpressions(
         invocation.binding.method,
         invocation.args,
       );
       if (inserted.length === 0) {
         if (
+          !movesExistingValues &&
           invocation.binding.method !== "push" &&
           invocation.binding.method !== "unshift"
         ) {
-          if (
-            invocation.binding.method === "pop" ||
-            invocation.binding.method === "shift"
-          ) {
-            bindRuntimeArrayRemovalMutation(
-              invocation.target,
-              invocation.binding.method,
-              imports,
-              scopes,
-            );
-          } else {
-            bindRuntimeArrayShapeMutation(
-              invocation.target,
-              imports,
-              scopes,
-            );
-          }
+          bindRuntimeUnknownPropertyMutation(
+            invocation.target,
+            undefined,
+            imports,
+            scopes,
+            0,
+          );
         }
       } else {
         for (const expression of inserted) {
@@ -4126,6 +4148,7 @@ function bindRuntimeCallMutation(
             expression,
             imports,
             scopes,
+            0,
           );
         }
       }
@@ -4220,6 +4243,7 @@ function bindRuntimeArrayShapeMutation(
     runtimeUnknownPropertyExpression(target),
     imports,
     scopes,
+    0,
   );
 }
 
@@ -4234,7 +4258,7 @@ function bindRuntimeArrayRemovalMutation(
   const receiver = unwrapExpression(target);
   if (!targetBinding || exactLength === undefined || !receiver) {
     if (method === "pop") {
-      bindRuntimeUnknownPropertyMutation(target, undefined, imports, scopes);
+      bindRuntimeUnknownPropertyMutation(target, undefined, imports, scopes, 0);
     } else {
       bindRuntimeArrayShapeMutation(target, imports, scopes);
     }
@@ -4279,6 +4303,15 @@ function bindRuntimeArrayRemovalMutation(
     imports,
     scopes,
   );
+}
+
+function arrayMutationMayMoveExistingValues(
+  method: string,
+  args: readonly unknown[],
+): boolean {
+  if (method === "copyWithin") return args.length >= 1;
+  if (method === "splice" || method === "unshift") return args.length > 0;
+  return method === "*" || method === "reverse" || method === "sort";
 }
 
 function arrayMutationInsertedExpressions(
@@ -4617,6 +4650,7 @@ function bindRuntimeUnknownPropertyMutation(
   assignedExpression: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  minimumArrayIndex?: number,
 ): void {
   bindRuntimeUnknownPropertyMutationBinding(
     target,
@@ -4624,6 +4658,7 @@ function bindRuntimeUnknownPropertyMutation(
     assignedExpression,
     imports,
     scopes,
+    minimumArrayIndex,
   );
 }
 
@@ -4671,6 +4706,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
   assignedExpression: unknown,
   imports: ImportBindings,
   scopes: readonly Scope[],
+  minimumArrayIndex?: number,
 ): void {
   const receiver = unwrapExpression(target);
   if (!receiver) return;
@@ -4682,6 +4718,7 @@ function bindRuntimeUnknownPropertyMutationBinding(
     imports,
     scopes,
     false,
+    minimumArrayIndex,
   );
 }
 
@@ -4692,6 +4729,7 @@ function bindRuntimeMemberAssignment(
   imports: ImportBindings,
   scopes: readonly Scope[],
   allowClearing: boolean,
+  minimumArrayIndex?: number,
 ): boolean {
   if (
     member.type !== "MemberExpression" &&
@@ -4793,6 +4831,7 @@ function bindRuntimeMemberAssignment(
       scopes,
       mutation.hasUnknownComputedProperty,
       allowClearing,
+      minimumArrayIndex,
     );
   }
   return true;
@@ -4808,6 +4847,7 @@ function bindRuntimeMemberAssignmentTarget(
   scopes: readonly Scope[],
   hasUnknownComputedProperty: boolean,
   allowClearing: boolean,
+  minimumArrayIndex?: number,
 ): void {
   const { scope, root } = target;
   const existing = scope.runtimeBindings.get(root);
@@ -4841,6 +4881,7 @@ function bindRuntimeMemberAssignmentTarget(
       defaultMayRun,
       crossesFunctionBoundary,
       aliasTargets,
+      minimumArrayIndex,
     )
     : assignRuntimeProperty(
       existing,
@@ -4906,7 +4947,14 @@ function runtimeNamespaceAliasTargetsForExpression(
   const value = unwrapExpression(expression);
   if (!value) return [];
   let targets: readonly RuntimeAliasTarget[] = [];
-  if (value.type === "ConditionalExpression") {
+  const assignment = runtimeAssignmentExpressionResolution(
+    value,
+    imports,
+    scopes,
+  );
+  if (assignment) {
+    targets = assignment.aliasTargets ?? [];
+  } else if (value.type === "ConditionalExpression") {
     targets = uniqueRuntimeAliasTargets([
       ...runtimeNamespaceAliasTargetsForExpression(
         value.consequent,
@@ -5214,6 +5262,7 @@ function assignUnknownRuntimeProperty(
   defaultMayRun: boolean,
   crossesFunctionBoundary: boolean,
   aliasTargets: readonly RuntimeAliasTarget[] = [],
+  minimumArrayIndex?: number,
 ): RuntimeBinding {
   const [property, ...rest] = objectPath;
   if (property) {
@@ -5224,6 +5273,7 @@ function assignUnknownRuntimeProperty(
       defaultMayRun,
       crossesFunctionBoundary,
       aliasTargets,
+      minimumArrayIndex,
     );
     return assignRuntimeProperty(existing, [property], nested, false, false);
   }
@@ -5233,6 +5283,7 @@ function assignUnknownRuntimeProperty(
     aliasTargets,
     defaultMayRun,
     crossesFunctionBoundary,
+    minimumArrayIndex,
   });
 }
 
@@ -5790,6 +5841,69 @@ function bindRuntimeAliasPattern(
   }
 }
 
+function runtimeAssignmentExpressionResolution(
+  value: Node,
+  imports: ImportBindings,
+  scopes: readonly Scope[],
+): RuntimePropertyResolution | undefined {
+  const operator = String(value.operator);
+  if (
+    value.type !== "AssignmentExpression" ||
+    !["=", "&&=", "||=", "??="].includes(operator) ||
+    !isNode(value.left)
+  ) {
+    return undefined;
+  }
+
+  const rightBinding = runtimeBindingForExpression(
+    value.right,
+    imports,
+    scopes,
+  );
+  const rightAliasTargets = runtimeNamespaceAliasTargetsForExpression(
+    value.right,
+    imports,
+    scopes,
+  );
+  const rightMayBeUndefined = expressionMayBeUndefined(
+    value.right,
+    rightBinding,
+    imports,
+    scopes,
+  );
+  if (operator === "=") {
+    return {
+      binding: rightBinding,
+      aliasTargets: rightAliasTargets,
+      defaultMayRun: rightMayBeUndefined,
+    };
+  }
+
+  const leftBinding = runtimeBindingForExpression(value.left, imports, scopes);
+  const leftAliasTargets = runtimeNamespaceAliasTargetsForExpression(
+    value.left,
+    imports,
+    scopes,
+  );
+  return {
+    binding: unionRuntimeBindings(
+      [leftBinding, rightBinding].flatMap((binding) => binding ?? []),
+    ),
+    aliasTargets: uniqueRuntimeAliasTargets([
+      ...leftAliasTargets,
+      ...rightAliasTargets,
+    ]),
+    defaultMayRun: operator === "&&="
+      ? expressionMayBeUndefined(
+        value.left,
+        leftBinding,
+        imports,
+        scopes,
+      ) || rightMayBeUndefined
+      : rightMayBeUndefined,
+  };
+}
+
 function runtimeBindingForExpression(
   expression: unknown,
   imports: ImportBindings,
@@ -5797,6 +5911,12 @@ function runtimeBindingForExpression(
 ): RuntimeBinding | undefined {
   const value = unwrapExpression(expression);
   if (!value) return undefined;
+  const assignment = runtimeAssignmentExpressionResolution(
+    value,
+    imports,
+    scopes,
+  );
+  if (assignment) return assignment.binding;
   if (value.type === "ClassExpression") {
     const classScope = createScope(value, imports, scopes);
     const name = classScope.classRuntimeBindings?.name;
@@ -5808,12 +5928,6 @@ function runtimeBindingForExpression(
   if (value.type === "ThisExpression") {
     return resolveLocalBinding(THIS_RUNTIME_ROOT, scopes).binding;
   }
-  const assignmentBinding = assignmentExpressionRuntimeBinding(
-    value,
-    imports,
-    scopes,
-  );
-  if (assignmentBinding) return assignmentBinding;
   const identifierBinding = identifierRuntimeBinding(value, imports, scopes);
   if (identifierBinding) return identifierBinding;
   const createRequireBinding = createRequireResultBinding(
@@ -5868,26 +5982,6 @@ function runtimeBindingForExpression(
     : undefined;
   return unionRuntimeBindings(
     [unknownProperty, unknownArrayMutation].flatMap((binding) => binding ?? []),
-  );
-}
-
-function assignmentExpressionRuntimeBinding(
-  value: Node,
-  imports: ImportBindings,
-  scopes: readonly Scope[],
-): RuntimeBinding | undefined {
-  if (value.type !== "AssignmentExpression") return undefined;
-  const right = runtimeBindingForExpression(value.right, imports, scopes);
-  if (value.operator === "=") return right;
-  if (
-    !["&&=", "||=", "??="].includes(String(value.operator)) ||
-    !isNode(value.left)
-  ) {
-    return undefined;
-  }
-  const left = runtimeBindingForExpression(value.left, imports, scopes);
-  return unionRuntimeBindings(
-    [left, right].flatMap((binding) => binding ?? []),
   );
 }
 
@@ -6156,6 +6250,12 @@ function expressionMayBeUndefined(
 ): boolean {
   const value = unwrapExpression(expression);
   if (!value) return true;
+  const assignment = runtimeAssignmentExpressionResolution(
+    value,
+    imports,
+    scopes,
+  );
+  if (assignment) return assignment.defaultMayRun;
   const nestedMayBeUndefined = (candidate: unknown): boolean =>
     expressionMayBeUndefined(
       candidate,
@@ -6727,8 +6827,8 @@ function runtimePropertyResolution(
           const propertyIndex = runtimeArrayIndex(property);
           if (
             operation.minimumArrayIndex !== undefined &&
-            propertyIndex !== undefined &&
-            propertyIndex < operation.minimumArrayIndex
+            (propertyIndex === undefined ||
+              propertyIndex < operation.minimumArrayIndex)
           ) {
             continue;
           }
@@ -6855,8 +6955,8 @@ function runtimePropertyHasCrossFunctionMutation(
           const propertyIndex = runtimeArrayIndex(property);
           if (
             operation.minimumArrayIndex !== undefined &&
-            propertyIndex !== undefined &&
-            propertyIndex < operation.minimumArrayIndex
+            (propertyIndex === undefined ||
+              propertyIndex < operation.minimumArrayIndex)
           ) {
             return false;
           }
